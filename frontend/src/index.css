@@ -1,0 +1,455 @@
+/* src/index.css */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes toast-progress {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+/* Standardized Hover Effects for Blulok Cloud */
+
+/* Card Hover Effects */
+.hover-card {
+  @apply transition-all duration-200 cursor-pointer;
+}
+
+.hover-card:hover {
+  @apply shadow-lg scale-[1.01] bg-gray-50 dark:bg-gray-700/30;
+}
+
+/* Table Row Hover Effects */
+.hover-table-row {
+  @apply transition-colors duration-200 cursor-pointer;
+}
+
+.hover-table-row:hover {
+  @apply bg-gray-50 dark:bg-gray-700/50;
+}
+
+/* Button Hover Effects */
+.hover-button {
+  @apply transition-colors duration-200;
+}
+
+.hover-button:hover {
+  @apply bg-gray-50 dark:bg-gray-700;
+}
+
+/* Link Hover Effects */
+.hover-link {
+  @apply transition-colors duration-200;
+}
+
+.hover-link:hover {
+  @apply text-primary-700 dark:text-primary-300;
+}
+
+/* Interactive Element Hover Effects */
+.hover-interactive {
+  @apply transition-all duration-200 cursor-pointer;
+}
+
+.hover-interactive:hover {
+  @apply shadow-sm bg-gray-50 dark:bg-gray-700/30;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 1000px;
+  }
+}
+
+@keyframes highlightPulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+}
+
+@keyframes highlightFade {
+  0% {
+    opacity: 0.8;
+  }
+  70% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply text-gray-900 bg-gray-50 dark:text-gray-100 dark:bg-gray-900;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  /* Ensure all elements inherit proper colors in dark mode */
+  * {
+    @apply border-gray-200 dark:border-gray-700;
+  }
+
+  /* Fix select elements in dark mode */
+  select {
+    @apply bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600;
+  }
+
+  /* Fix button elements in dark mode */
+  button:not(.btn-primary):not(.btn-secondary) {
+    @apply text-gray-700 dark:text-gray-200;
+  }
+
+  /* Fix table elements in dark mode */
+  table {
+    @apply bg-white dark:bg-gray-800;
+  }
+
+  th {
+    @apply bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-300;
+  }
+
+  td {
+    @apply bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100;
+  }
+
+  /* Fix form elements */
+  input, textarea {
+    @apply bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600;
+  }
+
+  /* Fix modal backdrops */
+  .modal-backdrop {
+    @apply bg-black bg-opacity-50 dark:bg-black dark:bg-opacity-70;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200;
+  }
+  
+  .btn-secondary {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200;
+  }
+  
+  .input {
+    @apply block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm transition-colors duration-200;
+  }
+  
+  .card {
+    @apply bg-white dark:bg-gray-800 shadow-soft rounded-lg border border-gray-200 dark:border-gray-700 transition-colors duration-200;
+    overflow: hidden; /* Only hide overflow for content, not absolutely positioned elements */
+  }
+
+  /* Allow dropdowns to overflow widget boundaries */
+  .widget-grid .react-grid-item {
+    overflow: visible !important;
+  }
+
+  .widget-grid .react-grid-item .card {
+    overflow: hidden; /* Content overflow hidden */
+    position: relative;
+  }
+
+  /* Ensure dropdowns appear above other widgets */
+  .dropdown-container {
+    position: relative;
+    z-index: 100;
+  }
+
+  .dropdown-container .dropdown-menu {
+    position: absolute;
+    z-index: 1000;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  }
+
+  /* Ensure dropdown menu appears above everything */
+  .dropdown-menu {
+    position: fixed !important;
+    z-index: 9999 !important;
+  }
+
+  /* Widget Grid Styles */
+  .widget-grid {
+    @apply relative;
+  }
+
+  .widget-grid .react-grid-item {
+    @apply transition-all duration-200 ease-out;
+  }
+
+  .widget-grid .react-grid-item.cssTransforms {
+    transition-property: transform, opacity;
+    transition-duration: 0.2s;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Placeholder (blue outline) should animate smoothly */
+  .widget-grid .react-grid-item.react-grid-placeholder {
+    @apply bg-primary-50 dark:bg-primary-900/20 border-2 border-dashed border-primary-400 dark:border-primary-500 rounded-lg;
+    transition: all 0.2s ease;
+    opacity: 0.8;
+  }
+
+  /* Dragging widget follows cursor smoothly */
+  .widget-grid .react-grid-item.react-draggable-dragging {
+    @apply z-40 shadow-2xl;
+    opacity: 0.9;
+    transition: none !important; /* Remove transitions during drag for smooth following */
+    cursor: grabbing !important;
+    /* Let react-draggable handle the transform for smooth cursor following */
+  }
+  
+  /* Enhanced transition for widgets being swapped */
+  .widget-grid .react-grid-item:not(.react-draggable-dragging) {
+    transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1) !important;
+  }
+
+  /* Resizing widget */
+  .widget-grid .react-grid-item.resizing {
+    @apply z-30 shadow-lg;
+    opacity: 0.95;
+    transition: none !important;
+  }
+
+
+  /* Drag handle cursor and styling */
+  .widget-grid .drag-handle {
+    cursor: grab;
+    transition: all 0.2s ease;
+    user-select: none;
+  }
+
+  .widget-grid .drag-handle:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+  }
+
+  .dark .widget-grid .drag-handle:hover {
+    background-color: rgba(255, 255, 255, 0.02);
+  }
+
+  .widget-grid .react-grid-item.react-draggable-dragging .drag-handle {
+    cursor: grabbing;
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+
+  .dark .widget-grid .react-grid-item.react-draggable-dragging .drag-handle {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Widget content scrolling */
+  .widget-content {
+    @apply overflow-auto;
+    height: calc(100% - 60px); /* Account for header */
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.gray.400') transparent;
+    /* Ensure content can scroll properly */
+    display: flex;
+    flex-direction: column;
+  }
+
+  .widget-content::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .widget-content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .widget-content::-webkit-scrollbar-thumb {
+    background-color: theme('colors.gray.400');
+    border-radius: 3px;
+    transition: background-color 0.2s ease;
+  }
+
+  .widget-content::-webkit-scrollbar-thumb:hover {
+    background-color: theme('colors.gray.500');
+  }
+
+  .dark .widget-content::-webkit-scrollbar-thumb {
+    background-color: theme('colors.gray.600');
+  }
+
+  .dark .widget-content::-webkit-scrollbar-thumb:hover {
+    background-color: theme('colors.gray.500');
+  }
+
+  /* --- CRITICAL FIX FOR DRAG HANDLE --- */
+  /* 1. Disable pointer events on the entire grid item by default. */
+  .react-grid-item {
+    pointer-events: none !important;
+  }
+
+  /* 2. Re-enable pointer events on the drag handle so it can be grabbed. */
+  .react-grid-item .drag-handle {
+    pointer-events: auto !important;
+    cursor: grab !important;
+  }
+  .react-grid-item.react-draggable-dragging .drag-handle {
+    cursor: grabbing !important;
+  }
+
+  /* 3. Re-enable pointer events on the content area and any interactive elements within it. */
+  .react-grid-item .widget-content,
+  .react-grid-item .widget-content *,
+  .react-grid-item .dropdown-container,
+  .react-grid-item .dropdown-container *,
+  .react-grid-item button,
+  .react-grid-item input,
+  .react-grid-item select,
+  .react-grid-item textarea,
+  .react-grid-item a {
+    pointer-events: auto !important;
+  }
+
+  /* 4. Ensure the widget body (non-header area) cannot be dragged */
+  .react-grid-item .widget-body,
+  .react-grid-item .card > *:not(.drag-handle),
+  .react-grid-item .no-drag {
+    pointer-events: auto !important;
+    cursor: default !important;
+  }
+  /* --- END OF FIX --- */
+
+  /* Improve drag performance and visual feedback */
+  .widget-grid .react-grid-item.react-draggable-dragging * {
+    pointer-events: none; /* Prevent interference during drag */
+  }
+
+  /* Smooth placeholder animation */
+  .widget-grid .react-grid-item.react-grid-placeholder {
+    animation: placeholderPulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes placeholderPulse {
+    0%, 100% { opacity: 0.8; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Better drag handle visibility */
+  .widget-grid .react-grid-item:hover .drag-handle {
+    background-color: rgba(0, 0, 0, 0.02);
+  }
+
+  .dark .widget-grid .react-grid-item:hover .drag-handle {
+    background-color: rgba(255, 255, 255, 0.02);
+  }
+
+  /* Hamburger menu visibility - only on header hover */
+  .widget-grid .react-grid-item .dropdown-container button {
+    transition: opacity 0.2s ease, transform 0.2s ease, z-index 0.2s ease;
+    position: relative;
+    z-index: 50;
+  }
+
+  .widget-grid .react-grid-item:hover .dropdown-container button {
+    transform: scale(1.05);
+    z-index: 100; /* Higher z-index on hover to appear above everything */
+  }
+
+  /* Ensure dropdown stays visible when open */
+  .widget-grid .react-grid-item .dropdown-container button[aria-expanded="true"] {
+    opacity: 1 !important;
+    z-index: 200 !important; /* Highest z-index when open */
+  }
+
+  /* Dropdown container should have high z-index */
+  .dropdown-container {
+    position: relative;
+    z-index: 150;
+  }
+
+  /* Prevent text selection during drag */
+  .widget-grid.dragging {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+  }
+
+  /* Text utilities for widget content */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Ensure widgets maintain their aspect ratio during animations */
+  .widget-grid .react-grid-item > div {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Compact widget specific styles */
+  .compact-widget .drag-handle {
+    border-radius: 8px;
+  }
+
+  .compact-widget:hover .drag-handle {
+    background-color: rgba(0, 0, 0, 0.01);
+  }
+
+  .dark .compact-widget:hover .drag-handle {
+    background-color: rgba(255, 255, 255, 0.01);
+  }
+
+  /* Title overlay for compact widgets */
+  .compact-widget .title-overlay {
+    backdrop-filter: blur(4px);
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+
+  .dark .compact-widget .title-overlay {
+    background-color: rgba(31, 41, 55, 0.9);
+  }
+
+  /* Ensure primary buttons always have white text */
+  .bg-primary-600, .bg-primary-700 {
+    color: white !important;
+  }
+
+  .bg-primary-600 *, .bg-primary-700 * {
+    color: white !important;
+  }
+
+  /* Override any conflicting text colors on primary buttons */
+  button.bg-primary-600, button.bg-primary-700,
+  .bg-primary-600 button, .bg-primary-700 button {
+    color: white !important;
+  }
+}
