@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "facilityId": "550e8400-e29b-41d4-a716-446655440001",
+    "description": "Tenant moved from unit A-101 to unit B-201"
+  },
+  "tenants": [
+    {
+      "id": "fms-tenant-001",
+      "email": "john.smith@example.com",
+      "firstName": "John",
+      "lastName": "Smith",
+      "phone": "555-0101",
+      "unitIds": ["fms-unit-104"],
+      "status": "active"
+    }
+  ],
+  "units": [
+    {
+      "id": "fms-unit-101",
+      "unitNumber": "A-101",
+      "status": "available",
+      "tenantId": null,
+      "monthlyRate": 150
+    },
+    {
+      "id": "fms-unit-104",
+      "unitNumber": "B-201",
+      "status": "occupied",
+      "tenantId": "fms-tenant-001",
+      "monthlyRate": 250
+    }
+  ]
+}

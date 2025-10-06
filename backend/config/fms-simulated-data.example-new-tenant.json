@@ -1,0 +1,53 @@
+{
+  "metadata": {
+    "facilityId": "550e8400-e29b-41d4-a716-446655440001",
+    "simulatedDataVersion": "1.0",
+    "lastUpdated": "2025-01-04T10:30:00Z",
+    "description": "Simulated data with NEW tenant for testing tenant addition"
+  },
+  "tenants": [
+    {
+      "id": "fms-tenant-001",
+      "email": "john.smith@example.com",
+      "firstName": "John",
+      "lastName": "Smith",
+      "phone": "555-0101",
+      "unitIds": ["fms-unit-101"],
+      "status": "active"
+    },
+    {
+      "id": "fms-tenant-NEW",
+      "email": "alice.newuser@example.com",
+      "firstName": "Alice",
+      "lastName": "Newuser",
+      "phone": "555-9999",
+      "unitIds": ["fms-unit-102"],
+      "leaseStartDate": "2025-01-04",
+      "leaseEndDate": "2026-01-04",
+      "status": "active",
+      "customFields": {
+        "emergencyContact": "Bob Newuser - 555-9998"
+      }
+    }
+  ],
+  "units": [
+    {
+      "id": "fms-unit-101",
+      "unitNumber": "A-101",
+      "unitType": "storage",
+      "size": "10x10",
+      "status": "occupied",
+      "tenantId": "fms-tenant-001",
+      "monthlyRate": 150
+    },
+    {
+      "id": "fms-unit-102",
+      "unitNumber": "A-102",
+      "unitType": "storage",
+      "size": "10x15",
+      "status": "occupied",
+      "tenantId": "fms-tenant-NEW",
+      "monthlyRate": 200
+    }
+  ]
+}

@@ -1,0 +1,240 @@
+{
+  "metadata": {
+    "facilityId": "550e8400-e29b-41d4-a716-446655440001",
+    "facilityName": "Downtown Storage Hub",
+    "simulatedDataVersion": "2.0",
+    "lastUpdated": "2025-10-06T20:00:00Z",
+    "description": "Simulated FMS data with some existing tenants (for updates) and new tenants (for additions)"
+  },
+  "tenants": [
+    {
+      "id": "fms-tenant-existing-001",
+      "email": "james.smith123@email.com",
+      "firstName": "James",
+      "lastName": "Smith",
+      "phone": "555-1001",
+      "unitIds": ["fms-unit-dow-101"],
+      "leaseStartDate": "2024-01-15",
+      "leaseEndDate": "2025-01-15",
+      "status": "active",
+      "customFields": {
+        "emergencyContact": "Mary Smith - 555-1002",
+        "moveInDate": "2024-01-15"
+      }
+    },
+    {
+      "id": "fms-tenant-existing-002",
+      "email": "mary.johnson456@email.com",
+      "firstName": "Mary",
+      "lastName": "Johnson",
+      "phone": "555-2001",
+      "unitIds": ["fms-unit-dow-102"],
+      "leaseStartDate": "2024-03-01",
+      "leaseEndDate": "2025-03-01",
+      "status": "active",
+      "customFields": {
+        "emergencyContact": "John Johnson - 555-2002"
+      }
+    },
+    {
+      "id": "fms-tenant-new-001",
+      "email": "sarah.williams@email.com",
+      "firstName": "Sarah",
+      "lastName": "Williams",
+      "phone": "555-3001",
+      "unitIds": ["fms-unit-dow-103"],
+      "leaseStartDate": "2024-10-01",
+      "leaseEndDate": "2025-10-01",
+      "status": "active",
+      "customFields": {
+        "emergencyContact": "Tom Williams - 555-3002",
+        "autoPayEnabled": true
+      }
+    },
+    {
+      "id": "fms-tenant-new-002",
+      "email": "robert.davis@email.com",
+      "firstName": "Robert",
+      "lastName": "Davis",
+      "phone": "555-4001",
+      "unitIds": ["fms-unit-dow-104"],
+      "leaseStartDate": "2024-09-15",
+      "leaseEndDate": "2025-09-15",
+      "status": "active",
+      "customFields": {
+        "emergencyContact": "Linda Davis - 555-4002"
+      }
+    },
+    {
+      "id": "fms-tenant-new-003",
+      "email": "jennifer.brown@email.com",
+      "firstName": "Jennifer",
+      "lastName": "Brown",
+      "phone": "555-5001",
+      "unitIds": ["fms-unit-dow-105", "fms-unit-dow-106"],
+      "leaseStartDate": "2024-08-01",
+      "leaseEndDate": "2025-08-01",
+      "status": "active",
+      "customFields": {
+        "emergencyContact": "Michael Brown - 555-5002",
+        "businessName": "Brown Storage Co"
+      }
+    }
+  ],
+  "units": [
+    {
+      "id": "fms-unit-dow-101",
+      "unitNumber": "DOW-A-101",
+      "unitType": "storage",
+      "size": "10x10",
+      "status": "occupied",
+      "tenantId": "fms-tenant-existing-001",
+      "monthlyRate": 150,
+      "customFields": {
+        "climateControlled": true,
+        "floor": 1,
+        "hasElectricity": false,
+        "building": "Main Building"
+      }
+    },
+    {
+      "id": "fms-unit-dow-102",
+      "unitNumber": "DOW-A-102",
+      "unitType": "storage",
+      "size": "10x15",
+      "status": "occupied",
+      "tenantId": "fms-tenant-existing-002",
+      "monthlyRate": 200,
+      "customFields": {
+        "climateControlled": true,
+        "floor": 1,
+        "hasElectricity": true,
+        "building": "Main Building"
+      }
+    },
+    {
+      "id": "fms-unit-dow-103",
+      "unitNumber": "DOW-A-103",
+      "unitType": "storage",
+      "size": "5x10",
+      "status": "occupied",
+      "tenantId": "fms-tenant-new-001",
+      "monthlyRate": 100,
+      "customFields": {
+        "climateControlled": false,
+        "floor": 1,
+        "hasElectricity": false,
+        "building": "Main Building"
+      }
+    },
+    {
+      "id": "fms-unit-dow-104",
+      "unitNumber": "DOW-B-201",
+      "unitType": "storage",
+      "size": "10x20",
+      "status": "occupied",
+      "tenantId": "fms-tenant-new-002",
+      "monthlyRate": 250,
+      "customFields": {
+        "climateControlled": true,
+        "floor": 2,
+        "hasElectricity": true,
+        "driveUpAccess": true,
+        "building": "Building B"
+      }
+    },
+    {
+      "id": "fms-unit-dow-105",
+      "unitNumber": "DOW-B-202",
+      "unitType": "storage",
+      "size": "10x10",
+      "status": "occupied",
+      "tenantId": "fms-tenant-new-003",
+      "monthlyRate": 150,
+      "customFields": {
+        "climateControlled": true,
+        "floor": 2,
+        "hasElectricity": false,
+        "building": "Building B"
+      }
+    },
+    {
+      "id": "fms-unit-dow-106",
+      "unitNumber": "DOW-B-203",
+      "unitType": "storage",
+      "size": "5x5",
+      "status": "occupied",
+      "tenantId": "fms-tenant-new-003",
+      "monthlyRate": 75,
+      "customFields": {
+        "climateControlled": false,
+        "floor": 2,
+        "hasElectricity": false,
+        "building": "Building B"
+      }
+    },
+    {
+      "id": "fms-unit-dow-107",
+      "unitNumber": "DOW-B-204",
+      "unitType": "storage",
+      "size": "10x15",
+      "status": "available",
+      "tenantId": null,
+      "monthlyRate": 200,
+      "customFields": {
+        "climateControlled": true,
+        "floor": 2,
+        "hasElectricity": true,
+        "building": "Building B"
+      }
+    },
+    {
+      "id": "fms-unit-dow-108",
+      "unitNumber": "DOW-C-301",
+      "unitType": "storage",
+      "size": "20x20",
+      "status": "available",
+      "tenantId": null,
+      "monthlyRate": 400,
+      "customFields": {
+        "climateControlled": true,
+        "floor": 3,
+        "hasElectricity": true,
+        "driveUpAccess": false,
+        "building": "Building C",
+        "description": "Large premium unit with high ceiling"
+      }
+    },
+    {
+      "id": "fms-unit-dow-109",
+      "unitNumber": "DOW-C-302",
+      "unitType": "storage",
+      "size": "10x10",
+      "status": "available",
+      "tenantId": null,
+      "monthlyRate": 150,
+      "customFields": {
+        "climateControlled": true,
+        "floor": 3,
+        "hasElectricity": false,
+        "building": "Building C"
+      }
+    },
+    {
+      "id": "fms-unit-dow-110",
+      "unitNumber": "DOW-C-303",
+      "unitType": "storage",
+      "size": "5x10",
+      "status": "maintenance",
+      "tenantId": null,
+      "monthlyRate": 100,
+      "customFields": {
+        "climateControlled": false,
+        "floor": 3,
+        "hasElectricity": false,
+        "building": "Building C",
+        "maintenanceNotes": "Lock mechanism needs replacement"
+      }
+    }
+  ]
+}
