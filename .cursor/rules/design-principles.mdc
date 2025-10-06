@@ -1,0 +1,18 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+Rather than having to read a whole bunch of code to grasp core architecture, there's a collection of documents found in /cursorDocs that you are to read and maintain as we make changes.  Be diligent in doing so to avoid costly architectural divergence and confusion.
+
+Always adhere strictly SOLID principles and best practices
+Do not allow files to become monolithic, refactor constantly and tidy as you go
+Avoid duplicate code - be diligent and organized and look for opportunities to reuse/refactor code
+Security for this project as of utmost importance - it is for a remotely controllable storage facility locking system.  Always use best practices for secure communications and storage, and do not use deprecated packages
+
+Front end
+---------
+The UI design is minimalist and clean.  The company theme colors are 147FD4 and 050505 (blue and white)
+Always consider support for themeing everything.  We will support at least light/dark modes and all components should look great in either
+High aesthetic is needed.  Include snappy professional animations, hover states, click states, etc.  Attention to detail is key.
