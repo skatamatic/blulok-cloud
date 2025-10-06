@@ -1,0 +1,107 @@
+# Google Cloud Build configuration for BluLok Cloud
+steps:
+  # Build backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/blulok-backend:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/blulok-backend:latest'
+      - '-f'
+      - 'backend/Dockerfile.prod'
+      - './backend'
+
+  # Build frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/blulok-frontend:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/blulok-frontend:latest'
+      - '-f'
+      - 'frontend/Dockerfile.prod'
+      - '--build-arg'
+      - 'VITE_API_URL=${_API_URL}'
+      - './frontend'
+
+  # Push backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/blulok-backend:$BUILD_ID'
+
+  # Push frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/blulok-frontend:$BUILD_ID'
+
+  # Deploy to Cloud Run - Backend
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'blulok-backend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/blulok-backend:$BUILD_ID'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'NODE_ENV=production,DB_HOST=${_DB_HOST},DB_NAME=${_DB_NAME},DB_USER=${_DB_USER},JWT_SECRET=${_JWT_SECRET}'
+      - '--set-secrets'
+      - 'DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest'
+      - '--memory'
+      - '1Gi'
+      - '--cpu'
+      - '1'
+      - '--max-instances'
+      - '100'
+      - '--concurrency'
+      - '80'
+
+  # Deploy to Cloud Run - Frontend
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'blulok-frontend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/blulok-frontend:$BUILD_ID'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--cpu'
+      - '1'
+      - '--max-instances'
+      - '50'
+      - '--concurrency'
+      - '100'
+
+# Substitution variables
+substitutions:
+  _REGION: 'us-central1'
+  _API_URL: 'https://blulok-backend-${_REGION}.run.app'
+  _DB_HOST: '${_SQL_CONNECTION_NAME}'
+  _DB_NAME: 'blulok_prod'
+  _DB_USER: 'blulok_user'
+  _DB_PASSWORD_SECRET: 'blulok-db-password'
+  _JWT_SECRET: 'blulok-jwt-secret'
+
+# Build options
+options:
+  machineType: 'E2_HIGHCPU_8'
+  substitutionOption: 'ALLOW_LOOSE'
+
+# Timeout
+timeout: '1200s'
