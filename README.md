@@ -275,10 +275,3 @@ VITE_WS_URL=ws://localhost:3000/ws
    ```bash
    ./scripts/deploy.sh
    ```
-
-### Support
-
-For support, email [support@blulok.com](mailto:support@blulok.com) or visit our [documentation](cursorDocs/).
-
----
-*Last updated: October 2025*
