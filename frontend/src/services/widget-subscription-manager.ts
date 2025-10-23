@@ -15,8 +15,6 @@ export class WidgetSubscriptionManager {
    * Subscribe to a widget data type
    */
   public subscribe(type: string, handler: (data: any) => void, errorHandler?: (error: string) => void): void {
-    console.log(`📡 WidgetSubscriptionManager: Subscribing to ${type}`);
-    
     // Set up message handlers first
     if (!this.messageHandlers.has(type)) {
       this.messageHandlers.set(type, new Set());
@@ -25,7 +23,6 @@ export class WidgetSubscriptionManager {
 
     // Check if already subscribed to WebSocket
     if (this.activeSubscriptions.has(type)) {
-      console.log(`⚠️ WidgetSubscriptionManager: Already subscribed to ${type}, just added handler`);
       return;
     }
 
@@ -57,10 +54,7 @@ export class WidgetSubscriptionManager {
    * Unsubscribe from a widget data type
    */
   public unsubscribe(type: string, handler?: (data: any) => void): void {
-    console.log(`📡 WidgetSubscriptionManager: Unsubscribing from ${type}`);
-    
     if (!this.activeSubscriptions.has(type)) {
-      console.log(`⚠️ WidgetSubscriptionManager: Not subscribed to ${type}`);
       return;
     }
 
@@ -103,8 +97,6 @@ export class WidgetSubscriptionManager {
    * Unsubscribe from all active subscriptions
    */
   public unsubscribeAll(): void {
-    console.log(`📡 WidgetSubscriptionManager: Unsubscribing from all (${this.activeSubscriptions.size} active)`);
-    
     const types = Array.from(this.activeSubscriptions.keys());
     types.forEach(type => this.unsubscribe(type));
   }
@@ -113,12 +105,9 @@ export class WidgetSubscriptionManager {
    * Update subscriptions based on widget types
    */
   public updateSubscriptions(
-    widgetTypes: string[], 
+    widgetTypes: string[],
     subscriptionMap: Record<string, { handler: (data: any) => void; errorHandler?: (error: string) => void }>
   ): void {
-    console.log(`📡 WidgetSubscriptionManager: Updating subscriptions for widgets:`, widgetTypes);
-    console.log(`📡 WidgetSubscriptionManager: Current active subscriptions:`, this.getActiveSubscriptions());
-    
     // Get currently active subscription types
     const activeTypes = this.getActiveSubscriptions();
     
@@ -127,7 +116,6 @@ export class WidgetSubscriptionManager {
     
     // Unsubscribe from unneeded types
     typesToUnsubscribe.forEach(type => {
-      console.log(`📡 WidgetSubscriptionManager: Unsubscribing from unneeded type: ${type}`);
       this.unsubscribe(type);
     });
     
@@ -136,7 +124,6 @@ export class WidgetSubscriptionManager {
       const subscription = subscriptionMap[type];
       if (subscription) {
         if (activeTypes.includes(type)) {
-          console.log(`📡 WidgetSubscriptionManager: Updating handler for existing type: ${type}`);
           // Update the handler for existing subscription without creating new WebSocket subscription
           const existingSubscription = this.activeSubscriptions.get(type);
           if (existingSubscription) {
@@ -149,7 +136,6 @@ export class WidgetSubscriptionManager {
           }
           this.messageHandlers.get(type)!.add(subscription.handler);
         } else {
-          console.log(`📡 WidgetSubscriptionManager: Subscribing to needed type: ${type}`);
           this.subscribe(type, subscription.handler, subscription.errorHandler);
         }
       }

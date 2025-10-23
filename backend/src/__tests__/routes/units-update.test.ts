@@ -3,14 +3,51 @@ import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectSuccess, expectForbidden, expectBadRequest, expectNotFound, expectConflict } from '@/__tests__/utils/mock-test-helpers';
 
 // Mock the database service before importing routes
-jest.mock('@/services/database.service', () => ({
-  DatabaseService: {
-    getInstance: jest.fn(() => ({
-      connection: createMockKnex(),
-      healthCheck: jest.fn().mockResolvedValue(true),
-    })),
-  },
-}));
+jest.mock('@/services/database.service', () => {
+  // Define the mock knex inline
+  const createMockKnexForService = () => {
+    const mockQueryBuilder = {
+      select: jest.fn().mockReturnThis(),
+      from: jest.fn().mockReturnThis(),
+      insert: jest.fn().mockReturnThis(),
+      update: jest.fn().mockReturnThis(),
+      delete: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      whereIn: jest.fn().mockReturnThis(),
+      whereNot: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
+      whereNotNull: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      raw: jest.fn().mockResolvedValue([]),
+      transaction: jest.fn().mockImplementation((callback) => {
+        const mockTrx = createLocalMockKnex();
+        return callback(mockTrx);
+      }),
+    };
+
+    return {
+      ...mockQueryBuilder,
+      schema: {
+        createTable: jest.fn().mockResolvedValue(undefined),
+        dropTable: jest.fn().mockResolvedValue(undefined),
+        alterTable: jest.fn().mockResolvedValue(undefined),
+      },
+    };
+  };
+
+  return {
+    DatabaseService: {
+      getInstance: jest.fn(() => ({
+        connection: createMockKnexForService(),
+        healthCheck: jest.fn().mockResolvedValue(true),
+      })),
+    },
+  };
+});
 
 // Mock the UnitModel
 jest.mock('@/models/unit.model', () => ({
@@ -182,7 +219,7 @@ jest.mock('@/services/websocket.service', () => ({
 }));
 
 // Mock Knex for database operations
-const createMockKnex = () => {
+const createLocalMockKnex = () => {
   const mockQueryBuilder = {
     select: jest.fn().mockReturnThis(),
     from: jest.fn().mockReturnThis(),
@@ -316,7 +353,7 @@ const createMockKnex = () => {
     ...mockQueryBuilder,
     raw: jest.fn().mockResolvedValue([]),
     transaction: jest.fn().mockImplementation((callback) => {
-      const mockTrx = createMockKnex();
+      const mockTrx = createLocalMockKnex();
       return callback(mockTrx);
     }),
     schema: {

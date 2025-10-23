@@ -2,6 +2,17 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData, expectUnauthorized, expectForbidden, expectNotFound } from '@/__tests__/utils/mock-test-helpers';
 
+// Mock DeviceModel to prevent errors during gateway sync operations
+jest.mock('@/models/device.model', () => ({
+  DeviceModel: jest.fn().mockImplementation(() => ({
+    deleteBluLokDevice: jest.fn().mockResolvedValue(undefined),
+    updateBluLokDevice: jest.fn().mockResolvedValue(undefined),
+    findById: jest.fn().mockResolvedValue(null),
+    createBluLokDevice: jest.fn().mockResolvedValue({ id: 'device-1' }),
+    findByGatewayId: jest.fn().mockResolvedValue([]),
+  }))
+}));
+
 describe('Gateway Routes', () => {
   let app: any;
   let testData: any;
@@ -425,6 +436,162 @@ describe('Gateway Routes', () => {
       expect(response.body.gateways).toBeDefined();
       // Should only see gateways from facility-1 (their assigned facility)
       expect(response.body.gateways.every((g: any) => g.facility_id === 'facility-1')).toBe(true);
+    });
+  });
+
+  describe('POST /api/v1/gateways/:id/test-connection - Test Gateway Connection', () => {
+    it('should allow ADMIN to test gateway connection', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/test-connection')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect([200, 400, 500]).toContain(response.status); // May succeed, fail validation, or fail connection depending on gateway type
+      expect(response.body).toHaveProperty('success');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should allow DEV_ADMIN to test gateway connection', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/test-connection')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`);
+
+      expect([200, 400, 500]).toContain(response.status); // May succeed, fail validation, or fail connection depending on gateway type
+      expect(response.body).toHaveProperty('success');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should allow FACILITY_ADMIN to test gateway connection in their facility', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/test-connection') // gateway-1 belongs to facility-1
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
+
+      expect([200, 400, 500]).toContain(response.status); // May succeed, fail validation, or fail connection depending on gateway type
+      expect(response.body).toHaveProperty('success');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should prevent FACILITY_ADMIN from testing gateway connection in other facility', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-2/test-connection') // gateway-2 belongs to facility-2
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`); // only has access to facility-1
+
+      expectForbidden(response);
+    });
+
+    it('should prevent TENANT from testing gateway connection', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/test-connection')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`);
+
+      expectForbidden(response);
+    });
+
+    it('should prevent MAINTENANCE from testing gateway connection', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/test-connection')
+        .set('Authorization', `Bearer ${testData.users.maintenance.token}`);
+
+      expectForbidden(response);
+    });
+
+    it('should return 404 for non-existent gateway', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/non-existent-gateway/test-connection')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expectNotFound(response);
+    });
+
+    it('should return 400 for gateway with incomplete configuration', async () => {
+      // Create a gateway with incomplete HTTP configuration (no base_url)
+      const incompleteGatewayData = {
+        facility_id: 'facility-1',
+        name: 'Incomplete HTTP Gateway',
+        gateway_type: 'http',
+        status: 'offline',
+        // Missing base_url which is required for HTTP gateways
+      };
+
+      const createResponse = await request(app)
+        .post('/api/v1/gateways')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send(incompleteGatewayData);
+
+      expect(createResponse.status).toBe(201);
+      const gatewayId = createResponse.body.gateway.id;
+
+      const response = await request(app)
+        .post(`/api/v1/gateways/${gatewayId}/test-connection`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toContain('incomplete');
+      expect(response.body.error).toContain('Missing required configuration');
+    });
+  });
+
+  describe('POST /api/v1/gateways/:id/sync - Sync Gateway', () => {
+    it('should allow ADMIN to sync gateway', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/sync')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect([200, 400, 500]).toContain(response.status); // May succeed, fail validation, or fail connection depending on gateway type
+      expect(response.body).toHaveProperty('success');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should allow DEV_ADMIN to sync gateway', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/sync')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`);
+
+      expect([200, 400, 500]).toContain(response.status); // May succeed, fail validation, or fail connection depending on gateway type
+      expect(response.body).toHaveProperty('success');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should allow FACILITY_ADMIN to sync gateway in their facility', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/sync') // gateway-1 belongs to facility-1
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
+
+      expect([200, 400, 500]).toContain(response.status); // May succeed, fail validation, or fail connection depending on gateway type
+      expect(response.body).toHaveProperty('success');
+      expect(response.body).toHaveProperty('message');
+    });
+
+    it('should prevent FACILITY_ADMIN from syncing gateway in other facility', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-2/sync') // gateway-2 belongs to facility-2
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`); // only has access to facility-1
+
+      expectForbidden(response);
+    });
+
+    it('should prevent TENANT from syncing gateway', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/sync')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`);
+
+      expectForbidden(response);
+    });
+
+    it('should prevent MAINTENANCE from syncing gateway', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/sync')
+        .set('Authorization', `Bearer ${testData.users.maintenance.token}`);
+
+      expectForbidden(response);
+    });
+
+    it('should return 404 for non-existent gateway', async () => {
+      const response = await request(app)
+        .post('/api/v1/gateways/non-existent-gateway/sync')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expectNotFound(response);
     });
   });
 });

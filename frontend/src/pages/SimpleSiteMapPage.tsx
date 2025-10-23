@@ -209,16 +209,6 @@ export default function SimpleSiteMapPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-1">Size</h4>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">{selectedUnit.size_sqft} sq ft</p>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-1">Rate</h4>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">${selectedUnit.monthly_rate}/mo</p>
-                </div>
-              </div>
 
               {selectedUnit.blulok_device && (
                 <div>

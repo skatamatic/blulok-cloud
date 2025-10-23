@@ -30,11 +30,15 @@ export class FMSChangeModel {
     after_data: any;
     required_actions: FMSChangeAction[];
     impact_summary: string;
+    is_valid?: boolean;
+    validation_errors?: string[];
   }): Promise<FMSChange> {
     try {
       // Generate UUID in JavaScript for MySQL compatibility
       const id = randomUUID();
       
+      const validationErrorsJson = data.validation_errors ? JSON.stringify(data.validation_errors) : null;
+
       await this.db('fms_changes')
         .insert({
           id,
@@ -48,6 +52,8 @@ export class FMSChangeModel {
           required_actions: JSON.stringify(data.required_actions),
           impact_summary: data.impact_summary,
           is_reviewed: false,
+          is_valid: data.is_valid,
+          validation_errors: validationErrorsJson,
           created_at: this.db.fn.now(),
         });
 
@@ -254,21 +260,64 @@ export class FMSChangeModel {
    * Map database record to model
    */
   private mapToModel(record: any): FMSChange {
-    return {
+    // Parse JSON columns
+    const parsedBefore = typeof record.before_data === 'string'
+      ? JSON.parse(record.before_data)
+      : record.before_data;
+
+    const parsedAfter = typeof record.after_data === 'string'
+      ? JSON.parse(record.after_data)
+      : record.after_data;
+
+    let validationErrors = typeof record.validation_errors === 'string'
+      ? JSON.parse(record.validation_errors)
+      : record.validation_errors;
+
+    // Derive validation errors if missing but the change is marked invalid
+    let derivedInvalid = false;
+    if ((record.is_valid === false || record.is_valid === 0) && (!validationErrors || validationErrors.length === 0)) {
+      const derived: string[] = [];
+      if (record.entity_type === 'tenant' && parsedAfter) {
+        const email = parsedAfter.email as string | null | undefined;
+        const firstName = (parsedAfter.firstName ?? parsedAfter.first_name) as string | null | undefined;
+        const lastName = (parsedAfter.lastName ?? parsedAfter.last_name) as string | null | undefined;
+
+        if (!email || (typeof email === 'string' && email.trim() === '')) {
+          derived.push('Missing or empty email address');
+        }
+        if (!firstName || (typeof firstName === 'string' && firstName.trim() === '')) {
+          derived.push('Missing or empty first name');
+        }
+        if (!lastName || (typeof lastName === 'string' && lastName.trim() === '')) {
+          derived.push('Missing or empty last name');
+        }
+      }
+      // Future: add unit validation derivation here if needed
+      if (derived.length > 0) {
+        validationErrors = derived;
+        derivedInvalid = true;
+      }
+    }
+
+    // Convert MySQL integer (0/1) to boolean
+    let isValidBoolean: boolean | undefined;
+    if (derivedInvalid) {
+      isValidBoolean = false;
+    } else if (record.is_valid !== null && record.is_valid !== undefined) {
+      isValidBoolean = Boolean(record.is_valid);
+    }
+
+    const result: FMSChange = {
       id: record.id,
       sync_log_id: record.sync_log_id,
       change_type: record.change_type,
       entity_type: record.entity_type,
       external_id: record.external_id,
       internal_id: record.internal_id,
-      before_data: typeof record.before_data === 'string' 
-        ? JSON.parse(record.before_data) 
-        : record.before_data,
-      after_data: typeof record.after_data === 'string' 
-        ? JSON.parse(record.after_data) 
-        : record.after_data,
-      required_actions: typeof record.required_actions === 'string' 
-        ? JSON.parse(record.required_actions) 
+      before_data: parsedBefore,
+      after_data: parsedAfter,
+      required_actions: typeof record.required_actions === 'string'
+        ? JSON.parse(record.required_actions)
         : record.required_actions,
       impact_summary: record.impact_summary,
       is_reviewed: record.is_reviewed,
@@ -276,6 +325,18 @@ export class FMSChangeModel {
       applied_at: record.applied_at,
       created_at: record.created_at,
     };
+
+    // Only set is_valid if it has a value
+    if (isValidBoolean !== undefined) {
+      result.is_valid = isValidBoolean;
+    }
+
+    // Only set validation_errors if it has a value
+    if (validationErrors !== null && validationErrors !== undefined) {
+      result.validation_errors = validationErrors;
+    }
+
+    return result;
   }
 }
 

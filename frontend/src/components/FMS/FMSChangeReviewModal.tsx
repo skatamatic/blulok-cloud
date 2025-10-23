@@ -9,8 +9,8 @@ import { Fragment, useState } from 'react';
 import { Dialog, Transition, Tab } from '@headlessui/react';
 import {
   XMarkIcon,
+  MinusIcon,
   CheckIcon,
-  XCircleIcon,
   UserPlusIcon,
   UserMinusIcon,
   PencilSquareIcon,
@@ -18,9 +18,12 @@ import {
   HomeIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import { FMSChange, FMSChangeType, FMSSyncResult } from '@/types/fms.types';
+import { FMSChange, FMSChangeType, FMSSyncResult, FMSChangeApplicationResult } from '@/types/fms.types';
 import { fmsService } from '@/services/fms.service';
+import { useFMSSync } from '@/contexts/FMSSyncContext';
+import { useToast } from '@/contexts/ToastContext';
 
 interface FMSChangeReviewModalProps {
   isOpen: boolean;
@@ -28,9 +31,43 @@ interface FMSChangeReviewModalProps {
   changes: FMSChange[];
   onApply: (changeIds: string[]) => Promise<void>;
   syncResult: FMSSyncResult | null;
+  facilityName?: string;
 }
 
-type ChangeFilter = 'all' | 'added' | 'updated' | 'removed';
+type ChangeFilter = 'all' | 'added' | 'updated' | 'removed' | 'invalid';
+
+/**
+ * Generate a human-readable summary message from FMS change application result
+ */
+function generateChangesSummary(result: FMSChangeApplicationResult, selectedCount: number): string {
+  const parts: string[] = [];
+  
+  if (result.changesApplied > 0) {
+    parts.push(`Applied ${result.changesApplied} of ${selectedCount} change${selectedCount !== 1 ? 's' : ''}`);
+  }
+  
+  const { accessChanges } = result;
+  const details: string[] = [];
+  
+  if (accessChanges.usersCreated.length > 0) {
+    details.push(`${accessChanges.usersCreated.length} user${accessChanges.usersCreated.length !== 1 ? 's' : ''} created`);
+  }
+  if (accessChanges.usersDeactivated.length > 0) {
+    details.push(`${accessChanges.usersDeactivated.length} user${accessChanges.usersDeactivated.length !== 1 ? 's' : ''} deactivated`);
+  }
+  if (accessChanges.accessGranted.length > 0) {
+    details.push(`${accessChanges.accessGranted.length} unit access granted`);
+  }
+  if (accessChanges.accessRevoked.length > 0) {
+    details.push(`${accessChanges.accessRevoked.length} unit access revoked`);
+  }
+  
+  if (details.length > 0) {
+    parts.push(`(${details.join(', ')})`);
+  }
+  
+  return parts.join(' ');
+}
 
 export function FMSChangeReviewModal({
   isOpen,
@@ -38,13 +75,24 @@ export function FMSChangeReviewModal({
   changes,
   onApply,
   syncResult,
+  facilityName,
 }: FMSChangeReviewModalProps) {
-  const [selectedChanges, setSelectedChanges] = useState<Set<string>>(new Set(changes.map(c => c.id)));
+  const { hideReview, minimizeReview } = useFMSSync();
+  const { addToast } = useToast();
+  const [selectedChanges, setSelectedChanges] = useState<Set<string>>(
+    new Set(changes.filter(c => c.is_valid !== false && c.is_valid !== null && c.is_valid !== undefined).map(c => c.id))
+  );
   const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
   const [activeFilter, setActiveFilter] = useState<ChangeFilter>('all');
 
   const toggleChange = (changeId: string) => {
+    // Don't allow selecting invalid changes
+    const change = changes.find(c => c.id === changeId);
+    if (change && (change.is_valid === false || change.is_valid === null || change.is_valid === undefined)) {
+      return;
+    }
+
     const newSelected = new Set(selectedChanges);
     if (newSelected.has(changeId)) {
       newSelected.delete(changeId);
@@ -65,7 +113,9 @@ export function FMSChangeReviewModal({
   };
 
   const selectAll = () => {
-    setSelectedChanges(new Set(filteredChanges.map(c => c.id)));
+    // Only select valid changes (not invalid ones)
+    const validFilteredChanges = filteredChanges.filter(c => c.is_valid !== false);
+    setSelectedChanges(new Set(validFilteredChanges.map(c => c.id)));
   };
 
   const selectNone = () => {
@@ -73,54 +123,67 @@ export function FMSChangeReviewModal({
   };
 
   // Calculate counts
-  const addedCount = changes.filter(c => 
-    c.change_type === FMSChangeType.TENANT_ADDED || 
-    c.change_type === FMSChangeType.UNIT_ADDED
+  // Treat changes without is_valid as valid (backward compatibility)
+  const isValidChange = (c: FMSChange) => c.is_valid !== false;
+
+  const addedCount = changes.filter(c =>
+    isValidChange(c) && (
+      c.change_type === FMSChangeType.TENANT_ADDED ||
+      c.change_type === FMSChangeType.UNIT_ADDED
+    )
   ).length;
-  
-  const updatedCount = changes.filter(c => 
-    c.change_type === FMSChangeType.TENANT_UPDATED || 
-    c.change_type === FMSChangeType.UNIT_UPDATED ||
-    c.change_type === FMSChangeType.TENANT_UNIT_CHANGED
+
+  const updatedCount = changes.filter(c =>
+    isValidChange(c) && (
+      c.change_type === FMSChangeType.TENANT_UPDATED ||
+      c.change_type === FMSChangeType.UNIT_UPDATED ||
+      c.change_type === FMSChangeType.TENANT_UNIT_CHANGED
+    )
   ).length;
-  
-  const removedCount = changes.filter(c => 
-    c.change_type === FMSChangeType.TENANT_REMOVED
+
+  const removedCount = changes.filter(c =>
+    isValidChange(c) && c.change_type === FMSChangeType.TENANT_REMOVED
   ).length;
+
+  const invalidCount = changes.filter(c => c.is_valid === false).length;
 
   // Filter changes based on active tab
   const filteredChanges = changes.filter(change => {
+    // For specific type tabs (added, updated, removed), only show valid changes (default to valid when is_valid is undefined)
+    const isValidChange = change.is_valid !== false;
+
     if (activeFilter === 'all') return true;
-    
+
     if (activeFilter === 'added') {
-      return change.change_type === FMSChangeType.TENANT_ADDED || 
-             change.change_type === FMSChangeType.UNIT_ADDED;
+      return isValidChange && (
+        change.change_type === FMSChangeType.TENANT_ADDED ||
+        change.change_type === FMSChangeType.UNIT_ADDED
+      );
     }
-    
+
     if (activeFilter === 'updated') {
-      return change.change_type === FMSChangeType.TENANT_UPDATED || 
-             change.change_type === FMSChangeType.UNIT_UPDATED ||
-             change.change_type === FMSChangeType.TENANT_UNIT_CHANGED;
+      return isValidChange && (
+        change.change_type === FMSChangeType.TENANT_UPDATED ||
+        change.change_type === FMSChangeType.UNIT_UPDATED ||
+        change.change_type === FMSChangeType.TENANT_UNIT_CHANGED
+      );
     }
-    
+
     if (activeFilter === 'removed') {
-      return change.change_type === FMSChangeType.TENANT_REMOVED;
+      return isValidChange && change.change_type === FMSChangeType.TENANT_REMOVED;
     }
-    
+
+    if (activeFilter === 'invalid') {
+      return change.is_valid === false;
+    }
+
     return true;
   });
 
+  // Count of selected changes that are visible in the current filter
+  const filteredSelectedCount = filteredChanges.filter(c => selectedChanges.has(c.id)).length;
 
-  const handleApply = async () => {
-    try {
-      setApplying(true);
-      await onApply(Array.from(selectedChanges));
-    } catch (error: any) {
-      alert(`Failed to apply changes: ${error.message}`);
-    } finally {
-      setApplying(false);
-    }
-  };
+
 
   const getChangeIcon = (type: FMSChangeType) => {
     switch (type) {
@@ -236,7 +299,10 @@ export function FMSChangeReviewModal({
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
-      <Dialog as="div" className="relative z-50" onClose={onClose}>
+      <Dialog as="div" className="relative z-50" onClose={() => {
+        hideReview();
+        onClose();
+      }}>
         <Transition.Child
           as={Fragment}
           enter="ease-out duration-300"
@@ -260,40 +326,38 @@ export function FMSChangeReviewModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 shadow-2xl transition-all">
+              <Dialog.Panel className="w-full max-w-4xl transform rounded-2xl bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 shadow-2xl transition-all relative">
+                {/* Window Controls - Top Right */}
+                <div className="absolute top-4 right-4 flex items-center space-x-1 z-10">
+                  <button
+                    onClick={minimizeReview}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                    title="Minimize to status bar"
+                  >
+                    <MinusIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      hideReview();
+                      onClose();
+                    }}
+                    className="p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                    title="Cancel and close"
+                  >
+                    <XMarkIcon className="h-4 w-4" />
+                  </button>
+                </div>
+
                 {/* Header */}
                 <div className="border-b-2 border-gray-200 dark:border-gray-700 px-6 py-4 bg-gradient-to-r from-gray-50 to-white dark:from-gray-900 dark:to-gray-800">
-                  <div className="flex items-center justify-between">
-                    <Dialog.Title className="text-xl font-semibold text-gray-900 dark:text-white">
-                      Review FMS Changes ({changes.length} detected)
-                    </Dialog.Title>
-                    <div className="flex items-center space-x-3">
-                      <button
-                        onClick={selectAll}
-                        className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
-                      >
-                        Select All
-                      </button>
-                      <span className="text-gray-300 dark:text-gray-600">|</span>
-                      <button
-                        onClick={selectNone}
-                        className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
-                      >
-                        Select None
-                      </button>
-                      <button
-                        onClick={onClose}
-                        className="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                      >
-                        <XMarkIcon className="h-6 w-6" />
-                      </button>
-                    </div>
-                  </div>
+                  <Dialog.Title className="text-xl font-semibold text-gray-900 dark:text-white text-center">
+                    Review FMS Changes ({changes.length} detected){facilityName ? ` - ${facilityName}` : ''}
+                  </Dialog.Title>
 
                   {/* Tab Navigation */}
                   <div className="mt-4">
                     <Tab.Group onChange={(index) => {
-                      const filters: ChangeFilter[] = ['all', 'added', 'updated', 'removed'];
+                      const filters: ChangeFilter[] = ['all', 'added', 'updated', 'removed', 'invalid'];
                       setActiveFilter(filters[index] || 'all');
                     }}>
                       <Tab.List className="flex space-x-1 rounded-xl bg-gray-100 dark:bg-gray-900/50 p-1">
@@ -347,6 +411,19 @@ export function FMSChangeReviewModal({
                             Removed ({removedCount})
                           </span>
                         </Tab>
+                        <Tab
+                          className={({ selected }) =>
+                            `w-full rounded-lg py-2.5 text-sm font-medium leading-5 transition-all
+                            ${selected
+                              ? 'bg-white dark:bg-gray-800 text-orange-600 dark:text-orange-400 shadow'
+                              : 'text-gray-600 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-800/50 hover:text-orange-600 dark:hover:text-orange-400'
+                            }`
+                          }
+                        >
+                          <span className="flex items-center justify-center">
+                            Invalid ({invalidCount})
+                          </span>
+                        </Tab>
                       </Tab.List>
                     </Tab.Group>
                   </div>
@@ -366,26 +443,44 @@ export function FMSChangeReviewModal({
                         const isExpanded = expandedChanges.has(change.id);
                         const isSelected = selectedChanges.has(change.id);
 
+                        const isInvalid = change.is_valid === false || change.is_valid === null || change.is_valid === undefined;
+
+
                         return (
                           <div
                             key={change.id}
-                            onClick={() => toggleChange(change.id)}
-                            className={`group relative border-2 rounded-xl transition-all cursor-pointer ${
-                              isSelected
+                            onClick={() => !isInvalid && toggleChange(change.id)}
+                            className={`group relative border-2 rounded-xl transition-all ${
+                              isInvalid
+                                ? 'cursor-not-allowed border-orange-300 dark:border-orange-600 bg-orange-50/80 dark:bg-orange-950/40 shadow-sm'
+                                : 'cursor-pointer'
+                            } ${
+                              isSelected && !isInvalid
                                 ? 'border-primary-500 dark:border-primary-500 bg-primary-50 dark:bg-primary-900/20 shadow-md'
-                                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm'
+                                : !isInvalid
+                                ? 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm'
+                                : ''
                             }`}
                           >
                             {/* Selection Indicator */}
-                            <div className={`absolute top-4 right-4 flex items-center justify-center w-6 h-6 rounded-full border-2 transition-all ${
-                              isSelected
-                                ? 'bg-primary-600 border-primary-600 scale-110'
-                                : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 group-hover:border-primary-400'
-                            }`}>
-                              {isSelected && (
-                                <CheckIcon className="h-4 w-4 text-white" />
-                              )}
-                            </div>
+                            {!isInvalid && (
+                              <div className={`absolute top-4 right-4 flex items-center justify-center w-6 h-6 rounded-full border-2 transition-all ${
+                                isSelected
+                                  ? 'bg-primary-600 border-primary-600 scale-110'
+                                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 group-hover:border-primary-400'
+                              }`}>
+                                {isSelected && (
+                                  <CheckIcon className="h-4 w-4 text-white" />
+                                )}
+                              </div>
+                            )}
+
+                            {/* Invalid indicator */}
+                            {isInvalid && (
+                              <div className="absolute top-4 right-4 flex items-center justify-center w-7 h-7 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 border-2 border-orange-300 shadow-lg">
+                                <ExclamationTriangleIcon className="h-4 w-4 text-white" />
+                              </div>
+                            )}
 
                             <div className="p-4 pr-14">
                               <div className="flex items-start">
@@ -418,6 +513,36 @@ export function FMSChangeReviewModal({
                                   <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
                                     {change.impact_summary}
                                   </p>
+
+                                  {/* Validation Errors */}
+                                  {isInvalid && (
+                                    <div className="mt-3 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg">
+                                      <div className="flex items-start">
+                                        <div className="flex-shrink-0">
+                                          <ExclamationTriangleIcon className="h-5 w-5 text-red-500 dark:text-red-400 mt-0.5" />
+                                        </div>
+                                        <div className="ml-3 flex-1">
+                                          <div className="text-sm font-medium text-red-800 dark:text-red-200 mb-1">
+                                            Cannot apply this change
+                                          </div>
+                                          {change.validation_errors && change.validation_errors.length > 0 ? (
+                                            <ul className="text-sm text-red-700 dark:text-red-300 space-y-1">
+                                              {change.validation_errors.map((error, idx) => (
+                                                <li key={idx} className="flex items-start">
+                                                  <span className="text-red-500 mr-2 mt-0.5">•</span>
+                                                  <span>{error}</span>
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          ) : (
+                                            <p className="text-sm text-red-600 dark:text-red-400 italic">
+                                              Validation details not available. Please contact support.
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
 
                                   {/* Required Actions */}
                                   {change.required_actions && change.required_actions.length > 0 && (
@@ -477,35 +602,46 @@ export function FMSChangeReviewModal({
                 {/* Footer */}
                 <div className="border-t-2 border-gray-200 dark:border-gray-700 px-6 py-4 bg-gradient-to-r from-gray-50 to-white dark:from-gray-900 dark:to-gray-800">
                   <div className="flex items-center justify-between">
+                    {/* Left: x of Y changes selected */}
                     <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      <span className="text-primary-600 dark:text-primary-400 font-semibold">{selectedChanges.size}</span> of {filteredChanges.length} changes selected
+                      <span className="text-primary-600 dark:text-primary-400 font-semibold">{filteredSelectedCount}</span> of {filteredChanges.length} changes selected
                     </div>
-                    <div className="flex space-x-3">
+
+                    {/* Center: Select All/None buttons */}
+                    <div className="flex items-center space-x-3 absolute left-1/2 transform -translate-x-1/2">
                       <button
-                        onClick={() => handleReview(false)}
-                        className="px-5 py-2.5 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500 transition-all"
+                        onClick={selectAll}
+                        className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
                       >
-                        <XCircleIcon className="h-5 w-5 inline mr-2" />
-                        Reject Selected
+                        Select All
                       </button>
+                      <span className="text-gray-300 dark:text-gray-600">|</span>
                       <button
-                        onClick={() => handleReview(true)}
-                        disabled={applying || selectedChanges.size === 0}
-                        className="px-5 py-2.5 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none"
+                        onClick={selectNone}
+                        className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
                       >
-                        {applying ? (
-                          <>
-                            <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                            Applying...
-                          </>
-                        ) : (
-                          <>
-                            <CheckIcon className="h-5 w-5 inline mr-2" />
-                            Accept & Apply ({selectedChanges.size})
-                          </>
-                        )}
+                        Select None
                       </button>
                     </div>
+
+                    {/* Right: Accept & Apply button */}
+                    <button
+                      onClick={() => handleReview(true)}
+                      disabled={applying || filteredSelectedCount === 0}
+                      className="px-5 py-2.5 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none"
+                    >
+                      {applying ? (
+                        <>
+                          <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                          Applying...
+                        </>
+                      ) : (
+                        <>
+                          <CheckIcon className="h-5 w-5 inline mr-2" />
+                          Accept & Apply ({filteredSelectedCount})
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
               </Dialog.Panel>
@@ -519,22 +655,80 @@ export function FMSChangeReviewModal({
   async function handleReview(accepted: boolean) {
     if (!syncResult) return;
 
+    const changeIds = Array.from(selectedChanges);
+
     try {
       setApplying(true);
       
+      // Review changes first (marks them as accepted/rejected)
       await fmsService.reviewChanges(
         syncResult.syncLogId,
-        Array.from(selectedChanges),
+        changeIds,
         accepted
       );
 
       if (accepted) {
-        await onApply(Array.from(selectedChanges));
+        // Apply the accepted changes
+        console.log('[FMS] Applying changes:', { syncLogId: syncResult.syncLogId, changeIds });
+        const result = await fmsService.applyChanges(syncResult.syncLogId, changeIds);
+        console.log('[FMS] Apply changes result:', result);
+        
+        // Check if there were any errors
+        if (result.changesFailed > 0 || result.errors.length > 0) {
+          console.log('[FMS] Some changes failed:', result);
+          // Show error toast with details
+          addToast({
+            type: 'error',
+            title: 'Some Changes Failed',
+            message: result.errors.length > 0 
+              ? result.errors[0] 
+              : `${result.changesFailed} change${result.changesFailed !== 1 ? 's' : ''} failed to apply`,
+            duration: 8000,
+          });
+          
+          // Keep modal open so user can see what failed
+          return;
+        }
+        
+        // Success! Show summary toast
+        console.log('[FMS] All changes applied successfully');
+        const summary = generateChangesSummary(result, changeIds.length);
+        console.log('[FMS] Toast summary:', summary);
+        addToast({
+          type: 'success',
+          title: 'Changes Applied Successfully',
+          message: summary || 'All selected changes have been applied',
+          duration: 6000,
+        });
+        
+        // Call onApply callback (if provided for additional logic)
+        await onApply(changeIds);
+        
+        // Close the review modal
+        console.log('[FMS] Closing review modal');
+        hideReview();
+        onClose();
       } else {
+        // Changes rejected
+        addToast({
+          type: 'info',
+          title: 'Changes Rejected',
+          message: `${changeIds.length} change${changeIds.length !== 1 ? 's' : ''} rejected`,
+        });
+        
+        hideReview();
         onClose();
       }
     } catch (error: any) {
-      alert(`Failed to ${accepted ? 'accept' : 'reject'} changes: ${error.message}`);
+      // Show error toast
+      addToast({
+        type: 'error',
+        title: `Failed to ${accepted ? 'Apply' : 'Reject'} Changes`,
+        message: error.message || 'An unexpected error occurred',
+        duration: 8000,
+      });
+      
+      // Keep modal open on error so user can retry or see the issue
     } finally {
       setApplying(false);
     }

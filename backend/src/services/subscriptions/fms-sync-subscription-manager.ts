@@ -3,12 +3,13 @@ import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSConfigurationModel } from '@/models/fms-configuration.model';
+import { FacilityModel } from '@/models/facility.model';
 
 interface FMSSyncStatus {
   facilityId: string;
   facilityName?: string;
   lastSyncTime: string | null;
-  status: 'completed' | 'failed' | 'partial' | 'never_synced';
+  status: 'completed' | 'failed' | 'partial' | 'never_synced' | 'not_configured';
   changesDetected?: number;
   changesApplied?: number;
   errorMessage?: string;
@@ -17,11 +18,13 @@ interface FMSSyncStatus {
 export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
   private syncLogModel: FMSSyncLogModel;
   private configModel: FMSConfigurationModel;
+  private facilityModel: FacilityModel;
 
   constructor() {
     super();
     this.syncLogModel = new FMSSyncLogModel();
     this.configModel = new FMSConfigurationModel();
+    this.facilityModel = new FacilityModel();
   }
 
   getSubscriptionType(): string {
@@ -70,45 +73,62 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
       // Get user's facility IDs based on role
       let facilityIds: string[] = [];
 
+      let facilityNameMap: Map<string, string> = new Map();
+
       if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
-        // Admin can see all facilities with FMS configured
-        const allConfigs = await this.configModel.findAll();
-        facilityIds = allConfigs.map(c => c.facility_id);
-        this.logger.info(`📡 FMS Sync: Admin/DevAdmin - checking ${facilityIds.length} facilities with FMS configs`);
+        // Admin can see ALL facilities - get them from the facility model
+        const allFacilities = await this.facilityModel.findAll();
+        facilityIds = allFacilities.facilities.map(f => f.id);
+        // Create a map of facility ID to name for quick lookup
+        allFacilities.facilities.forEach(f => facilityNameMap.set(f.id, f.name));
+        this.logger.info(`📡 FMS Sync: Admin/DevAdmin - checking ${facilityIds.length} total facilities`);
       } else if (client.userRole === UserRole.FACILITY_ADMIN) {
         // Facility admin can only see their own facilities
         facilityIds = client.facilityIds || [];
+        // For facility admins, we don't have facility names in the WebSocket data
+        // They should come from the frontend auth state
         this.logger.info(`📡 FMS Sync: Facility Admin - checking ${facilityIds.length} assigned facilities`);
       } else {
         this.logger.info(`📡 FMS Sync: User role ${client.userRole} has no FMS access`);
+        return statuses;
       }
 
-      // For each facility, get the latest sync log
+      // For each facility, get the FMS status (or indicate not configured)
       for (const facilityId of facilityIds) {
         try {
           // Check if FMS is configured for this facility
           const config = await this.configModel.findByFacilityId(facilityId);
-          if (!config) {
-            this.logger.debug(`📡 FMS Sync: No FMS config found for facility ${facilityId}`);
-            continue; // Skip facilities without FMS configured
+
+          if (!config || !config.is_enabled) {
+            // FMS not configured or disabled - include facility with "not_configured" status
+            this.logger.debug(`📡 FMS Sync: No FMS config or disabled for facility ${facilityId}`);
+            const status: FMSSyncStatus = {
+              facilityId,
+              lastSyncTime: null,
+              status: 'not_configured',
+            };
+            const name = facilityNameMap.get(facilityId);
+            if (name) status.facilityName = name;
+            statuses.push(status);
+            continue;
           }
-          if (!config.is_enabled) {
-            this.logger.debug(`📡 FMS Sync: FMS config disabled for facility ${facilityId}`);
-            continue; // Skip disabled FMS
-          }
-          
+
           this.logger.info(`📡 FMS Sync: Processing facility ${facilityId} with FMS provider ${config.provider_type}`);
 
           // Get the latest sync log
           const latestSync = await this.syncLogModel.findLatestByFacilityId(facilityId);
 
+          const name = facilityNameMap.get(facilityId);
+
           if (!latestSync) {
             // FMS configured but never synced
-            statuses.push({
+            const status: FMSSyncStatus = {
               facilityId,
               lastSyncTime: null,
               status: 'never_synced',
-            });
+            };
+            if (name) status.facilityName = name;
+            statuses.push(status);
           } else {
             // Has sync history
             const syncStatus: FMSSyncStatus = {
@@ -118,6 +138,7 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
               changesDetected: latestSync.changes_detected,
               changesApplied: latestSync.changes_applied,
             };
+            if (name) syncStatus.facilityName = name;
             if (latestSync.error_message) {
               syncStatus.errorMessage = latestSync.error_message;
             }
@@ -125,7 +146,16 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
           }
         } catch (error) {
           this.logger.error(`Error getting FMS sync status for facility ${facilityId}:`, error);
-          // Continue with other facilities
+          // Include facility with error status
+          const status: FMSSyncStatus = {
+            facilityId,
+            lastSyncTime: null,
+            status: 'not_configured',
+            errorMessage: 'Error loading FMS status',
+          };
+          const name = facilityNameMap.get(facilityId);
+          if (name) status.facilityName = name;
+          statuses.push(status);
         }
       }
     } catch (error) {

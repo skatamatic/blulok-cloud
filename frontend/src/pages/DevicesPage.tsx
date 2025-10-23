@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
@@ -53,7 +54,12 @@ const statusIcons = {
   low_battery: ExclamationTriangleIcon
 };
 
-export default function DevicesPage() {
+interface DevicesPageProps {
+  initialCommandQueue?: { items: any[]; total: number };
+}
+
+export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = {}) {
+  const ws = useWebSocket();
   const navigate = useNavigate();
   const location = useLocation();
   const { authState } = useAuth();
@@ -77,12 +83,28 @@ export default function DevicesPage() {
   });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<'grid' | 'list' | 'commands'>(initialCommandQueue ? 'commands' : 'grid');
+  const [commandQueue, setCommandQueue] = useState<{ items: any[]; total: number } | null>(initialCommandQueue || null);
+  const [cmdFilters, setCmdFilters] = useState<{ status: string }>({ status: '' });
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
 
   useEffect(() => {
     loadDevices();
   }, [filters, currentPage]);
+
+  // Command queue subscription
+  useEffect(() => {
+    if (activeTab !== 'commands') return;
+    const subId = ws.subscribe('command_queue', (data: any) => {
+      setCommandQueue({ items: data.items || [], total: data.total || 0 });
+    });
+    // initial fetch
+    apiService.getCommandQueue({ status: cmdFilters.status || undefined }).then(data => setCommandQueue({ items: data.items || [], total: data.total || 0 })).catch(() => {});
+    return () => {
+      if (subId) ws.unsubscribe(subId);
+    };
+  }, [activeTab, cmdFilters.status]);
 
   const loadDevices = async () => {
     try {
@@ -377,9 +399,9 @@ export default function DevicesPage() {
         <div className="flex items-center space-x-3">
           <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
             <button
-              onClick={() => setViewMode('grid')}
+              onClick={() => { setActiveTab('grid'); setViewMode('grid'); }}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'grid'
+                activeTab === 'grid'
                   ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
@@ -387,14 +409,24 @@ export default function DevicesPage() {
               <Squares2X2Icon className="h-4 w-4" />
             </button>
             <button
-              onClick={() => setViewMode('list')}
+              onClick={() => { setActiveTab('list'); setViewMode('list'); }}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'list'
+                activeTab === 'list'
                   ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
             >
               <ListBulletIcon className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setActiveTab('commands')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                activeTab === 'commands'
+                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+              }`}
+            >
+              <KeyIcon className="h-4 w-4" />
             </button>
           </div>
           
@@ -464,13 +496,66 @@ export default function DevicesPage() {
 
       {/* Results */}
       <div className="flex items-center justify-between mt-6">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Showing {devices.length} out of {total} devices
-        </p>
+        {activeTab !== 'commands' ? (
+          <p className="text-sm text-gray-600 dark:text-gray-400">Showing {devices.length} out of {total} devices</p>
+        ) : (
+          <div className="flex items-center space-x-3">
+            <p className="text-sm text-gray-600 dark:text-gray-400">Pending Commands: {commandQueue?.total || 0}</p>
+            <select
+              value={cmdFilters.status}
+              onChange={(e) => setCmdFilters({ status: e.target.value })}
+              className="text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1"
+            >
+              <option value="">All</option>
+              <option value="pending">Pending</option>
+              <option value="queued">Queued</option>
+              <option value="in_progress">In Progress</option>
+              <option value="failed">Failed</option>
+              <option value="dead_letter">Dead Letter</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="succeeded">Succeeded</option>
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Devices */}
-      {loading ? (
+      {activeTab === 'commands' ? (
+        <div className="bg-white dark:bg-gray-800 shadow overflow-hidden sm:rounded-md">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-900">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Facility</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Device</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Command</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Attempts</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Next Retry</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white dark:bg-gray-800">
+              {(commandQueue?.items || []).map((cmd: any) => (
+                <tr key={cmd.id} className="border-b border-gray-200 dark:border-gray-700 last:border-b-0">
+                  <td className="px-6 py-3 text-sm">{cmd.facility_id}</td>
+                  <td className="px-6 py-3 text-sm">{cmd.device_id}</td>
+                  <td className="px-6 py-3 text-sm">{cmd.command_type}</td>
+                  <td className="px-6 py-3 text-sm">{cmd.status}</td>
+                  <td className="px-6 py-3 text-sm">{cmd.attempt_count}</td>
+                  <td className="px-6 py-3 text-sm">{cmd.next_attempt_at ? new Date(cmd.next_attempt_at).toLocaleString() : '-'}</td>
+                  <td className="px-6 py-3 text-sm text-right space-x-2">
+                    <button onClick={() => apiService.retryCommand(cmd.id)} className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400">Retry</button>
+                    <button onClick={() => apiService.cancelCommand(cmd.id)} className="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700 dark:bg-gray-900/20 dark:text-gray-300">Cancel</button>
+                    {cmd.status === 'dead_letter' && (
+                      <button onClick={() => apiService.requeueDeadCommand(cmd.id)} className="px-2 py-1 text-xs rounded bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">Requeue</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : loading ? (
         <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
           {[...Array(6)].map((_, i) => (
             <div key={i} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 animate-pulse">

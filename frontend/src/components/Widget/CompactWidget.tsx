@@ -13,6 +13,7 @@ export interface CompactWidgetProps {
   children: React.ReactNode;
   className?: string;
   isDragging?: boolean;
+  suppressTitleOverlay?: boolean;
 }
 
 export const CompactWidget: React.FC<CompactWidgetProps> = ({
@@ -26,6 +27,7 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
   children,
   className = '',
   isDragging = false,
+  suppressTitleOverlay = false,
 }) => {
   const sizeToGrid = {
     tiny: { w: 1, h: 1 },      // 136×136px - Single metric
@@ -80,12 +82,14 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
           {children}
         </div>
 
-        {/* Title Overlay - Only show on hover */}
-        <div className={`absolute ${size === 'tiny' ? 'bottom-2 left-2' : 'top-2 left-2'} pointer-events-none z-20`}>
-          <div className="title-overlay text-xs font-medium text-gray-700 dark:text-gray-300 px-2 py-1 rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-all duration-200 transform group-hover:scale-105">
-            {title}
+        {/* Title Overlay - Only show on hover when not suppressed */}
+        {!suppressTitleOverlay && (
+          <div className={`absolute ${size === 'tiny' ? 'bottom-2 left-2' : 'top-2 left-2'} pointer-events-none z-20`}>
+            <div className="title-overlay text-xs font-medium text-gray-700 dark:text-gray-300 px-2 py-1 rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-all duration-200 transform group-hover:scale-105">
+              {title}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </motion.div>
   );

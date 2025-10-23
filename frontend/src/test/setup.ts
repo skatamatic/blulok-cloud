@@ -58,3 +58,33 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: jest.fn(),
   })),
 });
+
+// Suppress console errors, warnings, and logs during tests to reduce noise
+// Tests can still override this if they need to verify console output
+const originalError = console.error;
+const originalWarn = console.warn;
+const originalLog = console.log;
+
+beforeAll(() => {
+  console.error = jest.fn((...args: any[]) => {
+    // Only log React warnings and critical errors, suppress everything else
+    const message = args[0]?.toString() || '';
+    if (message.includes('Warning:') || (message.includes('Error:') && !message.includes('Failed to'))) {
+      originalError(...args);
+    }
+  });
+  
+  console.warn = jest.fn(() => {
+    // Suppress all warnings during tests
+  });
+  
+  console.log = jest.fn(() => {
+    // Suppress all logs during tests
+  });
+});
+
+afterAll(() => {
+  console.error = originalError;
+  console.warn = originalWarn;
+  console.log = originalLog;
+});

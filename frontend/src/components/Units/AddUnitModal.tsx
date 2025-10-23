@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { 
-  HomeIcon, 
+import {
+  HomeIcon,
   UserIcon,
-  CurrencyDollarIcon,
   TagIcon,
   CheckIcon,
   BuildingOfficeIcon
@@ -16,8 +15,6 @@ interface CreateUnitData {
   facility_id: string;
   unit_number: string;
   unit_type: string;
-  size_sqft: number;
-  monthly_rate: number;
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
   description: string;
   features: string[];
@@ -61,8 +58,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
     facility_id: facilityId || '',
     unit_number: '',
     unit_type: '',
-    size_sqft: 0,
-    monthly_rate: 0,
     status: 'available',
     description: '',
     features: []
@@ -115,12 +110,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
     }
     if (!formData.unit_type) {
       newErrors.unit_type = 'Unit type is required';
-    }
-    if (!formData.size_sqft || formData.size_sqft <= 0) {
-      newErrors.size_sqft = 'Size must be greater than 0';
-    }
-    if (!formData.monthly_rate || formData.monthly_rate <= 0) {
-      newErrors.monthly_rate = 'Monthly rate must be greater than 0';
     }
 
     setErrors(newErrors);
@@ -177,8 +166,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
       facility_id: facilityId || '',
       unit_number: '',
       unit_type: '',
-      size_sqft: 0,
-      monthly_rate: 0,
       status: 'available',
       description: '',
       features: []
@@ -317,49 +304,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Size (sq ft) *
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={formData.size_sqft || ''}
-                    onChange={(e) => handleInputChange('size_sqft', parseInt(e.target.value) || 0)}
-                    className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 ${
-                      errors.size_sqft 
-                        ? 'border-red-300 dark:border-red-600' 
-                        : 'border-gray-300 dark:border-gray-600'
-                    } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
-                    placeholder="e.g. 50"
-                  />
-                  {errors.size_sqft && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.size_sqft}</p>}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Monthly Rate ($) *
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <CurrencyDollarIcon className="h-5 w-5 text-gray-400" />
-                    </div>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={formData.monthly_rate || ''}
-                      onChange={(e) => handleInputChange('monthly_rate', parseFloat(e.target.value) || 0)}
-                      className={`block w-full pl-10 pr-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 ${
-                        errors.monthly_rate 
-                          ? 'border-red-300 dark:border-red-600' 
-                          : 'border-gray-300 dark:border-gray-600'
-                      } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
-                      placeholder="e.g. 75.00"
-                    />
-                  </div>
-                  {errors.monthly_rate && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.monthly_rate}</p>}
-                </div>
               </div>
 
               <div>

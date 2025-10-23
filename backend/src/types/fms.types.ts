@@ -14,6 +14,7 @@ export enum FMSProviderType {
 export enum FMSAuthType {
   API_KEY = 'api_key',
   OAUTH2 = 'oauth2',
+  OAUTH1 = 'oauth1',
   BASIC_AUTH = 'basic_auth',
   BEARER_TOKEN = 'bearer_token',
   CUSTOM = 'custom',
@@ -58,6 +59,8 @@ export interface FMSAuthConfig {
     clientSecret?: string;
     refreshToken?: string;
     tokenEndpoint?: string;
+    consumerKey?: string; // OAuth1 consumer key
+    consumerSecret?: string; // OAuth1 consumer secret
     [key: string]: any; // Allow custom auth fields
   };
 }
@@ -96,9 +99,9 @@ export interface FMSConfiguration {
 
 export interface FMSTenant {
   externalId: string; // ID from FMS
-  email: string;
-  firstName: string;
-  lastName: string;
+  email: string | null; // Can be null for invalid tenants
+  firstName: string | null; // Can be null for invalid tenants
+  lastName: string | null; // Can be null for invalid tenants
   phone?: string;
   unitIds: string[]; // External unit IDs from FMS
   leaseStartDate?: Date;
@@ -133,6 +136,9 @@ export interface FMSChange {
   is_accepted?: boolean;
   applied_at?: Date;
   created_at: Date;
+  // Validation fields
+  is_valid?: boolean; // Whether this change is valid and can be applied
+  validation_errors?: string[]; // List of validation error messages
 }
 
 export interface FMSSyncLog {

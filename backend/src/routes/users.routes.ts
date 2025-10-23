@@ -6,6 +6,8 @@ import { AuthService } from '@/services/auth.service';
 import { UserRole, CreateUserRequest, UpdateUserRequest, AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler, AppError } from '@/middleware/error.middleware';
 import { authenticateToken, requireUserManagement } from '@/middleware/auth.middleware';
+import { DatabaseService } from '@/services/database.service';
+import { UserDeviceModel } from '@/models/user-device.model';
 
 const router = Router();
 
@@ -79,11 +81,33 @@ const updateUserSchema = Joi.object({
 // GET /users - List all users with filtering and facility information
 router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { search, role, facility, sortBy = 'created_at', sortOrder = 'desc', limit, offset } = req.query;
+  const userId = req.user!.userId;
+  const userRole = req.user!.role;
 
   // Get users with facility information
   const usersWithFacilities = await UserFacilityAssociationModel.getUsersWithFacilities();
   
   let filteredUsers = usersWithFacilities;
+
+  // RBAC: Facility admins can only see users from their facilities
+  if (userRole === UserRole.FACILITY_ADMIN) {
+    // Get facilities managed by this facility admin
+    const userFacilityAssociations = await UserFacilityAssociationModel.findByUserId(userId);
+    const managedFacilityIds = userFacilityAssociations.map(assoc => assoc.facility_id);
+
+    if (managedFacilityIds.length === 0) {
+      // Facility admin with no facilities sees no users
+      filteredUsers = [];
+    } else {
+      // Filter to only users associated with managed facilities
+      filteredUsers = filteredUsers.filter(user => {
+        if (!user.facility_ids) return false;
+        const userFacilityIds = user.facility_ids.split(',').map((id: string) => id.trim());
+        // Check if any of the user's facilities match the admin's managed facilities
+        return userFacilityIds.some((facId: string) => managedFacilityIds.includes(facId));
+      });
+    }
+  }
 
   // Apply search filter
   if (search) {
@@ -193,7 +217,7 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
 // GET /users/:id - Get user by ID
 router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
-  
+
   if (!id) {
     res.status(400).json({
       success: false,
@@ -201,7 +225,7 @@ router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     });
     return;
   }
-  
+
   // Check facility access for facility admins
   const hasAccess = await checkFacilityAccess(req, id);
   if (!hasAccess) {
@@ -211,7 +235,7 @@ router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     });
     return;
   }
-  
+
   const user = await UserModel.findById(id) as User;
 
   if (!user) {
@@ -234,6 +258,140 @@ router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
       lastLogin: user.last_login,
       createdAt: user.created_at,
       updatedAt: user.updated_at
+    }
+  });
+}));
+
+// GET /users/:id/details - Get detailed user information with facilities, units, and devices
+router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const db = DatabaseService.getInstance().connection;
+
+  if (!id) {
+    res.status(400).json({
+      success: false,
+      message: 'User ID is required'
+    });
+    return;
+  }
+
+  // Check facility access for facility admins
+  const hasAccess = await checkFacilityAccess(req, id);
+  if (!hasAccess) {
+    res.status(403).json({
+      success: false,
+      message: 'Access denied to this user'
+    });
+    return;
+  }
+
+  const user = await UserModel.findById(id) as User;
+
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+    return;
+  }
+
+  // Get user facilities
+  const userFacilities = await db('user_facility_associations as ufa')
+    .join('facilities as f', 'ufa.facility_id', 'f.id')
+    .select(
+      'f.id as facility_id',
+      'f.name as facility_name',
+      'f.address as facility_address'
+    )
+    .where('ufa.user_id', id)
+    .orderBy('f.name');
+
+  // Get units for each facility that the user has access to
+  const facilityIds = userFacilities.map(f => f.facility_id);
+  const facilitiesWithUnits = [];
+
+  if (facilityIds.length > 0) {
+    const unitsData = await db('unit_assignments as ua')
+      .join('units as u', 'ua.unit_id', 'u.id')
+      .select(
+        'u.facility_id',
+        'u.id as unit_id',
+        'u.unit_number',
+        'u.unit_type',
+        'ua.is_primary'
+      )
+      .where('ua.tenant_id', id)
+      .whereIn('u.facility_id', facilityIds)
+      .orderBy('u.unit_number');
+
+    // Combine facilities with their units
+    for (const facility of userFacilities) {
+      const facilityData = {
+        ...facility,
+        units: unitsData.filter(u => u.facility_id === facility.facility_id).map(u => ({
+          id: u.unit_id,
+          unitNumber: u.unit_number,
+          unitType: u.unit_type,
+          isPrimary: u.is_primary
+        }))
+      };
+      facilitiesWithUnits.push(facilityData);
+    }
+  }
+
+  // facilitiesWithUnits is already properly structured
+
+  // Get user devices (only for dev admins)
+  let userDevices: any[] = [];
+  const isDevAdmin = req.user!.role === UserRole.DEV_ADMIN;
+  if (isDevAdmin) {
+    const userDeviceModel = new UserDeviceModel();
+    userDevices = await userDeviceModel.listByUser(id);
+
+    // For each device, get associated locks and recent distribution errors
+    for (const device of userDevices) {
+      const deviceLocks = await db('device_key_distributions as dkd')
+        .join('blulok_devices as bd', 'dkd.target_id', 'bd.id')
+        .join('units as u', 'bd.unit_id', 'u.id')
+        .join('facilities as f', 'u.facility_id', 'f.id')
+        .select(
+          'bd.id as lock_id',
+          'bd.device_serial',
+          'u.unit_number',
+          'f.name as facility_name',
+          'dkd.status as key_status',
+          'dkd.error as last_error',
+          'dkd.key_version as key_version',
+          'dkd.key_code as key_code'
+        )
+        .where('dkd.user_device_id', device.id)
+        .where('dkd.target_type', 'blulok');
+
+      device.associatedLocks = deviceLocks;
+
+      const distErrors = await db('device_key_distributions')
+        .where({ user_device_id: device.id })
+        .whereNotNull('error')
+        .orderBy('updated_at', 'desc')
+        .limit(10);
+      device.distributionErrors = distErrors;
+    }
+  }
+
+  res.json({
+    success: true,
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      isActive: user.is_active,
+      lastLogin: user.last_login,
+      createdAt: user.created_at,
+      updatedAt: user.updated_at,
+      facilities: facilitiesWithUnits,
+      devices: userDevices
     }
   });
 }));

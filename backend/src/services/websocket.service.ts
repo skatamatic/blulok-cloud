@@ -5,6 +5,7 @@ import { config } from '@/config/environment';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { SubscriptionRegistry } from './subscriptions/subscription-registry';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 
 export interface Subscription {
   id: string;
@@ -17,7 +18,7 @@ export interface Subscription {
 }
 
 export interface WebSocketMessage {
-  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update';
+  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update';
   subscriptionId?: string;
   subscriptionType?: string;
   data?: any;
@@ -64,10 +65,19 @@ export class WebSocketService {
       }
 
       const decoded = verify(token, config.jwt.secret) as any;
+      
+      // SECURITY: Load facility IDs for all non-global roles
+      let facilityIds: string[] | undefined;
+      if (decoded.role !== UserRole.ADMIN && decoded.role !== UserRole.DEV_ADMIN) {
+        facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(decoded.userId);
+        logger.info(`🔌 Loaded ${facilityIds.length} facility IDs for user ${decoded.userId} (${decoded.role})`);
+      }
+      
       const client = {
         userId: decoded.userId,
         userRole: decoded.role as UserRole,
-        subscriptions: new Map<string, Subscription>()
+        subscriptions: new Map<string, Subscription>(),
+        facilityIds, // Include facility IDs for RBAC enforcement in subscriptions
       };
 
       this.clients.set(ws, client);
@@ -148,22 +158,24 @@ export class WebSocketService {
       filters: message.data
     };
 
-    // Store subscription
-    client.subscriptions.set(subscriptionId, subscription);
-    this.subscriptions.set(subscriptionId, subscription);
-
     // Use subscription registry for all subscription types
-    await this.subscriptionRegistry.handleSubscription(ws, message, client);
+    const subscriptionSuccess = await this.subscriptionRegistry.handleSubscription(ws, message, client);
 
-    this.sendMessage(ws, {
-      type: 'subscription',
-      subscriptionId,
-      subscriptionType: message.subscriptionType,
-      data: { message: 'Subscription created successfully' },
-      timestamp: new Date().toISOString()
-    });
+    if (subscriptionSuccess) {
+      // Store subscription only if it was successful
+      client.subscriptions.set(subscriptionId, subscription);
+      this.subscriptions.set(subscriptionId, subscription);
 
-    logger.info(`📡 Subscription created: ${subscriptionId} (${message.subscriptionType})`);
+      this.sendMessage(ws, {
+        type: 'subscription',
+        subscriptionId,
+        subscriptionType: message.subscriptionType,
+        data: { message: 'Subscription created successfully' },
+        timestamp: new Date().toISOString()
+      });
+
+      logger.info(`📡 Subscription created: ${subscriptionId} (${message.subscriptionType})`);
+    }
   }
 
   private handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: any): void {
@@ -242,10 +254,15 @@ export class WebSocketService {
     const client = this.clients.get(ws);
     if (client) {
       logger.info(`WebSocket client disconnected: ${client.userId}`);
-      
+
+      // Clean up all subscriptions for this client from the global subscriptions map
+      client.subscriptions.forEach((subscription) => {
+        this.subscriptions.delete(subscription.id);
+      });
+
       // Clean up all subscriptions for this client
       this.subscriptionRegistry.cleanup(ws, client);
-      
+
       this.clients.delete(ws);
     }
   }
@@ -318,6 +335,20 @@ export class WebSocketService {
   public async broadcastBatteryStatusUpdate(): Promise<void> {
     const manager = this.subscriptionRegistry.getBatteryManager();
     if (manager) {
+      await manager.broadcastUpdate();
+    }
+  }
+
+  public async broadcastGatewayStatusUpdate(facilityId?: string, gatewayId?: string): Promise<void> {
+    const manager: any = this.subscriptionRegistry.getManager('gateway_status');
+    if (manager && typeof manager.broadcastUpdate === 'function') {
+      await manager.broadcastUpdate(facilityId, gatewayId);
+    }
+  }
+
+  public async broadcastCommandQueueUpdate(): Promise<void> {
+    const manager: any = this.subscriptionRegistry.getManager('command_queue');
+    if (manager && typeof manager.broadcastUpdate === 'function') {
       await manager.broadcastUpdate();
     }
   }

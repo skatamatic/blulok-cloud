@@ -4,7 +4,7 @@
  * Dynamic form that renders fields based on selected FMS provider
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { fmsService } from '@/services/fms.service';
 import { getProviderMetadata } from '@/config/fms-providers';
 import { FMSConfiguration, FMSProviderType } from '@/types/fms.types';
@@ -31,6 +31,43 @@ export function ProviderConfigForm({
   const providerMeta = getProviderMetadata(providerType);
   if (!providerMeta) return null;
 
+  // Populate form data from existing config when available
+  useEffect(() => {
+    if (existingConfig?.config) {
+      const config = existingConfig.config;
+      const newFormData: Record<string, any> = {};
+
+      // Map config fields back to form data
+      if (config.baseUrl) newFormData.baseUrl = config.baseUrl;
+      if (config.apiVersion) newFormData.apiVersion = config.apiVersion;
+
+      // Map auth credentials based on auth type
+      if (config.auth?.credentials) {
+        const creds = config.auth.credentials;
+        if (creds.apiKey) newFormData.apiKey = creds.apiKey;
+        if (creds.username) newFormData.username = creds.username;
+        if (creds.password) newFormData.password = creds.password;
+        if (creds.bearerToken) newFormData.bearerToken = creds.bearerToken;
+        if (creds.clientId) newFormData.clientId = creds.clientId;
+        if (creds.clientSecret) newFormData.clientSecret = creds.clientSecret;
+        if (creds.consumerKey) newFormData.consumerKey = creds.consumerKey;
+        if (creds.consumerSecret) newFormData.consumerSecret = creds.consumerSecret;
+      }
+
+      // Map custom settings (like facilityId for Storedge)
+      if (config.customSettings) {
+        Object.assign(newFormData, config.customSettings);
+      }
+
+      // Map sync settings
+      if (config.syncSettings?.autoAcceptChanges !== undefined) {
+        setAutoAccept(config.syncSettings.autoAcceptChanges);
+      }
+
+      setFormData(newFormData);
+    }
+  }, [existingConfig, providerType]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -53,6 +90,10 @@ export function ProviderConfigForm({
             credentials.clientId = value;
           } else if (field.key === 'clientSecret') {
             credentials.clientSecret = value;
+          } else if (field.key === 'consumerKey') {
+            credentials.consumerKey = value;
+          } else if (field.key === 'consumerSecret') {
+            credentials.consumerSecret = value;
           }
         }
       });
@@ -76,6 +117,8 @@ export function ProviderConfigForm({
         },
         customSettings: providerType === FMSProviderType.SIMULATED ? {
           dataFilePath: formData.dataFilePath || 'config/fms-simulated-data.json',
+        } : providerType === FMSProviderType.STOREDGE ? {
+          facilityId: formData.facilityId,
         } : undefined,
       };
 

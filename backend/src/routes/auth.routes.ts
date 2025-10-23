@@ -33,7 +33,14 @@ router.post('/login', asyncHandler(async (req: Request, res: Response): Promise<
   }
 
   const loginData: LoginRequest = value;
-  const result = await AuthService.login(loginData);
+  // Extract app device headers if provided
+  const appDeviceId = (req.headers['x-app-device-id'] as string | undefined)?.trim();
+  const appPlatform = (req.headers['x-app-platform'] as string | undefined)?.trim();
+
+  const result = await AuthService.login(loginData, {
+    appDeviceId: appDeviceId || undefined,
+    appPlatform: appPlatform || undefined
+  });
 
   const statusCode = result.success ? 200 : 401;
   res.status(statusCode).json(result);

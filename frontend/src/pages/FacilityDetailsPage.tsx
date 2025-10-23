@@ -24,9 +24,10 @@ import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit } fr
 import { useAuth } from '@/contexts/AuthContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
-import { TenantAssignmentModal } from '@/components/Units/TenantAssignmentModal';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
+import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 
 const statusColors = {
   active: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -50,6 +51,7 @@ const deviceTypeIcons = {
 };
 
 export default function FacilityDetailsPage() {
+  const ws = useWebSocket();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { authState } = useAuth();
@@ -57,20 +59,44 @@ export default function FacilityDetailsPage() {
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway'>('overview');
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
-  const [showTenantModal, setShowTenantModal] = useState(false);
-  const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
+  const canManageGateway = ['admin', 'dev_admin'].includes(authState.user?.role || '');
 
   useEffect(() => {
     if (id) {
       loadFacilityData();
     }
   }, [id]);
+
+  // Subscribe to gateway status updates to update overview gateway status
+  useEffect(() => {
+    if (!ws) return;
+    const subscriptionId = ws.subscribe('gateway_status', (data: any) => {
+      const gateways = data?.gateways || [];
+      gateways.forEach((g: any) => {
+        // Update deviceHierarchy gateway status for overview tab
+        setDeviceHierarchy(prev => {
+          if (!prev?.gateway || prev.gateway.id !== g.id) return prev;
+          return {
+            ...prev,
+            gateway: {
+              ...prev.gateway,
+              status: g.status
+            }
+          };
+        });
+      });
+    });
+    return () => {
+      if (subscriptionId) ws.unsubscribe(subscriptionId);
+    };
+  }, [ws]);
 
   const loadFacilityData = async () => {
     try {
@@ -242,8 +268,7 @@ export default function FacilityDetailsPage() {
   const UnitCard = ({ unit }: { unit: Unit }) => {
     const handleTenantManagement = (e: React.MouseEvent) => {
       e.stopPropagation();
-      setSelectedUnit(unit);
-      setShowTenantModal(true);
+      navigate(`/units/${unit.id}?tab=tenant`);
     };
 
     return (
@@ -274,8 +299,6 @@ export default function FacilityDetailsPage() {
         )}
 
         <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <span>{unit.size_sqft} sq ft</span>
-          {unit.monthly_rate && <span>${unit.monthly_rate}/mo</span>}
           {unit.blulok_device && (
             <span className={`font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors]}`}>
               {unit.blulok_device.lock_status}
@@ -333,7 +356,8 @@ export default function FacilityDetailsPage() {
             { key: 'overview', label: 'Overview', icon: BuildingOfficeIcon },
             { key: 'devices', label: 'Devices', icon: ServerIcon },
             { key: 'units', label: 'Units', icon: HomeIcon },
-            ...(canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : [])
+            ...(canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
+            ...(canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : [])
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -578,11 +602,22 @@ export default function FacilityDetailsPage() {
         </div>
       )}
 
+      {/* Gateway Tab */}
+      {activeTab === 'gateway' && facility && (
+        <FacilityGatewayTab
+          facilityId={facility.id}
+          facilityName={facility.name}
+          canManageGateway={canManageGateway}
+        />
+      )}
+
       {/* FMS Integration Tab */}
       {activeTab === 'fms' && facility && (
         <FacilityFMSTab
           facilityId={facility.id}
+          facilityName={facility.name}
           isDevMode={localStorage.getItem('fms-simulated-enabled') === 'true'}
+          canEditFMS={canEditFMS}
         />
       )}
 
@@ -607,21 +642,6 @@ export default function FacilityDetailsPage() {
           setShowAddUnitModal(false);
         }}
         facilityId={facility?.id}
-      />
-
-      {/* Tenant Assignment Modal */}
-      <TenantAssignmentModal
-        isOpen={showTenantModal}
-        onClose={() => {
-          setShowTenantModal(false);
-          setSelectedUnit(null);
-        }}
-        onSuccess={() => {
-          loadFacilityData();
-          setShowTenantModal(false);
-          setSelectedUnit(null);
-        }}
-        unit={selectedUnit}
       />
     </div>
   );

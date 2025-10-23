@@ -12,6 +12,17 @@ export interface Gateway {
   last_seen?: Date;
   configuration?: Record<string, any>;
   metadata?: Record<string, any>;
+  // Gateway connection configuration
+  gateway_type?: 'physical' | 'http' | 'simulated';
+  connection_url?: string; // For physical WebSocket gateways
+  base_url?: string; // For HTTP gateways
+  api_key?: string; // For HTTP gateways
+  username?: string; // For HTTP gateways
+  password?: string; // Encrypted password for HTTP gateways
+  protocol_version?: string;
+  poll_frequency_ms?: number; // Polling frequency for HTTP gateways (default 30000ms)
+  key_management_version: 'v1' | 'v2'; // v1=Postman hex format, v2=ED25519 format
+  ignore_ssl_cert?: boolean; // Whether to ignore SSL certificate validation for HTTP gateways
   created_at: Date;
   updated_at: Date;
 }
@@ -26,6 +37,16 @@ export interface CreateGatewayData {
   status?: 'online' | 'offline' | 'error' | 'maintenance';
   configuration?: Record<string, any>;
   metadata?: Record<string, any>;
+  // Gateway connection configuration
+  gateway_type?: 'physical' | 'http' | 'simulated';
+  connection_url?: string;
+  base_url?: string;
+  api_key?: string;
+  username?: string;
+  password?: string;
+  protocol_version?: string;
+  key_management_version?: 'v1' | 'v2';
+  ignore_ssl_cert?: boolean;
 }
 
 export interface UpdateGatewayData extends Partial<Omit<CreateGatewayData, 'facility_id'>> {}
@@ -76,6 +97,15 @@ export class GatewayModel {
     await knex('gateways').where('id', id).update({
       status,
       last_seen: status === 'online' ? new Date() : undefined,
+      updated_at: new Date()
+    });
+  }
+
+  async updateStatusAndLastSeen(id: string, status: Gateway['status']): Promise<void> {
+    const knex = this.db.connection;
+    await knex('gateways').where('id', id).update({
+      status,
+      last_seen: new Date(),
       updated_at: new Date()
     });
   }

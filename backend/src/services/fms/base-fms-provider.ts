@@ -5,14 +5,16 @@
  * Each FMS provider (Yardi, AppFolio, etc.) should extend this class.
  */
 
-import { 
-  FMSProviderConfig, 
-  FMSTenant, 
-  FMSUnit, 
+import {
+  FMSProviderConfig,
+  FMSTenant,
+  FMSUnit,
   FMSProviderCapabilities,
-  FMSWebhookPayload 
+  FMSWebhookPayload
 } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
+import OAuth from 'oauth-1.0a';
+import crypto from 'crypto';
 
 export abstract class BaseFMSProvider {
   protected config: FMSProviderConfig;
@@ -127,6 +129,33 @@ export abstract class BaseFMSProvider {
         // OAuth2 token should be refreshed if needed before calling this
         if (this.config.auth.credentials.bearerToken) {
           headers['Authorization'] = `Bearer ${this.config.auth.credentials.bearerToken}`;
+        }
+        break;
+
+      case 'oauth1':
+        if (this.config.auth.credentials.consumerKey && this.config.auth.credentials.consumerSecret) {
+          const oauth = new OAuth({
+            consumer: {
+              key: this.config.auth.credentials.consumerKey,
+              secret: this.config.auth.credentials.consumerSecret,
+            },
+            signature_method: 'HMAC-SHA1',
+            hash_function(base_string, key) {
+              return crypto
+                .createHmac('sha1', key)
+                .update(base_string)
+                .digest('base64');
+            },
+          });
+
+          const requestData = {
+            url,
+            method,
+            data: body,
+          };
+
+          const oauthHeaders = oauth.toHeader(oauth.authorize(requestData));
+          Object.assign(headers, oauthHeaders);
         }
         break;
     }

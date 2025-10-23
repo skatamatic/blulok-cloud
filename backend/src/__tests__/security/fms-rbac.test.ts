@@ -9,6 +9,7 @@ import express from 'express';
 import { fmsRouter } from '@/routes/fms.routes';
 import { FMSProviderType } from '@/types/fms.types';
 import { createMockTestData, MockTestData } from '../utils/mock-test-helpers';
+import { errorHandler } from '@/middleware/error.middleware';
 
 describe('FMS RBAC Security Tests', () => {
   let app: express.Application;
@@ -18,6 +19,7 @@ describe('FMS RBAC Security Tests', () => {
     app = express();
     app.use(express.json());
     app.use('/api/v1/fms', fmsRouter);
+    app.use(errorHandler); // Add error handler middleware
 
     testData = createMockTestData();
   });
@@ -67,29 +69,15 @@ describe('FMS RBAC Security Tests', () => {
         expect([200, 201, 409]).toContain(response.status);
       });
 
-      it('should allow FACILITY_ADMIN to create FMS config for their facility', async () => {
+      it('should deny FACILITY_ADMIN from creating FMS config (admin-only operation)', async () => {
         const response = await request(app)
           .post('/api/v1/fms/config')
           .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
           .send(validConfig);
 
-        expect([200, 201, 409]).toContain(response.status);
-      });
-
-      it('should deny FACILITY_ADMIN from creating FMS config for other facilities', async () => {
-        const otherFacilityConfig = {
-          ...validConfig,
-          facility_id: '550e8400-e29b-41d4-a716-446655440002' // facility-2
-        };
-
-        const response = await request(app)
-          .post('/api/v1/fms/config')
-          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-          .send(otherFacilityConfig);
-
         expect(response.status).toBe(403);
         expect(response.body).toHaveProperty('success', false);
-        expect(response.body.message).toContain('Access denied');
+        expect(response.body.message).toContain('Insufficient permissions');
       });
 
       it('should deny TENANT from creating FMS config', async () => {

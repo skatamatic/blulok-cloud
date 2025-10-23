@@ -1,10 +1,9 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { BatteryStatusWidget } from '@/components/Widget/BatteryStatusWidget';
-import { AuthProvider } from '@/contexts/AuthContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
-import { mockApiService, createMockUnit } from '@/__tests__/utils/test-utils';
+import { createMockUnit } from '@/__tests__/utils/test-utils';
 
 // Mock the WebSocket context
 const mockSubscribe = jest.fn();

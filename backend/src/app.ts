@@ -21,6 +21,9 @@ import accessHistoryRouter from '@/routes/access-history.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 import { fmsRouter } from '@/routes/fms.routes';
 import { devRouter } from '@/routes/dev.routes';
+import { systemSettingsRouter } from '@/routes/system-settings.routes';
+import { userDevicesRouter } from '@/routes/user-devices.routes';
+import commandsRouter from '@/routes/commands.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -47,7 +50,7 @@ export function createApp(): Application {
     origin: config.corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform'],
   }));
 
   // Rate limiting
@@ -74,6 +77,7 @@ export function createApp(): Application {
   // API routes
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/users', usersRouter);
+  app.use('/api/v1/user-devices', userDevicesRouter);
   app.use('/api/v1/user-facilities', userFacilitiesRouter);
   app.use('/api/v1/widget-layouts', widgetLayoutsRouter);
   app.use('/api/v1/facilities', facilitiesRouter);
@@ -83,7 +87,9 @@ export function createApp(): Application {
     app.use('/api/v1/fms', fmsRouter);
     app.use('/api/v1/access-history', accessHistoryRouter);
     app.use('/api/v1/key-sharing', keySharingRouter);
+    app.use('/api/v1/commands', commandsRouter);
     app.use('/api/v1/dev', authenticateToken, devRouter);
+  app.use('/api/v1/system-settings', systemSettingsRouter);
 
   // Error handling middleware (must be last)
   app.use(errorHandler);

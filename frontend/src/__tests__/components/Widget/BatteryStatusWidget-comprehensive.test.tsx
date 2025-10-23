@@ -1,9 +1,9 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { BatteryStatusWidget } from '@/components/Widget/BatteryStatusWidget';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
-import { mockApiService, createMockUnit } from '@/__tests__/utils/test-utils';
+import { createMockUnit } from '@/__tests__/utils/test-utils';
 
 // Mock the WebSocket context
 const mockSubscribe = jest.fn();
@@ -52,14 +52,6 @@ const renderWithProviders = (component: React.ReactElement) => {
 };
 
 describe('BatteryStatusWidget Comprehensive Tests', () => {
-  const mockUser = {
-    id: 'user-1',
-    email: 'test@example.com',
-    firstName: 'Test',
-    lastName: 'User',
-    role: 'admin' as const,
-    facilities: []
-  };
 
   const mockUnits = [
     createMockUnit({

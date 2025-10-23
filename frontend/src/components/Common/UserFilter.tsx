@@ -17,13 +17,17 @@ interface UserFilterProps {
   onChange: (userId: string) => void;
   placeholder?: string;
   className?: string;
+  facilityId?: string; // Optional facility filter for scoping
+  roleFilter?: string; // Optional role filter (e.g., 'tenant')
 }
 
 export const UserFilter: React.FC<UserFilterProps> = ({
   value,
   onChange,
   placeholder = 'Search users...',
-  className = ''
+  className = '',
+  facilityId,
+  roleFilter
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -68,11 +72,23 @@ export const UserFilter: React.FC<UserFilterProps> = ({
     try {
       setLoading(true);
       
-      const response = await apiService.getUsers({
+      const params: any = {
         search: search || undefined,
         sortBy: 'firstName',
         sortOrder: 'asc'
-      });
+      };
+
+      // Add facility filter if provided
+      if (facilityId) {
+        params.facility = facilityId;
+      }
+
+      // Add role filter if provided
+      if (roleFilter) {
+        params.role = roleFilter;
+      }
+      
+      const response = await apiService.getUsers(params);
       
       if (response.success) {
         const newUsers = response.users || [];
@@ -150,7 +166,8 @@ export const UserFilter: React.FC<UserFilterProps> = ({
       {isOpen && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 mt-1 w-full max-w-xs bg-white dark:bg-gray-800 shadow-lg max-h-48 rounded-md py-1 text-sm ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none border border-gray-200 dark:border-gray-700"
+          className="absolute z-[100] mt-1 w-full bg-white dark:bg-gray-800 shadow-xl max-h-60 rounded-lg py-1 text-sm ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none border border-gray-200 dark:border-gray-700"
+          style={{ minWidth: '300px' }}
         >
           {loading ? (
             <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">

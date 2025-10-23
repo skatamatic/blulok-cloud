@@ -558,21 +558,42 @@ jest.mock('../models/device.model', () => ({
 jest.mock('../models/gateway.model', () => ({
   GatewayModel: createModelMock({
     findAll: jest.fn().mockResolvedValue([
-      { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online' },
-      { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline' }
+      { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
+      { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
     ]),
     findById: jest.fn().mockImplementation((id: string) => {
       const gateways = [
-        { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online' },
-        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline' }
+        { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
+        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
       ];
+
+      // Handle dynamically created gateways
+      if (id === 'gateway-new') {
+        return Promise.resolve({
+          id: 'gateway-new',
+          facility_id: 'facility-1',
+          name: 'Incomplete HTTP Gateway',
+          status: 'offline',
+          gateway_type: 'http'
+          // Note: no base_url, so this should fail validation
+        });
+      }
+
       return Promise.resolve(gateways.find(g => g.id === id) || null);
     }),
-    create: jest.fn().mockResolvedValue({ id: 'gateway-new', facility_id: 'facility-1', name: 'New Gateway', status: 'online' }),
+    create: jest.fn().mockImplementation((data: any) => {
+      return Promise.resolve({
+        id: 'gateway-new',
+        facility_id: data.facility_id || 'facility-1',
+        name: data.name || 'New Gateway',
+        status: data.status || 'online',
+        gateway_type: data.gateway_type || 'simulated'
+      });
+    }),
     update: jest.fn().mockImplementation((id: string, data: any) => {
       const gateways = [
-        { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online' },
-        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline' }
+        { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
+        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
       ];
       const gateway = gateways.find(g => g.id === id);
       return Promise.resolve(gateway ? { ...gateway, ...data } : null);
@@ -619,7 +640,17 @@ jest.mock('../models/unit-assignment.model', () => ({
     findById: jest.fn().mockResolvedValue(null),
     findByUnitId: jest.fn().mockResolvedValue([]),
     findByTenantId: jest.fn().mockResolvedValue([]),
-    findByUnitAndTenant: jest.fn().mockResolvedValue(null),
+    findByUnitAndTenant: jest.fn().mockImplementation((unitId: string, tenantId: string) => 
+      Promise.resolve({
+        id: 'assignment-existing',
+        unit_id: unitId,
+        tenant_id: tenantId,
+        access_type: 'full',
+        is_primary: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+    ),
     update: jest.fn().mockResolvedValue(null),
     delete: jest.fn().mockResolvedValue(true),
     deleteByUnitAndTenant: jest.fn().mockResolvedValue(true),

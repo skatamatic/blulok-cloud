@@ -1,4 +1,5 @@
 import { DatabaseService } from '../services/database.service';
+import { DeviceEventService } from '../services/device-event.service';
 
 export interface AccessControlDevice {
   id: string;
@@ -58,7 +59,7 @@ export interface CreateAccessControlDeviceData {
 
 export interface CreateBluLokDeviceData {
   gateway_id: string;
-  unit_id: string;
+  unit_id?: string; // Optional - devices can exist without unit association
   device_serial: string;
   firmware_version?: string;
   device_settings?: Record<string, any>;
@@ -80,6 +81,7 @@ export interface DeviceFilters {
 
 export class DeviceModel {
   private db = DatabaseService.getInstance();
+  private eventService = DeviceEventService.getInstance();
 
   async findAccessControlDevices(filters: DeviceFilters = {}): Promise<AccessControlDevice[]> {
     const knex = this.db.connection;
@@ -248,21 +250,98 @@ export class DeviceModel {
     const knex = this.db.connection;
     const table = deviceType === 'access_control' ? 'access_control_devices' : 'blulok_devices';
     const statusField = deviceType === 'access_control' ? 'status' : 'device_status';
-    
+
+    // Get current status before update
+    const currentDevice = await knex(table).where('id', deviceId).select(statusField, 'gateway_id').first();
+    const oldStatus = currentDevice ? currentDevice[statusField] : null;
+
+    // Update the device
     await knex(table).where('id', deviceId).update({
       [statusField]: status,
       last_seen: new Date(),
       updated_at: new Date()
     });
+
+    // Emit event if status changed
+    if (oldStatus !== status && currentDevice) {
+      this.eventService.emitDeviceStatusChanged({
+        deviceId,
+        deviceType,
+        oldStatus: oldStatus || 'unknown',
+        newStatus: status,
+        gatewayId: currentDevice.gateway_id
+      });
+    }
   }
 
   async updateLockStatus(deviceId: string, lockStatus: 'locked' | 'unlocked' | 'error'): Promise<void> {
     const knex = this.db.connection;
+
+    // Get current lock status and unit info before update
+    const currentDevice = await knex('blulok_devices')
+      .where('id', deviceId)
+      .select('lock_status', 'gateway_id', 'unit_id')
+      .first();
+    const oldStatus = currentDevice ? currentDevice.lock_status : null;
+
+    // Update the device
     await knex('blulok_devices').where('id', deviceId).update({
       lock_status: lockStatus,
       last_activity: new Date(),
       updated_at: new Date()
     });
+
+    // Emit event if status changed
+    if (oldStatus !== lockStatus && currentDevice) {
+      this.eventService.emitLockStatusChanged({
+        deviceId,
+        oldStatus: oldStatus || 'unknown',
+        newStatus: lockStatus,
+        gatewayId: currentDevice.gateway_id,
+        unitId: currentDevice.unit_id
+      });
+    }
+  }
+
+  /**
+   * Delete a BluLok device
+   */
+  async deleteBluLokDevice(deviceId: string): Promise<void> {
+    const knex = this.db.connection;
+    await knex('blulok_devices').where('id', deviceId).del();
+  }
+
+  /**
+   * Delete an access control device
+   */
+  async deleteAccessControlDevice(deviceId: string): Promise<void> {
+    const knex = this.db.connection;
+    await knex('access_control_devices').where('id', deviceId).del();
+  }
+
+  /**
+   * Update battery level for a BluLok device
+   */
+  async updateBatteryLevel(deviceId: string, batteryLevel: number): Promise<void> {
+    const knex = this.db.connection;
+
+    // Get current battery level before update
+    const currentDevice = await knex('blulok_devices')
+      .where('id', deviceId)
+      .select('battery_level')
+      .first();
+    const oldBatteryLevel = currentDevice ? currentDevice.battery_level : null;
+
+    // Update battery level
+    await knex('blulok_devices').where('id', deviceId).update({
+      battery_level: batteryLevel,
+      updated_at: new Date()
+    });
+
+    // TODO: Emit battery level changed event if needed
+    if (oldBatteryLevel !== batteryLevel) {
+      console.log(`Updated battery level for device ${deviceId}: ${oldBatteryLevel}% -> ${batteryLevel}%`);
+    }
   }
 
   async getFacilityDeviceHierarchy(facilityId: string): Promise<{

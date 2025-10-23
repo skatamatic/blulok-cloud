@@ -136,6 +136,7 @@ describe('WebSocket Battery Integration Tests', () => {
       // Mock the handleSubscription method to call sendInitialData
       jest.spyOn(batteryManager, 'handleSubscription').mockImplementation(async (ws, _message, client) => {
         await (batteryManager as any).sendInitialData(ws, 'test-sub', client);
+        return true;
       });
 
       await batteryManager.handleSubscription(mockWs, {

@@ -158,6 +158,16 @@ export class UnitsService {
         return;
       }
 
+      // Check shared access limit (max 4 non-primary assignments)
+      if (!options.isPrimary) {
+        const assignments = await this.unitAssignmentModel.findByUnitId(unitId);
+        const sharedCount = assignments.filter(a => !a.is_primary).length;
+        
+        if (sharedCount >= 4) {
+          throw new Error('Maximum shared access limit reached (4 tenants). Remove a tenant to add another.');
+        }
+      }
+
       // Create assignment
       const assignmentData: any = {
         unit_id: unitId,

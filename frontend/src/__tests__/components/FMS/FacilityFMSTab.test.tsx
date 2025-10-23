@@ -7,6 +7,9 @@ import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import { fmsService } from '@/services/fms.service';
 import { FMSProviderType, FMSSyncStatus } from '@/types/fms.types';
 import { ToastProvider } from '@/contexts/ToastContext';
+import ToastContainer from '@/components/Toast/ToastContainer';
+import { FMSSyncProvider } from '@/contexts/FMSSyncContext';
+import { WebSocketProvider } from '@/contexts/WebSocketContext';
 
 // Mock the FMS service
 jest.mock('@/services/fms.service');
@@ -24,11 +27,16 @@ describe('FacilityFMSTab', () => {
     mockFmsService.getSyncHistory.mockResolvedValue({ logs: [], total: 0 });
   });
 
-  const renderComponent = (isDevMode = false) => {
+  const renderComponent = (isDevMode = false, canEditFMS = true) => {
     return render(
-      <ToastProvider>
-        <FacilityFMSTab facilityId={facilityId} isDevMode={isDevMode} />
-      </ToastProvider>
+      <WebSocketProvider>
+        <ToastProvider>
+          <ToastContainer />
+          <FMSSyncProvider>
+            <FacilityFMSTab facilityId={facilityId} isDevMode={isDevMode} canEditFMS={canEditFMS} />
+          </FMSSyncProvider>
+        </ToastProvider>
+      </WebSocketProvider>
     );
   };
 
@@ -67,7 +75,7 @@ describe('FacilityFMSTab', () => {
       // Configuration should auto-expand when no config exists
       await waitFor(() => {
         expect(screen.getByText('Select FMS Provider')).toBeInTheDocument();
-        expect(screen.getByText('Collapse')).toBeInTheDocument();
+        expect(screen.getByLabelText('Collapse configuration')).toBeInTheDocument();
       });
     });
 
@@ -251,8 +259,8 @@ describe('FacilityFMSTab', () => {
       renderComponent();
       
       // Expand configuration
-      await waitFor(() => screen.getByText('Expand'));
-      fireEvent.click(screen.getByText('Expand'));
+      await waitFor(() => screen.getByLabelText('Expand configuration'));
+      fireEvent.click(screen.getByLabelText('Expand configuration'));
 
       await waitFor(() => screen.getByText('Test Connection'));
       
@@ -297,6 +305,95 @@ describe('FacilityFMSTab', () => {
         const table = screen.getByRole('table');
         const changesCell = table.querySelector('td:nth-child(3)'); // Changes column
         expect(changesCell).toHaveTextContent('5');
+      });
+    });
+  });
+
+  describe('Read-only mode for facility managers', () => {
+    it('should show read-only badge and hide expand/collapse button when canEditFMS is false', async () => {
+      const mockConfig = {
+        id: 'config-1',
+        facility_id: facilityId,
+        provider_type: FMSProviderType.SIMULATED,
+        config: {} as any,
+        is_enabled: true,
+        last_sync_at: new Date().toISOString(),
+        last_sync_status: FMSSyncStatus.COMPLETED,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      mockFmsService.getConfig.mockResolvedValue(mockConfig);
+      mockFmsService.getSyncHistory.mockResolvedValue({ logs: [], total: 0 });
+
+      renderComponent(false, false); // isDevMode=false, canEditFMS=false
+
+      await waitFor(() => {
+        expect(screen.getByText('FMS Configuration')).toBeInTheDocument();
+        expect(screen.getByText('Read Only')).toBeInTheDocument();
+        expect(screen.queryByLabelText('Expand configuration')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Collapse configuration')).not.toBeInTheDocument();
+      });
+    });
+
+    it('should show readonly configuration summary in expanded view', async () => {
+      const mockConfig = {
+        id: 'config-1',
+        facility_id: facilityId,
+        provider_type: FMSProviderType.SIMULATED,
+        config: {} as any,
+        is_enabled: true,
+        last_sync_at: new Date().toISOString(),
+        last_sync_status: FMSSyncStatus.COMPLETED,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      mockFmsService.getConfig.mockResolvedValue(mockConfig);
+      mockFmsService.getSyncHistory.mockResolvedValue({ logs: [], total: 0 });
+
+      renderComponent(false, false); // canEditFMS=false
+
+      await waitFor(() => {
+        expect(screen.getByText('FMS Configuration')).toBeInTheDocument();
+        expect(screen.getByText('Simulated Provider')).toBeInTheDocument();
+        expect(screen.getAllByText('Enabled').length).toBeGreaterThan(0);
+        expect(screen.getByText('Configuration managed by administrators')).toBeInTheDocument();
+        // No expand/collapse button should be present
+        expect(screen.queryByLabelText('Expand configuration')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Collapse configuration')).not.toBeInTheDocument();
+      });
+    });
+
+    it('should still allow testing connection in readonly mode', async () => {
+      const mockConfig = {
+        id: 'config-1',
+        facility_id: facilityId,
+        provider_type: FMSProviderType.SIMULATED,
+        config: {} as any,
+        is_enabled: true,
+        last_sync_at: new Date().toISOString(),
+        last_sync_status: FMSSyncStatus.COMPLETED,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      mockFmsService.getConfig.mockResolvedValue(mockConfig);
+      mockFmsService.getSyncHistory.mockResolvedValue({ logs: [], total: 0 });
+      mockFmsService.testConnection.mockResolvedValue(true);
+
+      renderComponent(false, false); // canEditFMS=false
+
+      await waitFor(() => {
+        const testButton = screen.getByText('Test Connection');
+        expect(testButton).toBeInTheDocument();
+        expect(testButton).not.toBeDisabled();
+      });
+
+      fireEvent.click(screen.getByText('Test Connection'));
+
+      await waitFor(() => {
+        expect(mockFmsService.testConnection).toHaveBeenCalledWith('config-1');
       });
     });
   });

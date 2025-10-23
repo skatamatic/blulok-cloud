@@ -28,6 +28,55 @@ export class FMSEntityMappingModel {
   }
 
   /**
+   * Ensure mapping exists and is consistent. If a mapping exists for the external_id
+   * but points to a different internal_id, throws an error to let callers create
+   * an explicit repair change instead of silently mutating.
+   */
+  async ensureMapping(data: {
+    facility_id: string;
+    entity_type: 'user' | 'unit';
+    external_id: string;
+    internal_id: string;
+    provider_type: string;
+    metadata?: any;
+  }): Promise<FMSEntityMapping> {
+    const existing = await this.findByExternalId(
+      data.facility_id,
+      data.entity_type,
+      data.external_id
+    );
+
+    if (!existing) {
+      return await this.create(data);
+    }
+
+    if (existing.internal_id !== data.internal_id) {
+      // Conflict: external already mapped to a different internal
+      const err = new Error('FMS mapping conflict: external mapped to different internal');
+      (err as any).code = 'FMS_MAPPING_CONFLICT';
+      (err as any).existing_internal_id = existing.internal_id;
+      (err as any).expected_internal_id = data.internal_id;
+      throw err;
+    }
+
+    // Already correct; optionally update metadata/provider
+    if (data.metadata || data.provider_type !== existing.provider_type) {
+      await this.db('fms_entity_mappings')
+        .where({ id: existing.id })
+        .update({
+          provider_type: data.provider_type,
+          metadata: data.metadata ? JSON.stringify(data.metadata) : existing.metadata,
+          updated_at: this.db.fn.now(),
+        });
+
+      const updated = await this.findByExternalId(data.facility_id, data.entity_type, data.external_id);
+      if (updated) return updated;
+    }
+
+    return existing;
+  }
+
+  /**
    * Create a new mapping
    */
   async create(data: {
@@ -134,6 +183,20 @@ export class FMSEntityMappingModel {
       return mappings.map(m => this.mapToModel(m));
     } catch (error) {
       logger.error('Error finding FMS entity mappings:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update the internal_id of an existing mapping
+   */
+  async updateInternalId(id: string, newInternalId: string): Promise<void> {
+    try {
+      await this.db('fms_entity_mappings')
+        .where({ id })
+        .update({ internal_id: newInternalId, updated_at: this.db.fn.now() });
+    } catch (error) {
+      logger.error('Error updating FMS entity mapping internal_id:', error);
       throw error;
     }
   }

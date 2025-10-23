@@ -11,10 +11,7 @@ import {
   FMSSyncResult,
   FMSChange,
   FMSSyncLog,
-  FMSConfigResponse,
-  FMSSyncResponse,
-  FMSChangesResponse,
-  FMSTestConnectionResponse,
+  FMSChangeApplicationResult,
 } from '@/types/fms.types';
 
 class FMSService {
@@ -140,6 +137,14 @@ class FMSService {
   }
 
   /**
+   * Cancel an active sync
+   */
+  async cancelSync(facilityId: string): Promise<boolean> {
+    const result = await apiService.post(`/fms/sync/${facilityId}/cancel`);
+    return result.cancelled || false;
+  }
+
+  /**
    * Review changes (accept or reject)
    */
   async reviewChanges(
@@ -160,7 +165,7 @@ class FMSService {
   async applyChanges(
     syncLogId: string,
     changeIds: string[]
-  ): Promise<{ changesApplied: number; changesFailed: number; errors: string[] }> {
+  ): Promise<FMSChangeApplicationResult> {
     const data = await apiService.post('/fms/changes/apply', {
       syncLogId,
       changeIds,

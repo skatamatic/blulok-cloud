@@ -373,18 +373,18 @@ export default function DashboardPage() {
         const response = await apiService.getWidgetLayouts();
         // Raw API response received
         
-        // Check if we have actual saved layouts (not just empty response)
-        if (response.layouts && response.layouts.length > 0 && !response.isDefault) {
-          // Loading from API - response received
-          // Convert saved layouts to grid format
-          const savedLayouts: { [key: string]: WidgetLayout[] } = {
+        // Check if we have layouts from API (either saved or defaults)
+        if (response.layouts && response.layouts.length > 0) {
+          // Loading from API - response received (could be saved or default layouts)
+          // Convert layouts to grid format
+          const loadedLayouts: { [key: string]: WidgetLayout[] } = {
             lg: [],
             md: [],
             sm: [],
           };
 
           const newWidgetInstances: WidgetInstance[] = [];
-          
+
           for (const widget of response.layouts) {
             const layoutItem = {
               i: widget.widgetId,
@@ -393,19 +393,19 @@ export default function DashboardPage() {
               w: widget.layoutConfig.position.w,
               h: widget.layoutConfig.position.h,
             };
-            
+
             // Determine widget size from grid dimensions
             const widgetSize = getWidgetSizeFromGrid(layoutItem.w, layoutItem.h);
-            
+
             // Find the corresponding widget instance or create a new one
             let widgetInstance = widgetInstances.find(w => w.id === widget.widgetId);
-            
+
             if (!widgetInstance) {
               // Create a new widget instance for widgets that don't exist in defaults
               // Map backend widget type to frontend widget type
               const backendWidgetType = widget.widgetType || 'facilities';
               let frontendWidgetType: string;
-              
+
               // Handle special cases for widget type mapping
               if (backendWidgetType === 'syncfms') {
                 frontendWidgetType = 'sync-fms';
@@ -445,15 +445,15 @@ export default function DashboardPage() {
                   frontendWidgetType = `stats-${backendWidgetType}`;
                 }
               }
-              
+
               const widgetTypeConfig = getWidgetType(frontendWidgetType);
-              
+
               // Skip widgets with unknown types to prevent errors
               if (!widgetTypeConfig) {
                 console.warn(`Skipping widget ${widget.widgetId} with unknown type: ${frontendWidgetType}`);
                 continue;
               }
-              
+
               widgetInstance = {
                 id: widget.widgetId,
                 type: frontendWidgetType,
@@ -461,7 +461,7 @@ export default function DashboardPage() {
                 size: widgetSize,
                 config: {}
               };
-              
+
             } else {
               // Update existing widget with correct size
               widgetInstance = {
@@ -469,32 +469,31 @@ export default function DashboardPage() {
                 size: widgetSize
               };
             }
-            
+
             newWidgetInstances.push(widgetInstance);
-            
-            savedLayouts.lg.push(layoutItem);
+
+            loadedLayouts.lg.push(layoutItem);
             // Generate responsive layouts (simplified for now)
-            savedLayouts.md.push({ ...layoutItem, w: Math.min(layoutItem.w, 10) });
-            savedLayouts.sm.push({ ...layoutItem, w: 6, x: 0, y: widget.displayOrder * 2 });
+            loadedLayouts.md.push({ ...layoutItem, w: Math.min(layoutItem.w, 10) });
+            loadedLayouts.sm.push({ ...layoutItem, w: 6, x: 0, y: widget.displayOrder * 2 });
           }
 
-          // Always apply API data if it's available and not default
-          // Applying API layouts
-          setLayouts(savedLayouts);
+          // Apply API layouts (whether saved or defaults)
+          setLayouts(loadedLayouts);
           if (newWidgetInstances.length > 0) {
             setWidgetInstances(newWidgetInstances);
           }
           // Sync all widget sizes with the loaded layouts
-          syncWidgetSizesFromLayouts(savedLayouts);
+          syncWidgetSizesFromLayouts(loadedLayouts);
           // Also save to window storage for next time
           try {
-            window.localStorage.setItem('blulok-widget-layouts', JSON.stringify(savedLayouts));
+            window.localStorage.setItem('blulok-widget-layouts', JSON.stringify(loadedLayouts));
             window.localStorage.setItem('blulok-widget-instances', JSON.stringify(newWidgetInstances));
           } catch (error) {
             console.warn('Failed to save API layouts to window storage:', error);
           }
         } else {
-          // Apply the default layout explicitly
+          // Fallback to hardcoded defaults if API returns no layouts
           const defaultLayouts = createDefaultLayout();
           setLayouts(defaultLayouts);
           // Sync widget sizes with default layouts

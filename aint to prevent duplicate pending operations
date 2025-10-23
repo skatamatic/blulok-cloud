@@ -1,0 +1,165 @@
+warning: in the working copy of 'backend/package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/__tests__/routes/gateway.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/__tests__/routes/units-update.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/__tests__/routes/units.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/__tests__/security/fms-rbac.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/__tests__/setup-mocks.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/app.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/database/seeds/003_default_widget_templates.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/index.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/device.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/facility.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/fms-change.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/gateway.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/unit-assignment.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/unit.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/user-facility-association.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/models/user.model.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/routes/auth.routes.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/routes/devices.routes.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/routes/fms.routes.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/routes/gateway.routes.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/routes/units.routes.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/routes/users.routes.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/auth.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/subscriptions/base-subscription-manager.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/subscriptions/subscription-registry.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/units.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/websocket.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/types/fms.types.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/App.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/__tests__/components/FMS/FacilityFMSTab.test.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/__tests__/components/FMS/ProviderConfigForm.test.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/__tests__/components/Units/AddUnitModal.test.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/__tests__/components/Widget/BatteryStatusWidget-comprehensive.test.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/__tests__/pages/UnitsManagementPage.test.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/__tests__/services/api.service.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Common/UnitFilter.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Common/UserFilter.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/FMS/FMSChangeReviewModal.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/FMS/FMSSyncProgressModal.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/FMS/FacilityFMSTab.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/FMS/ProviderConfigForm.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Units/AddUnitModal.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Widget/BatteryStatusWidget.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Widget/CompactWidget.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Widget/SyncFMSWidget.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Widget/UnlockedUnitsWidget.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/Widget/Widget.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/config/fms-providers.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/contexts/WebSocketContext.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/index.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/AccessHistoryPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/DashboardPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/DevicesPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/FacilitiesPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/FacilityDetailsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/FacilitySiteMapPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/SettingsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/SimpleSiteMapPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/UnitDetailsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/UnitsManagementPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/UnitsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/UserManagementPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/services/api.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/services/fms.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/services/websocket.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/services/widget-subscription-manager.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/test/setup.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/types/facility.types.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/types/fms.types.ts', LF will be replaced by CRLF the next time Git touches it
+backend/package-lock.json
+backend/package.json
+backend/src/__tests__/routes/gateway.test.ts
+backend/src/__tests__/routes/units-update.test.ts
+backend/src/__tests__/routes/units.test.ts
+backend/src/__tests__/routes/users.test.ts
+backend/src/__tests__/security/fms-rbac.test.ts
+backend/src/__tests__/services/fms-sync-subscription.test.ts
+backend/src/__tests__/services/fms.service.test.ts
+backend/src/__tests__/services/websocket-battery-integration.test.ts
+backend/src/__tests__/setup-mocks.ts
+backend/src/app.ts
+backend/src/database/seeds/003_default_widget_templates.ts
+backend/src/index.ts
+backend/src/models/device.model.ts
+backend/src/models/facility.model.ts
+backend/src/models/fms-change.model.ts
+backend/src/models/fms-entity-mapping.model.ts
+backend/src/models/gateway.model.ts
+backend/src/models/unit-assignment.model.ts
+backend/src/models/unit.model.ts
+backend/src/models/user-facility-association.model.ts
+backend/src/models/user.model.ts
+backend/src/routes/auth.routes.ts
+backend/src/routes/devices.routes.ts
+backend/src/routes/fms.routes.ts
+backend/src/routes/gateway.routes.ts
+backend/src/routes/units.routes.ts
+backend/src/routes/users.routes.ts
+backend/src/services/auth.service.ts
+backend/src/services/fms/base-fms-provider.ts
+backend/src/services/fms/fms.service.ts
+backend/src/services/subscriptions/base-subscription-manager.ts
+backend/src/services/subscriptions/fms-sync-subscription-manager.ts
+backend/src/services/subscriptions/subscription-registry.ts
+backend/src/services/units.service.ts
+backend/src/services/websocket.service.ts
+backend/src/test/database.ts
+backend/src/test/integration-server.ts
+backend/src/test/setup.ts
+backend/src/tests/services/auth-service-rbac.test.ts
+backend/src/tests/services/general-stats.service.test.ts
+backend/src/tests/services/logger-interceptor-security.test.ts
+backend/src/tests/services/model-hooks.service.test.ts
+backend/src/tests/services/subscriptions/dashboard-layout-subscription-manager.test.ts
+backend/src/tests/services/subscriptions/general-stats-subscription-manager.test.ts
+backend/src/tests/services/subscriptions/subscription-registry.test.ts
+backend/src/tests/services/websocket-security.test.ts
+backend/src/types/fms.types.ts
+frontend/package-lock.json
+frontend/package.json
+frontend/src/App.tsx
+frontend/src/__tests__/components/FMS/FacilityFMSTab.test.tsx
+frontend/src/__tests__/components/FMS/ProviderConfigForm.test.tsx
+frontend/src/__tests__/components/Units/AddUnitModal.test.tsx
+frontend/src/__tests__/components/Widget/BatteryStatusWidget-comprehensive.test.tsx
+frontend/src/__tests__/components/Widget/BatteryStatusWidget.test.tsx
+frontend/src/__tests__/pages/UnitsManagementPage.test.tsx
+frontend/src/__tests__/services/api.service.test.ts
+frontend/src/components/Common/UnitFilter.tsx
+frontend/src/components/Common/UserFilter.tsx
+frontend/src/components/FMS/FMSChangeReviewModal.tsx
+frontend/src/components/FMS/FMSSyncProgressModal.tsx
+frontend/src/components/FMS/FacilityFMSTab.tsx
+frontend/src/components/FMS/ProviderConfigForm.tsx
+frontend/src/components/Units/AddUnitModal.tsx
+frontend/src/components/Widget/BatteryStatusWidget.tsx
+frontend/src/components/Widget/CompactWidget.tsx
+frontend/src/components/Widget/SyncFMSWidget.tsx
+frontend/src/components/Widget/UnlockedUnitsWidget.tsx
+frontend/src/components/Widget/Widget.tsx
+frontend/src/config/fms-providers.ts
+frontend/src/contexts/WebSocketContext.tsx
+frontend/src/index.css
+frontend/src/pages/AccessHistoryPage.tsx
+frontend/src/pages/DashboardPage.tsx
+frontend/src/pages/DevicesPage.tsx
+frontend/src/pages/FacilitiesPage.tsx
+frontend/src/pages/FacilityDetailsPage.tsx
+frontend/src/pages/FacilitySiteMapPage.tsx
+frontend/src/pages/SettingsPage.tsx
+frontend/src/pages/SimpleSiteMapPage.tsx
+frontend/src/pages/UnitDetailsPage.tsx
+frontend/src/pages/UnitsManagementPage.tsx
+frontend/src/pages/UnitsPage.tsx
+frontend/src/pages/UserManagementPage.tsx
+frontend/src/services/api.service.ts
+frontend/src/services/fms.service.ts
+frontend/src/services/websocket.service.ts
+frontend/src/services/widget-subscription-manager.ts
+frontend/src/test/setup.ts
+fr

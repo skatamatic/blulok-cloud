@@ -83,6 +83,8 @@ class ApiService {
     facility?: string;
     sortBy?: string;
     sortOrder?: string;
+    limit?: number;
+    offset?: number;
   }) {
     const response = await this.api.get('/users', { params });
     return response.data;
@@ -110,6 +112,16 @@ class ApiService {
 
   async activateUser(id: string) {
     const response = await this.api.post(`/users/${id}/activate`);
+    return response.data;
+  }
+
+  async getUserDetails(id: string) {
+    const response = await this.api.get(`/users/${id}/details`);
+    return response.data;
+  }
+
+  async deleteUserDevice(deviceId: string) {
+    const response = await this.api.delete(`/user-devices/admin/${deviceId}`);
     return response.data;
   }
 
@@ -179,6 +191,16 @@ class ApiService {
     return response.data;
   }
 
+  async getSystemSettings() {
+    const response = await this.api.get('/system-settings');
+    return response.data;
+  }
+
+  async updateSystemSettings(settings: any) {
+    const response = await this.api.put('/system-settings', settings);
+    return response.data;
+  }
+
   // Facilities Management
   async getFacilities(filters?: any) {
     const response = await this.api.get('/facilities', { params: filters });
@@ -207,6 +229,67 @@ class ApiService {
 
   async createGateway(data: any) {
     const response = await this.api.post('/gateways', data);
+    return response.data;
+  }
+
+  async getGateways(filters?: any) {
+    const response = await this.api.get('/gateways', { params: filters });
+    return response.data;
+  }
+
+  async getGateway(id: string) {
+    const response = await this.api.get(`/gateways/${id}`);
+    return response.data;
+  }
+
+  async updateGateway(id: string, data: any) {
+    const response = await this.api.put(`/gateways/${id}`, data);
+    return response.data;
+  }
+
+  async updateGatewayStatus(id: string, status: string) {
+    const response = await this.api.put(`/gateways/${id}/status`, { status });
+    return response.data;
+  }
+
+  // Command Queue
+  async getCommandQueue(params?: { status?: string; limit?: number; offset?: number }) {
+    const response = await this.api.get('/commands/pending', { params });
+    return response.data;
+  }
+
+  async retryCommand(id: string) {
+    const response = await this.api.post(`/commands/${id}/retry`);
+    return response.data;
+  }
+
+  async cancelCommand(id: string) {
+    const response = await this.api.post(`/commands/${id}/cancel`);
+    return response.data;
+  }
+
+  async requeueDeadCommand(id: string) {
+    const response = await this.api.post(`/commands/${id}/requeue-dead`);
+    return response.data;
+  }
+
+  async getCommandAttempts(id: string) {
+    const response = await this.api.get(`/commands/${id}/attempts`);
+    return response.data;
+  }
+
+  async deleteGateway(id: string) {
+    const response = await this.api.delete(`/gateways/${id}`);
+    return response.data;
+  }
+
+  async testGatewayConnection(id: string) {
+    const response = await this.api.post(`/gateways/${id}/test-connection`);
+    return response.data;
+  }
+
+  async syncGateway(id: string) {
+    const response = await this.api.post(`/gateways/${id}/sync`);
     return response.data;
   }
 

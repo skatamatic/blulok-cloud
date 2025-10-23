@@ -42,18 +42,23 @@ export class UnitAssignmentModel {
       // Generate UUID in JavaScript for MySQL compatibility
       const id = randomUUID();
       
-      await this.db('unit_assignments')
-        .insert({
-          id,
-          unit_id: data.unit_id,
-          tenant_id: data.tenant_id,
-          access_type: data.access_type || 'full',
-          is_primary: data.is_primary ?? true,
-          expires_at: data.expires_at,
-          notes: data.notes,
-          created_at: this.db.fn.now(),
-          updated_at: this.db.fn.now(),
-        });
+      const insertData: any = {
+        id,
+        unit_id: data.unit_id,
+        tenant_id: data.tenant_id,
+        access_type: data.access_type || 'full',
+        is_primary: data.is_primary ?? true,
+        notes: data.notes,
+        created_at: this.db.fn.now(),
+        updated_at: this.db.fn.now(),
+      };
+
+      // Only include expires_at if it's provided and the column exists
+      if (data.expires_at) {
+        insertData.expires_at = data.expires_at;
+      }
+
+      await this.db('unit_assignments').insert(insertData);
 
       // Fetch the created record
       const assignment = await this.db('unit_assignments')

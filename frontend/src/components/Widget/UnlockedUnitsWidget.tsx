@@ -13,7 +13,6 @@ import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
 import { useUnitsData } from '@/hooks/useUnitsData';
-import { navigateAndHighlight } from '@/utils/navigation.utils';
 
 interface UnlockedUnitsWidgetProps {
   id: string;
@@ -90,10 +89,7 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
   }) || [];
 
   const handleUnitClick = async (unitId: string) => {
-    await navigateAndHighlight(navigate, {
-      id: unitId,
-      type: 'unit'
-    });
+    navigate(`/units/${unitId}`);
   };
 
 

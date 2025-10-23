@@ -268,4 +268,224 @@ describe('APIService', () => {
       await expect(apiService.getProfile()).rejects.toThrow('Network Error');
     });
   });
+
+  describe('Gateway Management', () => {
+    describe('createGateway', () => {
+      it('should successfully create a gateway', async () => {
+        const gatewayData = {
+          facility_id: 'facility-1',
+          name: 'Test Gateway',
+          gateway_type: 'http'
+        };
+
+        const mockResponse = {
+          data: {
+            success: true,
+            gateway: {
+              id: 'gateway-1',
+              ...gatewayData
+            }
+          }
+        };
+
+        mockAxios.post.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.createGateway(gatewayData);
+
+        expect(mockAxios.post).toHaveBeenCalledWith('/gateways', gatewayData);
+        expect(result).toEqual(mockResponse.data);
+      });
+
+      it('should handle creation errors', async () => {
+        const error = new Error('Creation failed');
+        mockAxios.post.mockRejectedValueOnce(error);
+
+        await expect(apiService.createGateway({})).rejects.toThrow('Creation failed');
+      });
+    });
+
+    describe('getGateways', () => {
+      it('should successfully get gateways with filters', async () => {
+        const filters = { facility_id: 'facility-1' };
+        const mockResponse = {
+          data: {
+            success: true,
+            gateways: [
+              {
+                id: 'gateway-1',
+                name: 'Test Gateway',
+                facility_id: 'facility-1'
+              }
+            ]
+          }
+        };
+
+        mockAxios.get.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.getGateways(filters);
+
+        expect(mockAxios.get).toHaveBeenCalledWith('/gateways', { params: filters });
+        expect(result).toEqual(mockResponse.data);
+      });
+
+      it('should get all gateways without filters', async () => {
+        const mockResponse = {
+          data: {
+            success: true,
+            gateways: []
+          }
+        };
+
+        mockAxios.get.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.getGateways();
+
+        expect(mockAxios.get).toHaveBeenCalledWith('/gateways', { params: undefined });
+        expect(result).toEqual(mockResponse.data);
+      });
+    });
+
+    describe('getGateway', () => {
+      it('should successfully get a specific gateway', async () => {
+        const gatewayId = 'gateway-1';
+        const mockResponse = {
+          data: {
+            success: true,
+            gateway: {
+              id: gatewayId,
+              name: 'Test Gateway'
+            }
+          }
+        };
+
+        mockAxios.get.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.getGateway(gatewayId);
+
+        expect(mockAxios.get).toHaveBeenCalledWith(`/gateways/${gatewayId}`);
+        expect(result).toEqual(mockResponse.data);
+      });
+    });
+
+    describe('updateGateway', () => {
+      it('should successfully update a gateway', async () => {
+        const gatewayId = 'gateway-1';
+        const updateData = {
+          name: 'Updated Gateway',
+          gateway_type: 'physical'
+        };
+
+        const mockResponse = {
+          data: {
+            success: true,
+            gateway: {
+              id: gatewayId,
+              ...updateData
+            }
+          }
+        };
+
+        mockAxios.put.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.updateGateway(gatewayId, updateData);
+
+        expect(mockAxios.put).toHaveBeenCalledWith(`/gateways/${gatewayId}`, updateData);
+        expect(result).toEqual(mockResponse.data);
+      });
+    });
+
+    describe('updateGatewayStatus', () => {
+      it('should successfully update gateway status', async () => {
+        const gatewayId = 'gateway-1';
+        const status = 'online';
+
+        const mockResponse = {
+          data: {
+            success: true,
+            message: 'Status updated'
+          }
+        };
+
+        mockAxios.put.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.updateGatewayStatus(gatewayId, status);
+
+        expect(mockAxios.put).toHaveBeenCalledWith(`/gateways/${gatewayId}/status`, { status });
+        expect(result).toEqual(mockResponse.data);
+      });
+    });
+
+    describe('deleteGateway', () => {
+      it('should successfully delete a gateway', async () => {
+        const gatewayId = 'gateway-1';
+        const mockResponse = {
+          data: {
+            success: true,
+            message: 'Gateway deleted'
+          }
+        };
+
+        mockAxios.delete.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.deleteGateway(gatewayId);
+
+        expect(mockAxios.delete).toHaveBeenCalledWith(`/gateways/${gatewayId}`);
+        expect(result).toEqual(mockResponse.data);
+      });
+    });
+
+    describe('testGatewayConnection', () => {
+      it('should successfully test gateway connection', async () => {
+        const gatewayId = 'gateway-1';
+        const mockResponse = {
+          data: {
+            success: true,
+            message: 'Connection test successful'
+          }
+        };
+
+        mockAxios.post.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.testGatewayConnection(gatewayId);
+
+        expect(mockAxios.post).toHaveBeenCalledWith(`/gateways/${gatewayId}/test-connection`);
+        expect(result).toEqual(mockResponse.data);
+      });
+
+      it('should handle connection test failures', async () => {
+        const gatewayId = 'gateway-1';
+        const error = new Error('Connection failed');
+        mockAxios.post.mockRejectedValueOnce(error);
+
+        await expect(apiService.testGatewayConnection(gatewayId)).rejects.toThrow('Connection failed');
+      });
+    });
+
+    describe('syncGateway', () => {
+      it('should successfully sync gateway', async () => {
+        const gatewayId = 'gateway-1';
+        const mockResponse = {
+          data: {
+            success: true,
+            message: 'Sync completed successfully'
+          }
+        };
+
+        mockAxios.post.mockResolvedValueOnce(mockResponse);
+
+        const result = await apiService.syncGateway(gatewayId);
+
+        expect(mockAxios.post).toHaveBeenCalledWith(`/gateways/${gatewayId}/sync`);
+        expect(result).toEqual(mockResponse.data);
+      });
+
+      it('should handle sync failures', async () => {
+        const gatewayId = 'gateway-1';
+        const error = new Error('Sync failed');
+        mockAxios.post.mockRejectedValueOnce(error);
+
+        await expect(apiService.syncGateway(gatewayId)).rejects.toThrow('Sync failed');
+      });
+    });
+  });
 });

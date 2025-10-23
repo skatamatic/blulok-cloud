@@ -43,14 +43,23 @@ export class UserFacilityAssociationModel extends BaseModel {
   }
 
   public static async addUserToFacility(userId: string, facilityId: string): Promise<UserFacilityAssociation> {
-    const [id] = await this.query().insert({
+    await this.query().insert({
       user_id: userId,
       facility_id: facilityId,
       created_at: this.db.fn.now(),
       updated_at: this.db.fn.now(),
     });
     
-    const association = await this.findById(String(id)) as UserFacilityAssociation;
+    // MySQL does not reliably return inserted IDs for tables without auto-increment;
+    // fetch the created association by natural key instead.
+    const association = await this.query()
+      .where('user_id', userId)
+      .where('facility_id', facilityId)
+      .first() as UserFacilityAssociation | undefined;
+
+    if (!association) {
+      throw new Error('Failed to create user-facility association');
+    }
     
     // Trigger model change hook
     await this.hooks.onUserFacilityAssociationChange('create', association.id, association);

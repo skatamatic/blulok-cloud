@@ -3,11 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlight } from '@/hooks/useHighlight';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
-import { ExpandableCard } from '@/components/Common/ExpandableCard';
-import { 
-  BuildingOfficeIcon, 
-  MapPinIcon, 
-  PhoneIcon, 
+import {
+  BuildingOfficeIcon,
+  MapPinIcon,
+  PhoneIcon,
   EnvelopeIcon,
   PlusIcon,
   FunnelIcon,
@@ -45,7 +44,6 @@ export default function FacilitiesPage() {
   const [totalPages, setTotalPages] = useState(0);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [filters, setFilters] = useState<FacilityFilters>({
     search: '',
     status: '',
@@ -63,10 +61,6 @@ export default function FacilitiesPage() {
     loadFacilities();
   }, [filters, currentPage]);
 
-  // Reset expanded card when view mode changes or facilities are reloaded
-  useEffect(() => {
-    setExpandedCard(null);
-  }, [viewMode, facilities]);
 
   // Handle highlighting when page loads - only when facilities are loaded
   useHighlight(facilities, (facility) => facility.id, (id) => generateHighlightId('facility', id));
@@ -126,9 +120,6 @@ export default function FacilitiesPage() {
     setCurrentPage(page);
   };
 
-  const toggleCardExpansion = (facilityId: string) => {
-    setExpandedCard(prev => prev === facilityId ? null : facilityId);
-  };
 
   const FacilityTableRow = ({ facility }: { facility: Facility }) => {
     const StatusIcon = statusIcons[facility.status];
@@ -190,74 +181,69 @@ export default function FacilitiesPage() {
 
   const FacilityGridCard = ({ facility }: { facility: Facility }) => {
     const StatusIcon = statusIcons[facility.status];
-    const isExpanded = expandedCard === facility.id;
-    
+
     return (
-      <ExpandableCard
-        highlightId={generateHighlightId('facility', facility.id)}
-        isExpanded={isExpanded}
-        onToggle={() => toggleCardExpansion(facility.id)}
-        className="transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
-        children={
-          /* Main content - key information only */
-          <div className="space-y-4">
-            {/* Header with image and basic info */}
-            <div className="flex items-start space-x-4">
-              <div className="flex-shrink-0">
-                {facility.branding_image && facility.image_mime_type ? (
-                  <img 
-                    src={`data:${facility.image_mime_type};base64,${facility.branding_image}`} 
-                    alt={facility.name}
-                    className="h-16 w-16 rounded-lg object-cover"
-                  />
-                ) : (
-                  <div className="h-16 w-16 bg-primary-100 dark:bg-primary-900/20 rounded-lg flex items-center justify-center">
-                    <BuildingOfficeIcon className="h-8 w-8 text-primary-600 dark:text-primary-400" />
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  {facility.name}
-                </h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  {facility.address}
-                </p>
-                <div className="mt-3 flex items-center space-x-4">
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColors[facility.status]}`}>
-                    <StatusIcon className="h-4 w-4 mr-2" />
-                    {facility.status.charAt(0).toUpperCase() + facility.status.slice(1)}
-                  </span>
+      <div
+        id={generateHighlightId('facility', facility.id)}
+        className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden transition-all duration-200 hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
+      >
+        {/* All content - always visible */}
+        <div className="p-6 space-y-4">
+          {/* Header with image and basic info */}
+          <div className="flex items-start space-x-4">
+            <div className="flex-shrink-0">
+              {facility.branding_image && facility.image_mime_type ? (
+                <img
+                  src={`data:${facility.image_mime_type};base64,${facility.branding_image}`}
+                  alt={facility.name}
+                  className="h-16 w-16 rounded-lg object-cover"
+                />
+              ) : (
+                <div className="h-16 w-16 bg-primary-100 dark:bg-primary-900/20 rounded-lg flex items-center justify-center">
+                  <BuildingOfficeIcon className="h-8 w-8 text-primary-600 dark:text-primary-400" />
                 </div>
-              </div>
+              )}
             </div>
-            
-            {/* Quick stats */}
-            <div className="grid grid-cols-3 gap-4 pt-2 border-t border-gray-200 dark:border-gray-700">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {facility.stats?.totalUnits || 0}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Total Units</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {facility.stats?.occupiedUnits || 0}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Occupied</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {facility.stats ? `${facility.stats.devicesOnline}/${facility.stats.devicesTotal}` : '0/0'}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Devices</div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                {facility.name}
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                {facility.address}
+              </p>
+              <div className="mt-3 flex items-center space-x-4">
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColors[facility.status]}`}>
+                  <StatusIcon className="h-4 w-4 mr-2" />
+                  {facility.status.charAt(0).toUpperCase() + facility.status.slice(1)}
+                </span>
               </div>
             </div>
           </div>
-        }
-        expandedContent={
-          /* Expanded content - detailed information */
-          <div className="space-y-4">
+
+          {/* Quick stats */}
+          <div className="grid grid-cols-3 gap-4 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {facility.stats?.totalUnits || 0}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Total Units</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {facility.stats?.occupiedUnits || 0}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Occupied</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {facility.stats ? `${facility.stats.devicesOnline}/${facility.stats.devicesTotal}` : '0/0'}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Devices</div>
+            </div>
+          </div>
+
+          {/* Detailed information - always visible */}
+          <div className="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Contact Information</h4>
@@ -292,7 +278,7 @@ export default function FacilitiesPage() {
                 </div>
               </div>
             </div>
-            
+
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center text-sm text-gray-500 dark:text-gray-400">
@@ -311,8 +297,8 @@ export default function FacilitiesPage() {
               </div>
             </div>
           </div>
-        }
-      />
+        </div>
+      </div>
     );
   };
 

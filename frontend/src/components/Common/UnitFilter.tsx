@@ -297,12 +297,6 @@ export const UnitFilter: React.FC<UnitFilterProps> = ({
                         <div className={`font-medium capitalize ${getStatusColor(unit.status)}`}>
                           {unit.status}
                         </div>
-                        {unit.size_sqft && (
-                          <div>{unit.size_sqft} sq ft</div>
-                        )}
-                        {unit.monthly_rate && (
-                          <div>${unit.monthly_rate}/mo</div>
-                        )}
                       </div>
                     </div>
                   </div>

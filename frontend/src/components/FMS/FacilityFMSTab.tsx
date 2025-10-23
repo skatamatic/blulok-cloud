@@ -25,24 +25,25 @@ import {
   FMSSyncLog,
 } from '@/types/fms.types';
 import { ProviderConfigForm } from './ProviderConfigForm';
-import { FMSSyncProgressModal } from './FMSSyncProgressModal';
-import { FMSChangeReviewModal } from './FMSChangeReviewModal';
 import { useToast } from '@/contexts/ToastContext';
+import { useFMSSync } from '@/contexts/FMSSyncContext';
 
 interface FacilityFMSTabProps {
   facilityId: string;
+  facilityName?: string;
   isDevMode?: boolean;
+  canEditFMS?: boolean;
 }
 
-export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTabProps) {
+export function FacilityFMSTab({ facilityId, facilityName, isDevMode = false, canEditFMS = true }: FacilityFMSTabProps) {
   const { addToast } = useToast();
+  const { canStartNewSync, startSync, completeSync, showReview } = useFMSSync();
   const [config, setConfig] = useState<FMSConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [syncResult, setSyncResult] = useState<FMSSyncResult | null>(null);
+  const [, setSyncResult] = useState<FMSSyncResult | null>(null);
   const [pendingChanges, setPendingChanges] = useState<FMSChange[]>([]);
-  const [showReviewModal, setShowReviewModal] = useState(false);
   const [syncHistory, setSyncHistory] = useState<FMSSyncLog[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<FMSProviderType | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
@@ -59,7 +60,7 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
       setConfig(fetchedConfig);
       if (fetchedConfig) {
         setSelectedProvider(fetchedConfig.provider_type);
-        setConfigExpanded(false); // Collapse if config exists
+        setConfigExpanded(!canEditFMS); // Collapse for editors, expand for readonly users
       } else {
         setConfigExpanded(true); // Auto-expand if no config
       }
@@ -118,14 +119,34 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
   };
 
   const handleSync = async () => {
+    // Prevent starting new sync if one is already active
+    if (!canStartNewSync()) {
+      addToast({
+        type: 'warning',
+        title: 'Sync Already in Progress',
+        message: 'Please wait for the current sync to complete',
+      });
+      return;
+    }
+
     try {
       setSyncing(true);
+
+      // Start sync in global context
+      startSync(facilityId, facilityName || 'Unknown Facility');
+
       const result = await fmsService.triggerSync(facilityId);
       setSyncResult(result);
 
       if (result.changesDetected && result.changesDetected.length > 0) {
         setPendingChanges(result.changesDetected);
-        setShowReviewModal(true);
+
+        // Complete sync in global context
+        completeSync(result.changesDetected, result);
+
+        // Show review modal - will be handled by status bar clicking
+        showReview();
+
         addToast({
           type: 'info',
           title: 'Changes Detected',
@@ -151,39 +172,6 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
     }
   };
 
-  const handleApplyChanges = async (changeIds: string[]) => {
-    if (!syncResult) return;
-
-    try {
-      const result = await fmsService.applyChanges(syncResult.syncLogId, changeIds);
-      
-      if (result.changesFailed > 0) {
-        addToast({
-          type: 'warning',
-          title: 'Changes Partially Applied',
-          message: `Applied ${result.changesApplied} of ${changeIds.length} changes. ${result.changesFailed} failed.`,
-        });
-      } else {
-        addToast({
-          type: 'success',
-          title: 'Changes Applied Successfully',
-          message: `Successfully applied ${result.changesApplied} changes`,
-        });
-      }
-      
-      setShowReviewModal(false);
-      setPendingChanges([]);
-      setSyncResult(null);
-      await loadSyncHistory();
-      await loadConfig(); // Reload to update last sync time
-    } catch (error: any) {
-      addToast({
-        type: 'error',
-        title: 'Failed to Apply Changes',
-        message: error.message || 'Could not apply FMS changes',
-      });
-    }
-  };
 
   const availableProviders = getAvailableProviders(isDevMode);
 
@@ -205,26 +193,38 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">
               FMS Configuration
             </h3>
-          </div>
-          <button
-            onClick={() => setConfigExpanded(!configExpanded)}
-            className="flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-          >
-            {configExpanded ? (
-              <>
-                <span className="mr-1">Collapse</span>
-                <ChevronUpIcon className="h-4 w-4" />
-              </>
-            ) : (
-              <>
-                <span className="mr-1">Expand</span>
-                <ChevronDownIcon className="h-4 w-4" />
-              </>
+            {config && (
+              <span className={`ml-3 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                config.is_enabled
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                  : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+              }`}>
+                {config.is_enabled ? 'Enabled' : 'Disabled'}
+              </span>
             )}
-          </button>
+            {!canEditFMS && (
+              <span className="ml-3 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300">
+                Read Only
+              </span>
+            )}
+          </div>
+          {canEditFMS && (
+            <button
+              onClick={() => setConfigExpanded(!configExpanded)}
+              className="flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+              aria-label={configExpanded ? 'Collapse configuration' : 'Expand configuration'}
+              title={configExpanded ? 'Collapse' : 'Expand'}
+            >
+              {configExpanded ? (
+                <ChevronUpIcon className="h-4 w-4" />
+              ) : (
+                <ChevronDownIcon className="h-4 w-4" />
+              )}
+            </button>
+          )}
         </div>
 
-        {configExpanded && (
+        {configExpanded && canEditFMS && (
           <div className="space-y-6">
             {/* Provider Selection - Always show to allow changing provider */}
             <div>
@@ -244,7 +244,7 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
                   </option>
                 ))}
               </select>
-              
+
               {selectedProvider && (
                 <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                   {getProviderMetadata(selectedProvider)?.description}
@@ -282,18 +282,59 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
           </div>
         )}
 
+        {/* Read-only configuration summary for facility managers */}
+        {configExpanded && !canEditFMS && config && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  FMS Provider
+                </label>
+                <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <div className="text-sm text-gray-900 dark:text-white font-medium">
+                    {getProviderMetadata(config.provider_type)?.name}
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                    {getProviderMetadata(config.provider_type)?.description}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Status
+                </label>
+                <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                    config.is_enabled
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                      : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+                  }`}>
+                    {config.is_enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                Configuration managed by administrators
+              </div>
+              <button
+                onClick={handleTestConnection}
+                disabled={testing}
+                className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
+              >
+                {testing ? 'Testing...' : 'Test Connection'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {config && !configExpanded && (
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center text-sm pt-4 border-t border-gray-200 dark:border-gray-700">
             <div className="flex items-center text-gray-600 dark:text-gray-400">
               <CheckCircleIcon className="h-5 w-5 text-green-500 mr-2" />
               Configured: {getProviderMetadata(config.provider_type)?.name}
-            </div>
-            <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-              config.is_enabled
-                ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-            }`}>
-              {config.is_enabled ? 'Enabled' : 'Disabled'}
             </div>
           </div>
         )}
@@ -341,7 +382,7 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
                   </span>
                 </div>
                 <button
-                  onClick={() => setShowReviewModal(true)}
+                  onClick={() => showReview()}
                   className="text-sm text-yellow-700 dark:text-yellow-300 hover:text-yellow-900 dark:hover:text-yellow-100 font-medium"
                 >
                   Review Changes →
@@ -418,10 +459,15 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                      {log.changes_detected}
+                      {log.changes_detected || 0}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                      {log.changes_applied}
+                      {log.changes_applied === log.changes_detected && log.changes_pending === 0 && log.changes_detected > 0
+                        ? 'Auto Accepted'
+                        : log.changes_applied === log.changes_detected && log.changes_detected > 0
+                        ? 'All Applied'
+                        : (log.changes_applied || 0)
+                      }
                     </td>
                   </tr>
                 ))}
@@ -430,20 +476,6 @@ export function FacilityFMSTab({ facilityId, isDevMode = false }: FacilityFMSTab
           </div>
         </div>
       )}
-
-      {/* Modals */}
-      <FMSSyncProgressModal
-        isOpen={syncing}
-        onClose={() => setSyncing(false)}
-      />
-
-      <FMSChangeReviewModal
-        isOpen={showReviewModal}
-        onClose={() => setShowReviewModal(false)}
-        changes={pendingChanges}
-        onApply={handleApplyChanges}
-        syncResult={syncResult}
-      />
     </div>
   );
 }

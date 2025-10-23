@@ -46,14 +46,12 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
     if (!authState.user) return;
 
     const handleBatteryData = (data: BatteryData) => {
-      console.log('🔋 Battery widget received data:', data);
       setBatteryData(data);
       setLoading(false);
       setError(null);
     };
 
     const handleError = (error: string) => {
-      console.error('🔋 Battery widget error:', error);
       setError(error);
       setLoading(false);
     };

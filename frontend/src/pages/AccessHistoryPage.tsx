@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
-import { navigateAndHighlight, generateHighlightId, calculatePageForItem, navigateAndHighlightWithAutoPagination } from '@/utils/navigation.utils';
+import { generateHighlightId, calculatePageForItem, navigateAndHighlightWithAutoPagination, navigateAndHighlight } from '@/utils/navigation.utils';
 import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
@@ -338,30 +338,30 @@ export default function AccessHistoryPage() {
 
   const handleNavigation = async (url: string, targetId?: string, targetType?: 'user' | 'facility' | 'unit' | 'device') => {
     if (targetId && targetType) {
-      if (targetType === 'unit' || targetType === 'device') {
-        // For units and devices, use auto-pagination to determine the correct page
+      if (targetType === 'unit') {
+        // Navigate directly to unit details
+        navigate(`/units/${targetId}`);
+      } else if (targetType === 'facility') {
+        // Navigate directly to facility details
+        navigate(`/facilities/${targetId}`);
+      } else if (targetType === 'device') {
+        // For devices, use auto-pagination to determine the correct page
         await navigateAndHighlightWithAutoPagination(navigate, {
           id: targetId,
           type: targetType
         });
       } else {
-        // For users and facilities, calculate page from current logs
+        // For users, calculate page from current logs
         let calculatedPage = 1;
-        
+
         if (targetType === 'user') {
           // For users, we need to find the user in the current logs and calculate page
           const userIndex = logs.findIndex(log => log.user_id === targetId);
           if (userIndex !== -1) {
             calculatedPage = calculatePageForItem(userIndex, 50); // Access history uses 50 items per page
           }
-        } else if (targetType === 'facility') {
-          // For facilities, we need to find the facility in the current logs and calculate page
-          const facilityIndex = logs.findIndex(log => log.facility_id === targetId);
-          if (facilityIndex !== -1) {
-            calculatedPage = calculatePageForItem(facilityIndex, 50);
-          }
         }
-        
+
         // Use the navigation utility for highlighting
         await navigateAndHighlight(navigate, {
           id: targetId,

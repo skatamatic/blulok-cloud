@@ -265,16 +265,6 @@ export default function UnitsPage() {
 
         {/* Unit Details */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500 dark:text-gray-400">Size</span>
-            <span className="font-medium text-gray-900 dark:text-white">{unit.size_sqft} sq ft</span>
-          </div>
-          {unit.monthly_rate && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-500 dark:text-gray-400">Monthly Rate</span>
-              <span className="font-medium text-gray-900 dark:text-white">${unit.monthly_rate}</span>
-            </div>
-          )}
           {unit.blulok_device && (
             <>
               <div className="flex items-center justify-between text-sm">
@@ -388,12 +378,6 @@ export default function UnitsPage() {
           ) : (
             <span className="text-gray-400 dark:text-gray-500">—</span>
           )}
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-          {unit.size_sqft} sq ft
-        </td>
-        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-          {unit.monthly_rate ? `$${unit.monthly_rate}` : '—'}
         </td>
         <td className="px-6 py-4 whitespace-nowrap">
           {unit.blulok_device ? (
@@ -658,12 +642,6 @@ export default function UnitsPage() {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Tenant
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Size
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Rate
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Device

@@ -4,7 +4,6 @@ import { DeviceModel, type DeviceFilters } from '../models/device.model';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { UserRole } from '../types/auth.types';
 import { AuthenticatedRequest } from '../types/auth.types';
-import { WebSocketService } from '../services/websocket.service';
 
 const router = Router();
 const deviceModel = new DeviceModel();
@@ -269,10 +268,6 @@ router.put('/:deviceType/:id/status', async (req: AuthenticatedRequest, res: Res
 
     await deviceModel.updateDeviceStatus(String(id), deviceType as any, value.status);
     
-    // Broadcast battery status update if this affects battery levels
-    const wsService = WebSocketService.getInstance();
-    await wsService.broadcastBatteryStatusUpdate();
-    
     res.json({ message: 'Device status updated successfully' });
   } catch (error) {
     console.error('Error updating device status:', error);
@@ -321,10 +316,6 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
     }
 
     await deviceModel.updateLockStatus(String(id), value.lock_status);
-    
-    // Broadcast units update to all subscribers when lock status changes
-    const wsService = WebSocketService.getInstance();
-    await wsService.broadcastUnitsUpdate();
     
     res.json({ message: 'Lock status updated successfully' });
   } catch (error) {

@@ -435,9 +435,7 @@ describe('Units Routes', () => {
         .expect(200);
 
       expectSuccess(response);
-      expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('unit_id');
-      expect(response.body.data).toHaveProperty('tenant_id');
+      expect(response.body.message).toMatch(/assigned|granted.*access/i);
     });
 
     it('should assign tenant to unit for ADMIN', async () => {
@@ -448,9 +446,7 @@ describe('Units Routes', () => {
         .expect(200);
 
       expectSuccess(response);
-      expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('unit_id');
-      expect(response.body.data).toHaveProperty('tenant_id');
+      expect(response.body.message).toMatch(/assigned|granted.*access/i);
     });
 
     it('should assign tenant to unit for FACILITY_ADMIN with access', async () => {
@@ -461,9 +457,7 @@ describe('Units Routes', () => {
         .expect(200);
 
       expectSuccess(response);
-      expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('unit_id');
-      expect(response.body.data).toHaveProperty('tenant_id');
+      expect(response.body.message).toMatch(/assigned|granted.*access/i);
     });
 
     it('should return 404 for non-existent unit', async () => {
@@ -499,39 +493,63 @@ describe('Units Routes', () => {
 
   describe('DELETE /api/v1/units/:id/assign/:tenantId - Remove Tenant from Unit', () => {
     it('should remove tenant from unit for DEV_ADMIN', async () => {
+      // First assign the tenant
+      await request(app)
+        .post(`/api/v1/units/${testData.units.unit1.id}/assign`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ tenant_id: testData.users.tenant.id, is_primary: false });
+
+      // Then remove the tenant
       const response = await request(app)
         .delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.tenant.id}`)
         .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .expect(200);
 
       expectSuccess(response);
+      expect(response.body.message).toContain('removed');
       expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('unit_id');
-      expect(response.body.data).toHaveProperty('tenant_id');
+      expect(response.body.data).toHaveProperty('unit_id', testData.units.unit1.id);
+      expect(response.body.data).toHaveProperty('tenant_id', testData.users.tenant.id);
     });
 
     it('should remove tenant from unit for ADMIN', async () => {
+      // First assign the tenant
+      await request(app)
+        .post(`/api/v1/units/${testData.units.unit1.id}/assign`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ tenant_id: testData.users.tenant.id, is_primary: false });
+
+      // Then remove the tenant
       const response = await request(app)
         .delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.tenant.id}`)
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .expect(200);
 
       expectSuccess(response);
+      expect(response.body.message).toContain('removed');
       expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('unit_id');
-      expect(response.body.data).toHaveProperty('tenant_id');
+      expect(response.body.data).toHaveProperty('unit_id', testData.units.unit1.id);
+      expect(response.body.data).toHaveProperty('tenant_id', testData.users.tenant.id);
     });
 
     it('should remove tenant from unit for FACILITY_ADMIN with access', async () => {
+      // First assign the tenant
+      await request(app)
+        .post(`/api/v1/units/${testData.units.unit1.id}/assign`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ tenant_id: testData.users.tenant.id, is_primary: false });
+
+      // Then remove the tenant
       const response = await request(app)
         .delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.tenant.id}`)
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .expect(200);
 
       expectSuccess(response);
+      expect(response.body.message).toContain('removed');
       expect(response.body).toHaveProperty('data');
-      expect(response.body.data).toHaveProperty('unit_id');
-      expect(response.body.data).toHaveProperty('tenant_id');
+      expect(response.body.data).toHaveProperty('unit_id', testData.units.unit1.id);
+      expect(response.body.data).toHaveProperty('tenant_id', testData.users.tenant.id);
     });
 
     it('should return 404 for non-existent unit', async () => {

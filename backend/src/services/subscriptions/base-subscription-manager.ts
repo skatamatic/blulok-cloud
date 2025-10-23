@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import { UserRole } from '@/types/auth.types';
 
 export interface WebSocketMessage {
-  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'logs_update' | 'units_update' | 'battery_status_update' | 'fms_sync_status_update';
+  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update' | 'command_queue_update' | 'logs_update' | 'units_update' | 'battery_status_update' | 'fms_sync_status_update' | 'fms_sync_progress_update';
   subscriptionId?: string;
   subscriptionType?: string;
   data?: any;
@@ -28,7 +28,7 @@ export interface Subscription {
 export interface SubscriptionManager {
   getSubscriptionType(): string;
   canSubscribe(userRole: UserRole): boolean;
-  handleSubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): Promise<void>;
+  handleSubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): Promise<boolean>;
   handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): void;
   cleanup(ws: WebSocket, client: SubscriptionClient): void;
   broadcastUpdate?(data: any): void;
@@ -42,25 +42,26 @@ export abstract class BaseSubscriptionManager implements SubscriptionManager {
   abstract getSubscriptionType(): string;
   abstract canSubscribe(userRole: UserRole): boolean;
 
-  async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): Promise<void> {
+  async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): Promise<boolean> {
     const subscriptionId = message.subscriptionId || `${this.getSubscriptionType()}-${Date.now()}`;
-    
+
     // Check permissions
     if (!this.canSubscribe(client.userRole)) {
       this.sendError(ws, `Access denied: ${this.getSubscriptionType()} subscription requires appropriate role`);
-      return;
+      return false;
     }
 
     // Store client context
     this.clientContext.set(subscriptionId, client);
-    
+
     // Add to watchers
     this.addWatcher(subscriptionId, ws, client);
-    
+
     // Send initial data
     await this.sendInitialData(ws, subscriptionId, client);
-    
+
     this.logger.info(`📡 ${this.getSubscriptionType()} subscription created: ${subscriptionId} for user ${client.userId}`);
+    return true;
   }
 
   handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): void {

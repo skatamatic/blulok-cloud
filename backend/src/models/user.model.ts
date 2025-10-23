@@ -20,6 +20,22 @@ export class UserModel extends BaseModel {
     return 'users';
   }
 
+  // Backwards-compat for older tests expecting update/deactivate
+  public static async update(id: string, data: Partial<User>): Promise<User | undefined> {
+    const updated = await this.updateById(id, data as Record<string, unknown>);
+    return updated as User | undefined;
+  }
+
+  public static async deactivate(id: string, _performedBy?: string, _reason?: string): Promise<void> {
+    await this.query()
+      .where('id', id)
+      .update({ is_active: false, updated_at: this.db.fn.now() });
+    const user = await this.findById(id) as User | undefined;
+    if (user) {
+      await this.hooks.onUserChange('status_change', user.id, user);
+    }
+  }
+
   private static get hooks() {
     return ModelHooksService.getInstance();
   }

@@ -1,5 +1,6 @@
 import { DatabaseService } from '../services/database.service';
 import { ModelHooksService } from '../services/model-hooks.service';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface Facility {
   id: string;
@@ -116,12 +117,24 @@ export class FacilityModel {
 
   async create(data: CreateFacilityData): Promise<Facility> {
     const knex = this.db.connection;
-    const [id] = await knex('facilities').insert(data);
-    const facility = await this.findById(String(id)) as Facility;
-    
+
+    // Generate UUID for the new facility (same pattern as UnitModel)
+    const facilityId = uuidv4();
+
+    // Create the facility with the generated ID
+    await knex('facilities').insert({
+      id: facilityId,
+      ...data,
+      created_at: knex.fn.now(),
+      updated_at: knex.fn.now()
+    });
+
+    // Fetch and return the created facility
+    const facility = await this.findById(facilityId) as Facility;
+
     // Trigger model change hook
     await this.hooks.onFacilityChange('create', facility.id, facility);
-    
+
     return facility;
   }
 

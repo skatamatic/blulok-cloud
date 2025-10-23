@@ -9,7 +9,7 @@ import { logger } from '@/utils/logger';
 export class AuthService {
   private static readonly SALT_ROUNDS = 12;
 
-  public static async login(credentials: LoginRequest): Promise<LoginResponse> {
+  public static async login(credentials: LoginRequest, deviceCtx?: { appDeviceId?: string | undefined; appPlatform?: string | undefined }): Promise<LoginResponse & { key_generation_required?: boolean }> {
     try {
       const { email, password } = credentials;
 
@@ -60,8 +60,32 @@ export class AuthService {
         // Generate JWT token
         const token = this.generateToken(user, facilityIds);
 
+        // Detect new app device to flag key generation
+        let keyGenerationRequired = false;
+        try {
+          const appDeviceId = deviceCtx?.appDeviceId;
+          if (appDeviceId) {
+            const { UserDeviceModel } = await import('@/models/user-device.model');
+            const udm = new UserDeviceModel();
+            const existing = await udm.findByUserAndAppDeviceId(user.id, appDeviceId);
+            if (!existing) {
+              keyGenerationRequired = true;
+            }
+          } else {
+            // If user has never generated keys, also require
+            const hasKeyStatusColumn = true; // added by migration
+            if (hasKeyStatusColumn) {
+              // naive check: treat absence as pending
+              keyGenerationRequired = true;
+            }
+          }
+        } catch (e) {
+          // Non-fatal
+          logger.warn('Device detection failed during login', e);
+        }
+
         logger.info(`Successful login: ${email}`);
-        
+
         return {
           success: true,
           message: 'Login successful',
@@ -72,7 +96,8 @@ export class AuthService {
             lastName: user.last_name,
             role: user.role as UserRole
           },
-          token
+          token,
+          ...(keyGenerationRequired ? { key_generation_required: true } : {})
         };
 
       } catch (dbError) {

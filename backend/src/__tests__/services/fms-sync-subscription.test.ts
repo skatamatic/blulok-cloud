@@ -8,24 +8,27 @@ import { WebSocket } from 'ws';
 import { FMSSyncSubscriptionManager } from '@/services/subscriptions/fms-sync-subscription-manager';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSConfigurationModel } from '@/models/fms-configuration.model';
+import { FacilityModel } from '@/models/facility.model';
 import { UserRole } from '@/types/auth.types';
 import { SubscriptionClient } from '@/services/subscriptions/base-subscription-manager';
 
 // Mock the models
 jest.mock('@/models/fms-sync-log.model');
 jest.mock('@/models/fms-configuration.model');
+jest.mock('@/models/facility.model');
 
 describe('FMSSyncSubscriptionManager', () => {
   let manager: FMSSyncSubscriptionManager;
   let mockWs: jest.Mocked<WebSocket>;
   let mockSyncLogModel: jest.Mocked<FMSSyncLogModel>;
   let mockConfigModel: jest.Mocked<FMSConfigurationModel>;
+  let mockFacilityModel: jest.Mocked<FacilityModel>;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     manager = new FMSSyncSubscriptionManager();
-    
+
     // Create mock WebSocket
     mockWs = {
       send: jest.fn(),
@@ -35,6 +38,7 @@ describe('FMSSyncSubscriptionManager', () => {
     // Get mocked model instances
     mockSyncLogModel = (manager as any).syncLogModel;
     mockConfigModel = (manager as any).configModel;
+    mockFacilityModel = (manager as any).facilityModel;
   });
 
   describe('getSubscriptionType', () => {
@@ -74,23 +78,17 @@ describe('FMSSyncSubscriptionManager', () => {
         subscriptions: new Map(),
       };
 
-      // Mock all FMS configurations
-      mockConfigModel.findAll.mockResolvedValue([
-        {
-          id: 'config-1',
-          facility_id: 'facility-1',
-          provider_type: 'simulated',
-          is_enabled: true,
-        } as any,
-        {
-          id: 'config-2',
-          facility_id: 'facility-2',
-          provider_type: 'storedge',
-          is_enabled: true,
-        } as any,
-      ]);
+      // Mock all facilities (admin should see ALL facilities)
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [
+          { id: 'facility-1', name: 'Facility 1' } as any,
+          { id: 'facility-2', name: 'Facility 2' } as any,
+          { id: 'facility-3', name: 'Facility 3' } as any, // No FMS config
+        ],
+        total: 3,
+      });
 
-      // Mock facility configs
+      // Mock facility configs (only facility-1 and facility-2 have FMS)
       mockConfigModel.findByFacilityId
         .mockResolvedValueOnce({
           id: 'config-1',
@@ -101,7 +99,8 @@ describe('FMSSyncSubscriptionManager', () => {
           id: 'config-2',
           facility_id: 'facility-2',
           is_enabled: true,
-        } as any);
+        } as any)
+        .mockResolvedValueOnce(null); // facility-3 has no FMS config
 
       // Mock sync logs
       mockSyncLogModel.findLatestByFacilityId
@@ -114,7 +113,8 @@ describe('FMSSyncSubscriptionManager', () => {
           changes_detected: 5,
           changes_applied: 5,
         } as any)
-        .mockResolvedValueOnce(null); // facility-2 never synced
+        .mockResolvedValueOnce(null) // facility-2 never synced
+        .mockResolvedValueOnce(null); // facility-3 no sync log (no config)
 
       await (manager as any).sendInitialData(mockWs, 'sub-1', client);
 
@@ -123,7 +123,7 @@ describe('FMSSyncSubscriptionManager', () => {
       );
 
       const sentData = JSON.parse(mockWs.send.mock.calls[0]?.[0] as string);
-      expect(sentData.data.facilities).toHaveLength(2);
+      expect(sentData.data.facilities).toHaveLength(3); // All facilities now
       expect(sentData.data.facilities[0]).toMatchObject({
         facilityId: 'facility-1',
         status: 'completed',
@@ -133,6 +133,11 @@ describe('FMSSyncSubscriptionManager', () => {
       expect(sentData.data.facilities[1]).toMatchObject({
         facilityId: 'facility-2',
         status: 'never_synced',
+        lastSyncTime: null,
+      });
+      expect(sentData.data.facilities[2]).toMatchObject({
+        facilityId: 'facility-3',
+        status: 'not_configured', // Not configured
         lastSyncTime: null,
       });
     });
@@ -172,7 +177,7 @@ describe('FMSSyncSubscriptionManager', () => {
       expect(sentData.data.facilities[0].facilityId).toBe('facility-1');
     });
 
-    it('should skip facilities without FMS configured', async () => {
+    it('should include facilities without FMS configured', async () => {
       const client: SubscriptionClient = {
         userId: 'admin-1',
         userRole: UserRole.ADMIN,
@@ -180,23 +185,28 @@ describe('FMSSyncSubscriptionManager', () => {
         subscriptions: new Map(),
       };
 
-      mockConfigModel.findAll.mockResolvedValue([
-        {
-          id: 'config-1',
-          facility_id: 'facility-1',
-          is_enabled: true,
-        } as any,
-      ]);
+      // Mock all facilities
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [
+          { id: 'facility-1', name: 'Facility 1' } as any,
+        ],
+        total: 1,
+      });
 
-      mockConfigModel.findByFacilityId.mockResolvedValue(null); // No config
+      mockConfigModel.findByFacilityId.mockResolvedValue(null); // No FMS config
 
       await (manager as any).sendInitialData(mockWs, 'sub-1', client);
 
       const sentData = JSON.parse(mockWs.send.mock.calls[0]?.[0] as string);
-      expect(sentData.data.facilities).toHaveLength(0);
+      expect(sentData.data.facilities).toHaveLength(1);
+      expect(sentData.data.facilities[0]).toMatchObject({
+        facilityId: 'facility-1',
+        status: 'not_configured', // Not configured
+        lastSyncTime: null,
+      });
     });
 
-    it('should skip facilities with disabled FMS', async () => {
+    it('should include facilities with disabled FMS', async () => {
       const client: SubscriptionClient = {
         userId: 'admin-1',
         userRole: UserRole.ADMIN,
@@ -204,24 +214,29 @@ describe('FMSSyncSubscriptionManager', () => {
         subscriptions: new Map(),
       };
 
-      mockConfigModel.findAll.mockResolvedValue([
-        {
-          id: 'config-1',
-          facility_id: 'facility-1',
-          is_enabled: false, // Disabled
-        } as any,
-      ]);
+      // Mock all facilities
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [
+          { id: 'facility-1', name: 'Facility 1' } as any,
+        ],
+        total: 1,
+      });
 
       mockConfigModel.findByFacilityId.mockResolvedValue({
         id: 'config-1',
         facility_id: 'facility-1',
-        is_enabled: false,
+        is_enabled: false, // Disabled
       } as any);
 
       await (manager as any).sendInitialData(mockWs, 'sub-1', client);
 
       const sentData = JSON.parse(mockWs.send.mock.calls[0]?.[0] as string);
-      expect(sentData.data.facilities).toHaveLength(0);
+      expect(sentData.data.facilities).toHaveLength(1);
+      expect(sentData.data.facilities[0]).toMatchObject({
+        facilityId: 'facility-1',
+        status: 'not_configured', // Disabled = not configured
+        lastSyncTime: null,
+      });
     });
 
     it('should handle failed sync status', async () => {
@@ -232,9 +247,13 @@ describe('FMSSyncSubscriptionManager', () => {
         subscriptions: new Map(),
       };
 
-      mockConfigModel.findAll.mockResolvedValue([
-        { id: 'config-1', facility_id: 'facility-1', is_enabled: true } as any,
-      ]);
+      // Mock all facilities
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [
+          { id: 'facility-1', name: 'Facility 1' } as any,
+        ],
+        total: 1,
+      });
 
       mockConfigModel.findByFacilityId.mockResolvedValue({
         id: 'config-1',
@@ -289,10 +308,13 @@ describe('FMSSyncSubscriptionManager', () => {
       (manager as any).clientContext.set('sub-1', client1);
       (manager as any).clientContext.set('sub-2', client2);
 
-      // Mock data for broadcast
-      mockConfigModel.findAll.mockResolvedValue([
-        { id: 'config-1', facility_id: 'facility-1', is_enabled: true } as any,
-      ]);
+      // Mock facility data for admin client
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [
+          { id: 'facility-1', name: 'Facility 1' } as any,
+        ],
+        total: 1,
+      });
 
       mockConfigModel.findByFacilityId.mockResolvedValue({
         id: 'config-1',
@@ -335,7 +357,11 @@ describe('FMSSyncSubscriptionManager', () => {
       (manager as any).watchers.set('sub-1', watchers);
       (manager as any).clientContext.set('sub-1', client);
 
-      mockConfigModel.findAll.mockResolvedValue([]);
+      // Mock facility data for admin
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [],
+        total: 0,
+      });
 
       await manager.broadcastUpdate();
 
@@ -363,7 +389,11 @@ describe('FMSSyncSubscriptionManager', () => {
       (manager as any).watchers.set('sub-1', watchers);
       (manager as any).clientContext.set('sub-1', client);
 
-      mockConfigModel.findAll.mockResolvedValue([]);
+      // Mock facility data for admin
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [],
+        total: 0,
+      });
 
       // Should not throw
       await expect(manager.broadcastUpdate()).resolves.not.toThrow();
@@ -428,22 +458,41 @@ describe('FMSSyncSubscriptionManager', () => {
         subscriptions: new Map(),
       };
 
-      mockConfigModel.findAll.mockResolvedValue([
-        { id: 'config-1', facility_id: 'facility-1', is_enabled: true } as any,
-        { id: 'config-2', facility_id: 'facility-2', is_enabled: true } as any,
-        { id: 'config-3', facility_id: 'facility-3', is_enabled: true } as any,
-      ]);
+      // Mock all facilities (admin should see ALL facilities)
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [
+          { id: 'facility-1', name: 'Facility 1' } as any,
+          { id: 'facility-2', name: 'Facility 2' } as any,
+          { id: 'facility-3', name: 'Facility 3' } as any,
+        ],
+        total: 3,
+      });
 
-      mockConfigModel.findByFacilityId.mockResolvedValue({
-        is_enabled: true,
-      } as any);
+      // Mock FMS configs (only facility-1 and facility-2 have FMS)
+      mockConfigModel.findByFacilityId
+        .mockResolvedValueOnce({
+          id: 'config-1',
+          facility_id: 'facility-1',
+          is_enabled: true,
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'config-2',
+          facility_id: 'facility-2',
+          is_enabled: true,
+        } as any)
+        .mockResolvedValueOnce(null); // facility-3 has no FMS
 
       mockSyncLogModel.findLatestByFacilityId.mockResolvedValue(null);
 
       await (manager as any).sendInitialData(mockWs, 'sub-1', client);
 
       const sentData = JSON.parse(mockWs.send.mock.calls[0]?.[0] as string);
-      expect(sentData.data.facilities).toHaveLength(3);
+      expect(sentData.data.facilities).toHaveLength(3); // All facilities
+      expect(sentData.data.facilities.map((f: any) => f.facilityId)).toEqual([
+        'facility-1',
+        'facility-2',
+        'facility-3',
+      ]);
     });
   });
 });

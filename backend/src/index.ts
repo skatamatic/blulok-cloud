@@ -5,9 +5,11 @@ import { DatabaseService } from '@/services/database.service';
 import { MigrationService } from '@/services/migration.service';
 import { WebSocketService } from '@/services/websocket.service';
 import { LoggerInterceptorService } from '@/services/logger-interceptor.service';
+import { DeviceEventService } from '@/services/device-event.service';
 import { FMSService } from '@/services/fms/fms.service';
 import { SimulatedProvider } from '@/services/fms/providers/simulated-provider';
 import { GenericRestProvider } from '@/services/fms/providers/generic-rest-provider';
+import { StoredgeProvider } from '@/services/fms/providers/storedge-provider';
 import { FMSProviderType } from '@/types/fms.types';
 
 async function bootstrap(): Promise<void> {
@@ -38,6 +40,7 @@ async function bootstrap(): Promise<void> {
     const fmsService = FMSService.getInstance();
     fmsService.registerProvider(FMSProviderType.SIMULATED, SimulatedProvider as any);
     fmsService.registerProvider(FMSProviderType.GENERIC_REST, GenericRestProvider as any);
+    fmsService.registerProvider(FMSProviderType.STOREDGE, StoredgeProvider as any);
     logger.info('FMS providers registered');
 
     // Create and start the application
@@ -51,8 +54,21 @@ async function bootstrap(): Promise<void> {
     // Initialize WebSocket and logger interceptor
     const wsService = WebSocketService.getInstance();
     wsService.initialize(server);
-    
+
     const loggerInterceptor = LoggerInterceptorService.getInstance();
+
+    // Initialize DeviceEventService now that database is ready
+    const deviceEventService = DeviceEventService.getInstance();
+    deviceEventService.initialize();
+
+    // Initialize GatewayService
+    const { GatewayService } = await import('./services/gateway/gateway.service');
+    const gatewayService = GatewayService.getInstance();
+    await gatewayService.initializeAllGateways();
+
+    // Start command worker
+    const { CommandWorkerService } = await import('./services/command-worker.service');
+    CommandWorkerService.getInstance().start();
 
     // Graceful shutdown
     const gracefulShutdown = () => {

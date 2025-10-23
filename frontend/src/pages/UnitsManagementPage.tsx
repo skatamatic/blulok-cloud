@@ -19,7 +19,6 @@ import { apiService } from '@/services/api.service';
 import { Unit, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
-import { TenantAssignmentModal } from '@/components/Units/TenantAssignmentModal';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { UserFilter } from '@/components/Common/UserFilter';
 
@@ -44,8 +43,6 @@ export default function UnitsManagementPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showTenantModal, setShowTenantModal] = useState(false);
-  const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [filters, setFilters] = useState<UnitFilters>({
     search: '',
     status: '',
@@ -192,8 +189,7 @@ export default function UnitsManagementPage() {
   };
 
   const handleTenantManagement = (unit: Unit) => {
-    setSelectedUnit(unit);
-    setShowTenantModal(true);
+    navigate(`/units/${unit.id}?tab=tenant`);
   };
 
   const UnitCard = ({ unit }: { unit: Unit }) => {
@@ -244,21 +240,6 @@ export default function UnitsManagementPage() {
           </div>
         )}
 
-        {/* Unit Details Grid */}
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="text-center p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg">
-            <div className="text-lg font-bold text-gray-900 dark:text-white">
-              {unit.size_sqft}
-            </div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">sq ft</div>
-          </div>
-          <div className="text-center p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg">
-            <div className="text-lg font-bold text-gray-900 dark:text-white">
-              ${unit.monthly_rate}
-            </div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">per month</div>
-          </div>
-        </div>
 
         {/* Lock Status */}
         {unit.blulok_device && (
@@ -612,9 +593,6 @@ export default function UnitsManagementPage() {
                   Tenant
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Details
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Lock Status
                 </th>
                 <th className="relative px-6 py-3">
@@ -661,10 +639,6 @@ export default function UnitsManagementPage() {
                     ) : (
                       <span className="text-gray-400 dark:text-gray-500">Unassigned</span>
                     )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                    <div>{unit.size_sqft} sq ft</div>
-                    <div className="text-gray-500 dark:text-gray-400">${unit.monthly_rate}/month</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                     {unit.blulok_device ? (
@@ -812,21 +786,6 @@ export default function UnitsManagementPage() {
           loadUnits();
           setShowAddModal(false);
         }}
-      />
-
-      {/* Tenant Assignment Modal */}
-      <TenantAssignmentModal
-        isOpen={showTenantModal}
-        onClose={() => {
-          setShowTenantModal(false);
-          setSelectedUnit(null);
-        }}
-        onSuccess={() => {
-          loadUnits();
-          setShowTenantModal(false);
-          setSelectedUnit(null);
-        }}
-        unit={selectedUnit}
       />
     </div>
   );

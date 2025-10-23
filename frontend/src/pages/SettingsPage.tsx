@@ -1,20 +1,27 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { UserRole } from '@/types/auth.types';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
-import { 
-  SunIcon, 
-  MoonIcon, 
+import { useToast } from '@/contexts/ToastContext';
+import {
+  SunIcon,
+  MoonIcon,
   ComputerDesktopIcon,
-  Cog6ToothIcon 
+  Cog6ToothIcon,
+  ShieldCheckIcon,
+  DevicePhoneMobileIcon
 } from '@heroicons/react/24/outline';
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { authState } = useAuth();
+  const { addToast } = useToast();
   const [isResetting, setIsResetting] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
+  const [maxDevicesPerUser, setMaxDevicesPerUser] = useState(2);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   const themeOptions = [
     {
@@ -36,6 +43,45 @@ export default function SettingsPage() {
       icon: ComputerDesktopIcon,
     },
   ];
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      if (authState.user?.role === UserRole.ADMIN || authState.user?.role === UserRole.DEV_ADMIN) {
+        setIsLoadingSettings(true);
+        try {
+          const response = await apiService.getSystemSettings();
+          if (response.success) {
+            setMaxDevicesPerUser(response.settings['security.max_devices_per_user']);
+          }
+        } catch (error) {
+          console.error('Failed to load system settings:', error);
+        } finally {
+          setIsLoadingSettings(false);
+        }
+      }
+    };
+
+    loadSettings();
+  }, [authState.user?.role]);
+
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      const response = await apiService.updateSystemSettings({
+        'security.max_devices_per_user': maxDevicesPerUser
+      });
+      if (response.success) {
+        addToast({ type: 'success', title: 'Security settings updated successfully' });
+      } else {
+        addToast({ type: 'error', title: 'Failed to update security settings' });
+      }
+    } catch (error) {
+      console.error('Failed to save system settings:', error);
+      addToast({ type: 'error', title: 'An error occurred while updating settings' });
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
 
   const handleResetWidgets = async () => {
     setIsResetting(true);
@@ -193,6 +239,78 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* Security Settings */}
+        {(authState.user?.role === UserRole.ADMIN || authState.user?.role === UserRole.DEV_ADMIN) && (
+          <div className="card">
+            <div className="p-6">
+              <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+                <div className="flex items-center">
+                  <ShieldCheckIcon className="h-5 w-5 text-gray-400 mr-2" />
+                  Security Settings
+                </div>
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+                Configure security policies and device access limits
+              </p>
+
+              {isLoadingSettings ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                  <span className="ml-3 text-gray-600 dark:text-gray-400">Loading settings...</span>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      <div className="flex items-center">
+                        <DevicePhoneMobileIcon className="h-4 w-4 text-gray-400 mr-2" />
+                        Maximum Devices Per User
+                      </div>
+                    </label>
+                    <div className="flex items-center space-x-4">
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={maxDevicesPerUser}
+                        onChange={(e) => setMaxDevicesPerUser(parseInt(e.target.value) || 1)}
+                        className="w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        disabled={isSavingSettings}
+                      />
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        devices (1-10 allowed)
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Limits how many app devices (phones, browsers) a user can register for key distribution
+                    </p>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleSaveSettings}
+                      disabled={isSavingSettings}
+                      className="btn-primary"
+                    >
+                      {isSavingSettings ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Saving...
+                        </>
+                      ) : (
+                        'Save Settings'
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* User Preferences */}
         <div className="card">

@@ -204,7 +204,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     name: 'FMS Sync',
     description: 'Synchronize customer data with FMS',
     defaultSize: 'medium',
-    availableSizes: ['tiny', 'small', 'medium', 'medium-tall', 'large'],
+    availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'system',
     requiredPermissions: ['admin', 'dev_admin', 'facility_admin']

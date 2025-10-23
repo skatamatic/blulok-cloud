@@ -35,6 +35,13 @@ const renderWithProviders = (component: React.ReactElement) => {
   );
 };
 
+// Export test utilities for other test files
+describe('Test Utils', () => {
+  it('should export helper functions', () => {
+    expect(typeof renderWithProviders).toBe('function');
+  });
+});
+
 describe('AddUnitModal', () => {
   const mockFacilities = [
     createMockFacility({
@@ -119,8 +126,6 @@ describe('AddUnitModal', () => {
       expect(screen.getByText('Unit Number *')).toBeInTheDocument();
       expect(screen.getByText('Unit Type *')).toBeInTheDocument();
       expect(screen.getByText('Status')).toBeInTheDocument();
-      expect(screen.getByText('Size (sq ft) *')).toBeInTheDocument();
-      expect(screen.getByText('Monthly Rate ($) *')).toBeInTheDocument();
     });
 
     it('should have a facility dropdown', async () => {
@@ -165,9 +170,6 @@ describe('AddUnitModal', () => {
       
       const textInputs = screen.getByPlaceholderText(/a101/i);
       expect(textInputs).toBeInTheDocument();
-      
-      const numberInputs = screen.getAllByRole('spinbutton');
-      expect(numberInputs.length).toBeGreaterThanOrEqual(2); // Size and Rate
     });
 
     it('should have input fields for unit data', async () => {
@@ -188,8 +190,8 @@ describe('AddUnitModal', () => {
       const unitNumberInput = screen.getByPlaceholderText(/a101/i);
       expect(unitNumberInput).toBeInTheDocument();
       
-      const sizeInput = screen.getByPlaceholderText(/50/i);
-      expect(sizeInput).toBeInTheDocument();
+      const descriptionInput = screen.getByPlaceholderText(/enter unit description/i);
+      expect(descriptionInput).toBeInTheDocument();
     });
   });
 

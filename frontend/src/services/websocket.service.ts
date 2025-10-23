@@ -18,8 +18,6 @@ class WebSocketService implements IWebSocketService {
   }
 
   private connect(): void {
-    console.log('🔌 WebSocket connect() called');
-    
     // Close existing connection if any
     if (this.ws) {
       this.ws.close();
@@ -28,10 +26,8 @@ class WebSocketService implements IWebSocketService {
 
     try {
       const token = localStorage.getItem('authToken');
-      console.log('🔌 Auth token found:', !!token);
-      
+
       if (!token) {
-        console.log('❌ No auth token found, cannot connect WebSocket');
         return;
       }
 
@@ -42,8 +38,7 @@ class WebSocketService implements IWebSocketService {
         return importMeta?.env?.VITE_WS_URL || 'ws://localhost:3000';
       };
       const wsUrl = `${getWsUrl()}/ws?token=${token}`;
-      console.log('🔌 Connecting to WebSocket URL:', wsUrl);
-      
+
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = this.handleOpen.bind(this);
@@ -58,7 +53,6 @@ class WebSocketService implements IWebSocketService {
   }
 
   private handleOpen(): void {
-    console.log('✅ WebSocket connected successfully');
     this.isConnected = true;
     this.reconnectAttempts = 0;
     this.startHeartbeat();
@@ -69,9 +63,11 @@ class WebSocketService implements IWebSocketService {
     // Debug toast
     websocketDebugService.showDebugToast('success', 'WebSocket Connected', 'Connection established successfully');
 
-    // Re-subscribe to all existing subscriptions
+    // Re-subscribe to all existing subscriptions (only if not already subscribed)
     this.subscriptions.forEach((filters, subscriptionType) => {
-      this.subscribe(subscriptionType, filters);
+      if (!this.subscriptionIds.has(subscriptionType)) {
+        this.subscribe(subscriptionType, filters);
+      }
     });
   }
 
@@ -108,8 +104,17 @@ class WebSocketService implements IWebSocketService {
         case 'battery_status_update':
           this.handleBatteryStatusUpdate(message);
           break;
+        case 'command_queue_update':
+          this.handleCommandQueueUpdate(message);
+          break;
+        case 'gateway_status_update':
+          this.handleGatewayStatusUpdate(message);
+          break;
         case 'fms_sync_status_update':
           this.handleFMSSyncStatusUpdate(message);
+          break;
+        case 'fms_sync_progress_update':
+          this.handleFMSSyncProgressUpdate(message);
           break;
         default:
           break;
@@ -133,37 +138,52 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
+  private handleCommandQueueUpdate(message: any): void {
+    const handlers = this.messageHandlers.get('command_queue');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleGatewayStatusUpdate(message: any): void {
+    const handlers = this.messageHandlers.get('gateway_status');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+
+    // Optional: show toast on status change could be handled by subscribers
+  }
+
   private handleGeneralStatsUpdate(message: any): void {
-    console.log('📊 Received general_stats_update message:', message);
     const handlers = this.messageHandlers.get('general_stats');
-    console.log('📊 Found handlers for general_stats:', handlers?.size || 0);
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
   private handleDashboardLayoutUpdate(message: any): void {
-    console.log('📊 Received dashboard_layout_update message:', message);
     const handlers = this.messageHandlers.get('dashboard_layout');
-    console.log('📊 Found handlers for dashboard_layout:', handlers?.size || 0);
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
   private handleBatteryStatusUpdate(message: any): void {
-    console.log('🔋 Received battery_status_update message:', message);
     const handlers = this.messageHandlers.get('battery_status');
-    console.log('🔋 Found handlers for battery_status:', handlers?.size || 0);
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
   private handleFMSSyncStatusUpdate(message: any): void {
-    console.log('🔄 Received fms_sync_status_update message:', message);
     const handlers = this.messageHandlers.get('fms_sync_status');
-    console.log('🔄 Found handlers for fms_sync_status:', handlers?.size || 0);
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleFMSSyncProgressUpdate(message: any): void {
+    const handlers = this.messageHandlers.get('fms_sync_progress');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
@@ -173,6 +193,10 @@ class WebSocketService implements IWebSocketService {
     console.log('❌ WebSocket closed:', { code: event.code, reason: event.reason, wasClean: event.wasClean });
     this.isConnected = false;
     this.stopHeartbeat();
+
+    // Clear subscription state on disconnect so we can resubscribe properly on reconnect
+    // Note: We keep the subscriptions Map so we know what to resubscribe to, but clear the IDs
+    this.subscriptionIds.clear();
 
     // Notify connection handlers
     this.connectionHandlers.forEach(handler => handler(false));
@@ -233,15 +257,11 @@ class WebSocketService implements IWebSocketService {
   }
 
   public subscribe(subscriptionType: string, filters?: any): void {
-    console.log('📡 WebSocket subscribe called:', { subscriptionType, filters, isConnected: this.isConnected });
-    
     // If not currently subscribed, send the subscription message.
     if (!this.subscriptions.has(subscriptionType)) {
       this.subscriptions.set(subscriptionType, filters);
       const tempId = `${subscriptionType}-${Date.now()}`;
       this.subscriptionIds.set(subscriptionType, tempId);
-      
-      console.log('📡 Sending subscription message:', { subscriptionType, tempId });
       websocketDebugService.showDebugToast('info', 'WebSocket Subscription', `Subscribed to: ${subscriptionType}`);
       
       this.send({
@@ -250,8 +270,6 @@ class WebSocketService implements IWebSocketService {
         data: filters,
         timestamp: new Date().toISOString()
       });
-    } else {
-        console.log('⚠️ Already subscribed to:', subscriptionType);
     }
   }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
@@ -10,14 +10,15 @@ import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { FacilityAssignmentModal } from '@/components/UserManagement/FacilityAssignmentModal';
 import { SortableHeader } from '@/components/UserManagement/SortableHeader';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
-import { 
-  PlusIcon, 
-  PencilIcon, 
+import {
+  PlusIcon,
+  PencilIcon,
   CheckIcon,
   XMarkIcon,
   BuildingStorefrontIcon,
   FunnelIcon,
   BuildingOfficeIcon,
+  EyeIcon,
 } from '@heroicons/react/24/outline';
 
 interface User {
@@ -35,6 +36,7 @@ interface User {
 
 export default function UserManagementPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { authState } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -78,7 +80,7 @@ export default function UserManagementPage() {
   const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   useEffect(() => {
-    fetchUsers();
+    fetchUsers(currentPage);
     fetchFacilities();
   }, []);
 
@@ -98,23 +100,25 @@ export default function UserManagementPage() {
     }
   };
 
-  const fetchUsers = useCallback(async (isInitialLoad = false) => {
+  const fetchUsers = useCallback(async (page: number, isInitialLoad = false) => {
     try {
       if (isInitialLoad) {
         setLoading(true);
       } else {
         setSearchLoading(true);
       }
-      
+
       const limit = 20;
-      // const offset = (currentPage - 1) * limit;
-      
+      const offset = (page - 1) * limit;
+
       const response = await apiService.getUsers({
         search: search || undefined,
         role: roleFilter || undefined,
         facility: facilityFilter || undefined,
         sortBy,
         sortOrder,
+        limit,
+        offset,
       });
       if (response.success) {
         setUsers(response.users);
@@ -133,28 +137,30 @@ export default function UserManagementPage() {
         setSearchLoading(false);
       }
     }
-  }, [search, roleFilter, facilityFilter, sortBy, sortOrder, currentPage]);
+  }, [search, roleFilter, facilityFilter, sortBy, sortOrder]);
 
   // Initial load
   useEffect(() => {
-    fetchUsers(true);
+    fetchUsers(currentPage, true);
   }, []);
 
   // Debounced fetch for search/filter changes
   useEffect(() => {
     const timer = setTimeout(() => {
       setCurrentPage(1); // Reset to first page when filters change
-      fetchUsers(false);
+      fetchUsers(1, false);
     }, 300);
 
     return () => clearTimeout(timer);
   }, [search, roleFilter, facilityFilter, sortBy, sortOrder]);
+
 
   // Handle highlighting when page loads
   useHighlight(users, (user) => user.id, (id) => generateHighlightId('user', id));
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
+    fetchUsers(page, false);
   };
 
   const formatRoleName = (role: UserRole): string => {
@@ -205,7 +211,7 @@ export default function UserManagementPage() {
         try {
           const response = await apiService.deactivateUser(userId);
           if (response.success) {
-            fetchUsers(); // Refresh the list
+            fetchUsers(currentPage); // Refresh the list
             setConfirmModal(prev => ({ ...prev, isOpen: false }));
           } else {
             setError(response.message || 'Failed to deactivate user');
@@ -221,7 +227,7 @@ export default function UserManagementPage() {
     try {
       const response = await apiService.activateUser(userId);
       if (response.success) {
-        fetchUsers(); // Refresh the list
+        fetchUsers(currentPage); // Refresh the list
       } else {
         setError(response.message || 'Failed to activate user');
       }
@@ -461,7 +467,14 @@ export default function UserManagementPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <div className="flex space-x-2">
-                        <button 
+                        <button
+                          onClick={() => navigate(`/users/${user.id}/details`)}
+                          className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-300 transition-colors duration-200"
+                          title="View user details"
+                        >
+                          <EyeIcon className="h-4 w-4" />
+                        </button>
+                        <button
                           onClick={() => setFacilityModal({ isOpen: true, user })}
                           className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 transition-colors duration-200"
                           title="Manage facility access"
@@ -585,14 +598,14 @@ export default function UserManagementPage() {
       <AddUserModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onSuccess={fetchUsers}
+        onSuccess={() => fetchUsers(currentPage)}
       />
 
       {/* Facility Assignment Modal */}
       <FacilityAssignmentModal
         isOpen={facilityModal.isOpen}
         onClose={() => setFacilityModal({ isOpen: false, user: null })}
-        onSuccess={fetchUsers}
+        onSuccess={() => fetchUsers(currentPage)}
         user={facilityModal.user}
       />
 

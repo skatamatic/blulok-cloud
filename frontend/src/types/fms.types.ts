@@ -13,6 +13,7 @@ export enum FMSProviderType {
 export enum FMSAuthType {
   API_KEY = 'api_key',
   OAUTH2 = 'oauth2',
+  OAUTH1 = 'oauth1',
   BASIC_AUTH = 'basic_auth',
   BEARER_TOKEN = 'bearer_token',
   CUSTOM = 'custom',
@@ -57,6 +58,8 @@ export interface FMSAuthConfig {
     clientSecret?: string;
     refreshToken?: string;
     tokenEndpoint?: string;
+    consumerKey?: string; // OAuth1 consumer key
+    consumerSecret?: string; // OAuth1 consumer secret
     [key: string]: any;
   };
 }
@@ -108,6 +111,9 @@ export interface FMSChange {
   is_accepted?: boolean;
   applied_at?: string;
   created_at: string;
+  // Validation fields
+  is_valid?: boolean; // Whether this change is valid and can be applied
+  validation_errors?: string[]; // List of validation error messages
 }
 
 export interface FMSSyncResult {
@@ -176,6 +182,20 @@ export interface FMSTestConnectionResponse {
   connected?: boolean;
   message?: string;
   error?: string;
+}
+
+// Result of applying FMS changes
+export interface FMSChangeApplicationResult {
+  success: boolean;
+  changesApplied: number;
+  changesFailed: number;
+  errors: string[];
+  accessChanges: {
+    usersCreated: string[];
+    usersDeactivated: string[];
+    accessGranted: Array<{ userId: string; unitId: string }>;
+    accessRevoked: Array<{ userId: string; unitId: string }>;
+  };
 }
 
 // Provider metadata for UI

@@ -100,6 +100,19 @@
   }
 }
 
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(34, 197, 94, 0.3), 0 0 10px rgba(34, 197, 94, 0.2), 0 0 15px rgba(34, 197, 94, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.5), 0 0 20px rgba(34, 197, 94, 0.3), 0 0 30px rgba(34, 197, 94, 0.2);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
 @layer base {
   html {
     font-family: 'Inter', system-ui, sans-serif;
@@ -438,18 +451,38 @@
     background-color: rgba(31, 41, 55, 0.9);
   }
 
-  /* Ensure primary buttons always have white text */
-  .bg-primary-600, .bg-primary-700 {
+  /* Ensure all colored buttons always have white text */
+  .bg-primary-600, .bg-primary-700,
+  .bg-green-600, .bg-green-700,
+  .bg-red-600, .bg-red-700, .bg-red-800, .bg-red-900,
+  .bg-blue-600, .bg-blue-700,
+  .bg-yellow-600, .bg-yellow-700,
+  .bg-gray-600, .bg-gray-700 {
     color: white !important;
   }
 
-  .bg-primary-600 *, .bg-primary-700 * {
+  .bg-primary-600 *, .bg-primary-700 *,
+  .bg-green-600 *, .bg-green-700 *,
+  .bg-red-600 *, .bg-red-700 *, .bg-red-800 *, .bg-red-900 *,
+  .bg-blue-600 *, .bg-blue-700 *,
+  .bg-yellow-600 *, .bg-yellow-700 *,
+  .bg-gray-600 *, .bg-gray-700 * {
     color: white !important;
   }
 
-  /* Override any conflicting text colors on primary buttons */
+  /* Override any conflicting text colors on all colored buttons */
   button.bg-primary-600, button.bg-primary-700,
-  .bg-primary-600 button, .bg-primary-700 button {
+  button.bg-green-600, button.bg-green-700,
+  button.bg-red-600, button.bg-red-700, button.bg-red-800, button.bg-red-900,
+  button.bg-blue-600, button.bg-blue-700,
+  button.bg-yellow-600, button.bg-yellow-700,
+  button.bg-gray-600, button.bg-gray-700,
+  .bg-primary-600 button, .bg-primary-700 button,
+  .bg-green-600 button, .bg-green-700 button,
+  .bg-red-600 button, .bg-red-700 button, .bg-red-800 button, .bg-red-900 button,
+  .bg-blue-600 button, .bg-blue-700 button,
+  .bg-yellow-600 button, .bg-yellow-700 button,
+  .bg-gray-600 button, .bg-gray-700 button {
     color: white !important;
   }
 }

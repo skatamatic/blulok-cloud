@@ -8,8 +8,6 @@ export interface Unit {
   facility_id: string;
   unit_number: string;
   unit_type: string | null;
-  size_sqft: number | null;
-  monthly_rate: number | null;
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
   description: string | null;
   features: any;
@@ -359,12 +357,11 @@ export class UnitModel {
     // Calculate total count after deduplication
     const total = deduplicatedResults.length;
     
-      // Transform results to match expected format
+        // Transform results to match expected format
       const units = paginatedResults.map(row => ({
         id: row.id,
         unit_number: row.unit_number,
         unit_type: row.unit_type,
-        size_sqft: row.size_sqft,
         status: row.status,
         facility_id: row.facility_id,
         facility_name: row.facility_name,
@@ -530,15 +527,17 @@ export class UnitModel {
         throw new Error('Unit number already exists in this facility');
       }
 
+      // Generate UUID for the new unit
+      const { v4: uuidv4 } = require('uuid');
+      const unitId = uuidv4();
+
       // Create the unit
-      const [unitId] = await knex('units').insert({
-        id: knex.raw('UUID()'),
+      await knex('units').insert({
+        id: unitId,
         facility_id: unitData.facility_id,
         unit_number: unitData.unit_number,
         unit_type: unitData.unit_type || null,
         status: unitData.status || 'available',
-        size_sqft: unitData.size_sqft || null,
-        monthly_rate: unitData.monthly_rate || null,
         description: unitData.description || null,
         features: unitData.features ? JSON.stringify(unitData.features) : null,
         metadata: unitData.metadata ? JSON.stringify(unitData.metadata) : null,
@@ -741,12 +740,37 @@ export class UnitModel {
         return null;
       }
 
+      // Get shared tenant assignments for this unit
+      const sharedAssignments = await knex('unit_assignments as ua')
+        .join('users as u', 'ua.tenant_id', 'u.id')
+        .where('ua.unit_id', unitId)
+        .where('ua.is_primary', false)
+        .select([
+          'ua.id',
+          'ua.tenant_id',
+          'ua.access_type',
+          'ua.access_granted_at',
+          'ua.access_expires_at',
+          'u.first_name',
+          'u.last_name',
+          'u.email'
+        ]);
+
+      const sharedTenants = sharedAssignments.map(assignment => ({
+        id: assignment.tenant_id,
+        first_name: assignment.first_name,
+        last_name: assignment.last_name,
+        email: assignment.email,
+        access_type: assignment.access_type,
+        access_granted_at: assignment.access_granted_at,
+        access_expires_at: assignment.access_expires_at
+      }));
+
       // Transform result to match expected format
       return {
         id: result.id,
         unit_number: result.unit_number,
         unit_type: result.unit_type,
-        size_sqft: result.size_sqft,
         status: result.status,
         facility_id: result.facility_id,
         facility_name: result.facility_name,
@@ -774,7 +798,8 @@ export class UnitModel {
           first_name: result.tenant_first_name,
           last_name: result.tenant_last_name,
           email: result.tenant_email
-        } : null
+        } : null,
+        shared_tenants: sharedTenants
       };
 
     } catch (error) {
@@ -849,12 +874,6 @@ export class UnitModel {
       }
       if (updateData.status !== undefined) {
         updateFields.status = updateData.status;
-      }
-      if (updateData.size_sqft !== undefined) {
-        updateFields.size_sqft = updateData.size_sqft;
-      }
-      if (updateData.monthly_rate !== undefined) {
-        updateFields.monthly_rate = updateData.monthly_rate;
       }
       if (updateData.description !== undefined) {
         updateFields.description = updateData.description;

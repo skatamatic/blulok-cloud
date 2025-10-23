@@ -6,48 +6,45 @@
 
 import { Fragment, useState, useEffect } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
-import { ArrowPathIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, CheckCircleIcon, MinusIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { useFMSSync, SyncStep } from '@/contexts/FMSSyncContext';
+import { fmsService } from '@/services/fms.service';
 
 interface FMSSyncProgressModalProps {
   isOpen: boolean;
   onClose: () => void;
+  facilityId?: string;
+  facilityName?: string;
 }
 
-type SyncStep = 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'complete';
+export function FMSSyncProgressModal({ isOpen, onClose, facilityId }: FMSSyncProgressModalProps) {
+  const { syncState, minimizeSync, cancelSync } = useFMSSync();
+  const [animatedProgress, setAnimatedProgress] = useState(0);
 
-export function FMSSyncProgressModal({ isOpen, onClose }: FMSSyncProgressModalProps) {
-  const [currentStep, setCurrentStep] = useState<SyncStep>('connecting');
-
+  // Animate progress changes smoothly over 0.5 seconds
   useEffect(() => {
-    if (!isOpen) {
-      setCurrentStep('connecting');
-      return;
-    }
+    const targetProgress = syncState.progressPercentage;
+    const startProgress = animatedProgress;
+    const duration = 500; // 0.5 seconds
+    const startTime = Date.now();
 
-    // Simulate progress through the steps based on our backend timing
-    // Step 1: Connecting (2 seconds)
-    const timer1 = setTimeout(() => setCurrentStep('fetching'), 2000);
-    
-    // Step 2: Fetching (4 seconds - 2s for tenants + 2s for units)
-    const timer2 = setTimeout(() => setCurrentStep('detecting'), 6000);
-    
-    // Step 3: Detecting (2 seconds)
-    const timer3 = setTimeout(() => setCurrentStep('preparing'), 8000);
-    
-    // Step 4: Preparing (2 seconds)
-    const timer4 = setTimeout(() => setCurrentStep('complete'), 10000);
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(startProgress + (targetProgress - startProgress) * (elapsed / duration), targetProgress);
 
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-      clearTimeout(timer4);
+      setAnimatedProgress(progress);
+
+      if (progress < targetProgress) {
+        requestAnimationFrame(animate);
+      }
     };
-  }, [isOpen]);
+
+    animate();
+  }, [syncState.progressPercentage]);
 
   const getStepStatus = (step: SyncStep) => {
     const steps: SyncStep[] = ['connecting', 'fetching', 'detecting', 'preparing', 'complete'];
-    const currentIndex = steps.indexOf(currentStep);
+    const currentIndex = steps.indexOf(syncState.currentStep);
     const stepIndex = steps.indexOf(step);
 
     if (stepIndex < currentIndex) return 'complete';
@@ -56,9 +53,7 @@ export function FMSSyncProgressModal({ isOpen, onClose }: FMSSyncProgressModalPr
   };
 
   const getProgressPercentage = () => {
-    const steps: SyncStep[] = ['connecting', 'fetching', 'detecting', 'preparing', 'complete'];
-    const currentIndex = steps.indexOf(currentStep);
-    return ((currentIndex + 1) / steps.length) * 100;
+    return animatedProgress;
   };
 
   const renderStepIcon = (step: SyncStep) => {
@@ -77,7 +72,7 @@ export function FMSSyncProgressModal({ isOpen, onClose }: FMSSyncProgressModalPr
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
-      <Dialog as="div" className="relative z-50" onClose={() => {}}>
+      <Dialog as="div" className="relative z-50" onClose={onClose}>
         <Transition.Child
           as={Fragment}
           enter="ease-out duration-300"
@@ -101,18 +96,94 @@ export function FMSSyncProgressModal({ isOpen, onClose }: FMSSyncProgressModalPr
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 p-6 shadow-2xl transition-all">
-                <div className="text-center">
+              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 p-6 shadow-2xl transition-all relative">
+                {/* Window Controls - Top Right */}
+                <div className="absolute top-4 right-4 flex items-center space-x-1">
+                  {syncState.currentStep !== 'complete' && (
+                    <>
+                      <button
+                        onClick={minimizeSync}
+                        className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                        title="Minimize to status bar"
+                      >
+                        <MinusIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            // Call backend cancel endpoint
+                            if (facilityId) {
+                              await fmsService.cancelSync(facilityId);
+                            }
+                          } catch (error) {
+                            console.error('Failed to cancel sync:', error);
+                          }
+
+                          // Update local state
+                          cancelSync();
+                          onClose();
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                        title="Cancel sync"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                  {syncState.currentStep === 'complete' && (
+                    <button
+                      onClick={onClose}
+                      className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                      title="Close"
+                    >
+                      <XMarkIcon className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Show "All Up to Date" view when complete with no changes */}
+                {syncState.currentStep === 'complete' && syncState.pendingChanges.length === 0 ? (
+                  <div className="text-center py-4">
+                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-green-100 to-green-50 dark:from-green-900/20 dark:to-green-800/20 border-2 border-green-200 dark:border-green-800">
+                      <CheckCircleIcon className="h-12 w-12 text-green-600 dark:text-green-400" />
+                    </div>
+
+                    <div className="mt-6">
+                      <Dialog.Title
+                        as="h3"
+                        className="text-2xl font-bold text-gray-900 dark:text-white"
+                      >
+                        All Up to Date!
+                      </Dialog.Title>
+                      <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
+                        Your facility data is in perfect sync with the FMS.
+                      </p>
+                      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        No changes were detected during this sync.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={onClose}
+                      className="mt-8 w-full px-4 py-2.5 bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700 text-white font-medium rounded-lg transition-colors shadow-sm"
+                    >
+                      Got it
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-center">
                   <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-900/20 dark:to-primary-800/20 border-2 border-primary-200 dark:border-primary-800">
                     <ArrowPathIcon className="h-8 w-8 text-primary-600 dark:text-primary-400 animate-spin" />
                   </div>
-                  
-                  <Dialog.Title
-                    as="h3"
-                    className="mt-4 text-xl font-semibold text-gray-900 dark:text-white"
-                  >
-                    Syncing with FMS
-                  </Dialog.Title>
+
+                  <div className="mt-4">
+                    <Dialog.Title
+                      as="h3"
+                      className="text-xl font-semibold text-gray-900 dark:text-white"
+                    >
+                      Syncing with FMS{syncState.facilityName ? ` - ${syncState.facilityName}` : ''}
+                    </Dialog.Title>
+                  </div>
 
                   <div className="mt-8 space-y-4">
                     {/* Progress Steps */}
@@ -180,8 +251,8 @@ export function FMSSyncProgressModal({ isOpen, onClose }: FMSSyncProgressModalPr
                   {/* Progress Bar */}
                   <div className="mt-8">
                     <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 overflow-hidden shadow-inner">
-                      <div 
-                        className="h-full bg-gradient-to-r from-primary-500 to-primary-600 rounded-full transition-all duration-1000 ease-out"
+                      <div
+                        className="h-full bg-gradient-to-r from-primary-500 to-primary-600 rounded-full"
                         style={{ width: `${getProgressPercentage()}%` }}
                       />
                     </div>
@@ -194,6 +265,7 @@ export function FMSSyncProgressModal({ isOpen, onClose }: FMSSyncProgressModalPr
                     This may take a few moments...
                   </p>
                 </div>
+                )}
               </Dialog.Panel>
             </Transition.Child>
           </div>

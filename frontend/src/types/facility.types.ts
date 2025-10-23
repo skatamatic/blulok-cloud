@@ -89,8 +89,6 @@ export interface Unit {
   facility_id: string;
   unit_number: string;
   unit_type?: string;
-  size_sqft?: number;
-  monthly_rate?: number;
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
   description?: string;
   features?: string[];
@@ -170,7 +168,7 @@ export interface UnitFilters {
   unit_type?: string;
   tenant_id?: string;
   lock_status?: 'locked' | 'unlocked' | 'all' | 'unknown';
-  sortBy?: 'unit_number' | 'unit_type' | 'monthly_rate' | 'status' | 'created_at';
+  sortBy?: 'unit_number' | 'unit_type' | 'status' | 'created_at';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;

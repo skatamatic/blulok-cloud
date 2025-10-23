@@ -6,6 +6,9 @@ import { LogsSubscriptionManager } from './logs-subscription-manager';
 import { UnitsSubscriptionManager } from './units-subscription-manager';
 import { BatterySubscriptionManager } from './battery-subscription-manager';
 import { FMSSyncSubscriptionManager } from './fms-sync-subscription-manager';
+import { FMSSyncProgressSubscriptionManager } from './fms-sync-progress-subscription-manager';
+import { GatewayStatusSubscriptionManager } from './gateway-status-subscription-manager';
+import { CommandQueueSubscriptionManager } from './command-queue-subscription-manager';
 
 export class SubscriptionRegistry {
   private managers: Map<string, SubscriptionManager> = new Map();
@@ -19,6 +22,9 @@ export class SubscriptionRegistry {
     this.registerManager(new UnitsSubscriptionManager());
     this.registerManager(new BatterySubscriptionManager());
     this.registerManager(new FMSSyncSubscriptionManager());
+    this.registerManager(new FMSSyncProgressSubscriptionManager());
+    this.registerManager(new GatewayStatusSubscriptionManager());
+    this.registerManager(new CommandQueueSubscriptionManager());
   }
 
   private registerManager(manager: SubscriptionManager): void {
@@ -30,20 +36,21 @@ export class SubscriptionRegistry {
     return this.managers.get(subscriptionType);
   }
 
-  public async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): Promise<void> {
+  public async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): Promise<boolean> {
     const subscriptionType = message.subscriptionType;
     if (!subscriptionType) {
       this.sendError(ws, 'Subscription type required');
-      return;
+      return false;
     }
 
     const manager = this.getManager(subscriptionType);
     if (!manager) {
       this.sendError(ws, `Unknown subscription type: ${subscriptionType}`);
-      return;
+      return false;
     }
 
     await manager.handleSubscription(ws, message, client);
+    return true;
   }
 
   public handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): void {
@@ -101,5 +108,9 @@ export class SubscriptionRegistry {
 
   public getFMSSyncManager(): FMSSyncSubscriptionManager | undefined {
     return this.getManager('fms_sync_status') as FMSSyncSubscriptionManager;
+  }
+
+  public getFMSSyncProgressManager(): FMSSyncProgressSubscriptionManager | undefined {
+    return this.getManager('fms_sync_progress') as FMSSyncProgressSubscriptionManager;
   }
 }

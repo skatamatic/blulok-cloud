@@ -15,6 +15,7 @@ export interface WidgetProps {
   isDragging?: boolean;
   enhancedMenu?: React.ReactNode;
   onRemove?: () => void;
+  suppressTitleOverlay?: boolean;
 }
 
 export const Widget: React.FC<WidgetProps> = ({
@@ -29,6 +30,7 @@ export const Widget: React.FC<WidgetProps> = ({
   isDragging = false,
   enhancedMenu,
   onRemove,
+  suppressTitleOverlay = false,
 }) => {
   // Size to grid dimensions mapping
   const sizeToGrid = {
@@ -62,6 +64,7 @@ export const Widget: React.FC<WidgetProps> = ({
         onRemove={onRemove}
         className={className}
         isDragging={isDragging}
+        suppressTitleOverlay={suppressTitleOverlay}
       >
         {children}
       </CompactWidget>

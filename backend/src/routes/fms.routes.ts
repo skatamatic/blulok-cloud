@@ -25,12 +25,11 @@ const getSyncLogModel = () => new FMSSyncLogModel();
 /**
  * POST /api/v1/fms/config
  * Create FMS configuration for a facility
- * Requires: ADMIN or FACILITY_ADMIN role
+ * Requires: ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot create/modify FMS config)
  */
-router.post('/config', 
-  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+router.post('/config',
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const user = req.user!;
     const { facility_id, provider_type, config, is_enabled } = req.body;
 
     // Validate input
@@ -40,17 +39,6 @@ router.post('/config',
         message: 'facility_id, provider_type, and config are required'
       });
       return;
-    }
-
-    // Check if user has access to this facility
-    if (user.role === UserRole.FACILITY_ADMIN) {
-      if (!user.facilityIds?.includes(facility_id)) {
-        res.status(403).json({
-          success: false,
-          message: 'Access denied to this facility'
-        });
-        return;
-      }
     }
 
     // Check if config already exists
@@ -128,11 +116,11 @@ router.get('/config/:facilityId',
 /**
  * PUT /api/v1/fms/config/:id
  * Update FMS configuration
+ * Requires: ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot modify FMS config)
  */
 router.put('/config/:id',
-  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const user = req.user!;
     const { id } = req.params;
     const { provider_type, config, is_enabled } = req.body;
 
@@ -154,17 +142,6 @@ router.put('/config/:id',
       return;
     }
 
-    // Check access
-    if (user.role === UserRole.FACILITY_ADMIN) {
-      if (!user.facilityIds?.includes(existingConfig.facility_id)) {
-        res.status(403).json({
-          success: false,
-          message: 'Access denied to this facility'
-        });
-        return;
-      }
-    }
-
     // Update configuration
     const updatedConfig = await getFMSConfigModel().update(id, {
       provider_type,
@@ -183,11 +160,11 @@ router.put('/config/:id',
 /**
  * DELETE /api/v1/fms/config/:id
  * Delete FMS configuration
+ * Requires: ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot delete FMS config)
  */
 router.delete('/config/:id',
-  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const user = req.user!;
     const { id } = req.params;
 
     if (!id) {
@@ -206,17 +183,6 @@ router.delete('/config/:id',
         message: 'FMS configuration not found'
       });
       return;
-    }
-
-    // Check access
-    if (user.role === UserRole.FACILITY_ADMIN) {
-      if (!user.facilityIds?.includes(existingConfig.facility_id)) {
-        res.status(403).json({
-          success: false,
-          message: 'Access denied to this facility'
-        });
-        return;
-      }
     }
 
     await getFMSConfigModel().delete(id);
@@ -326,6 +292,53 @@ router.post('/sync/:facilityId',
       res.status(500).json({
         success: false,
         message: 'Sync failed',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  })
+);
+
+/**
+ * POST /api/v1/fms/sync/:facilityId/cancel
+ * Cancel an active FMS sync
+ */
+router.post('/sync/:facilityId/cancel',
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { facilityId } = req.params;
+
+    if (!facilityId) {
+      res.status(400).json({
+        success: false,
+        message: 'Facility ID is required'
+      });
+      return;
+    }
+
+    // Check access
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      if (!user.facilityIds?.includes(facilityId)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this facility'
+        });
+        return;
+      }
+    }
+
+    try {
+      const cancelled = getFMSService().cancelSync(facilityId);
+
+      res.json({
+        success: true,
+        message: cancelled ? 'Sync cancelled successfully' : 'No active sync found to cancel',
+        cancelled,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to cancel sync',
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
@@ -460,7 +473,23 @@ router.get('/changes/:syncLogId/pending',
       }
     }
 
-    const changes = await getFMSService().getPendingChanges(syncLogId);
+    // Retrieve pending changes and ensure validation_errors are present for invalid items
+    const changes = (await getFMSService().getPendingChanges(syncLogId)).map((c) => {
+      if ((c.is_valid === false || c.is_valid === null || typeof c.is_valid === 'undefined') && (!c.validation_errors || c.validation_errors.length === 0)) {
+        const derived: string[] = [];
+        const after: any = c.after_data;
+        if (c.entity_type === 'tenant' && after) {
+          const email = after.email as string | null | undefined;
+          const firstName = (after.firstName ?? after.first_name) as string | null | undefined;
+          const lastName = (after.lastName ?? after.last_name) as string | null | undefined;
+          if (!email || (typeof email === 'string' && email.trim() === '')) derived.push('Missing or empty email address');
+          if (!firstName || (typeof firstName === 'string' && firstName.trim() === '')) derived.push('Missing or empty first name');
+          if (!lastName || (typeof lastName === 'string' && lastName.trim() === '')) derived.push('Missing or empty last name');
+        }
+        return { ...c, validation_errors: derived.length > 0 ? derived : c.validation_errors };
+      }
+      return c;
+    });
 
     res.json({
       success: true,
