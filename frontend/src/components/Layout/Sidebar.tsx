@@ -17,7 +17,8 @@ import {
   ComputerDesktopIcon,
   KeyIcon,
   ClockIcon,
-  CodeBracketIcon
+  CodeBracketIcon,
+  DevicePhoneMobileIcon
 } from '@heroicons/react/24/outline';
 
 interface NavItem {
@@ -42,10 +43,16 @@ const navigation: NavItem[] = [
     icon: UsersIcon,
     requireUserManagement: true
   },
-  { 
-    name: 'System Settings', 
-    href: '/settings', 
+  {
+    name: 'System Settings',
+    href: '/settings',
     icon: Cog6ToothIcon,
+    requireAdmin: true
+  },
+  {
+    name: 'Notification Settings',
+    href: '/notification-settings',
+    icon: DevicePhoneMobileIcon,
     requireAdmin: true
   },
   { 

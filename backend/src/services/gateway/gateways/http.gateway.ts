@@ -15,13 +15,69 @@ import { ProtocolFactory } from '../protocols/protocol-factory';
 import { GatewayDeviceData } from '../../device-sync.service';
 
 /**
- * HTTP-based gateway implementation for the Mesh Manager API
- * This is a temporary implementation before WebSocket is ready
+ * HTTP Gateway Implementation
+ *
+ * HTTP-based gateway implementation for cloud-managed facilities using REST API communication.
+ * Designed for polling-based architectures where gateways periodically check for updates
+ * rather than maintaining persistent connections.
+ *
+ * Key Features:
+ * - REST API communication with configurable polling intervals
+ * - API key authentication for secure communication
+ * - Automatic device discovery and synchronization
+ * - Command queuing and execution through HTTP endpoints
+ * - Failure detection and offline status management
+ * - SSL certificate validation control for development
+ *
+ * Polling Architecture:
+ * - Configurable poll frequency (default 30 seconds)
+ * - Device status synchronization on each poll
+ * - Command delivery and response collection
+ * - Automatic retry logic for failed operations
+ * - Consecutive failure tracking for health monitoring
+ *
+ * Device Management:
+ * - HTTP-based device discovery and registration
+ * - Status polling for connected devices
+ * - Command execution through API calls
+ * - Battery level and connectivity monitoring
+ *
+ * Use Cases:
+ * - Cloud-managed facilities with intermittent connectivity
+ * - Facilities behind restrictive firewalls (HTTP vs WebSocket)
+ * - Cost-effective communication for low-frequency updates
+ * - Development and testing environments
+ *
+ * Architecture:
+ * - Inherits from BaseGateway for common functionality
+ * - HTTP connection for API communication
+ * - Protocol abstraction for message encoding/decoding
+ * - Timer-based polling for periodic updates
+ * - Failure tracking and automatic offline detection
+ *
+ * Security Considerations:
+ * - HTTPS-only communication in production
+ * - API key authentication and validation
+ * - SSL certificate validation (configurable for development)
+ * - Request/response encryption and integrity
+ * - Audit logging for all API interactions
+ *
+ * Performance Characteristics:
+ * - Higher latency than WebSocket connections
+ * - Configurable polling frequency for optimization
+ * - Lower server resource usage (no persistent connections)
+ * - Scalable for large numbers of gateways
+ * - Suitable for periodic status updates and command delivery
  */
 export class HttpGateway extends BaseGateway {
+  // HTTP connection for API communication
   private httpConnection?: HttpConnection;
+
+  // Polling configuration and state
   private readonly pollFrequencyMs: number;
   private pollingInterval: NodeJS.Timeout | undefined;
+
+  // Failure tracking for health monitoring
   private consecutiveFailures: number = 0;
   private readonly MAX_FAILURES_BEFORE_OFFLINE = 3;
 

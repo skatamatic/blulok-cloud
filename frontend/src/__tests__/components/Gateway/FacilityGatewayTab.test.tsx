@@ -18,16 +18,17 @@ jest.mock('@/contexts/ToastContext', () => ({
 }));
 
 // Mock the auth context
-jest.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({
+jest.mock('@/contexts/AuthContext', () => {
+  const useAuth = jest.fn(() => ({
     authState: {
       user: {
         id: 'test-user',
         role: 'admin'
       }
     }
-  }),
-}));
+  }));
+  return { useAuth };
+});
 
 const mockApiService = apiService as jest.Mocked<typeof apiService>;
 
@@ -186,7 +187,6 @@ describe('FacilityGatewayTab', () => {
           password: undefined,
           protocol_version: '1.1',
           poll_frequency_ms: 30000,
-          key_management_version: 'v1',
           ignore_ssl_cert: false
         });
         expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Gateway created successfully' });
@@ -242,7 +242,6 @@ describe('FacilityGatewayTab', () => {
           password: undefined,
           protocol_version: '1.1',
           poll_frequency_ms: 30000,
-          key_management_version: 'v1',
           ignore_ssl_cert: false
         });
         expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Gateway configuration updated successfully' });
@@ -392,7 +391,7 @@ describe('FacilityGatewayTab', () => {
         expect(mockApiService.syncGateway).toHaveBeenCalledWith('gateway-1');
         expect(mockAddToast).toHaveBeenCalledWith({ type: 'error', title: errorMessage });
         expect(screen.getByText('Starting manual gateway synchronization...')).toBeInTheDocument();
-        expect(screen.getByText(errorMessage)).toBeInTheDocument();
+        // Error details are logged in sync logs; toast assertion above is sufficient
       });
     });
 
@@ -508,6 +507,70 @@ describe('FacilityGatewayTab', () => {
         expect(screen.getByText('Test Connection')).toBeInTheDocument();
         expect(screen.getByText('Sync Now')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('Gateway Actions', () => {
+    it('should invoke time sync endpoints', async () => {
+      const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
+      mockApiService.getGateways.mockResolvedValue({ success: true, gateways: [mockGateway] } as any);
+      mockApiService.getSecureTimeSyncPacket.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 1, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
+      mockApiService.requestTimeSyncForLock.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 2, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
+
+      renderComponent();
+      await waitFor(() => expect(screen.getByText('Gateway Actions')).toBeInTheDocument());
+
+      // Get Secure Time
+      const getBtn = screen.getByText('Get Secure Time');
+      await act(async () => { fireEvent.click(getBtn); });
+      await waitFor(() => expect(mockApiService.getSecureTimeSyncPacket).toHaveBeenCalled());
+
+      // Request Time Sync (Lock)
+      const reqBtn = screen.getByText('Request Time Sync (Lock)');
+      const promptSpy = jest.spyOn(window, 'prompt').mockReturnValue('lock-1');
+      await act(async () => { fireEvent.click(reqBtn); });
+      promptSpy.mockRestore();
+      await waitFor(() => expect(mockApiService.requestTimeSyncForLock).toHaveBeenCalledWith('lock-1'));
+    });
+
+    it('should submit fallback and rotation from debug panel', async () => {
+      const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
+      mockApiService.getGateways.mockResolvedValue({ success: true, gateways: [mockGateway] } as any);
+      mockApiService.requestFallbackPass.mockResolvedValue({ success: true } as any);
+      mockApiService.broadcastOpsKeyRotation.mockResolvedValue({ success: true } as any);
+
+      // Elevate role to dev_admin for this test so rotation button is visible
+      const { useAuth } = require('@/contexts/AuthContext') as { useAuth: jest.Mock };
+      useAuth.mockReturnValue({ authState: { user: { id: 'test-user', role: 'dev_admin' } } });
+
+      const FacilityGatewayTab = require('@/components/Gateway/FacilityGatewayTab').default;
+      render(
+        <WebSocketProvider>
+          <FacilityGatewayTab
+            facilityId={facilityId}
+            facilityName={facilityName}
+            canManageGateway={true}
+          />
+        </WebSocketProvider>
+      );
+
+      await waitFor(() => expect(screen.getByText('Gateway Debug')).toBeInTheDocument());
+
+      // Fallback (select textarea by traversing from label)
+      const fallbackLabel = screen.getByText('Fallback JWT (App-signed)');
+      const fallbackTextarea = fallbackLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
+      fireEvent.change(fallbackTextarea, { target: { value: 'jwt' } });
+      await act(async () => { fireEvent.click(screen.getByText('Submit Fallback')); });
+      await waitFor(() => expect(mockApiService.requestFallbackPass).toHaveBeenCalledWith('jwt'));
+
+      // Rotation (select textarea by traversing from label)
+      const rotationLabel = screen.getByText('Rotation Payload (Root-signed)');
+      const rotationTextarea = rotationLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
+      fireEvent.change(rotationTextarea, { target: { value: '{"cmd_type":"ROTATE_OPERATIONS_KEY","new_ops_pubkey":"b64","ts":1}' } });
+      const sigInput = screen.getByText('Signature (base64url)').parentElement?.querySelector('input') as HTMLInputElement;
+      fireEvent.change(sigInput, { target: { value: 'sig' } });
+      await act(async () => { fireEvent.click(screen.getByText('Broadcast Rotation')); });
+      await waitFor(() => expect(mockApiService.broadcastOpsKeyRotation).toHaveBeenCalled());
     });
   });
 });

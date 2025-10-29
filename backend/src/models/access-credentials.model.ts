@@ -1,47 +1,136 @@
 import { DatabaseService } from '../services/database.service';
 
+/**
+ * Access Credentials Model
+ *
+ * Manages physical and digital access credentials for users in the BluLok system.
+ * Handles credential lifecycle from issuance to expiration and revocation.
+ *
+ * Key Features:
+ * - Multi-type credential support (physical keys, cards, mobile apps, keypads)
+ * - Expiration and renewal management
+ * - Permission-based access control
+ * - Audit trail for credential operations
+ * - User association and credential uniqueness
+ *
+ * Credential Types:
+ * - physical_key: Traditional metal keys or key fobs
+ * - card: RFID/NFC access cards
+ * - mobile_app: Digital credentials in mobile applications
+ * - keypad_code: Temporary numeric codes for keypads
+ *
+ * Security Considerations:
+ * - Credential uniqueness validation
+ * - Expiration enforcement
+ * - Permission validation on access
+ * - Audit logging for all operations
+ * - Secure credential storage and transmission
+ *
+ * Business Logic:
+ * - Automatic deactivation on expiration
+ * - Permission inheritance from user roles
+ * - Integration with access control systems
+ * - Credential sharing and delegation
+ */
+
+/**
+ * Access Credential Interface
+ *
+ * Core representation of an access credential in the system.
+ * Contains all metadata and lifecycle information for credential management.
+ */
 export interface AccessCredential {
+  /** Globally unique identifier for the credential */
   id: string;
+  /** User ID that owns this credential */
   user_id: string;
+  /** Unique credential identifier (key number, card ID, etc.) */
   credential_id: string;
+  /** Type classification of the credential */
   credential_type: 'physical_key' | 'card' | 'mobile_app' | 'keypad_code';
+  /** Human-readable name for the credential */
   credential_name?: string;
+  /** Detailed description or notes about the credential */
   description?: string;
+  /** Whether the credential is currently active and usable */
   is_active: boolean;
+  /** Timestamp when the credential was issued */
   issued_at: Date;
+  /** Optional expiration timestamp for temporary credentials */
   expires_at?: Date;
+  /** User ID of the person who issued the credential */
   issued_by?: string;
+  /** Permission configuration specific to this credential */
   access_permissions?: Record<string, any>;
+  /** Automatic timestamp of record creation */
   created_at: Date;
+  /** Automatic timestamp of last record update */
   updated_at: Date;
 }
 
+/**
+ * Access Credential with Joined User Details
+ *
+ * Extended credential interface including joined user information for display purposes.
+ * Used in admin interfaces and reporting where user context is needed.
+ */
 export interface AccessCredentialWithDetails extends AccessCredential {
-  // Joined data
+  // Joined user data for display purposes
+  /** Full name of the credential owner */
   user_name?: string;
+  /** Email address of the credential owner */
   user_email?: string;
+  /** Full name of the person who issued the credential */
   issued_by_name?: string;
 }
 
+/**
+ * Access Credential Creation Data
+ *
+ * Input interface for creating new access credentials.
+ * Contains required fields and optional configuration parameters.
+ */
 export interface CreateAccessCredentialData {
+  /** User ID that will own the new credential */
   user_id: string;
+  /** Unique identifier for the new credential */
   credential_id: string;
+  /** Type classification for the new credential */
   credential_type: 'physical_key' | 'card' | 'mobile_app' | 'keypad_code';
+  /** Optional human-readable name */
   credential_name?: string;
+  /** Optional detailed description */
   description?: string;
+  /** Optional expiration date for temporary credentials */
   expires_at?: Date;
+  /** User ID of the person issuing the credential */
   issued_by?: string;
+  /** Permission configuration for the credential */
   access_permissions?: Record<string, any>;
 }
 
+/**
+ * Access Credential Query Filters
+ *
+ * Filtering and pagination options for credential queries.
+ * Supports advanced filtering and sorting for credential management.
+ */
 export interface AccessCredentialFilters {
+  /** Filter by specific user ownership */
   user_id?: string;
+  /** Filter by credential type */
   credential_type?: string;
+  /** Filter by active/inactive status */
   is_active?: boolean;
+  /** Filter credentials expiring before a specific date */
   expires_before?: Date;
+  /** Maximum number of results to return */
   limit?: number;
+  /** Number of results to skip (for pagination) */
   offset?: number;
+  /** Sort field for result ordering */
   sort_by?: 'issued_at' | 'expires_at' | 'credential_name';
+  /** Sort direction */
   sort_order?: 'asc' | 'desc';
 }
 

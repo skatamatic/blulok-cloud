@@ -3,36 +3,92 @@ import { UserRole } from '@/types/auth.types';
 // Dynamic import to avoid circular dependency
 import { logger } from '@/utils/logger';
 
+/**
+ * General Statistics Data Interface
+ *
+ * Comprehensive dashboard statistics for system monitoring and management.
+ * Provides aggregated metrics across facilities, devices, and users.
+ */
 export interface GeneralStatsData {
+  /** Facility statistics across the system or scoped facilities */
   facilities: {
+    /** Total number of facilities */
     total: number;
+    /** Number of active facilities */
     active: number;
+    /** Number of inactive facilities */
     inactive: number;
+    /** Number of facilities under maintenance */
     maintenance: number;
   };
+  /** Device connectivity and status statistics */
   devices: {
+    /** Total number of devices */
     total: number;
+    /** Number of online devices */
     online: number;
+    /** Number of offline devices */
     offline: number;
+    /** Number of devices in error state */
     error: number;
+    /** Number of devices under maintenance */
     maintenance: number;
   };
+  /** User account statistics */
   users: {
+    /** Total number of users */
     total: number;
+    /** Number of active user accounts */
     active: number;
+    /** Number of inactive/deactivated accounts */
     inactive: number;
+    /** User count broken down by role */
     byRole: Record<UserRole, number>;
   };
+  /** ISO timestamp when statistics were last calculated */
   lastUpdated: string;
 }
 
+/**
+ * Scoped General Statistics Data Interface
+ *
+ * Extends GeneralStatsData with scope information for role-based access control.
+ * Indicates whether statistics are global or limited to specific facilities.
+ */
 export interface ScopedGeneralStatsData extends GeneralStatsData {
+  /** Access scope information for the requesting user */
   scope: {
+    /** Type of access scope */
     type: 'all' | 'facility_limited';
+    /** Specific facility IDs if scope is limited */
     facilityIds?: string[];
   };
 }
 
+/**
+ * General Stats Service
+ *
+ * Provides comprehensive system statistics for dashboards and monitoring.
+ * Aggregates data across facilities, devices, and users with role-based scoping.
+ *
+ * Key Features:
+ * - Role-based data scoping (global vs facility-limited)
+ * - Real-time statistics calculation
+ * - Efficient database aggregation queries
+ * - Comprehensive system health metrics
+ * - Performance-optimized for dashboard displays
+ *
+ * Data Provided:
+ * - Facility status breakdown (active/inactive/maintenance)
+ * - Device connectivity statistics (online/offline/error/maintenance)
+ * - User account metrics by role and status
+ * - System-wide operational statistics
+ *
+ * Access Control:
+ * - DEV_ADMIN, ADMIN: Full system statistics
+ * - FACILITY_ADMIN: Statistics limited to assigned facilities
+ * - Other roles: Access denied
+ */
 export class GeneralStatsService {
   private static instance: GeneralStatsService;
   private db = DatabaseService.getInstance();

@@ -3,6 +3,27 @@ import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { GeneralStatsService } from '@/services/general-stats.service';
 
+/**
+ * General Stats Subscription Manager
+ *
+ * Manages real-time subscriptions to system-wide statistics and metrics.
+ * Provides facility-scoped dashboard data including unit counts, device status,
+ * connectivity metrics, and operational statistics.
+ *
+ * Subscription Type: 'general_stats'
+ *
+ * Data Provided:
+ * - Total units and occupancy statistics
+ * - Device connectivity and battery levels
+ * - Gateway status and network health
+ * - Facility-specific metrics (scoped by user permissions)
+ *
+ * Access Control:
+ * - DEV_ADMIN: Full system statistics across all facilities
+ * - ADMIN: Full system statistics across all facilities
+ * - FACILITY_ADMIN: Statistics limited to assigned facilities
+ * - Other roles: Access denied
+ */
 export class GeneralStatsSubscriptionManager extends BaseSubscriptionManager {
   private generalStatsService = GeneralStatsService.getInstance();
 

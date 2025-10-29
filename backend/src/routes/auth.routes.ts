@@ -4,10 +4,52 @@ import { AuthService } from '@/services/auth.service';
 import { LoginRequest, AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
+import { InviteService } from '@/services/invite.service';
+import { OTPService } from '@/services/otp.service';
+import { UserModel, User } from '@/models/user.model';
+import bcrypt from 'bcrypt';
+
+/**
+ * Authentication Routes
+ *
+ * Handles user authentication, authorization, and session management for the BluLok system.
+ * Provides secure login/logout functionality with JWT-based session tokens.
+ *
+ * Key Features:
+ * - User authentication with email/password
+ * - JWT token generation and validation
+ * - Password change functionality
+ * - Session management and logout
+ * - Comprehensive input validation
+ * - Rate limiting protection
+ *
+ * Authentication Flow:
+ * 1. User submits credentials via POST /auth/login
+ * 2. Credentials validated against database
+ * 3. JWT token generated with user claims and roles
+ * 4. Token returned for subsequent API calls
+ * 5. Token validated on protected routes via middleware
+ *
+ * Security Considerations:
+ * - Password complexity requirements
+ * - JWT token expiration and refresh
+ * - Rate limiting to prevent brute force attacks
+ * - Secure password hashing (bcrypt)
+ * - Input sanitization and validation
+ * - Audit logging for authentication events
+ * - Session timeout and automatic logout
+ *
+ * API Endpoints:
+ * - POST /auth/login - User authentication
+ * - POST /auth/logout - Session termination
+ * - POST /auth/change-password - Password update
+ * - GET /auth/me - Current user profile
+ * - POST /auth/refresh - Token refresh
+ */
 
 const router = Router();
 
-// Validation schemas
+// Input validation schemas with security constraints
 const loginSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required()
@@ -21,7 +63,7 @@ const changePasswordSchema = Joi.object({
     })
 });
 
-// POST /auth/login
+// POST /auth/login - User authentication endpoint
 router.post('/login', asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const { error, value } = loginSchema.validate(req.body);
   if (error) {
@@ -43,7 +85,22 @@ router.post('/login', asyncHandler(async (req: Request, res: Response): Promise<
   });
 
   const statusCode = result.success ? 200 : 401;
-  res.status(statusCode).json(result);
+  if (result.success) {
+    // Compute isDeviceRegistered: check if the provided appDeviceId exists
+    let isDeviceRegistered = false;
+    try {
+      const appDeviceId = (req.headers['x-app-device-id'] as string | undefined)?.trim();
+      if (appDeviceId) {
+        const { UserDeviceModel } = await import('@/models/user-device.model');
+        const udm = new UserDeviceModel();
+        const device = await udm.findByUserAndAppDeviceId(result.user!.id, appDeviceId);
+        isDeviceRegistered = !!device;
+      }
+    } catch (_e) {}
+    res.status(statusCode).json({ ...result, isDeviceRegistered });
+  } else {
+    res.status(statusCode).json(result);
+  }
 }));
 
 // POST /auth/change-password
@@ -104,3 +161,71 @@ router.get('/verify-token', authenticateToken as any, asyncHandler(async (req: A
 }));
 
 export { router as authRouter };
+
+// ----- First-time Invite Flow Endpoints -----
+
+// POST /auth/invite/request-otp { token, phone? | email? }
+router.post('/invite/request-otp', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({
+    token: Joi.string().required(),
+    phone: Joi.string().optional(),
+    email: Joi.string().email().optional(),
+  }).xor('phone', 'email');
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+  const svc = FirstTimeUserService.getInstance();
+  try {
+    const result = await svc.requestOtp({ token: value.token, phone: value.phone, email: value.email });
+    res.json({ success: true, expiresAt: result.expiresAt });
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e?.message || 'Unable to send OTP' });
+  }
+}));
+
+// POST /auth/invite/verify-otp { token, otp }
+router.post('/invite/verify-otp', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({ token: Joi.string().required(), otp: Joi.string().pattern(/^\d{6}$/).required() });
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+  const svc = FirstTimeUserService.getInstance();
+  try {
+    const valid = await svc.verifyOtp({ token: value.token, otp: value.otp });
+    res.json({ success: valid });
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e?.message || 'Invalid OTP' });
+  }
+}));
+
+// POST /auth/invite/set-password { token, otp, newPassword }
+router.post('/invite/set-password', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({
+    token: Joi.string().required(),
+    otp: Joi.string().pattern(/^\d{6}$/).required(),
+    newPassword: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$')).required()
+      .messages({ 'string.pattern.base': 'Password must contain lowercase, uppercase, number, and special char' })
+  });
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+  const svc = FirstTimeUserService.getInstance();
+  try {
+    await svc.setPassword({ token: value.token, otp: value.otp, newPassword: value.newPassword });
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e?.message || 'Unable to set password' });
+  }
+}));

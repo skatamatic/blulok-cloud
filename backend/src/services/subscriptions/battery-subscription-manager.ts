@@ -3,6 +3,38 @@ import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { UnitsService } from '@/services/units.service';
 
+/**
+ * Battery Status Subscription Manager
+ *
+ * Manages real-time subscriptions to device battery levels and connectivity status.
+ * Provides critical monitoring for battery-powered smart locks and access devices.
+ *
+ * Subscription Type: 'battery_status'
+ *
+ * Key Features:
+ * - Real-time battery level monitoring
+ * - Critical battery alerts (≤5% threshold)
+ * - Low battery warnings (≤20% threshold)
+ * - Device connectivity status tracking
+ * - Facility-scoped battery health dashboards
+ *
+ * Data Provided:
+ * - Units with low battery levels (<20%)
+ * - Critical battery units (<5%) requiring immediate attention
+ * - Device connectivity statistics (online/offline counts)
+ * - Battery level distributions and trends
+ * - Real-time alerts for battery maintenance
+ *
+ * Access Control:
+ * - All authenticated users can subscribe
+ * - Facility-scoped data based on user role and permissions
+ * - Role-based filtering for appropriate data access
+ *
+ * Battery Thresholds:
+ * - Critical: ≤5% - Immediate replacement required
+ * - Low: 6-20% - Replacement recommended soon
+ * - Normal: >20% - Acceptable battery levels
+ */
 export class BatterySubscriptionManager extends BaseSubscriptionManager {
   private unitsService: UnitsService;
 

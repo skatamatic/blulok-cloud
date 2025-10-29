@@ -1,3 +1,59 @@
+/**
+ * Gateway Commands Routes
+ *
+ * Advanced command queue management API for monitoring and controlling gateway command execution.
+ * Provides administrative tools for troubleshooting failed commands, manual retries, and
+ * dead letter queue management with comprehensive audit trails.
+ *
+ * Key Features:
+ * - Real-time command queue monitoring with status filtering
+ * - Manual command retry capabilities for failed operations
+ * - Command cancellation for obsolete or erroneous commands
+ * - Dead letter queue management for permanently failed commands
+ * - Command execution attempt history and debugging
+ * - WebSocket broadcasting for real-time queue updates
+ *
+ * Command Lifecycle Management:
+ * - Queue monitoring and status tracking
+ * - Manual intervention for stuck or failed commands
+ * - Retry logic with exponential backoff
+ * - Dead letter queue recovery and reprocessing
+ * - Audit trail for all command operations
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full command management capabilities
+ * - FACILITY_ADMIN: Limited visibility for assigned facilities
+ * - TENANT/MAINTENANCE: No access to command operations
+ *
+ * Command Operations:
+ * - List pending commands with status filtering
+ * - Force retry failed commands immediately
+ * - Cancel commands that should not execute
+ * - Requeue dead letter commands for reprocessing
+ * - View detailed attempt history for debugging
+ *
+ * Business Logic:
+ * - Command idempotency prevents duplicate execution
+ * - Facility-scoped operations ensure data isolation
+ * - Real-time updates keep monitoring dashboards current
+ * - Comprehensive logging supports troubleshooting
+ * - Queue management prevents system resource exhaustion
+ *
+ * Security Considerations:
+ * - Strict role-based access control (ADMIN/DEV_ADMIN only)
+ * - Audit logging for all command modifications
+ * - Input validation on command IDs and parameters
+ * - Secure WebSocket broadcasting with authentication
+ * - Protection against command injection attacks
+ *
+ * Performance Optimizations:
+ * - Efficient database queries with proper indexing
+ * - Paginated results for large command queues
+ * - WebSocket broadcasting for real-time updates
+ * - Background processing for heavy operations
+ * - Connection pooling for database operations
+ */
+
 import { Router, Response } from 'express';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
@@ -8,6 +64,7 @@ const router = Router();
 const model = new GatewayCommandModel();
 const attemptModel = new GatewayCommandAttemptModel();
 
+// Apply authentication middleware to all routes
 router.use(authenticateToken);
 
 router.get('/pending', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {

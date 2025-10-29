@@ -3,6 +3,39 @@ import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { UnitsService } from '@/services/units.service';
 
+/**
+ * Units Subscription Manager
+ *
+ * Manages real-time subscriptions to unit status and occupancy data.
+ * Provides live updates on unit availability, lock status, and tenant information.
+ *
+ * Subscription Type: 'units'
+ *
+ * Key Features:
+ * - Real-time unit occupancy and status updates
+ * - Unlocked unit monitoring for security dashboards
+ * - Facility-scoped access control
+ * - Comprehensive unit statistics aggregation
+ * - Lock/unlock status tracking
+ *
+ * Data Provided:
+ * - Complete unit listings with status and metadata
+ * - Currently unlocked units with tenant information
+ * - Occupancy statistics (occupied, available, maintenance, reserved)
+ * - Lock status counts and percentages
+ * - Real-time updates on unit state changes
+ *
+ * Access Control:
+ * - All authenticated users can subscribe
+ * - Facility-scoped data based on user role and permissions
+ * - Role-based filtering (TENANT sees assigned units, ADMIN sees all)
+ *
+ * Unit Status Types:
+ * - available: Ready for new tenant assignment
+ * - occupied: Currently leased and occupied
+ * - maintenance: Under maintenance, access restricted
+ * - reserved: Held for future tenant but not yet occupied
+ */
 export class UnitsSubscriptionManager extends BaseSubscriptionManager {
   private unitsService: UnitsService;
 

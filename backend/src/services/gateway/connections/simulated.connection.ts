@@ -2,13 +2,41 @@ import { BaseConnection } from './base.connection';
 import { GatewayConnectionState } from '../../../types/gateway.types';
 
 /**
- * Simulated connection for testing and development
- * Provides realistic connection behavior without actual network calls
+ * Simulated Gateway Connection
+ *
+ * Simulated connection implementation for testing and development environments.
+ * Provides realistic gateway connection behavior without requiring actual network
+ * infrastructure or physical gateways.
+ *
+ * Key Features:
+ * - Configurable reliability for testing failure scenarios
+ * - Realistic connection delays and timeouts
+ * - Simulated heartbeat and reconnection behavior
+ * - Mock message handling for testing protocols
+ * - Deterministic behavior for reproducible testing
+ *
+ * Simulation Parameters:
+ * - Reliability: Configurable success rate (0.0-1.0)
+ * - Heartbeat interval: Faster intervals for testing
+ * - Connection delays: Realistic network latency simulation
+ * - Failure simulation: Random failures based on reliability setting
+ *
+ * Testing Capabilities:
+ * - Normal operation testing with high reliability
+ * - Failure scenario testing with low reliability
+ * - Network condition simulation (latency, timeouts)
+ * - Protocol testing without physical hardware
+ * - Integration testing of gateway service logic
+ *
+ * Security Considerations:
+ * - No actual network communication (safe for testing)
+ * - Mock authentication and authorization
+ * - Controlled failure simulation for security testing
  */
 export class SimulatedConnection extends BaseConnection {
+  // Timer handles for heartbeat and response simulation
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private responseTimer: NodeJS.Timeout | undefined;
-  // private isSimulatingFailure = false; // Unused for now
 
   constructor(
     public readonly gatewayId: string,

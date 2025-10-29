@@ -7,25 +7,92 @@ import { logger } from '@/utils/logger';
 import { SubscriptionRegistry } from './subscriptions/subscription-registry';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 
+/**
+ * WebSocket Subscription Interface
+ *
+ * Represents an active subscription to real-time data streams.
+ * Subscriptions are created when clients request specific data feeds
+ * and are automatically cleaned up on disconnection or timeout.
+ */
 export interface Subscription {
+  /** Unique subscription identifier */
   id: string;
+  /** Type of subscription (e.g., 'gateway_status', 'device_updates') */
   type: string;
+  /** User who created this subscription */
   userId: string;
+  /** User's role for access control */
   userRole: UserRole;
+  /** When the subscription was created */
   createdAt: Date;
+  /** Last heartbeat timestamp from client */
   lastHeartbeat: Date;
+  /** Optional filters to limit subscription scope */
   filters?: Record<string, any>;
 }
 
+/**
+ * WebSocket Message Interface
+ *
+ * Defines the protocol for client-server communication over WebSocket connections.
+ * Messages are JSON-encoded and support various real-time operations.
+ */
 export interface WebSocketMessage {
+  /** Message type determining how the message should be processed */
   type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update';
+  /** Subscription ID for targeted messages */
   subscriptionId?: string;
+  /** Type of subscription being referenced */
   subscriptionType?: string;
+  /** Message payload data */
   data?: any;
+  /** Error message if type is 'error' */
   error?: string;
+  /** ISO timestamp when message was sent */
   timestamp?: string;
 }
 
+/**
+ * WebSocket Service
+ *
+ * Manages real-time bidirectional communication between clients and server.
+ * Provides subscription-based data streaming, authentication, and connection management
+ * through a sophisticated registry of specialized subscription managers.
+ *
+ * Key Features:
+ * - JWT-based authentication for WebSocket connections
+ * - Role-based access control with facility scoping
+ * - Heartbeat monitoring for connection health
+ * - Pluggable subscription manager architecture
+ * - Automatic cleanup of stale connections and subscriptions
+ *
+ * Security Considerations:
+ * - All connections require valid JWT authentication
+ * - Role-based filtering prevents unauthorized data access
+ * - Facility-scoped subscriptions for multi-tenant isolation
+ * - Connection limits prevent DoS attacks
+ * - Automatic cleanup prevents resource leaks
+ * - Encrypted WebSocket connections (WSS) in production
+ *
+ * Subscription Manager Architecture:
+ * - GeneralStatsSubscriptionManager: System-wide statistics and metrics
+ * - GatewayStatusSubscriptionManager: Gateway connectivity and health
+ * - FMSSyncSubscriptionManager: FMS synchronization status
+ * - DashboardLayoutSubscriptionManager: User dashboard configuration
+ * - LogsSubscriptionManager: Real-time log streaming
+ * - UnitsSubscriptionManager: Unit status and occupancy updates
+ * - BatterySubscriptionManager: Device battery level monitoring
+ * - CommandQueueSubscriptionManager: Command execution queue status
+ * - FMSSyncProgressSubscriptionManager: FMS sync operation progress
+ *
+ * Message Protocol:
+ * - subscription: Create new data stream subscription
+ * - unsubscription: Cancel existing subscription
+ * - heartbeat: Connection health monitoring
+ * - data: Initial subscription data payload
+ * - error: Error reporting and handling
+ * - [type]_update: Real-time data updates (e.g., gateway_status_update)
+ */
 export class WebSocketService {
   private static instance: WebSocketService;
   private wss: WebSocketServer | null = null;
@@ -39,6 +106,10 @@ export class WebSocketService {
     this.startHeartbeat();
   }
 
+  /**
+   * Get singleton instance of the WebSocket service.
+   * Ensures consistent WebSocket management across the application.
+   */
   public static getInstance(): WebSocketService {
     if (!WebSocketService.instance) {
       WebSocketService.instance = new WebSocketService();

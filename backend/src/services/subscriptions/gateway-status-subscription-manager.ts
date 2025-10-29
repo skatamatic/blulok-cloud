@@ -3,6 +3,39 @@ import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { GatewayModel, Gateway } from '@/models/gateway.model';
 
+/**
+ * Gateway Status Subscription Manager
+ *
+ * Manages real-time subscriptions to gateway connectivity and operational status.
+ * Provides live monitoring of network infrastructure health and device connectivity.
+ *
+ * Subscription Type: 'gateway_status'
+ *
+ * Key Features:
+ * - Real-time gateway status monitoring (online/offline/error/maintenance)
+ * - Facility-scoped visibility for multi-tenant environments
+ * - Last seen timestamps for connectivity tracking
+ * - Targeted updates for specific gateway or facility changes
+ * - Comprehensive network health dashboards
+ *
+ * Data Provided:
+ * - Gateway operational status and connectivity state
+ * - Facility association and gateway metadata
+ * - Last communication timestamps
+ * - Real-time status change notifications
+ * - Network topology and health metrics
+ *
+ * Access Control:
+ * - All authenticated users can subscribe
+ * - Facility-scoped data based on user role and permissions
+ * - Role-based filtering (TENANT sees facility gateways, ADMIN sees all)
+ *
+ * Gateway Status Types:
+ * - online: Gateway connected and operational
+ * - offline: Gateway unreachable or disconnected
+ * - error: Gateway experiencing communication errors
+ * - maintenance: Gateway under maintenance, limited functionality
+ */
 export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   private gatewayModel: GatewayModel;
 

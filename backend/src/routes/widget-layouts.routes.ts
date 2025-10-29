@@ -1,3 +1,40 @@
+/**
+ * Widget Layouts Routes
+ *
+ * Personalized dashboard layout management for users. Enables customizable
+ * widget arrangements, visibility controls, and display preferences while
+ * maintaining role-based access to available widgets.
+ *
+ * Key Features:
+ * - User-specific widget layout persistence
+ * - Drag-and-drop positioning and sizing
+ * - Role-based widget availability filtering
+ * - Default template management
+ * - Real-time layout synchronization (temporarily disabled)
+ * - Layout reset and restoration capabilities
+ *
+ * Layout System:
+ * - Grid-based positioning with x/y coordinates
+ * - Flexible widget sizing (tiny, small, medium, large, etc.)
+ * - Display order management for tab navigation
+ * - Visibility toggles for customization
+ * - Template-based default configurations
+ *
+ * Widget Management:
+ * - Individual widget positioning and configuration
+ * - Bulk layout save and restore operations
+ * - Widget visibility controls (show/hide)
+ * - Template-based widget creation
+ * - Layout migration support for updates
+ *
+ * Security Considerations:
+ * - User isolation for layout data
+ * - Input validation for layout configurations
+ * - XSS protection for widget content
+ * - Permission validation for widget access
+ * - Secure layout serialization and storage
+ */
+
 import { Router, Response } from 'express';
 import Joi from 'joi';
 import { UserWidgetLayoutModel, DefaultWidgetTemplateModel } from '@/models/user-widget-layout.model';

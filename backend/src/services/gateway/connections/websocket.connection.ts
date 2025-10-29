@@ -3,15 +3,77 @@ import { BaseConnection } from './base.connection';
 import { GatewayConnectionState } from '../../../types/gateway.types';
 
 /**
- * WebSocket connection implementation for gateway communication
+ * WebSocket Gateway Connection
+ *
+ * WebSocket-based connection implementation for real-time bidirectional communication
+ * with on-site gateways. Provides persistent connections for immediate command delivery
+ * and status updates.
+ *
+ * Key Features:
+ * - Persistent WebSocket connections for real-time communication
+ * - Automatic reconnection with exponential backoff
+ * - Heartbeat monitoring for connection health
+ * - Message framing and protocol handling
+ * - Connection statistics and performance monitoring
+ *
+ * Connection Management:
+ * - Configurable connection timeout and handshake timeout
+ * - Automatic reconnection on connection loss
+ * - Exponential backoff for reconnection attempts
+ * - Maximum reconnection attempts with failure handling
+ * - Graceful connection shutdown and cleanup
+ *
+ * Heartbeat Protocol:
+ * - Configurable heartbeat interval (default 30 seconds)
+ * - Bidirectional heartbeat for connection validation
+ * - Connection health monitoring and automatic recovery
+ * - Timeout detection and reconnection triggering
+ *
+ * Message Handling:
+ * - Binary and text message support
+ * - Message fragmentation handling
+ * - Error message processing and logging
+ * - Statistics tracking for bandwidth monitoring
+ *
+ * Use Cases:
+ * - Real-time device control and monitoring
+ * - Immediate command delivery and acknowledgment
+ * - Live status updates and telemetry
+ * - High-frequency data streaming
+ * - Interactive gateway management
+ *
+ * Architecture:
+ * - WebSocket client with comprehensive event handling
+ * - State machine for connection lifecycle management
+ * - Timer-based heartbeat and reconnection logic
+ * - Statistics aggregation for monitoring
+ * - Error handling with connection recovery
+ *
+ * Security Considerations:
+ * - WSS (WebSocket Secure) connections required in production
+ * - Connection authentication and authorization
+ * - Message validation and sanitization
+ * - Resource limits to prevent abuse
+ * - Audit logging for connection events
+ *
+ * Performance Characteristics:
+ * - Low latency for real-time operations
+ * - Persistent connection overhead
+ * - Efficient for high-frequency updates
+ * - Scalable with connection pooling
  */
 export class WebSocketConnection extends BaseConnection {
+  // WebSocket client instance
   private ws: WebSocket | undefined;
+
+  // Timer handles for reconnection and heartbeat
   private reconnectTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
+
+  // Reconnection management
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
-  private reconnectDelay = 1000; // Start with 1 second
+  private reconnectDelay = 1000; // Start with 1 second, exponential backoff
 
   constructor(
     public readonly gatewayId: string,

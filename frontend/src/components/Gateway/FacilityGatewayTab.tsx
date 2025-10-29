@@ -18,6 +18,7 @@ import {
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Gateway {
   id: string;
@@ -88,9 +89,14 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     password: '',
     protocol_version: '1.1',
     poll_frequency_ms: 30000,
-    key_management_version: 'v1' as 'v1' | 'v2',
     ignore_ssl_cert: false
   });
+
+  // Debug panel state
+  const [fallbackJwtInput, setFallbackJwtInput] = useState('');
+  const [rotationPayloadInput, setRotationPayloadInput] = useState('');
+  const [rotationSignatureInput, setRotationSignatureInput] = useState('');
+  const { authState } = useAuth();
 
   // Check if gateway is properly configured
   const isGatewayProperlyConfigured = (gw: Gateway | null) => {
@@ -129,7 +135,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
           password: '', // Don't populate password
           protocol_version: gw.protocol_version || '1.1',
           poll_frequency_ms: gw.poll_frequency_ms || 30000,
-          key_management_version: gw.key_management_version || 'v1',
           ignore_ssl_cert: gw.ignore_ssl_cert || false
         });
       }
@@ -276,6 +281,34 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     }
   };
 
+  const renderGatewayModeInfo = () => {
+    if (!gateway) return null;
+    if (gateway.gateway_type === 'physical') {
+      const apiBase = (globalThis as any).import?.meta?.env?.VITE_WS_URL || 'ws://localhost:3000';
+      const token = localStorage.getItem('authToken') || '<FACILITY_ADMIN_JWT>';
+      const wsUrl = `${apiBase}/ws/gateway?token=${token}`;
+      return (
+        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm">
+          <p className="text-gray-700 dark:text-gray-300 mb-2">WebSocket gateway connection URL:</p>
+          <div className="flex items-center gap-2">
+            <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all">{wsUrl}</code>
+            <button onClick={() => { navigator.clipboard.writeText(wsUrl); addToast({ type: 'success', title: 'Copied WS URL' }); }} className="px-2 py-1 bg-gray-700 text-white rounded">
+              Copy
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (gateway.gateway_type === 'http') {
+      return (
+        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm">
+          <p className="text-gray-700 dark:text-gray-300">HTTP gateway uses polling for updates (denylists/time sync). Poll interval: {configForm.poll_frequency_ms} ms.</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
   const handleSaveConfiguration = async () => {
     try {
       const updateData = {
@@ -287,7 +320,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
         password: configForm.password || undefined, // Only update if provided
         protocol_version: configForm.protocol_version,
         poll_frequency_ms: configForm.poll_frequency_ms,
-        key_management_version: configForm.key_management_version,
         ignore_ssl_cert: configForm.ignore_ssl_cert
       };
 
@@ -469,23 +501,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
                     />
                     <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                       How often to poll for updates (5-300 seconds)
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Key Management Version
-                    </label>
-                    <select
-                      value={configForm.key_management_version}
-                      onChange={(e) => setConfigForm(prev => ({ ...prev, key_management_version: e.target.value as 'v1' | 'v2' }))}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    >
-                      <option value="v1">v1 - Postman (Hex)</option>
-                      <option value="v2">v2 - ED25519</option>
-                    </select>
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      Key format for device authentication (v1: existing hex format, v2: secure ED25519)
                     </p>
                   </div>
 
@@ -705,6 +720,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       {gateway && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway Actions</h3>
+          {renderGatewayModeInfo()}
           <button
             onClick={handleManualSync}
             disabled={syncing}
@@ -733,6 +749,86 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               Last sync: {lastSyncTime.toLocaleString()}
             </div>
           )}
+
+          {/* Time Sync Tools */}
+          <div className="mt-6 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center">
+                <ClockIcon className="h-4 w-4 mr-2" /> Secure Time Sync
+              </h4>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={async () => {
+                  try { const res = await apiService.getSecureTimeSyncPacket(); addToast({ type: 'success', title: `Time Sync ts=${res.timeSyncPacket?.[0]?.ts}` }); }
+                  catch { addToast({ type: 'error', title: 'Failed to get time sync packet' }); }
+                }}
+                className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-primary-600 text-white hover:bg-primary-700"
+              >
+                Get Secure Time
+              </button>
+              <button
+                onClick={async () => {
+                  const lockId = prompt('Enter lock id'); if (!lockId) return;
+                  try { const res = await apiService.requestTimeSyncForLock(lockId); addToast({ type: 'success', title: `Time Sync (lock) ts=${res.timeSyncPacket?.[0]?.ts}` }); }
+                  catch { addToast({ type: 'error', title: 'Failed to request time sync for lock' }); }
+                }}
+                className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-700 text-white hover:bg-gray-800"
+              >
+                Request Time Sync (Lock)
+              </button>
+            </div>
+            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">Locks reject older timestamps to prevent time rollback.</p>
+          </div>
+
+          {/* Debug Panel */}
+          <div className="mt-6 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+            <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">Gateway Debug</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fallback JWT (App-signed)</label>
+                <textarea value={fallbackJwtInput} onChange={(e) => setFallbackJwtInput(e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"></textarea>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={async () => {
+                      if (!fallbackJwtInput.trim()) return;
+                      try { const res = await apiService.requestFallbackPass(fallbackJwtInput.trim()); addToast({ type: res.success ? 'success' : 'error', title: res.success ? 'Fallback pass processed' : 'Fallback failed' }); }
+                      catch { addToast({ type: 'error', title: 'Fallback request failed' }); }
+                    }}
+                    className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-primary-600 text-white hover:bg-primary-700"
+                  >
+                    Submit Fallback
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rotation Payload (Root-signed)</label>
+                <textarea value={rotationPayloadInput} onChange={(e) => setRotationPayloadInput(e.target.value)} rows={3} placeholder='{"cmd_type":"ROTATE_OPERATIONS_KEY","new_ops_pubkey":"...","ts":1234567890}' className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"></textarea>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mt-2 mb-1">Signature (base64url)</label>
+                <input value={rotationSignatureInput} onChange={(e) => setRotationSignatureInput(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400" />
+                <div className="mt-2 flex gap-2">
+                  {['dev_admin'].includes(authState.user?.role || '') && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const payload = JSON.parse(rotationPayloadInput);
+                        const signature = rotationSignatureInput.trim();
+                        if (!payload?.cmd_type || !signature) throw new Error('Invalid input');
+                        const res = await apiService.broadcastOpsKeyRotation(payload, signature);
+                        addToast({ type: res.success ? 'success' : 'error', title: res.success ? 'Rotation broadcasted' : 'Rotation failed' });
+                      } catch {
+                        addToast({ type: 'error', title: 'Invalid rotation packet or request failed' });
+                      }
+                    }}
+                    className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-700 text-white hover:bg-gray-800"
+                  >
+                    Broadcast Rotation
+                  </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

@@ -2,50 +2,108 @@ import { EventEmitter } from 'events';
 import { WebSocketService } from './websocket.service';
 
 /**
- * Events emitted by the device system
+ * Device Event Types
+ *
+ * Defines the lifecycle events emitted by devices in the BluLok system.
+ * These events drive real-time updates and maintain system state consistency.
  */
 export enum DeviceEvent {
+  /** Device connectivity or operational status changed */
   DEVICE_STATUS_CHANGED = 'deviceStatusChanged',
+  /** Lock mechanism state transitioned (locked/unlocked/error) */
   LOCK_STATUS_CHANGED = 'lockStatusChanged',
+  /** New device discovered and registered in the system */
   DEVICE_ADDED = 'deviceAdded',
+  /** Device removed or decommissioned from the system */
   DEVICE_REMOVED = 'deviceRemoved'
 }
 
 /**
- * Device event data interfaces
+ * Device Status Changed Event Interface
+ *
+ * Emitted when a device's operational status changes (online/offline/error/maintenance).
+ * Triggers battery status and connectivity monitoring updates.
  */
 export interface DeviceStatusChangedEvent {
+  /** Unique device identifier */
   deviceId: string;
+  /** Type of device (blulok lock or access control device) */
   deviceType: 'blulok' | 'access_control';
+  /** Previous device status */
   oldStatus: string;
+  /** New device status */
   newStatus: string;
-  gatewayId: string;
-}
-
-export interface LockStatusChangedEvent {
-  deviceId: string;
-  oldStatus: 'locked' | 'unlocked' | 'error';
-  newStatus: 'locked' | 'unlocked' | 'error';
-  gatewayId: string;
-  unitId: string;
-}
-
-export interface DeviceAddedEvent {
-  deviceId: string;
-  deviceType: 'blulok' | 'access_control';
-  gatewayId: string;
-  unitId?: string;
-}
-
-export interface DeviceRemovedEvent {
-  deviceId: string;
-  deviceType: 'blulok' | 'access_control';
+  /** Gateway managing this device */
   gatewayId: string;
 }
 
 /**
- * Service that manages device-related events and broadcasting.
- * This decouples device model operations from WebSocket broadcasting.
+ * Lock Status Changed Event Interface
+ *
+ * Emitted when a lock's physical state changes. This is critical for
+ * security monitoring and real-time occupancy tracking.
+ */
+export interface LockStatusChangedEvent {
+  /** Lock device identifier */
+  deviceId: string;
+  /** Previous lock state */
+  oldStatus: 'locked' | 'unlocked' | 'error';
+  /** New lock state */
+  newStatus: 'locked' | 'unlocked' | 'error';
+  /** Gateway managing this lock */
+  gatewayId: string;
+  /** Unit this lock secures */
+  unitId: string;
+}
+
+/**
+ * Device Added Event Interface
+ *
+ * Emitted when a new device is discovered and registered in the system.
+ * Used for device inventory management and automatic configuration.
+ */
+export interface DeviceAddedEvent {
+  /** Newly added device identifier */
+  deviceId: string;
+  /** Type of device added */
+  deviceType: 'blulok' | 'access_control';
+  /** Gateway managing the new device */
+  gatewayId: string;
+  /** Unit the device is associated with (if applicable) */
+  unitId?: string;
+}
+
+/**
+ * Device Removed Event Interface
+ *
+ * Emitted when a device is removed or decommissioned from the system.
+ * Triggers cleanup and access control updates.
+ */
+export interface DeviceRemovedEvent {
+  /** Device being removed */
+  deviceId: string;
+  /** Type of device being removed */
+  deviceType: 'blulok' | 'access_control';
+  /** Gateway that was managing the device */
+  gatewayId: string;
+}
+
+/**
+ * Device Event Service
+ *
+ * Event-driven service that manages device lifecycle events and coordinates
+ * real-time broadcasting to maintain system state consistency across clients.
+ *
+ * Key Features:
+ * - Decoupled architecture separating device operations from WebSocket broadcasting
+ * - Event-driven updates for lock status, device connectivity, and battery monitoring
+ * - Automatic triggering of subscription manager broadcasts
+ * - Graceful initialization to avoid database dependency issues during startup
+ *
+ * Event Flow:
+ * 1. Device operations emit events through this service
+ * 2. Service listeners trigger appropriate WebSocket broadcasts
+ * 3. Subscription managers deliver real-time updates to clients
  */
 export class DeviceEventService extends EventEmitter {
   private static instance: DeviceEventService;

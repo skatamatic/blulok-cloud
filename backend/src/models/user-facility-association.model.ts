@@ -1,11 +1,50 @@
 import { BaseModel } from './base.model';
 import { ModelHooksService } from '../services/model-hooks.service';
 
+/**
+ * User Facility Association Model
+ *
+ * Manages the many-to-many relationship between users and facilities, controlling
+ * which users have access to which facilities. This is a critical access control
+ * mechanism that determines facility visibility and permissions throughout the system.
+ *
+ * Key Features:
+ * - Many-to-many user-facility relationships
+ * - Facility-scoped user access control
+ * - Automatic association management
+ * - Role-based permission inheritance
+ * - Association lifecycle tracking
+ *
+ * Access Control:
+ * - Users can only access facilities they're associated with
+ * - Facility admins can manage user associations within their facility
+ * - System admins can manage associations across all facilities
+ * - Association changes trigger permission updates
+ *
+ * Association Types:
+ * - Direct associations: Users explicitly assigned to facilities
+ * - Role-based associations: Users gain access through their roles
+ * - Temporary associations: Time-limited facility access
+ * - Inherited associations: Through organizational hierarchies
+ *
+ * Security Considerations:
+ * - Association validation before facility access
+ * - Audit logging for all association changes
+ * - Permission checks before association modifications
+ * - Secure association queries with proper indexing
+ * - Protection against association manipulation attacks
+ */
+
 export interface UserFacilityAssociation {
+  /** Globally unique identifier for the association */
   id: string;
+  /** User ID in the association */
   user_id: string;
+  /** Facility ID in the association */
   facility_id: string;
+  /** Association creation timestamp */
   created_at: Date;
+  /** Association last update timestamp */
   updated_at: Date;
 }
 

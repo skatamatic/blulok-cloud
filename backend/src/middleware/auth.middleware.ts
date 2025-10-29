@@ -1,9 +1,9 @@
-import { Response, NextFunction } from 'express';
+import { Response, NextFunction, RequestHandler } from 'express';
 import { AuthService } from '@/services/auth.service';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
 import { AppError } from '@/middleware/error.middleware';
 
-export const authenticateToken = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
+export const authenticateToken: RequestHandler = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
@@ -34,7 +34,7 @@ export const requireRoles = (roles: UserRole[]) => {
   };
 };
 
-export const requireAdmin = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
+export const requireAdmin: RequestHandler = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
   if (!req.user) {
     throw new AppError('Authentication required', 401);
   }
@@ -46,7 +46,7 @@ export const requireAdmin = (req: AuthenticatedRequest, _res: Response, next: Ne
   next();
 };
 
-export const requireUserManagement = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
+export const requireUserManagement: RequestHandler = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
   if (!req.user) {
     throw new AppError('Authentication required', 401);
   }

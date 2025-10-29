@@ -1,4 +1,3 @@
-// src/services/fms/providers/storedge-provider.ts
 import { BaseFMSProvider } from '../base-fms-provider';
 import {
   FMSTenant,
@@ -9,7 +8,51 @@ import {
 } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
 
+/**
+ * StoreDge FMS Provider
+ *
+ * Concrete implementation of the BaseFMSProvider for StoreDge facility management system.
+ * Provides integration with StoreDge's REST API for tenant and unit synchronization.
+ *
+ * Key Features:
+ * - REST API integration with StoreDge platform
+ * - Tenant and unit data synchronization
+ * - Lease management support
+ * - Facility-specific data scoping
+ * - Authentication via API key or OAuth
+ *
+ * API Integration:
+ * - Base URL configuration for StoreDge instance
+ * - Facility ID mapping between StoreDge and BluLok
+ * - RESTful endpoints for tenants and units
+ * - Error handling and rate limiting
+ *
+ * Data Mapping:
+ * - StoreDge tenant records → BluLok user accounts
+ * - StoreDge unit records → BluLok rental units
+ * - Lease information → Unit assignments
+ * - Contact details → User profiles
+ *
+ * Limitations:
+ * - No webhook support (polling-based only)
+ * - No real-time synchronization
+ * - No payment integration
+ * - No bulk operations support
+ *
+ * Security Considerations:
+ * - Secure API key storage
+ * - HTTPS-only communication
+ * - Input validation and sanitization
+ * - Rate limiting compliance
+ *
+ * Business Value:
+ * - Automated tenant onboarding from StoreDge
+ * - Real-time unit availability synchronization
+ * - Reduced manual data entry for property managers
+ * - Consistent data between management and access systems
+ */
 export class StoredgeProvider extends BaseFMSProvider {
+  // StoreDge-specific facility identifier
   private storedgeFacilityId: string;
 
   constructor(blulokFacilityId: string, config: FMSProviderConfig) {

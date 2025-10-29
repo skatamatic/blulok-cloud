@@ -3,50 +3,149 @@ import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { FacilityAccessService } from '@/services/facility-access.service';
 
+/**
+ * Unit Entity Interface
+ *
+ * Represents an individual rental unit (apartment, suite, etc.) within a facility.
+ * Units are the basic rentable spaces that tenants occupy and secure with BluLok devices.
+ *
+ * Key Relationships:
+ * - Belongs to a Facility (many-to-one)
+ * - Has one BluLok device for physical access control
+ * - Assigned to tenants via UnitAssignment records
+ * - May have multiple access control devices (gates, elevators)
+ *
+ * Unit Lifecycle:
+ * - Available: Ready for new tenant assignment
+ * - Occupied: Currently leased and occupied
+ * - Maintenance: Under maintenance, access restricted
+ * - Reserved: Held for future tenant but not yet occupied
+ *
+ * Features & Metadata:
+ * - Features: Physical amenities and capabilities (balcony, parking, etc.)
+ * - Metadata: Extensible configuration for property-specific attributes
+ */
 export interface Unit {
+  /** Primary key - unique identifier for the unit */
   id: string;
+  /** Foreign key to facilities table - the property this unit belongs to */
   facility_id: string;
+  /** Human-readable unit identifier (e.g., "101", "2A", "Penthouse") */
   unit_number: string;
+  /** Unit type classification (studio, 1BR, 2BR, etc.) */
   unit_type: string | null;
+  /** Current occupancy/availability status */
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
+  /** Optional description of the unit */
   description: string | null;
+  /** Physical features and amenities (balcony, parking space, etc.) */
   features: any;
+  /** Extensible metadata for unit-specific configuration */
   metadata: any;
+  /** Unit creation timestamp */
   created_at: Date;
+  /** Last modification timestamp */
   updated_at: Date;
 }
 
+/**
+ * Unlocked Unit Interface
+ *
+ * Represents a unit that is currently unlocked for a tenant.
+ * Used for real-time monitoring of access status and tenant activity.
+ *
+ * This interface combines data from units, tenants, facilities, and device status
+ * to provide a complete view of active access sessions.
+ */
 export interface UnlockedUnit {
-    id: string;
+  /** Unit primary key */
+  id: string;
+  /** Human-readable unit number */
   unit_number: string;
+  /** Facility identifier */
   facility_id: string;
+  /** Facility display name */
   facility_name: string;
+  /** Current tenant's user ID */
   tenant_id: string;
+  /** Current tenant's full name */
   tenant_name: string;
+  /** Current tenant's email address */
   tenant_email: string;
+  /** Timestamp when unit was unlocked */
   unlocked_since: Date;
+  /** Timestamp of last device activity */
   last_activity: Date;
+  /** Lock status (always 'unlocked' for this interface) */
   lock_status: 'unlocked';
+  /** Current device connectivity status */
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
+  /** Device battery level percentage */
   battery_level: number | null;
+  /** Whether auto-lock is enabled for this unit */
   auto_lock_enabled: boolean;
 }
 
+/**
+ * Unit Assignment Entity Interface
+ *
+ * Represents the assignment of a tenant to a unit with specific access permissions.
+ * Supports multiple access types and time-based access control.
+ *
+ * Access Types:
+ * - full: Complete access to the unit
+ * - shared: Limited access (e.g., common areas only)
+ * - temporary: Time-limited access (guests, contractors)
+ *
+ * Security: Assignments can expire and have granular permissions.
+ */
 export interface UnitAssignment {
+  /** Primary key - unique assignment identifier */
   id: string;
+  /** Foreign key to units table - the assigned unit */
   unit_id: string;
+  /** Foreign key to users table - the assigned tenant */
   tenant_id: string;
+  /** Whether this is the primary tenant for the unit */
   is_primary: boolean;
+  /** Type of access granted */
   access_type: 'full' | 'shared' | 'temporary';
+  /** Timestamp when access was initially granted */
   access_granted_at: Date;
+  /** Optional expiration timestamp for temporary access */
   access_expires_at: Date | null;
+  /** User ID who granted this access (for audit trails) */
   granted_by: string | null;
+  /** Optional notes about the assignment */
   notes: string | null;
+  /** Granular permissions configuration */
   access_permissions: any;
+  /** Assignment creation timestamp */
   created_at: Date;
+  /** Last modification timestamp */
   updated_at: Date;
 }
 
+/**
+ * Unit Model Class
+ *
+ * Handles all database operations for rental units within facilities. Units are the
+ * fundamental rentable spaces that tenants access using BluLok devices.
+ *
+ * Key Responsibilities:
+ * - Unit CRUD operations and lifecycle management
+ * - Tenant assignment and access control
+ * - Real-time unlocked unit monitoring
+ * - Facility-scoped unit queries
+ * - Integration with BluLok device status
+ *
+ * Complex Queries:
+ * - Unlocked units require joining units, facilities, devices, and tenant assignments
+ * - Access control respects user roles and facility permissions
+ * - Statistics aggregation for facility dashboards
+ *
+ * Security: All operations validate user permissions and audit access.
+ */
 export class UnitModel {
   private db: DatabaseService;
 
@@ -55,7 +154,23 @@ export class UnitModel {
   }
 
   /**
-   * Get unlocked units for a user based on their role and access
+   * Get unlocked units accessible to a user based on their role and permissions.
+   * Returns real-time status of units that are currently unlocked for the user.
+   *
+   * This is a complex query that joins:
+   * - units (for unit info)
+   * - facilities (for facility names)
+   * - blulok_devices (for lock status and battery)
+   * - unit_assignments + users (for tenant info)
+   *
+   * Role-based Access:
+   * - TENANT: Only their assigned units
+   * - FACILITY_ADMIN: Units in their managed facilities
+   * - ADMIN/DEV_ADMIN: All units (global access)
+   *
+   * @param userId - User requesting unlocked unit information
+   * @param userRole - User's role for access control
+   * @returns Promise resolving to array of currently unlocked units
    */
   async getUnlockedUnitsForUser(userId: string, userRole: UserRole): Promise<UnlockedUnit[]> {
     const knex = this.db.connection;

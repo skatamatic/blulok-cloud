@@ -1,3 +1,43 @@
+/**
+ * Key Sharing Routes
+ *
+ * Comprehensive key sharing management API for controlling temporary and permanent
+ * access sharing between tenants and authorized users. Enables flexible access
+ * control while maintaining security and audit trails.
+ *
+ * Key Features:
+ * - Multi-level access sharing (full, limited, temporary)
+ * - Expiration-based access revocation
+ * - Comprehensive audit trail for sharing operations
+ * - Role-based access control for sharing management
+ * - Integration with user notifications and access control
+ *
+ * Access Levels:
+ * - full: Complete access equivalent to primary tenant
+ * - limited: Restricted access with specific limitations
+ * - temporary: Time-bound access with automatic expiration
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full access to all sharing records
+ * - FACILITY_ADMIN: Management of sharing in assigned facilities
+ * - TENANT: Management of sharing for their own units
+ *
+ * Sharing Operations:
+ * - Create sharing invitations with access levels and expiration
+ * - Accept/reject sharing invitations
+ * - Update sharing permissions and expiration dates
+ * - Revoke sharing access immediately
+ * - Monitor active sharing relationships
+ * - Search and filter sharing records
+ *
+ * Security Considerations:
+ * - User isolation prevents unauthorized sharing management
+ * - Permission validation before sharing operations
+ * - Expiration enforcement prevents indefinite access
+ * - Audit logging for all sharing lifecycle events
+ * - Secure sharing invitation and acceptance workflows
+ */
+
 import { Router, Response } from 'express';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { KeySharingModel } from '../models/key-sharing.model';
@@ -392,6 +432,25 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<
     const success = await keySharingModel.revokeSharing(id);
     
     if (success) {
+      (async () => {
+        // Upon revocation, push denylist for the shared user at the facility of the unit
+        // Device-targeted: find lock device_ids for the unit and unicast per facility
+        const { DenylistService } = await import('@/services/denylist.service');
+        const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+        const { UnitModel } = await import('../models/unit.model');
+        const { DatabaseService } = await import('@/services/database.service');
+        const unitModel = new UnitModel();
+        const unit = await unitModel.findById(existingSharing.unit_id);
+        if (unit?.facility_id) {
+          const exp = Math.floor(Date.now() / 1000);
+          // Collect device ids for the unit
+          const knex = DatabaseService.getInstance().connection;
+          const devices = await knex('blulok_devices').where({ unit_id: existingSharing.unit_id }).select('id');
+          const deviceIds = devices.map((d: any) => d.id);
+          const packet = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], deviceIds);
+          GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
+        }
+      })().catch(() => {});
       res.json({ message: 'Key sharing revoked successfully' });
     } else {
       res.status(500).json({ error: 'Failed to revoke key sharing' });

@@ -2,26 +2,74 @@ import { DeviceModel, BluLokDevice, CreateBluLokDeviceData } from '../models/dev
 import { DeviceEventService } from './device-event.service';
 
 /**
- * Interface for gateway device data
+ * Gateway Device Data Interface
+ *
+ * Represents device information received from gateway synchronization.
+ * This interface accommodates various gateway protocols and device types.
  */
 export interface GatewayDeviceData {
+  /** Gateway-specific device identifier */
   id?: string;
+  /** Lock-specific identifier */
   lockId?: string;
+  /** Device serial number (primary identifier) */
   serial?: string;
+  /** Device connectivity status */
   online?: boolean;
+  /** Lock mechanism state */
   locked?: boolean;
+  /** Battery charge percentage */
   batteryLevel?: number;
+  /** Wireless signal strength */
   signalStrength?: number;
+  /** Device temperature reading */
   temperature?: number;
+  /** Installed firmware version */
   firmwareVersion?: string;
+  /** Last communication timestamp */
   lastSeen?: Date;
+  /** Additional gateway-specific properties */
   [key: string]: any;
 }
 
 /**
- * Service responsible for synchronizing devices between gateways and the backend database.
- * This service provides pure synchronization logic - it takes gateway device data and
- * ensures our backend models are in sync.
+ * Device Synchronization Service
+ *
+ * Core service responsible for maintaining consistency between gateway-discovered
+ * devices and the backend database. Handles the complete device lifecycle
+ * including discovery, updates, and removal.
+ *
+ * Key Responsibilities:
+ * - Synchronizes device state between gateways and database
+ * - Manages device lifecycle (add/update/remove)
+ * - Triggers real-time events for status changes
+ * - Handles device deduplication and conflict resolution
+ * - Provides audit trail for device operations
+ *
+ * Synchronization Process:
+ * 1. Retrieve current device state from database
+ * 2. Compare with gateway-reported device state
+ * 3. Add newly discovered devices
+ * 4. Update existing device information
+ * 5. Mark disappeared devices as offline
+ * 6. Emit events for real-time client updates
+ *
+ * Device Discovery:
+ * - Uses device serial numbers as primary identifiers
+ * - Supports multiple identifier formats (serial, id, lockId)
+ * - Handles device renumbering and identifier changes
+ * - Prevents duplicate device registration
+ *
+ * Status Management:
+ * - Tracks device connectivity (online/offline)
+ * - Monitors battery levels and health metrics
+ * - Records lock states and operational status
+ * - Maintains firmware version information
+ *
+ * Event Integration:
+ * - Emits DeviceEventService events for real-time updates
+ * - Triggers WebSocket broadcasts for live dashboards
+ * - Supports subscription-based device monitoring
  */
 export class DeviceSyncService {
   private static instance: DeviceSyncService;

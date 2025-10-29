@@ -1,17 +1,47 @@
 /**
  * FMS Configuration Model
- * 
- * Stores FMS integration configuration for each facility
+ *
+ * Manages Facility Management System (FMS) integration configurations for each facility.
+ * Stores provider-specific settings, authentication credentials, and sync parameters
+ * required for automated data synchronization between BluLok and external FMS systems.
+ *
+ * Key Features:
+ * - Provider-specific configuration storage
+ * - Secure credential management for FMS APIs
+ * - Enable/disable toggle for individual facilities
+ * - Sync status tracking and health monitoring
+ * - Multi-provider support (Storedge, Generic REST, etc.)
+ * - Configuration validation and testing
+ *
+ * Provider Types:
+ * - storedge: Storedge FMS API integration
+ * - generic_rest: Generic REST API for custom FMS systems
+ * - storedge_xml: Legacy XML-based Storedge integration
+ * - custom: Extensible for future provider types
+ *
+ * Configuration Structure:
+ * - API endpoints and authentication credentials
+ * - Sync frequency and scheduling parameters
+ * - Data mapping and transformation rules
+ * - Error handling and retry policies
+ * - Facility-specific filtering rules
+ *
+ * Security Considerations:
+ * - Encrypted storage of API credentials
+ * - Role-based access to configuration management
+ * - Audit logging for configuration changes
+ * - Secure credential rotation workflows
+ * - Provider-specific security validations
  */
 
 import { Knex } from 'knex';
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '@/services/database.service';
-import { 
-  FMSConfiguration, 
-  FMSProviderType, 
+import {
+  FMSConfiguration,
+  FMSProviderType,
   FMSSyncStatus,
-  FMSProviderConfig 
+  FMSProviderConfig
 } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
 

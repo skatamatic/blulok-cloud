@@ -5,16 +5,63 @@ import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSConfigurationModel } from '@/models/fms-configuration.model';
 import { FacilityModel } from '@/models/facility.model';
 
+/**
+ * FMS Sync Status Interface
+ *
+ * Represents the current synchronization state between BluLok and external FMS systems.
+ * Provides comprehensive status information for monitoring and troubleshooting.
+ */
 interface FMSSyncStatus {
+  /** Facility identifier */
   facilityId: string;
+  /** Human-readable facility name */
   facilityName?: string;
+  /** ISO timestamp of last sync attempt */
   lastSyncTime: string | null;
+  /** Current sync status */
   status: 'completed' | 'failed' | 'partial' | 'never_synced' | 'not_configured';
+  /** Number of changes detected in last sync */
   changesDetected?: number;
+  /** Number of changes successfully applied */
   changesApplied?: number;
+  /** Error message if sync failed */
   errorMessage?: string;
 }
 
+/**
+ * FMS Sync Subscription Manager
+ *
+ * Manages real-time subscriptions to Facility Management System synchronization status.
+ * Provides live monitoring of FMS integration health, sync progress, and error reporting.
+ *
+ * Subscription Type: 'fms_sync_status'
+ *
+ * Key Features:
+ * - Real-time FMS sync status monitoring across all facilities
+ * - Integration health dashboards for administrators
+ * - Sync failure alerts and error reporting
+ * - Facility-scoped status visibility
+ * - Comprehensive sync history and metrics
+ *
+ * Data Provided:
+ * - Current sync status for each facility (completed/failed/partial/never_synced/not_configured)
+ * - Last sync timestamps and change counts
+ * - Error messages and diagnostic information
+ * - Facility-specific FMS configuration status
+ * - Real-time updates when syncs complete or fail
+ *
+ * Access Control:
+ * - ADMIN, DEV_ADMIN: Full system-wide FMS status visibility
+ * - FACILITY_ADMIN: Limited to assigned facilities only
+ * - Other roles: Access denied
+ *
+ * Sync Status Types:
+ * - completed: Sync successful with all changes applied
+ * - failed: Sync encountered errors, manual intervention required
+ * - partial: Some changes applied, others failed
+ * - never_synced: FMS configured but never synchronized
+ * - not_configured: No FMS integration configured for facility
+ */
 export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
   private syncLogModel: FMSSyncLogModel;
   private configModel: FMSConfigurationModel;

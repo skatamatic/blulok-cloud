@@ -6,14 +6,40 @@ import { UserFacilityAssociationModel } from '@/models/user-facility-association
 import { JWTPayload, LoginRequest, LoginResponse, CreateUserRequest, UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 
+/**
+ * Authentication Service
+ *
+ * Handles user authentication, authorization, and session management operations.
+ * Provides secure credential validation and JWT token management.
+ *
+ * Key Features:
+ * - Password hashing with bcrypt (12 salt rounds)
+ * - JWT token generation and validation
+ * - Account status verification
+ * - Facility-scoped access control
+ * - User creation and management
+ * - Password change operations
+ * - Comprehensive audit logging
+ */
 export class AuthService {
+  /** Bcrypt salt rounds for password hashing (higher = more secure but slower) */
   private static readonly SALT_ROUNDS = 12;
 
+  /**
+   * Authenticate user credentials and generate JWT token.
+   *
+   * Validates user email/password, generates JWT token with user claims,
+   * and determines device registration status.
+   *
+   * @param credentials - User login credentials (email/password)
+   * @param deviceCtx - Optional device context for mobile app authentication
+   * @returns Promise resolving to login response with JWT token or error details
+   */
   public static async login(credentials: LoginRequest, deviceCtx?: { appDeviceId?: string | undefined; appPlatform?: string | undefined }): Promise<LoginResponse & { key_generation_required?: boolean }> {
     try {
       const { email, password } = credentials;
 
-      // Check if database is available
+      // Database connectivity check
       try {
         // Find user by email
         const user = await UserModel.findByEmail(email.toLowerCase());

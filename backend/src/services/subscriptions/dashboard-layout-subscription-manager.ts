@@ -4,8 +4,34 @@ import { BaseSubscriptionManager, WebSocketMessage, SubscriptionClient } from '.
 import { WidgetTypeHelper, WidgetSize } from '@/types/widget.types';
 import { sizeToGrid } from '@/utils/widget-size.utils';
 
+/**
+ * Dashboard Layout Subscription Manager
+ *
+ * Manages real-time subscriptions to user dashboard configurations and widget layouts.
+ * Provides personalized dashboard state synchronization across multiple client sessions.
+ *
+ * Subscription Type: 'dashboard_layout'
+ *
+ * Key Features:
+ * - User-specific layout management (not facility-scoped)
+ * - Real-time layout synchronization across browser tabs/sessions
+ * - Automatic widget type resolution and size calculation
+ * - Backward compatibility with old layout formats
+ * - Responsive grid layout support (lg, md, sm breakpoints)
+ *
+ * Data Provided:
+ * - Widget positions and dimensions on dashboard grid
+ * - Widget types and configurations
+ * - Responsive layouts for different screen sizes
+ * - Widget titles and metadata
+ *
+ * Access Control:
+ * - All authenticated users can access their own dashboard layouts
+ * - No role restrictions (personalized data)
+ */
 export class DashboardLayoutSubscriptionManager extends BaseSubscriptionManager {
-  // Dashboard layout subscriptions are organized by userId, not subscriptionId
+  // User-based watcher organization for efficient broadcasting
+  // Maps userId to set of WebSocket connections watching that user's layout
   private userWatchers: Map<string, Set<WebSocket>> = new Map();
 
   getSubscriptionType(): string {

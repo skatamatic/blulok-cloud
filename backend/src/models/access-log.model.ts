@@ -1,49 +1,136 @@
 import { DatabaseService } from '../services/database.service';
 
+/**
+ * Access Log Model
+ *
+ * Comprehensive audit trail for all access control events in the BluLok system.
+ * Records every access attempt, success, failure, and system event for security,
+ * compliance, and operational monitoring.
+ *
+ * Key Features:
+ * - Complete audit trail of all access events
+ * - Multi-device type support (BluLok locks, access control panels)
+ * - Geographic tracking and session correlation
+ * - Denial reason categorization for security analysis
+ * - Performance metrics and system health monitoring
+ * - Integration with compliance reporting systems
+ *
+ * Device Types:
+ * - blulok: Smart locks and primary access devices
+ * - access_control: Secondary access control panels and readers
+ *
+ * Action Types:
+ * - unlock/lock: Physical access control actions
+ * - access_granted/denied: Permission-based access decisions
+ * - door/gate operations: Physical device state changes
+ * - system events: Errors, timeouts, and system issues
+ *
+ * Security Considerations:
+ * - Immutable audit records with tamper detection
+ * - Geographic access pattern analysis
+ * - Session correlation for fraud detection
+ * - Comprehensive metadata for forensic analysis
+ * - Compliance-ready data retention policies
+ *
+ * Business Intelligence:
+ * - Usage pattern analysis for facility optimization
+ * - Security incident investigation and response
+ * - Performance monitoring and SLA tracking
+ * - Predictive maintenance based on failure patterns
+ */
+
+/**
+ * Access Log Entry Interface
+ *
+ * Complete representation of an access control event.
+ * Captures all contextual information for security auditing and analysis.
+ */
 export interface AccessLog {
+  /** Globally unique identifier for the log entry */
   id: string;
+  /** Device that generated or is associated with the event */
   device_id: string;
+  /** Classification of the device type */
   device_type: 'blulok' | 'access_control';
+  /** Facility where the event occurred */
   facility_id?: string;
+  /** Specific unit/storage space involved */
   unit_id?: string;
+  /** Associated access control device identifier */
   access_control_device_id?: string;
+  /** Gateway that processed the event */
   gateway_id?: string;
+  /** User who initiated or is associated with the access */
   user_id?: string;
+  /** Primary tenant of the unit/facility */
   primary_tenant_id?: string;
+  /** Credential identifier used for access */
   credential_id?: string;
+  /** Type of credential used */
   credential_type?: 'physical_key' | 'mobile_app' | 'card' | 'keypad';
-  action: 'unlock' | 'lock' | 'access_granted' | 'access_denied' | 'manual_override' | 
+  /** Action performed or attempted */
+  action: 'unlock' | 'lock' | 'access_granted' | 'access_denied' | 'manual_override' |
           'door_open' | 'door_close' | 'gate_open' | 'gate_close' | 'elevator_call' |
           'system_error' | 'timeout' | 'invalid_credential' | 'schedule_violation';
+  /** Method used to perform the action */
   method: 'app' | 'keypad' | 'card' | 'manual' | 'automatic' | 'physical_key' |
           'mobile_key' | 'admin_override' | 'emergency' | 'scheduled';
+  /** Whether the action was successful */
   success: boolean;
+  /** Specific reason for access denial (if applicable) */
   denial_reason?: 'invalid_credential' | 'out_of_schedule' | 'system_error' | 'device_offline' |
                   'insufficient_permissions' | 'expired_access' | 'maintenance_mode' | 'other';
+  /** Human-readable explanation of the event */
   reason?: string;
+  /** Physical location context (floor, wing, etc.) */
   location_context?: string;
+  /** Session identifier for correlating related events */
   session_id?: string;
+  /** Raw device response data for debugging */
   device_response?: Record<string, any>;
+  /** Geographic latitude of the access attempt */
   latitude?: number;
+  /** Geographic longitude of the access attempt */
   longitude?: number;
+  /** Duration of the access event in seconds */
   duration_seconds?: number;
+  /** IP address of the initiating system/app */
   ip_address?: string;
+  /** Additional metadata for extensibility */
   metadata?: Record<string, any>;
+  /** Timestamp when the event actually occurred */
   occurred_at: Date;
+  /** Database record creation timestamp */
   created_at: Date;
+  /** Database record last update timestamp */
   updated_at: Date;
 }
 
+/**
+ * Access Log with Joined Details
+ *
+ * Extended log entry with joined relational data for reporting and display.
+ * Includes human-readable names and additional context for UI presentation.
+ */
 export interface AccessLogWithDetails extends AccessLog {
-  // Joined data
+  // Joined relational data for display purposes
+  /** Human-readable facility name */
   facility_name?: string;
+  /** Human-readable unit identifier */
   unit_number?: string;
+  /** Full name of the user involved */
   user_name?: string;
+  /** Email address of the user involved */
   user_email?: string;
+  /** Full name of the primary tenant */
   primary_tenant_name?: string;
+  /** Email address of the primary tenant */
   primary_tenant_email?: string;
+  /** Human-readable device name */
   device_name?: string;
+  /** Physical location description of the device */
   device_location?: string;
+  /** Human-readable gateway name */
   gateway_name?: string;
 }
 

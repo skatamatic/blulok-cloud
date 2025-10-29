@@ -1,7 +1,41 @@
 /**
  * FMS Change Model
- * 
- * Tracks individual changes detected during FMS sync operations
+ *
+ * Tracks and manages individual changes detected during Facility Management System (FMS)
+ * synchronization operations. Provides comprehensive change tracking, validation,
+ * review workflow, and application management for FMS data imports.
+ *
+ * Key Features:
+ * - Change detection and classification (create, update, delete operations)
+ * - Data validation with detailed error reporting
+ * - Human review workflow for change acceptance/rejection
+ * - Impact assessment and required action tracking
+ * - Change application tracking and rollback support
+ * - Bulk operations for efficient change management
+ *
+ * Change Types:
+ * - CREATE: New entities detected in FMS
+ * - UPDATE: Existing entities modified in FMS
+ * - DELETE: Entities removed from FMS
+ * - MOVE: Entities relocated between facilities
+ * - MERGE: Duplicate entity consolidation
+ *
+ * Entity Types:
+ * - tenant: User/customer accounts and profiles
+ * - unit: Storage units and rental spaces
+ *
+ * Review Workflow:
+ * 1. FMS sync detects changes and creates change records
+ * 2. Changes are validated for data integrity
+ * 3. Administrators review changes with impact summaries
+ * 4. Approved changes are applied to the system
+ * 5. Application results are tracked for audit purposes
+ *
+ * Security Considerations:
+ * - Change validation prevents malicious data injection
+ * - Review workflow ensures human oversight of critical changes
+ * - Audit trail tracks all change lifecycle events
+ * - Permission-based access to change management operations
  */
 
 import { Knex } from 'knex';

@@ -66,7 +66,7 @@ export default function FacilityDetailsPage() {
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
-  const canManageGateway = ['admin', 'dev_admin'].includes(authState.user?.role || '');
+  const canManageGateway = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
 
   useEffect(() => {
     if (id) {

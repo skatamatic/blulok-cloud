@@ -5,11 +5,37 @@ import { GatewayFactory } from './gateways/gateway-factory';
 import { DatabaseService } from '@/services/database.service';
 
 /**
- * Gateway Service - Manages gateway instances and provides high-level API
+ * Gateway Service
+ *
+ * Central service for managing network gateways that connect BluLok cloud to physical facilities.
+ * Provides high-level API for gateway lifecycle management, device communication, and protocol handling.
+ *
+ * Key Features:
+ * - Gateway lifecycle management (initialize, connect, disconnect, shutdown)
+ * - Device discovery and synchronization
+ * - Command execution and status monitoring
+ * - Protocol abstraction and factory pattern
+ * - Real-time event broadcasting
+ * - Facility-scoped gateway operations
+ *
+ * Gateway Types Supported:
+ * - Physical: WebSocket-based direct device control
+ * - HTTP: API-based cloud-managed gateways
+ * - Simulated: Testing and development gateways
+ *
+ * Security Considerations:
+ * - Encrypted communication channels (WSS for WebSocket, HTTPS for HTTP)
+ * - Authentication and authorization for gateway operations
+ * - Secure credential storage for gateway connections
+ * - Audit logging for all gateway operations
  */
 export class GatewayService extends EventEmitter {
   private static instance: GatewayService;
+
+  // Active gateway instances keyed by gateway ID
   private activeGateways = new Map<string, IGateway>();
+
+  // Database models for persistence
   private gatewayModel = new GatewayModel();
   private db = DatabaseService.getInstance().connection;
 

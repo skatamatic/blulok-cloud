@@ -1,7 +1,42 @@
 /**
  * FMS Sync Log Model
- * 
- * Tracks FMS sync operations and their results
+ *
+ * Comprehensive audit trail and operational tracking for Facility Management System (FMS)
+ * synchronization operations. Records every sync attempt, its progress, results, and
+ * any issues encountered during the data synchronization process.
+ *
+ * Key Features:
+ * - Complete sync lifecycle tracking (start → progress → completion/failure)
+ * - Detailed statistics and performance metrics
+ * - Error logging and failure analysis
+ * - Trigger source tracking (manual, automatic, webhook)
+ * - Change summary and impact assessment
+ * - Retry and rollback tracking
+ *
+ * Sync Status Lifecycle:
+ * - IN_PROGRESS: Sync operation actively running
+ * - COMPLETED: Sync finished successfully
+ * - FAILED: Sync terminated with errors
+ * - CANCELLED: Sync stopped by user/admin
+ * - ROLLED_BACK: Sync changes were reverted
+ *
+ * Trigger Types:
+ * - manual: User-initiated sync via admin interface
+ * - automatic: Scheduled sync based on configuration
+ * - webhook: Sync triggered by external FMS webhook
+ *
+ * Statistics Tracked:
+ * - Changes detected, applied, pending, rejected counts
+ * - Processing duration and performance metrics
+ * - Error counts and types
+ * - Data volume processed (tenants, units)
+ *
+ * Security Considerations:
+ * - Audit trail for all sync operations
+ * - User attribution for manual operations
+ * - Facility-scoped access control
+ * - Sensitive data handling in logs
+ * - Compliance-ready retention policies
  */
 
 import { Knex } from 'knex';

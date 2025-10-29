@@ -1,32 +1,97 @@
 import { DatabaseService } from '@/services/database.service';
 
+/**
+ * Gateway Command Model
+ *
+ * Manages the lifecycle of commands sent to gateway devices for execution.
+ * Implements a robust queuing system with retry logic, prioritization, and
+ * idempotency to ensure reliable device control operations.
+ *
+ * Key Features:
+ * - Command queuing with priority-based execution
+ * - Idempotency to prevent duplicate command execution
+ * - Retry logic with exponential backoff
+ * - Status tracking and failure handling
+ * - Dead letter queue for failed commands
+ * - Facility-scoped command isolation
+ *
+ * Command Status Lifecycle:
+ * - pending: Command created but not yet queued
+ * - queued: Command ready for execution
+ * - in_progress: Command currently being executed
+ * - succeeded: Command completed successfully
+ * - failed: Command failed but can be retried
+ * - cancelled: Command cancelled by user/system
+ * - dead_letter: Command permanently failed, moved to dead letter queue
+ *
+ * Command Types:
+ * - ADD_KEY: Program cryptographic access key to device
+ * - REVOKE_KEY: Remove cryptographic access key from device
+ * - Extensible for future device control operations
+ *
+ * Retry Logic:
+ * - Configurable maximum retry attempts
+ * - Exponential backoff for retry delays
+ * - Circuit breaker pattern for failing devices
+ * - Manual retry capabilities for administrators
+ *
+ * Security Considerations:
+ * - Facility-scoped commands prevent cross-facility operations
+ * - Idempotency keys prevent replay attacks
+ * - Audit logging for all command operations
+ * - Permission validation before command execution
+ * - Secure payload encryption for sensitive commands
+ */
+
 export type GatewayCommandStatus = 'pending' | 'queued' | 'in_progress' | 'succeeded' | 'failed' | 'cancelled' | 'dead_letter';
 
 export interface GatewayCommand {
+  /** Globally unique identifier for the command */
   id: string;
+  /** Facility that owns this command */
   facility_id: string;
+  /** Gateway responsible for executing the command */
   gateway_id: string;
+  /** Target device for command execution */
   device_id: string;
+  /** Type of command to execute */
   command_type: 'ADD_KEY' | 'REVOKE_KEY' | string;
+  /** Command-specific payload data */
   payload: any;
+  /** Idempotency key to prevent duplicate execution */
   idempotency_key: string;
+  /** Current execution status */
   status: GatewayCommandStatus;
+  /** Priority level (higher numbers = higher priority) */
   priority: number;
+  /** Number of execution attempts made */
   attempt_count: number;
+  /** Last error message if execution failed */
   last_error?: string | null;
+  /** Timestamp for next retry attempt */
   next_attempt_at?: Date | null;
+  /** Command creation timestamp */
   created_at: Date;
+  /** Last update timestamp */
   updated_at: Date;
 }
 
 export interface CreateGatewayCommand {
+  /** Facility that owns the command */
   facility_id: string;
+  /** Gateway responsible for executing the command */
   gateway_id: string;
+  /** Target device for command execution */
   device_id: string;
+  /** Type of command to execute */
   command_type: 'ADD_KEY' | 'REVOKE_KEY' | string;
+  /** Command-specific payload data */
   payload: any;
+  /** Idempotency key to prevent duplicate execution */
   idempotency_key: string;
+  /** Priority level (higher numbers = higher priority) */
   priority?: number;
+  /** Optional scheduled execution time */
   next_attempt_at?: Date;
 }
 

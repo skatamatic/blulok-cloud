@@ -3,8 +3,28 @@ import { UserFacilityAssociationModel } from '@/models/user-facility-association
 import { logger } from '@/utils/logger';
 
 /**
- * Centralized service for managing facility access control
- * Ensures consistent RBAC across all components
+ * Facility Access Service
+ *
+ * Centralized service for managing facility-scoped access control across the entire BluLok system.
+ * Provides consistent role-based access control (RBAC) for multi-tenant facility operations.
+ *
+ * Key Features:
+ * - Role-based facility access determination
+ * - Facility association management
+ * - Access validation and authorization
+ * - Comprehensive audit logging
+ * - Graceful error handling with secure defaults
+ *
+ * Access Control Model:
+ * - DEV_ADMIN, ADMIN: Global access to all facilities
+ * - FACILITY_ADMIN: Limited to explicitly assigned facilities
+ * - TENANT, MAINTENANCE: Facility-scoped based on assignments
+ *
+ * Security Considerations:
+ * - All access decisions logged for audit trails
+ * - Secure defaults (deny access on database errors)
+ * - Facility scoping prevents cross-tenant data leakage
+ * - Role hierarchy enforcement
  */
 export class FacilityAccessService {
   /**

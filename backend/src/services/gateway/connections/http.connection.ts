@@ -4,10 +4,38 @@ import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import * as https from 'https';
 
 /**
- * HTTP connection implementation for gateway communication
- * Used for the temporary HTTP-based API before WebSocket implementation
+ * HTTP Gateway Connection
+ *
+ * HTTP-based connection implementation for communicating with gateways via REST API.
+ * Used for cloud-managed gateways that poll for updates rather than maintaining
+ * persistent WebSocket connections.
+ *
+ * Key Features:
+ * - REST API communication with configurable timeouts
+ * - API key authentication via headers
+ * - SSL certificate validation control
+ * - Polling-based architecture for command delivery
+ * - Error handling and retry logic
+ *
+ * Authentication:
+ * - API key passed in X-API-KEY header
+ * - No separate authentication step required
+ * - Secure credential storage in gateway configuration
+ *
+ * Connection Management:
+ * - Lightweight connection establishment (no persistent socket)
+ * - Timeout handling for API calls
+ * - SSL certificate validation bypass for development
+ * - Connection state tracking for monitoring
+ *
+ * Security Considerations:
+ * - API key transmission over HTTPS only
+ * - SSL certificate validation (configurable for development)
+ * - Request timeout to prevent hanging connections
+ * - Error responses don't leak sensitive information
  */
 export class HttpConnection extends BaseConnection {
+  // Axios HTTP client configured for gateway communication
   private httpClient: AxiosInstance;
 
   constructor(

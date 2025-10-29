@@ -198,6 +198,44 @@ describe('APIService', () => {
     });
   });
 
+  describe('internal gateway endpoints', () => {
+    it('should GET secure time sync packet', async () => {
+      const mockData = { data: { success: true, timeSyncPacket: [{ cmd_type: 'SECURE_TIME_SYNC', ts: 123 }, 'sig'] } };
+      mockAxios.get.mockResolvedValueOnce(mockData);
+      const res = await apiService.getSecureTimeSyncPacket();
+      expect(mockAxios.get).toHaveBeenCalledWith('/internal/gateway/time-sync');
+      expect(res).toEqual(mockData.data);
+    });
+
+    it('should POST request time sync for lock', async () => {
+      const mockData = { data: { success: true, timeSyncPacket: [{ cmd_type: 'SECURE_TIME_SYNC', ts: 456 }, 'sig'] } };
+      mockAxios.post.mockResolvedValueOnce(mockData);
+      const res = await apiService.requestTimeSyncForLock('lock-1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/internal/gateway/request-time-sync', { lock_id: 'lock-1' });
+      expect(res).toEqual(mockData.data);
+    });
+
+    it('should POST fallback pass request', async () => {
+      const mockData = { data: { success: true, routePass: 'rp.jwt' } };
+      mockAxios.post.mockResolvedValueOnce(mockData);
+      const res = await apiService.requestFallbackPass('jwt');
+      expect(mockAxios.post).toHaveBeenCalledWith('/internal/gateway/fallback-pass', { fallbackJwt: 'jwt' });
+      expect(res).toEqual(mockData.data);
+    });
+  });
+
+  describe('admin ops-key rotation relay', () => {
+    it('should POST broadcast rotation packet', async () => {
+      const payload = { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'b64', ts: 1000 } as any;
+      const signature = 'sig';
+      const mockData = { data: { success: true } };
+      mockAxios.post.mockResolvedValueOnce(mockData);
+      const res = await apiService.broadcastOpsKeyRotation(payload, signature);
+      expect(mockAxios.post).toHaveBeenCalledWith('/admin/ops-key-rotation/broadcast', { payload, signature });
+      expect(res).toEqual(mockData.data);
+    });
+  });
+
   describe('getUsers', () => {
     it('should fetch users with filters', async () => {
       const mockUsers = {

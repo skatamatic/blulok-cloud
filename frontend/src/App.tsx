@@ -22,6 +22,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import UserManagementPage from '@/pages/UserManagementPage';
 import UserDetailsPage from '@/pages/UserDetailsPage';
 import SettingsPage from '@/pages/SettingsPage';
+import NotificationSettingsPage from '@/pages/NotificationSettingsPage';
 import FacilitiesPage from '@/pages/FacilitiesPage';
 import FacilityDetailsPage from '@/pages/FacilityDetailsPage';
 import EditFacilityPage from '@/pages/EditFacilityPage';
@@ -148,6 +149,14 @@ function App() {
                           <ProtectedRoute requireAdmin>
                             <DashboardLayout>
                               <SettingsPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/notification-settings" element={
+                          <ProtectedRoute requireAdmin>
+                            <DashboardLayout>
+                              <NotificationSettingsPage />
                             </DashboardLayout>
                           </ProtectedRoute>
                         } />

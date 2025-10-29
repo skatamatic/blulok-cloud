@@ -2,15 +2,63 @@ import { WebSocket } from 'ws';
 import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 
+/**
+ * FMS Sync Progress Payload Interface
+ *
+ * Defines the structure for real-time progress updates during FMS synchronization operations.
+ * Provides detailed step-by-step progress information for long-running sync processes.
+ */
 export interface FMSSyncProgressPayload {
+  /** Target facility identifier */
   facilityId: string;
+  /** Sync log identifier for tracking */
   syncLogId: string;
+  /** Current synchronization step */
   step: 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'complete' | 'cancelled' | 'failed';
-  percent: number; // 0-100
+  /** Progress percentage (0-100) */
+  percent: number;
+  /** Optional human-readable status message */
   message?: string;
+  /** Optional timestamp override */
   timestamp?: string;
 }
 
+/**
+ * FMS Sync Progress Subscription Manager
+ *
+ * Manages real-time subscriptions to detailed FMS synchronization progress updates.
+ * Provides granular visibility into long-running sync operations with step-by-step progress.
+ *
+ * Subscription Type: 'fms_sync_progress'
+ *
+ * Key Features:
+ * - Real-time sync progress monitoring with percentage completion
+ * - Step-by-step progress updates (connecting → fetching → detecting → preparing → complete)
+ * - Facility-scoped progress visibility
+ * - Error state reporting and cancellation notifications
+ * - Progress bar support for UI components
+ *
+ * Data Provided:
+ * - Current sync step and percentage completion
+ * - Facility-specific progress updates
+ * - Error messages and failure notifications
+ * - Sync cancellation and completion events
+ * - Real-time status messages for user feedback
+ *
+ * Access Control:
+ * - ADMIN, DEV_ADMIN: Full system-wide progress visibility
+ * - FACILITY_ADMIN: Limited to assigned facilities only
+ * - Other roles: Access denied
+ *
+ * Sync Steps:
+ * - connecting: Establishing connection to FMS provider
+ * - fetching: Downloading tenant/unit data from FMS
+ * - detecting: Comparing local vs remote data for changes
+ * - preparing: Preparing changes for application
+ * - complete: Sync finished successfully
+ * - cancelled: Sync operation was cancelled
+ * - failed: Sync encountered unrecoverable errors
+ */
 export class FMSSyncProgressSubscriptionManager extends BaseSubscriptionManager {
   getSubscriptionType(): string {
     return 'fms_sync_progress';

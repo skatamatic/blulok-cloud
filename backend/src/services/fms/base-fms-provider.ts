@@ -1,10 +1,3 @@
-/**
- * Base FMS Provider
- * 
- * Abstract base class for all FMS integrations.
- * Each FMS provider (Yardi, AppFolio, etc.) should extend this class.
- */
-
 import {
   FMSProviderConfig,
   FMSTenant,
@@ -16,6 +9,43 @@ import { logger } from '@/utils/logger';
 import OAuth from 'oauth-1.0a';
 import crypto from 'crypto';
 
+/**
+ * Base FMS Provider
+ *
+ * Abstract base class defining the contract for all Facility Management System integrations.
+ * Provides common functionality and interface for FMS providers like StoreDge, Yardi, AppFolio, etc.
+ *
+ * Key Features:
+ * - Pluggable architecture for multiple FMS vendors
+ * - Standardized interface for tenant and unit synchronization
+ * - Authentication abstraction (API keys, OAuth, Basic Auth)
+ * - Webhook support for real-time updates
+ * - Comprehensive error handling and logging
+ * - Rate limiting and retry logic
+ *
+ * Authentication Methods Supported:
+ * - API Key authentication
+ * - OAuth 1.0a and OAuth 2.0
+ * - Basic HTTP authentication
+ * - Bearer token authentication
+ * - Custom authentication schemes
+ *
+ * Provider Capabilities:
+ * - Tenant synchronization
+ * - Unit synchronization
+ * - Webhook support for real-time updates
+ * - Realtime API polling
+ * - Lease management integration
+ * - Payment processing integration
+ * - Bulk operations support
+ *
+ * Security Considerations:
+ * - Secure credential storage and transmission
+ * - Rate limiting to prevent API abuse
+ * - Input validation and sanitization
+ * - Comprehensive audit logging
+ * - Error handling without exposing sensitive data
+ */
 export abstract class BaseFMSProvider {
   protected config: FMSProviderConfig;
   protected facilityId: string;

@@ -2,13 +2,11 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectSuccess, expectForbidden, expectNotFound, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
 import { DatabaseService } from '@/services/database.service';
-import { KeyDistributionService } from '@/services/key-distribution.service';
 import { UserDeviceModel } from '@/models/user-device.model';
 import { SystemSettingsModel } from '@/models/system-settings.model';
 
 // Mock services and models
 jest.mock('@/services/database.service');
-jest.mock('@/services/key-distribution.service');
 jest.mock('@/models/user-device.model');
 jest.mock('@/models/system-settings.model');
 
@@ -16,7 +14,6 @@ describe('User Devices Routes', () => {
   let app: any;
   let testData: MockTestData;
   let mockDb: any;
-  let mockKeyDistributionService: jest.Mocked<KeyDistributionService>;
   let mockUserDeviceModel: jest.Mocked<UserDeviceModel>;
   let mockSystemSettingsModel: jest.Mocked<SystemSettingsModel>;
 
@@ -62,17 +59,7 @@ describe('User Devices Routes', () => {
       connection: mockDb
     });
 
-    // Mock key distribution service
-    mockKeyDistributionService = {
-      addKeysForUserDevice: jest.fn().mockResolvedValue(undefined),
-      removeKeysForUserDevice: jest.fn().mockResolvedValue(undefined),
-      onTenancyChange: jest.fn().mockResolvedValue(undefined),
-      onLockAdded: jest.fn().mockResolvedValue(undefined),
-      processPending: jest.fn().mockResolvedValue(undefined),
-      rotateKeysForUserDevice: jest.fn().mockResolvedValue(undefined),
-    } as any;
-
-    (KeyDistributionService.getInstance as jest.Mock).mockReturnValue(mockKeyDistributionService);
+    // legacy key distribution removed; no mocks required
 
     // Mock UserDeviceModel
     mockUserDeviceModel = {
@@ -187,10 +174,6 @@ describe('User Devices Routes', () => {
 
       expectSuccess(response);
       expect(response.body).toHaveProperty('device');
-      expect(mockKeyDistributionService.addKeysForUserDevice).toHaveBeenCalledWith(
-        testData.users.tenant.id,
-        'new-device-id'
-      );
       expect(mockUserDeviceModel.countActiveByUser).toHaveBeenCalledWith(testData.users.tenant.id);
       expect(mockUserDeviceModel.upsertByUserAndAppDeviceId).toHaveBeenCalled();
     });
@@ -375,7 +358,6 @@ describe('User Devices Routes', () => {
 
       expectSuccess(response);
       expect(mockUserDeviceModel.revoke).toHaveBeenCalledWith('device-1');
-      expect(mockKeyDistributionService.removeKeysForUserDevice).toHaveBeenCalledWith('device-1');
     });
 
     it('should return 404 when device not found', async () => {

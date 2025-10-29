@@ -21,6 +21,12 @@ const envSchema = Joi.object({
   // Security
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_EXPIRES_IN: Joi.string().default('24h'),
+  // Operations/Root keys (Ed25519)
+  OPS_ED25519_PRIVATE_KEY_B64: Joi.string().when('NODE_ENV', { is: 'test', then: Joi.string().default('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), otherwise: Joi.string().required() }),
+  OPS_ED25519_PUBLIC_KEY_B64: Joi.string().when('NODE_ENV', { is: 'test', then: Joi.string().default('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), otherwise: Joi.string().required() }),
+  ROOT_ED25519_PUBLIC_KEY_B64: Joi.string().when('NODE_ENV', { is: 'test', then: Joi.string().default('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), otherwise: Joi.string().required() }),
+  ROUTE_PASS_TTL_HOURS: Joi.number().integer().min(1).default(24),
+  FALLBACK_IAT_SKEW_SECONDS: Joi.number().integer().min(0).default(10),
   
   // CORS
   CORS_ORIGINS: Joi.string().default('http://localhost:3001,http://localhost:3002'),
@@ -53,6 +59,13 @@ export interface Config {
   };
   corsOrigins: string[];
   logLevel: string;
+  security: {
+    opsPrivateKeyB64: string;
+    opsPublicKeyB64: string;
+    rootPublicKeyB64: string;
+    routePassTtlHours: number;
+    fallbackIatSkewSeconds: number;
+  };
 }
 
 export const config: Config = {
@@ -71,4 +84,11 @@ export const config: Config = {
   },
   corsOrigins: envVars.CORS_ORIGINS.split(',').map((origin: string) => origin.trim()),
   logLevel: envVars.LOG_LEVEL,
+  security: {
+    opsPrivateKeyB64: envVars.OPS_ED25519_PRIVATE_KEY_B64,
+    opsPublicKeyB64: envVars.OPS_ED25519_PUBLIC_KEY_B64,
+    rootPublicKeyB64: envVars.ROOT_ED25519_PUBLIC_KEY_B64,
+    routePassTtlHours: envVars.ROUTE_PASS_TTL_HOURS,
+    fallbackIatSkewSeconds: envVars.FALLBACK_IAT_SKEW_SECONDS,
+  },
 };

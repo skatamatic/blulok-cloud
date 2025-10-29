@@ -1,3 +1,37 @@
+/**
+ * User Facilities Routes
+ *
+ * User-facility association management API for controlling which users have access
+ * to which facilities. Provides comprehensive facility assignment and management
+ * capabilities with role-based access control and audit trails.
+ *
+ * Key Features:
+ * - User-facility association CRUD operations
+ * - Bulk facility assignment for users
+ * - Facility access validation and enforcement
+ * - Role-based access control for facility management
+ * - Audit logging for all association changes
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full access to manage all user-facility associations
+ * - FACILITY_ADMIN: Can manage associations within their assigned facilities
+ * - TENANT/MAINTENANCE: No access to user-facility management
+ *
+ * Association Management:
+ * - Individual user facility assignments
+ * - Bulk facility assignment updates
+ * - Facility access validation
+ * - Association history and auditing
+ * - Automatic cleanup on user/facility deactivation
+ *
+ * Security Considerations:
+ * - Strict role-based access control with user management permissions
+ * - Input validation on user and facility IDs
+ * - Audit logging for all association changes
+ * - Facility access validation before operations
+ * - Secure bulk operations with transaction safety
+ */
+
 import { Router, Response } from 'express';
 import Joi from 'joi';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';

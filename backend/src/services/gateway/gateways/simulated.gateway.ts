@@ -6,9 +6,40 @@ import { ProtocolFactory } from '../protocols/protocol-factory';
 import { SimulatedConnection } from '../connections/simulated.connection';
 
 /**
- * Simulated gateway for testing and development
+ * Simulated Gateway Implementation
+ *
+ * Simulated gateway implementation for testing and development environments.
+ * Provides mock device behavior and responses without requiring physical hardware.
+ *
+ * Key Features:
+ * - Mock device simulation with configurable behavior
+ * - Realistic device lifecycle and status changes
+ * - Simulated command execution and responses
+ * - Configurable device counts and types for testing
+ * - Deterministic behavior for reproducible testing
+ *
+ * Simulation Capabilities:
+ * - Device discovery and registration simulation
+ * - Lock/unlock operations with status changes
+ * - Battery level simulation and depletion
+ * - Command execution with realistic delays
+ * - Error condition simulation and recovery
+ *
+ * Device Simulation:
+ * - Dynamic device creation and management
+ * - Realistic device identifiers and metadata
+ * - Simulated hardware characteristics and capabilities
+ * - State transitions and event generation
+ * - Performance characteristics matching real hardware
+ *
+ * Security Considerations:
+ * - No actual hardware interaction (safe for testing)
+ * - Mock authentication and authorization
+ * - Controlled simulation of security scenarios
+ * - Audit logging for test traceability
  */
 export class SimulatedGateway extends BaseGateway {
+  // In-memory simulated device registry
   private simulatedDevices = new Map<string, any>();
 
   constructor(

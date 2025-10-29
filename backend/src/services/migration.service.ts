@@ -1,6 +1,42 @@
 import { DatabaseService } from './database.service';
 import { logger } from '@/utils/logger';
 
+/**
+ * Migration Service
+ *
+ * Handles database schema migrations and seeding operations for the BluLok system.
+ * Provides controlled database evolution and initial data setup.
+ *
+ * Key Features:
+ * - Automated schema migrations with version tracking
+ * - Selective seed execution (essential vs test data)
+ * - Migration rollback capabilities
+ * - Comprehensive logging and error handling
+ * - Production-safe migration patterns
+ *
+ * Migration Strategy:
+ * - Uses Knex.js migration system with batch tracking
+ * - Migrations are versioned and executed in order
+ * - Rollbacks supported for development and emergency fixes
+ * - Schema changes are additive and backward-compatible where possible
+ *
+ * Seeding Strategy:
+ * - Essential seeds: Device types, default users, widget templates
+ * - Test data seeds: Sample facilities, units, and test data
+ * - Selective execution prevents accidental test data in production
+ * - Idempotent operations to prevent duplicate data
+ *
+ * Production Deployment:
+ * - Migrations run automatically on application startup
+ * - Only essential seeds execute in production
+ * - Test data seeding requires manual intervention
+ * - Migration failures prevent application startup
+ *
+ * Development Workflow:
+ * - Developers can run migrations and seeds locally
+ * - Rollback capability for testing migration changes
+ * - Full seed execution for complete test environments
+ */
 export class MigrationService {
   public static async runMigrations(): Promise<void> {
     try {

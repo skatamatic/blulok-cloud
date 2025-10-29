@@ -1,38 +1,102 @@
 import { BaseModel } from './base.model';
 import { WidgetTypeHelper } from '@/types/widget.types';
 
+/**
+ * User Widget Layout Model
+ *
+ * Manages personalized dashboard layouts for users, controlling widget positioning,
+ * sizing, visibility, and display order. Enables customizable user experiences
+ * while maintaining consistent widget behavior and permissions.
+ *
+ * Key Features:
+ * - Personalized widget layouts per user
+ * - Drag-and-drop positioning system
+ * - Responsive widget sizing
+ * - Visibility controls and ordering
+ * - Default template management
+ * - Permission-based widget filtering
+ *
+ * Layout System:
+ * - Grid-based positioning (x, y coordinates)
+ * - Flexible sizing (width, height)
+ * - Display order for tab navigation
+ * - Visibility toggles for customization
+ * - Responsive behavior across devices
+ *
+ * Widget Management:
+ * - User-specific widget instances
+ * - Template-based widget creation
+ * - Permission validation on layout changes
+ * - Migration support for layout updates
+ * - Backup and restore capabilities
+ *
+ * Default Templates:
+ * - Pre-configured widget layouts
+ * - Role-based default configurations
+ * - Organization-wide layout standards
+ * - Onboarding experience templates
+ *
+ * Security Considerations:
+ * - User isolation prevents layout manipulation
+ * - Permission validation before layout changes
+ * - Input sanitization for layout configurations
+ * - XSS protection in widget content
+ * - Secure default template management
+ */
+
 export interface UserWidgetLayout {
+  /** Globally unique identifier for the layout entry */
   id: string;
+  /** User that owns this widget layout */
   user_id: string;
+  /** Unique widget instance identifier */
   widget_id: string;
+  /** Canonical widget type identifier */
   widget_type: string;
+  /** Layout configuration including position and sizing */
   layout_config: {
     position: { x: number; y: number; w: number; h: number };
     size: string;
     [key: string]: any;
   };
+  /** Whether the widget is visible in the dashboard */
   is_visible: boolean;
+  /** Display order for widget arrangement */
   display_order: number;
+  /** Layout creation timestamp */
   created_at: Date;
+  /** Layout last update timestamp */
   updated_at: Date;
 }
 
 export interface DefaultWidgetTemplate {
+  /** Globally unique identifier for the template */
   id: string;
+  /** Canonical widget identifier for the template */
   widget_id: string;
+  /** Widget type this template applies to */
   widget_type: string;
+  /** Human-readable template name */
   name: string;
+  /** Optional template description */
   description?: string;
+  /** Default layout configuration */
   default_config: {
     position: { x: number; y: number; w: number; h: number };
     size: string;
     [key: string]: any;
   };
+  /** Available size options for this widget */
   available_sizes: string[];
+  /** Required permissions to use this widget */
   required_permissions?: string[];
+  /** Whether this template is currently active */
   is_active: boolean;
+  /** Default display order for new instances */
   default_order: number;
+  /** Template creation timestamp */
   created_at: Date;
+  /** Template last update timestamp */
   updated_at: Date;
 }
 

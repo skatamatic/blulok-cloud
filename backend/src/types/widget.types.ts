@@ -1,62 +1,154 @@
 /**
- * Shared widget type definitions for backend and frontend consistency
- * This file should be kept in sync with frontend/src/types/widget.types.ts
+ * Widget Types and Definitions
+ *
+ * Comprehensive type system for BluLok dashboard widgets. This module defines
+ * the complete widget ecosystem used throughout the frontend and backend for
+ * consistent widget management, permissions, and configuration.
+ *
+ * Key Concepts:
+ * - Widgets: Modular UI components displaying specific data/functionality
+ * - Categories: Logical grouping (analytics, status, activity, system)
+ * - Sizes: Responsive grid sizing options for flexible layouts
+ * - Permissions: Role-based access control for widget visibility
+ * - Registry: Centralized widget definitions and metadata
+ *
+ * Architecture:
+ * - Type-safe widget definitions with validation
+ * - Permission-based widget filtering
+ * - Responsive sizing system for different screen sizes
+ * - Category-based organization for UI navigation
+ * - Backward compatibility mapping for legacy widget IDs
+ *
+ * Security Considerations:
+ * - Permission-based widget access control
+ * - Input validation for widget configurations
+ * - Safe default fallbacks for unknown widget types
+ * - Audit logging for widget usage and permissions
+ *
+ * Performance Optimizations:
+ * - Static widget registry for fast lookups
+ * - Efficient permission checking algorithms
+ * - Minimal memory footprint for widget definitions
+ * - Lazy loading support for large widget sets
+ *
+ * Synchronization:
+ * - This file MUST be kept in sync with frontend/src/types/widget.types.ts
+ * - Any changes to widget definitions require frontend updates
+ * - Version compatibility checking between frontend/backend
  */
 
+import { EventEmitter } from 'events';
+
+/**
+ * Widget Size Enumeration
+ *
+ * Defines the available size options for dashboard widgets.
+ * Sizes determine grid layout and responsive behavior.
+ */
 export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide';
 
+/**
+ * Widget Category Enumeration
+ *
+ * Defines the logical categories for organizing widgets in the UI.
+ * Categories help users find relevant widgets and provide contextual grouping.
+ */
 export type WidgetCategory = 'analytics' | 'status' | 'activity' | 'system';
 
+/**
+ * Widget Type Definition Interface
+ *
+ * Complete metadata definition for a widget type, including display properties,
+ * permissions, and configuration options.
+ */
 export interface WidgetTypeDefinition {
+  /** Unique identifier for the widget type */
   type: string;
+  /** Human-readable display name */
   name: string;
+  /** Detailed description of the widget's functionality */
   description: string;
+  /** Default size when widget is first added */
   defaultSize: WidgetSize;
+  /** Array of sizes this widget supports */
   availableSizes: WidgetSize[];
+  /** Whether multiple instances of this widget are allowed */
   allowMultiple: boolean;
+  /** Category for UI organization and filtering */
   category: WidgetCategory;
+  /** Required user permissions to access this widget */
   requiredPermissions?: string[];
 }
 
 /**
- * Standard widget types - these are the canonical types used throughout the system
- * Both backend and frontend should use these exact type strings
+ * Canonical Widget Types
+ *
+ * Defines the complete set of supported widget types in the BluLok system.
+ * These are the authoritative type strings used throughout the application.
+ * Both backend and frontend MUST use these exact string values for consistency.
  */
 export const WIDGET_TYPES = {
-  // Stats widgets
+  // Analytics & Statistics Widgets
+  /** Displays total facility count and basic statistics */
   'stats-facilities': 'stats-facilities',
-  'stats-devices': 'stats-devices', 
+  /** Shows active device count and connectivity metrics */
+  'stats-devices': 'stats-devices',
+  /** Displays registered user count and growth metrics */
   'stats-users': 'stats-users',
+  /** Shows active alerts and notification counts */
   'stats-alerts': 'stats-alerts',
-  
-  // Activity widgets
+
+  // Activity & Monitoring Widgets
+  /** Real-time activity log and system monitoring */
   'activity-monitor': 'activity-monitor',
+  /** Recent system activity feed with filtering */
   'activity-feed': 'activity-feed',
+  /** Access history for user's units and permissions */
   'access-history': 'access-history',
-  
-  // Status widgets
+
+  // Status & Control Widgets
+  /** System alerts, notifications, and messages */
   'notifications': 'notifications',
+  /** Device battery level monitoring and alerts */
   'battery-status': 'battery-status',
+  /** Security alert for units left unlocked */
   'unlocked-units': 'unlocked-units',
+  /** Lock control interface for user's units */
   'lock-status': 'lock-status',
+  /** Shared access key management overview */
   'shared-keys': 'shared-keys',
+  /** Overall system health and status dashboard */
   'system-status': 'system-status',
-  
-  // System widgets
+
+  // System Administration Widgets
+  /** Remote facility gate control interface */
   'remote-gate': 'remote-gate',
+  /** FMS synchronization status and controls */
   'sync-fms': 'sync-fms',
+  /** System performance metrics and monitoring */
   'performance-stats': 'performance-stats',
-  
-  // Demo/Test widgets
+
+  // Development & Testing Widgets
+  /** Demo widget for scrollable content testing */
   'test-scroll': 'test-scroll',
+  /** Activity histogram visualization over time */
   'histogram': 'histogram',
 } as const;
 
+/**
+ * Widget Type Union
+ *
+ * Type-safe union of all valid widget type strings.
+ * Ensures compile-time validation of widget type references.
+ */
 export type WidgetType = typeof WIDGET_TYPES[keyof typeof WIDGET_TYPES];
 
 /**
- * Widget type registry with full definitions
- * This should match the frontend widget registry exactly
+ * Widget Registry
+ *
+ * Comprehensive registry of all widget types with complete metadata.
+ * This registry MUST be kept in sync with the frontend widget registry.
+ * Each widget definition includes permissions, sizing, and display properties.
  */
 export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
   'stats-facilities': {
@@ -242,39 +334,76 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
 };
 
 /**
- * Helper functions for widget type management
+ * Widget Type Helper Class
+ *
+ * Utility class providing type-safe operations on the widget registry.
+ * Handles widget validation, filtering, permission checking, and backward compatibility.
+ *
+ * Key Features:
+ * - Type-safe widget lookups and validation
+ * - Permission-based filtering for user roles
+ * - Category-based widget organization
+ * - Backward compatibility mapping for legacy widget IDs
+ * - Comprehensive error handling and fallbacks
+ *
+ * Use Cases:
+ * - Frontend widget selection and filtering
+ * - Backend permission validation for widget access
+ * - Migration support for legacy widget configurations
+ * - UI rendering and widget availability checking
+ *
+ * Architecture:
+ * - Static methods for stateless operations
+ * - Registry-based lookups for performance
+ * - Comprehensive fallback handling for unknown types
+ * - Logging for debugging and migration assistance
+ *
+ * Security Considerations:
+ * - Permission validation before widget access
+ * - Safe fallbacks for unknown widget types
+ * - Input sanitization for widget ID parsing
+ * - Audit logging for permission checks
  */
 export class WidgetTypeHelper {
   /**
-   * Get widget type definition
+   * Retrieve widget type definition by type string
+   * @param type - Widget type identifier to look up
+   * @returns Widget definition or undefined if not found
    */
   static getWidgetType(type: string): WidgetTypeDefinition | undefined {
     return WIDGET_REGISTRY[type as WidgetType];
   }
 
   /**
-   * Check if a widget type is valid
+   * Validate if a string is a valid widget type
+   * @param type - String to validate as widget type
+   * @returns Type guard confirming the string is a valid WidgetType
    */
   static isValidWidgetType(type: string): type is WidgetType {
     return type in WIDGET_REGISTRY;
   }
 
   /**
-   * Get all widget types for a specific category
+   * Get all widgets belonging to a specific category
+   * @param category - Widget category to filter by
+   * @returns Array of widget definitions in the specified category
    */
   static getWidgetsByCategory(category: WidgetCategory): WidgetTypeDefinition[] {
     return Object.values(WIDGET_REGISTRY).filter(widget => widget.category === category);
   }
 
   /**
-   * Get all available widget types
+   * Get complete list of all available widget types
+   * @returns Array of all widget type definitions
    */
   static getAllWidgetTypes(): WidgetTypeDefinition[] {
     return Object.values(WIDGET_REGISTRY);
   }
 
   /**
-   * Get widget types available for a specific user role
+   * Get widgets available to a specific user role based on permissions
+   * @param userRole - User role string to check permissions against
+   * @returns Array of widget definitions accessible to the user role
    */
   static getAvailableForRole(userRole: string): WidgetTypeDefinition[] {
     return Object.values(WIDGET_REGISTRY).filter(widget => {
@@ -286,8 +415,13 @@ export class WidgetTypeHelper {
   }
 
   /**
-   * Extract widget type from widget ID (for backward compatibility)
-   * This should be used sparingly - prefer using the canonical widget types
+   * Extract canonical widget type from legacy widget ID (for backward compatibility)
+   *
+   * This method provides migration support for legacy widget configurations.
+   * It should be used sparingly - prefer using canonical widget types directly.
+   *
+   * @param widgetId - Legacy widget ID string to convert
+   * @returns Canonical widget type string, with safe fallbacks
    */
   static extractWidgetTypeFromId(widgetId: string): string {
     // Map old widget ID patterns to new canonical types

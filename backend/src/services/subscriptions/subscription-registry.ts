@@ -10,7 +10,32 @@ import { FMSSyncProgressSubscriptionManager } from './fms-sync-progress-subscrip
 import { GatewayStatusSubscriptionManager } from './gateway-status-subscription-manager';
 import { CommandQueueSubscriptionManager } from './command-queue-subscription-manager';
 
+/**
+ * Subscription Registry
+ *
+ * Central registry for all WebSocket subscription managers in the BluLok system.
+ * Manages the lifecycle of real-time data subscriptions, routing messages to appropriate
+ * handlers, and ensuring proper cleanup of client connections.
+ *
+ * Supported Subscription Types:
+ * - general_stats: System-wide statistics and metrics
+ * - dashboard_layout: User dashboard configuration changes
+ * - logs: Real-time log streaming
+ * - units: Unit status and occupancy updates
+ * - battery_status: Device battery level monitoring
+ * - fms_sync_status: FMS synchronization status
+ * - fms_sync_progress: FMS sync operation progress
+ * - gateway_status: Gateway connectivity and health
+ * - command_queue: Command execution queue status
+ *
+ * Security Considerations:
+ * - All subscriptions respect client authentication and facility scoping
+ * - Managers validate subscription parameters and access permissions
+ * - Connection cleanup prevents resource leaks
+ * - Error handling prevents subscription failures from affecting other clients
+ */
 export class SubscriptionRegistry {
+  // Registry of all subscription managers keyed by subscription type
   private managers: Map<string, SubscriptionManager> = new Map();
   private logger = require('@/utils/logger').logger;
 

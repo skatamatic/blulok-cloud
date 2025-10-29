@@ -3,6 +3,41 @@ import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { GatewayCommandModel } from '@/models/gateway-command.model';
 
+/**
+ * Command Queue Subscription Manager
+ *
+ * Manages real-time subscriptions to gateway command queue status and execution monitoring.
+ * Provides visibility into asynchronous command processing and queue health.
+ *
+ * Subscription Type: 'command_queue'
+ *
+ * Key Features:
+ * - Real-time command queue monitoring and status updates
+ * - Facility-scoped command visibility for multi-tenant environments
+ * - Command execution progress tracking
+ * - Queue health metrics and failure detection
+ * - Dead letter queue monitoring for failed commands
+ *
+ * Data Provided:
+ * - Pending, queued, and in-progress commands
+ * - Command execution status and timestamps
+ * - Failed and dead-letter commands requiring attention
+ * - Queue depth and processing statistics
+ * - Real-time command completion notifications
+ *
+ * Access Control:
+ * - All authenticated users can subscribe
+ * - Facility-scoped data based on user role and permissions
+ * - Role-based filtering (TENANT sees facility commands, ADMIN sees all)
+ *
+ * Command Status Types:
+ * - pending: Command created but not yet queued
+ * - queued: Command waiting for gateway availability
+ * - in_progress: Command being executed by gateway
+ * - completed: Command executed successfully
+ * - failed: Command execution failed (retryable)
+ * - dead_letter: Command permanently failed (manual intervention required)
+ */
 export class CommandQueueSubscriptionManager extends BaseSubscriptionManager {
   private model: GatewayCommandModel;
 

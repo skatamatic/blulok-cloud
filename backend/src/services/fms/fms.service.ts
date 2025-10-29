@@ -1,7 +1,24 @@
 /**
- * FMS Service
- * 
- * Orchestrates FMS sync operations, change detection, and provider management
+ * FMS (Facility Management System) Integration Service
+ *
+ * Orchestrates comprehensive integration with third-party Facility Management Systems
+ * to synchronize tenant and unit data between external FMS platforms and BluLok's
+ * access control system.
+ *
+ * Key Features:
+ * - Multi-provider support (StoreDge, Generic REST, Simulated for testing)
+ * - Automated change detection and conflict resolution
+ * - Webhook-based real-time synchronization
+ * - Manual sync operations with review workflows
+ * - Entity mapping between external and internal IDs
+ * - Comprehensive audit logging and error handling
+ *
+ * Security Considerations:
+ * - Encrypted storage of FMS API credentials
+ * - Webhook signature validation for authenticity
+ * - Rate limiting to prevent FMS API abuse
+ * - Facility-scoped access control for sync operations
+ * - Comprehensive audit trails for all changes
  */
 
 import { BaseFMSProvider } from './base-fms-provider';
@@ -9,7 +26,7 @@ import { FMSConfigurationModel } from '@/models/fms-configuration.model';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSChangeModel } from '@/models/fms-change.model';
 import { FMSEntityMappingModel } from '@/models/fms-entity-mapping.model';
-import { UserModel } from '@/models/user.model';
+import { User, UserModel } from '@/models/user.model';
 import { UnitModel } from '@/models/unit.model';
 import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitsService } from '../units.service';
@@ -29,19 +46,35 @@ import {
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 
+/**
+ * FMS Integration Service Class
+ *
+ * Central orchestrator for all FMS-related operations. Manages the complete
+ * lifecycle of FMS integrations including provider management, synchronization,
+ * change detection, and access control updates.
+ */
 export class FMSService {
   private static instance: FMSService;
+
+  // Core data models for FMS operations
   private fmsConfigModel: FMSConfigurationModel;
   private syncLogModel: FMSSyncLogModel;
   private changeModel: FMSChangeModel;
   private entityMappingModel: FMSEntityMappingModel;
+
+  // Business logic services
   private unitModel: UnitModel;
   private unitsService: UnitsService;
   private unitAssignmentModel: UnitAssignmentModel;
+
+  // Provider management
   private providerRegistry: Map<FMSProviderType, typeof BaseFMSProvider>;
+
+  // Active sync tracking for cancellation support
   private activeSyncs: Map<string, AbortController>;
 
   private constructor() {
+    // Initialize all required service dependencies
     this.fmsConfigModel = new FMSConfigurationModel();
     this.syncLogModel = new FMSSyncLogModel();
     this.changeModel = new FMSChangeModel();
@@ -147,6 +180,42 @@ export class FMSService {
    * 
    * SECURITY: All operations are scoped to the specified facility.
    * Users/units can only be modified if they belong to this facility.
+   */
+  /**
+   * Perform a complete FMS synchronization for a facility.
+   *
+   * This is the core synchronization operation that fetches the latest data from
+   * the external FMS, compares it with the current BluLok state, detects changes,
+   * and creates a reviewable change set for approval.
+   *
+   * Synchronization Process:
+   * 1. Validate FMS configuration and facility access
+   * 2. Prevent concurrent syncs for the same facility
+   * 3. Fetch tenant and unit data from external FMS
+   * 4. Compare with current internal state
+   * 5. Generate change set with required actions
+   * 6. Store changes for review and approval
+   * 7. Log comprehensive sync results
+   *
+   * Change Detection Logic:
+   * - New tenants: Create user accounts and grant access
+   * - Removed tenants: Deactivate users and revoke access
+   * - Unit changes: Update assignments and access permissions
+   * - Data conflicts: Flag for manual review
+   *
+   * Security Considerations:
+   * - Facility-scoped access control validation
+   * - Prevents concurrent sync operations
+   * - Comprehensive audit logging
+   * - Graceful error handling with cleanup
+   *
+   * @param facilityId - Target facility for synchronization
+   * @param userId - User performing the sync (for audit trails)
+   * @param userRole - User's role (for access validation)
+   * @returns Promise resolving to comprehensive sync results
+   *
+   * @throws Error if FMS not configured, disabled, or access denied
+   * @throws Error if concurrent sync is already running
    */
   public async performSync(
     facilityId: string,
@@ -1020,6 +1089,46 @@ export class FMSService {
   /**
    * Apply approved changes
    */
+  /**
+   * Apply approved FMS changes to the BluLok system.
+   *
+   * This critical method executes the approved changes from an FMS sync operation,
+   * updating the BluLok database and access control system accordingly. It handles
+   * the complex orchestration of user creation, deactivation, and access management.
+   *
+   * Change Application Process:
+   * 1. Load and validate all requested changes
+   * 2. Sort changes by dependency order (units → tenants → assignments)
+   * 3. Execute each change type with proper error handling
+   * 4. Track all access control modifications
+   * 5. Update sync log with results
+   * 6. Trigger denylist updates for access revocations
+   *
+   * Supported Change Types:
+   * - UNIT_ADDED/UPDATED/REMOVED: Unit lifecycle management
+   * - TENANT_ADDED/UPDATED/REMOVED: User account management
+   * - TENANT_UNIT_CHANGED: Access assignment modifications
+   *
+   * Security Considerations:
+   * - All operations are facility-scoped
+   * - Changes are validated before application
+   * - Comprehensive audit logging
+   * - Transactional consistency where possible
+   * - Automatic denylist updates for security
+   *
+   * Business Impact:
+   * - Creates new user accounts for new tenants
+   * - Deactivates users for removed tenants
+   * - Updates unit assignments and access permissions
+   * - Maintains synchronization between FMS and BluLok
+   * - Ensures immediate access control updates
+   *
+   * @param syncLogId - Sync operation identifier for tracking
+   * @param changeIds - Array of approved change IDs to apply
+   * @returns Promise resolving to detailed application results
+   *
+   * @throws Error if changes cannot be loaded or validation fails
+   */
   public async applyChanges(
     syncLogId: string,
     changeIds: string[]
@@ -1159,13 +1268,22 @@ export class FMSService {
     const performedBy = syncLog.triggered_by_user_id || 'fms-system';
     const config = await this.fmsConfigModel.findByFacilityId(facilityId);
 
-    // Check if user already exists by email (safety check for idempotency)
-    const existingUsers = await UserModel.findAll({ role: UserRole.TENANT });
-    const existingUser = tenantData.email
-      ? existingUsers.find((u: any) => u.email.toLowerCase() === tenantData.email!.toLowerCase()) as any
-      : null;
+    // Determine preferred login identifier: email (preferred) or normalized phone
+    const rawEmail = tenantData.email?.trim() || '';
+    const rawPhone = tenantData.phone?.trim() || '';
+    const preferredIdentifier = rawEmail ? rawEmail.toLowerCase() : (rawPhone ? rawPhone.replace(/[^\d+]/g, '') : '');
 
-    let user: any;
+    // Check if user already exists by login identifier when available, fallback to email scan
+    let existingUser: User | undefined;
+    if (preferredIdentifier) {
+      existingUser = await UserModel.findByLoginIdentifier(preferredIdentifier);
+    }
+    if (!existingUser && rawEmail) {
+      const existingUsers = await UserModel.findAll({ role: UserRole.TENANT });
+      existingUser = existingUsers.find((u: any) => (u.email || '').toLowerCase() === rawEmail.toLowerCase()) as any;
+    }
+
+    let user: User;
     if (existingUser) {
       // User already exists - just ensure they're associated with the facility and have a mapping
       logger.info(`[FMS] User ${tenantData.email} already exists. Ensuring facility association and mapping.`, {
@@ -1179,16 +1297,27 @@ export class FMSService {
       // Ensure facility association
       await UserFacilityAssociationModel.addUserToFacility(user.id, facilityId);
     } else {
-    // SECURITY: Create user with TENANT role ONLY (FMS never creates admin/maintenance)
+      // SECURITY: Create user with TENANT role ONLY (FMS never creates admin/maintenance)
+      // Backfill fields: login_identifier and phone_number
       user = await UserModel.create({
-      email: tenantData.email,
-      first_name: tenantData.firstName,
-      last_name: tenantData.lastName,
-      // Note: phone is not stored in users table - store in metadata if needed
-      role: UserRole.TENANT, // ← ALWAYS TENANT, never admin/maintenance
-      password_hash: '$2b$10$dummyhashforinvitationflow', // Temporary - should send invitation
-      is_active: true,
-    }) as any;
+        login_identifier: preferredIdentifier || (tenantData.email?.toLowerCase() || tenantData.externalId),
+        email: rawEmail || null,
+        phone_number: rawPhone || null,
+        first_name: tenantData.firstName,
+        last_name: tenantData.lastName,
+        role: UserRole.TENANT, // ← ALWAYS TENANT, never admin/maintenance
+        password_hash: '$2b$10$dummyhashforinvitationflow', // Temporary - should send invitation
+        is_active: true,
+        requires_password_reset: true,
+      }) as any;
+
+      // Trigger first-time invite notification
+      try {
+        const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+        await FirstTimeUserService.getInstance().sendInvite(user);
+      } catch (e) {
+        logger.warn(`[FMS] Failed to send first-time invite for user ${user.id}:`, e);
+      }
 
     result.accessChanges.usersCreated.push(user.id);
     logger.info(`[FMS] Created tenant user: ${user.email} (${user.id}) by ${performedBy}`, {

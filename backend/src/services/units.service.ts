@@ -4,7 +4,32 @@ import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitAssignmentEventsService } from './events/unit-assignment-events.service';
 import { logger } from '@/utils/logger';
 
-
+/**
+ * Units Service
+ *
+ * Comprehensive service for managing rental units, tenant assignments, and access control.
+ * Handles the complete unit lifecycle from creation to decommissioning.
+ *
+ * Key Features:
+ * - Role-based unit access control and filtering
+ * - Real-time unit locking/unlocking operations
+ * - Tenant assignment management with event tracking
+ * - Facility-scoped unit operations
+ * - Integration with access control and monitoring systems
+ *
+ * Unit Operations:
+ * - CRUD operations for unit management
+ * - Lock/unlock operations with device integration
+ * - Tenant assignment and unassignment
+ * - Unit status and maintenance tracking
+ * - Occupancy and availability reporting
+ *
+ * Security Model:
+ * - Facility-scoped access control
+ * - Role-based permissions (TENANT, FACILITY_ADMIN, ADMIN)
+ * - Audit logging for all operations
+ * - Event-driven access revocation
+ */
 export class UnitsService {
   private static instance: UnitsService;
   private unitModel: UnitModel;

@@ -1,14 +1,22 @@
-import { Router, Response } from 'express';
+/**
+ * User Devices Routes
+ *
+ * Manages user app device registrations for the new Route Pass security model.
+ * - POST /register-key: Register device-bound Ed25519 public key (first time or new device)
+ * - POST /me/rotate-key: Rotate device public key (e.g., after secure enclave key rotation)
+ * - DELETE /me/:id: Revoke a device (tenant self-service)
+ * - DELETE /admin/:id: Revoke any user's device (dev admin only)
+ */
+import { Router, Response, RequestHandler, NextFunction } from 'express';
 import Joi from 'joi';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { UserDeviceModel, UserDeviceStatus, AppPlatform } from '@/models/user-device.model';
 import { DatabaseService } from '@/services/database.service';
-import { KeyDistributionService } from '@/services/key-distribution.service';
 
 // Middleware to check if user is a dev admin
-const requireDevAdmin = (req: AuthenticatedRequest, res: Response, next: any) => {
+const requireDevAdmin: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   if (req.user!.role !== UserRole.DEV_ADMIN) {
     res.status(403).json({ success: false, message: 'Access denied. Dev admin role required.' });
     return;
@@ -19,7 +27,7 @@ const requireDevAdmin = (req: AuthenticatedRequest, res: Response, next: any) =>
 const router = Router();
 
 // Middleware to check if user is a tenant
-const requireTenant = (req: AuthenticatedRequest, res: Response, next: any) => {
+const requireTenant: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   if (req.user!.role !== UserRole.TENANT) {
     res.status(403).json({ success: false, message: 'Access denied. Tenant role required.' });
     return;
@@ -39,7 +47,7 @@ const rotateSchema = Joi.object({
 });
 
 // GET /api/v1/user-devices/me
-router.get('/me', authenticateToken as any, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.get('/me', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user!.userId;
   const model = new UserDeviceModel();
   const devices = await model.listByUser(userId);
@@ -47,7 +55,7 @@ router.get('/me', authenticateToken as any, requireTenant, asyncHandler(async (r
 }));
 
 // POST /api/v1/user-devices/register-key
-router.post('/register-key', authenticateToken as any, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/register-key', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = registerSchema.validate(req.body);
   if (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -72,7 +80,7 @@ router.post('/register-key', authenticateToken as any, requireTenant, asyncHandl
     return;
   }
 
-  // Mark device pending until keys added to all accessible locks
+  // Mark device pending until first pass request; no key distribution required
   const status: UserDeviceStatus = 'pending_key';
   const device = await model.upsertByUserAndAppDeviceId(userId, app_device_id, {
     platform,
@@ -82,14 +90,11 @@ router.post('/register-key', authenticateToken as any, requireTenant, asyncHandl
     last_used_at: new Date(),
   } as any);
 
-  // Enqueue distributions for all accessible locks
-  await KeyDistributionService.getInstance().addKeysForUserDevice(userId, device.id);
-
   res.json({ success: true, device });
 }));
 
 // DELETE /api/v1/user-devices/me/:id
-router.delete('/me/:id', authenticateToken as any, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.delete('/me/:id', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user!.userId;
   const id = req.params.id;
   if (!id) {
@@ -104,12 +109,11 @@ router.delete('/me/:id', authenticateToken as any, requireTenant, asyncHandler(a
     return;
   }
   await model.revoke(id);
-  await KeyDistributionService.getInstance().removeKeysForUserDevice(id);
   res.json({ success: true });
 }));
 
 // POST /api/v1/user-devices/me/rotate-key
-router.post('/me/rotate-key', authenticateToken as any, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/me/rotate-key', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = rotateSchema.validate(req.body);
   if (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -140,15 +144,11 @@ router.post('/me/rotate-key', authenticateToken as any, requireTenant, asyncHand
     last_used_at: new Date(),
   } as any);
 
-  // Rotate keys: enqueue removes for existing and adds for current access
-  // Note: In production, this should be in a transaction with device update for atomicity
-  await KeyDistributionService.getInstance().rotateKeysForUserDevice(userId, device.id);
-
   res.json({ success: true });
 }));
 
 // DELETE /api/v1/user-devices/admin/:id - Delete any user device (dev admin only)
-router.delete('/admin/:id', authenticateToken as any, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.delete('/admin/:id', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const deviceId = req.params.id;
   if (!deviceId) {
     res.status(400).json({ success: false, message: 'Device ID is required' });
@@ -164,13 +164,11 @@ router.delete('/admin/:id', authenticateToken as any, requireDevAdmin, asyncHand
     return;
   }
 
-  // Delete the device and trigger key distribution cleanup
   await model.revoke(deviceId);
-  await KeyDistributionService.getInstance().removeKeysForUserDevice(deviceId);
 
   res.json({
     success: true,
-    message: 'Device deleted successfully and keys revoked from associated locks'
+    message: 'Device deleted successfully'
   });
 }));
 

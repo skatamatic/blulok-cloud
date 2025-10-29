@@ -17,13 +17,52 @@ import { IProtocol } from '../../../types/gateway.types';
 import { DeviceSyncService, GatewayDeviceData } from '../../device-sync.service';
 
 /**
- * Base gateway implementation providing common functionality
+ * Base Gateway Implementation
+ *
+ * Abstract base class providing common functionality for all gateway implementations.
+ * Implements the IGateway interface and provides shared logic for device management,
+ * connection handling, and protocol abstraction.
+ *
+ * Key Features:
+ * - Connection lifecycle management (connect/disconnect/reconnect)
+ * - Device discovery and registration
+ * - Command execution and response handling
+ * - Heartbeat monitoring and health checks
+ * - Protocol abstraction for different communication methods
+ * - Event emission for status changes and device updates
+ *
+ * Connection States:
+ * - DISCONNECTED: Not connected to gateway
+ * - CONNECTING: Establishing connection
+ * - CONNECTED: Successfully connected
+ * - RECONNECTING: Attempting to reconnect after failure
+ * - ERROR: Connection failed with error
+ *
+ * Device Management:
+ * - Device discovery through sync operations
+ * - Device registration and status tracking
+ * - Command execution on individual devices
+ * - Device lifecycle event emission
+ *
+ * Security Considerations:
+ * - Secure connection establishment
+ * - Authentication and authorization
+ * - Command validation and sanitization
+ * - Audit logging for all operations
+ * - Error handling without information leakage
  */
 export abstract class BaseGateway extends EventEmitter implements IGateway {
+  // Connection and protocol components
   protected connection?: IGatewayConnection;
   protected protocol?: IProtocol;
+
+  // Device registry - maps device IDs to device information
   protected devices = new Map<string, IDeviceInfo>();
+
+  // Current gateway status
   protected _status: IGatewayStatus;
+
+  // Timer handles for heartbeat and reconnection
   protected heartbeatTimer: NodeJS.Timeout | undefined;
   protected reconnectTimer: NodeJS.Timeout | undefined;
 

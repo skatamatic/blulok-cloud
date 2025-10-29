@@ -1,3 +1,44 @@
+/**
+ * Gateway Routes
+ *
+ * Comprehensive gateway management API providing CRUD operations for facility gateways.
+ * Supports multiple gateway types (physical, HTTP, simulated) with configuration validation,
+ * connection testing, and operational monitoring.
+ *
+ * Key Features:
+ * - Multi-type gateway support (WebSocket, HTTP, simulated)
+ * - Gateway configuration management and validation
+ * - Connection testing and health monitoring
+ * - Facility-scoped gateway operations
+ * - Role-based access control for gateway management
+ * - Gateway status and telemetry data
+ *
+ * Gateway Types:
+ * - physical: WebSocket-based direct device control
+ * - http: REST API-based cloud-managed gateways
+ * - simulated: Testing gateways with mock behavior
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full gateway management capabilities
+ * - FACILITY_ADMIN: Management of gateways in assigned facilities
+ * - TENANT/MAINTENANCE: Read-only access to gateway status
+ *
+ * Gateway Operations:
+ * - Create gateways with type-specific configuration
+ * - Update gateway settings and connection parameters
+ * - Delete gateways and cleanup associated resources
+ * - Test gateway connections and validate configurations
+ * - Monitor gateway status and operational health
+ * - Retrieve gateway telemetry and performance data
+ *
+ * Security Considerations:
+ * - Facility-scoped gateway access prevents cross-facility operations
+ * - Configuration validation prevents misconfigurations
+ * - Secure credential handling for gateway authentication
+ * - Audit logging for all gateway operations
+ * - Permission checks before sensitive operations
+ */
+
 import { Router, Response } from 'express';
 import { GatewayModel } from '../models/gateway.model';
 import { authenticateToken } from '../middleware/auth.middleware';

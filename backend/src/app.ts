@@ -24,6 +24,9 @@ import { devRouter } from '@/routes/dev.routes';
 import { systemSettingsRouter } from '@/routes/system-settings.routes';
 import { userDevicesRouter } from '@/routes/user-devices.routes';
 import commandsRouter from '@/routes/commands.routes';
+import { passesRouter } from '@/routes/passes.routes';
+import { internalGatewayRouter } from '@/routes/internal-gateway.routes';
+import { adminRouter } from '@/routes/admin.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -82,11 +85,14 @@ export function createApp(): Application {
   app.use('/api/v1/widget-layouts', widgetLayoutsRouter);
   app.use('/api/v1/facilities', facilitiesRouter);
   app.use('/api/v1/gateways', gatewayRouter);
+  app.use('/api/v1/internal/gateway', internalGatewayRouter);
+  app.use('/api/v1/admin', adminRouter);
   app.use('/api/v1/devices', devicesRouter);
     app.use('/api/v1/units', unitsRouter);
     app.use('/api/v1/fms', fmsRouter);
     app.use('/api/v1/access-history', accessHistoryRouter);
     app.use('/api/v1/key-sharing', keySharingRouter);
+  app.use('/api/v1/passes', passesRouter);
     app.use('/api/v1/commands', commandsRouter);
     app.use('/api/v1/dev', authenticateToken, devRouter);
   app.use('/api/v1/system-settings', systemSettingsRouter);

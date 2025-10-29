@@ -201,6 +201,21 @@ class ApiService {
     return response.data;
   }
 
+  async getNotificationSettings() {
+    const response = await this.api.get('/system-settings/notifications');
+    return response.data;
+  }
+
+  async updateNotificationSettings(config: any) {
+    const response = await this.api.put('/system-settings/notifications', config);
+    return response.data;
+  }
+
+  async resendUserInvite(userId: string) {
+    const response = await this.api.post(`/users/${userId}/resend-invite`);
+    return response.data;
+  }
+
   // Facilities Management
   async getFacilities(filters?: any) {
     const response = await this.api.get('/facilities', { params: filters });
@@ -291,6 +306,28 @@ class ApiService {
   async syncGateway(id: string) {
     const response = await this.api.post(`/gateways/${id}/sync`);
     return response.data;
+  }
+
+  // Internal Gateway endpoints
+  async getSecureTimeSyncPacket() {
+    const response = await this.api.get('/internal/gateway/time-sync');
+    return response.data as { success: boolean; timeSyncPacket: [any, string] };
+  }
+
+  async requestTimeSyncForLock(lockId: string) {
+    const response = await this.api.post('/internal/gateway/request-time-sync', { lock_id: lockId });
+    return response.data as { success: boolean; timeSyncPacket: [any, string] };
+  }
+
+  async requestFallbackPass(fallbackJwt: string) {
+    const response = await this.api.post('/internal/gateway/fallback-pass', { fallbackJwt });
+    return response.data as { success: boolean; routePass?: string };
+  }
+
+  // Admin Ops-Key Rotation relay (DEV_ADMIN)
+  async broadcastOpsKeyRotation(payload: { cmd_type: 'ROTATE_OPERATIONS_KEY'; new_ops_pubkey: string; ts: number }, signature: string) {
+    const response = await this.api.post('/admin/ops-key-rotation/broadcast', { payload, signature });
+    return response.data as { success: boolean };
   }
 
   // Devices Management

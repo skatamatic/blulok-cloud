@@ -12,7 +12,9 @@ import {
   DevicePhoneMobileIcon,
   KeyIcon,
   TrashIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ClockIcon,
+  PaperAirplaneIcon
 } from '@heroicons/react/24/outline';
 
 interface UserDetails {
@@ -63,7 +65,7 @@ interface LockInfo {
   key_status: string;
 }
 
-type TabType = 'summary' | 'facilities' | 'devices';
+type TabType = 'summary' | 'facilities' | 'devices' | 'invites';
 
 export default function UserDetailsPage() {
   const { userId } = useParams<{ userId: string }>();
@@ -294,6 +296,19 @@ export default function UserDetailsPage() {
                   Devices ({userDetails.devices.length})
                 </button>
               )}
+              {canManageUsers && (
+                <button
+                  onClick={() => setActiveTab('invites')}
+                  className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                    activeTab === 'invites'
+                      ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <PaperAirplaneIcon className="mr-2 h-4 w-4 inline" />
+                  Invites & OTP
+                </button>
+              )}
             </nav>
           </div>
         </div>
@@ -495,6 +510,53 @@ export default function UserDetailsPage() {
                   </div>
                 ))
               )}
+            </div>
+          )}
+
+          {/* Invites & OTP Tab (Admin/Facility Admin/Dev Admin Only) */}
+          {activeTab === 'invites' && canManageUsers && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+              <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-6">Invites & OTP Management</h2>
+
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-900 dark:text-white">User Status</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      {userDetails.isActive ? 'Active account' : 'Inactive account'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const response = await apiService.resendUserInvite(userId!);
+                        if (response.success) {
+                          addToast({ type: 'success', title: 'Invite resent successfully' });
+                        } else {
+                          addToast({ type: 'error', title: 'Failed to resend invite' });
+                        }
+                      } catch (error) {
+                        console.error('Failed to resend invite:', error);
+                        addToast({ type: 'error', title: 'An error occurred while resending invite' });
+                      }
+                    }}
+                    className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                  >
+                    <PaperAirplaneIcon className="h-4 w-4 mr-2" />
+                    Resend Invite
+                  </button>
+                </div>
+
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
+                  <div className="flex items-center text-sm text-gray-500 dark:text-gray-400">
+                    <ClockIcon className="h-4 w-4 mr-2" />
+                    <span>
+                      Invites are sent automatically when users are created via FMS sync.
+                      The resend button invalidates any previous invites and sends a new one.
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

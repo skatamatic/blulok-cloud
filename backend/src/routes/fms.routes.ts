@@ -1,7 +1,43 @@
 /**
  * FMS (Facility Management System) Routes
- * 
- * API endpoints for FMS integration management
+ *
+ * Comprehensive API for Facility Management System integration and data synchronization.
+ * Provides configuration management, sync operations, change review workflows, and
+ * webhook support for automated data updates from external FMS providers.
+ *
+ * Key Features:
+ * - Multi-provider FMS integration (Storedge, Generic REST, etc.)
+ * - Automated data synchronization with conflict resolution
+ * - Human review workflow for data changes
+ * - Webhook support for real-time updates
+ * - Comprehensive audit trails and error handling
+ * - Role-based access control with facility scoping
+ *
+ * Integration Workflow:
+ * 1. Configure FMS provider settings per facility
+ * 2. Test connection and validate credentials
+ * 3. Trigger manual or scheduled synchronization
+ * 4. Review detected changes (create, update, delete)
+ * 5. Accept/reject changes with human oversight
+ * 6. Apply approved changes to the system
+ * 7. Monitor sync status and error handling
+ *
+ * Supported Operations:
+ * - FMS configuration CRUD operations
+ * - Connection testing and validation
+ * - Manual and scheduled synchronization
+ * - Change detection and conflict resolution
+ * - Bulk change review and application
+ * - Sync history and status monitoring
+ * - Webhook event processing (planned)
+ *
+ * Security Considerations:
+ * - Facility-scoped access control
+ * - Provider credential encryption
+ * - Input validation and sanitization
+ * - Audit logging for all operations
+ * - Secure webhook signature validation (planned)
+ * - Role-based permission enforcement
  */
 
 import { Router, Response } from 'express';

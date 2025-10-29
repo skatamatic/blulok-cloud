@@ -6,7 +6,39 @@ import { ProtocolFactory } from '../protocols/protocol-factory';
 import { WebSocketConnection } from '../connections/websocket.connection';
 
 /**
- * Physical gateway implementation for real hardware
+ * Physical Gateway Implementation
+ *
+ * Production-ready gateway implementation for real hardware communication with on-site facilities.
+ * Provides direct device control through persistent WebSocket connections to physical gateways.
+ *
+ * Key Features:
+ * - WebSocket-based real-time communication with physical gateways
+ * - Direct device control and monitoring capabilities
+ * - Firmware update support for remote maintenance
+ * - Comprehensive device type support (locks, access control, sensors, cameras)
+ * - Remote access control with key management
+ * - Heartbeat monitoring for connection health
+ *
+ * Communication Architecture:
+ * - Persistent WebSocket connections to physical gateway hardware
+ * - Protocol abstraction for different communication versions
+ * - Message framing and command execution
+ * - Real-time device status updates and telemetry
+ * - Secure command delivery and response handling
+ *
+ * Device Support:
+ * - Smart locks with access control
+ * - Access control panels and readers
+ * - Environmental sensors and monitoring devices
+ * - Security cameras and intercom systems
+ * - Multi-device coordination and orchestration
+ *
+ * Security Considerations:
+ * - WSS (WebSocket Secure) connections required
+ * - Authentication and authorization for gateway access
+ * - Encrypted command and response communication
+ * - Secure firmware update mechanisms
+ * - Audit logging for all device operations
  */
 export class PhysicalGateway extends BaseGateway {
   constructor(

@@ -1,3 +1,46 @@
+/**
+ * Access History Routes
+ *
+ * Comprehensive access event logging and reporting API providing detailed audit trails
+ * for all access control events. Supports advanced filtering, role-based access control,
+ * and comprehensive reporting for security monitoring and compliance.
+ *
+ * Key Features:
+ * - Complete audit trail of all access events (successful and failed)
+ * - Advanced filtering by user, device, facility, time range
+ * - Role-based access control for log visibility
+ * - Geographic tracking and session correlation
+ * - Denial reason analysis for security investigations
+ * - Performance metrics and access pattern analysis
+ *
+ * Access Event Types:
+ * - Physical access (unlock/lock operations)
+ * - Digital access (app, keypad, card authentication)
+ * - System events (maintenance, errors, timeouts)
+ * - Administrative actions (manual overrides, emergency access)
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full access to all access logs across all facilities
+ * - FACILITY_ADMIN: Access to logs for their assigned facilities
+ * - TENANT: Access to logs for their units and shared access
+ * - MAINTENANCE: Access to logs for maintenance operations
+ *
+ * Filtering Capabilities:
+ * - Time range filtering (date_from, date_to)
+ * - User and credential filtering
+ * - Device and facility filtering
+ * - Action type and method filtering
+ * - Success/failure status filtering
+ * - Geographic location filtering
+ *
+ * Security Considerations:
+ * - Facility-scoped log access prevents data leakage
+ * - Comprehensive audit logging for compliance
+ * - Input validation on all filter parameters
+ * - Rate limiting to prevent log abuse
+ * - Secure data export capabilities
+ */
+
 import { Router, Response } from 'express';
 import { AccessLogModel } from '../models/access-log.model';
 import { UnitModel } from '../models/unit.model';
@@ -11,7 +54,7 @@ const accessLogModel = new AccessLogModel();
 const unitModel = new UnitModel();
 const keySharingModel = new KeySharingModel();
 
-// Apply auth middleware to all routes
+// Apply authentication middleware to all routes
 router.use(authenticateToken);
 
 // Get access history with role-based filtering

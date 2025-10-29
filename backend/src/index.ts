@@ -55,6 +55,10 @@ async function bootstrap(): Promise<void> {
     const wsService = WebSocketService.getInstance();
     wsService.initialize(server);
 
+    // Initialize Gateway WS for site gateways
+    const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+    GatewayEventsService.getInstance().initialize(server);
+
     const loggerInterceptor = LoggerInterceptorService.getInstance();
 
     // Initialize DeviceEventService now that database is ready
@@ -66,9 +70,11 @@ async function bootstrap(): Promise<void> {
     const gatewayService = GatewayService.getInstance();
     await gatewayService.initializeAllGateways();
 
-    // Start command worker
-    const { CommandWorkerService } = await import('./services/command-worker.service');
-    CommandWorkerService.getInstance().start();
+    // Initialize access revocation listener (denylist on unassign)
+    const { AccessRevocationListenerService } = await import('@/services/access-revocation-listener.service');
+    AccessRevocationListenerService.getInstance();
+
+    // Legacy command worker removed (key distribution queues deprecated)
 
     // Graceful shutdown
     const gracefulShutdown = () => {

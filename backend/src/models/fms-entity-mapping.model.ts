@@ -1,7 +1,40 @@
 /**
  * FMS Entity Mapping Model
- * 
- * Maps FMS external IDs to our internal IDs for tracking sync relationships
+ *
+ * Maintains bidirectional mapping between external FMS (Facility Management System) entity IDs
+ * and internal BluLok entity IDs. Ensures data consistency and prevents duplication during
+ * synchronization operations across different FMS providers and facilities.
+ *
+ * Key Features:
+ * - Bidirectional ID mapping (external ↔ internal)
+ * - Entity type classification (users, units)
+ * - Provider-specific mappings
+ * - Facility-scoped relationships
+ * - Conflict detection and resolution
+ * - Metadata storage for sync context
+ *
+ * Entity Types:
+ * - user: Maps FMS customer/tenant IDs to BluLok user IDs
+ * - unit: Maps FMS unit/space IDs to BluLok unit IDs
+ *
+ * Mapping Lifecycle:
+ * 1. Initial mapping created during first sync
+ * 2. Mappings validated on subsequent syncs
+ * 3. Conflicts detected and flagged for review
+ * 4. Mappings updated only through explicit change approval
+ * 5. Orphaned mappings cleaned up on entity deletion
+ *
+ * Conflict Resolution:
+ * - External ID conflicts: Same external ID maps to different internal entities
+ * - Internal ID conflicts: Same internal entity maps to different external IDs
+ * - Provider conflicts: Different providers claim same external ID
+ * - All conflicts require human review before resolution
+ *
+ * Security Considerations:
+ * - Facility-scoped mappings prevent cross-facility data leakage
+ * - Provider isolation ensures clean separation between FMS systems
+ * - Audit trail for all mapping changes and conflict resolutions
+ * - Validation prevents malicious ID manipulation
  */
 
 import { randomUUID } from 'crypto';
@@ -9,14 +42,23 @@ import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 
 export interface FMSEntityMapping {
+  /** Globally unique identifier for the mapping record */
   id: string;
+  /** Facility that owns this mapping relationship */
   facility_id: string;
+  /** Type of entity being mapped */
   entity_type: 'user' | 'unit';
+  /** External identifier from the FMS system */
   external_id: string;
+  /** Internal BluLok identifier */
   internal_id: string;
+  /** FMS provider type (storedge, generic_rest, etc.) */
   provider_type: string;
+  /** Additional sync context and metadata */
   metadata?: any;
+  /** Automatic record creation timestamp */
   created_at: Date;
+  /** Automatic record update timestamp */
   updated_at: Date;
 }
 

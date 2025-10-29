@@ -1,10 +1,48 @@
 import { IProtocol, IGatewayMessage, MessageType, ProtocolVersion } from '../../../types/gateway.types';
 
 /**
- * Base protocol implementation providing common functionality
+ * Base Protocol Implementation
+ *
+ * Abstract base class providing common functionality for all gateway communication protocols.
+ * Implements the IProtocol interface and provides shared logic for message encoding/decoding,
+ * validation, and protocol abstraction.
+ *
+ * Key Features:
+ * - JSON-based message encoding and decoding
+ * - Message validation and format verification
+ * - Protocol version abstraction
+ * - Message type support checking
+ * - Timestamp handling and correlation ID support
+ * - Priority and timeout management
+ *
+ * Message Format:
+ * - JSON-encoded messages with standardized structure
+ * - Message metadata (ID, type, source, destination, timestamp)
+ * - Protocol version identification
+ * - Payload abstraction for protocol-specific data
+ * - Priority levels for message queuing
+ * - Timeout handling for request/response patterns
+ * - Correlation IDs for request tracking
+ *
+ * Architecture:
+ * - Abstract base class with concrete protocol implementations
+ * - Implements IProtocol interface for standardized API
+ * - Message framing and parsing logic
+ * - Validation and error handling
+ * - Extensible for future protocol versions
+ *
+ * Security Considerations:
+ * - Input validation for message parsing
+ * - Safe JSON parsing with error handling
+ * - Message size limits and validation
+ * - Protocol version compatibility checking
+ * - Audit logging for message processing
  */
 export abstract class BaseProtocol implements IProtocol {
+  // Protocol version identifier
   public abstract readonly version: ProtocolVersion;
+
+  // Supported message types for this protocol version
   public abstract readonly supportedMessageTypes: MessageType[];
 
   /**

@@ -1,3 +1,56 @@
+/**
+ * Development Routes
+ *
+ * Critical development and testing utilities for BluLok system administration.
+ * Provides powerful tools for system setup, testing, debugging, and maintenance
+ * with strict security controls to prevent misuse in production.
+ *
+ * Key Features:
+ * - Admin user creation for initial system setup
+ * - Comprehensive test data seeding for development
+ * - Complete database reset and reseeding capabilities
+ * - Real-time log access for debugging
+ * - WebSocket connection statistics and monitoring
+ * - Full system testing and validation tools
+ *
+ * Security Architecture:
+ * - DEV_ADMIN only access for all endpoints
+ * - Password hashing and secure credential management
+ * - Environment-aware operations (dev/staging vs production)
+ * - Comprehensive audit logging for all operations
+ * - Input validation and sanitization
+ *
+ * Database Operations:
+ * - Complete schema reset and rebuild
+ * - Migration application and validation
+ * - Seeded data creation with realistic relationships
+ * - Foreign key constraint management
+ * - Transaction safety for bulk operations
+ *
+ * Test Data Generation:
+ * - Multi-facility setup with realistic configurations
+ * - Complete user hierarchy (admins, facility admins, tenants)
+ * - Device ecosystem (BluLok locks + access control devices)
+ * - Unit assignments and occupancy management
+ * - Comprehensive access history generation
+ * - Geographic data and metadata enrichment
+ *
+ * Use Cases:
+ * - Initial system setup and configuration
+ * - Development environment testing
+ * - QA and staging environment preparation
+ * - Performance testing with realistic data
+ * - Debugging and troubleshooting support
+ * - Demonstration and training scenarios
+ *
+ * Business Impact:
+ * - Accelerated development cycles
+ * - Consistent test environments
+ * - Reliable debugging capabilities
+ * - Streamlined system administration
+ * - Enhanced development productivity
+ */
+
 import { Router, Response } from 'express';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../types/auth.types';

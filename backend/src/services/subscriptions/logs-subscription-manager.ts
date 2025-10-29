@@ -3,6 +3,37 @@ import { UserRole } from '@/types/auth.types';
 import { WebSocket } from 'ws';
 import { SubscriptionClient } from './base-subscription-manager';
 
+/**
+ * Logs Subscription Manager
+ *
+ * Manages real-time log streaming subscriptions for system monitoring and debugging.
+ * Provides live log data to development and operations teams for troubleshooting.
+ *
+ * Subscription Type: 'logs'
+ *
+ * Key Features:
+ * - Real-time log streaming without historical data
+ * - System-wide log aggregation from all services
+ * - Connection health monitoring and automatic cleanup
+ * - Subscription statistics for monitoring usage
+ *
+ * Data Provided:
+ * - Live log entries with timestamps
+ * - Log types (error, info, debug, warn)
+ * - Log content and metadata
+ * - Real-time system activity monitoring
+ *
+ * Access Control:
+ * - DEV_ADMIN only (highly sensitive debugging information)
+ * - No facility scoping (system-wide logs)
+
+ *
+ * Security Considerations:
+ * - Highly restricted access (DEV_ADMIN only)
+ * - No historical log exposure
+ * - Connection monitoring prevents resource abuse
+ * - Sensitive system information protection
+ */
 export class LogsSubscriptionManager extends BaseSubscriptionManager {
   getSubscriptionType(): string {
     return 'logs';

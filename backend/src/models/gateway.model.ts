@@ -1,29 +1,77 @@
 import { DatabaseService } from '../services/database.service';
 
+/**
+ * Gateway Entity Interface
+ *
+ * Represents a network gateway that connects the BluLok cloud to physical facilities.
+ * Gateways are the communication bridges that manage device connectivity, protocol
+ * translation, and secure command execution.
+ *
+ * Gateway Types:
+ * - physical: WebSocket-based gateways for direct device control
+ * - http: HTTP API gateways for cloud-managed facilities
+ * - simulated: Testing gateways that mimic real device behavior
+ *
+ * Key Management Evolution:
+ * - v1: Legacy Postman hex format (deprecated)
+ * - v2: Modern Ed25519 cryptographic signatures
+ *
+ * Network Configuration:
+ * - Physical gateways use WebSocket connections
+ * - HTTP gateways poll for updates and commands
+ * - SSL certificate validation can be disabled for testing
+ *
+ * Device Management:
+ * - Gateways aggregate status from multiple device types
+ * - Handle firmware updates and configuration changes
+ * - Provide real-time connectivity monitoring
+ */
 export interface Gateway {
+  /** Primary key - unique gateway identifier */
   id: string;
+  /** Foreign key to facilities table - facility this gateway serves */
   facility_id: string;
+  /** Human-readable gateway name for identification */
   name: string;
+  /** Hardware model identifier */
   model?: string;
+  /** Current firmware version running on the gateway */
   firmware_version?: string;
+  /** Gateway's IP address for network identification */
   ip_address?: string;
+  /** Gateway's MAC address for hardware identification */
   mac_address?: string;
+  /** Current operational status of the gateway */
   status: 'online' | 'offline' | 'error' | 'maintenance';
+  /** Timestamp of last successful communication */
   last_seen?: Date;
+  /** Gateway-specific configuration settings */
   configuration?: Record<string, any>;
+  /** Extensible metadata for gateway-specific attributes */
   metadata?: Record<string, any>;
-  // Gateway connection configuration
+  /** Gateway communication protocol type */
   gateway_type?: 'physical' | 'http' | 'simulated';
-  connection_url?: string; // For physical WebSocket gateways
-  base_url?: string; // For HTTP gateways
-  api_key?: string; // For HTTP gateways
-  username?: string; // For HTTP gateways
-  password?: string; // Encrypted password for HTTP gateways
+  /** WebSocket URL for physical gateway connections */
+  connection_url?: string;
+  /** Base URL for HTTP API gateway connections */
+  base_url?: string;
+  /** API key for HTTP gateway authentication */
+  api_key?: string;
+  /** Username for HTTP gateway authentication */
+  username?: string;
+  /** Encrypted password for HTTP gateway authentication */
+  password?: string;
+  /** Communication protocol version */
   protocol_version?: string;
-  poll_frequency_ms?: number; // Polling frequency for HTTP gateways (default 30000ms)
-  key_management_version: 'v1' | 'v2'; // v1=Postman hex format, v2=ED25519 format
-  ignore_ssl_cert?: boolean; // Whether to ignore SSL certificate validation for HTTP gateways
+  /** Polling frequency in milliseconds for HTTP gateways */
+  poll_frequency_ms?: number;
+  /** Key management protocol version (v1 legacy, v2 modern) */
+  key_management_version: 'v1' | 'v2';
+  /** Whether to ignore SSL certificate validation (for testing) */
+  ignore_ssl_cert?: boolean;
+  /** Gateway registration timestamp */
   created_at: Date;
+  /** Last configuration update timestamp */
   updated_at: Date;
 }
 

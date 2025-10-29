@@ -4,7 +4,40 @@ import { SimulatedGateway } from './simulated.gateway';
 import { HttpGateway } from './http.gateway';
 
 /**
- * Factory for creating gateway instances
+ * Gateway Factory
+ *
+ * Factory pattern implementation for creating and configuring gateway instances.
+ * Provides centralized gateway instantiation with type safety and configuration validation.
+ *
+ * Key Features:
+ * - Type-safe gateway creation methods
+ * - Configuration-driven gateway instantiation
+ * - Protocol and connection type abstraction
+ * - Validation of required configuration parameters
+ * - Support for multiple gateway implementations
+ *
+ * Supported Gateway Types:
+ * - Physical: WebSocket-based direct device control
+ * - HTTP: REST API-based cloud-managed gateways
+ * - Simulated: Testing gateways with mock behavior
+ *
+ * Factory Methods:
+ * - Direct creation methods for each gateway type
+ * - Configuration-based creation from database records
+ * - Parameter validation and error handling
+ * - Type-safe configuration mapping
+ *
+ * Configuration Mapping:
+ * - Database configuration fields → Gateway constructor parameters
+ * - Protocol version and key management version handling
+ * - Connection-specific parameters (URLs, credentials, certificates)
+ * - Facility association and identification
+ *
+ * Security Considerations:
+ * - Credential validation before gateway creation
+ * - Secure parameter handling and storage
+ * - Configuration sanitization and validation
+ * - Audit logging of gateway creation events
  */
 export class GatewayFactory {
   /**

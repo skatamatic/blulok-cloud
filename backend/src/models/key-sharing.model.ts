@@ -1,29 +1,93 @@
 import { DatabaseService } from '../services/database.service';
 
+/**
+ * Key Sharing Model
+ *
+ * Manages temporary and permanent access sharing between tenants and authorized users.
+ * Enables flexible access control for storage units while maintaining security and audit trails.
+ *
+ * Key Features:
+ * - Multi-level access control (full, limited, temporary)
+ * - Expiration-based access revocation
+ * - Comprehensive audit trail for access sharing
+ * - Integration with user management and notifications
+ * - Access restriction policies and enforcement
+ *
+ * Access Levels:
+ * - full: Complete access equivalent to primary tenant
+ * - limited: Restricted access with specific limitations
+ * - temporary: Time-bound access with automatic expiration
+ *
+ * Security Considerations:
+ * - Access level validation and enforcement
+ * - Expiration monitoring and automatic revocation
+ * - Audit logging for all sharing operations
+ * - Permission inheritance and restriction policies
+ * - Secure sharing invitation and acceptance workflows
+ *
+ * Business Logic:
+ * - Primary tenant retains ultimate control
+ * - Automatic cleanup of expired shares
+ * - Notification system for share lifecycle events
+ * - Integration with billing and access tracking
+ */
+
+/**
+ * Key Sharing Record Interface
+ *
+ * Represents a single access sharing relationship between users for a storage unit.
+ * Contains all metadata for managing shared access permissions and lifecycle.
+ */
 export interface KeySharing {
+  /** Globally unique identifier for the sharing record */
   id: string;
+  /** Storage unit being shared */
   unit_id: string;
+  /** Primary tenant who owns the unit */
   primary_tenant_id: string;
+  /** User receiving shared access */
   shared_with_user_id: string;
+  /** Level of access being granted */
   access_level: 'full' | 'limited' | 'temporary';
+  /** Timestamp when sharing was established */
   shared_at: Date;
+  /** Optional expiration timestamp for temporary access */
   expires_at?: Date;
+  /** User who authorized the sharing */
   granted_by?: string;
+  /** Additional notes about the sharing arrangement */
   notes?: string;
+  /** Whether the sharing is currently active */
   is_active: boolean;
+  /** Specific access restrictions and limitations */
   access_restrictions?: Record<string, any>;
+  /** Automatic record creation timestamp */
   created_at: Date;
+  /** Automatic record update timestamp */
   updated_at: Date;
 }
 
+/**
+ * Key Sharing with Joined Details
+ *
+ * Extended sharing record with joined user and unit information for display purposes.
+ * Used in admin interfaces and sharing management UIs.
+ */
 export interface KeySharingWithDetails extends KeySharing {
-  // Joined data
+  // Joined relational data for display purposes
+  /** Human-readable unit identifier */
   unit_number?: string;
+  /** Associated facility name */
   facility_name?: string;
+  /** Full name of the primary tenant */
   primary_tenant_name?: string;
+  /** Email of the primary tenant */
   primary_tenant_email?: string;
+  /** Full name of the user receiving access */
   shared_with_name?: string;
+  /** Email of the user receiving access */
   shared_with_email?: string;
+  /** Full name of the user who granted access */
   granted_by_name?: string;
 }
 

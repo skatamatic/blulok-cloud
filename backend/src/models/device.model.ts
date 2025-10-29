@@ -1,32 +1,100 @@
 import { DatabaseService } from '../services/database.service';
 import { DeviceEventService } from '../services/device-event.service';
 
+/**
+ * Device Models
+ *
+ * Comprehensive device management for the BluLok system, supporting both
+ * primary BluLok smart locks and secondary access control devices.
+ *
+ * Key Features:
+ * - Dual device type architecture (BluLok primary + access control secondary)
+ * - Real-time status monitoring and health tracking
+ * - Battery level monitoring for wireless devices
+ * - Firmware version management and updates
+ * - Geographic location tracking and facility association
+ * - Comprehensive event logging and state management
+ *
+ * Device Types:
+ * - BluLok Devices: Primary smart locks with cryptographic access control
+ * - Access Control Devices: Gates, elevators, doors with relay control
+ *
+ * Status Monitoring:
+ * - Online/offline connectivity tracking
+ * - Battery level and low battery alerts
+ * - Lock status for security monitoring
+ * - Maintenance mode for service operations
+ * - Error state detection and recovery
+ *
+ * Security Considerations:
+ * - Device authentication and authorization
+ * - Secure firmware update mechanisms
+ * - Tamper detection and reporting
+ * - Audit logging for all device operations
+ * - Secure credential management
+ */
+
+/**
+ * Access Control Device Interface
+ *
+ * Represents secondary access control devices like gates, elevators, and doors.
+ * These devices provide extended access control beyond primary BluLok locks.
+ */
 export interface AccessControlDevice {
+  /** Globally unique identifier for the device */
   id: string;
+  /** Gateway managing this device */
   gateway_id: string;
+  /** Human-readable device name */
   name: string;
+  /** Type classification of access control device */
   device_type: 'gate' | 'elevator' | 'door';
+  /** Detailed location description */
   location_description?: string;
+  /** Relay channel number for control */
   relay_channel: number;
+  /** Current operational status */
   status: 'online' | 'offline' | 'error' | 'maintenance';
+  /** Current lock state of the device */
   is_locked: boolean;
+  /** Timestamp of last device activity */
   last_activity?: Date;
+  /** Device-specific configuration settings */
   device_settings?: Record<string, any>;
+  /** Additional metadata for extensibility */
   metadata?: Record<string, any>;
+  /** Automatic record creation timestamp */
   created_at: Date;
+  /** Automatic record update timestamp */
   updated_at: Date;
 }
 
+/**
+ * BluLok Device Interface
+ *
+ * Primary smart lock devices with advanced cryptographic access control.
+ * These are the core devices providing secure access to storage units.
+ */
 export interface BluLokDevice {
+  /** Globally unique identifier for the device */
   id: string;
+  /** Gateway managing this device */
   gateway_id: string;
+  /** Associated storage unit identifier */
   unit_id: string;
+  /** Manufacturer-assigned serial number */
   device_serial: string;
+  /** Current firmware version installed */
   firmware_version?: string;
+  /** Current lock mechanism status */
   lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance';
+  /** Overall device connectivity and health status */
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
+  /** Battery charge level (0-100) */
   battery_level?: number;
+  /** Timestamp of last device command/activity */
   last_activity?: Date;
+  /** Timestamp of last successful communication */
   last_seen?: Date;
   device_settings?: Record<string, any>;
   metadata?: Record<string, any>;

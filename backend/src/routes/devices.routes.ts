@@ -1,3 +1,58 @@
+/**
+ * Devices Routes
+ *
+ * Comprehensive device management API providing CRUD operations for BluLok locks
+ * and access control devices. Supports device registration, status monitoring,
+ * configuration management, and operational control.
+ *
+ * Key Features:
+ * - Dual device type management (BluLok locks + access control devices)
+ * - Device registration and configuration
+ * - Real-time status monitoring and health tracking
+ * - Device control operations (lock/unlock status updates)
+ * - Battery level monitoring and alerts
+ * - Facility-scoped device access control
+ *
+ * Device Types:
+ * - BluLok: Primary smart locks with cryptographic access control
+ * - Access Control: Secondary devices (gates, elevators, doors)
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full device management across all facilities
+ * - FACILITY_ADMIN: Management of devices in assigned facilities
+ * - TENANT: Read-only access to devices in their units
+ * - MAINTENANCE: Access for device maintenance operations
+ *
+ * Device Operations:
+ * - Register new devices with gateway association
+ * - Update device configurations and settings
+ * - Monitor device status and connectivity
+ * - Update lock status for access control
+ * - Track battery levels and maintenance needs
+ * - Search and filter devices by various criteria
+ *
+ * Business Logic:
+ * - Device isolation ensures facility security
+ * - Status monitoring enables proactive maintenance
+ * - Battery tracking prevents device failures
+ * - Lock status updates support access control workflows
+ * - Gateway association enables device communication
+ *
+ * Security Considerations:
+ * - Facility-scoped access prevents unauthorized operations
+ * - Input validation on all device data and configurations
+ * - XSS protection for user-provided device names
+ * - Audit logging for all device operations
+ * - Secure device configuration management
+ *
+ * Performance Optimizations:
+ * - Efficient database queries with proper indexing
+ * - Pagination support for large device lists
+ * - Cached device lookups for frequent access
+ * - Optimized status queries for monitoring dashboards
+ * - Bulk operations for facility-wide updates
+ */
+
 import { Router, Response } from 'express';
 import Joi from 'joi';
 import { DeviceModel, type DeviceFilters } from '../models/device.model';

@@ -1,26 +1,62 @@
-/**
- * Unit Assignment Events Service
- * 
- * Pub/sub system for unit assignment changes.
- * Allows services to react to tenant-unit assignments (e.g., gateway access updates)
- */
-
 import { EventEmitter } from 'events';
 import { logger } from '@/utils/logger';
 
+/**
+ * Unit Assignment Event Interface
+ *
+ * Represents changes to tenant-unit relationships in the BluLok system.
+ * These events drive access control updates, denylist management, and
+ * real-time dashboard notifications.
+ */
 export interface UnitAssignmentEvent {
+  /** Type of assignment change */
   eventType: 'assigned' | 'unassigned' | 'updated';
+  /** Unit affected by the assignment change */
   unitId: string;
+  /** Facility containing the affected unit */
   facilityId: string;
+  /** Tenant affected by the assignment change */
   tenantId: string;
+  /** Type of access granted (full/shared/temporary) */
   accessType?: string;
+  /** Additional event metadata for tracking and auditing */
   metadata?: {
+    /** Source of the assignment change */
     source: 'manual' | 'fms_sync' | 'api';
+    /** FMS sync log ID if triggered by external system */
     syncLogId?: string;
+    /** User who performed the action */
     performedBy?: string;
   };
+  /** Timestamp when the event occurred */
   timestamp: Date;
 }
+
+/**
+ * Unit Assignment Events Service
+ *
+ * Publish-subscribe system for tenant-unit assignment lifecycle events.
+ * Enables decoupled, event-driven architecture for access control management
+ * and real-time system updates.
+ *
+ * Key Features:
+ * - Event-driven access control updates
+ * - Multi-source assignment tracking (manual, FMS, API)
+ * - Comprehensive audit logging
+ * - Error-resilient event handling
+ * - High-performance event emission with many listeners
+ *
+ * Event Types:
+ * - tenant:assigned: New tenant-unit relationship created
+ * - tenant:unassigned: Existing tenant-unit relationship terminated
+ * - assignment:updated: Access type or permissions modified
+ * - unit:assignment:changed: Catch-all for any assignment change
+ *
+ * Security Integration:
+ * - Triggers AccessRevocationListenerService for denylist updates
+ * - Updates Route Pass audiences when assignments change
+ * - Maintains facility-scoped access control integrity
+ */
 
 export class UnitAssignmentEventsService {
   private static instance: UnitAssignmentEventsService;

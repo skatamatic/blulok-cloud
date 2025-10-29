@@ -1,16 +1,40 @@
 import { WebSocketService } from './websocket.service';
 import { logger } from '@/utils/logger';
 
+/**
+ * Logger Interceptor Service
+ *
+ * Intercepts Winston logger calls and broadcasts them in real-time to WebSocket clients.
+ * Enables live log streaming for development and debugging purposes.
+ *
+ * Key Features:
+ * - Transparent logger interception without affecting normal logging
+ * - Real-time log streaming to subscribed WebSocket clients
+ * - Error object handling with stack traces
+ * - Re-entrancy protection to prevent infinite loops
+ * - Graceful cleanup and restoration of original logger methods
+ *
+ * Architecture:
+ * - Intercepts Winston logger methods (error, warn, info, debug)
+ * - Stores original methods for restoration
+ * - Broadcasts formatted log entries to WebSocket clients
+ * - Handles complex data types and Error objects
+ * - Prevents circular logging loops
+ */
 export class LoggerInterceptorService {
   private static instance: LoggerInterceptorService;
   private wsService: WebSocketService;
+
+  // Store original logger methods to restore on cleanup
   private originalMethods!: {
     error: (...args: any[]) => any;
     warn: (...args: any[]) => any;
     info: (...args: any[]) => any;
     debug: (...args: any[]) => any;
   };
-  private isIntercepting = false; // Re-entrancy guard
+
+  // Prevents re-entrant calls that could cause infinite loops
+  private isIntercepting = false;
 
   private constructor() {
     this.wsService = WebSocketService.getInstance();

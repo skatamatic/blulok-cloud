@@ -1,3 +1,39 @@
+/**
+ * Units Routes
+ *
+ * Comprehensive storage unit management API providing CRUD operations for rental units.
+ * Implements role-based access control with unit-scoped permissions and real-time updates.
+ *
+ * Key Features:
+ * - Multi-tenant unit management with access control
+ * - Unit status monitoring (locked/unlocked/occupied)
+ * - Assignment management for tenant-unit relationships
+ * - Real-time status updates via WebSocket
+ * - Unit search and filtering capabilities
+ * - Lock control operations for authorized users
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full unit management across all facilities
+ * - FACILITY_ADMIN: Management of units in assigned facilities
+ * - TENANT: Access to assigned units only (read + lock control)
+ * - MAINTENANCE: Access to units for maintenance operations
+ *
+ * Unit Operations:
+ * - Create units with facility association and configuration
+ * - Update unit details, pricing, and availability
+ * - Assign/unassign tenants to units
+ * - Control unit locks (unlock for authorized access)
+ * - Monitor unit status and occupancy
+ * - Search and filter units by various criteria
+ *
+ * Security Considerations:
+ * - Unit-scoped access prevents cross-tenant operations
+ * - Lock control requires proper authorization
+ * - Assignment validation prevents conflicts
+ * - Audit logging for all unit operations
+ * - Secure lock control prevents replay attacks
+ */
+
 import { Router, Response } from 'express';
 import { UnitsService } from '@/services/units.service';
 import { UnitModel } from '@/models/unit.model';

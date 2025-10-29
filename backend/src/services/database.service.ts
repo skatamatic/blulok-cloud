@@ -2,12 +2,41 @@ import knex, { Knex } from 'knex';
 import { config } from '@/config/environment';
 import { logger } from '@/utils/logger';
 
+/**
+ * Database Service
+ *
+ * Singleton service managing all database connectivity and operations for the BluLok system.
+ * Provides centralized database connection management, health monitoring, and migration support.
+ *
+ * Key Features:
+ * - Singleton pattern ensuring single database connection pool
+ * - Automatic database creation for development environments
+ * - Connection pooling with configurable limits
+ * - Health monitoring and graceful shutdown
+ * - Migration and seeding support
+ * - SSL/TLS configuration for production security
+ *
+ * Connection Pool Configuration:
+ * - Min/Max connections: 2-10 (configurable for different environments)
+ * - Connection timeouts: 30s acquire, 30s create, 5s destroy
+ * - Idle timeout: 30s with 1s reap interval
+ *
+ * Security Considerations:
+ * - SSL/TLS enabled in production (rejectUnauthorized: false for self-signed certs)
+ * - Connection credentials loaded from secure configuration
+ * - Prepared statements and parameterized queries used throughout
+ * - Connection pool prevents connection exhaustion attacks
+ */
 export class DatabaseService {
   private static instance: DatabaseService;
   private _connection: Knex | null = null;
 
   private constructor() {}
 
+  /**
+   * Get singleton instance of the database service.
+   * Ensures only one database connection pool exists across the application.
+   */
   public static getInstance(): DatabaseService {
     if (!DatabaseService.instance) {
       DatabaseService.instance = new DatabaseService();
@@ -15,11 +44,24 @@ export class DatabaseService {
     return DatabaseService.instance;
   }
 
+  /**
+   * Initialize the database connection and ensure database exists.
+   * This method should be called once during application startup.
+   *
+   * Initialization Steps:
+   * 1. Ensure database exists (creates if needed in development)
+   * 2. Establish Knex connection with full configuration
+   * 3. Configure connection pooling and SSL settings
+   * 4. Set up migration and seeding directories
+   *
+   * @returns Promise resolving to true if initialization successful, false otherwise
+   */
   public async initialize(): Promise<boolean> {
     try {
-      // First, try to create the database if it doesn't exist
+      // Ensure database exists before attempting connection
       const wasCreated = await this.ensureDatabaseExists();
 
+      // Create Knex instance with full configuration
       this._connection = knex({
         client: 'mysql2',
         connection: {

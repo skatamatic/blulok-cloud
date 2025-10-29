@@ -1,3 +1,37 @@
+/**
+ * Facilities Routes
+ *
+ * Comprehensive facility management API providing CRUD operations for storage facilities.
+ * Implements role-based access control with facility-scoped permissions for different user types.
+ *
+ * Key Features:
+ * - Multi-tenant facility management with access control
+ * - Facility status monitoring and health tracking
+ * - Device and unit association management
+ * - Facility search and filtering capabilities
+ * - Role-based data access (ADMIN, FACILITY_ADMIN, TENANT, MAINTENANCE)
+ *
+ * Access Control:
+ * - ADMIN/DEV_ADMIN: Full access to all facilities
+ * - FACILITY_ADMIN: Access to assigned facilities only
+ * - TENANT: Access to facilities containing their units
+ * - MAINTENANCE: Access to facilities requiring maintenance
+ *
+ * Facility Operations:
+ * - Create new facilities with configuration
+ * - Update facility details and settings
+ * - Deactivate/reactivate facilities
+ * - Monitor facility status and device counts
+ * - Search and filter facilities by various criteria
+ *
+ * Security Considerations:
+ * - Facility-scoped access prevents unauthorized data access
+ * - Input validation on all facility data
+ * - Permission checks before all operations
+ * - Audit logging for compliance requirements
+ * - Secure facility configuration management
+ */
+
 import { Router, Response } from 'express';
 import { FacilityModel } from '../models/facility.model';
 // import { GatewayModel } from '../models/gateway.model';
@@ -10,7 +44,7 @@ const facilityModel = new FacilityModel();
 // Removed unused gatewayModel
 const deviceModel = new DeviceModel();
 
-// Apply auth middleware to all routes
+// Apply authentication middleware to all routes
 router.use(authenticateToken);
 
 // GET /api/facilities - Get all facilities (with filtering for admins)
