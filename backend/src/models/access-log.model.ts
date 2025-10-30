@@ -31,12 +31,6 @@ import { DatabaseService } from '../services/database.service';
  * - Session correlation for fraud detection
  * - Comprehensive metadata for forensic analysis
  * - Compliance-ready data retention policies
- *
- * Business Intelligence:
- * - Usage pattern analysis for facility optimization
- * - Security incident investigation and response
- * - Performance monitoring and SLA tracking
- * - Predictive maintenance based on failure patterns
  */
 
 /**

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import Joi from 'joi';
 import { AuthService } from '@/services/auth.service';
 import { LoginRequest, AuthenticatedRequest } from '@/types/auth.types';
@@ -43,11 +44,25 @@ import bcrypt from 'bcrypt';
  * - POST /auth/login - User authentication
  * - POST /auth/logout - Session termination
  * - POST /auth/change-password - Password update
- * - GET /auth/me - Current user profile
- * - POST /auth/refresh - Token refresh
+ * - GET /auth/profile - Current user profile
+ * - GET /auth/verify-token - Token validation
  */
 
 const router = Router();
+// Strict rate limiters for invite/OTP endpoints
+const inviteRequestLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const inviteVerifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Input validation schemas with security constraints
 const loginSchema = Joi.object({
@@ -165,7 +180,7 @@ export { router as authRouter };
 // ----- First-time Invite Flow Endpoints -----
 
 // POST /auth/invite/request-otp { token, phone? | email? }
-router.post('/invite/request-otp', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+router.post('/invite/request-otp', inviteRequestLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({
     token: Joi.string().required(),
     phone: Joi.string().optional(),
@@ -188,7 +203,7 @@ router.post('/invite/request-otp', asyncHandler(async (req: Request, res: Respon
 }));
 
 // POST /auth/invite/verify-otp { token, otp }
-router.post('/invite/verify-otp', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+router.post('/invite/verify-otp', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({ token: Joi.string().required(), otp: Joi.string().pattern(/^\d{6}$/).required() });
   const { error, value } = schema.validate(req.body);
   if (error) {
@@ -207,7 +222,7 @@ router.post('/invite/verify-otp', asyncHandler(async (req: Request, res: Respons
 }));
 
 // POST /auth/invite/set-password { token, otp, newPassword }
-router.post('/invite/set-password', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({
     token: Joi.string().required(),
     otp: Joi.string().pattern(/^\d{6}$/).required(),

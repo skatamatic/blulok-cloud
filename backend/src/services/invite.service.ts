@@ -94,6 +94,15 @@ export class InviteService {
       .where('id', inviteId)
       .update({ consumed_at: this.db.fn.now(), updated_at: this.db.fn.now() });
   }
+
+  /**
+   * Update the last_sent_at timestamp for an invite (used for resend throttling).
+   */
+  public async touchLastSent(inviteId: string): Promise<void> {
+    await this.db('user_invites')
+      .where('id', inviteId)
+      .update({ last_sent_at: this.db.fn.now(), updated_at: this.db.fn.now() });
+  }
 }
 
 function safeParseJson(value: any): any {

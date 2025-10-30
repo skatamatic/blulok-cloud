@@ -24,12 +24,6 @@ import { DatabaseService } from '../services/database.service';
  * - Audit logging for all sharing operations
  * - Permission inheritance and restriction policies
  * - Secure sharing invitation and acceptance workflows
- *
- * Business Logic:
- * - Primary tenant retains ultimate control
- * - Automatic cleanup of expired shares
- * - Notification system for share lifecycle events
- * - Integration with billing and access tracking
  */
 
 /**

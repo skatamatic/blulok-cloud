@@ -35,32 +35,12 @@ import { GatewayConnectionState } from '../../../types/gateway.types';
  * - Error message processing and logging
  * - Statistics tracking for bandwidth monitoring
  *
- * Use Cases:
- * - Real-time device control and monitoring
- * - Immediate command delivery and acknowledgment
- * - Live status updates and telemetry
- * - High-frequency data streaming
- * - Interactive gateway management
- *
- * Architecture:
- * - WebSocket client with comprehensive event handling
- * - State machine for connection lifecycle management
- * - Timer-based heartbeat and reconnection logic
- * - Statistics aggregation for monitoring
- * - Error handling with connection recovery
- *
  * Security Considerations:
  * - WSS (WebSocket Secure) connections required in production
  * - Connection authentication and authorization
  * - Message validation and sanitization
  * - Resource limits to prevent abuse
  * - Audit logging for connection events
- *
- * Performance Characteristics:
- * - Low latency for real-time operations
- * - Persistent connection overhead
- * - Efficient for high-frequency updates
- * - Scalable with connection pooling
  */
 export class WebSocketConnection extends BaseConnection {
   // WebSocket client instance

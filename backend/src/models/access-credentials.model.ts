@@ -25,12 +25,6 @@ import { DatabaseService } from '../services/database.service';
  * - Permission validation on access
  * - Audit logging for all operations
  * - Secure credential storage and transmission
- *
- * Business Logic:
- * - Automatic deactivation on expiration
- * - Permission inheritance from user roles
- * - Integration with access control systems
- * - Credential sharing and delegation
  */
 
 /**

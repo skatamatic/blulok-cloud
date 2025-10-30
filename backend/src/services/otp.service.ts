@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { DatabaseService } from '@/services/database.service';
 import { NotificationService } from '@/services/notifications/notification.service';
+import { logger } from '@/utils/logger';
 
 const OTP_TTL_MINUTES = parseInt(process.env.OTP_TTL_MINUTES || '10', 10);
 const OTP_MAX_ATTEMPTS = parseInt(process.env.OTP_MAX_ATTEMPTS || '5', 10);
@@ -53,6 +54,7 @@ export class OTPService {
       throw new Error('Invalid OTP delivery parameters');
     }
 
+    logger.info(`OTP dispatched via ${params.delivery} for user ${params.userId}${params.inviteId ? ` invite ${params.inviteId}` : ''}`);
     return { expiresAt };
   }
 
@@ -71,13 +73,26 @@ export class OTPService {
       if (row.attempts >= OTP_MAX_ATTEMPTS) continue;
       const match = await bcrypt.compare(params.code, row.code_hash);
       if (match) {
-        // On success, optionally we could mark others invalid. Increment attempts minimally.
+        // On success, increment attempts minimally and invalidate other rows for same context.
         await this.db('user_otps').where('id', row.id).update({ attempts: row.attempts + 1, updated_at: this.db.fn.now() });
+        await this.db('user_otps')
+          .where('user_id', params.userId)
+          .modify((qb) => {
+            if (params.inviteId) qb.where('invite_id', params.inviteId);
+          })
+          .whereNot('id', row.id)
+          .update({ attempts: OTP_MAX_ATTEMPTS, updated_at: this.db.fn.now() });
+        logger.info(`OTP verified for user ${params.userId}${params.inviteId ? ` invite ${params.inviteId}` : ''}`);
         return { valid: true };
       } else {
         await this.db('user_otps').where('id', row.id).update({ attempts: row.attempts + 1, updated_at: this.db.fn.now() });
+        // small delay to slow brute force
+        await new Promise((r) => setTimeout(r, 150));
       }
     }
+    // final delay if no match
+    await new Promise((r) => setTimeout(r, 150));
+    logger.warn(`OTP verification failed for user ${params.userId}${params.inviteId ? ` invite ${params.inviteId}` : ''}`);
     return { valid: false };
   }
 

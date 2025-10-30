@@ -42,32 +42,12 @@ import { GatewayDeviceData } from '../../device-sync.service';
  * - Command execution through API calls
  * - Battery level and connectivity monitoring
  *
- * Use Cases:
- * - Cloud-managed facilities with intermittent connectivity
- * - Facilities behind restrictive firewalls (HTTP vs WebSocket)
- * - Cost-effective communication for low-frequency updates
- * - Development and testing environments
- *
- * Architecture:
- * - Inherits from BaseGateway for common functionality
- * - HTTP connection for API communication
- * - Protocol abstraction for message encoding/decoding
- * - Timer-based polling for periodic updates
- * - Failure tracking and automatic offline detection
- *
  * Security Considerations:
  * - HTTPS-only communication in production
  * - API key authentication and validation
  * - SSL certificate validation (configurable for development)
  * - Request/response encryption and integrity
  * - Audit logging for all API interactions
- *
- * Performance Characteristics:
- * - Higher latency than WebSocket connections
- * - Configurable polling frequency for optimization
- * - Lower server resource usage (no persistent connections)
- * - Scalable for large numbers of gateways
- * - Suitable for periodic status updates and command delivery
  */
 export class HttpGateway extends BaseGateway {
   // HTTP connection for API communication
