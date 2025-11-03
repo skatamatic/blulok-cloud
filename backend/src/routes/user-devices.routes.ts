@@ -80,8 +80,9 @@ router.post('/register-key', authenticateToken, requireTenant, asyncHandler(asyn
     return;
   }
 
-  // Mark device pending until first pass request; no key distribution required
-  const status: UserDeviceStatus = 'pending_key';
+  // Device is immediately active since registration includes public key
+  // No need for a subsequent key rotation step
+  const status: UserDeviceStatus = 'active';
   const device = await model.upsertByUserAndAppDeviceId(userId, app_device_id, {
     platform,
     device_name,

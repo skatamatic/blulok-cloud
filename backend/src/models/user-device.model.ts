@@ -12,8 +12,8 @@ export type AppPlatform = 'ios' | 'android' | 'web' | 'other';
  * User Device Status
  *
  * Lifecycle states for user device registrations in the security model.
- * - pending_key: Device registered but key not yet rotated/activated
- * - active: Device fully registered and authorized for Route Pass issuance
+ * - pending_key: Legacy state - no longer used for initial registration (key provided during registration)
+ * - active: Device fully registered and authorized for Route Pass issuance (set immediately when public key is provided)
  * - revoked: Device access permanently revoked (security incident, user request)
  */
 export type UserDeviceStatus = 'pending_key' | 'active' | 'revoked';
