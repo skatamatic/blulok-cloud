@@ -19,9 +19,12 @@ import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { DatabaseService } from '@/services/database.service';
 import { PassesService } from '@/services/passes.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { RoutePassIssuanceModel } from '@/models/route-pass-issuance.model';
 import { Knex } from 'knex';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { logger } from '@/utils/logger';
+import { config } from '@/config/environment';
 
 const router = Router();
 
@@ -120,6 +123,34 @@ router.post('/request', authenticateToken, passRequestLimiter, asyncHandler(asyn
   const audiences = await resolveAudiences(db, userId, userRole, facilityIds);
 
   const routePass = await PassesService.issueRoutePass({ userId, devicePublicKey: device.public_key, audiences });
+  
+  // Log route pass issuance for auditing and optimization
+  try {
+    const routePassModel = new RoutePassIssuanceModel();
+    // Decode JWT to get jti, iat, exp
+    const payload = await Ed25519Service.verifyJwt(routePass);
+    const jti = payload.jti as string;
+    const iat = payload.iat as number;
+    const exp = payload.exp as number;
+    
+    const issuedAt = new Date(iat * 1000);
+    const expiresAt = new Date(exp * 1000);
+    
+    await routePassModel.create({
+      userId,
+      deviceId: device.id,
+      audiences,
+      jti,
+      issuedAt,
+      expiresAt,
+    });
+    
+    logger.debug(`Logged route pass issuance: user=${userId} device=${device.id} jti=${jti}`);
+  } catch (error) {
+    // Log error but don't fail the request - issuance logging is non-critical
+    logger.error(`Failed to log route pass issuance for user ${userId}:`, error);
+  }
+  
   logger.info(`Issued Route Pass: user=${userId} device=${appDeviceId || 'latest'} audCount=${audiences.length}`);
   res.json({ success: true, routePass });
 }));

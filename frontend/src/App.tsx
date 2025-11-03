@@ -27,6 +27,7 @@ import FacilitiesPage from '@/pages/FacilitiesPage';
 import FacilityDetailsPage from '@/pages/FacilityDetailsPage';
 import EditFacilityPage from '@/pages/EditFacilityPage';
 import DevicesPage from '@/pages/DevicesPage';
+import DeviceDetailsPage from '@/pages/DeviceDetailsPage';
 import UnitsPage from '@/pages/UnitsPage';
 import UnitsManagementPage from '@/pages/UnitsManagementPage';
 import UnitDetailsPage from '@/pages/UnitDetailsPage';
@@ -206,6 +207,14 @@ function App() {
                           <ProtectedRoute>
                             <DashboardLayout>
                               <UnitDetailsPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/devices/:deviceId" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <DeviceDetailsPage />
                             </DashboardLayout>
                           </ProtectedRoute>
                         } />

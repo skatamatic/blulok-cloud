@@ -17,7 +17,8 @@ import {
   KeyIcon,
   UserIcon,
   EyeIcon,
-  CloudIcon
+  CloudIcon,
+  QuestionMarkCircleIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit } from '@/types/facility.types';
@@ -39,6 +40,7 @@ const statusColors = {
   low_battery: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
   unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
+  unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
@@ -231,7 +233,9 @@ export default function FacilityDetailsPage() {
 
         <div className="flex items-center justify-between mb-3">
           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[device.lock_status]}`}>
-            {device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : <LockOpenIcon className="h-3 w-3 mr-1" />}
+            {device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : 
+             device.lock_status === 'unlocked' ? <LockOpenIcon className="h-3 w-3 mr-1" /> :
+             <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />}
             {device.lock_status}
           </span>
           {device.battery_level && (
@@ -333,6 +337,13 @@ export default function FacilityDetailsPage() {
           >
             <ArrowLeftIcon className="h-5 w-5" />
           </button>
+          {facility.branding_image && facility.image_mime_type ? (
+            <img
+              src={`data:${facility.image_mime_type};base64,${facility.branding_image}`}
+              alt={facility.name}
+              className="h-16 w-16 rounded-lg object-contain bg-white dark:bg-gray-100 p-1 border border-gray-200 dark:border-gray-600 flex-shrink-0"
+            />
+          ) : null}
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{facility.name}</h1>
             <p className="text-sm text-gray-600 dark:text-gray-400">{facility.address}</p>

@@ -13,7 +13,9 @@ import {
   ChevronUpIcon,
   EyeIcon,
   EyeSlashIcon,
-  ShieldCheckIcon
+  ShieldCheckIcon,
+  InformationCircleIcon,
+  WrenchScrewdriverIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
@@ -77,6 +79,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       errors: string[];
     };
   } | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'setup' | 'sync' | 'devtools'>('overview');
   const [configExpanded, setConfigExpanded] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -274,8 +277,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       // Log detailed error in sync logs
       addLog('error', `Synchronization failed: ${detailedError}`);
 
-      // Keep toast concise
-      addToast({ type: 'error', title: 'Sync failed: Network error' });
+      // Keep toast concise - use the actual error message
+      addToast({ type: 'error', title: message });
     } finally {
       setSyncing(false);
     }
@@ -354,44 +357,201 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     );
   }
 
-  return (
-    <div className="space-y-6">
-      {/* Gateway Status Header */}
-      {gateway ? (
+  // Navigation tabs
+  const navTabs = [
+    { id: 'overview' as const, label: 'Overview', icon: InformationCircleIcon },
+    { id: 'setup' as const, label: 'Setup', icon: Cog6ToothIcon },
+    { id: 'sync' as const, label: 'Sync', icon: CloudIcon },
+    { id: 'devtools' as const, label: 'DevTools/Diag', icon: WrenchScrewdriverIcon },
+  ];
+
+  // Render Overview Tab
+  const renderOverviewTab = () => {
+    if (!gateway) {
+      return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center">
-              <ServerIcon className="h-6 w-6 text-primary-500 mr-3" />
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                {gateway.name}
-              </h3>
-              <span className={`ml-3 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                gateway.gateway_type === 'simulated' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
-                gateway.status === 'online' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
-                gateway.status === 'offline' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' :
-                gateway.status === 'error' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' :
-                'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-              }`}>
-                {gateway.gateway_type === 'simulated' ? 'SIMULATED' : gateway.status}
-              </span>
-            </div>
+          <div className="text-center py-8">
+            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              This facility doesn't have a gateway configured yet.
+            </p>
             {canManageGateway && (
               <button
-                onClick={() => setConfigExpanded(!configExpanded)}
-                className="flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-                aria-label={configExpanded ? 'Collapse configuration' : 'Expand configuration'}
-                title={configExpanded ? 'Collapse' : 'Expand'}
+                onClick={() => setActiveTab('setup')}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
               >
-                {configExpanded ? (
-                  <ChevronUpIcon className="h-4 w-4" />
-                ) : (
-                  <ChevronDownIcon className="h-4 w-4" />
-                )}
+                <Cog6ToothIcon className="h-4 w-4 mr-2" />
+                Configure Gateway
               </button>
             )}
           </div>
-          {configExpanded && canManageGateway && (
-            <div className="space-y-4">
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">Gateway Overview</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">Basic Information</h4>
+            <dl className="space-y-3">
+              <div>
+                <dt className="text-sm text-gray-500 dark:text-gray-400">Name</dt>
+                <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.name}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-gray-500 dark:text-gray-400">Status</dt>
+                <dd className="mt-1">
+                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                    gateway.gateway_type === 'simulated' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
+                    gateway.status === 'online' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
+                    gateway.status === 'offline' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' :
+                    gateway.status === 'error' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' :
+                    'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+                  }`}>
+                    {gateway.gateway_type === 'simulated' ? 'SIMULATED' : gateway.status}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-sm text-gray-500 dark:text-gray-400">Gateway Type</dt>
+                <dd className="mt-1 text-sm text-gray-900 dark:text-white">
+                  {gateway.gateway_type === 'http' ? 'HTTP (Mesh Manager API)' :
+                   gateway.gateway_type === 'physical' ? 'Physical (WebSocket)' :
+                   gateway.gateway_type === 'simulated' ? 'Simulated (Testing)' :
+                   'Unknown'}
+                </dd>
+              </div>
+              {gateway.model && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Model</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.model}</dd>
+                </div>
+              )}
+              {gateway.firmware_version && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Firmware Version</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.firmware_version}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+          <div>
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">Connection Details</h4>
+            <dl className="space-y-3">
+              {gateway.ip_address && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">IP Address</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono">{gateway.ip_address}</dd>
+                </div>
+              )}
+              {gateway.mac_address && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">MAC Address</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono">{gateway.mac_address}</dd>
+                </div>
+              )}
+              {gateway.base_url && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Base URL</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono break-all">{gateway.base_url}</dd>
+                </div>
+              )}
+              {gateway.connection_url && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Connection URL</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono break-all">{gateway.connection_url}</dd>
+                </div>
+              )}
+              {gateway.last_seen && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Last Seen</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">
+                    {new Date(gateway.last_seen).toLocaleString()}
+                  </dd>
+                </div>
+              )}
+              {gateway.protocol_version && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Protocol Version</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.protocol_version}</dd>
+                </div>
+              )}
+              {gateway.poll_frequency_ms && (
+                <div>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Poll Frequency</dt>
+                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.poll_frequency_ms} ms</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        </div>
+        <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
+            {isGatewayProperlyConfigured(gateway) ? (
+              <>
+                <CheckCircleIcon className="h-5 w-5 text-green-500 mr-2" />
+                Gateway is properly configured
+              </>
+            ) : (
+              <>
+                <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500 mr-2" />
+                Gateway needs setup configuration
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Render Setup Tab
+  const renderSetupTab = () => {
+    if (!gateway && !canManageGateway) {
+      return (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+          <div className="text-center py-8">
+            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
+            <p className="text-gray-600 dark:text-gray-400">
+              You don't have permission to configure gateways.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        {gateway ? (
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                Gateway Configuration
+              </h3>
+              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                isGatewayProperlyConfigured(gateway) 
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' 
+                  : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+              }`}>
+                {isGatewayProperlyConfigured(gateway) ? 'Configured' : 'Needs Setup'}
+              </span>
+            </div>
+            {canManageGateway && (
+              <>
+                {!configExpanded && (
+                  <button
+                    onClick={() => setConfigExpanded(true)}
+                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 mb-4"
+                  >
+                    <ChevronDownIcon className="h-4 w-4 inline mr-2" />
+                    Show Configuration
+                  </button>
+                )}
+                {configExpanded && (
+                  <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Gateway Type
@@ -565,18 +725,15 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
                 </button>
               </div>
 
-              {/* Configuration Status */}
-              <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
-                <div className="text-sm text-gray-600 dark:text-gray-400">
-                  Gateway Type: <span className="font-medium">{configForm.gateway_type}</span>
-                  {gateway && (
-                    <span className={`ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      gateway.gateway_type ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-                    }`}>
-                      {gateway.gateway_type ? 'Configured' : 'Needs Setup'}
-                    </span>
-                  )}
-                </div>
+              {/* Configuration Status and Actions */}
+              <div className="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-700">
+                <button
+                  onClick={() => setConfigExpanded(false)}
+                  className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                >
+                  <ChevronUpIcon className="h-4 w-4 inline mr-1" />
+                  Hide Configuration
+                </button>
                 {gateway && (
                   <button
                     onClick={handleTestConnection}
@@ -599,34 +756,10 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               </div>
             </div>
           )}
-
-          {/* Collapsed Configuration Status */}
-          {gateway && !configExpanded && (
-            <div className="flex items-center justify-between text-sm pt-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center text-gray-600 dark:text-gray-400">
-                {isGatewayProperlyConfigured(gateway) ? (
-                  <>
-                    <CheckCircleIcon className="h-5 w-5 text-green-500 mr-2" />
-                    Configured: {gateway.gateway_type || configForm.gateway_type}
-                  </>
-                ) : (
-                  <>
-                    <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500 mr-2" />
-                    Needs Setup: {gateway.gateway_type || configForm.gateway_type}
-                  </>
-                )}
-              </div>
-              <button
-                onClick={handleTestConnection}
-                disabled={testingConnection}
-                className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
-              >
-                {testingConnection ? 'Testing...' : 'Test Connection'}
-              </button>
-            </div>
-          )}
-        </div>
-      ) : (
+          </>
+        )}
+      </>
+    ) : (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
           <div className="text-center py-8">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
@@ -713,13 +846,30 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
           )}
         </div>
       )}
+      </div>
+    );
+  };
 
-      {/* Configuration Form moved inside the header card */}
-
-      {/* Action Buttons */}
-      {gateway && (
+  // Render Sync Tab
+  const renderSyncTab = () => {
+    if (!gateway) {
+      return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway Actions</h3>
+          <div className="text-center py-8">
+            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600 dark:text-gray-400">
+              Gateway must be configured before syncing.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Sync Now Button */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Manual Synchronization</h3>
           {renderGatewayModeInfo()}
           <button
             onClick={handleManualSync}
@@ -738,76 +888,233 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               </>
             )}
           </button>
-
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 text-center">
             Sync will fetch latest data from gateway devices
           </p>
-
           {lastSyncTime && (
             <div className="mt-4 flex items-center text-sm text-gray-600 dark:text-gray-400">
               <ClockIcon className="h-4 w-4 mr-2" />
               Last sync: {lastSyncTime.toLocaleString()}
             </div>
           )}
+        </div>
 
-          {/* Time Sync Tools */}
-          <div className="mt-6 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center">
-                <ClockIcon className="h-4 w-4 mr-2" /> Secure Time Sync
-              </h4>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={async () => {
-                  try { const res = await apiService.getSecureTimeSyncPacket(); addToast({ type: 'success', title: `Time Sync ts=${res.timeSyncPacket?.[0]?.ts}` }); }
-                  catch { addToast({ type: 'error', title: 'Failed to get time sync packet' }); }
-                }}
-                className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-primary-600 text-white hover:bg-primary-700"
-              >
-                Get Secure Time
-              </button>
-              <button
-                onClick={async () => {
-                  const lockId = prompt('Enter lock id'); if (!lockId) return;
-                  try { const res = await apiService.requestTimeSyncForLock(lockId); addToast({ type: 'success', title: `Time Sync (lock) ts=${res.timeSyncPacket?.[0]?.ts}` }); }
-                  catch { addToast({ type: 'error', title: 'Failed to request time sync for lock' }); }
-                }}
-                className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-700 text-white hover:bg-gray-800"
-              >
-                Request Time Sync (Lock)
-              </button>
-            </div>
-            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">Locks reject older timestamps to prevent time rollback.</p>
-          </div>
-
-          {/* Debug Panel */}
-          <div className="mt-6 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
-            <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">Gateway Debug</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fallback JWT (App-signed)</label>
-                <textarea value={fallbackJwtInput} onChange={(e) => setFallbackJwtInput(e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"></textarea>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    onClick={async () => {
-                      if (!fallbackJwtInput.trim()) return;
-                      try { const res = await apiService.requestFallbackPass(fallbackJwtInput.trim()); addToast({ type: res.success ? 'success' : 'error', title: res.success ? 'Fallback pass processed' : 'Fallback failed' }); }
-                      catch { addToast({ type: 'error', title: 'Fallback request failed' }); }
-                    }}
-                    className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-primary-600 text-white hover:bg-primary-700"
-                  >
-                    Submit Fallback
-                  </button>
+        {/* Sync Logs */}
+        {syncLogs.length > 0 && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Sync Logs</h3>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {syncLogs.map((log, index) => (
+                <div key={index} className="flex items-start space-x-3">
+                  <div className="flex-shrink-0">
+                    {log.level === 'success' && <CheckCircleIcon className="h-5 w-5 text-green-500" />}
+                    {log.level === 'error' && <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />}
+                    {log.level === 'warn' && <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500" />}
+                    {log.level === 'info' && <PlayIcon className="h-5 w-5 text-blue-500" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-900 dark:text-white">{log.message}</p>
+                    {log.details && (
+                      <p className="text-xs text-gray-600 dark:text-gray-300 mt-1 font-mono">
+                        {typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2)}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {log.timestamp.toLocaleTimeString()}
+                    </p>
+                  </div>
                 </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Last Synced Devices */}
+        {lastSyncResults && lastSyncResults.devices.length > 0 && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Last Synced Devices</h3>
+            <div className="grid gap-4">
+              {lastSyncResults.devices.map((device, index) => (
+                <div key={device.id || index} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-3 h-3 rounded-full ${device.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                      <h4 className="font-medium text-gray-900 dark:text-white">
+                        Device: {device.serial || device.id}
+                      </h4>
+                      <span className={`px-2 py-1 text-xs rounded-full ${
+                        device.locked ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
+                        'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                      }`}>
+                        {device.locked ? 'Locked' : 'Unlocked'}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                      Battery: {device.batteryLevel}%
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3 text-sm">
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Signal:</span>
+                      <span className="ml-1 font-medium">{device.signalStrength}%</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Temp:</span>
+                      <span className="ml-1 font-medium">{device.temperature?.toFixed(1)}°C</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Keys:</span>
+                      <span className="ml-1 font-medium">{device.keys?.length || 0}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">ID:</span>
+                      <span className="ml-1 font-medium font-mono text-xs">{device.id}</span>
+                    </div>
+                  </div>
+                  {device.keys && device.keys.length > 0 && (
+                    <div className="mt-3">
+                      <h5 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Keys:</h5>
+                      <div className="flex flex-wrap gap-2">
+                        {device.keys.map((key: any, keyIndex: number) => (
+                          <div key={keyIndex} className="inline-flex items-center px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs">
+                            <span className="font-mono">{key.keyCode || key.code}</span>
+                            {key.user && <span className="ml-1 text-gray-600 dark:text-gray-400">({key.user})</span>}
+                            {key.valid !== undefined && (
+                              <span className={`ml-1 ${key.valid ? 'text-green-600' : 'text-red-600'}`}>
+                                {key.valid ? '✓' : '✗'}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
+              <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
+                <span>Devices Found: {lastSyncResults.syncResults.devicesFound}</span>
+                <span>Devices Synced: {lastSyncResults.syncResults.devicesSynced}</span>
+                <span>Keys Retrieved: {lastSyncResults.syncResults.keysRetrieved}</span>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rotation Payload (Root-signed)</label>
-                <textarea value={rotationPayloadInput} onChange={(e) => setRotationPayloadInput(e.target.value)} rows={3} placeholder='{"cmd_type":"ROTATE_OPERATIONS_KEY","new_ops_pubkey":"...","ts":1234567890}' className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"></textarea>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mt-2 mb-1">Signature (base64url)</label>
-                <input value={rotationSignatureInput} onChange={(e) => setRotationSignatureInput(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400" />
-                <div className="mt-2 flex gap-2">
-                  {['dev_admin'].includes(authState.user?.role || '') && (
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render Devtools/Diagnostics Tab
+  const renderDevtoolsTab = () => {
+    if (!gateway) {
+      return (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+          <div className="text-center py-8">
+            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600 dark:text-gray-400">
+              Gateway must be configured to use diagnostics tools.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Secure Time Sync */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center">
+            <ClockIcon className="h-5 w-5 mr-2" />
+            Secure Time Sync
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={async () => {
+                try {
+                  const res = await apiService.getSecureTimeSyncPacket();
+                  addToast({ type: 'success', title: `Time Sync ts=${res.timeSyncPacket?.[0]?.ts}` });
+                } catch {
+                  addToast({ type: 'error', title: 'Failed to get time sync packet' });
+                }
+              }}
+              className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-primary-600 text-white hover:bg-primary-700"
+            >
+              Get Secure Time
+            </button>
+            <button
+              onClick={async () => {
+                const lockId = prompt('Enter lock id');
+                if (!lockId) return;
+                try {
+                  const res = await apiService.requestTimeSyncForLock(lockId);
+                  addToast({ type: 'success', title: `Time Sync (lock) ts=${res.timeSyncPacket?.[0]?.ts}` });
+                } catch {
+                  addToast({ type: 'error', title: 'Failed to request time sync for lock' });
+                }
+              }}
+              className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-700 text-white hover:bg-gray-800"
+            >
+              Request Time Sync (Lock)
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+            Locks reject older timestamps to prevent time rollback.
+          </p>
+        </div>
+
+        {/* Gateway Debug */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway Debug</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Fallback JWT (App-signed)
+              </label>
+              <textarea
+                value={fallbackJwtInput}
+                onChange={(e) => setFallbackJwtInput(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+              />
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={async () => {
+                    if (!fallbackJwtInput.trim()) return;
+                    try {
+                      const res = await apiService.requestFallbackPass(fallbackJwtInput.trim());
+                      addToast({ type: res.success ? 'success' : 'error', title: res.success ? 'Fallback pass processed' : 'Fallback failed' });
+                    } catch {
+                      addToast({ type: 'error', title: 'Fallback request failed' });
+                    }
+                  }}
+                  className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-primary-600 text-white hover:bg-primary-700"
+                >
+                  Submit Fallback
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Rotation Payload (Root-signed)
+              </label>
+              <textarea
+                value={rotationPayloadInput}
+                onChange={(e) => setRotationPayloadInput(e.target.value)}
+                rows={3}
+                placeholder='{"cmd_type":"ROTATE_OPERATIONS_KEY","new_ops_pubkey":"...","ts":1234567890}'
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+              />
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mt-2 mb-1">
+                Signature (base64url)
+              </label>
+              <input
+                value={rotationSignatureInput}
+                onChange={(e) => setRotationSignatureInput(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+              />
+              <div className="mt-2 flex gap-2">
+                {['dev_admin'].includes(authState.user?.role || '') && (
                   <button
                     onClick={async () => {
                       try {
@@ -824,121 +1131,50 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
                   >
                     Broadcast Rotation
                   </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sync Logs */}
-      {syncLogs.length > 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Sync Logs</h3>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {syncLogs.map((log, index) => (
-              <div key={index} className="flex items-start space-x-3">
-                <div className="flex-shrink-0">
-                  {log.level === 'success' && <CheckCircleIcon className="h-5 w-5 text-green-500" />}
-                  {log.level === 'error' && <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />}
-                  {log.level === 'warn' && <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500" />}
-                  {log.level === 'info' && <PlayIcon className="h-5 w-5 text-blue-500" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900 dark:text-white">{log.message}</p>
-                  {log.details && (
-                    <p className="text-xs text-gray-600 dark:text-gray-300 mt-1 font-mono">
-                      {typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2)}
-                    </p>
-                  )}
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {log.timestamp.toLocaleTimeString()}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Sync Results */}
-      {lastSyncResults && lastSyncResults.devices.length > 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Synced Devices</h3>
-
-          <div className="grid gap-4">
-            {lastSyncResults.devices.map((device, index) => (
-              <div key={device.id || index} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-3 h-3 rounded-full ${device.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                    <h4 className="font-medium text-gray-900 dark:text-white">
-                      Device: {device.serial || device.id}
-                    </h4>
-                    <span className={`px-2 py-1 text-xs rounded-full ${
-                      device.locked ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
-                      'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                    }`}>
-                      {device.locked ? 'Locked' : 'Unlocked'}
-                    </span>
-                  </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">
-                    Battery: {device.batteryLevel}%
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3 text-sm">
-                  <div>
-                    <span className="text-gray-500 dark:text-gray-400">Signal:</span>
-                    <span className="ml-1 font-medium">{device.signalStrength}%</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 dark:text-gray-400">Temp:</span>
-                    <span className="ml-1 font-medium">{device.temperature?.toFixed(1)}°C</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 dark:text-gray-400">Keys:</span>
-                    <span className="ml-1 font-medium">{device.keys?.length || 0}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 dark:text-gray-400">ID:</span>
-                    <span className="ml-1 font-medium font-mono text-xs">{device.id}</span>
-                  </div>
-                </div>
-
-                {device.keys && device.keys.length > 0 && (
-                  <div className="mt-3">
-                    <h5 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Keys:</h5>
-                    <div className="flex flex-wrap gap-2">
-                      {device.keys.map((key: any, keyIndex: number) => (
-                        <div key={keyIndex} className="inline-flex items-center px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs">
-                          <span className="font-mono">{key.keyCode || key.code}</span>
-                          {key.user && <span className="ml-1 text-gray-600 dark:text-gray-400">({key.user})</span>}
-                          {key.valid !== undefined && (
-                            <span className={`ml-1 ${key.valid ? 'text-green-600' : 'text-red-600'}`}>
-                              {key.valid ? '✓' : '✗'}
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 )}
               </div>
-            ))}
-          </div>
-
-          <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
-            <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
-              <span>Devices Found: {lastSyncResults.syncResults.devicesFound}</span>
-              <span>Devices Synced: {lastSyncResults.syncResults.devicesSynced}</span>
-              <span>Keys Retrieved: {lastSyncResults.syncResults.keysRetrieved}</span>
             </div>
           </div>
         </div>
-      )}
+      </div>
+    );
+  };
 
+  // Main return with left nav and tab content
+  return (
+    <div className="flex gap-6">
+      {/* Left Navigation */}
+      <div className="w-64 flex-shrink-0">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-2">
+          <nav className="space-y-1">
+            {navTabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-400'
+                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <Icon className="h-5 w-5 mr-3" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </div>
+
+      {/* Tab Content */}
+      <div className="flex-1 min-w-0">
+        {activeTab === 'overview' && renderOverviewTab()}
+        {activeTab === 'setup' && renderSetupTab()}
+        {activeTab === 'sync' && renderSyncTab()}
+        {activeTab === 'devtools' && renderDevtoolsTab()}
+      </div>
     </div>
   );
 }

@@ -2,12 +2,14 @@ import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import Joi from 'joi';
 import { AuthService } from '@/services/auth.service';
-import { LoginRequest, AuthenticatedRequest } from '@/types/auth.types';
+import { LoginRequest, AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { InviteService } from '@/services/invite.service';
 import { OTPService } from '@/services/otp.service';
 import { UserModel, User } from '@/models/user.model';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { logger } from '@/utils/logger';
 import bcrypt from 'bcrypt';
 
 /**
@@ -46,6 +48,7 @@ import bcrypt from 'bcrypt';
  * - POST /auth/change-password - Password update
  * - GET /auth/profile - Current user profile
  * - GET /auth/verify-token - Token validation
+ * - POST /auth/refresh-token - Refresh JWT token with fresh user data
  */
 
 const router = Router();
@@ -173,6 +176,60 @@ router.get('/verify-token', authenticateToken as any, asyncHandler(async (req: A
       role: req.user!.role
     }
   });
+}));
+
+// POST /auth/refresh-token - Refresh user's JWT token
+router.post('/refresh-token', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    
+    // Fetch fresh user data from database
+    const user = await UserModel.findById(userId) as User | undefined;
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
+
+    // Check if user is still active
+    if (!user.is_active) {
+      res.status(403).json({
+        success: false,
+        message: 'Account is deactivated'
+      });
+      return;
+    }
+
+    // Get fresh facility associations if user is facility-scoped
+    let facilityIds: string[] = [];
+    if (AuthService.isFacilityScoped(user.role as UserRole)) {
+      facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(user.id);
+    }
+
+    // Generate new token with fresh user data
+    const newToken = AuthService.generateToken(user, facilityIds);
+
+    res.json({
+      success: true,
+      message: 'Token refreshed successfully',
+      token: newToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role as UserRole
+      }
+    });
+  } catch (error) {
+    logger.error('Error refreshing token:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An error occurred while refreshing token'
+    });
+  }
 }));
 
 export { router as authRouter };

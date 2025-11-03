@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { FacilityDropdown } from '@/components/Common/FacilityDropdown';
 import { 
   HomeIcon,
   FunnelIcon,
@@ -14,7 +15,8 @@ import {
   WrenchScrewdriverIcon,
   BuildingOfficeIcon,
   PlusIcon,
-  ArrowTopRightOnSquareIcon
+  ArrowTopRightOnSquareIcon,
+  QuestionMarkCircleIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit, UnitFilters } from '@/types/facility.types';
@@ -28,7 +30,8 @@ const statusColors = {
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400',
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
   unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
-  error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+  error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
+  unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
 };
 
 const statusIcons = {
@@ -75,19 +78,47 @@ export default function UnitsPage() {
     loadUsers();
   }, []);
 
+  // Load and persist facility selection
+  useEffect(() => {
+    if (!isTenant) {
+      // Load from localStorage on mount
+      const savedFacilityId = localStorage.getItem('selectedFacilityId');
+      if (savedFacilityId && !filters.facility_id) {
+        setFilters(prev => ({ ...prev, facility_id: savedFacilityId }));
+      }
+    }
+  }, [isTenant]);
+
+  // Auto-select facility if none selected and facilities are available
+  useEffect(() => {
+    if (!isTenant && facilities.length > 0 && !filters.facility_id) {
+      // Try to use saved facility if it exists in the list
+      const savedFacilityId = localStorage.getItem('selectedFacilityId');
+      const facilityToSelect = savedFacilityId && facilities.find(f => f.id === savedFacilityId)
+        ? savedFacilityId
+        : facilities[0].id;
+      
+      setFilters(prev => ({ ...prev, facility_id: facilityToSelect }));
+      localStorage.setItem('selectedFacilityId', facilityToSelect);
+    }
+  }, [facilities, isTenant]);
+
+  // Persist facility selection to localStorage when it changes
+  useEffect(() => {
+    if (!isTenant && filters.facility_id) {
+      localStorage.setItem('selectedFacilityId', filters.facility_id);
+    }
+  }, [filters.facility_id, isTenant]);
+
   const loadFacilities = async () => {
     try {
-      // setFacilitiesLoading(true);
-      const response = await apiService.getFacilities();
-      if (response.success) {
-        setFacilities(response.facilities || []);
-      } else {
-        console.error('Failed to fetch facilities:', response.message);
-      }
+      // Fetch all facilities without pagination for dropdown
+      const response = await apiService.getFacilities({ limit: 1000 });
+      // Handle both response formats (with or without success property)
+      const facilitiesData = response.success ? response.facilities : (response.facilities || []);
+      setFacilities(facilitiesData);
     } catch (error) {
       console.error('Error fetching facilities:', error);
-    } finally {
-      // setFacilitiesLoading(false);
     }
   };
 
@@ -110,15 +141,29 @@ export default function UnitsPage() {
   };
 
   const loadUnits = async () => {
+    // For non-tenants, require facility selection
+    if (!isTenant && !filters.facility_id) {
+      setLoading(false);
+      setUnits([]);
+      setAllUnits([]);
+      setTotal(0);
+      return;
+    }
+
     try {
       setLoading(true);
-      const queryFilters = {
+      const queryFilters: any = {
         ...filters,
         // Map user_id to tenant_id for backend compatibility
         tenant_id: filters.tenant_id,
         user_id: undefined, // Remove user_id as backend expects tenant_id
         offset: (currentPage - 1) * (filters.limit || 20)
       };
+      
+      // Only include search if it has a value (remove empty strings)
+      if (!queryFilters.search || !queryFilters.search.trim()) {
+        delete queryFilters.search;
+      }
       
       // Debug logging
       console.log('Loading units with filters:', queryFilters);
@@ -135,7 +180,7 @@ export default function UnitsPage() {
       // Also load full dataset for pagination calculations (only if not tenant)
       if (!isTenant) {
         try {
-          const fullDatasetFilters = {
+          const fullDatasetFilters: any = {
             ...filters,
             tenant_id: filters.tenant_id,
             user_id: undefined,
@@ -143,6 +188,11 @@ export default function UnitsPage() {
             offset: undefined,
             limit: undefined
           };
+          
+          // Only include search if it has a value
+          if (!fullDatasetFilters.search || !fullDatasetFilters.search.trim()) {
+            delete fullDatasetFilters.search;
+          }
           
           const fullResponse = await apiService.getUnits(fullDatasetFilters);
           setAllUnits(fullResponse.units || []);
@@ -221,7 +271,7 @@ export default function UnitsPage() {
     return (
       <div 
         id={generateHighlightId('unit', unit.id)}
-        className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-gray-50 dark:hover:bg-gray-700/30"
+        className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-md hover:bg-gray-50 dark:hover:bg-gray-700/30"
         onClick={() => navigate(`/units/${unit.id}`)}
       >
         <div className="flex items-start justify-between mb-4">
@@ -269,10 +319,12 @@ export default function UnitsPage() {
             <>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
-                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors]}`}>
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors] || statusColors.unknown}`}>
                   {unit.blulok_device.lock_status === 'locked' ? 
                     <LockClosedIcon className="h-3 w-3 mr-1" /> : 
-                    <LockOpenIcon className="h-3 w-3 mr-1" />
+                    unit.blulok_device.lock_status === 'unlocked' ?
+                    <LockOpenIcon className="h-3 w-3 mr-1" /> :
+                    <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />
                   }
                   {unit.blulok_device.lock_status}
                 </span>
@@ -382,10 +434,12 @@ export default function UnitsPage() {
         <td className="px-6 py-4 whitespace-nowrap">
           {unit.blulok_device ? (
             <div className="flex items-center space-x-2">
-              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors]}`}>
+              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors] || statusColors.unknown}`}>
                 {unit.blulok_device.lock_status === 'locked' ? 
                   <LockClosedIcon className="h-3 w-3 mr-1" /> : 
-                  <LockOpenIcon className="h-3 w-3 mr-1" />
+                  unit.blulok_device.lock_status === 'unlocked' ?
+                  <LockOpenIcon className="h-3 w-3 mr-1" /> :
+                  <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />
                 }
                 {unit.blulok_device.lock_status}
               </span>
@@ -489,6 +543,25 @@ export default function UnitsPage() {
         </div>
       </div>
 
+      {/* Facility Selection - Prominent */}
+      {!isTenant && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Facility
+          </label>
+          <FacilityDropdown
+            facilities={facilities}
+            selectedFacilityId={filters.facility_id || ''}
+            onSelect={(facilityId) => {
+              setFilters(prev => ({ ...prev, facility_id: facilityId }));
+              setCurrentPage(1);
+            }}
+            placeholder="Select a facility"
+            required={true}
+          />
+        </div>
+      )}
+
       {/* Filters */}
       <ExpandableFilters
         searchValue={filters.search || ''}
@@ -497,17 +570,21 @@ export default function UnitsPage() {
         isExpanded={filtersExpanded}
         onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
         onClearFilters={() => {
+          const firstFacilityId = facilities.length > 0 ? facilities[0].id : '';
           setFilters({
             search: '',
             status: '',
             unit_type: '',
-            facility_id: '',
+            facility_id: firstFacilityId,
             tenant_id: '',
             sortBy: 'unit_number',
             sortOrder: 'asc',
             limit: 20,
             offset: 0
           });
+          if (firstFacilityId) {
+            localStorage.setItem('selectedFacilityId', firstFacilityId);
+          }
         }}
         sections={[
           {
@@ -537,22 +614,8 @@ export default function UnitsPage() {
             selected: filters.unit_type || '',
             onSelect: handleTypeFilter
           },
-          // Only show facility and user filters for non-tenants
+          // Only show user filter for non-tenants (facility is handled by prominent dropdown)
           ...(!isTenant ? [
-            {
-              title: 'Facility',
-              icon: <BuildingOfficeIcon className="h-5 w-5" />,
-              type: 'select' as const,
-              options: [
-                { key: '', label: 'All Facilities' },
-                ...facilities.map(facility => ({
-                  key: facility.id,
-                  label: facility.name
-                }))
-              ],
-              selected: filters.facility_id || '',
-              onSelect: handleFacilityFilter
-            },
             {
               title: 'User',
               icon: <UserIcon className="h-5 w-5" />,

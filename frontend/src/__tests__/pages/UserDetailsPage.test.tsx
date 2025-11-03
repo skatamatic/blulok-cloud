@@ -33,6 +33,12 @@ jest.mock('@heroicons/react/24/outline', () => ({
   KeyIcon: () => <div data-testid="key-icon" />,
   TrashIcon: () => <div data-testid="trash-icon" />,
   ExclamationTriangleIcon: () => <div data-testid="exclamation-triangle-icon" />,
+  TicketIcon: () => <div data-testid="ticket-icon" />,
+  ClockIcon: () => <div data-testid="clock-icon" />,
+  PaperAirplaneIcon: () => <div data-testid="paper-airplane-icon" />,
+  PencilIcon: () => <div data-testid="pencil-icon" />,
+  CheckCircleIcon: () => <div data-testid="check-circle-icon" />,
+  LinkIcon: () => <div data-testid="link-icon" />,
 }));
 
 // Mock ConfirmModal
@@ -123,7 +129,7 @@ const renderUserDetailsPage = () => {
     isLoading: false,
     hasRole: jest.fn(),
     isAdmin: jest.fn(),
-    canManageUsers: jest.fn(),
+    canManageUsers: jest.fn().mockReturnValue(true),
   });
 
   return render(
@@ -143,6 +149,15 @@ describe('UserDetailsPage', () => {
     mockApiService.getUserDetails.mockResolvedValue({
       success: true,
       user: mockUserDetails,
+    });
+    mockApiService.getFacilities = jest.fn().mockResolvedValue({
+      success: true,
+      facilities: [],
+    });
+    mockApiService.getUserRoutePassHistory = jest.fn().mockResolvedValue({
+      success: true,
+      data: [],
+      pagination: { total: 0, limit: 50, offset: 0, hasMore: false },
     });
   });
 
@@ -480,13 +495,35 @@ describe('UserDetailsPage', () => {
         user: userWithNoFacilities,
       });
 
-      renderUserDetailsPage();
+      // Mock canManageUsers to return false to see the "No Facilities Assigned" message
+      (useAuth as jest.MockedFunction<typeof useAuth>).mockReturnValue({
+        authState: mockAuthState,
+        login: jest.fn(),
+        logout: jest.fn(),
+        isLoading: false,
+        hasRole: jest.fn(),
+        isAdmin: jest.fn(),
+        canManageUsers: jest.fn().mockReturnValue(false),
+      });
+
+      const { render } = require('@testing-library/react');
+      render(
+        <MemoryRouter initialEntries={['/users/test-user-id/details']}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/users/:userId/details" element={<UserDetailsPage />} />
+            </Routes>
+          </ToastProvider>
+        </MemoryRouter>
+      );
 
       await waitFor(() => {
         fireEvent.click(screen.getByText('Facilities (0)'));
       });
 
+      await waitFor(() => {
       expect(screen.getByText('No Facilities Assigned')).toBeInTheDocument();
+      });
     });
 
     it('should show no devices message when user has no devices', async () => {

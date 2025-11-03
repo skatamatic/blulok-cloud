@@ -74,12 +74,19 @@ async function bootstrap(): Promise<void> {
     const { AccessRevocationListenerService } = await import('@/services/access-revocation-listener.service');
     AccessRevocationListenerService.getInstance();
 
+    // Initialize denylist pruning service (daily cleanup of expired entries)
+    const { DenylistPruningService } = await import('@/services/denylist-pruning.service');
+    DenylistPruningService.getInstance().start();
+
     // Legacy command worker removed (key distribution queues deprecated)
 
     // Graceful shutdown
     const gracefulShutdown = () => {
       logger.info('Shutting down gracefully');
       
+      // Stop denylist pruning service
+      const { DenylistPruningService } = require('@/services/denylist-pruning.service');
+      DenylistPruningService.getInstance().stop();
       
       // Destroy logger interceptor
       loggerInterceptor.destroy();

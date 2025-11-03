@@ -33,6 +33,36 @@ export interface GatewayDeviceData {
 }
 
 /**
+ * Utility function to map device status from API format to locked boolean.
+ * Handles both "Closed"/"Opened" string status and boolean locked fields.
+ * Returns undefined when status cannot be determined, allowing explicit 'unknown' status.
+ * 
+ * @param device - Raw device data from gateway API (may have status or locked field)
+ * @returns boolean indicating if device is locked (true) or unlocked (false), or undefined if unknown
+ */
+export function mapDeviceLockStatus(device: any): boolean | undefined {
+  // If locked is already a boolean, use it directly
+  if (typeof device.locked === 'boolean') {
+    return device.locked;
+  }
+  
+  // If status field exists, map "Closed" -> true, "Opened" -> false
+  if (device.status !== undefined && device.status !== null) {
+    const statusLower = String(device.status).toLowerCase().trim();
+    if (statusLower === 'closed') {
+      return true;
+    } else if (statusLower === 'opened') {
+      return false;
+    }
+    // If status is something other than Closed/Opened, return undefined
+    return undefined;
+  }
+  
+  // Return undefined if status cannot be determined - will be set to 'unknown'
+  return undefined;
+}
+
+/**
  * Device Synchronization Service
  *
  * Core service responsible for maintaining consistency between gateway-discovered
@@ -241,7 +271,10 @@ export class DeviceSyncService {
    */
   private async updateDeviceFromGatewayData(device: BluLokDevice, gatewayDevice: GatewayDeviceData): Promise<void> {
     const newDeviceStatus = gatewayDevice.online ? 'online' : 'offline';
-    const newLockStatus = gatewayDevice.locked ? 'locked' : 'unlocked';
+    // Handle locked field - if undefined, set to 'unknown' to explicitly show status is unclear
+    const newLockStatus = gatewayDevice.locked === true ? 'locked' : 
+                         gatewayDevice.locked === false ? 'unlocked' : 
+                         'unknown'; // Explicitly show unknown when status cannot be determined
 
     let statusChanged = false;
 

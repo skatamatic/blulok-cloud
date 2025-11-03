@@ -113,7 +113,7 @@ The Mesh Manager API includes these endpoints:
 
 ### Locks
 - `POST /locks/send-lock-command` - Send OPEN/CLOSE command
-- `GET /locks/all` - Get all locks
+- `GET /locks` - Get all locks
 
 ### Devices
 - `POST /devices/register` - Register mobile device

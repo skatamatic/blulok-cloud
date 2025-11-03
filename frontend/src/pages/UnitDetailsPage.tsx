@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
 import { UserFilter } from '@/components/Common/UserFilter';
 import { EditUnitModal } from '@/components/Units/EditUnitModal';
+import { DeviceAssignmentModal } from '@/components/Devices/DeviceAssignmentModal';
 import { 
   ArrowLeftIcon,
   HomeIcon,
@@ -21,6 +22,7 @@ import {
   PlusIcon,
   XMarkIcon,
   ArrowPathIcon,
+  ArrowTopRightOnSquareIcon,
   Battery50Icon,
   Battery100Icon,
   BoltIcon
@@ -93,6 +95,13 @@ const lockStatusColors = {
   maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
 };
 
+const deviceStatusIcons = {
+  online: CheckCircleIcon,
+  offline: ExclamationTriangleIcon,
+  error: ExclamationTriangleIcon,
+  low_battery: ExclamationTriangleIcon
+};
+
 
 export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
@@ -117,6 +126,7 @@ export default function UnitDetailsPage() {
   const [selectedPrimaryTenant, setSelectedPrimaryTenant] = useState<string>('');
   const [selectedSharedTenant, setSelectedSharedTenant] = useState<string>('');
   const [showPrimaryTenantChange, setShowPrimaryTenantChange] = useState(false);
+  const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
 
   const canManageUnits = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canChangePrimaryTenant = canManageUnits; // Only admins can change primary tenant
@@ -707,89 +717,116 @@ export default function UnitDetailsPage() {
             {activeTab === 'device' && (
               <div className="space-y-8">
                 {unit.blulok_device ? (
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Device Information</h3>
-                    <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-6">
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Device Serial</label>
-                    <p className="mt-1 text-sm text-gray-900 dark:text-white font-mono">{unit.blulok_device.device_serial}</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Firmware Version</label>
-                          <p className="mt-1 text-sm text-gray-900 dark:text-white">{unit.blulok_device.firmware_version || 'Unknown'}</p>
-                  </div>
-                  <div>
-                          <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Battery Level</label>
-                          <div className="mt-1 flex items-center space-x-2">
-                            {unit.blulok_device.battery_level !== null && unit.blulok_device.battery_level !== undefined && (
-                              <>
-                                {unit.blulok_device.battery_level >= 50 ? (
-                                  <Battery100Icon className="h-4 w-4 text-green-500" />
-                                ) : unit.blulok_device.battery_level >= 20 ? (
-                                  <Battery50Icon className="h-4 w-4 text-yellow-500" />
-                                ) : (
-                                  <BoltIcon className="h-4 w-4 text-red-500" />
-                                )}
-                                <span className="text-sm text-gray-900 dark:text-white">{unit.blulok_device.battery_level}%</span>
-                              </>
-                            )}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Lock Status</label>
-                    <div className="mt-1">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${lockStatusColors[unit.blulok_device.lock_status as keyof typeof lockStatusColors]}`}>
-                              {unit.blulok_device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : <LockOpenIcon className="h-3 w-3 mr-1" />}
-                              {unit.blulok_device.lock_status}
-                      </span>
-                    </div>
-                  </div>
-                    <div>
-                          <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Device Status</label>
-                          <div className="mt-1">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${deviceStatusColors[unit.blulok_device.device_status as keyof typeof deviceStatusColors]}`}>
-                              {unit.blulok_device.device_status === 'online' ? <CheckCircleIcon className="h-3 w-3 mr-1" /> : <ExclamationTriangleIcon className="h-3 w-3 mr-1" />}
+                  <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center">
+                        <div className="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-lg mr-4">
+                          <LockClosedIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                            Unit {unit.unit_number}
+                          </h3>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">{unit.blulok_device.device_serial}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {(() => {
+                          const StatusIcon = deviceStatusIcons[unit.blulok_device.device_status as keyof typeof deviceStatusIcons] || ExclamationTriangleIcon;
+                          return (
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${deviceStatusColors[unit.blulok_device.device_status as keyof typeof deviceStatusColors]}`}>
+                              <StatusIcon className="h-3 w-3 mr-1" />
                               {unit.blulok_device.device_status}
                             </span>
+                          );
+                        })()}
                       </div>
                     </div>
-                  <div>
-                          <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Last Seen</label>
-                    <p className="mt-1 text-sm text-gray-900 dark:text-white">
-                            {unit.blulok_device.last_seen ? new Date(unit.blulok_device.last_seen).toLocaleString() : 'Never'}
-                    </p>
-              </div>
-            </div>
 
-                      {/* Device Actions */}
-                      <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-600">
-                        <div className="flex items-center justify-between">
-                  <div>
-                            <h4 className="text-sm font-medium text-gray-900 dark:text-white">Device Controls</h4>
-                            <p className="text-sm text-gray-600 dark:text-gray-400">Manage lock status and device settings</p>
-                </div>
-                          <div className="flex items-center space-x-3">
-                            {canManageUnits && (
-                              <>
-                                <button className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                                  <ArrowPathIcon className="h-4 w-4 mr-2" />
-                                  Refresh Status
-                </button>
-                                <Link
-                                  to={`/devices?highlight=${unit.blulok_device.id}`}
-                                  className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
-                  >
-                    <CpuChipIcon className="h-4 w-4 mr-2" />
-                                  View Device Details
-                                </Link>
-                              </>
-                )}
-                </div>
-              </div>
-            </div>
-          </div>
-            </div>
+                    {unit.primary_tenant && (
+                      <div className="flex items-center text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        <UserIcon className="h-4 w-4 mr-2" />
+                        <span>
+                          {unit.primary_tenant.first_name} {unit.primary_tenant.last_name}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${lockStatusColors[unit.blulok_device.lock_status as keyof typeof lockStatusColors] || 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'}`}>
+                          {unit.blulok_device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : 
+                           unit.blulok_device.lock_status === 'unlocked' ? <LockOpenIcon className="h-3 w-3 mr-1" /> :
+                           <ExclamationTriangleIcon className="h-3 w-3 mr-1" />}
+                          {unit.blulok_device.lock_status}
+                        </span>
+                      </div>
+                      {unit.blulok_device.battery_level !== null && unit.blulok_device.battery_level !== undefined && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">Battery Level</span>
+                          <span className={`font-medium ${
+                            unit.blulok_device.battery_level < 20 ? 'text-red-500' : 
+                            unit.blulok_device.battery_level < 50 ? 'text-yellow-500' : 'text-green-500'
+                          }`}>
+                            {unit.blulok_device.battery_level}%
+                          </span>
+                        </div>
+                      )}
+                      {unit.blulok_device.firmware_version && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">Firmware Version</span>
+                          <span className="font-medium text-gray-900 dark:text-white">{unit.blulok_device.firmware_version}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500 dark:text-gray-400">Facility</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{unit.facility_name}</span>
+                      </div>
+                      {unit.blulok_device.last_seen && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">Last Seen</span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {new Date(unit.blulok_device.last_seen).toLocaleString()}
+                          </span>
+                        </div>
+                      )}
+                      {unit.blulok_device.last_activity && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">Last Activity</span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {new Date(unit.blulok_device.last_activity).toLocaleString()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
+                      <div className="flex items-center justify-between space-x-2">
+                        <div className="flex space-x-3">
+                          <Link
+                            to={`/devices?highlight=${unit.blulok_device.id}`}
+                            className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+                          >
+                            <CpuChipIcon className="h-4 w-4 mr-1" />
+                            View Device Details
+                            <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
+                          </Link>
+                        </div>
+                        {canManageUnits && (
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => setShowDeviceAssignmentModal(true)}
+                              className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-900/20 dark:text-gray-400 dark:hover:bg-gray-800"
+                              title="Change device assignment"
+                            >
+                              <ArrowPathIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <div>
                     <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Device Assignment</h3>
@@ -799,14 +836,17 @@ export default function UnitDetailsPage() {
                       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">This unit does not have a BluLok device assigned to it.</p>
                       {canManageUnits && (
                         <div className="mt-6">
-                          <button className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700">
+                          <button 
+                            onClick={() => setShowDeviceAssignmentModal(true)}
+                            className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+                          >
                             <PlusIcon className="h-4 w-4 mr-2" />
                             Assign Device
-                </button>
+                          </button>
                         </div>
-                )}
-              </div>
-            </div>
+                      )}
+                    </div>
+                  </div>
                 )}
                 </div>
             )}
@@ -820,6 +860,17 @@ export default function UnitDetailsPage() {
         onClose={() => setShowEditModal(false)}
         onSuccess={() => {
           setShowEditModal(false);
+          loadUnitDetails(); // Refresh unit data
+        }}
+        unit={unit}
+      />
+
+      {/* Device Assignment Modal */}
+      <DeviceAssignmentModal
+        isOpen={showDeviceAssignmentModal}
+        onClose={() => setShowDeviceAssignmentModal(false)}
+        onSuccess={() => {
+          setShowDeviceAssignmentModal(false);
           loadUnitDetails(); // Refresh unit data
         }}
         unit={unit}

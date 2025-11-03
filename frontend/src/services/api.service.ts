@@ -341,6 +341,33 @@ class ApiService {
     return response.data;
   }
 
+  async getDeviceDenylist(deviceId: string) {
+    const response = await this.api.get(`/devices/blulok/${deviceId}/denylist`);
+    return response.data;
+  }
+
+  async pruneDenylist() {
+    const response = await this.api.post('/denylist/prune');
+    return response.data;
+  }
+
+  // Route Pass History endpoints
+  async getUserRoutePassHistory(userId: string, filters?: {
+    limit?: number;
+    offset?: number;
+    startDate?: string;
+    endDate?: string;
+  }) {
+    const params: any = {};
+    if (filters?.limit) params.limit = filters.limit;
+    if (filters?.offset) params.offset = filters.offset;
+    if (filters?.startDate) params.startDate = filters.startDate;
+    if (filters?.endDate) params.endDate = filters.endDate;
+    
+    const response = await this.api.get(`/route-passes/users/${userId}`, { params });
+    return response.data;
+  }
+
   async createAccessControlDevice(data: any) {
     const response = await this.api.post('/devices/access-control', data);
     return response.data;
@@ -358,6 +385,22 @@ class ApiService {
 
   async updateLockStatus(id: string, lock_status: string) {
     const response = await this.api.put(`/devices/blulok/${id}/lock`, { lock_status });
+    return response.data;
+  }
+
+  async getUnassignedDevices(facilityId?: string) {
+    const params = facilityId ? { facility_id: facilityId } : {};
+    const response = await this.api.get('/devices/unassigned', { params });
+    return response.data;
+  }
+
+  async assignDeviceToUnit(deviceId: string, unitId: string) {
+    const response = await this.api.post(`/devices/blulok/${deviceId}/assign`, { unit_id: unitId });
+    return response.data;
+  }
+
+  async unassignDeviceFromUnit(deviceId: string) {
+    const response = await this.api.delete(`/devices/blulok/${deviceId}/unassign`);
     return response.data;
   }
 

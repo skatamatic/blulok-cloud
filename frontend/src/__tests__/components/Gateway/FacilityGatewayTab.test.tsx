@@ -131,11 +131,23 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Setup tab
       await waitFor(() => {
-        expect(screen.getByLabelText('Expand configuration')).toBeInTheDocument();
+        expect(screen.getByText('Setup')).toBeInTheDocument();
       });
 
-      fireEvent.click(screen.getByLabelText('Expand configuration'));
+      // Click the Setup tab
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      // Wait for and expand configuration
+      await waitFor(() => {
+        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
+      });
+
+      const showConfigBtn = screen.getByText('Show Configuration');
+      await act(async () => { fireEvent.click(showConfigBtn); });
+
       await waitFor(() => {
         expect(screen.getByText('Gateway Type')).toBeInTheDocument();
       });
@@ -148,6 +160,16 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Setup tab
+      await waitFor(() => {
+        expect(screen.getByText('Setup')).toBeInTheDocument();
+      });
+
+      // Click the Setup tab
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      // Wait for Configure Gateway button
       await waitFor(() => {
         expect(screen.getByText('Configure Gateway')).toBeInTheDocument();
       });
@@ -215,13 +237,23 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Setup tab
       await waitFor(() => {
-        expect(screen.getByLabelText('Expand configuration')).toBeInTheDocument();
+        expect(screen.getByText('Setup')).toBeInTheDocument();
       });
 
-      await act(async () => {
-        fireEvent.click(screen.getByLabelText('Expand configuration'));
+      // Click the Setup tab
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      // Wait for and expand configuration
+      await waitFor(() => {
+        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
       });
+
+      const showConfigBtn = screen.getByText('Show Configuration');
+      await act(async () => { fireEvent.click(showConfigBtn); });
+
       await waitFor(() => {
         expect(screen.getByText('Gateway Type')).toBeInTheDocument();
       });
@@ -255,7 +287,9 @@ describe('FacilityGatewayTab', () => {
         id: 'gateway-1',
         facility_id: facilityId,
         name: 'Test Gateway',
-        status: 'online'
+        status: 'online',
+        gateway_type: 'http',
+        base_url: 'https://test.example.com'
       };
 
       mockApiService.getGateways.mockResolvedValue({
@@ -269,6 +303,24 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Setup tab
+      await waitFor(() => {
+        expect(screen.getByText('Setup')).toBeInTheDocument();
+      });
+
+      // Click the Setup tab
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      // Wait for and expand configuration
+      await waitFor(() => {
+        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
+      });
+
+      const showConfigBtn = screen.getByText('Show Configuration');
+      await act(async () => { fireEvent.click(showConfigBtn); });
+
+      // Now Test Connection button should be visible
       await waitFor(() => {
         expect(screen.getByText('Test Connection')).toBeInTheDocument();
       });
@@ -289,7 +341,9 @@ describe('FacilityGatewayTab', () => {
         id: 'gateway-1',
         facility_id: facilityId,
         name: 'Test Gateway',
-        status: 'offline'
+        status: 'offline',
+        gateway_type: 'http',
+        base_url: 'https://test.example.com'
       };
 
       mockApiService.getGateways.mockResolvedValue({
@@ -307,6 +361,24 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Setup tab
+      await waitFor(() => {
+        expect(screen.getByText('Setup')).toBeInTheDocument();
+      });
+
+      // Click the Setup tab
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      // Wait for and expand configuration
+      await waitFor(() => {
+        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
+      });
+
+      const showConfigBtn = screen.getByText('Show Configuration');
+      await act(async () => { fireEvent.click(showConfigBtn); });
+
+      // Now Test Connection button should be visible
       await waitFor(() => {
         expect(screen.getByText('Test Connection')).toBeInTheDocument();
       });
@@ -340,6 +412,16 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Sync tab
+      await waitFor(() => {
+        expect(screen.getByText('Sync')).toBeInTheDocument();
+      });
+
+      // Click the Sync tab
+      const syncTab = screen.getByText('Sync');
+      await act(async () => { fireEvent.click(syncTab); });
+
+      // Now Sync Now button should be visible
       await waitFor(() => {
         expect(screen.getByText('Sync Now')).toBeInTheDocument();
       });
@@ -381,6 +463,16 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Sync tab
+      await waitFor(() => {
+        expect(screen.getByText('Sync')).toBeInTheDocument();
+      });
+
+      // Click the Sync tab
+      const syncTab = screen.getByText('Sync');
+      await act(async () => { fireEvent.click(syncTab); });
+
+      // Now Sync Now button should be visible
       await waitFor(() => {
         expect(screen.getByText('Sync Now')).toBeInTheDocument();
       });
@@ -415,6 +507,16 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Sync tab
+      await waitFor(() => {
+        expect(screen.getByText('Sync')).toBeInTheDocument();
+      });
+
+      // Click the Sync tab
+      const syncTab = screen.getByText('Sync');
+      await act(async () => { fireEvent.click(syncTab); });
+
+      // Now Sync Now button should be visible
       await waitFor(() => {
         expect(screen.getByText('Sync Now')).toBeInTheDocument();
       });
@@ -443,11 +545,23 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent();
+      // Wait for gateway to load, then navigate to Setup tab
       await waitFor(() => {
-        expect(screen.getByLabelText('Expand configuration')).toBeInTheDocument();
+        expect(screen.getByText('Setup')).toBeInTheDocument();
       });
 
-      fireEvent.click(screen.getByLabelText('Expand configuration'));
+      // Click the Setup tab
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      // Wait for and expand configuration
+      await waitFor(() => {
+        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
+      });
+
+      const showConfigBtn = screen.getByText('Show Configuration');
+      await act(async () => { fireEvent.click(showConfigBtn); });
+
       await waitFor(() => {
         expect(screen.getByText('Base URL')).toBeInTheDocument();
         expect(screen.getByText('API Key')).toBeInTheDocument();
@@ -457,6 +571,16 @@ describe('FacilityGatewayTab', () => {
 
     it('should show WebSocket fields for physical gateway type', async () => {
       renderComponent();
+      // Wait for gateway to load, then navigate to Setup tab
+      await waitFor(() => {
+        expect(screen.getByText('Setup')).toBeInTheDocument();
+      });
+
+      // Click the Setup tab
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      // Wait for Configure Gateway button
       await waitFor(() => {
         expect(screen.getByText('Configure Gateway')).toBeInTheDocument();
       });
@@ -494,7 +618,9 @@ describe('FacilityGatewayTab', () => {
         id: 'gateway-1',
         facility_id: facilityId,
         name: 'Test Gateway',
-        status: 'online'
+        status: 'online',
+        gateway_type: 'http',
+        base_url: 'https://test.example.com'
       };
 
       mockApiService.getGateways.mockResolvedValue({
@@ -503,8 +629,32 @@ describe('FacilityGatewayTab', () => {
       });
 
       renderComponent(true);
+      // Wait for gateway to load
+      await waitFor(() => {
+        expect(screen.getByText('Setup')).toBeInTheDocument();
+        expect(screen.getByText('Sync')).toBeInTheDocument();
+      });
+
+      // Navigate to Setup tab and expand configuration to see Test Connection
+      const setupTab = screen.getByText('Setup');
+      await act(async () => { fireEvent.click(setupTab); });
+
+      await waitFor(() => {
+        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
+      });
+
+      const showConfigBtn = screen.getByText('Show Configuration');
+      await act(async () => { fireEvent.click(showConfigBtn); });
+
       await waitFor(() => {
         expect(screen.getByText('Test Connection')).toBeInTheDocument();
+      });
+
+      // Navigate to Sync tab to see Sync Now
+      const syncTab = screen.getByText('Sync');
+      await act(async () => { fireEvent.click(syncTab); });
+
+      await waitFor(() => {
         expect(screen.getByText('Sync Now')).toBeInTheDocument();
       });
     });
@@ -518,7 +668,17 @@ describe('FacilityGatewayTab', () => {
       mockApiService.requestTimeSyncForLock.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 2, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
 
       renderComponent();
-      await waitFor(() => expect(screen.getByText('Gateway Actions')).toBeInTheDocument());
+      // Wait for gateway to load, then click DevTools/Diag tab
+      await waitFor(() => {
+        expect(screen.getByText('DevTools/Diag')).toBeInTheDocument();
+      });
+
+      // Click the DevTools/Diag tab to navigate to it
+      const devToolsTab = screen.getByText('DevTools/Diag');
+      await act(async () => { fireEvent.click(devToolsTab); });
+
+      // Now look for Secure Time Sync instead of Gateway Actions
+      await waitFor(() => expect(screen.getByText('Secure Time Sync')).toBeInTheDocument());
 
       // Get Secure Time
       const getBtn = screen.getByText('Get Secure Time');
@@ -553,6 +713,15 @@ describe('FacilityGatewayTab', () => {
           />
         </WebSocketProvider>
       );
+
+      // Wait for gateway to load, then click DevTools/Diag tab
+      await waitFor(() => {
+        expect(screen.getByText('DevTools/Diag')).toBeInTheDocument();
+      });
+
+      // Click the DevTools/Diag tab to navigate to it
+      const devToolsTab = screen.getByText('DevTools/Diag');
+      await act(async () => { fireEvent.click(devToolsTab); });
 
       await waitFor(() => expect(screen.getByText('Gateway Debug')).toBeInTheDocument());
 

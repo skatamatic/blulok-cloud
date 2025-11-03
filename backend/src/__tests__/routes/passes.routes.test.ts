@@ -3,6 +3,9 @@ import { createApp } from '@/app';
 import { DatabaseService } from '@/services/database.service';
 import { createMockTestData } from '@/__tests__/utils/mock-test-helpers';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { RoutePassIssuanceModel } from '@/models/route-pass-issuance.model';
+
+jest.mock('@/models/route-pass-issuance.model');
 
 // Mock DatabaseService before any imports that might use it
 const createMockDbConnection = (userDevices: any, lockRows: any[]) => {
@@ -83,6 +86,37 @@ describe('Passes Routes', () => {
       expect(payload.sub).toBe(testData.users.tenant.id);
       expect(payload.device_pubkey).toBe('cHVibGlj');
       expect(Array.isArray(payload.aud)).toBe(true);
+    });
+
+    it('logs route pass issuance', async () => {
+      const mockRoutePassModel = {
+        create: jest.fn().mockResolvedValue({}),
+      };
+      (RoutePassIssuanceModel as jest.MockedClass<typeof RoutePassIssuanceModel>).mockImplementation(
+        () => mockRoutePassModel as any
+      );
+
+      (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+        connection: createMockDbConnection(
+          { id: 'device-1', public_key: 'cHVibGlj' },
+          [{ id: 'lock-1' }, { id: 'lock-2' }]
+        ),
+      });
+
+      const res = await request(app)
+        .post('/api/v1/passes/request')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(mockRoutePassModel.create).toHaveBeenCalled();
+      const callArgs = mockRoutePassModel.create.mock.calls[0][0];
+      expect(callArgs.userId).toBe(testData.users.tenant.id);
+      expect(callArgs.deviceId).toBe('device-1');
+      expect(callArgs.audiences).toEqual(['lock:lock-1', 'lock:lock-2']);
+      expect(callArgs.jti).toBeDefined();
+      expect(callArgs.issuedAt).toBeInstanceOf(Date);
+      expect(callArgs.expiresAt).toBeInstanceOf(Date);
     });
   });
 

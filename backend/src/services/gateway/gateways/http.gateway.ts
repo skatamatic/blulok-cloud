@@ -12,7 +12,7 @@ import {
 } from '../../../types/gateway.types';
 import { HttpConnection } from '../connections/http.connection';
 import { ProtocolFactory } from '../protocols/protocol-factory';
-import { GatewayDeviceData } from '../../device-sync.service';
+import { GatewayDeviceData, mapDeviceLockStatus } from '../../device-sync.service';
 
 /**
  * HTTP Gateway Implementation
@@ -480,7 +480,7 @@ export class HttpGateway extends BaseGateway {
     }
 
     try {
-      const response = await this.httpConnection.makeRequest('GET', '/locks/all');
+      const response = await this.httpConnection.makeRequest('GET', '/locks');
 
       // Check if response is HTML (indicates wrong endpoint)
       if (typeof response === 'string' && response.includes('<!DOCTYPE html>')) {
@@ -489,7 +489,7 @@ export class HttpGateway extends BaseGateway {
 
       // Check if response indicates API not found
       if (response && typeof response === 'object' && response.status === 404) {
-        throw new Error(`API endpoint not found. The gateway at ${this.baseUrl} does not support the expected API endpoints. Please check that the gateway firmware supports the Mesh Manager API.`);
+        throw new Error(`API endpoint not found. The gateway at ${this.baseUrl} does not support the expected API endpoints (/locks). Please check that the gateway firmware supports the Mesh Manager API.`);
       }
 
       // Handle different response formats
@@ -507,17 +507,17 @@ export class HttpGateway extends BaseGateway {
           return response.devices;
         }
         // If it's an object but we can't find an array, throw error
-        throw new Error(`Unexpected response format from /locks/all: ${JSON.stringify(response).substring(0, 200)}`);
+        throw new Error(`Unexpected response format from /locks: ${JSON.stringify(response).substring(0, 200)}`);
       } else {
         // Response is not an object or array
-        throw new Error(`Invalid response type from /locks/all: ${typeof response}`);
+        throw new Error(`Invalid response type from /locks: ${typeof response}`);
       }
     } catch (error: any) {
       console.error('Failed to get all locks:', error);
 
       // Provide more specific error messages for common issues
       if (error?.response?.status === 404) {
-        throw new Error(`API endpoint not found. The gateway at ${this.baseUrl} does not support the expected API endpoints (/locks/all). Please check that the gateway firmware supports the Mesh Manager API.`);
+        throw new Error(`API endpoint not found. The gateway at ${this.baseUrl} does not support the expected API endpoints (/locks). Please check that the gateway firmware supports the Mesh Manager API.`);
       } else if (error?.response?.status === 401) {
         throw new Error(`Authentication failed. Please check the API key configured for this gateway.`);
       } else if (error?.response?.status >= 500) {
@@ -588,18 +588,22 @@ export class HttpGateway extends BaseGateway {
       }
 
       // Convert gateway locks to GatewayDeviceData format
-      const gatewayDevices: GatewayDeviceData[] = gatewayLocks.map(lock => ({
-        id: lock.id || lock.lockId || lock.serial,
-        lockId: lock.lockId,
-        serial: lock.serial || lock.id || lock.lockId,
-        online: lock.online !== false, // Default to true if not specified
-        locked: lock.locked,
-        batteryLevel: lock.batteryLevel,
-        signalStrength: lock.signalStrength,
-        temperature: lock.temperature,
-        firmwareVersion: lock.firmwareVersion,
-        lastSeen: new Date()
-      }));
+      const gatewayDevices: GatewayDeviceData[] = gatewayLocks.map(lock => {
+        // Map status field: "Closed" -> locked=true, "Opened" -> locked=false
+        // Also handle boolean locked field if present for backwards compatibility
+        return {
+          id: lock.id || lock.lockId || lock.serial,
+          lockId: lock.lockId,
+          serial: lock.serial || lock.id || lock.lockId,
+          online: lock.online !== false, // Default to true if not specified
+          locked: mapDeviceLockStatus(lock), // Use shared utility function
+          batteryLevel: lock.batteryLevel,
+          signalStrength: lock.signalStrength,
+          temperature: lock.temperature,
+          firmwareVersion: lock.firmwareVersion,
+          lastSeen: new Date()
+        };
+      });
 
       // Sync with backend using the base gateway method
       await this.syncDeviceData(gatewayDevices);
@@ -609,6 +613,7 @@ export class HttpGateway extends BaseGateway {
       const devicesWithKeys = [];
       for (const device of gatewayLocks) {
         const deviceId = device.id || device.lockId || device.serial;
+
         try {
           const keys = await this.getKeys(deviceId);
           syncResults.keysRetrieved += keys.length;
@@ -618,7 +623,7 @@ export class HttpGateway extends BaseGateway {
             lockId: device.lockId,
             serial: device.serial || device.id || device.lockId,
             online: device.online !== false,
-            locked: device.locked,
+            locked: mapDeviceLockStatus(device), // Use shared utility function
             batteryLevel: device.batteryLevel,
             signalStrength: device.signalStrength,
             temperature: device.temperature,
@@ -633,7 +638,7 @@ export class HttpGateway extends BaseGateway {
             lockId: device.lockId,
             serial: device.serial || device.id || device.lockId,
             online: device.online !== false,
-            locked: device.locked,
+            locked: mapDeviceLockStatus(device), // Use shared utility function
             batteryLevel: device.batteryLevel,
             signalStrength: device.signalStrength,
             temperature: device.temperature,

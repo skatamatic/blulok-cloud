@@ -80,14 +80,14 @@ export interface BluLokDevice {
   id: string;
   /** Gateway managing this device */
   gateway_id: string;
-  /** Associated storage unit identifier */
-  unit_id: string;
+  /** Associated storage unit identifier (nullable - devices can exist without unit assignment) */
+  unit_id: string | null;
   /** Manufacturer-assigned serial number */
   device_serial: string;
   /** Current firmware version installed */
   firmware_version?: string;
   /** Current lock mechanism status */
-  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance';
+  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
   /** Overall device connectivity and health status */
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   /** Battery charge level (0-100) */
@@ -103,9 +103,9 @@ export interface BluLokDevice {
 }
 
 export interface DeviceWithContext extends BluLokDevice {
-  unit_number: string;
-  unit_type?: string;
-  facility_name: string;
+  unit_number: string | null; // Nullable for devices not yet assigned to units
+  unit_type?: string | null;
+  facility_name: string | null; // Nullable for devices without units (can get from gateway)
   gateway_name: string;
   primary_tenant?: {
     id: string;
@@ -150,6 +150,29 @@ export interface DeviceFilters {
 export class DeviceModel {
   private db = DatabaseService.getInstance();
   private eventService = DeviceEventService.getInstance();
+
+  /**
+   * Safely parse JSON fields that may already be parsed objects or still be strings
+   */
+  private safeParseJson(value: any): any {
+    if (value === null || value === undefined) {
+      return undefined;
+    }
+    // If it's already an object or array, return it as-is
+    if (typeof value === 'object') {
+      return value;
+    }
+    // If it's a string, try to parse it
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch (e) {
+        console.warn('Failed to parse JSON field:', e);
+        return undefined;
+      }
+    }
+    return undefined;
+  }
 
   async findAccessControlDevices(filters: DeviceFilters = {}): Promise<AccessControlDevice[]> {
     const knex = this.db.connection;
@@ -198,15 +221,17 @@ export class DeviceModel {
         'blulok_devices.*',
         'units.unit_number',
         'units.unit_type',
-        'facilities.name as facility_name',
-        'gateways.name as gateway_name'
+        'facilities.name as facility_name', // Always from gateway - devices belong to gateway's facility
+        'gateways.name as gateway_name',
+        'gateways.facility_id as gateway_facility_id'
       )
-      .join('units', 'blulok_devices.unit_id', 'units.id')
+      .leftJoin('units', 'blulok_devices.unit_id', 'units.id')
       .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
-      .join('facilities', 'units.facility_id', 'facilities.id');
+      .join('facilities', 'gateways.facility_id', 'facilities.id'); // Facility via gateway - authoritative source
 
     if (filters.facility_id) {
-      query = query.where('facilities.id', filters.facility_id);
+      // Filter by gateway's facility - this is the authoritative facility for the device
+      query = query.where('gateways.facility_id', filters.facility_id);
     }
 
     if (filters.gateway_id) {
@@ -228,7 +253,8 @@ export class DeviceModel {
     const sortOrder = filters.sortOrder || 'asc';
     
     if (sortBy === 'name' || sortBy === 'unit_number') {
-      query = query.orderBy('units.unit_number', sortOrder);
+      // For devices without units, sort by device_serial
+      query = query.orderByRaw('COALESCE(units.unit_number, blulok_devices.device_serial) ' + sortOrder);
     } else if (sortBy === 'facility_name') {
       query = query.orderBy('facilities.name', sortOrder);
     } else if (sortBy === 'gateway_name') {
@@ -251,18 +277,21 @@ export class DeviceModel {
     // Get primary tenant data separately for each device
     const mapped: DeviceWithContext[] = [];
     for (const row of results) {
-      // Get primary tenant for this unit
-      const primaryTenant = await knex('unit_assignments')
-        .select(
-          'users.id',
-          'users.first_name',
-          'users.last_name',
-          'users.email'
-        )
-        .join('users', 'unit_assignments.tenant_id', 'users.id')
-        .where('unit_assignments.unit_id', row.unit_id)
-        .where('unit_assignments.is_primary', true)
-        .first();
+      // Get primary tenant for this unit (only if unit_id is not null)
+      let primaryTenant = null;
+      if (row.unit_id) {
+        primaryTenant = await knex('unit_assignments')
+          .select(
+            'users.id',
+            'users.first_name',
+            'users.last_name',
+            'users.email'
+          )
+          .join('users', 'unit_assignments.tenant_id', 'users.id')
+          .where('unit_assignments.unit_id', row.unit_id)
+          .where('unit_assignments.is_primary', true)
+          .first();
+      }
 
       const base: any = {
         id: row.id,
@@ -275,13 +304,13 @@ export class DeviceModel {
         battery_level: row.battery_level,
         last_activity: row.last_activity,
         last_seen: row.last_seen,
-        device_settings: row.device_settings ? JSON.parse(row.device_settings) : undefined,
-        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        device_settings: this.safeParseJson(row.device_settings),
+        metadata: this.safeParseJson(row.metadata),
         created_at: row.created_at,
         updated_at: row.updated_at,
-        unit_number: row.unit_number,
-        unit_type: row.unit_type,
-        facility_name: row.facility_name,
+        unit_number: row.unit_number || null,
+        unit_type: row.unit_type || null,
+        facility_name: row.facility_name, // Always populated from gateway's facility
         gateway_name: row.gateway_name,
       };
 
@@ -342,7 +371,7 @@ export class DeviceModel {
     }
   }
 
-  async updateLockStatus(deviceId: string, lockStatus: 'locked' | 'unlocked' | 'error'): Promise<void> {
+  async updateLockStatus(deviceId: string, lockStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown'): Promise<void> {
     const knex = this.db.connection;
 
     // Get current lock status and unit info before update
@@ -475,11 +504,13 @@ export class DeviceModel {
   async countBluLokDevices(filters: DeviceFilters = {}): Promise<number> {
     const knex = this.db.connection;
     let query = knex('blulok_devices')
-      .join('units', 'blulok_devices.unit_id', 'units.id')
-      .join('facilities', 'units.facility_id', 'facilities.id');
+      .leftJoin('units', 'blulok_devices.unit_id', 'units.id')
+      .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
+      .join('facilities', 'gateways.facility_id', 'facilities.id'); // Facility via gateway - authoritative
 
     if (filters.facility_id) {
-      query = query.where('units.facility_id', filters.facility_id);
+      // Filter by gateway's facility - this is the authoritative facility for the device
+      query = query.where('gateways.facility_id', filters.facility_id);
     }
 
     if (filters.unit_id) {
@@ -499,6 +530,151 @@ export class DeviceModel {
         this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
           .orWhere('units.unit_number', 'like', `%${filters.search}%`)
           .orWhere('facilities.name', 'like', `%${filters.search}%`);
+      });
+    }
+
+    const result = await query.count('* as count').first();
+    return parseInt(result?.count as string) || 0;
+  }
+
+  /**
+   * Assign a device to a unit
+   */
+  async assignDeviceToUnit(deviceId: string, unitId: string): Promise<void> {
+    const knex = this.db.connection;
+    await knex('blulok_devices')
+      .where('id', deviceId)
+      .update({
+        unit_id: unitId,
+        updated_at: new Date()
+      });
+  }
+
+  /**
+   * Unassign a device from a unit
+   */
+  async unassignDeviceFromUnit(deviceId: string): Promise<void> {
+    const knex = this.db.connection;
+    await knex('blulok_devices')
+      .where('id', deviceId)
+      .update({
+        unit_id: null,
+        updated_at: new Date()
+      });
+  }
+
+  /**
+   * Find unassigned BluLok devices
+   */
+  async findUnassignedDevices(filters: DeviceFilters = {}): Promise<DeviceWithContext[]> {
+    const knex = this.db.connection;
+    let query = knex('blulok_devices')
+      .select(
+        'blulok_devices.*',
+        'units.unit_number',
+        'units.unit_type',
+        'facilities.name as facility_name',
+        'gateways.name as gateway_name',
+        'gateways.facility_id as gateway_facility_id'
+      )
+      .leftJoin('units', 'blulok_devices.unit_id', 'units.id')
+      .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
+      .join('facilities', 'gateways.facility_id', 'facilities.id')
+      .whereNull('blulok_devices.unit_id'); // Only unassigned devices
+
+    if (filters.facility_id) {
+      query = query.where('gateways.facility_id', filters.facility_id);
+    }
+
+    if (filters.gateway_id) {
+      query = query.where('blulok_devices.gateway_id', filters.gateway_id);
+    }
+
+    if (filters.status) {
+      query = query.where('blulok_devices.device_status', filters.status);
+    }
+
+    if (filters.search) {
+      query = query.where(function(this: any) {
+        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
+            .orWhere('facilities.name', 'like', `%${filters.search}%`)
+            .orWhere('gateways.name', 'like', `%${filters.search}%`);
+      });
+    }
+
+    const sortBy = (filters.sortBy || 'device_serial') as string;
+    const sortOrder = filters.sortOrder || 'asc';
+    
+    if (sortBy === 'facility_name') {
+      query = query.orderBy('facilities.name', sortOrder);
+    } else if (sortBy === 'gateway_name') {
+      query = query.orderBy('gateways.name', sortOrder);
+    } else {
+      query = query.orderBy(`blulok_devices.${sortBy}`, sortOrder);
+    }
+
+    // Apply pagination
+    if (filters.limit) {
+      query = query.limit(filters.limit);
+    }
+    if (filters.offset) {
+      query = query.offset(filters.offset);
+    }
+
+    const results = await query;
+    
+    // Map results to DeviceWithContext format
+    const mapped: DeviceWithContext[] = results.map((row: any) => ({
+      id: row.id,
+      gateway_id: row.gateway_id,
+      unit_id: null, // Always null for unassigned devices
+      device_serial: row.device_serial,
+      firmware_version: row.firmware_version,
+      lock_status: row.lock_status,
+      device_status: row.device_status,
+      battery_level: row.battery_level,
+      last_activity: row.last_activity,
+      last_seen: row.last_seen,
+      device_settings: this.safeParseJson(row.device_settings),
+      metadata: this.safeParseJson(row.metadata),
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      unit_number: null,
+      unit_type: null,
+      facility_name: row.facility_name,
+      gateway_name: row.gateway_name
+    }));
+
+    return mapped;
+  }
+
+  /**
+   * Count unassigned BluLok devices
+   */
+  async countUnassignedDevices(filters: DeviceFilters = {}): Promise<number> {
+    const knex = this.db.connection;
+    let query = knex('blulok_devices')
+      .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
+      .join('facilities', 'gateways.facility_id', 'facilities.id')
+      .whereNull('blulok_devices.unit_id'); // Only unassigned devices
+
+    if (filters.facility_id) {
+      query = query.where('gateways.facility_id', filters.facility_id);
+    }
+
+    if (filters.gateway_id) {
+      query = query.where('blulok_devices.gateway_id', filters.gateway_id);
+    }
+
+    if (filters.status) {
+      query = query.where('blulok_devices.device_status', filters.status);
+    }
+
+    if (filters.search) {
+      query = query.where(function() {
+        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
+          .orWhere('facilities.name', 'like', `%${filters.search}%`)
+          .orWhere('gateways.name', 'like', `%${filters.search}%`);
       });
     }
 

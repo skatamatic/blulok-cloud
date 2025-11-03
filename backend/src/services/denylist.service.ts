@@ -60,6 +60,25 @@ export class DenylistService {
     const { payload: p, signature } = await Ed25519Service.signPacket(payload);
     return [p, signature];
   }
+
+  /**
+   * Build a signed denylist remove command.
+   * Creates a cryptographically signed packet to remove users from device denylists.
+   *
+   * @param entries - Array of users to remove from denylist (only 'sub' field required)
+   * @param targetDeviceIds - Optional array of specific device IDs to target
+   * @returns Promise resolving to tuple of [signed_payload, detached_signature]
+   *
+   * @throws Error if cryptographic signing fails
+   */
+  public static async buildDenylistRemove(entries: DenylistEntry[], targetDeviceIds?: string[]): Promise<[Record<string, any>, string]> {
+    const payload: any = { cmd_type: 'DENYLIST_REMOVE', denylist_remove: entries };
+    if (targetDeviceIds && targetDeviceIds.length > 0) {
+      payload.targets = { device_ids: targetDeviceIds };
+    }
+    const { payload: p, signature } = await Ed25519Service.signPacket(payload);
+    return [p, signature];
+  }
 }
 
 

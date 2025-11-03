@@ -7,18 +7,11 @@ import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlight } from '@/hooks/useHighlight';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
-import { FacilityAssignmentModal } from '@/components/UserManagement/FacilityAssignmentModal';
 import { SortableHeader } from '@/components/UserManagement/SortableHeader';
-import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import {
   PlusIcon,
-  PencilIcon,
-  CheckIcon,
-  XMarkIcon,
-  BuildingStorefrontIcon,
   FunnelIcon,
   BuildingOfficeIcon,
-  EyeIcon,
 } from '@heroicons/react/24/outline';
 
 interface User {
@@ -48,25 +41,6 @@ export default function UserManagementPage() {
   const [showCreateModal, setShowCreateModal] = useState(
     (location.state as any)?.openAddModal || false
   );
-  const [facilityModal, setFacilityModal] = useState<{
-    isOpen: boolean;
-    user: User | null;
-  }>({
-    isOpen: false,
-    user: null,
-  });
-  const [confirmModal, setConfirmModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-    variant?: 'danger' | 'warning' | 'info';
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-  });
 
   // Filter states
   const [search, setSearch] = useState('');
@@ -201,40 +175,6 @@ export default function UserManagementPage() {
     }
   };
 
-  const handleDeactivateUser = (userId: string, userName: string) => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Deactivate User',
-      message: `Are you sure you want to deactivate ${userName}? They will no longer be able to access the system.`,
-      variant: 'danger',
-      onConfirm: async () => {
-        try {
-          const response = await apiService.deactivateUser(userId);
-          if (response.success) {
-            fetchUsers(currentPage); // Refresh the list
-            setConfirmModal(prev => ({ ...prev, isOpen: false }));
-          } else {
-            setError(response.message || 'Failed to deactivate user');
-          }
-        } catch (err) {
-          setError('Error deactivating user');
-        }
-      },
-    });
-  };
-
-  const handleActivateUser = async (userId: string) => {
-    try {
-      const response = await apiService.activateUser(userId);
-      if (response.success) {
-        fetchUsers(currentPage); // Refresh the list
-      } else {
-        setError(response.message || 'Failed to activate user');
-      }
-    } catch (err) {
-      setError('Error activating user');
-    }
-  };
 
   const handleSort = (newSortBy: string, newSortOrder: 'asc' | 'desc') => {
     setSortBy(newSortBy);
@@ -358,9 +298,6 @@ export default function UserManagementPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                   Facilities
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                  Actions
-                </th>
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-gray-800">
@@ -391,13 +328,6 @@ export default function UserManagementPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-20"></div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex space-x-2">
-                        <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                        <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                        <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                      </div>
-                    </td>
                   </tr>
                 ))
               ) : (
@@ -406,6 +336,7 @@ export default function UserManagementPage() {
                   <tr 
                     key={user.id} 
                     id={generateHighlightId('user', user.id)}
+                    onClick={() => navigate(`/users/${user.id}/details`)}
                     className="group transition-all duration-200 cursor-pointer hover:shadow-sm border-b border-gray-200 dark:border-gray-700 last:border-b-0"
                   >
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
@@ -464,45 +395,6 @@ export default function UserManagementPage() {
                       ) : (
                         <span className="text-red-500 dark:text-red-400">No access</span>
                       )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => navigate(`/users/${user.id}/details`)}
-                          className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-300 transition-colors duration-200"
-                          title="View user details"
-                        >
-                          <EyeIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setFacilityModal({ isOpen: true, user })}
-                          className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 transition-colors duration-200"
-                          title="Manage facility access"
-                        >
-                          <BuildingStorefrontIcon className="h-4 w-4" />
-                        </button>
-                        <button className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 transition-colors duration-200">
-                          <PencilIcon className="h-4 w-4" />
-                        </button>
-                        {user.isActive ? (
-                          <button 
-                            onClick={() => handleDeactivateUser(user.id, `${user.firstName} ${user.lastName}`)}
-                            className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition-colors duration-200"
-                            disabled={user.id === authState.user?.id}
-                            title="Deactivate user"
-                          >
-                            <XMarkIcon className="h-4 w-4" />
-                          </button>
-                        ) : (
-                          <button 
-                            onClick={() => handleActivateUser(user.id)}
-                            className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 transition-colors duration-200"
-                            title="Activate user"
-                          >
-                            <CheckIcon className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
                     </td>
                   </tr>
                   ))}
@@ -599,26 +491,6 @@ export default function UserManagementPage() {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onSuccess={() => fetchUsers(currentPage)}
-      />
-
-      {/* Facility Assignment Modal */}
-      <FacilityAssignmentModal
-        isOpen={facilityModal.isOpen}
-        onClose={() => setFacilityModal({ isOpen: false, user: null })}
-        onSuccess={() => fetchUsers(currentPage)}
-        user={facilityModal.user}
-      />
-
-      {/* Confirmation Modal */}
-      <ConfirmModal
-        isOpen={confirmModal.isOpen}
-        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-        onConfirm={confirmModal.onConfirm}
-        title={confirmModal.title}
-        message={confirmModal.message}
-        variant={confirmModal.variant}
-        confirmText="Confirm"
-        cancelText="Cancel"
       />
     </div>
   );

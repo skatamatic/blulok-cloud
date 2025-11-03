@@ -160,8 +160,10 @@ export class AuthService {
       const passwordHash = await bcrypt.hash(password, this.SALT_ROUNDS);
 
       // Create user
+      const normalizedEmail = email.toLowerCase();
       const newUser = await UserModel.create({
-        email: email.toLowerCase(),
+        email: normalizedEmail,
+        login_identifier: normalizedEmail,
         password_hash: passwordHash,
         first_name: firstName,
         last_name: lastName,

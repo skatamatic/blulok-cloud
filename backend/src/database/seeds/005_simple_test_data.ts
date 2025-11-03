@@ -14,6 +14,7 @@ export async function seed(knex: Knex): Promise<void> {
     {
       id: uuidv4(),
       email: 'admin@blulok.com',
+      login_identifier: 'admin@blulok.com',
       password_hash: defaultPassword,
       first_name: 'System',
       last_name: 'Administrator',
@@ -23,6 +24,7 @@ export async function seed(knex: Knex): Promise<void> {
     {
       id: uuidv4(),
       email: 'facility.admin@downtown.com',
+      login_identifier: 'facility.admin@downtown.com',
       password_hash: defaultPassword,
       first_name: 'Sarah',
       last_name: 'Johnson',
@@ -32,6 +34,7 @@ export async function seed(knex: Knex): Promise<void> {
     {
       id: uuidv4(),
       email: 'tech@blulok.com',
+      login_identifier: 'tech@blulok.com',
       password_hash: defaultPassword,
       first_name: 'Alex',
       last_name: 'Rodriguez',
@@ -41,6 +44,7 @@ export async function seed(knex: Knex): Promise<void> {
     {
       id: uuidv4(),
       email: 'john.smith@email.com',
+      login_identifier: 'john.smith@email.com',
       password_hash: defaultPassword,
       first_name: 'John',
       last_name: 'Smith',
@@ -50,6 +54,7 @@ export async function seed(knex: Knex): Promise<void> {
     {
       id: uuidv4(),
       email: 'lisa.anderson@email.com',
+      login_identifier: 'lisa.anderson@email.com',
       password_hash: defaultPassword,
       first_name: 'Lisa',
       last_name: 'Anderson',

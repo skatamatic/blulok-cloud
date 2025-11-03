@@ -257,12 +257,19 @@ describe('HttpGateway', () => {
             id: 'lock-1',
             serial: 'ABC123',
             online: true,
-            locked: false,
             batteryLevel: 85,
             lastSeen: expect.any(Date)
           })
         ])
       );
+      // Verify core properties - locked is optional and may be undefined
+      const callArgs = mockDeviceSyncService.syncGatewayDevices.mock.calls[0];
+      const devices = callArgs[1];
+      expect(devices[0]).toHaveProperty('id', 'lock-1');
+      expect(devices[0]).toHaveProperty('serial', 'ABC123');
+      expect(devices[0]).toHaveProperty('online', true);
+      expect(devices[0]).toHaveProperty('batteryLevel', 85);
+      expect(devices[0]).toHaveProperty('lastSeen');
 
       // Disconnect to clean up
       await gateway.disconnect();
@@ -403,12 +410,19 @@ describe('HttpGateway', () => {
             id: 'lock-manual',
             serial: 'MANUAL123',
             online: true,
-            locked: false,
             batteryLevel: 90,
             lastSeen: expect.any(Date)
           })
         ])
       );
+      // Verify core properties - locked is optional and may be undefined
+      const callArgs = mockDeviceSyncService.syncGatewayDevices.mock.calls[0];
+      const devices = callArgs[1];
+      expect(devices[0]).toHaveProperty('id', 'lock-manual');
+      expect(devices[0]).toHaveProperty('serial', 'MANUAL123');
+      expect(devices[0]).toHaveProperty('online', true);
+      expect(devices[0]).toHaveProperty('batteryLevel', 90);
+      expect(devices[0]).toHaveProperty('lastSeen');
 
       expect(mockDeviceSyncService.updateDeviceStatuses).toHaveBeenCalled();
     });

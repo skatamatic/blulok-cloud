@@ -137,7 +137,7 @@ export default function FacilitiesPage() {
                 <img 
                   src={`data:${facility.image_mime_type};base64,${facility.branding_image}`} 
                   alt={facility.name}
-                  className="h-10 w-10 rounded-lg object-cover"
+                  className="h-10 w-10 rounded-lg object-contain bg-white dark:bg-gray-100 p-1"
                 />
               ) : (
                 <div className="h-10 w-10 rounded-lg bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
@@ -185,7 +185,8 @@ export default function FacilitiesPage() {
     return (
       <div
         id={generateHighlightId('facility', facility.id)}
-        className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden transition-all duration-200 hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
+        onClick={() => navigate(`/facilities/${facility.id}`)}
+        className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden transition-all duration-200 hover:shadow-md hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer"
       >
         {/* All content - always visible */}
         <div className="p-6 space-y-4">
@@ -196,7 +197,7 @@ export default function FacilitiesPage() {
                 <img
                   src={`data:${facility.image_mime_type};base64,${facility.branding_image}`}
                   alt={facility.name}
-                  className="h-16 w-16 rounded-lg object-cover"
+                  className="h-16 w-16 rounded-lg object-contain bg-white dark:bg-gray-100 p-1"
                 />
               ) : (
                 <div className="h-16 w-16 bg-primary-100 dark:bg-primary-900/20 rounded-lg flex items-center justify-center">
@@ -280,20 +281,9 @@ export default function FacilitiesPage() {
             </div>
 
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center text-sm text-gray-500 dark:text-gray-400">
-                  <MapPinIcon className="h-4 w-4 mr-1" />
-                  {facility.address}
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(`/facilities/${facility.id}`);
-                  }}
-                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-primary-700 bg-primary-100 hover:bg-primary-200 dark:bg-primary-900/20 dark:text-primary-400 dark:hover:bg-primary-900/30 rounded-md transition-colors"
-                >
-                  View Details
-                </button>
+              <div className="flex items-center text-sm text-gray-500 dark:text-gray-400">
+                <MapPinIcon className="h-4 w-4 mr-1" />
+                {facility.address}
               </div>
             </div>
           </div>

@@ -7,7 +7,6 @@ import {
   DevicePhoneMobileIcon,
   EnvelopeIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon,
   EyeIcon,
   EyeSlashIcon,
   ShieldCheckIcon,
@@ -66,7 +65,7 @@ export default function NotificationSettingsPage() {
   };
 
   const updateConfig = (path: string, value: any) => {
-    setConfig(prev => {
+    setConfig((prev: NotificationsConfig) => {
       const newConfig = { ...prev };
       const keys = path.split('.');
       let current = newConfig as any;
@@ -236,7 +235,7 @@ export default function NotificationSettingsPage() {
                 placeholder="Welcome to BluLok. Tap to get started: {{deeplink}}"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Use {{`{deeplink}`}} placeholder for the invitation link
+                Use {'{{deeplink}}'} placeholder for the invitation link
               </p>
             </div>
           )}
@@ -254,7 +253,7 @@ export default function NotificationSettingsPage() {
                 placeholder="Your verification code is: {{code}}"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Use {{`{code}`}} placeholder for the 6-digit verification code
+                Use {'{{code}}'} placeholder for the 6-digit verification code
               </p>
             </div>
           )}
@@ -286,7 +285,7 @@ export default function NotificationSettingsPage() {
                 placeholder="Welcome to BluLok. Click the link below to get started: {{deeplink}}"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Use {{`{deeplink}`}} placeholder for the invitation link
+                Use {'{{deeplink}}'} placeholder for the invitation link
               </p>
             </div>
           )}
@@ -318,7 +317,7 @@ export default function NotificationSettingsPage() {
                 placeholder="Your verification code is: {{code}}"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Use {{`{code}`}} placeholder for the 6-digit verification code
+                Use {'{{code}}'} placeholder for the 6-digit verification code
               </p>
             </div>
           )}

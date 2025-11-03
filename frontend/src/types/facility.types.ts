@@ -62,7 +62,7 @@ export interface BluLokDevice {
   unit_id: string;
   device_serial: string;
   firmware_version?: string;
-  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance';
+  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   battery_level?: number;
   last_activity?: string;

@@ -5,6 +5,8 @@ import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ConfirmModal } from '@/components/Modal/ConfirmModal';
+import { useToast } from '@/contexts/ToastContext';
 import { 
   ServerIcon,
   FunnelIcon,
@@ -16,13 +18,16 @@ import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   WrenchScrewdriverIcon,
+  QuestionMarkCircleIcon,
   BuildingOfficeIcon,
   UserIcon,
   EyeIcon,
   ArrowTopRightOnSquareIcon,
   HomeIcon,
   Squares2X2Icon,
-  ListBulletIcon
+  ListBulletIcon,
+  CpuChipIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { AccessControlDevice, BluLokDevice, DeviceFilters } from '@/types/facility.types';
@@ -36,7 +41,8 @@ const statusColors = {
   maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   low_battery: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
-  unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+  unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
+  unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
 };
 
 const deviceTypeIcons = {
@@ -86,6 +92,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const [activeTab, setActiveTab] = useState<'grid' | 'list' | 'commands'>(initialCommandQueue ? 'commands' : 'grid');
   const [commandQueue, setCommandQueue] = useState<{ items: any[]; total: number } | null>(initialCommandQueue || null);
   const [cmdFilters, setCmdFilters] = useState<{ status: string }>({ status: '' });
+  const [showUnassignConfirm, setShowUnassignConfirm] = useState<{ deviceId: string; deviceSerial: string } | null>(null);
+  const [unassigningDevice, setUnassigningDevice] = useState(false);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
 
@@ -193,6 +201,26 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     }
   };
 
+  const handleUnassignDevice = async () => {
+    if (!showUnassignConfirm) return;
+
+    try {
+      setUnassigningDevice(true);
+      await apiService.unassignDeviceFromUnit(showUnassignConfirm.deviceId);
+      addToast({ type: 'success', title: 'Device unassigned successfully' });
+      await loadDevices(); // Refresh data
+      setShowUnassignConfirm(null);
+    } catch (error: any) {
+      console.error('Failed to unassign device:', error);
+      addToast({ 
+        type: 'error', 
+        title: error?.response?.data?.message || 'Failed to unassign device from unit' 
+      });
+    } finally {
+      setUnassigningDevice(false);
+    }
+  };
+
   const AccessControlDeviceCard = ({ device }: { device: AccessControlDevice & { device_category: string } }) => {
     const DeviceIcon = deviceTypeIcons[device.device_type];
     const StatusIcon = statusIcons[device.status];
@@ -201,6 +229,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       <div 
         id={generateHighlightId('device', device.id)}
         className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
+        onClick={() => navigate(`/devices/${device.id}`)}
       >
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center">
@@ -248,7 +277,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
         <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
           <div className="flex items-center justify-between">
             <button
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 const facilityIndex = devices.findIndex(d => d.gateway_id === device.gateway_id);
                 const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
                 navigateAndHighlight(navigate, { id: device.gateway_id, type: 'facility', page: calculatedPage });
@@ -260,7 +290,13 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
               <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
             </button>
             {canManage && (
-              <button className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-primary-700 bg-primary-100 hover:bg-primary-200 dark:bg-primary-900/20 dark:text-primary-400 rounded-md transition-colors">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/devices/${device.id}`);
+                }}
+                className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-primary-700 bg-primary-100 hover:bg-primary-200 dark:bg-primary-900/20 dark:text-primary-400 rounded-md transition-colors"
+              >
                 <EyeIcon className="h-4 w-4 mr-1" />
                 Manage
               </button>
@@ -280,6 +316,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       <div 
         id={generateHighlightId('device', device.id)}
         className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
+        onClick={() => navigate(`/devices/${device.id}`)}
       >
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center">
@@ -313,8 +350,10 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
         <div className="space-y-3">
           <div className="flex items-center justify-between text-sm">
             <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
-            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[device.lock_status]}`}>
-              {device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : <LockOpenIcon className="h-3 w-3 mr-1" />}
+            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[device.lock_status] || statusColors.unknown}`}>
+              {device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : 
+               device.lock_status === 'unlocked' ? <LockOpenIcon className="h-3 w-3 mr-1" /> :
+               <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />}
               {device.lock_status}
             </span>
           </div>
@@ -344,15 +383,32 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           <div className="flex items-center justify-between space-x-2">
             <div className="flex space-x-3">
               <button
-                onClick={() => navigate(`/units/${device.unit_id}`)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/devices/${device.id}`);
+                }}
+                className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+              >
+                <CpuChipIcon className="h-4 w-4 mr-1" />
+                View Details
+                <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
+              </button>
+              {device.unit_id && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/units/${device.unit_id}`);
+                  }}
                 className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
               >
                 <HomeIcon className="h-4 w-4 mr-1" />
                 View Unit
                 <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
               </button>
+              )}
               <button
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   const facilityId = getDeviceProperty(device, 'facility_id');
                   if (facilityId) {
                     const facilityIndex = devices.findIndex(d => getDeviceProperty(d, 'facility_id') === facilityId);
@@ -368,16 +424,33 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
               </button>
             </div>
             {canManage && (
-              <button
-                onClick={() => handleLockToggle(device)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  device.lock_status === 'locked'
-                    ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                    : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
-                }`}
-              >
-                {device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
-              </button>
+              <>
+                {device.unit_id && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowUnassignConfirm({ deviceId: device.id, deviceSerial: device.device_serial });
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-900/20 dark:text-gray-400 dark:hover:bg-gray-800"
+                    title="Unassign device from unit"
+                  >
+                    <XMarkIcon className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleLockToggle(device);
+                  }}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    device.lock_status === 'locked'
+                      ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                      : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
+                  }`}
+                >
+                  {device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -785,6 +858,22 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           setShowAddDeviceModal(false);
         }}
         deviceType={selectedDeviceType}
+      />
+
+      {/* Unassign Device Confirmation Modal */}
+      <ConfirmModal
+        isOpen={!!showUnassignConfirm}
+        onClose={() => setShowUnassignConfirm(null)}
+        onConfirm={handleUnassignDevice}
+        title="Unassign Device"
+        message={
+          showUnassignConfirm
+            ? `Are you sure you want to unassign device "${showUnassignConfirm.deviceSerial}" from its unit? The device will become available for other units.`
+            : ''
+        }
+        confirmText="Unassign"
+        cancelText="Cancel"
+        isLoading={unassigningDevice}
       />
     </div>
   );

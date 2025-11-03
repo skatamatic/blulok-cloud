@@ -15,7 +15,11 @@ export enum DeviceEvent {
   /** New device discovered and registered in the system */
   DEVICE_ADDED = 'deviceAdded',
   /** Device removed or decommissioned from the system */
-  DEVICE_REMOVED = 'deviceRemoved'
+  DEVICE_REMOVED = 'deviceRemoved',
+  /** Device assigned to a unit */
+  DEVICE_ASSIGNED = 'deviceAssigned',
+  /** Device unassigned from a unit */
+  DEVICE_UNASSIGNED = 'deviceUnassigned'
 }
 
 /**
@@ -47,9 +51,9 @@ export interface LockStatusChangedEvent {
   /** Lock device identifier */
   deviceId: string;
   /** Previous lock state */
-  oldStatus: 'locked' | 'unlocked' | 'error';
+  oldStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
   /** New lock state */
-  newStatus: 'locked' | 'unlocked' | 'error';
+  newStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
   /** Gateway managing this lock */
   gatewayId: string;
   /** Unit this lock secures */
@@ -86,6 +90,47 @@ export interface DeviceRemovedEvent {
   deviceType: 'blulok' | 'access_control';
   /** Gateway that was managing the device */
   gatewayId: string;
+}
+
+/**
+ * Device Assigned Event Interface
+ *
+ * Emitted when a device is assigned to a unit.
+ * Triggers unit updates and access control synchronization.
+ */
+export interface DeviceAssignedEvent {
+  /** Device being assigned */
+  deviceId: string;
+  /** Unit the device is being assigned to */
+  unitId: string;
+  /** Facility containing the unit */
+  facilityId: string;
+  /** Additional event metadata */
+  metadata?: {
+    source?: 'manual' | 'fms_sync' | 'api';
+    performedBy?: string;
+  };
+}
+
+/**
+ * Device Unassigned Event Interface
+ *
+ * Emitted when a device is unassigned from a unit.
+ * Triggers unit updates and makes device available for other assignments.
+ */
+export interface DeviceUnassignedEvent {
+  /** Device being unassigned */
+  deviceId: string;
+  /** Unit the device was assigned to */
+  unitId: string;
+  /** Facility containing the unit */
+  facilityId: string;
+  /** Additional event metadata */
+  metadata?: {
+    source?: 'manual' | 'fms_sync' | 'api';
+    performedBy?: string;
+    reason?: 'manual' | 'reassigned' | 'unit_deleted';
+  };
 }
 
 /**
@@ -189,5 +234,19 @@ export class DeviceEventService extends EventEmitter {
    */
   public emitDeviceRemoved(event: DeviceRemovedEvent): void {
     this.emit(DeviceEvent.DEVICE_REMOVED, event);
+  }
+
+  /**
+   * Emit device assigned event
+   */
+  public emitDeviceAssigned(event: DeviceAssignedEvent): void {
+    this.emit(DeviceEvent.DEVICE_ASSIGNED, event);
+  }
+
+  /**
+   * Emit device unassigned event
+   */
+  public emitDeviceUnassigned(event: DeviceUnassignedEvent): void {
+    this.emit(DeviceEvent.DEVICE_UNASSIGNED, event);
   }
 }

@@ -113,6 +113,7 @@ router.post('/create-admin-users', asyncHandler(async (_req: AuthenticatedReques
       users.push({
         id: '550e8400-e29b-41d4-a716-446655440010',
         email: 'admin@blulok.com',
+        login_identifier: 'admin@blulok.com',
         password_hash: adminPasswordHash,
         first_name: 'System',
         last_name: 'Administrator',
@@ -127,6 +128,7 @@ router.post('/create-admin-users', asyncHandler(async (_req: AuthenticatedReques
       users.push({
         id: '550e8400-e29b-41d4-a716-446655440011',
         email: 'devadmin@blulok.com',
+        login_identifier: 'devadmin@blulok.com',
         password_hash: devAdminPasswordHash,
         first_name: 'Developer',
         last_name: 'Admin',
@@ -588,9 +590,11 @@ async function createUsers(db: any, facilities: any[]): Promise<any[]> {
   // Create facility admins (2 per facility)
   facilities.forEach((facility, facilityIndex) => {
     for (let i = 0; i < 2; i++) {
+      const email = `admin${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`;
       users.push({
         id: uuidv4(),
-        email: `admin${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`,
+        email: email,
+        login_identifier: email.toLowerCase(),
         password_hash: passwordHash,
         first_name: `Facility${facilityIndex + 1}`,
         last_name: `Admin${i + 1}`,
@@ -603,9 +607,11 @@ async function createUsers(db: any, facilities: any[]): Promise<any[]> {
   // Create maintenance users (2 per facility)
   facilities.forEach((facility, facilityIndex) => {
     for (let i = 0; i < 2; i++) {
+      const email = `maintenance${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`;
       users.push({
         id: uuidv4(),
-        email: `maintenance${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`,
+        email: email,
+        login_identifier: email.toLowerCase(),
         password_hash: passwordHash,
         first_name: `Maintenance${facilityIndex + 1}`,
         last_name: `Tech${i + 1}`,
@@ -619,9 +625,11 @@ async function createUsers(db: any, facilities: any[]): Promise<any[]> {
   facilities.forEach((facility, facilityIndex) => {
     const tenantCount = 5 + Math.floor(Math.random() * 6);
     for (let i = 0; i < tenantCount; i++) {
+      const email = `tenant${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`;
       users.push({
         id: uuidv4(),
-        email: `tenant${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`,
+        email: email,
+        login_identifier: email.toLowerCase(),
         password_hash: passwordHash,
         first_name: `Tenant${facilityIndex + 1}`,
         last_name: `User${i + 1}`,

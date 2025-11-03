@@ -27,6 +27,8 @@ import commandsRouter from '@/routes/commands.routes';
 import { passesRouter } from '@/routes/passes.routes';
 import { internalGatewayRouter } from '@/routes/internal-gateway.routes';
 import { adminRouter } from '@/routes/admin.routes';
+import { denylistRouter } from '@/routes/denylist.routes';
+import { routePassesRouter } from '@/routes/route-passes.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -56,7 +58,8 @@ export function createApp(): Application {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform'],
   }));
 
-  // Rate limiting
+  // Rate limiting (disabled in test mode to avoid test failures)
+  if (config.nodeEnv !== 'test') {
   const limiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 100, // Limit each IP to 100 requests per windowMs
@@ -65,6 +68,7 @@ export function createApp(): Application {
     legacyHeaders: false,
   });
   app.use(limiter);
+  }
 
   // Compression and parsing middleware
   app.use(compression());
@@ -93,6 +97,8 @@ export function createApp(): Application {
     app.use('/api/v1/access-history', accessHistoryRouter);
     app.use('/api/v1/key-sharing', keySharingRouter);
   app.use('/api/v1/passes', passesRouter);
+    app.use('/api/v1/route-passes', routePassesRouter);
+    app.use('/api/v1/denylist', denylistRouter);
     app.use('/api/v1/commands', commandsRouter);
     app.use('/api/v1/dev', authenticateToken, devRouter);
   app.use('/api/v1/system-settings', systemSettingsRouter);

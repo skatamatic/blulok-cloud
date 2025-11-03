@@ -9,6 +9,7 @@ import { authenticateToken, requireUserManagement } from '@/middleware/auth.midd
 import { DatabaseService } from '@/services/database.service';
 import { UserDeviceModel } from '@/models/user-device.model';
 import { FirstTimeUserService } from '@/services/first-time-user.service';
+import { logger } from '@/utils/logger';
 
 /**
  * User Management Routes
@@ -339,12 +340,18 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
   if (facilityIds.length > 0) {
     const unitsData = await db('unit_assignments as ua')
       .join('units as u', 'ua.unit_id', 'u.id')
+      .leftJoin('blulok_devices as bd', 'u.id', 'bd.unit_id')
       .select(
         'u.facility_id',
         'u.id as unit_id',
         'u.unit_number',
         'u.unit_type',
-        'ua.is_primary'
+        'ua.is_primary',
+        'bd.id as device_id',
+        'bd.device_serial',
+        'bd.lock_status',
+        'bd.device_status',
+        'bd.battery_level'
       )
       .where('ua.tenant_id', id)
       .whereIn('u.facility_id', facilityIds)
@@ -358,7 +365,14 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
           id: u.unit_id,
           unitNumber: u.unit_number,
           unitType: u.unit_type,
-          isPrimary: u.is_primary
+          isPrimary: u.is_primary,
+          device: u.device_id ? {
+            id: u.device_id,
+            device_serial: u.device_serial,
+            lock_status: u.lock_status,
+            device_status: u.device_status,
+            battery_level: u.battery_level
+          } : undefined
         }))
       };
       facilitiesWithUnits.push(facilityData);
@@ -614,24 +628,61 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
       const { DenylistService } = await import('@/services/denylist.service');
       const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
       const { DatabaseService } = await import('@/services/database.service');
+      const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
+      const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
+      const { config } = await import('@/config/environment');
       const knex = DatabaseService.getInstance().connection;
+      const denylistModel = new DenylistEntryModel();
+      
+      // Get all devices from all units the user has access to
       const rows = await knex('blulok_devices as bd')
         .join('units as u', 'bd.unit_id', 'u.id')
         .leftJoin('unit_assignments as ua', 'ua.unit_id', 'u.id')
         .where('ua.tenant_id', id)
         .select('bd.id as device_id', 'u.facility_id');
-      const exp = Math.floor(Date.now() / 1000);
+      
+      if (rows.length === 0) {
+        return; // No devices to deny
+      }
+
+      // Check if we should skip denylist command (user's last route pass is expired)
+      const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(id);
+      
+      // Calculate expiration based on route pass TTL (for DB entry)
+      const now = new Date();
+      const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
+      const expiresAt = new Date(now.getTime() + ttlMs);
+      const exp = Math.floor(expiresAt.getTime() / 1000);
       const byFacility = new Map<string, string[]>();
+      const performedBy = req.user!.userId;
+
+      // Create database entries and group by facility (always do this for audit trail)
       for (const r of rows) {
+        await denylistModel.create({
+          device_id: r.device_id,
+          user_id: id,
+          expires_at: expiresAt,
+          source: 'user_deactivation',
+          created_by: performedBy,
+        });
+
         const list = byFacility.get(r.facility_id) || [];
         list.push(r.device_id);
         byFacility.set(r.facility_id, list);
       }
+
+      // Send denylist commands only if user's last route pass is not expired
+      if (!shouldSkip) {
       for (const [facilityId, deviceIds] of byFacility.entries()) {
         const packet = await DenylistService.buildDenylistAdd([{ sub: id, exp }], deviceIds);
         GatewayEventsService.getInstance().unicastToFacility(facilityId, packet);
       }
-    } catch (_e) {}
+      } else {
+        logger.info(`Skipping DENYLIST_ADD for deactivated user ${id} - last route pass is expired`);
+      }
+    } catch (error) {
+      logger.error('Failed to push denylist on user deactivation:', error);
+    }
   })();
 
   res.json({

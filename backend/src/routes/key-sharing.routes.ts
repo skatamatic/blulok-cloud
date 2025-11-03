@@ -439,18 +439,57 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<
         const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
         const { UnitModel } = await import('../models/unit.model');
         const { DatabaseService } = await import('@/services/database.service');
+        const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
+        const { config } = await import('@/config/environment');
+        const { logger } = await import('@/utils/logger');
         const unitModel = new UnitModel();
         const unit = await unitModel.findById(existingSharing.unit_id);
         if (unit?.facility_id) {
-          const exp = Math.floor(Date.now() / 1000);
-          // Collect device ids for the unit
           const knex = DatabaseService.getInstance().connection;
           const devices = await knex('blulok_devices').where({ unit_id: existingSharing.unit_id }).select('id');
           const deviceIds = devices.map((d: any) => d.id);
+
+          if (deviceIds.length === 0) {
+            return;
+          }
+
+          // Calculate expiration based on route pass TTL
+          const now = new Date();
+          const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
+          const expiresAt = new Date(now.getTime() + ttlMs);
+
+          // Check if we should skip denylist command (user's last route pass is expired)
+          const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
+          const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(existingSharing.shared_with_user_id);
+
+          const exp = Math.floor(expiresAt.getTime() / 1000);
+          const denylistModel = new DenylistEntryModel();
+          const performedBy = req.user!.userId || 'system';
+
+          // Create database entries (always do this for audit trail)
+          for (const deviceId of deviceIds) {
+            await denylistModel.create({
+              device_id: deviceId,
+              user_id: existingSharing.shared_with_user_id,
+              expires_at: expiresAt,
+              source: 'key_sharing_revocation',
+              created_by: performedBy,
+            });
+          }
+
+          // Send denylist command only if user's last route pass is not expired
+          if (!shouldSkip) {
           const packet = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], deviceIds);
           GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
+          } else {
+            const { logger } = require('@/utils/logger');
+            logger.info(`Skipping DENYLIST_ADD for revoked key sharing user ${existingSharing.shared_with_user_id} - last route pass is expired`);
+          }
         }
-      })().catch(() => {});
+      })().catch((error) => {
+        const { logger } = require('@/utils/logger');
+        logger.error('Failed to push denylist on key sharing revocation:', error);
+      });
       res.json({ message: 'Key sharing revoked successfully' });
     } else {
       res.status(500).json({ error: 'Failed to revoke key sharing' });

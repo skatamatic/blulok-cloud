@@ -210,9 +210,11 @@ export async function seed(knex: Knex): Promise<void> {
   // Create facility admins (2 per facility)
   facilities.forEach((facility, facilityIndex) => {
     for (let i = 0; i < 2; i++) {
+      const email = `admin${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`;
       users.push({
         id: uuidv4(),
-        email: `admin${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`,
+        email: email,
+        login_identifier: email.toLowerCase(),
         password_hash: passwordHash,
         first_name: `Facility${facilityIndex + 1}`,
         last_name: `Admin${i + 1}`,
@@ -225,9 +227,11 @@ export async function seed(knex: Knex): Promise<void> {
   // Create maintenance users (2 per facility)
   facilities.forEach((facility, facilityIndex) => {
     for (let i = 0; i < 2; i++) {
+      const email = `maintenance${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`;
       users.push({
         id: uuidv4(),
-        email: `maintenance${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`,
+        email: email,
+        login_identifier: email.toLowerCase(),
         password_hash: passwordHash,
         first_name: `Maintenance${facilityIndex + 1}`,
         last_name: `Tech${i + 1}`,
@@ -241,9 +245,11 @@ export async function seed(knex: Knex): Promise<void> {
   facilities.forEach((facility, facilityIndex) => {
     const tenantCount = 5 + Math.floor(Math.random() * 6);
     for (let i = 0; i < tenantCount; i++) {
+      const email = `tenant${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`;
       users.push({
         id: uuidv4(),
-        email: `tenant${facilityIndex + 1}${i + 1}@${facility.name.toLowerCase().replace(/\s+/g, '')}.com`,
+        email: email,
+        login_identifier: email.toLowerCase(),
         password_hash: passwordHash,
         first_name: `Tenant${facilityIndex + 1}`,
         last_name: `User${i + 1}`,

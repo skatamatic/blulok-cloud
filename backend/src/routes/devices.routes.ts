@@ -59,6 +59,10 @@ import { DeviceModel, type DeviceFilters } from '../models/device.model';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { UserRole } from '../types/auth.types';
 import { AuthenticatedRequest } from '../types/auth.types';
+import { DevicesService } from '../services/devices.service';
+import { asyncHandler } from '../middleware/error.middleware';
+import { logger } from '../utils/logger';
+import { DatabaseService } from '../services/database.service';
 
 const router = Router();
 const deviceModel = new DeviceModel();
@@ -378,5 +382,245 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
     res.status(500).json({ success: false, message: 'Failed to update lock status' });
   }
 });
+
+// GET /api/devices/blulok/:id/denylist - Get denylist entries for a device
+router.get('/blulok/:id/denylist', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id: deviceId } = req.params;
+    const user = req.user!;
+
+    // Check access: facility admin can only view devices in their facilities
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      const knex = DatabaseService.getInstance().connection;
+      const device = await knex('blulok_devices')
+        .join('units', 'blulok_devices.unit_id', 'units.id')
+        .where('blulok_devices.id', deviceId)
+        .select('units.facility_id')
+        .first();
+
+      if (!device || !user.facilityIds?.includes(device.facility_id)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this device'
+        });
+        return;
+      }
+    }
+
+    const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
+    const denylistModel = new DenylistEntryModel();
+    const entries = await denylistModel.findByDevice(deviceId);
+
+    // Enrich entries with user information
+    const knex = DatabaseService.getInstance().connection;
+    const enrichedEntries = await Promise.all(
+      entries.map(async (entry) => {
+        const userInfo = await knex('users')
+          .where('id', entry.user_id)
+          .select('id', 'email', 'first_name', 'last_name')
+          .first();
+
+        return {
+          ...entry,
+          user: userInfo || { id: entry.user_id, email: null, first_name: null, last_name: null },
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      entries: enrichedEntries,
+    });
+  } catch (error) {
+    console.error('Error fetching device denylist:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch device denylist' });
+  }
+}));
+
+// GET /api/devices/unassigned - Get unassigned BluLok devices
+router.get('/unassigned', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user!;
+    const { facility_id, status, search, sortBy, sortOrder, limit, offset } = req.query;
+
+    // Restrict facility access based on user role
+    let allowedFacilityId = facility_id as string | undefined;
+    
+    // For facility-scoped users, enforce facility restrictions
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+      if (facility_id && !user.facilityIds?.includes(facility_id as string)) {
+        res.status(403).json({ success: false, message: 'Access denied to this facility' });
+        return;
+      }
+      // If no facility specified, restrict to user's facilities
+      if (!facility_id) {
+        if (user.facilityIds && user.facilityIds.length > 0) {
+          allowedFacilityId = user.facilityIds[0]; // Default to first facility
+        } else {
+          // User has no facility access - return empty result
+          res.json({ success: true, devices: [], total: 0 });
+          return;
+        }
+      }
+    }
+
+    const filters: DeviceFilters = {
+      device_type: 'blulok',
+      status: status as string,
+      search: search as string,
+      sortBy: sortBy as any,
+      sortOrder: sortOrder as any,
+    };
+    
+    if (limit) {
+      filters.limit = parseInt(limit as string);
+    }
+    if (offset) {
+      filters.offset = parseInt(offset as string);
+    }
+    if (allowedFacilityId) {
+      filters.facility_id = allowedFacilityId;
+    }
+
+    const devices = await deviceModel.findUnassignedDevices(filters);
+    const total = await deviceModel.countUnassignedDevices(filters);
+
+    res.json({ success: true, devices, total });
+  } catch (error) {
+    logger.error('Error fetching unassigned devices:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch unassigned devices' });
+  }
+}));
+
+// POST /api/devices/blulok/:deviceId/assign - Assign device to unit
+router.post('/blulok/:deviceId/assign', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user!;
+    const { deviceId } = req.params;
+    const { unit_id } = req.body;
+
+    // RBAC: Only admins and facility admins can assign devices
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN && user.role !== UserRole.FACILITY_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Insufficient permissions. Admin or facility admin role required.'
+      });
+      return;
+    }
+
+    if (!unit_id) {
+      res.status(400).json({
+        success: false,
+        message: 'unit_id is required'
+      });
+      return;
+    }
+
+    if (!deviceId) {
+      res.status(400).json({
+        success: false,
+        message: 'deviceId is required'
+      });
+      return;
+    }
+
+    // Check if user has access to the device (for facility admins)
+    const devicesService = DevicesService.getInstance();
+    const hasAccess = await devicesService.hasUserAccessToDevice(deviceId, user.userId, user.role);
+    if (!hasAccess) {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied to this device'
+      });
+      return;
+    }
+
+    // Assign device to unit
+    try {
+      await devicesService.assignDeviceToUnit(deviceId, unit_id, {
+        performedBy: user.userId,
+        source: 'api'
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Device assigned to unit successfully'
+      });
+    } catch (error: any) {
+      logger.error('Error assigning device:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to assign device to unit'
+      });
+    }
+  } catch (error) {
+    logger.error('Error in assign device route:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign device to unit'
+    });
+  }
+}));
+
+// DELETE /api/devices/blulok/:deviceId/unassign - Unassign device from unit
+router.delete('/blulok/:deviceId/unassign', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user!;
+    const { deviceId } = req.params;
+
+    // RBAC: Only admins and facility admins can unassign devices
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN && user.role !== UserRole.FACILITY_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Insufficient permissions. Admin or facility admin role required.'
+      });
+      return;
+    }
+
+    if (!deviceId) {
+      res.status(400).json({
+        success: false,
+        message: 'deviceId is required'
+      });
+      return;
+    }
+
+    // Check if user has access to the device (for facility admins)
+    const devicesService = DevicesService.getInstance();
+    const hasAccess = await devicesService.hasUserAccessToDevice(deviceId, user.userId, user.role);
+    if (!hasAccess) {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied to this device'
+      });
+      return;
+    }
+
+    // Unassign device from unit
+    try {
+      await devicesService.unassignDeviceFromUnit(deviceId, {
+        performedBy: user.userId,
+        source: 'api'
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Device unassigned from unit successfully'
+      });
+    } catch (error: any) {
+      logger.error('Error unassigning device:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to unassign device from unit'
+      });
+    }
+  } catch (error) {
+    logger.error('Error in unassign device route:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to unassign device from unit'
+    });
+  }
+}));
 
 export { router as devicesRouter };
