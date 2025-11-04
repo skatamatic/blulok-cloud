@@ -153,12 +153,7 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
                 </p>
               </div>
             </div>
-            <button
-              onClick={handleClose}
-              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
-              <XMarkIcon className="h-5 w-5" />
-            </button>
+            {/* Close handled by Modal's built-in top-right button */}
           </div>
         </div>
 
@@ -293,7 +288,7 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
             onClick={handleClose}
             className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
           >
-            Close
+            Cancel
           </button>
           
           {hasDevice && selectedDevice && (

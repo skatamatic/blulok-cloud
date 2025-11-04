@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import type { AxiosError } from 'axios';
 import { useForm } from 'react-hook-form';
 import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/Modal/Modal';
 import { UserRole } from '@/types/auth.types';
@@ -63,7 +64,9 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
         setError(response.message || 'Failed to create user');
       }
     } catch (err) {
-      setError('An error occurred while creating the user');
+      const axiosErr = err as AxiosError<any>;
+      const serverMessage = axiosErr?.response?.data?.message as string | undefined;
+      setError(serverMessage || 'An error occurred while creating the user');
     } finally {
       setIsLoading(false);
     }

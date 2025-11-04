@@ -7,33 +7,15 @@
  * - DELETE /me/:id: Revoke a device (tenant self-service)
  * - DELETE /admin/:id: Revoke any user's device (dev admin only)
  */
-import { Router, Response, RequestHandler, NextFunction } from 'express';
+import { Router, Response } from 'express';
 import Joi from 'joi';
 import { asyncHandler } from '@/middleware/error.middleware';
-import { authenticateToken } from '@/middleware/auth.middleware';
-import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
+import { authenticateToken, requireDevAdmin, requireTenant } from '@/middleware/auth.middleware';
+import { AuthenticatedRequest } from '@/types/auth.types';
 import { UserDeviceModel, UserDeviceStatus, AppPlatform } from '@/models/user-device.model';
 import { DatabaseService } from '@/services/database.service';
 
-// Middleware to check if user is a dev admin
-const requireDevAdmin: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-  if (req.user!.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Access denied. Dev admin role required.' });
-    return;
-  }
-  next();
-};
-
 const router = Router();
-
-// Middleware to check if user is a tenant
-const requireTenant: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-  if (req.user!.role !== UserRole.TENANT) {
-    res.status(403).json({ success: false, message: 'Access denied. Tenant role required.' });
-    return;
-  }
-  next();
-};
 
 const registerSchema = Joi.object({
   app_device_id: Joi.string().max(128).required(),

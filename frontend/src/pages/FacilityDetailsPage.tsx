@@ -69,6 +69,7 @@ export default function FacilityDetailsPage() {
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
   const canManageGateway = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const isTenant = authState.user?.role === 'tenant';
 
   useEffect(() => {
     if (id) {
@@ -110,7 +111,8 @@ export default function FacilityDetailsPage() {
       
       setFacility(facilityResponse.facility);
       setDeviceHierarchy(facilityResponse.deviceHierarchy);
-      setUnits(unitsResponse.units || []);
+      const allUnits: Unit[] = unitsResponse.units || [];
+      setUnits(isTenant ? allUnits.filter(u => String(u.facility_id) === String(id)) : allUnits);
     } catch (error) {
       console.error('Failed to load facility data:', error);
     } finally {
@@ -365,10 +367,10 @@ export default function FacilityDetailsPage() {
         <nav className="-mb-px flex space-x-8">
           {[
             { key: 'overview', label: 'Overview', icon: BuildingOfficeIcon },
-            { key: 'devices', label: 'Devices', icon: ServerIcon },
+            ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
             { key: 'units', label: 'Units', icon: HomeIcon },
-            ...(canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
-            ...(canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : [])
+            ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
+            ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : [])
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -421,7 +423,7 @@ export default function FacilityDetailsPage() {
             </div>
 
             {/* Gateway Status */}
-            {deviceHierarchy?.gateway && (
+            {!isTenant && deviceHierarchy?.gateway && (
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway Status</h3>
                 <div className="flex items-center justify-between">
@@ -444,7 +446,7 @@ export default function FacilityDetailsPage() {
 
           {/* Stats */}
           <div className="space-y-6">
-            {facility.stats && (
+            {!isTenant && facility.stats && (
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Statistics</h3>
                 <div className="space-y-4">
@@ -487,29 +489,31 @@ export default function FacilityDetailsPage() {
               />
             )}
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Quick Actions</h3>
-              <div className="space-y-2">
-                <button
-                  onClick={() => setActiveTab('devices')}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-                >
-                  View All Devices
-                </button>
-                <button
-                  onClick={() => setActiveTab('units')}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-                >
-                  Manage Units
-                </button>
-                <button
-                  onClick={() => navigate('/devices', { state: { facilityFilter: facility.id } })}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-                >
-                  Device Dashboard
-                </button>
+            {!isTenant && (
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Quick Actions</h3>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setActiveTab('devices')}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                  >
+                    View All Devices
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('units')}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                  >
+                    Manage Units
+                  </button>
+                  <button
+                    onClick={() => navigate('/devices', { state: { facilityFilter: facility.id } })}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                  >
+                    Device Dashboard
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -583,17 +587,16 @@ export default function FacilityDetailsPage() {
 
       {activeTab === 'units' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white">Units</h3>
-            {canManage && (
+          {canManage && (
+            <div className="flex justify-end">
               <button
                 onClick={() => setShowAddUnitModal(true)}
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
               >
                 Add Unit
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           {units.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

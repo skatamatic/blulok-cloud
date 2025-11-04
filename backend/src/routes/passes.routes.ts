@@ -13,7 +13,7 @@
  */
 import { Router, Response } from 'express';
 import Joi from 'joi';
-import rateLimit from 'express-rate-limit';
+import { passRequestLimiter } from '@/middleware/security-limits';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
@@ -28,14 +28,7 @@ import { config } from '@/config/environment';
 
 const router = Router();
 
-// Rate limit pass requests to 20 per minute per user
-const passRequestLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 20,
-  message: 'Too many pass requests, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// Rate limit pass requests
 
 /**
  * Resolve lock audiences based on user role and permissions.

@@ -5,7 +5,7 @@ import { UserFacilityAssociationModel } from '@/models/user-facility-association
 import { AuthService } from '@/services/auth.service';
 import { UserRole, CreateUserRequest, UpdateUserRequest, AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler, AppError } from '@/middleware/error.middleware';
-import { authenticateToken, requireUserManagement } from '@/middleware/auth.middleware';
+import { authenticateToken, requireUserManagement, requireUserManagementOrSelf } from '@/middleware/auth.middleware';
 import { DatabaseService } from '@/services/database.service';
 import { UserDeviceModel } from '@/models/user-device.model';
 import { FirstTimeUserService } from '@/services/first-time-user.service';
@@ -41,36 +41,18 @@ const router = Router();
 // All routes require authentication - no anonymous access allowed
 router.use(authenticateToken);
 
-// Helper function to check if user is accessing their own profile
-const isSelfProfile = (req: AuthenticatedRequest): boolean => {
-  return !!(req.user && req.params.id === req.user.userId);
-};
-
-// Helper function to check if user has management permissions or is accessing their own profile
-const requireUserManagementOrSelf = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
-  if (!req.user) {
-    throw new AppError('Authentication required', 401);
-  }
-
-  // Allow if user has management permissions OR is accessing their own profile
-  if (AuthService.canManageUsers(req.user.role) || isSelfProfile(req)) {
-    next();
-  } else {
-    throw new AppError('User management permissions required', 403);
-  }
-};
 
 // Helper function to check facility access for facility admins
 const checkFacilityAccess = async (req: AuthenticatedRequest, targetUserId: string): Promise<boolean> => {
   if (!req.user) return false;
   
   // Global admins can access all users
-  if (req.user.role === UserRole.ADMIN || req.user.role === UserRole.DEV_ADMIN) {
+  if (AuthService.canAccessAllFacilities(req.user.role)) {
     return true;
   }
   
   // Facility admins can only access users in their facilities
-  if (req.user.role === UserRole.FACILITY_ADMIN) {
+  if (AuthService.isFacilityAdmin(req.user.role)) {
     if (!req.user.facilityIds || req.user.facilityIds.length === 0) {
       return false;
     }
@@ -89,7 +71,7 @@ const checkFacilityAccess = async (req: AuthenticatedRequest, targetUserId: stri
 // Validation schemas
 const createUserSchema = Joi.object({
   email: Joi.string().email().required(),
-  password: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]')).required()
+  password: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$')).required()
     .messages({
       'string.pattern.base': 'Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character'
     }),
@@ -197,7 +179,7 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   });
 
   // If requester is facility admin, filter to only show users from their facilities
-  if (req.user!.role === UserRole.FACILITY_ADMIN) {
+  if (AuthService.isFacilityAdmin(req.user!.role)) {
     const requesterFacilityIds = req.user!.facilityIds || [];
     filteredUsers = filteredUsers.filter(user => {
       // Always show global admins
@@ -383,7 +365,7 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
 
   // Get user devices (only for dev admins)
   let userDevices: any[] = [];
-  const isDevAdmin = req.user!.role === UserRole.DEV_ADMIN;
+  const isDevAdmin = AuthService.isAdmin(req.user!.role) && req.user!.role === UserRole.DEV_ADMIN;
   if (isDevAdmin) {
     const userDeviceModel = new UserDeviceModel();
     userDevices = await userDeviceModel.listByUser(id);
@@ -440,6 +422,11 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
 router.post('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = createUserSchema.validate(req.body);
   if (error) {
+    logger.warn('Create user validation failed', {
+      requester: req.user?.userId,
+      role: req.user?.role,
+      message: error.details[0]?.message,
+    });
     res.status(400).json({
       success: false,
       message: error.details[0]?.message || 'Validation error'
@@ -460,6 +447,20 @@ router.post('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRe
 
   const result = await AuthService.createUser(userData);
   const statusCode = result.success ? 201 : 400;
+  if (!result.success) {
+    logger.warn('Create user failed', {
+      requester: req.user?.userId,
+      role: req.user?.role,
+      reason: result.message,
+    });
+  } else {
+    logger.info('User created', {
+      requester: req.user?.userId,
+      role: req.user?.role,
+      createdUserEmail: userData.email,
+      createdRole: userData.role,
+    });
+  }
   res.status(statusCode).json(result);
 }));
 

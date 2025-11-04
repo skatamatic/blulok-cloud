@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
+import { loginLimiter } from '@/middleware/security-limits';
 import Joi from 'joi';
 import { AuthService } from '@/services/auth.service';
 import { LoginRequest, AuthenticatedRequest, UserRole } from '@/types/auth.types';
@@ -75,14 +76,17 @@ const loginSchema = Joi.object({
 
 const changePasswordSchema = Joi.object({
   currentPassword: Joi.string().required(),
-  newPassword: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$')).required()
+  newPassword: Joi.string()
+    .min(8)
+    .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$'))
+    .required()
     .messages({
-      'string.pattern.base': 'Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character'
+      'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character'
     })
 });
 
 // POST /auth/login - User authentication endpoint
-router.post('/login', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+router.post('/login', loginLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const { error, value } = loginSchema.validate(req.body);
   if (error) {
     res.status(400).json({
@@ -125,6 +129,11 @@ router.post('/login', asyncHandler(async (req: Request, res: Response): Promise<
 router.post('/change-password', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = changePasswordSchema.validate(req.body);
   if (error) {
+    logger.error('Change password validation failed', {
+      requester: req.user?.userId,
+      role: req.user?.role,
+      message: error.details[0]?.message,
+    });
     res.status(400).json({
       success: false,
       message: error.details[0]?.message || 'Validation error'
@@ -136,6 +145,18 @@ router.post('/change-password', authenticateToken as any, asyncHandler(async (re
   const result = await AuthService.changePassword(req.user!.userId, currentPassword, newPassword);
 
   const statusCode = result.success ? 200 : 400;
+  if (!result.success) {
+    logger.error('Change password failed', {
+      requester: req.user?.userId,
+      role: req.user?.role,
+      reason: result.message,
+    });
+  } else {
+    logger.info('Password changed', {
+      requester: req.user?.userId,
+      role: req.user?.role,
+    });
+  }
   res.status(statusCode).json(result);
 }));
 
@@ -283,8 +304,11 @@ router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req
   const schema = Joi.object({
     token: Joi.string().required(),
     otp: Joi.string().pattern(/^\d{6}$/).required(),
-    newPassword: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$')).required()
-      .messages({ 'string.pattern.base': 'Password must contain lowercase, uppercase, number, and special char' })
+    newPassword: Joi.string()
+      .min(8)
+      .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$'))
+      .required()
+      .messages({ 'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character' })
   });
   const { error, value } = schema.validate(req.body);
   if (error) {

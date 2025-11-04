@@ -81,23 +81,14 @@ export const Modal: React.FC<ModalProps> = ({
           ref={modalRef}
           className={`relative w-full ${sizeClasses[size]} transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 shadow-xl transition-all duration-300 scale-100`}
         >
-          {/* Header */}
-          {(title || showCloseButton) && (
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-              {title && (
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                  {title}
-                </h3>
-              )}
-              {showCloseButton && (
-                <button
-                  onClick={onClose}
-                  className="rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors duration-200"
-                >
-                  <XMarkIcon className="h-6 w-6" />
-                </button>
-              )}
-            </div>
+          {showCloseButton && (
+            <button
+              onClick={onClose}
+              className="absolute top-3 right-3 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors duration-200"
+              aria-label="Close"
+            >
+              <XMarkIcon className="h-6 w-6" />
+            </button>
           )}
 
           {/* Content */}

@@ -28,6 +28,22 @@ describe('LoggerInterceptorService Security Tests', () => {
   });
 
   describe('Security and Data Integrity', () => {
+    it('redacts bearer tokens and token fields from broadcasts', () => {
+      // Reset interceptor instance
+      (LoggerInterceptorService as any).instance = undefined;
+      const svc = LoggerInterceptorService.getInstance();
+
+      const originalInfo = logger.info;
+      logger.info = jest.fn();
+
+      (svc as any).broadcastLogEntry('info', 'Authorization: Bearer abc.def.ghi', [{ token: 'supersecrettoken' }]);
+      expect(mockWebSocketService.broadcastLogUpdate).toHaveBeenCalled();
+      const payload = JSON.parse(mockWebSocketService.broadcastLogUpdate.mock.calls[0][1]);
+      expect(payload.message).not.toContain('abc.def.ghi');
+      expect((payload.args || []).join(' ')).not.toContain('supersecrettoken');
+
+      logger.info = originalInfo;
+    });
     it('should not expose sensitive data in log broadcasts', () => {
       const sensitiveData = {
         password: 'secret123',

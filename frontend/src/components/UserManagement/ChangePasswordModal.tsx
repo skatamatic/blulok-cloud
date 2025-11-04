@@ -34,8 +34,8 @@ export function ChangePasswordModal({ isOpen, onClose, onSuccess }: ChangePasswo
       newErrors.newPassword = 'New password is required';
     } else if (formData.newPassword.length < 8) {
       newErrors.newPassword = 'Password must be at least 8 characters long';
-    } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(formData.newPassword)) {
-      newErrors.newPassword = 'Password must contain at least one uppercase letter, one lowercase letter, and one number';
+    } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])/.test(formData.newPassword)) {
+      newErrors.newPassword = 'Password must include uppercase, lowercase, number, and special character';
     }
 
     if (!formData.confirmPassword.trim()) {
@@ -115,15 +115,6 @@ export function ChangePasswordModal({ isOpen, onClose, onSuccess }: ChangePasswo
               </p>
             </div>
           </div>
-          <button
-            onClick={handleClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-          >
-            <span className="sr-only">Close</span>
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
         </div>
 
         {/* Form */}
@@ -193,7 +184,7 @@ export function ChangePasswordModal({ isOpen, onClose, onSuccess }: ChangePasswo
               <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.newPassword}</p>
             )}
             <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              Password must be at least 8 characters with uppercase, lowercase, and number
+              Password must be at least 8 characters and include uppercase, lowercase, number, and special character
             </div>
           </div>
 

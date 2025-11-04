@@ -20,23 +20,17 @@
  * - Critical for maintaining cryptographic security
  */
 
-import { Router, Response, RequestHandler, NextFunction } from 'express';
+import { Router, Response } from 'express';
 import Joi from 'joi';
-import { authenticateToken } from '@/middleware/auth.middleware';
-import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
+import { authenticateToken, requireDevAdmin } from '@/middleware/auth.middleware';
+import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { validate } from '@/middleware/validator.middleware';
 import rateLimit from 'express-rate-limit';
+import { adminWriteLimiter } from '@/middleware/security-limits';
 
 const router = Router();
-
-const requireDevAdmin: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-  if (![UserRole.DEV_ADMIN].includes(req.user!.role)) {
-    res.status(403).json({ success: false, message: 'Dev admin required' });
-    return;
-  }
-  next();
-};
 
 const rotationSchema = Joi.object({
   payload: Joi.object({
@@ -48,15 +42,11 @@ const rotationSchema = Joi.object({
 });
 
 // Rate limit sensitive admin endpoint
-const rotationLimiter = rateLimit({ windowMs: 60_000, max: 5 });
+const rotationLimiter = adminWriteLimiter;
 
 // POST /api/v1/admin/ops-key-rotation/broadcast
-router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = rotationSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, validate(rotationSchema), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const value = req.body as any;
 
   // Monotonic ts: persist last in system_settings
   const { DatabaseService } = await import('@/services/database.service');

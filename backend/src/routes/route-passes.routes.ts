@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
-import { authenticateToken } from '@/middleware/auth.middleware';
+import { authenticateToken, requireDevAdmin } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
-import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
+import { AuthenticatedRequest } from '@/types/auth.types';
 import { RoutePassIssuanceModel } from '@/models/route-pass-issuance.model';
 import { logger } from '@/utils/logger';
 
@@ -13,18 +13,8 @@ const router = Router();
  * Get route pass issuance history for a user (DEV_ADMIN only).
  * Supports pagination and optional date filtering.
  */
-router.get('/users/:userId', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.get('/users/:userId', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { userId } = req.params;
-  const requestingUser = req.user!;
-
-  // Only DEV_ADMIN can view route pass history
-  if (requestingUser.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({
-      success: false,
-      message: 'Only dev_admin can view route pass history'
-    });
-    return;
-  }
 
   if (!userId) {
     res.status(400).json({

@@ -41,9 +41,10 @@
 
 import { Router, Response } from 'express';
 import { GatewayModel } from '../models/gateway.model';
-import { authenticateToken } from '../middleware/auth.middleware';
+import { authenticateToken, requireAdmin, requireRoles } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { asyncHandler } from '../middleware/error.middleware';
+import { AuthService } from '../services/auth.service';
 
 const router = Router();
 const gatewayModel = new GatewayModel();
@@ -76,18 +77,8 @@ function validateGatewayConfigurationForTesting(gateway: any): boolean {
 router.use(authenticateToken);
 
 // POST /api/gateways - Create new gateway
-router.post('/', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-  
-  // Only admins and dev admins can create gateways
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ 
-      success: false, 
-      message: 'Insufficient permissions. Only administrators can create gateways.' 
-    });
-    return;
-  }
-
+router.post('/', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+ 
   const gatewayData = req.body;
   const gateway = await gatewayModel.create(gatewayData);
   
@@ -98,17 +89,8 @@ router.post('/', asyncHandler(async (req: AuthenticatedRequest, res: Response): 
 }));
 
 // GET /api/gateways - Get all gateways
-router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.get('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  
-  // TENANT and MAINTENANCE users cannot access gateways
-  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-    res.status(403).json({ 
-      success: false, 
-      message: 'Access denied. Tenants and maintenance users cannot access gateways.' 
-    });
-    return;
-  }
   
   const gateways = await gatewayModel.findAll();
   
@@ -128,18 +110,9 @@ router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: Response): P
 }));
 
 // GET /api/gateways/:id - Get specific gateway
-router.get('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.get('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id as string;
-  
-  // TENANT and MAINTENANCE users cannot access gateways
-  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-    res.status(403).json({ 
-      success: false, 
-      message: 'Access denied. Tenants and maintenance users cannot access gateways.' 
-    });
-    return;
-  }
   
   const gateway = await gatewayModel.findById(String(id));
   
@@ -169,19 +142,9 @@ router.get('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response)
 }));
 
 // PUT /api/gateways/:id - Update gateway
-router.put('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
+router.put('/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const id = req.params.id as string;
-  
-  // Only admins and dev admins can update gateways
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ 
-      success: false, 
-      message: 'Insufficient permissions. Only administrators can update gateways.' 
-    });
-    return;
-  }
-
+ 
   const gatewayData = req.body;
   const gateway = await gatewayModel.update(String(id), gatewayData);
 
@@ -210,19 +173,10 @@ router.put('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response)
 }));
 
 // PUT /api/gateways/:id/status - Update gateway status
-router.put('/:id/status', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.put('/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id as string;
   const { status } = req.body as { status: string };
-  
-  // TENANT and MAINTENANCE users cannot update gateway status
-  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-    res.status(403).json({ 
-      success: false, 
-      message: 'Access denied. Tenants and maintenance users cannot update gateway status.' 
-    });
-    return;
-  }
   
   // Check if gateway exists and user has access
   const gateway = await gatewayModel.findById(String(id));
@@ -254,18 +208,9 @@ router.put('/:id/status', asyncHandler(async (req: AuthenticatedRequest, res: Re
 }));
 
 // POST /api/gateways/:id/test-connection - Test gateway connection
-router.post('/:id/test-connection', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/:id/test-connection', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id as string;
-
-  // TENANT and MAINTENANCE users cannot test gateway connections
-  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-    res.status(403).json({
-      success: false,
-      message: 'Access denied. Tenants and maintenance users cannot test gateway connections.'
-    });
-    return;
-  }
 
   // Check if gateway exists and user has access
   const gateway = await gatewayModel.findById(String(id));
@@ -386,18 +331,9 @@ router.post('/:id/test-connection', asyncHandler(async (req: AuthenticatedReques
 }));
 
 // POST /api/gateways/:id/sync - Manually sync gateway
-router.post('/:id/sync', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/:id/sync', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id as string;
-
-  // TENANT and MAINTENANCE users cannot sync gateways
-  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-    res.status(403).json({
-      success: false,
-      message: 'Access denied. Tenants and maintenance users cannot sync gateways.'
-    });
-    return;
-  }
 
   // Check if gateway exists and user has access
   const gateway = await gatewayModel.findById(String(id));

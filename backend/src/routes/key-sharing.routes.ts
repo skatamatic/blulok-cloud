@@ -42,6 +42,7 @@ import { Router, Response } from 'express';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { KeySharingModel } from '../models/key-sharing.model';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
+import { AuthService } from '../services/auth.service';
 
 const router = Router();
 const keySharingModel = new KeySharingModel();
@@ -82,32 +83,22 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     if (expires_before) filters.expires_before = new Date(expires_before as string);
 
     // Apply role-based filtering
-    switch (user.role) {
-      case UserRole.ADMIN:
-      case UserRole.DEV_ADMIN:
-        // Admins can see everything - no additional filtering
-        break;
-        
-      case UserRole.FACILITY_ADMIN:
-        // Facility admins can only see sharing for their assigned facilities
-        if (user.facilityIds && user.facilityIds.length > 0) {
-          filters.facility_ids = user.facilityIds;
-        }
-        break;
-        
-      case UserRole.TENANT:
-        // Tenants can only see sharing for their own units or units they have shared access to
-        filters.primary_tenant_id = user.userId;
-        break;
-        
-      case UserRole.MAINTENANCE:
-        // Maintenance can only see their own sharing
-        filters.shared_with_user_id = user.userId;
-        break;
-        
-      default:
-        res.status(403).json({ error: 'Insufficient permissions' });
-        return;
+    if (AuthService.isAdmin(user.role)) {
+      // Admins can see everything - no additional filtering
+    } else if (AuthService.isFacilityAdmin(user.role)) {
+      // Facility admins can only see sharing for their assigned facilities
+      if (user.facilityIds && user.facilityIds.length > 0) {
+        filters.facility_ids = user.facilityIds;
+      }
+    } else if (user.role === UserRole.TENANT) {
+      // Tenants can only see sharing for their own units or units they have shared access to
+      filters.primary_tenant_id = user.userId;
+    } else if (user.role === UserRole.MAINTENANCE) {
+      // Maintenance can only see their own sharing
+      filters.shared_with_user_id = user.userId;
+    } else {
+      res.status(403).json({ error: 'Insufficient permissions' });
+      return;
     }
 
     const result = await keySharingModel.findAll(filters);
@@ -173,7 +164,7 @@ router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Pr
     }
     
     // Check if user exists (for non-admin users, this is already validated by the permission check above)
-    if (![UserRole.ADMIN, UserRole.DEV_ADMIN].includes(user.role)) {
+    if (!AuthService.isAdmin(user.role)) {
       // For non-admin users, we already validated they can only access their own records
       // So we can proceed without additional user existence check
     } else {
@@ -227,7 +218,7 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
     
     const hasAccess = await keySharingModel.checkUserHasAccess(user.userId, unitId);
     
-    if (!hasAccess && ![UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(user.role)) {
+    if (!hasAccess && !AuthService.canManageUsers(user.role)) {
       res.status(403).json({ error: 'Access denied to this unit' });
       return;
     }
@@ -312,7 +303,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
         res.status(403).json({ error: 'You can only share keys for units you own' });
         return;
       }
-    } else if (![UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(user.role)) {
+    } else if (!AuthService.canManageUsers(user.role)) {
       res.status(403).json({ error: 'Insufficient permissions to share keys' });
       return;
     }
@@ -379,7 +370,7 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
         res.status(403).json({ error: 'You can only modify sharing for units you own' });
         return;
       }
-    } else if (![UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(user.role)) {
+    } else if (!AuthService.canManageUsers(user.role)) {
       res.status(403).json({ error: 'Insufficient permissions to modify key sharing' });
       return;
     }
@@ -424,7 +415,7 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<
         res.status(403).json({ error: 'You can only revoke sharing for units you own' });
         return;
       }
-    } else if (![UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(user.role)) {
+    } else if (!AuthService.canManageUsers(user.role)) {
       res.status(403).json({ error: 'Insufficient permissions to revoke key sharing' });
       return;
     }

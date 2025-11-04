@@ -24,7 +24,10 @@
     "db:init": "node scripts/init-database.js",
     "db:setup": "npm run db:init && npm run migrate && npm run seed",
     "db:demo": "npm run db:init && npm run migrate && npm run seed:simple",
-    "demo:reset": "node scripts/reset-demo-db.js"
+    "demo:reset": "node scripts/reset-demo-db.js",
+    "gen:ops-keys": "node scripts/gen-ops-keys.js",
+    "gen:root-keys": "node scripts/gen-root-keys.js",
+    "gen:dev-secrets": "node scripts/gen-dev-secrets.js"
   },
   "dependencies": {
     "@types/uuid": "^8.3.4",

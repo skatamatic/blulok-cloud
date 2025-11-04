@@ -756,14 +756,13 @@ describe('Devices Routes', () => {
         expectForbidden(response);
       });
 
-      it('should allow TENANT to list devices in their facilities', async () => {
+      it('should deny TENANT from listing devices', async () => {
         const response = await request(app)
           .get('/api/v1/devices')
           .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .expect(200);
+          .expect(403);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('devices');
+        expectForbidden(response);
       });
 
       it('should prevent TENANT from listing devices in other facilities', async () => {
@@ -826,14 +825,13 @@ describe('Devices Routes', () => {
         expectForbidden(response);
       });
 
-      it('should allow TENANT to view their facility hierarchy', async () => {
+      it('should deny TENANT from viewing facility hierarchy', async () => {
         const response = await request(app)
           .get(`/api/v1/devices/facility/${testData.facilities.facility1.id}/hierarchy`)
           .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .expect(200);
+          .expect(403);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('hierarchy');
+        expectForbidden(response);
       });
 
       it('should prevent TENANT from viewing other facility hierarchy', async () => {
@@ -1144,7 +1142,7 @@ describe('Devices Routes', () => {
       expect(response.body).toHaveProperty('devices');
     });
 
-    it('should ensure tenants only see devices in their facilities', async () => {
+    it('should deny tenants from listing devices', async () => {
       mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
       mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
       mockDeviceModel.countBluLokDevices.mockResolvedValue(0);
@@ -1153,11 +1151,9 @@ describe('Devices Routes', () => {
       const response = await request(app)
         .get('/api/v1/devices')
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .expect(200);
+        .expect(403);
 
-      expectSuccess(response);
-      // All returned devices should be for facilities the tenant has access to
-      expect(response.body).toHaveProperty('devices');
+      expectForbidden(response);
     });
   });
 
@@ -1355,22 +1351,18 @@ describe('Devices Routes', () => {
         const response = await request(app)
           .get('/api/v1/devices/unassigned')
           .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .expect(200); // Returns 200 with empty array for users with no facility access
+          .expect(403);
 
-        expectSuccess(response);
-        // Should return empty array for tenant users
-        expect(response.body).toHaveProperty('devices');
-        expect(Array.isArray(response.body.devices)).toBe(true);
+        expectForbidden(response);
       });
 
       it('should prevent MAINTENANCE from accessing unassigned devices endpoint', async () => {
         const response = await request(app)
           .get('/api/v1/devices/unassigned')
           .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-          .expect(200); // Returns 200 with empty array for users with no facility access
+          .expect(403);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('devices');
+        expectForbidden(response);
       });
     });
 

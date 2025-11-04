@@ -13,6 +13,8 @@ jest.mock('@/middleware/auth.middleware', () => ({
     }
     next();
   },
+  requireTenant: (req: any, res: any, next: any) => next(),
+  requireNotTenant: (req: any, res: any, next: any) => next(),
   requireUserManagement: (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
@@ -22,6 +24,10 @@ jest.mock('@/middleware/auth.middleware', () => ({
     }
     next();
   },
+  requireAdmin: (req: any, res: any, next: any) => next(),
+  requireDevAdmin: (req: any, res: any, next: any) => next(),
+  requireAdminOrFacilityAdmin: (req: any, res: any, next: any) => next(),
+  requireUserManagementOrSelf: (req: any, res: any, next: any) => next(),
   requireRoles: () => (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
@@ -138,8 +144,14 @@ describe('Route Passes Routes', () => {
           };
           next();
         },
+        requireTenant: (req: any, res: any, next: any) => next(),
+        requireNotTenant: (req: any, res: any, next: any) => next(),
         requireUserManagement: (req: any, res: any, next: any) => next(),
-        requireRoles: () => (req: any, res: any, next: any) => next(),
+        requireAdmin: (req: any, res: any, next: any) => next(),
+        requireDevAdmin: (_req: any, res: any, _next: any) => res.status(403).json({ success: false, message: 'dev_admin required' }),
+        requireAdminOrFacilityAdmin: (req: any, res: any, next: any) => next(),
+        requireUserManagementOrSelf: (req: any, res: any, next: any) => next(),
+        requireRoles: () => (_req: any, _res: any, next: any) => next(),
       }));
       
       const { createApp: createFreshApp } = require('@/app');

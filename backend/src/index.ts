@@ -11,9 +11,13 @@ import { SimulatedProvider } from '@/services/fms/providers/simulated-provider';
 import { GenericRestProvider } from '@/services/fms/providers/generic-rest-provider';
 import { StoredgeProvider } from '@/services/fms/providers/storedge-provider';
 import { FMSProviderType } from '@/types/fms.types';
+import { validateEd25519Env } from '@/utils/security-env';
 
 async function bootstrap(): Promise<void> {
   try {
+    // Validate security environment early
+    validateEd25519Env();
+
     // Initialize database connection
     const dbService = DatabaseService.getInstance();
     let databaseWasCreated = false;
@@ -33,7 +37,12 @@ async function bootstrap(): Promise<void> {
       }
       
     } catch (dbError) {
-      logger.warn('Database setup failed, continuing without database:', dbError);
+      if (config.nodeEnv === 'test') {
+        logger.warn('Database setup failed (test mode), continuing without database:', dbError);
+      } else {
+        logger.error('Database setup failed. Aborting startup to avoid partial initialization.', dbError);
+        throw dbError;
+      }
     }
 
     // Register FMS providers

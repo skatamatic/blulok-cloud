@@ -22,7 +22,7 @@ jest.mock('@/models/denylist-entry.model', () => ({
     create: jest.fn().mockResolvedValue({}),
     findByUnitsAndUser: jest.fn().mockResolvedValue([]),
     remove: jest.fn().mockResolvedValue(true),
-  })),
+      })),
 }));
 
 const mockHandlers: any = {};
@@ -101,7 +101,7 @@ describe('AccessRevocationListenerService', () => {
         connection: mockDb,
       });
 
-      AccessRevocationListenerService.getInstance();
+    AccessRevocationListenerService.getInstance();
 
       await mockHandlers.unassigned({
         tenantId: 'user-1',
@@ -111,9 +111,9 @@ describe('AccessRevocationListenerService', () => {
       });
 
       expect(mockDenylistModel.create).toHaveBeenCalled();
-      const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
-      const gw = GatewayEventsService.getInstance() as any;
-      expect(gw.unicastToFacility).toHaveBeenCalled();
+    const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+    const gw = GatewayEventsService.getInstance() as any;
+    expect(gw.unicastToFacility).toHaveBeenCalled();
     });
 
     it('skips denylist if no devices found for unit', async () => {

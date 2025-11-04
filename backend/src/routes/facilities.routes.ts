@@ -36,8 +36,9 @@ import { Router, Response } from 'express';
 import { FacilityModel } from '../models/facility.model';
 // import { GatewayModel } from '../models/gateway.model';
 import { DeviceModel } from '../models/device.model';
-import { authenticateToken } from '../middleware/auth.middleware';
+import { authenticateToken, requireAdmin } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
+import { AuthService } from '../services/auth.service';
 
 const router = Router();
 const facilityModel = new FacilityModel();
@@ -56,7 +57,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     let facilityIds: string[] | undefined;
 
     // Restrict facility access based on user role
-    if (user.role === UserRole.FACILITY_ADMIN) {
+    if (AuthService.isFacilityAdmin(user.role)) {
       facilityIds = user.facilityIds;
     } else if (user.role === UserRole.TENANT) {
       facilityIds = user.facilityIds;
@@ -97,14 +98,20 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     }
 
     // Get stats for each facility
-    const facilitiesWithStats = await Promise.all(
+  // For TENANT roles, do not include stats to avoid leaking sensitive data
+  let facilitiesPayload: any[];
+  if (user.role === UserRole.TENANT) {
+    facilitiesPayload = result.facilities.map((f) => ({ ...f, stats: undefined }));
+  } else {
+    facilitiesPayload = await Promise.all(
       result.facilities.map(async (facility) => {
         const stats = await facilityModel.getFacilityStats(facility.id);
         return { ...facility, stats };
       })
     );
+  }
 
-    res.json({ success: true, facilities: facilitiesWithStats, total: result.total });
+  res.json({ success: true, facilities: facilitiesPayload, total: result.total });
   } catch (error) {
     console.error('Error fetching facilities:', error);
     res.status(500).json({ error: 'Failed to fetch facilities' });
@@ -118,7 +125,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
     const id = req.params.id as string;
 
     // Check access permissions
-    if (user.role === UserRole.FACILITY_ADMIN || user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
+    if (AuthService.isFacilityAdmin(user.role) || user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
       if (!user.facilityIds?.includes(id)) {
         res.status(403).json({ error: 'Access denied to this facility' });
         return;
@@ -131,14 +138,25 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
       return;
     }
 
-    const stats = await facilityModel.getFacilityStats(String(id));
-    const deviceHierarchy = await deviceModel.getFacilityDeviceHierarchy(String(id));
-
+  // Build response based on role
+  if (user.role === UserRole.TENANT) {
+    // Do not include stats or device hierarchy for tenants
     res.json({ 
       success: true,
-      facility: { ...facility, stats },
-      deviceHierarchy
+      facility: { ...facility, stats: undefined },
+      deviceHierarchy: { facility, gateway: null, accessControlDevices: [], blulokDevices: [] }
     });
+    return;
+  }
+
+  const stats = await facilityModel.getFacilityStats(String(id));
+  const deviceHierarchy = await deviceModel.getFacilityDeviceHierarchy(String(id));
+
+  res.json({ 
+    success: true,
+    facility: { ...facility, stats },
+    deviceHierarchy
+  });
   } catch (error) {
     console.error('Error fetching facility:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch facility' });
@@ -146,15 +164,8 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
 });
 
 // POST /api/facilities - Create new facility (Admin only)
-router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/', requireAdmin, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const user = req.user!;
-    
-    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-      res.status(403).json({ error: 'Insufficient permissions' });
-      return;
-    }
-
     const facilityData = req.body;
     const facility = await facilityModel.create(facilityData);
     
@@ -198,15 +209,8 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
 });
 
 // DELETE /api/facilities/:id - Delete facility (Admin only)
-router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.delete('/:id', requireAdmin, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const user = req.user!;
-    
-    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-      res.status(403).json({ error: 'Insufficient permissions' });
-      return;
-    }
-
     const id = req.params.id as string;
     const deleted = await facilityModel.delete(String(id));
     

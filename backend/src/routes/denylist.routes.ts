@@ -16,12 +16,13 @@
  * - TENANT: No access (denylist is internal security mechanism)
  */
 import { Router, Response } from 'express';
-import { authenticateToken } from '@/middleware/auth.middleware';
+import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { DenylistEntryModel } from '@/models/denylist-entry.model';
 import { DenylistPruningService } from '@/services/denylist-pruning.service';
 import { DatabaseService } from '@/services/database.service';
+import { AuthService } from '@/services/auth.service';
 import { logger } from '@/utils/logger';
 
 const router = Router();
@@ -33,7 +34,7 @@ router.get('/devices/:deviceId', asyncHandler(async (req: AuthenticatedRequest, 
   const user = req.user!;
 
   // Check access: facility admin can only view devices in their facilities
-  if (user.role === UserRole.FACILITY_ADMIN) {
+  if (AuthService.isFacilityAdmin(user.role)) {
     const knex = DatabaseService.getInstance().connection;
     const device = await knex('blulok_devices')
       .join('units', 'blulok_devices.unit_id', 'units.id')
@@ -76,18 +77,8 @@ router.get('/devices/:deviceId', asyncHandler(async (req: AuthenticatedRequest, 
 }));
 
 // GET /api/v1/denylist/users/:userId - Get denylist entries for a user
-router.get('/users/:userId', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.get('/users/:userId', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { userId } = req.params;
-  const user = req.user!;
-
-  // Only admins can view user denylist entries
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({
-      success: false,
-      message: 'Access denied. Admin role required.'
-    });
-    return;
-  }
 
   const denylistModel = new DenylistEntryModel();
   const entries = await denylistModel.findByUser(userId);
@@ -121,17 +112,8 @@ router.get('/users/:userId', asyncHandler(async (req: AuthenticatedRequest, res:
 }));
 
 // POST /api/v1/denylist/prune - Manually trigger pruning (admin only)
-router.post('/prune', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/prune', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-
-  // Only admins can trigger manual pruning
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({
-      success: false,
-      message: 'Access denied. Admin role required.'
-    });
-    return;
-  }
 
   try {
     const pruningService = DenylistPruningService.getInstance();

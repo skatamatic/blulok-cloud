@@ -46,8 +46,9 @@ import { AccessLogModel } from '../models/access-log.model';
 import { UnitModel } from '../models/unit.model';
 import { KeySharingModel } from '../models/key-sharing.model';
 import { UserFacilityAssociationModel } from '../models/user-facility-association.model';
-import { authenticateToken } from '../middleware/auth.middleware';
+import { authenticateToken, requireRoles } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
+import { AuthService } from '../services/auth.service';
 
 const router = Router();
 const accessLogModel = new AccessLogModel();
@@ -95,7 +96,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
       const sharedUnits = await keySharingModel.getUserSharedUnits(user.userId);
       const accessibleUnits = [...userUnits.map((u: any) => u.id), ...sharedUnits.map((s: any) => s.unit_id)];
       filters.user_accessible_units = accessibleUnits;
-    } else if (user.role === UserRole.FACILITY_ADMIN) {
+    } else if (AuthService.isFacilityAdmin(user.role)) {
       // Facility admins can only see logs for their assigned facilities
       if (!user.facilityIds || user.facilityIds.length === 0) {
         res.status(403).json({ success: false, message: 'No facilities assigned' });
@@ -112,7 +113,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     if (facility_id) {
       const requestedFacilityId = facility_id as string;
       // Check if user has access to this facility
-      if (user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(requestedFacilityId)) {
+      if (AuthService.isFacilityAdmin(user.role) && !user.facilityIds?.includes(requestedFacilityId)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });
         return;
       }
@@ -157,7 +158,7 @@ router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
     
-    if (user.role === UserRole.FACILITY_ADMIN) {
+    if (AuthService.isFacilityAdmin(user.role)) {
       // Check if the user is in one of their facilities
       const userFacilities = await UserFacilityAssociationModel.getUserFacilityIds(userId as string);
       const hasAccess = userFacilities.some(facilityId => user.facilityIds?.includes(facilityId));
@@ -186,18 +187,12 @@ router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Pr
 });
 
 // Get access history for a specific facility
-router.get('/facility/:facilityId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.get('/facility/:facilityId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const { facilityId } = req.params;
     
-    // Check permissions
-    if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-      res.status(403).json({ success: false, message: 'Insufficient permissions' });
-      return;
-    }
-    
-    if (user.role === UserRole.FACILITY_ADMIN) {
+    if (AuthService.isFacilityAdmin(user.role)) {
       if (!user.facilityIds?.includes(facilityId as string)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });
         return;
@@ -230,7 +225,7 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
         res.status(403).json({ success: false, message: 'Access denied to this unit' });
         return;
       }
-    } else if (user.role === UserRole.FACILITY_ADMIN) {
+    } else if (AuthService.isFacilityAdmin(user.role)) {
       // Check if unit belongs to one of their facilities
       const unit = await unitModel.findById(unitId as string);
       if (!unit || !user.facilityIds?.includes(unit.facility_id)) {
@@ -292,7 +287,7 @@ router.get('/export', async (req: AuthenticatedRequest, res: Response): Promise<
       const sharedUnits = await keySharingModel.getUserSharedUnits(user.userId);
       const accessibleUnits = [...userUnits.map((u: any) => u.id), ...sharedUnits.map((s: any) => s.unit_id)];
       filters.user_accessible_units = accessibleUnits;
-    } else if (user.role === UserRole.FACILITY_ADMIN) {
+    } else if (AuthService.isFacilityAdmin(user.role)) {
       // Facility admins can only see logs for their assigned facilities
       filters.facility_ids = user.facilityIds;
     } else if (user.role === UserRole.MAINTENANCE) {
@@ -305,7 +300,7 @@ router.get('/export', async (req: AuthenticatedRequest, res: Response): Promise<
     if (facility_id) {
       const requestedFacilityId = facility_id as string;
       // Check if user has access to this facility
-      if (user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(requestedFacilityId)) {
+      if (AuthService.isFacilityAdmin(user.role) && !user.facilityIds?.includes(requestedFacilityId)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });
         return;
       }
@@ -363,7 +358,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
           return;
         }
       }
-    } else if (user.role === UserRole.FACILITY_ADMIN && log.facility_id) {
+    } else if (AuthService.isFacilityAdmin(user.role) && log.facility_id) {
       // Facility admins can only see logs for their facilities
       if (!user.facilityIds?.includes(log.facility_id)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });

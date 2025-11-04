@@ -93,13 +93,27 @@ export class LoggerInterceptorService {
         messageStr = typeof message === 'string' ? message : String(message);
       }
       
+      // Redact sensitive tokens and secrets in message/args
+      const redact = (val: string): string => {
+        return val
+          .replace(/Bearer\s+[A-Za-z0-9-_.]+/gi, 'Bearer [REDACTED]')
+          .replace(/(Authorization\s*:?\s*)(Bearer\s+)?[A-Za-z0-9-_.]+/gi, '$1[REDACTED]')
+          .replace(/(JWT_SECRET|OPS_ED25519_PRIVATE_KEY_B64|OPS_ED25519_PUBLIC_KEY_B64|ROOT_ED25519_PUBLIC_KEY_B64)=[^\s]+/g, '$1=[REDACTED]')
+          .replace(/(token"?\s*:\s*")[^"]+/gi, '$1[REDACTED]')
+          .replace(/(token=)[^&\s]+/gi, '$1[REDACTED]');
+      };
+      messageStr = redact(messageStr);
+
       // Format the log entry similar to Winston's format
       const logEntry = {
         level,
         message: messageStr,
         timestamp: new Date().toISOString(),
         stack,
-        args: args.length > 0 ? args.map(arg => typeof arg === 'string' ? arg : String(arg)) : undefined
+        args: args.length > 0 ? args.map(arg => {
+          const s = typeof arg === 'string' ? arg : String(arg);
+          return redact(s);
+        }) : undefined
       };
 
 

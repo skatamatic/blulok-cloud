@@ -18,6 +18,10 @@ export class Ed25519Service {
 	private static opsPrivateKeyPromise: Promise<KeyLike> | null = null;
 	private static opsPublicKeyPromise: Promise<KeyLike> | null = null;
   private static testGenerated: { d: string; x: string } | null = null;
+  private static getOpsKeyId(): string {
+    if (this.testGenerated?.x) return this.testGenerated.x;
+    return String((config as any).security.opsPublicKeyB64 || '');
+  }
 
 	private static async getOpsPrivateKey(): Promise<KeyLike> {
 		if (!this.opsPrivateKeyPromise) {
@@ -67,7 +71,7 @@ export class Ed25519Service {
 		const now = Math.floor(Date.now() / 1000);
 		const ttlSeconds = (config.security.routePassTtlHours || 24) * 3600;
 		return await new SignJWT(payload as any)
-			.setProtectedHeader({ alg: 'EdDSA', typ: 'JWT' })
+			.setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
 			.setIssuedAt(now)
 			.setExpirationTime(now + ttlSeconds)
 			.sign(privateKey);

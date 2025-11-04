@@ -55,7 +55,7 @@
  */
 
 import { Router, Response } from 'express';
-import { authenticateToken } from '@/middleware/auth.middleware';
+import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { GatewayCommandModel, GatewayCommandAttemptModel } from '@/models/gateway-command.model';
 import { asyncHandler } from '@/utils/asyncHandler';
@@ -76,49 +76,32 @@ router.get('/pending', asyncHandler(async (req: AuthenticatedRequest, res: Respo
   res.json({ success: true, ...result });
 }));
 
-router.post('/:id/retry', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/:id/retry', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Insufficient permissions' });
-    return;
-  }
   await model.retryNow(String(req.params.id));
   const { WebSocketService } = await import('@/services/websocket.service');
   await WebSocketService.getInstance().broadcastCommandQueueUpdate();
   res.json({ success: true });
 }));
 
-router.post('/:id/cancel', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/:id/cancel', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Insufficient permissions' });
-    return;
-  }
   await model.cancel(String(req.params.id));
   const { WebSocketService } = await import('@/services/websocket.service');
   await WebSocketService.getInstance().broadcastCommandQueueUpdate();
   res.json({ success: true });
 }));
 
-router.post('/:id/requeue-dead', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.post('/:id/requeue-dead', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Insufficient permissions' });
-    return;
-  }
   await model.requeueDead(String(req.params.id));
   const { WebSocketService } = await import('@/services/websocket.service');
   await WebSocketService.getInstance().broadcastCommandQueueUpdate();
   res.json({ success: true });
 }));
 
-router.get('/:id/attempts', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+router.get('/:id/attempts', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  // Admin/Dev Admin only for full audit visibility
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Insufficient permissions' });
-    return;
-  }
   const items = await attemptModel.listByCommand(String(req.params.id));
   res.json({ success: true, items });
 }));
