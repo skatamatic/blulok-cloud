@@ -13,7 +13,7 @@
  *   - ROOT private key printed once with a strong warning
  */
 
-const { generateKeyPair, exportJWK } = require('jose');
+const { generateKeyPair, exportJWK, importJWK, exportSPKI } = require('jose');
 const crypto = require('crypto');
 
 function isBase64Url(str) {
@@ -54,6 +54,12 @@ async function main() {
   console.log('============================= OPS KEYS (Ed25519) =============================');
   console.log('OPS_ED25519_PRIVATE_KEY_B64=' + ops.d);
   console.log('OPS_ED25519_PUBLIC_KEY_B64=' + ops.x);
+  // JWK & PEM (SPKI) for OPS public key
+  const opsJwk = { kty: 'OKP', crv: 'Ed25519', x: ops.x };
+  const opsKey = await importJWK(opsJwk, 'EdDSA');
+  const opsSpki = await exportSPKI(opsKey);
+  console.log('OPS_PUBLIC_KEY_JWK=' + JSON.stringify(opsJwk));
+  console.log('OPS_PUBLIC_KEY_PEM=\n' + opsSpki.trim());
   console.log('==============================================================================');
   console.log('');
 
@@ -62,6 +68,12 @@ async function main() {
   console.log('ROOT_ED25519_PRIVATE_KEY_B64=' + root.d);
   console.log('==============================================================================');
   console.log('ROOT_ED25519_PUBLIC_KEY_B64=' + root.x);
+  // JWK & PEM (SPKI) for ROOT public key
+  const rootJwk = { kty: 'OKP', crv: 'Ed25519', x: root.x };
+  const rootKey = await importJWK(rootJwk, 'EdDSA');
+  const rootSpki = await exportSPKI(rootKey);
+  console.log('ROOT_PUBLIC_KEY_JWK=' + JSON.stringify(rootJwk));
+  console.log('ROOT_PUBLIC_KEY_PEM=\n' + rootSpki.trim());
   console.log('');
 
   console.log('=============================== JWT SECRET ===================================');

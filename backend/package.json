@@ -27,7 +27,8 @@
     "demo:reset": "node scripts/reset-demo-db.js",
     "gen:ops-keys": "node scripts/gen-ops-keys.js",
     "gen:root-keys": "node scripts/gen-root-keys.js",
-    "gen:dev-secrets": "node scripts/gen-dev-secrets.js"
+    "gen:dev-secrets": "node scripts/gen-dev-secrets.js",
+    "gen:public_keys": "node scripts/gen-public-keys.js"
   },
   "dependencies": {
     "@types/uuid": "^8.3.4",
