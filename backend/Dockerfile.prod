@@ -34,15 +34,15 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Create logs directory
 RUN mkdir -p logs && chown backend:nodejs logs
 
-# Health check
+# Health check on the runtime port (Cloud Run sets PORT, default 8080)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3000/health || exit 1
+  CMD /bin/sh -c 'wget -qO- http://127.0.0.1:${PORT:-8080}/health >/dev/null 2>&1 || exit 1'
 
 # Switch to non-root user
 USER backend
 
-# Expose port
-EXPOSE 3000
+# Expose Cloud Run port
+EXPOSE 8080
 
 # Start application
 CMD ["npm", "start"]
