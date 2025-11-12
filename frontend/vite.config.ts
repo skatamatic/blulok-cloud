@@ -27,7 +27,8 @@ export default defineConfig(({ mode }) => {
       sourcemap: true,
     },
     define: {
-      'import.meta.env.VITE_API_URL': JSON.stringify(env.VITE_API_URL || ''),
+      // Use process.env so Cloud Build/Docker ENV VITE_API_URL is injected at build time
+      'import.meta.env.VITE_API_URL': JSON.stringify(process.env.VITE_API_URL || env.VITE_API_URL || ''),
     },
   };
 });
