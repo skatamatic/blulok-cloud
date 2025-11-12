@@ -43,6 +43,10 @@ import { authenticateToken } from '../middleware/auth.middleware';
 import { KeySharingModel } from '../models/key-sharing.model';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { AuthService } from '../services/auth.service';
+import { DatabaseService } from '@/services/database.service';
+import { logger } from '@/utils/logger';
+import { KeySharingService } from '@/services/key-sharing.service';
+import { toE164 } from '@/utils/phone.util';
 
 const router = Router();
 const keySharingModel = new KeySharingModel();
@@ -516,3 +520,83 @@ router.get('/admin/expired', async (req: AuthenticatedRequest, res: Response): P
 });
 
 export default router;
+// ----- Invite flow: POST /api/v1/key-sharing/invite -----
+// Allows a sharer to invite a user by phone number (E.164) and grant shared access to a unit.
+// Roles: TENANT (must be primary on unit), FACILITY_ADMIN (scoped to their facilities), ADMIN/DEV_ADMIN (global)
+router.post('/invite', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user!;
+    const { unit_id, phone, access_level = 'limited', expires_at } = req.body || {};
+
+    // Basic validation
+    if (!unit_id) {
+      res.status(400).json({ success: false, message: 'unit_id is required' });
+      return;
+    }
+    if (!phone) {
+      res.status(400).json({ success: false, message: 'phone is required' });
+      return;
+    }
+    const validAccess = ['full', 'limited', 'temporary'];
+    if (access_level && !validAccess.includes(access_level)) {
+      res.status(400).json({ success: false, message: 'Invalid access_level' });
+      return;
+    }
+    let expiresAtDate: Date | null = null;
+    if (expires_at) {
+      const d = new Date(expires_at);
+      if (Number.isNaN(d.getTime())) {
+        res.status(400).json({ success: false, message: 'Invalid expires_at format' });
+        return;
+      }
+      expiresAtDate = d;
+    }
+
+    // Authorization checks
+    // - TENANT: must be primary tenant of the unit
+    // - FACILITY_ADMIN: unit must be in one of their facilities
+    // - ADMIN/DEV_ADMIN: allowed
+    const knex = DatabaseService.getInstance().connection;
+    const unit = await knex('units').where('id', unit_id).first();
+    if (!unit) {
+      res.status(404).json({ success: false, message: 'Unit not found' });
+      return;
+    }
+
+    if (user.role === UserRole.TENANT) {
+      const primaryAssignment = await knex('unit_assignments')
+        .where({ unit_id, tenant_id: user.userId, is_primary: true })
+        .first();
+      if (!primaryAssignment) {
+        res.status(403).json({ success: false, message: 'Only primary tenants can share this unit' });
+        return;
+      }
+    } else if (user.role === UserRole.FACILITY_ADMIN) {
+      const allowed = user.facilityIds?.includes(unit.facility_id);
+      if (!allowed) {
+        res.status(403).json({ success: false, message: 'Access denied to unit in this facility' });
+        return;
+      }
+    } else if (![UserRole.ADMIN, UserRole.DEV_ADMIN].includes(user.role)) {
+      res.status(403).json({ success: false, message: 'Insufficient permissions' });
+      return;
+    }
+
+    const phoneE164 = toE164(phone, 'US');
+
+    const svc = KeySharingService.getInstance();
+    const { shareId } = await svc.inviteByPhone({
+      unitId: unit_id,
+      phoneE164,
+      accessLevel: access_level,
+      expiresAt: expiresAtDate ?? undefined,
+      grantedBy: user.userId,
+      primaryTenantIdFallback: user.role === UserRole.TENANT ? user.userId : undefined,
+    });
+
+    res.status(200).json({ success: true, share_id: shareId });
+  } catch (error: any) {
+    logger.error('Error processing key share invite:', error);
+    res.status(500).json({ success: false, message: 'Failed to process invite' });
+  }
+});

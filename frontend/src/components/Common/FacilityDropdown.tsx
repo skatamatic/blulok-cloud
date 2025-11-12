@@ -17,7 +17,7 @@ export const FacilityDropdown: React.FC<FacilityDropdownProps> = ({
   onSelect,
   placeholder = 'Select a facility',
   className = '',
-  required = true
+  required: _required = true
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -148,4 +148,6 @@ export const FacilityDropdown: React.FC<FacilityDropdownProps> = ({
     </div>
   );
 };
+
+
 

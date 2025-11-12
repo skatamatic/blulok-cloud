@@ -97,9 +97,20 @@ export interface CreateGatewayCommand {
 
 export class GatewayCommandModel {
   private db = DatabaseService.getInstance();
+  private async tableExists(): Promise<boolean> {
+    try {
+      const knex = this.db.connection;
+      return await knex.schema.hasTable('gateway_commands');
+    } catch (_e) {
+      return false;
+    }
+  }
 
   async enqueue(command: CreateGatewayCommand): Promise<GatewayCommand> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) {
+      throw new Error('gateway_commands table is not available');
+    }
     const now = new Date();
     const data = {
       ...command,
@@ -123,6 +134,9 @@ export class GatewayCommandModel {
 
   async pickDue(limit: number): Promise<GatewayCommand[]> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) {
+      return [];
+    }
     const now = new Date();
     // Use FOR UPDATE SKIP LOCKED for concurrency control (if supported)
     const rows = await knex('gateway_commands')
@@ -135,16 +149,19 @@ export class GatewayCommandModel {
 
   async markInProgress(id: string): Promise<void> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return;
     await knex('gateway_commands').where('id', id).update({ status: 'in_progress', updated_at: new Date() });
   }
 
   async markSucceeded(id: string): Promise<void> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return;
     await knex('gateway_commands').where('id', id).update({ status: 'succeeded', updated_at: new Date(), next_attempt_at: null });
   }
 
   async markFailed(id: string, error: string, nextAttemptAt: Date | null, attemptCount: number, deadLetter: boolean): Promise<void> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return;
     await knex('gateway_commands').where('id', id).update({
       status: deadLetter ? 'dead_letter' : 'failed',
       last_error: error,
@@ -156,6 +173,7 @@ export class GatewayCommandModel {
 
   async updateNextAttempt(id: string, nextAttemptAt: Date, attemptCount: number): Promise<void> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return;
     await knex('gateway_commands').where('id', id).update({
       status: 'queued',
       attempt_count: attemptCount,
@@ -166,12 +184,14 @@ export class GatewayCommandModel {
 
   async getById(id: string): Promise<GatewayCommand | null> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return null;
     const row = await knex('gateway_commands').where('id', id).first();
     return (row as GatewayCommand) || null;
   }
 
   async list(filters: { facilities?: string[] | undefined; statuses?: GatewayCommandStatus[] | undefined }, limit = 50, offset = 0): Promise<{ items: GatewayCommand[]; total: number; }> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return { items: [], total: 0 };
     let query = knex('gateway_commands').select('*');
     if (filters.facilities && filters.facilities.length > 0) {
       query = query.whereIn('facility_id', filters.facilities);
@@ -186,6 +206,7 @@ export class GatewayCommandModel {
 
   async retryNow(id: string): Promise<void> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return;
     await knex('gateway_commands').where('id', id).update({
       status: 'queued',
       next_attempt_at: new Date(),
@@ -195,6 +216,7 @@ export class GatewayCommandModel {
 
   async cancel(id: string): Promise<void> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return;
     await knex('gateway_commands').where('id', id).update({
       status: 'cancelled',
       next_attempt_at: null,
@@ -204,6 +226,7 @@ export class GatewayCommandModel {
 
   async requeueDead(id: string): Promise<void> {
     const knex = this.db.connection;
+    if (!(await this.tableExists())) return;
     await knex('gateway_commands').where('id', id).andWhere('status', 'dead_letter').update({
       status: 'queued',
       next_attempt_at: new Date(),

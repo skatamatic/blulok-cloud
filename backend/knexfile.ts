@@ -1,5 +1,6 @@
 import { config } from './src/config/environment';
 import type { Knex } from 'knex';
+import path from 'path';
 
 const knexConfig: { [key: string]: Knex.Config } = {
   development: {
@@ -16,12 +17,12 @@ const knexConfig: { [key: string]: Knex.Config } = {
       max: 10,
     },
     migrations: {
-      directory: './src/database/migrations',
+      directory: path.resolve(__dirname, 'src', 'database', 'migrations'),
       extension: 'ts',
       tableName: 'knex_migrations'
     },
     seeds: {
-      directory: './src/database/seeds',
+      directory: path.resolve(__dirname, 'src', 'database', 'seeds'),
       extension: 'ts',
     },
   },
@@ -40,12 +41,12 @@ const knexConfig: { [key: string]: Knex.Config } = {
       max: 5,
     },
     migrations: {
-      directory: './src/database/migrations',
+      directory: path.resolve(__dirname, 'src', 'database', 'migrations'),
       extension: 'ts',
       tableName: 'knex_migrations'
     },
     seeds: {
-      directory: './src/database/seeds',
+      directory: path.resolve(__dirname, 'src', 'database', 'seeds'),
       extension: 'ts',
     },
   },
@@ -65,13 +66,13 @@ const knexConfig: { [key: string]: Knex.Config } = {
       max: 20,
     },
     migrations: {
-      directory: './src/database/migrations',
-      extension: 'ts',
+      directory: path.resolve(__dirname, 'src', 'database', 'migrations'),
+      extension: 'js',
       tableName: 'knex_migrations'
     },
     seeds: {
-      directory: './src/database/seeds',
-      extension: 'ts',
+      directory: path.resolve(__dirname, 'src', 'database', 'seeds'),
+      extension: 'js',
     },
   },
 };

@@ -16,6 +16,8 @@ const mockApiService = apiService as jest.Mocked<typeof apiService>;
 const mockUseToast = useToast as jest.MockedFunction<typeof useToast>;
 
 const mockAddToast = jest.fn();
+const mockRemoveToast = jest.fn();
+const mockClearAllToasts = jest.fn();
 
 const renderWithProviders = (component: React.ReactElement) => {
   const queryClient = new QueryClient({
@@ -27,7 +29,10 @@ const renderWithProviders = (component: React.ReactElement) => {
   });
 
   mockUseToast.mockReturnValue({
+    toasts: [],
     addToast: mockAddToast,
+    removeToast: mockRemoveToast,
+    clearAllToasts: mockClearAllToasts,
   });
 
   return render(

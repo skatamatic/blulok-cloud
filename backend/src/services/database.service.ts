@@ -1,4 +1,5 @@
 import knex, { Knex } from 'knex';
+import path from 'path';
 import { config } from '@/config/environment';
 import { logger } from '@/utils/logger';
 
@@ -62,6 +63,15 @@ export class DatabaseService {
       const wasCreated = await this.ensureDatabaseExists();
 
       // Create Knex instance with full configuration
+      const isProd = config.nodeEnv === 'production';
+      const migrationAndSeedExtension = isProd ? 'js' : 'ts';
+      const migrationsDir = isProd
+        ? path.resolve(process.cwd(), 'dist', 'src', 'database', 'migrations')
+        : path.resolve(__dirname, '../database/migrations');
+      const seedsDir = isProd
+        ? path.resolve(process.cwd(), 'dist', 'src', 'database', 'seeds')
+        : path.resolve(__dirname, '../database/seeds');
+
       this._connection = knex({
         client: 'mysql2',
         connection: {
@@ -70,7 +80,7 @@ export class DatabaseService {
           user: config.database.user,
           password: config.database.password,
           database: config.database.name,
-          ssl: config.nodeEnv === 'production' ? { rejectUnauthorized: false } : false,
+          ssl: isProd ? { rejectUnauthorized: false } : false,
         },
         pool: {
           min: 2,
@@ -83,17 +93,17 @@ export class DatabaseService {
           createRetryIntervalMillis: 100,
         },
         migrations: {
-          directory: './src/database/migrations',
-          extension: 'ts',
+          directory: migrationsDir,
+          extension: migrationAndSeedExtension,
         },
         seeds: {
-          directory: './src/database/seeds',
-          extension: 'ts',
+          directory: seedsDir,
+          extension: migrationAndSeedExtension,
         },
       });
 
       // Test the connection
-      await this._connection.raw('SELECT 1');
+      await this._withTimeout(this._connection.raw('SELECT 1'), 10000, 'Database connectivity check timed out');
       logger.info('Database connection established successfully');
 
       // Return whether the database was just created (for auto-seeding)
@@ -102,6 +112,20 @@ export class DatabaseService {
     } catch (error) {
       logger.error('Failed to establish database connection:', error);
       throw error;
+    }
+  }
+
+  private async _withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race<T>([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(message)), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

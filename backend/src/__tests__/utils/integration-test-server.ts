@@ -26,7 +26,7 @@ import accessHistoryRouter from '@/routes/access-history.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 
 // Mock the database service before importing routes
-jest.mock('../services/database.service', () => ({
+jest.mock('@/services/database.service', () => ({
   DatabaseService: {
     getInstance: jest.fn(() => ({
       connection: createMockKnex(),
@@ -36,7 +36,7 @@ jest.mock('../services/database.service', () => ({
 }));
 
 // Mock all the models
-jest.mock('../models/user.model', () => ({
+jest.mock('@/models/user.model', () => ({
   UserModel: {
     findById: jest.fn().mockImplementation((id) => {
       if (id === 'non-existent-user') return Promise.resolve(null);
@@ -48,6 +48,7 @@ jest.mock('../models/user.model', () => ({
         role: 'TENANT'
       });
     }),
+    deactivateUser: jest.fn().mockResolvedValue((id: string) => ({ id, is_active: false })),
     findAll: jest.fn().mockResolvedValue({
       users: [
         { id: 'user-1', firstName: 'John', lastName: 'Doe', email: 'john@example.com', role: 'ADMIN' },
@@ -61,7 +62,7 @@ jest.mock('../models/user.model', () => ({
   }
 }));
 
-jest.mock('../models/facility.model', () => ({
+jest.mock('@/models/facility.model', () => ({
   FacilityModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue({
       facilities: [
@@ -81,7 +82,7 @@ jest.mock('../models/facility.model', () => ({
   }))
 }));
 
-jest.mock('../models/key-sharing.model', () => ({
+jest.mock('@/models/key-sharing.model', () => ({
   KeySharingModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue({
       sharings: [
@@ -120,7 +121,7 @@ jest.mock('../models/key-sharing.model', () => ({
   }))
 }));
 
-jest.mock('../services/auth.service', () => ({
+jest.mock('@/services/auth.service', () => ({
   AuthService: {
     login: jest.fn().mockResolvedValue({
       success: true,

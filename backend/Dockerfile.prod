@@ -45,4 +45,4 @@ USER backend
 EXPOSE 8080
 
 # Start application
-CMD ["npm", "start"]
+CMD ["node", "dist/src/index.js"]

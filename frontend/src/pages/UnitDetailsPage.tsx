@@ -5,7 +5,8 @@ import { apiService } from '@/services/api.service';
 import { UserFilter } from '@/components/Common/UserFilter';
 import { EditUnitModal } from '@/components/Units/EditUnitModal';
 import { DeviceAssignmentModal } from '@/components/Devices/DeviceAssignmentModal';
-import { 
+import { ShareKeyModal } from '@/components/Units/ShareKeyModal';
+import {
   ArrowLeftIcon,
   HomeIcon,
   UserIcon,
@@ -22,10 +23,7 @@ import {
   PlusIcon,
   XMarkIcon,
   ArrowPathIcon,
-  ArrowTopRightOnSquareIcon,
-  Battery50Icon,
-  Battery100Icon,
-  BoltIcon
+  ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline';
 
 interface UnitDetails {
@@ -111,6 +109,7 @@ export default function UnitDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'tenant' | 'device'>('overview');
+  const [showShareModal, setShowShareModal] = useState(false);
 
   // Handle tab from URL query parameter
   useEffect(() => {
@@ -813,7 +812,7 @@ export default function UnitDetailsPage() {
                             <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
                           </Link>
                         </div>
-                        {canManageUnits && (
+                        {canManageSharedAccess && (
                           <div className="flex items-center space-x-2">
                             <button
                               onClick={() => setShowDeviceAssignmentModal(true)}
@@ -821,6 +820,13 @@ export default function UnitDetailsPage() {
                               title="Change device assignment"
                             >
                               <ArrowPathIcon className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => setShowShareModal(true)}
+                              className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-primary-600 text-white hover:bg-primary-700"
+                              title="Share key access"
+                            >
+                              Share Key
                             </button>
                           </div>
                         )}
@@ -875,6 +881,19 @@ export default function UnitDetailsPage() {
         }}
         unit={unit}
       />
+
+      {/* Share Key Modal */}
+      {unit && (
+        <ShareKeyModal
+          isOpen={showShareModal}
+          unitId={unit.id}
+          onClose={() => setShowShareModal(false)}
+          onSuccess={() => {
+            setShowShareModal(false);
+            // Optional: refresh any shared state
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { LoginCredentials, LoginResponse } from '@/types/auth.types';
 const getApiBaseUrl = () => {
   // Access import.meta through globalThis to avoid Jest parse errors
   const importMeta = (globalThis as any).import?.meta || (globalThis as any)['import.meta'];
-  return importMeta?.env?.VITE_API_URL || 'http://localhost:3000';
+  return importMeta?.env?.VITE_API_URL || '';
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -239,6 +239,11 @@ class ApiService {
 
   async deleteFacility(id: string) {
     const response = await this.api.delete(`/facilities/${id}`);
+    return response.data;
+  }
+
+  async getFacilityDeleteImpact(id: string) {
+    const response = await this.api.get(`/facilities/${id}/delete-impact`);
     return response.data;
   }
 
@@ -604,6 +609,16 @@ class ApiService {
 
   async getExpiredKeySharing() {
     const response = await this.api.get('/key-sharing/admin/expired');
+    return response.data;
+  }
+
+  async inviteSharedKey(data: {
+    unit_id: string;
+    phone: string;
+    access_level?: 'full' | 'limited' | 'temporary';
+    expires_at?: string;
+  }) {
+    const response = await this.api.post('/key-sharing/invite', data);
     return response.data;
   }
 

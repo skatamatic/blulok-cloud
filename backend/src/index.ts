@@ -28,10 +28,11 @@ async function bootstrap(): Promise<void> {
       
       // Always run migrations
       await MigrationService.runMigrations();
-      
-      // If database was just created, run seeds to set up initial data
-      if (databaseWasCreated) {
-        logger.info('New database detected. Running seeds to create initial data...');
+
+      // Check if database needs seeding (either newly created or empty)
+      const needsSeeding = databaseWasCreated || await MigrationService.needsSeeding();
+      if (needsSeeding) {
+        logger.info('Database needs initial data. Running seeds...');
         await MigrationService.runSeeds();
         logger.info('Initial data seeded successfully');
       }

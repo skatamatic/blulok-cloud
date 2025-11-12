@@ -13,9 +13,11 @@ const createMockDbConnection = (userDevices: any, lockRows: any[]) => {
     const mockQueryBuilder: any = {
       where: jest.fn().mockReturnThis(),
       whereIn: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
       join: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
       first: jest.fn(),
       then: jest.fn((onFulfilled?: (rows: any[]) => any, _onRejected?: (e: any) => any) => {
         if (onFulfilled) onFulfilled([]);
@@ -25,6 +27,10 @@ const createMockDbConnection = (userDevices: any, lockRows: any[]) => {
       insert: jest.fn().mockResolvedValue([1]),
       update: jest.fn().mockResolvedValue(1),
       fn: { now: () => new Date() },
+      union: jest.fn().mockImplementation(function (otherQuery: any) {
+        // For TENANT role, simulate UNION of primary assignments + shared keys
+        return Promise.resolve(lockRows);
+      }),
     };
 
     if (table === 'user_devices') {
@@ -37,6 +43,22 @@ const createMockDbConnection = (userDevices: any, lockRows: any[]) => {
         return Promise.resolve(lockRows);
       };
       mockQueryBuilder.first.mockResolvedValue(lockRows[0] || null);
+      return mockQueryBuilder;
+    }
+    if (table === 'unit_assignments') {
+      // Mock primary assignments for TENANT role
+      mockQueryBuilder.then = (onFulfilled?: (rows: any[]) => any) => {
+        if (onFulfilled) onFulfilled(lockRows);
+        return Promise.resolve(lockRows);
+      };
+      return mockQueryBuilder;
+    }
+    if (table === 'key_sharing') {
+      // Mock shared keys for TENANT role (empty by default for failing tests)
+      mockQueryBuilder.then = (onFulfilled?: (rows: any[]) => any) => {
+        if (onFulfilled) onFulfilled([]);
+        return Promise.resolve([]);
+      };
       return mockQueryBuilder;
     }
     if (table === 'system_settings') {
@@ -117,6 +139,36 @@ describe('Passes Routes', () => {
       expect(callArgs.jti).toBeDefined();
       expect(callArgs.issuedAt).toBeInstanceOf(Date);
       expect(callArgs.expiresAt).toBeInstanceOf(Date);
+    });
+
+    it('includes shared-key locks in audiences', async () => {
+      // Mock DB: user device present; union returns both assigned + shared
+      const mockKnex = jest.fn((table: string) => {
+        const qb: any = {
+          where: jest.fn().mockReturnThis(),
+          whereIn: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          join: jest.fn().mockReturnThis(),
+          first: jest.fn(),
+          then: jest.fn((onFulfilled?: any) => Promise.resolve(onFulfilled ? onFulfilled([]) : [])),
+          union: jest.fn().mockImplementation(function () { return Promise.resolve([{ id: 'lock-assigned' }, { id: 'lock-shared' }]); }),
+          orderBy: jest.fn().mockReturnThis(),
+        };
+        if (table === 'user_devices') {
+          qb.first.mockResolvedValue({ id: 'dev-1', user_id: 'tenant-1', status: 'active', public_key: 'cHVibGlj' });
+        }
+        return qb;
+      });
+      (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: mockKnex });
+
+      const res = await request(app)
+        .post('/api/v1/passes/request')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      const payload = await Ed25519Service.verifyJwt(res.body.routePass);
+      expect(payload.aud).toEqual(expect.arrayContaining(['lock:lock-assigned', 'lock:lock-shared']));
     });
   });
 

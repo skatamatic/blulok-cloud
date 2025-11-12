@@ -1,5 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '@/contexts/ToastContext';
 import DeviceDetailsPage from '@/pages/DeviceDetailsPage';
 import { apiService } from '@/services/api.service';

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
 import { generateHighlightId } from '@/utils/navigation.utils';
@@ -30,7 +29,6 @@ interface User {
 export default function UserManagementPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { authState } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);

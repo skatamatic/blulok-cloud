@@ -52,11 +52,23 @@ async function resolveAudiences(db: Knex, userId: string, userRole: UserRole, fa
       .select('bd.id');
     lockIds = rows.map((r: any) => r.id);
   } else if (userRole === UserRole.TENANT) {
-    // Tenants: locks for their assigned units
-    const rows = await db('blulok_devices as bd')
+    // Tenants: locks for their assigned units (primary)
+    const assignmentsQuery = db('blulok_devices as bd')
       .join('unit_assignments as ua', 'ua.unit_id', 'bd.unit_id')
       .where('ua.tenant_id', userId)
       .select('bd.id');
+
+    // Plus locks for units shared with them (active, not expired)
+    const sharedQuery = db('blulok_devices as bd')
+      .join('key_sharing as ks', 'ks.unit_id', 'bd.unit_id')
+      .where('ks.shared_with_user_id', userId)
+      .where('ks.is_active', true)
+      .where(function(this: any) {
+        this.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', db.fn.now());
+      })
+      .select('bd.id');
+
+    const rows = await assignmentsQuery.union(sharedQuery);
     lockIds = rows.map((r: any) => r.id);
   } else if (userRole === UserRole.MAINTENANCE) {
     // Maintenance: locks for explicitly granted units (future; stub for now)

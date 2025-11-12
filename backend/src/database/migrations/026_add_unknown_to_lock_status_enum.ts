@@ -65,3 +65,5 @@ export async function down(knex: Knex): Promise<void> {
   console.log("Removed 'unknown' from lock_status enum");
 }
 
+
+

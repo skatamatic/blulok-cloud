@@ -225,10 +225,6 @@ export default function UnitsManagementPage() {
   };
 
 
-  const handleFacilityFilter = (facilityId: string) => {
-    setFilters(prev => ({ ...prev, facility_id: facilityId }));
-    setCurrentPage(1);
-  };
 
   const handleLockToggle = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;

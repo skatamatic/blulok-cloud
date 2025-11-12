@@ -102,7 +102,7 @@ export default function UserDetailsPage() {
   const [selectedFacilityIds, setSelectedFacilityIds] = useState<string[]>([]);
   const [initialFacilityIds, setInitialFacilityIds] = useState<string[]>([]);
   const [updatingFacilities, setUpdatingFacilities] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [_editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     firstName: '',
     lastName: '',

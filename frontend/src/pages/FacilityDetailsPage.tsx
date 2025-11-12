@@ -29,6 +29,8 @@ import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { ConfirmModal } from '@/components/Modal/ConfirmModal';
+import { useToast } from '@/contexts/ToastContext';
 
 const statusColors = {
   active: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -57,6 +59,7 @@ export default function FacilityDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const { addToast } = useToast();
   const [facility, setFacility] = useState<Facility | null>(null);
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -65,11 +68,15 @@ export default function FacilityDetailsPage() {
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteImpact, setDeleteImpact] = useState<{ units: number; devices: number; gateways: number } | null>(null);
+  const [loadingImpact, setLoadingImpact] = useState(false);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
   const canManageGateway = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
+  const canDelete = ['admin', 'dev_admin'].includes(authState.user?.role || '');
 
   useEffect(() => {
     if (id) {
@@ -127,6 +134,37 @@ export default function FacilityDetailsPage() {
       await loadFacilityData(); // Refresh data
     } catch (error) {
       console.error('Failed to toggle lock:', error);
+    }
+  };
+
+  const openDeleteConfirm = async () => {
+    if (!facility) return;
+    try {
+      setLoadingImpact(true);
+      const impact = await apiService.getFacilityDeleteImpact(facility.id);
+      setDeleteImpact({
+        units: impact.units ?? 0,
+        devices: impact.devices ?? 0,
+        gateways: impact.gateways ?? 0,
+      });
+      setShowDeleteConfirm(true);
+    } catch (error: any) {
+      addToast({ type: 'error', title: error?.response?.data?.message || 'Failed to load delete impact' });
+    } finally {
+      setLoadingImpact(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!facility) return;
+    try {
+      await apiService.deleteFacility(facility.id);
+      addToast({ type: 'success', title: 'Facility deleted successfully' });
+      navigate('/facilities');
+    } catch (error: any) {
+      addToast({ type: 'error', title: error?.response?.data?.message || 'Failed to delete facility' });
+    } finally {
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -351,15 +389,25 @@ export default function FacilityDetailsPage() {
             <p className="text-sm text-gray-600 dark:text-gray-400">{facility.address}</p>
           </div>
         </div>
-        {canManage && (
-          <button
-            onClick={() => navigate(`/facilities/${facility.id}/edit`)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-          >
-            <PencilIcon className="h-4 w-4 mr-2" />
-            Edit
-          </button>
-        )}
+        <div className="flex items-center space-x-3">
+          {canManage && (
+            <button
+              onClick={() => navigate(`/facilities/${facility.id}/edit`)}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            >
+              <PencilIcon className="h-4 w-4 mr-2" />
+              Edit
+            </button>
+          )}
+          {canDelete && (
+            <button
+              onClick={openDeleteConfirm}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+            >
+              Delete
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -656,6 +704,17 @@ export default function FacilityDetailsPage() {
           setShowAddUnitModal(false);
         }}
         facilityId={facility?.id}
+      />
+
+      {/* Delete confirmation */}
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        title="Delete Facility"
+        message={loadingImpact ? 'Loading impact...' : `This will permanently delete this facility and remove ${deleteImpact?.units ?? 0} unit(s), ${deleteImpact?.devices ?? 0} device(s), and ${deleteImpact?.gateways ?? 0} gateway(s). This action cannot be undone.`}
+        confirmText="Delete Facility"
+        variant="danger"
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={confirmDelete}
       />
     </div>
   );

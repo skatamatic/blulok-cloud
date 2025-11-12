@@ -14,14 +14,21 @@ const createMockDbConnection = (userDeviceRow: any, lockRows: any[]) => {
     const qb: any = {
       where: jest.fn().mockReturnThis(),
       whereIn: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
       join: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
       first: jest.fn(),
       then: jest.fn((onFulfilled?: (rows: any[]) => any) => {
         if (onFulfilled) onFulfilled([]);
         return Promise.resolve([]);
       }),
+      union: jest.fn().mockImplementation(function (otherQuery: any) {
+        // For TENANT role, simulate UNION of primary assignments + shared keys
+        return Promise.resolve(lockRows);
+      }),
+      fn: { now: () => new Date() },
     };
 
     if (table === 'user_devices') {
@@ -34,6 +41,22 @@ const createMockDbConnection = (userDeviceRow: any, lockRows: any[]) => {
         return Promise.resolve(lockRows);
       };
       qb.first.mockResolvedValue(lockRows[0] || null);
+      return qb;
+    }
+    if (table === 'unit_assignments') {
+      // Mock primary assignments for TENANT role
+      qb.then = (onFulfilled?: (rows: any[]) => any) => {
+        if (onFulfilled) onFulfilled(lockRows);
+        return Promise.resolve(lockRows);
+      };
+      return qb;
+    }
+    if (table === 'key_sharing') {
+      // Mock shared keys for TENANT role (empty by default)
+      qb.then = (onFulfilled?: (rows: any[]) => any) => {
+        if (onFulfilled) onFulfilled([]);
+        return Promise.resolve([]);
+      };
       return qb;
     }
     return qb;

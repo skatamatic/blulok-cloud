@@ -58,6 +58,7 @@ import { UserRole } from '../types/auth.types';
 import { DatabaseService } from '../services/database.service';
 import { MigrationService } from '../services/migration.service';
 import { v4 as uuidv4 } from 'uuid';
+import { config } from '@/config/environment';
 import fs from 'fs';
 import path from 'path';
 import { WebSocketService } from '../services/websocket.service';
@@ -256,6 +257,9 @@ router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, r
     await db.connection.raw(`CREATE SCHEMA \`${dbName}\``);
     console.log(`Recreated schema: ${dbName}`);
 
+    // Ensure the connection is using the newly created schema
+    await db.connection.raw(`USE \`${dbName}\``);
+
     // Step 2: Clear migration tracking tables
     console.log('Step 2: Clearing migration tracking...');
     try {
@@ -299,9 +303,10 @@ router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, r
     console.log('Step 5: Running basic seeds...');
     try {
       // Run specific seeds in order
-      await db.connection.seed.run({ specific: '001_device_types.ts' });
-      await db.connection.seed.run({ specific: '002_default_users.ts' });
-      await db.connection.seed.run({ specific: '003_default_widget_templates.ts' });
+      const ext = config.nodeEnv === 'production' ? 'js' : 'ts';
+      await db.connection.seed.run({ specific: `001_device_types.${ext}` });
+      await db.connection.seed.run({ specific: `002_default_users.${ext}` });
+      await db.connection.seed.run({ specific: `003_default_widget_templates.${ext}` });
       console.log('Basic seeds completed successfully');
     } catch (error) {
       console.error('Error running seeds:', error);
@@ -491,6 +496,10 @@ async function createGateways(db: any, facilities: any[]): Promise<any[]> {
 async function createUnitsAndBluLokDevices(db: any, facilities: any[], gateways: any[]): Promise<{units: any[], blulokDevices: any[]}> {
   const units: any[] = [];
   const blulokDevices: any[] = [];
+
+  // Detect optional columns for flexible seeding across schema versions
+  const hasSizeSqft = await db.connection.schema.hasColumn('units', 'size_sqft');
+  const hasMonthlyRate = await db.connection.schema.hasColumn('units', 'monthly_rate');
   
   facilities.forEach((facility, facilityIndex) => {
     const gateway = gateways[facilityIndex];
@@ -512,15 +521,21 @@ async function createUnitsAndBluLokDevices(db: any, facilities: any[], gateways:
       const unitSize: typeof sizes[number] = sizes[Math.floor(Math.random() * sizes.length)] || 'medium';
       const rateMap: Record<typeof sizes[number], number> = { small: 89.99, medium: 129.99, large: 179.99, xl: 229.99 };
       
-      units.push({
+      const unit: any = {
         id: unitId,
         facility_id: facility.id,
         unit_number: unitNumber,
         unit_type: unitSize.charAt(0).toUpperCase() + unitSize.slice(1),
-        size_sqft: unitSize === 'small' ? 25 : unitSize === 'medium' ? 50 : unitSize === 'large' ? 100 : 200,
-        monthly_rate: rateMap[unitSize],
-        status: 'available' // All units start as available, will be updated to occupied when assigned
-      });
+        status: 'available', // All units start as available, will be updated to occupied when assigned
+      };
+      if (hasSizeSqft) {
+        unit.size_sqft = unitSize === 'small' ? 25 : unitSize === 'medium' ? 50 : unitSize === 'large' ? 100 : 200;
+      }
+      if (hasMonthlyRate) {
+        unit.monthly_rate = rateMap[unitSize];
+      }
+
+      units.push(unit);
       
       // Create corresponding BluLok device
       const lockStatus = Math.random() > 0.95 ? 'unlocked' : 'locked'; // 5% unlocked

@@ -27,6 +27,7 @@ import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSChangeModel } from '@/models/fms-change.model';
 import { FMSEntityMappingModel } from '@/models/fms-entity-mapping.model';
 import { User, UserModel } from '@/models/user.model';
+import { KeySharingModel } from '@/models/key-sharing.model';
 import { UnitModel } from '@/models/unit.model';
 import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitsService } from '../units.service';
@@ -1411,7 +1412,7 @@ export class FMSService {
    * 
    * SECURITY: Only affects TENANT role users. Never modifies admin/maintenance users.
    */
-  private async applyTenantRemoved(
+  public async applyTenantRemoved(
     change: FMSChange,
     result: FMSChangeApplicationResult
   ): Promise<void> {
@@ -1475,7 +1476,13 @@ export class FMSService {
 
     // Only deactivate user if they have no other assignments (in other facilities)
     const remainingAssignments = allAssignments.length - assignments.length;
-    if (remainingAssignments === 0) {
+
+    // NEW: Protect users who still have active shared keys
+    const keySharingModel = new KeySharingModel();
+    const sharedKeys = await keySharingModel.getUserSharedUnits(change.internal_id);
+    const hasSharedKeys = sharedKeys.length > 0;
+
+    if (remainingAssignments === 0 && !hasSharedKeys) {
       await UserModel.deactivateUser(change.internal_id);
       result.accessChanges.usersDeactivated.push(change.internal_id);
       logger.info(`[FMS] Deactivated tenant user: ${change.internal_id}`, {
@@ -1484,7 +1491,7 @@ export class FMSService {
         performed_by: performedBy,
       });
     } else {
-      logger.info(`[FMS] Tenant user ${change.internal_id} not deactivated (has ${remainingAssignments} assignment(s) in other facilities)`, {
+      logger.info(`[FMS] Tenant user ${change.internal_id} not deactivated (remainingAssignments=${remainingAssignments}, sharedKeys=${sharedKeys.length})`, {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
       });

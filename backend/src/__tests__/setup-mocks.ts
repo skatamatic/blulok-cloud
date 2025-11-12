@@ -712,6 +712,7 @@ jest.mock('../services/fms/fms.service', () => ({
           accessRevoked: [],
         },
       }),
+      applyTenantRemoved: jest.fn().mockResolvedValue(undefined),
     }),
   },
 }));
@@ -858,6 +859,13 @@ jest.mock('../models/key-sharing.model', () => ({
       if (filters.primary_tenant_id) {
         filteredRecords = filteredRecords.filter(record => 
           record.primary_tenant_id === filters.primary_tenant_id
+        );
+      }
+
+      // Apply shared_with_user_id filter
+      if (filters.shared_with_user_id) {
+        filteredRecords = filteredRecords.filter(record =>
+          record.shared_with_user_id === filters.shared_with_user_id
         );
       }
       
@@ -1254,6 +1262,10 @@ jest.mock('../models/user.model', () => {
         }
         
         return Promise.resolve(users.length);
+      }),
+      findByPhone: jest.fn().mockImplementation((phone: string) => {
+        const user = Array.from(mockUsers.values()).find(u => u.phone_number === phone);
+        return Promise.resolve(user || undefined);
       }),
     },
   };

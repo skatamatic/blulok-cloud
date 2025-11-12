@@ -1,6 +1,26 @@
 version: '3.8'
 
 services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=blulok_dev
+      - MYSQL_USER=blulok_user
+      - MYSQL_PASSWORD=blulok_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    networks:
+      - blulok-network
+    restart: unless-stopped
+
+
+
   backend:
     build:
       context: ./backend
@@ -14,9 +34,16 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
+      - OPS_ED25519_PRIVATE_KEY_B64=${OPS_ED25519_PRIVATE_KEY_B64}
+      - OPS_ED25519_PUBLIC_KEY_B64=${OPS_ED25519_PUBLIC_KEY_B64}
+      - ROOT_ED25519_PUBLIC_KEY_B64=${ROOT_ED25519_PUBLIC_KEY_B64}
       - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
       - CORS_ORIGINS=${CORS_ORIGINS}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
@@ -55,6 +82,9 @@ services:
     restart: unless-stopped
     networks:
       - blulok-network
+
+volumes:
+  mysql_data:
 
 networks:
   blulok-network:

@@ -623,7 +623,7 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
   await UserModel.deactivateUser(id);
 
   // Push denylist update to relevant locks via gateway events (fire-and-forget)
-  // Device-targeted: determine lock device_ids from user's assigned units and unicast per facility
+  // Device-targeted: determine lock device_ids from user's assigned units AND shared units, then unicast per facility
   (async () => {
     try {
       const { DenylistService } = await import('@/services/denylist.service');
@@ -632,14 +632,31 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
       const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
       const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
       const { config } = await import('@/config/environment');
+      const { logger } = await import('@/utils/logger');
       const knex = DatabaseService.getInstance().connection;
       const denylistModel = new DenylistEntryModel();
       
-      // Get all devices from all units the user has access to
-      const rows = await knex('blulok_devices as bd')
+      // Collect all units the user has access to:
+      // 1) Primary/assigned units (unit_assignments)
+      const primaryUnitIds = await knex('unit_assignments')
+        .where('tenant_id', id)
+        .pluck('unit_id');
+
+      // 2) Shared units via key_sharing (active and not expired)
+      const sharedUnitIds = await knex('key_sharing')
+        .where('shared_with_user_id', id)
+        .where('is_active', true)
+        .where(function(this: any) {
+          this.whereNull('expires_at').orWhere('expires_at', '>', knex.fn.now());
+        })
+        .pluck('unit_id');
+
+      const unitIds = Array.from(new Set([...(primaryUnitIds || []), ...(sharedUnitIds || [])]));
+
+      // Get all devices from these units
+      const rows = unitIds.length === 0 ? [] : await knex('blulok_devices as bd')
         .join('units as u', 'bd.unit_id', 'u.id')
-        .leftJoin('unit_assignments as ua', 'ua.unit_id', 'u.id')
-        .where('ua.tenant_id', id)
+        .whereIn('bd.unit_id', unitIds)
         .select('bd.id as device_id', 'u.facility_id');
       
       if (rows.length === 0) {
@@ -680,6 +697,56 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
       }
       } else {
         logger.info(`Skipping DENYLIST_ADD for deactivated user ${id} - last route pass is expired`);
+      }
+
+      // -------- Cascading revoke for GRANTED access (primary_tenant's invitees) --------
+      // Per product decision: inactivate shares and denylist invitees
+      const activeSharesGranted = await knex('key_sharing')
+        .where('primary_tenant_id', id)
+        .where('is_active', true)
+        .where(function(this: any) {
+          this.whereNull('expires_at').orWhere('expires_at', '>', knex.fn.now());
+        })
+        .select('id', 'unit_id', 'shared_with_user_id');
+
+      for (const share of activeSharesGranted) {
+        try {
+          // Inactivate the share
+          await knex('key_sharing').where('id', share.id).update({ is_active: false, updated_at: knex.fn.now() });
+
+          // Devices for the shared unit
+          const devices = await knex('blulok_devices').where({ unit_id: share.unit_id }).select('id');
+          if (devices.length === 0) {
+            continue;
+          }
+
+          // Facility for routing
+          const unit = await knex('units').where('id', share.unit_id).first('facility_id');
+          if (!unit) continue;
+
+          // DB entries for invitee denylist
+          const deviceIds = devices.map((d: any) => d.id as string);
+          for (const deviceId of deviceIds) {
+            await denylistModel.create({
+              device_id: deviceId,
+              user_id: share.shared_with_user_id,
+              expires_at: expiresAt,
+              source: 'key_sharing_revocation',
+              created_by: performedBy,
+            });
+          }
+
+          // Optimization for gateway command (per invitee)
+          const skipInvitee = await DenylistOptimizationService.shouldSkipDenylistAdd(share.shared_with_user_id);
+          if (!skipInvitee) {
+            const packet = await DenylistService.buildDenylistAdd([{ sub: share.shared_with_user_id, exp }], deviceIds);
+            GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
+          } else {
+            logger.info(`Skipping DENYLIST_ADD for invitee ${share.shared_with_user_id} (revoked by deactivated primary ${id}) - last route pass expired`);
+          }
+        } catch (err) {
+          logger.error(`Failed cascading revoke for sharing ${share.id} on deactivation of user ${id}:`, err);
+        }
       }
     } catch (error) {
       logger.error('Failed to push denylist on user deactivation:', error);

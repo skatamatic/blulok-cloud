@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import {
@@ -9,17 +8,11 @@ import {
   LockOpenIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
-  ClockIcon,
   Battery50Icon,
   Battery100Icon,
   UserIcon,
-  BuildingOfficeIcon,
-  HomeIcon,
   ShieldExclamationIcon,
-  CpuChipIcon,
   ArrowTopRightOnSquareIcon,
-  XCircleIcon,
-  CalendarIcon,
 } from '@heroicons/react/24/outline';
 
 interface DeviceDetails {
@@ -85,7 +78,6 @@ const sourceLabels = {
 export default function DeviceDetailsPage() {
   const { deviceId } = useParams<{ deviceId: string }>();
   const navigate = useNavigate();
-  const { authState } = useAuth();
   const { addToast } = useToast();
   const [device, setDevice] = useState<DeviceDetails | null>(null);
   const [denylistEntries, setDenylistEntries] = useState<DenylistEntry[]>([]);

@@ -227,10 +227,6 @@ export default function UnitsPage() {
     setCurrentPage(1);
   };
 
-  const handleFacilityFilter = (facilityId: string) => {
-    setFilters(prev => ({ ...prev, facility_id: facilityId === prev.facility_id ? '' : facilityId }));
-    setCurrentPage(1);
-  };
 
   const handleUserFilter = (userId: string) => {
     setFilters(prev => ({ ...prev, tenant_id: userId === prev.tenant_id ? '' : userId }));

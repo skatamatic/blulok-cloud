@@ -1,0 +1,30 @@
+﻿# Production Environment Variables for BluLok Cloud
+
+# Database Configuration (will connect to MySQL container)
+DB_HOST=mysql
+DB_PORT=3306
+DB_NAME=blulok_dev
+DB_USER=blulok_user
+DB_PASSWORD=blulok_password
+
+# JWT Configuration - Generate a secure random key for production
+JWT_SECRET=
+JWT_EXPIRES_IN=24h
+
+# Security Keys (Generated using backend/scripts/gen-*.js scripts)
+OPS_ED25519_PRIVATE_KEY_B64=pyB-N_B94oyl1UBRMClMrA6WFPc_mcZSKZUPsV-Vszs
+OPS_ED25519_PUBLIC_KEY_B64=kIQQS9bELFAFReiBRg0WHlx7W1YXQVV99ykwud5CyA4
+ROOT_ED25519_PUBLIC_KEY_B64=z7FnUGk4kW7yjpEah2t08E3ieFx-EJfVPh6Cj5CMNPw
+
+# Route Pass Configuration
+ROUTE_PASS_TTL_HOURS=24
+FALLBACK_IAT_SKEW_SECONDS=10
+
+# CORS Configuration (Update with your frontend domain)
+CORS_ORIGINS=http://localhost:8080,http://localhost:80,https://yourdomain.com
+
+# Logging
+LOG_LEVEL=info
+
+# Frontend Configuration
+VITE_API_URL=http://localhost:3000

@@ -69,6 +69,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const navigate = useNavigate();
   const location = useLocation();
   const { authState } = useAuth();
+  const { addToast } = useToast();
   const [devices, setDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]);
   const [allDevices, setAllDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);

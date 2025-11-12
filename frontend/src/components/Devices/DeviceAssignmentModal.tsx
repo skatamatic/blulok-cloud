@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
-import { 
+import {
   CpuChipIcon,
-  HomeIcon,
-  XMarkIcon,
   PlusIcon,
   TrashIcon,
   ArrowPathIcon
@@ -94,7 +92,7 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
 
     try {
       setLoading(true);
-      await apiService.unassignDeviceFromUnit(unit.blulok_device.id);
+      await apiService.unassignDeviceFromUnit(unit.blulok_device!.id);
       addToast({ type: 'success', title: 'Device unassigned from unit successfully' });
       onSuccess();
       setShowUnassignConfirm(false);
@@ -113,7 +111,7 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
       setLoading(true);
       // First unassign the old device, then assign the new one
       // The backend handles this automatically, but we can also do it explicitly
-      await apiService.unassignDeviceFromUnit(unit.blulok_device.id);
+      await apiService.unassignDeviceFromUnit(unit.blulok_device!.id);
       await apiService.assignDeviceToUnit(selectedDevice, unit.id);
       addToast({ type: 'success', title: 'Device changed successfully' });
       onSuccess();
@@ -133,7 +131,6 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
   };
 
   const hasDevice = !!unit?.blulok_device;
-  const isChangingDevice = hasDevice && !!selectedDevice;
 
   return (
     <>
@@ -173,20 +170,20 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
                       </div>
                       <div>
                         <p className="text-sm font-medium text-gray-900 dark:text-white font-mono">
-                          {unit.blulok_device.device_serial}
+                          {unit.blulok_device!.device_serial}
                         </p>
                         <div className="flex items-center space-x-4 mt-1">
-                          {unit.blulok_device.firmware_version && (
+                          {unit.blulok_device!.firmware_version && (
                             <p className="text-xs text-gray-500 dark:text-gray-400">
-                              Firmware: {unit.blulok_device.firmware_version}
+                              Firmware: {unit.blulok_device!.firmware_version}
                             </p>
                           )}
                           <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            unit.blulok_device.device_status === 'online' 
+                            unit.blulok_device!.device_status === 'online'
                               ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
                               : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
                           }`}>
-                            {unit.blulok_device.device_status}
+                            {unit.blulok_device!.device_status}
                           </span>
                         </div>
                       </div>
