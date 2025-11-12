@@ -12,6 +12,7 @@ import {
   ShieldCheckIcon,
   LinkIcon
 } from '@heroicons/react/24/outline';
+import { Modal, ModalBody, ModalFooter, ModalHeader } from '@/components/Modal/Modal';
 
 export default function NotificationSettingsPage() {
   const { addToast } = useToast();
@@ -28,6 +29,9 @@ export default function NotificationSettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showTestModal, setShowTestModal] = useState(false);
+  const [testToEmail, setTestToEmail] = useState('');
+  const [testToPhone, setTestToPhone] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -65,19 +69,54 @@ export default function NotificationSettingsPage() {
     }
   };
 
-  const handleSendTest = async () => {
+  const getCookie = (name: string): string => {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : '';
+  };
+  const setCookie = (name: string, value: string, days = 180) => {
+    const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
+    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+  };
+
+  const openTestModal = () => {
+    try {
+      setTestToEmail(getCookie('blulok_test_to_email') || '');
+      setTestToPhone(getCookie('blulok_test_to_phone') || '');
+    } catch {
+      // ignore cookie errors
+    }
+    setShowTestModal(true);
+  };
+
+  const confirmSendTests = async () => {
     setIsTesting(true);
     try {
-      const resp = await apiService.sendTestNotifications();
+      // Save preferences to cookies
+      if (testToEmail) setCookie('blulok_test_to_email', testToEmail);
+      if (testToPhone) setCookie('blulok_test_to_phone', testToPhone);
+
+      const payload: { toEmail?: string; toPhone?: string; configOverride?: NotificationsConfig } = {};
+      if (config.enabledChannels?.email && testToEmail) payload.toEmail = testToEmail;
+      if (config.enabledChannels?.sms !== false && testToPhone) payload.toPhone = testToPhone;
+      // Pass current (unsaved) UI settings for testing without committing
+      payload.configOverride = config;
+
+      const resp = await apiService.sendTestNotifications(payload);
+      const errorDetails = Array.isArray(resp.errors) && resp.errors.length
+        ? `Errors: ${resp.errors.map((e: any) => `${e.channel}: ${e.message}`).join('; ')}`
+        : '';
+
       if (resp.success) {
         const details = [
-          resp.sent?.length ? `sent: ${resp.sent.join(', ')}` : undefined,
-          resp.toEmail ? `email: ${resp.toEmail}` : undefined,
-          resp.toPhone ? `phone: ${resp.toPhone}` : undefined,
+          resp.sent?.length ? `Sent: ${resp.sent.join(', ')}` : undefined,
+          resp.toEmail ? `Email: ${resp.toEmail}` : (payload.toEmail ? `Email: ${payload.toEmail}` : undefined),
+          resp.toPhone ? `Phone: ${resp.toPhone}` : (payload.toPhone ? `Phone: ${payload.toPhone}` : undefined),
+          errorDetails || undefined,
         ].filter(Boolean).join(' | ');
-        addToast({ type: 'success', title: 'Test notifications dispatched', message: details });
+        addToast({ type: 'success', title: 'Test notifications result', message: details });
+        setShowTestModal(false);
       } else {
-        addToast({ type: 'error', title: 'Failed to send test notifications' });
+        addToast({ type: 'error', title: 'Failed to send test notifications', message: errorDetails || resp.message });
       }
     } catch (e: any) {
       addToast({ type: 'error', title: 'Failed to send test notifications', message: e?.message || 'Unknown error' });
@@ -395,7 +434,7 @@ export default function NotificationSettingsPage() {
       {/* Save Button */}
       <div className="flex justify-end gap-3">
         <button
-          onClick={handleSendTest}
+          onClick={openTestModal}
           disabled={isTesting}
           className="inline-flex items-center px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -429,6 +468,66 @@ export default function NotificationSettingsPage() {
           )}
         </button>
       </div>
+
+      {/* Test Notifications Modal */}
+      <Modal isOpen={showTestModal} onClose={() => !isTesting && setShowTestModal(false)} size="md">
+        <ModalHeader>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Send Test Notifications</h3>
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            Specify recipient addresses to receive test messages. We’ll remember your entries for next time.
+          </p>
+        </ModalHeader>
+        <ModalBody>
+          <div className="space-y-4">
+            {config.enabledChannels?.email && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  To Email
+                </label>
+                <input
+                  type="email"
+                  value={testToEmail}
+                  onChange={(e) => setTestToEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+            )}
+            {config.enabledChannels?.sms !== false && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  To Phone (E.164)
+                </label>
+                <input
+                  type="tel"
+                  value={testToPhone}
+                  onChange={(e) => setTestToPhone(e.target.value)}
+                  placeholder="+15551234567"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+            )}
+          </div>
+        </ModalBody>
+        <ModalFooter>
+          <button
+            type="button"
+            onClick={() => setShowTestModal(false)}
+            disabled={isTesting}
+            className="btn-secondary"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={confirmSendTests}
+            disabled={isTesting}
+            className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+          >
+            {isTesting ? 'Sending...' : 'Send Tests'}
+          </button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 }

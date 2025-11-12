@@ -206,9 +206,9 @@ class ApiService {
     return response.data;
   }
 
-  async sendTestNotifications(payload?: { toEmail?: string; toPhone?: string }) {
+  async sendTestNotifications(payload?: { toEmail?: string; toPhone?: string; configOverride?: any }) {
     const response = await this.api.post('/system-settings/notifications/test', payload || {});
-    return response.data as { success: boolean; message: string; sent?: string[]; toEmail?: string; toPhone?: string };
+    return response.data as { success: boolean; message: string; sent?: string[]; errors?: { channel: string; message: string }[]; toEmail?: string; toPhone?: string };
   }
 
   async resendUserInvite(userId: string) {

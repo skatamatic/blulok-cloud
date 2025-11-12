@@ -187,7 +187,7 @@ router.post('/notifications/test', authenticateToken as any, asyncHandler(async 
     return;
   }
 
-  const { toEmail, toPhone } = req.body || {};
+  const { toEmail, toPhone, configOverride } = req.body || {};
 
   // Determine recipients: defaults to current user profile
   let targetEmail: string | undefined = toEmail;
@@ -205,9 +205,31 @@ router.post('/notifications/test', authenticateToken as any, asyncHandler(async 
   }
 
   const notifications = NotificationService.getInstance();
-  const result = await notifications.sendTestNotifications({ toEmail: targetEmail, toPhone: targetPhone });
+  try {
+    const result = await notifications.sendTestNotifications({ toEmail: targetEmail, toPhone: targetPhone }, configOverride);
 
-  res.json({ success: true, message: 'Test notifications dispatched', sent: result.sent, toEmail: targetEmail, toPhone: targetPhone });
+    // If nothing was sent and there are errors, return a 500 with details
+    if ((result.sent?.length || 0) === 0 && (result.errors?.length || 0) > 0) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send test notifications',
+        errors: result.errors,
+      });
+      return;
+    }
+
+    // Otherwise return success including any partial errors
+    res.json({
+      success: true,
+      message: 'Test notifications dispatched',
+      sent: result.sent,
+      errors: result.errors,
+      toEmail: targetEmail,
+      toPhone: targetPhone
+    });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e?.message || 'Failed to send test notifications' });
+  }
 }));
 
 export { router as systemSettingsRouter };

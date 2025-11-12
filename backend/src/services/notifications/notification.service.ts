@@ -1,5 +1,6 @@
 import { SystemSettingsModel } from '@/models/system-settings.model';
 import { NotificationsConfig, SendInviteParams, SendOtpParams } from '@/types/notification.types';
+import { logger } from '@/utils/logger';
 
 interface SmsProvider {
   sendSms(to: string, body: string): Promise<void>;
@@ -144,15 +145,28 @@ export class NotificationService {
    * Send one test message per template and channel configured.
    * Prefixes content with 'TEST - ' so recipients can identify non-production messages.
    */
-  public async sendTestNotifications(params: { toEmail?: string; toPhone?: string }): Promise<{ sent: string[] }> {
-    const config = await this.loadConfig();
+  public async sendTestNotifications(
+    params: { toEmail?: string; toPhone?: string },
+    configOverride?: NotificationsConfig
+  ): Promise<{ sent: string[]; errors: { channel: string; message: string }[] }> {
+    const config = configOverride ?? await this.loadConfig();
     const sent: string[] = [];
+    const errors: { channel: string; message: string }[] = [];
 
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
 
-    // Prepare providers when needed
-    const smsProvider = smsEnabled ? this.getSmsProvider(config) : undefined;
+    // Prepare providers when needed (gracefully skip if provider not available)
+    let smsProvider: SmsProvider | undefined;
+    if (smsEnabled) {
+      try {
+        smsProvider = this.getSmsProvider(config);
+      } catch (e: any) {
+        logger.warn(`Notifications: SMS provider unavailable: ${e?.message || e}`);
+        errors.push({ channel: 'sms', message: e?.message || 'SMS provider unavailable' });
+        smsProvider = undefined;
+      }
+    }
     const emailProvider = emailEnabled ? this.getEmailProvider(config) : undefined;
 
     // INVITE
@@ -161,14 +175,24 @@ export class NotificationService {
     const inviteEmailTpl = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
     const inviteEmailSubject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
 
-    if (smsEnabled && params.toPhone) {
-      await smsProvider!.sendSms(params.toPhone, `TEST - ` + inviteSmsTpl.replace('{{deeplink}}', deeplink));
-      sent.push('sms_invite');
+    if (smsProvider && params.toPhone) {
+      try {
+        await smsProvider.sendSms(params.toPhone, `TEST - ` + inviteSmsTpl.replace('{{deeplink}}', deeplink));
+        sent.push('sms_invite');
+      } catch (e: any) {
+        logger.error(`Notifications: Failed to send SMS invite: ${e?.message || e}`);
+        errors.push({ channel: 'sms_invite', message: e?.message || 'Failed to send SMS invite' });
+      }
     }
     if (emailEnabled && params.toEmail) {
-      const html = `TEST - ` + inviteEmailTpl.replace('{{deeplink}}', deeplink);
-      await emailProvider!.sendEmail(params.toEmail, `TEST - ${inviteEmailSubject}`, html, html);
-      sent.push('email_invite');
+      try {
+        const html = `TEST - ` + inviteEmailTpl.replace('{{deeplink}}', deeplink);
+        await emailProvider!.sendEmail(params.toEmail, `TEST - ${inviteEmailSubject}`, html, html);
+        sent.push('email_invite');
+      } catch (e: any) {
+        logger.error(`Notifications: Failed to send Email invite: ${e?.message || e}`);
+        errors.push({ channel: 'email_invite', message: e?.message || 'Failed to send Email invite' });
+      }
     }
 
     // OTP
@@ -177,17 +201,27 @@ export class NotificationService {
     const otpEmailTpl = config.templates?.otpEmail || 'Your verification code is: {{code}}';
     const otpEmailSubject = config.templates?.otpEmailSubject || 'Your Verification Code';
 
-    if (smsEnabled && params.toPhone) {
-      await smsProvider!.sendSms(params.toPhone, `TEST - ` + otpSmsTpl.replace('{{code}}', otpCode));
-      sent.push('sms_otp');
+    if (smsProvider && params.toPhone) {
+      try {
+        await smsProvider.sendSms(params.toPhone, `TEST - ` + otpSmsTpl.replace('{{code}}', otpCode));
+        sent.push('sms_otp');
+      } catch (e: any) {
+        logger.error(`Notifications: Failed to send SMS OTP: ${e?.message || e}`);
+        errors.push({ channel: 'sms_otp', message: e?.message || 'Failed to send SMS OTP' });
+      }
     }
     if (emailEnabled && params.toEmail) {
-      const html = `TEST - ` + otpEmailTpl.replace('{{code}}', otpCode);
-      await emailProvider!.sendEmail(params.toEmail, `TEST - ${otpEmailSubject}`, html, html);
-      sent.push('email_otp');
+      try {
+        const html = `TEST - ` + otpEmailTpl.replace('{{code}}', otpCode);
+        await emailProvider!.sendEmail(params.toEmail, `TEST - ${otpEmailSubject}`, html, html);
+        sent.push('email_otp');
+      } catch (e: any) {
+        logger.error(`Notifications: Failed to send Email OTP: ${e?.message || e}`);
+        errors.push({ channel: 'email_otp', message: e?.message || 'Failed to send Email OTP' });
+      }
     }
 
-    return { sent };
+    return { sent, errors };
   }
 }
 
