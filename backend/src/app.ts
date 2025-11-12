@@ -33,6 +33,9 @@ import { routePassesRouter } from '@/routes/route-passes.routes';
 export function createApp(): Application {
   const app = express();
 
+  // Behind Cloud Run (proxy) - trust X-Forwarded-* headers for real client IP
+  app.set('trust proxy', true);
+
   // Security middleware
   app.use(helmet({
     contentSecurityPolicy: {
@@ -54,8 +57,16 @@ export function createApp(): Application {
   app.use(cors({
     origin: config.corsOrigins,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform', 'X-Requested-With'],
+  }));
+
+  // Explicit preflight handler to prevent 405 on OPTIONS
+  app.options('*', cors({
+    origin: config.corsOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform', 'X-Requested-With'],
   }));
 
   // Rate limiting (disabled in test mode to avoid test failures)
