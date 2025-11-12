@@ -3,9 +3,10 @@ import { LoginCredentials, LoginResponse } from '@/types/auth.types';
 
 // Safe access to import.meta for Jest compatibility
 const getApiBaseUrl = () => {
-  // Access import.meta through globalThis to avoid Jest parse errors
-  const importMeta = (globalThis as any).import?.meta || (globalThis as any)['import.meta'];
-  return importMeta?.env?.VITE_API_URL || '';
+  // IMPORTANT: Access import.meta.env directly so Vite replaces the value at build time
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const envUrl = (import.meta as any)?.env?.VITE_API_URL as string | undefined;
+  return envUrl || '';
 };
 
 const API_BASE_URL = getApiBaseUrl();
