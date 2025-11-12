@@ -34,6 +34,35 @@ export class DatabaseService {
 
   private constructor() {}
 
+  private async sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async retry<T>(
+    task: () => Promise<T>,
+    description: string,
+    attempts = 5,
+    baseDelayMs = 2000
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await task();
+      } catch (error) {
+        lastError = error;
+        const isLast = attempt === attempts;
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        logger.warn(
+          `${description} failed (attempt ${attempt}/${attempts})${isLast ? '' : `, retrying in ${delay}ms`} `,
+          error as any
+        );
+        if (isLast) break;
+        await this.sleep(delay);
+      }
+    }
+    throw lastError;
+  }
+
   /**
    * Get singleton instance of the database service.
    * Ensures only one database connection pool exists across the application.
@@ -59,8 +88,13 @@ export class DatabaseService {
    */
   public async initialize(): Promise<boolean> {
     try {
-      // Ensure database exists before attempting connection
-      const wasCreated = await this.ensureDatabaseExists();
+      // Ensure database exists before attempting connection, with backoff
+      const wasCreated = await this.retry<boolean>(
+        () => this.ensureDatabaseExists(),
+        'Ensure database exists',
+        5,
+        2000
+      );
 
       // Create Knex instance with full configuration
       const isProd = config.nodeEnv === 'production';
@@ -80,13 +114,14 @@ export class DatabaseService {
           user: config.database.user,
           password: config.database.password,
           database: config.database.name,
+          connectTimeout: 30000,
           ssl: isProd ? { rejectUnauthorized: false } : false,
         },
         pool: {
           min: 2,
           max: 10,
-          acquireTimeoutMillis: 30000,
-          createTimeoutMillis: 30000,
+          acquireTimeoutMillis: 60000,
+          createTimeoutMillis: 60000,
           destroyTimeoutMillis: 5000,
           idleTimeoutMillis: 30000,
           reapIntervalMillis: 1000,
@@ -102,8 +137,19 @@ export class DatabaseService {
         },
       });
 
-      // Test the connection
-      await this._withTimeout(this._connection.raw('SELECT 1'), 10000, 'Database connectivity check timed out');
+      // Test the connection with backoff and a longer timeout
+      await this.retry<void>(
+        async () => {
+          await this._withTimeout(
+            this._connection!.raw('SELECT 1'),
+            30000,
+            'Database connectivity check timed out'
+          );
+        },
+        'Database connectivity check',
+        5,
+        2000
+      );
       logger.info('Database connection established successfully');
 
       // Return whether the database was just created (for auto-seeding)
@@ -142,6 +188,7 @@ export class DatabaseService {
           port: config.database.port,
           user: config.database.user,
           password: config.database.password,
+          connectTimeout: 30000,
           ssl: config.nodeEnv === 'production' ? { rejectUnauthorized: false } : false,
         },
       });
