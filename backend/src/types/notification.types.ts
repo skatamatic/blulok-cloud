@@ -1,8 +1,10 @@
 export interface NotificationTemplatesConfig {
   inviteSms?: string;
   inviteEmail?: string;
+  inviteEmailSubject?: string;
   otpSms?: string;
   otpEmail?: string;
+  otpEmailSubject?: string;
 }
 
 export interface TwilioConfig {

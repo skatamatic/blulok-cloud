@@ -46,7 +46,7 @@ import { AuthenticatedRequest } from '@/types/auth.types';
 import { SystemSettingsModel } from '@/models/system-settings.model';
 import { NotificationsConfig } from '@/types/notification.types';
 import { NotificationService } from '@/services/notifications/notification.service';
-import { UserModel } from '@/models/user.model';
+import { UserModel, User } from '@/models/user.model';
 
 const router = Router();
 
@@ -71,8 +71,10 @@ const notificationsSchema = Joi.object({
   templates: Joi.object({
     inviteSms: Joi.string().optional(),
     inviteEmail: Joi.string().optional(),
+    inviteEmailSubject: Joi.string().optional(),
     otpSms: Joi.string().optional(),
     otpEmail: Joi.string().optional(),
+    otpEmailSubject: Joi.string().optional(),
   }).optional(),
   deeplinkBaseUrl: Joi.string().optional(),
 });
@@ -192,7 +194,7 @@ router.post('/notifications/test', authenticateToken as any, asyncHandler(async 
   let targetPhone: string | undefined = toPhone;
 
   if (!targetEmail || !targetPhone) {
-    const profile = await UserModel.findById(user.userId);
+    const profile = await UserModel.findById(user.userId) as User | undefined;
     if (!targetEmail && profile?.email) targetEmail = profile.email || undefined;
     if (!targetPhone && profile?.phone_number) targetPhone = profile.phone_number || undefined;
   }

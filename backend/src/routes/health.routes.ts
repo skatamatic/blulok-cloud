@@ -59,6 +59,12 @@ interface HealthCheckResponse {
   uptime: number;
   database: 'connected' | 'disconnected';
   version: string;
+  commitSha?: string;
+  commitShort?: string;
+  buildId?: string;
+  buildUrl?: string;
+  service?: string;
+  environment?: string;
 }
 
 router.get('/', asyncHandler(async (_req: Request, res: Response): Promise<void> => {
@@ -78,6 +84,12 @@ router.get('/', asyncHandler(async (_req: Request, res: Response): Promise<void>
     uptime: process.uptime(),
     database: isDatabaseHealthy ? 'connected' : 'disconnected',
     version: process.env.npm_package_version || '1.0.0',
+    commitSha: process.env.COMMIT_SHA,
+    commitShort: process.env.COMMIT_SHA ? process.env.COMMIT_SHA.substring(0, 7) : undefined,
+    buildId: process.env.BUILD_ID,
+    buildUrl: process.env.BUILD_URL,
+    service: 'backend',
+    environment: process.env.NODE_ENV || 'development',
   };
 
   res.status(200).json(healthCheck);

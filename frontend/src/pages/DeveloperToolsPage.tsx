@@ -356,8 +356,10 @@ const UIDebugTab: React.FC = () => {
   );
 };
 
+type DevTabs = 'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms' | 'deployment';
+
 export default function DeveloperToolsPage() {
-  const [activeTab, setActiveTab] = useState<'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms'>('database');
+  const [activeTab, setActiveTab] = useState<DevTabs>('database');
   const [seedStatus, setSeedStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
   const [resetStatus, setResetStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
   const { isDebugEnabled, toggleDebug } = useWebSocketDebug();
@@ -379,6 +381,15 @@ export default function DeveloperToolsPage() {
   const [wsStats, setWsStats] = useState<WebSocketStats | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [wsLoading, setWsLoading] = useState(false);
+
+  // Deployment info
+  const [backendInfo, setBackendInfo] = useState<any | null>(null);
+  const frontendInfo = {
+    version: (globalThis as any)?.window?.__APP_CONFIG__?.frontendVersion as string | undefined,
+    commit: (globalThis as any)?.window?.__APP_CONFIG__?.frontendCommit as string | undefined,
+    commitShort: ((globalThis as any)?.window?.__APP_CONFIG__?.frontendCommit as string | undefined)?.slice(0,7),
+    buildUrl: (globalThis as any)?.window?.__APP_CONFIG__?.frontendBuildUrl as string | undefined,
+  };
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
 
   // Load logs when switching to logs tab for the first time
@@ -435,6 +446,22 @@ export default function DeveloperToolsPage() {
     return () => {
       websocketService.unsubscribe('logs');
     };
+  }, [activeTab]);
+
+  // Load backend health when deployment tab shown
+  useEffect(() => {
+    const loadBackendInfo = async () => {
+      try {
+        const resp = await fetch(`${API_BASE_URL}/health`);
+        const json = await resp.json();
+        setBackendInfo(json);
+      } catch (_e) {
+        setBackendInfo(null);
+      }
+    };
+    if (activeTab === 'deployment') {
+      loadBackendInfo();
+    }
   }, [activeTab]);
 
   // Auto-scroll when new logs arrive (if enabled)
@@ -888,7 +915,8 @@ export default function DeveloperToolsPage() {
                 ['logs', DocumentTextIcon, 'Backend Logs'],
                 ['websocket', WifiIcon, 'WebSocket'],
                 ['fms', CloudIcon, 'FMS'],
-                ['ui-debug', PaintBrushIcon, 'UI Debug']
+                ['ui-debug', PaintBrushIcon, 'UI Debug'],
+                ['deployment', DocumentTextIcon, 'Deployment']
               ] as const).map(([tab, Icon, label]) => (
                 <button
                   key={tab}
@@ -1165,6 +1193,30 @@ export default function DeveloperToolsPage() {
           </div>
         )}
         
+        {activeTab === 'deployment' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Frontend</h2>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Version:</span><span className="font-mono">{frontendInfo.version || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Commit:</span><span className="font-mono">{frontendInfo.commitShort || frontendInfo.commit || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Build:</span><span className="font-mono truncate max-w-[240px]">{frontendInfo.buildUrl ? <a className="text-primary-600 dark:text-primary-400 underline" href={frontendInfo.buildUrl} target="_blank" rel="noreferrer">Open</a> : 'n/a'}</span></div>
+                </div>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Backend</h2>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Version:</span><span className="font-mono">{backendInfo?.version || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Commit:</span><span className="font-mono">{backendInfo?.commitShort || backendInfo?.commitSha || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Build:</span><span className="font-mono truncate max-w-[240px]">{backendInfo?.buildUrl ? <a className="text-primary-600 dark:text-primary-400 underline" href={backendInfo.buildUrl} target="_blank" rel="noreferrer">Open</a> : 'n/a'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Uptime:</span><span className="font-mono">{backendInfo?.uptime != null ? `${Math.round(backendInfo.uptime)}s` : 'n/a'}</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'websocket' && (
           <div className="space-y-6">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">

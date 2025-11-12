@@ -6,6 +6,14 @@ import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 
 jest.mock('@/services/api.service');
+jest.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({
+    addToast: jest.fn(),
+    removeToast: jest.fn(),
+    clearAllToasts: jest.fn(),
+    toasts: [],
+  }),
+}));
 jest.mock('@/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   useAuth: () => ({

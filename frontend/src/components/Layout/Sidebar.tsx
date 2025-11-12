@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { UserRole } from '@/types/auth.types';
 import { ChangePasswordModal } from '@/components/UserManagement/ChangePasswordModal';
+import { useEffect, useState } from 'react';
 import {
   HomeIcon,
   UsersIcon,
@@ -70,6 +71,18 @@ export const Sidebar: React.FC = () => {
   const { isCollapsed, toggleSidebar } = useSidebar();
   const navigate = useNavigate();
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [backendInfo, setBackendInfo] = useState<any | null>(null);
+  const feInfo = {
+    version: (globalThis as any)?.window?.__APP_CONFIG__?.frontendVersion as string | undefined,
+    commitShort: ((globalThis as any)?.window?.__APP_CONFIG__?.frontendCommit as string | undefined)?.slice(0,7),
+  };
+
+  useEffect(() => {
+    // Try to fetch backend health once for version info; ignore errors
+    const backendUrl = (globalThis as any)?.window?.__APP_CONFIG__?.apiBaseUrl as string | undefined;
+    if (!backendUrl) return;
+    fetch(`${backendUrl}/health`).then(r => r.json()).then(setBackendInfo).catch(() => {});
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -228,7 +241,7 @@ export const Sidebar: React.FC = () => {
 
       {/* Developer Tools - Bottom Section */}
       {hasRole([UserRole.DEV_ADMIN]) && (
-        <div className="px-2 pb-4">
+        <div className="px-2 pb-2">
           {/* Separator */}
           <div className="my-4 border-t border-gray-200 dark:border-gray-700"></div>
           
@@ -260,6 +273,16 @@ export const Sidebar: React.FC = () => {
               )}
             </NavLink>
           </div>
+
+          {/* Deployment badge (all users want to see; but place in dev section visually above user card) */}
+        </div>
+      )}
+
+      {/* Deployment badge (visible to all users) */}
+      {!isCollapsed && (
+        <div className="px-4 pb-2 text-xs text-gray-500 dark:text-gray-400 font-mono">
+          <div>BluLok FE {feInfo.version || 'n/a'} {feInfo.commitShort ? `(${feInfo.commitShort})` : ''}</div>
+          <div>API {backendInfo?.version || 'n/a'} {backendInfo?.commitShort ? `(${backendInfo.commitShort})` : ''}</div>
         </div>
       )}
 
