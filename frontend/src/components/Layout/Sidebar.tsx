@@ -70,18 +70,12 @@ export const Sidebar: React.FC = () => {
   const { isCollapsed, toggleSidebar } = useSidebar();
   const navigate = useNavigate();
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
-  const [backendInfo, setBackendInfo] = useState<any | null>(null);
   const feInfo = {
     version: (globalThis as any)?.window?.__APP_CONFIG__?.frontendVersion as string | undefined,
     commitShort: ((globalThis as any)?.window?.__APP_CONFIG__?.frontendCommit as string | undefined)?.slice(0,7),
   };
 
-  useEffect(() => {
-    // Try to fetch backend health once for version info; ignore errors
-    const backendUrl = (globalThis as any)?.window?.__APP_CONFIG__?.apiBaseUrl as string | undefined;
-    if (!backendUrl) return;
-    fetch(`${backendUrl}/health`).then(r => r.json()).then(setBackendInfo).catch(() => {});
-  }, []);
+  // No backend info needed for sidebar label; Developer Tools shows full details
 
   const handleLogout = async () => {
     await logout();
@@ -277,14 +271,6 @@ export const Sidebar: React.FC = () => {
         </div>
       )}
 
-      {/* Deployment badge (visible to all users) */}
-      {!isCollapsed && (
-        <div className="px-4 pb-2 text-xs text-gray-500 dark:text-gray-400 font-mono">
-          <div>BluLok FE {feInfo.version || 'n/a'} {feInfo.commitShort ? `(${feInfo.commitShort})` : ''}</div>
-          <div>API {backendInfo?.version || 'n/a'} {backendInfo?.commitShort ? `(${backendInfo.commitShort})` : ''}</div>
-        </div>
-      )}
-
       {/* User Info */}
       <div className={`${isCollapsed ? 'p-2' : 'p-4'} border-t border-gray-200 dark:border-gray-700`}>
         {!isCollapsed && (
@@ -343,6 +329,13 @@ export const Sidebar: React.FC = () => {
           />
           {!isCollapsed && 'Sign out'}
         </button>
+
+        {/* Simple version label below Sign Out */}
+        {!isCollapsed && (
+          <div className="mt-3 text-xs text-gray-500 dark:text-gray-400 font-mono">
+            Version: {feInfo.version || 'n/a'}
+          </div>
+        )}
       </div>
 
       {/* Change Password Modal */}

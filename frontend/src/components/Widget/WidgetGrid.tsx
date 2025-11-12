@@ -67,7 +67,9 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     hasSwapped: false
   });
 
-  const breakpoints = { lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 };
+  // Tweaked to require substantially smaller window before switching layouts
+  // Aligns roughly with Tailwind: lg 1024, md 768, sm 640
+  const breakpoints = { lg: 1024, md: 768, sm: 640, xs: 480, xxs: 0 };
   const cols = { lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 };
 
   // Smart widget swapping for horizontal drags

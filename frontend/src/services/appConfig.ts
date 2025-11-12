@@ -8,14 +8,22 @@ const getRuntimeConfig = (): RuntimeConfig => {
   return ((globalThis as any)?.window?.__APP_CONFIG__ as RuntimeConfig) || {};
 };
 
-// Safely read Vite env in both browser and Jest/node (where import.meta is undefined)
+// Safely read Vite env in both browser and Jest/node without crashing when process is undefined
 const getViteEnv = (key: string): string | undefined => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const importMeta = (globalThis as any).import?.meta || (globalThis as any)['import.meta'];
-  const val = importMeta?.env?.[key];
-  // Fallback to process.env for Jest/node
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (val as string | undefined) ?? (process.env as any)?.[key];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const env = (import.meta as any)?.env;
+    if (env && env[key] !== undefined) {
+      return env[key] as string;
+    }
+  } catch {
+    // ignore if import.meta is not available (e.g., Jest/node without ESM)
+  }
+  // Fallback to process.env for Jest/node environments
+  if (typeof process !== 'undefined' && (process as any)?.env && (process as any).env[key] !== undefined) {
+    return (process as any).env[key] as string;
+  }
+  return undefined;
 };
 
 export const getApiBaseUrl = (): string => {

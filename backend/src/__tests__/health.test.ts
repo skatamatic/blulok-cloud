@@ -19,6 +19,7 @@ describe('Health Routes', () => {
       process.env.COMMIT_SHA = 'abcdef1234567890';
       process.env.BUILD_ID = 'test-build-123';
       process.env.BUILD_URL = 'https://example.com/build/test-build-123';
+      process.env.APP_VERSION = '9.9.9-test';
 
       const response = await request(app)
         .get('/health');
@@ -32,7 +33,7 @@ describe('Health Routes', () => {
       expect(response.body).toHaveProperty('timestamp');
       expect(response.body).toHaveProperty('uptime');
       expect(response.body).toHaveProperty('database');
-      expect(response.body).toHaveProperty('version');
+      expect(response.body).toHaveProperty('version', '9.9.9-test');
       // New metadata fields
       expect(response.body).toHaveProperty('commitSha', 'abcdef1234567890');
       expect(response.body).toHaveProperty('commitShort', 'abcdef1');

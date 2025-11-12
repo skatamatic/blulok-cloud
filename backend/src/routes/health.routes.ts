@@ -48,6 +48,8 @@
  */
 
 import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { DatabaseService } from '@/services/database.service';
 import { asyncHandler } from '@/middleware/error.middleware';
 
@@ -78,12 +80,28 @@ router.get('/', asyncHandler(async (_req: Request, res: Response): Promise<void>
     isDatabaseHealthy = false;
   }
 
+  // Resolve version: prefer explicit APP_VERSION env, then VERSION file, then package.json
+  let resolvedVersion: string | undefined = process.env.APP_VERSION;
+  if (!resolvedVersion) {
+    try {
+      const verPath = path.resolve(process.cwd(), 'VERSION');
+      if (fs.existsSync(verPath)) {
+        resolvedVersion = fs.readFileSync(verPath, 'utf8').trim() || undefined;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (!resolvedVersion) {
+    resolvedVersion = process.env.npm_package_version || '0.1.0';
+  }
+
   const healthCheck: HealthCheckResponse = {
     status: 'healthy', // Service is healthy even without database in dev mode
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     database: isDatabaseHealthy ? 'connected' : 'disconnected',
-    version: process.env.npm_package_version || '1.0.0',
+    version: resolvedVersion,
     commitSha: process.env.COMMIT_SHA,
     commitShort: process.env.COMMIT_SHA ? process.env.COMMIT_SHA.substring(0, 7) : undefined,
     buildId: process.env.BUILD_ID,
