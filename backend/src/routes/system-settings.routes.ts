@@ -45,6 +45,8 @@ import { UserRole } from '@/types/auth.types';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { SystemSettingsModel } from '@/models/system-settings.model';
 import { NotificationsConfig } from '@/types/notification.types';
+import { NotificationService } from '@/services/notifications/notification.service';
+import { UserModel } from '@/models/user.model';
 
 const router = Router();
 
@@ -173,6 +175,37 @@ router.put('/notifications', authenticateToken as any, asyncHandler(async (req: 
   await model.set('notifications.config', JSON.stringify(value));
 
   res.json({ success: true, message: 'Notification settings updated successfully' });
+}));
+
+// POST /api/v1/system-settings/notifications/test
+router.post('/notifications/test', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+    res.status(403).json({ success: false, message: 'Access denied' });
+    return;
+  }
+
+  const { toEmail, toPhone } = req.body || {};
+
+  // Determine recipients: defaults to current user profile
+  let targetEmail: string | undefined = toEmail;
+  let targetPhone: string | undefined = toPhone;
+
+  if (!targetEmail || !targetPhone) {
+    const profile = await UserModel.findById(user.userId);
+    if (!targetEmail && profile?.email) targetEmail = profile.email || undefined;
+    if (!targetPhone && profile?.phone_number) targetPhone = profile.phone_number || undefined;
+  }
+
+  if (!targetEmail && !targetPhone) {
+    res.status(400).json({ success: false, message: 'No recipient found. Provide toEmail/toPhone or set your email/phone.' });
+    return;
+  }
+
+  const notifications = NotificationService.getInstance();
+  const result = await notifications.sendTestNotifications({ toEmail: targetEmail, toPhone: targetPhone });
+
+  res.json({ success: true, message: 'Test notifications dispatched', sent: result.sent, toEmail: targetEmail, toPhone: targetPhone });
 }));
 
 export { router as systemSettingsRouter };

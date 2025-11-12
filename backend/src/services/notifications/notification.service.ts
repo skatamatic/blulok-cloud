@@ -139,6 +139,56 @@ export class NotificationService {
     }
     throw new Error('sendOtp requires toPhone or toEmail');
   }
+
+  /**
+   * Send one test message per template and channel configured.
+   * Prefixes content with 'TEST - ' so recipients can identify non-production messages.
+   */
+  public async sendTestNotifications(params: { toEmail?: string; toPhone?: string }): Promise<{ sent: string[] }> {
+    const config = await this.loadConfig();
+    const sent: string[] = [];
+
+    const smsEnabled = config.enabledChannels?.sms !== false;
+    const emailEnabled = config.enabledChannels?.email === true;
+
+    // Prepare providers when needed
+    const smsProvider = smsEnabled ? this.getSmsProvider(config) : undefined;
+    const emailProvider = emailEnabled ? this.getEmailProvider(config) : undefined;
+
+    // INVITE
+    const deeplink = (config.deeplinkBaseUrl || 'blulok://invite') + (config.deeplinkBaseUrl?.includes('?') ? '&' : '?') + 'test=1';
+    const inviteSmsTpl = config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}}';
+    const inviteEmailTpl = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
+    const inviteEmailSubject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
+
+    if (smsEnabled && params.toPhone) {
+      await smsProvider!.sendSms(params.toPhone, `TEST - ` + inviteSmsTpl.replace('{{deeplink}}', deeplink));
+      sent.push('sms_invite');
+    }
+    if (emailEnabled && params.toEmail) {
+      const html = `TEST - ` + inviteEmailTpl.replace('{{deeplink}}', deeplink);
+      await emailProvider!.sendEmail(params.toEmail, `TEST - ${inviteEmailSubject}`, html, html);
+      sent.push('email_invite');
+    }
+
+    // OTP
+    const otpCode = '123456 TEST';
+    const otpSmsTpl = config.templates?.otpSms || 'Your verification code is: {{code}}';
+    const otpEmailTpl = config.templates?.otpEmail || 'Your verification code is: {{code}}';
+    const otpEmailSubject = config.templates?.otpEmailSubject || 'Your Verification Code';
+
+    if (smsEnabled && params.toPhone) {
+      await smsProvider!.sendSms(params.toPhone, `TEST - ` + otpSmsTpl.replace('{{code}}', otpCode));
+      sent.push('sms_otp');
+    }
+    if (emailEnabled && params.toEmail) {
+      const html = `TEST - ` + otpEmailTpl.replace('{{code}}', otpCode);
+      await emailProvider!.sendEmail(params.toEmail, `TEST - ${otpEmailSubject}`, html, html);
+      sent.push('email_otp');
+    }
+
+    return { sent };
+  }
 }
 
 

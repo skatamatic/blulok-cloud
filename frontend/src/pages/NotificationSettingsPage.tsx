@@ -26,6 +26,7 @@ export default function NotificationSettingsPage() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
@@ -61,6 +62,27 @@ export default function NotificationSettingsPage() {
       addToast({ type: 'error', title: 'An error occurred while updating settings' });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSendTest = async () => {
+    setIsTesting(true);
+    try {
+      const resp = await apiService.sendTestNotifications();
+      if (resp.success) {
+        const details = [
+          resp.sent?.length ? `sent: ${resp.sent.join(', ')}` : undefined,
+          resp.toEmail ? `email: ${resp.toEmail}` : undefined,
+          resp.toPhone ? `phone: ${resp.toPhone}` : undefined,
+        ].filter(Boolean).join(' | ');
+        addToast({ type: 'success', title: 'Test notifications dispatched', message: details });
+      } else {
+        addToast({ type: 'error', title: 'Failed to send test notifications' });
+      }
+    } catch (e: any) {
+      addToast({ type: 'error', title: 'Failed to send test notifications', message: e?.message || 'Unknown error' });
+    } finally {
+      setIsTesting(false);
     }
   };
 
@@ -371,7 +393,24 @@ export default function NotificationSettingsPage() {
       </div>
 
       {/* Save Button */}
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={handleSendTest}
+          disabled={isTesting}
+          className="inline-flex items-center px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isTesting ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+              Sending Tests...
+            </>
+          ) : (
+            <>
+              <ShieldCheckIcon className="h-4 w-4 mr-2" />
+              Send Test Notifications
+            </>
+          )}
+        </button>
         <button
           onClick={handleSave}
           disabled={isSaving}

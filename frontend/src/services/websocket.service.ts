@@ -1,5 +1,6 @@
 import { IWebSocketService } from '@/types/websocket.types';
 import { websocketDebugService } from './websocket-debug.service';
+import { getWsBaseUrl } from './appConfig';
 
 class WebSocketService implements IWebSocketService {
   private ws: WebSocket | null = null;
@@ -31,32 +32,7 @@ class WebSocketService implements IWebSocketService {
         return;
       }
 
-      // Resolve WS base URL: runtime config -> Vite env -> derive from API base -> localhost
-      const getWsBase = (): string => {
-        // Prefer runtime-config injected by /config.js
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const runtime = (globalThis as any)?.window?.__APP_CONFIG__ as { apiBaseUrl?: string; wsBaseUrl?: string } | undefined;
-        if (runtime?.wsBaseUrl) return runtime.wsBaseUrl.replace(/\/+$/, '');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const envWs = (import.meta as any)?.env?.VITE_WS_URL as string | undefined;
-        if (envWs) return envWs.replace(/\/+$/, '');
-        // Derive from API base if available
-        const apiBase = runtime?.apiBaseUrl || ((import.meta as any)?.env?.VITE_API_URL as string | undefined);
-        if (apiBase) {
-          try {
-            const u = new URL(apiBase);
-            u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
-            u.pathname = '/ws';
-            u.search = '';
-            u.hash = '';
-            return u.toString().replace(/\/+$/, '').replace(/\/ws$/, ''); // return base; we'll append /ws below
-          } catch {
-            // ignore
-          }
-        }
-        return 'ws://localhost:3000';
-      };
-      const wsUrl = `${getWsBase()}/ws?token=${token}`;
+      const wsUrl = `${getWsBaseUrl()}/ws?token=${token}`;
 
       this.ws = new WebSocket(wsUrl);
 

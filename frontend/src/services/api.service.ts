@@ -1,16 +1,8 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { getApiBaseUrl } from './appConfig';
 import { LoginCredentials, LoginResponse } from '@/types/auth.types';
 
 // Safe access to import.meta for Jest compatibility
-const getApiBaseUrl = () => {
-  // Prefer runtime-config (generated at container start), then build-time Vite env
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const runtimeUrl = (globalThis as any)?.window?.__APP_CONFIG__?.apiBaseUrl as string | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const envUrl = (import.meta as any)?.env?.VITE_API_URL as string | undefined;
-  return runtimeUrl || envUrl || '';
-};
-
 const API_BASE_URL = getApiBaseUrl();
 
 class ApiService {
@@ -212,6 +204,11 @@ class ApiService {
   async updateNotificationSettings(config: any) {
     const response = await this.api.put('/system-settings/notifications', config);
     return response.data;
+  }
+
+  async sendTestNotifications(payload?: { toEmail?: string; toPhone?: string }) {
+    const response = await this.api.post('/system-settings/notifications/test', payload || {});
+    return response.data as { success: boolean; message: string; sent?: string[]; toEmail?: string; toPhone?: string };
   }
 
   async resendUserInvite(userId: string) {

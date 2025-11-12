@@ -60,7 +60,8 @@ interface DiagnosticsData {
   logWatchers: Record<string, number>;
 }
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:3000';
+import { getApiBaseUrl } from '@/services/appConfig';
+const API_BASE_URL = getApiBaseUrl();
 
 const FMSToolsTab: React.FC = () => {
   const { addToast } = useToast();
