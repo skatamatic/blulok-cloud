@@ -10,6 +10,8 @@ RUN npm ci
 COPY . .
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
+# Debug: print API URL at build time for verification in Cloud Build logs
+RUN echo "VITE_API_URL=$VITE_API_URL"
 RUN npm run build
 
 # Production stage with nginx
