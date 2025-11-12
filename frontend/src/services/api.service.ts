@@ -3,10 +3,12 @@ import { LoginCredentials, LoginResponse } from '@/types/auth.types';
 
 // Safe access to import.meta for Jest compatibility
 const getApiBaseUrl = () => {
-  // IMPORTANT: Access import.meta.env directly so Vite replaces the value at build time
+  // Prefer runtime-config (generated at container start), then build-time Vite env
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const runtimeUrl = (globalThis as any)?.window?.__APP_CONFIG__?.apiBaseUrl as string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const envUrl = (import.meta as any)?.env?.VITE_API_URL as string | undefined;
-  return envUrl || '';
+  return runtimeUrl || envUrl || '';
 };
 
 const API_BASE_URL = getApiBaseUrl();
