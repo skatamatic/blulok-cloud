@@ -35,8 +35,8 @@ RUN chown -R nginx-user:nginx-user /var/run/nginx.pid
 # Switch to non-root user
 USER nginx-user
 
-# Expose port
-EXPOSE 80
+# Expose Cloud Run port
+EXPOSE 8080
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
