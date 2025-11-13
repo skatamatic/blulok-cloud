@@ -582,20 +582,20 @@ class ApiService {
   async createKeySharing(data: {
     unit_id: string;
     shared_with_user_id: string;
-    access_level: string;
+    access_level: 'full' | 'limited' | 'temporary' | 'permanent';
     expires_at?: string;
     notes?: string;
-    access_restrictions?: string;
+    access_restrictions?: Record<string, any>;
   }) {
     const response = await this.api.post('/key-sharing', data);
     return response.data;
   }
 
   async updateKeySharing(id: string, data: {
-    access_level?: string;
+    access_level?: 'full' | 'limited' | 'temporary' | 'permanent';
     expires_at?: string;
     notes?: string;
-    access_restrictions?: string;
+    access_restrictions?: Record<string, any>;
     is_active?: boolean;
   }) {
     const response = await this.api.put(`/key-sharing/${id}`, data);
@@ -615,7 +615,7 @@ class ApiService {
   async inviteSharedKey(data: {
     unit_id: string;
     phone: string;
-    access_level?: 'full' | 'limited' | 'temporary';
+    access_level?: 'full' | 'limited' | 'temporary' | 'permanent';
     expires_at?: string;
   }) {
     const response = await this.api.post('/key-sharing/invite', data);

@@ -69,11 +69,11 @@ export interface KeySharing {
   unit_id: string;
   primary_tenant_id: string;
   shared_with_user_id: string;
-  access_level: 'read' | 'write' | 'admin';
+  access_level: 'full' | 'limited' | 'temporary' | 'permanent';
   expires_at?: string;
   granted_by: string;
   notes?: string;
-  access_restrictions?: string;
+  access_restrictions?: Record<string, any>;
   is_active: boolean;
   created_at: string;
   updated_at: string;

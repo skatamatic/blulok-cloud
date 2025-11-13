@@ -13,7 +13,7 @@ interface ShareKeyModalProps {
 export function ShareKeyModal({ isOpen, unitId, onClose, onSuccess }: ShareKeyModalProps) {
   const { addToast } = useToast();
   const [phone, setPhone] = useState('');
-  const [accessLevel, setAccessLevel] = useState<'full' | 'limited' | 'temporary'>('limited');
+  const [accessLevel, setAccessLevel] = useState<'full' | 'limited' | 'temporary' | 'permanent'>('limited');
   const [expiresAt, setExpiresAt] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -49,7 +49,7 @@ export function ShareKeyModal({ isOpen, unitId, onClose, onSuccess }: ShareKeyMo
       addToast({ type: 'success', title: 'Invite sent successfully' });
       onSuccess();
     } catch (e: any) {
-      const msg = e?.response?.data?.message || 'Failed to send invite';
+      const msg = e?.response?.data?.error || e?.response?.data?.message || 'Failed to send invite';
       addToast({ type: 'error', title: msg });
     } finally {
       setSubmitting(false);
@@ -84,6 +84,7 @@ export function ShareKeyModal({ isOpen, unitId, onClose, onSuccess }: ShareKeyMo
             <option value="full">Full</option>
             <option value="limited">Limited</option>
             <option value="temporary">Temporary</option>
+            <option value="permanent">Permanent</option>
           </select>
         </div>
         <div>

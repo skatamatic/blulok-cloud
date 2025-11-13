@@ -45,7 +45,6 @@ import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
-import { KeySharingService } from '@/services/key-sharing.service';
 import { toE164 } from '@/utils/phone.util';
 
 const router = Router();
@@ -275,69 +274,49 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
       expires_at,
       notes,
       access_restrictions
-    } = req.body;
+    } = req.body || {};
 
-    // Validate required fields
+    // Basic input validation (keep 400s at route level)
     if (!unit_id || !shared_with_user_id) {
       res.status(400).json({ error: 'unit_id and shared_with_user_id are required' });
       return;
     }
-    
-    // Validate access_level
     const validAccessLevels = ['full', 'limited', 'temporary', 'permanent'];
     if (access_level && !validAccessLevels.includes(access_level)) {
       res.status(400).json({ error: 'Invalid access_level. Must be one of: full, limited, temporary, permanent' });
       return;
     }
-    
-    // Validate expires_at format if provided
     if (expires_at) {
-      const expiresDate = new Date(expires_at);
-      if (isNaN(expiresDate.getTime())) {
+      const d = new Date(expires_at);
+      if (Number.isNaN(d.getTime())) {
         res.status(400).json({ error: 'Invalid expires_at format. Must be a valid ISO date string' });
         return;
       }
     }
-
-    // Check permissions
-    if (user.role === UserRole.TENANT) {
-      // Tenants can only share keys for units they own
-      const hasAccess = await keySharingModel.checkUserHasAccess(user.userId, unit_id);
-      if (!hasAccess) {
-        res.status(403).json({ error: 'You can only share keys for units you own' });
-        return;
+    const { KeySharingService } = await import('@/services/key-sharing.service');
+    const svc = KeySharingService.getInstance();
+    const sharing = await svc.createShare(
+      { userId: user.userId, role: user.role },
+      {
+        unit_id,
+        shared_with_user_id,
+        access_level,
+        expires_at: expires_at ? new Date(expires_at) : null,
+        notes,
+        access_restrictions,
       }
-    } else if (!AuthService.canManageUsers(user.role)) {
-      res.status(403).json({ error: 'Insufficient permissions to share keys' });
-      return;
-    }
-
-    // Check if sharing already exists
-    const existingSharings = await keySharingModel.getUnitSharedKeys(unit_id, {
-      shared_with_user_id,
-      is_active: true
-    });
-
-    if (existingSharings.sharings.length > 0) {
-      res.status(409).json({ error: 'Key sharing already exists for this user and unit' });
-      return;
-    }
-
-    const sharingData = {
-      unit_id,
-      primary_tenant_id: user.userId, // For now, assume the current user is the primary tenant
-      shared_with_user_id,
-      access_level,
-      expires_at: expires_at ? new Date(expires_at) : null,
-      granted_by: user.userId,
-      notes,
-      access_restrictions
-    };
-
-    const sharing = await keySharingModel.create(sharingData);
-    
+    );
     res.status(201).json({ success: true, ...sharing });
   } catch (error) {
+    const msg = String((error as any)?.message || '');
+    if (msg.includes('only share keys for units you own') || msg.includes('Insufficient permissions')) {
+      res.status(403).json({ error: msg });
+      return;
+    }
+    if (msg.includes('already exists')) {
+      res.status(409).json({ error: msg });
+      return;
+    }
     console.error('Error creating key sharing record:', error);
     res.status(500).json({ error: 'Failed to create key sharing record' });
   }
@@ -348,48 +327,30 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
   try {
     const user = req.user!;
     const { id } = req.params;
-    const {
-      access_level,
-      expires_at,
-      notes,
-      access_restrictions,
-      is_active
-    } = req.body;
-
-    // Get the existing sharing record
-    if (!id) {
-      res.status(400).json({ error: 'Sharing ID is required' });
-      return;
-    }
-    const existingSharing = await keySharingModel.findById(id);
-    if (!existingSharing) {
-      res.status(404).json({ error: 'Key sharing record not found' });
-      return;
-    }
-
-    // Check permissions
-    if (user.role === UserRole.TENANT) {
-      // Tenants can only modify sharing for units they own
-      if (existingSharing.primary_tenant_id !== user.userId) {
-        res.status(403).json({ error: 'You can only modify sharing for units you own' });
-        return;
+    const { KeySharingService } = await import('@/services/key-sharing.service');
+    const svc = KeySharingService.getInstance();
+    const updatedSharing = await svc.updateShare(
+      { userId: user.userId, role: user.role },
+      id,
+      {
+        access_level: req.body.access_level,
+        expires_at: req.body.expires_at ? new Date(req.body.expires_at) : null,
+        notes: req.body.notes,
+        access_restrictions: req.body.access_restrictions,
+        is_active: req.body.is_active,
       }
-    } else if (!AuthService.canManageUsers(user.role)) {
-      res.status(403).json({ error: 'Insufficient permissions to modify key sharing' });
-      return;
-    }
-
-    const updateData: any = {};
-    if (access_level !== undefined) updateData.access_level = access_level;
-    if (expires_at !== undefined) updateData.expires_at = expires_at ? new Date(expires_at) : null;
-    if (notes !== undefined) updateData.notes = notes;
-    if (access_restrictions !== undefined) updateData.access_restrictions = access_restrictions;
-    if (is_active !== undefined) updateData.is_active = is_active;
-
-    const updatedSharing = await keySharingModel.update(id, updateData);
-    
+    );
     res.json({ success: true, ...updatedSharing });
   } catch (error) {
+    const msg = String((error as any)?.message || '');
+    if (msg.includes('not found')) {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (msg.includes('only modify sharing for units you own') || msg.includes('Insufficient permissions')) {
+      res.status(403).json({ error: msg });
+      return;
+    }
     console.error('Error updating key sharing record:', error);
     res.status(500).json({ error: 'Failed to update key sharing record' });
   }
@@ -400,96 +361,21 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<
   try {
     const user = req.user!;
     const { id } = req.params;
-
-    // Get the existing sharing record
-    if (!id) {
-      res.status(400).json({ error: 'Sharing ID is required' });
-      return;
-    }
-    const existingSharing = await keySharingModel.findById(id);
-    if (!existingSharing) {
-      res.status(404).json({ error: 'Key sharing record not found' });
-      return;
-    }
-
-    // Check permissions
-    if (user.role === UserRole.TENANT) {
-      // Tenants can only revoke sharing for units they own
-      if (existingSharing.primary_tenant_id !== user.userId) {
-        res.status(403).json({ error: 'You can only revoke sharing for units you own' });
-        return;
-      }
-    } else if (!AuthService.canManageUsers(user.role)) {
-      res.status(403).json({ error: 'Insufficient permissions to revoke key sharing' });
-      return;
-    }
-
-    const success = await keySharingModel.revokeSharing(id);
-    
-    if (success) {
-      (async () => {
-        // Upon revocation, push denylist for the shared user at the facility of the unit
-        // Device-targeted: find lock device_ids for the unit and unicast per facility
-        const { DenylistService } = await import('@/services/denylist.service');
-        const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
-        const { UnitModel } = await import('../models/unit.model');
-        const { DatabaseService } = await import('@/services/database.service');
-        const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
-        const { config } = await import('@/config/environment');
-        const { logger } = await import('@/utils/logger');
-        const unitModel = new UnitModel();
-        const unit = await unitModel.findById(existingSharing.unit_id);
-        if (unit?.facility_id) {
-          const knex = DatabaseService.getInstance().connection;
-          const devices = await knex('blulok_devices').where({ unit_id: existingSharing.unit_id }).select('id');
-          const deviceIds = devices.map((d: any) => d.id);
-
-          if (deviceIds.length === 0) {
-            return;
-          }
-
-          // Calculate expiration based on route pass TTL
-          const now = new Date();
-          const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
-          const expiresAt = new Date(now.getTime() + ttlMs);
-
-          // Check if we should skip denylist command (user's last route pass is expired)
-          const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
-          const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(existingSharing.shared_with_user_id);
-
-          const exp = Math.floor(expiresAt.getTime() / 1000);
-          const denylistModel = new DenylistEntryModel();
-          const performedBy = req.user!.userId || 'system';
-
-          // Create database entries (always do this for audit trail)
-          for (const deviceId of deviceIds) {
-            await denylistModel.create({
-              device_id: deviceId,
-              user_id: existingSharing.shared_with_user_id,
-              expires_at: expiresAt,
-              source: 'key_sharing_revocation',
-              created_by: performedBy,
-            });
-          }
-
-          // Send denylist command only if user's last route pass is not expired
-          if (!shouldSkip) {
-          const packet = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], deviceIds);
-          GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
-          } else {
-            const { logger } = require('@/utils/logger');
-            logger.info(`Skipping DENYLIST_ADD for revoked key sharing user ${existingSharing.shared_with_user_id} - last route pass is expired`);
-          }
-        }
-      })().catch((error) => {
-        const { logger } = require('@/utils/logger');
-        logger.error('Failed to push denylist on key sharing revocation:', error);
-      });
-      res.json({ message: 'Key sharing revoked successfully' });
-    } else {
-      res.status(500).json({ error: 'Failed to revoke key sharing' });
-    }
+    const { KeySharingService } = await import('@/services/key-sharing.service');
+    const svc = KeySharingService.getInstance();
+    const success = await svc.revokeShare({ userId: user.userId, role: user.role }, id, user.userId || 'system');
+    if (success) res.json({ message: 'Key sharing revoked successfully' });
+    else res.status(500).json({ error: 'Failed to revoke key sharing' });
   } catch (error) {
+    const msg = String((error as any)?.message || '');
+    if (msg.includes('not found')) {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (msg.includes('only revoke sharing for units you own') || msg.includes('Insufficient permissions')) {
+      res.status(403).json({ error: msg });
+      return;
+    }
     console.error('Error revoking key sharing:', error);
     res.status(500).json({ error: 'Failed to revoke key sharing' });
   }
@@ -584,6 +470,7 @@ router.post('/invite', async (req: AuthenticatedRequest, res: Response): Promise
 
     const phoneE164 = toE164(phone, 'US');
 
+    const { KeySharingService } = await import('@/services/key-sharing.service');
     const svc = KeySharingService.getInstance();
     const { shareId } = await svc.inviteByPhone({
       unitId: unit_id,

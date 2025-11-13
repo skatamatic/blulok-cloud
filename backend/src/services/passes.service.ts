@@ -20,7 +20,12 @@ export interface RoutePassClaims {
   iss: 'BluCloud:Root';
   /** Subject claim - user ID this pass is issued for */
   sub: string;
-  /** Audience claim - array of lock/zone IDs this pass grants access to */
+  /**
+   * Audience claim - array of audience-scoped targets this pass grants access to
+   * Formats:
+   * - Direct access to a lock:         lock:{lockId}
+   * - Shared access via owner user:    shared_key:{primaryTenantId}:{lockId}
+   */
   aud: string[];
   /** Issued at timestamp (JWT standard claim) */
   iat?: number;

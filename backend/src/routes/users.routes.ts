@@ -699,8 +699,8 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
         logger.info(`Skipping DENYLIST_ADD for deactivated user ${id} - last route pass is expired`);
       }
 
-      // -------- Cascading revoke for GRANTED access (primary_tenant's invitees) --------
-      // Per product decision: inactivate shares and denylist invitees
+      // -------- Cascading change for GRANTED access (primary_tenant's invitees) --------
+      // Updated product decision: inactivate shares only; DO NOT denylist invitees here.
       const activeSharesGranted = await knex('key_sharing')
         .where('primary_tenant_id', id)
         .where('is_active', true)
@@ -713,37 +713,7 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
         try {
           // Inactivate the share
           await knex('key_sharing').where('id', share.id).update({ is_active: false, updated_at: knex.fn.now() });
-
-          // Devices for the shared unit
-          const devices = await knex('blulok_devices').where({ unit_id: share.unit_id }).select('id');
-          if (devices.length === 0) {
-            continue;
-          }
-
-          // Facility for routing
-          const unit = await knex('units').where('id', share.unit_id).first('facility_id');
-          if (!unit) continue;
-
-          // DB entries for invitee denylist
-          const deviceIds = devices.map((d: any) => d.id as string);
-          for (const deviceId of deviceIds) {
-            await denylistModel.create({
-              device_id: deviceId,
-              user_id: share.shared_with_user_id,
-              expires_at: expiresAt,
-              source: 'key_sharing_revocation',
-              created_by: performedBy,
-            });
-          }
-
-          // Optimization for gateway command (per invitee)
-          const skipInvitee = await DenylistOptimizationService.shouldSkipDenylistAdd(share.shared_with_user_id);
-          if (!skipInvitee) {
-            const packet = await DenylistService.buildDenylistAdd([{ sub: share.shared_with_user_id, exp }], deviceIds);
-            GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
-          } else {
-            logger.info(`Skipping DENYLIST_ADD for invitee ${share.shared_with_user_id} (revoked by deactivated primary ${id}) - last route pass expired`);
-          }
+          // No denylist operations for invitees on owner deactivation
         } catch (err) {
           logger.error(`Failed cascading revoke for sharing ${share.id} on deactivation of user ${id}:`, err);
         }
@@ -802,10 +772,73 @@ router.post('/:id/activate', requireUserManagement, asyncHandler(async (req: Aut
 
   await UserModel.activateUser(id);
 
-  res.json({
-    success: true,
-    message: 'User activated successfully'
-  });
+  // On activation: remove owner from device denylists and reactivate shares
+  (async () => {
+    const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
+    const { DenylistService } = await import('@/services/denylist.service');
+    const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+    const { DatabaseService } = await import('@/services/database.service');
+    const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
+    const { logger } = await import('@/utils/logger');
+
+    const knex = DatabaseService.getInstance().connection;
+    const denylistModel = new DenylistEntryModel();
+
+    try {
+      // Load active denylist entries for this user
+      const entries = await denylistModel.findByUser(id);
+      if (entries.length > 0) {
+        // Map device -> facility
+        const deviceIds = Array.from(new Set(entries.map(e => e.device_id)));
+        const deviceFacilityRows = await knex('blulok_devices as bd')
+          .join('units as u', 'bd.unit_id', 'u.id')
+          .whereIn('bd.id', deviceIds)
+          .select('bd.id as device_id', 'u.facility_id');
+
+        const facilityToDeviceIds = new Map<string, string[]>();
+        for (const row of deviceFacilityRows) {
+          const list = facilityToDeviceIds.get(row.facility_id) || [];
+          list.push(row.device_id);
+          facilityToDeviceIds.set(row.facility_id, list);
+        }
+
+        // Send remove commands per facility, honoring optimization
+        for (const [facilityId, targetDeviceIds] of facilityToDeviceIds.entries()) {
+          const entriesForFacility = entries.filter(e => targetDeviceIds.includes(e.device_id));
+          const entriesToProcess = entriesForFacility.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e as any));
+
+          // Always clean DB entries
+          for (const deviceId of targetDeviceIds) {
+            await denylistModel.remove(deviceId, id);
+          }
+
+          if (entriesToProcess.length > 0) {
+            const [payload] = await DenylistService.buildDenylistRemove([{ sub: id, exp: 0 }], targetDeviceIds);
+            GatewayEventsService.getInstance().unicastToFacility(facilityId, payload);
+          } else {
+            logger.info(`Skipped DENYLIST_REMOVE for user ${id} on ${targetDeviceIds.length} device(s) - entries already expired, removed from DB only`);
+          }
+        }
+      }
+    } catch (err) {
+      logger.error(`Failed to process denylist removal on activation for user ${id}:`, err);
+    }
+
+    try {
+      // Reactivate previously deactivated (and unexpired) shares owned by this user
+      await knex('key_sharing')
+        .where('primary_tenant_id', id)
+        .where('is_active', false)
+        .where(function(this: any) {
+          this.whereNull('expires_at').orWhere('expires_at', '>', knex.fn.now());
+        })
+        .update({ is_active: true, updated_at: knex.fn.now() });
+    } catch (err) {
+      logger.error(`Failed to reactivate shares on activation for user ${id}:`, err);
+    }
+  })().catch(() => {});
+
+  res.json({ success: true, message: 'User activated successfully' });
 }));
 
 export { router as usersRouter };

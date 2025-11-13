@@ -65,6 +65,17 @@ describe('ShareKeyModal', () => {
     expect(onSuccess).toHaveBeenCalled();
   });
 
+  it('supports permanent access level in invite', async () => {
+    renderWithProviders(<ShareKeyModal isOpen unitId="unit-1" onClose={onClose} onSuccess={onSuccess} />);
+    const phoneInput = screen.getByPlaceholderText('+15551234567');
+    fireEvent.change(phoneInput, { target: { value: '+15551230001' } });
+    const select = screen.getByRole('combobox');
+    fireEvent.change(select, { target: { value: 'permanent' } });
+    const submit = screen.getByRole('button', { name: /send invite/i });
+    await act(async () => { fireEvent.click(submit); });
+    await waitFor(() => expect(mockApi.inviteSharedKey).toHaveBeenCalledWith({ unit_id: 'unit-1', phone: '+15551230001', access_level: 'permanent' }));
+  });
+
   it('handles API error gracefully', async () => {
     mockApi.inviteSharedKey.mockRejectedValueOnce({ response: { data: { message: 'Failed' } } });
     renderWithProviders(<ShareKeyModal isOpen unitId="unit-1" onClose={onClose} onSuccess={onSuccess} />);
@@ -73,6 +84,16 @@ describe('ShareKeyModal', () => {
     const submit = screen.getByRole('button', { name: /send invite/i });
     await act(async () => { fireEvent.click(submit); });
     await waitFor(() => expect(addToast).toHaveBeenCalledWith({ type: 'error', title: 'Failed' }));
+  });
+
+  it('prefers error field from API when present', async () => {
+    mockApi.inviteSharedKey.mockRejectedValueOnce({ response: { data: { error: 'Invalid phone' } } });
+    renderWithProviders(<ShareKeyModal isOpen unitId="unit-1" onClose={onClose} onSuccess={onSuccess} />);
+    const phoneInput = screen.getByPlaceholderText('+15551234567');
+    fireEvent.change(phoneInput, { target: { value: '+15551230000' } });
+    const submit = screen.getByRole('button', { name: /send invite/i });
+    await act(async () => { fireEvent.click(submit); });
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith({ type: 'error', title: 'Invalid phone' }));
   });
 });
 

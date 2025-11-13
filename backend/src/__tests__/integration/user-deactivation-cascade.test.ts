@@ -1,9 +1,9 @@
 /**
  * Integration Test: User Deactivation Cascades
  *
- * Verifies Flow G:
+ * Verifies Flow G (updated policy):
  *  - Held access: deactivated user is denylisted on devices from primary and shared units
- *  - Granted access: shares granted by the user are inactivated and invitees are denylisted
+ *  - Granted access: shares granted by the user are inactivated (no invitee denylist adds)
  */
 
 jest.mock('@/services/database.service');
@@ -132,7 +132,7 @@ describe('User Deactivation Cascades', () => {
     jest.clearAllMocks();
   });
 
-  it('deny-lists deactivated user for primary and shared units, and cascades to invitees', async () => {
+  it('deny-lists deactivated user for primary and shared units, and DOES NOT denylist invitees', async () => {
     const res = await request(app)
       .delete('/api/v1/users/user-to-deactivate')
       .set('Authorization', 'Bearer mock-jwt-token')
@@ -142,12 +142,10 @@ describe('User Deactivation Cascades', () => {
 
     // Held access: entries created for devices from both facility-1 & facility-2
     expect(mockDenylistModel.create).toHaveBeenCalled();
-    // Gateway called for both facilities for deactivated user
-    expect(mockGateway.unicastToFacility).toHaveBeenCalled();
-
-    // Granted access cascade: key_sharing inactivated and invitees denylisted
-    // Verify we sent at least two unicast commands (deactivated user + invitees)
-    expect((mockGateway.unicastToFacility as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Gateway called for both facilities for deactivated user (2 calls total)
+    expect((mockGateway.unicastToFacility as jest.Mock).mock.calls.length).toBe(2);
+    // Only owner denylist adds should be built (equal to facility groups)
+    expect((DenylistService.buildDenylistAdd as jest.Mock).mock.calls.length).toBe(2);
   });
 });
 

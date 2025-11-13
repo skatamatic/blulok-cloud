@@ -11,8 +11,10 @@ const getRuntimeConfig = (): RuntimeConfig => {
 // Safely read Vite env in both browser and Jest/node without crashing when process is undefined
 const getViteEnv = (key: string): string | undefined => {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const env = (import.meta as any)?.env;
+    // Access import.meta via eval to avoid syntax errors in Jest/CommonJS
+    // eslint-disable-next-line no-eval
+    const meta = (0, eval)('import.meta') as any;
+    const env = meta?.env;
     if (env && env[key] !== undefined) {
       return env[key] as string;
     }

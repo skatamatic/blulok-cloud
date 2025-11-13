@@ -49,6 +49,7 @@ jest.mock('@/models/user.model', () => ({
       });
     }),
     deactivateUser: jest.fn().mockResolvedValue((id: string) => ({ id, is_active: false })),
+    activateUser: jest.fn().mockResolvedValue((id: string) => ({ id, is_active: true })),
     findAll: jest.fn().mockResolvedValue({
       users: [
         { id: 'user-1', firstName: 'John', lastName: 'Doe', email: 'john@example.com', role: 'ADMIN' },
@@ -86,15 +87,17 @@ jest.mock('@/models/key-sharing.model', () => ({
   KeySharingModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue({
       sharings: [
-        { id: 'sharing-1', userId: 'user-1', unitId: 'unit-1', status: 'active' }
+        { id: 'sharing-1', primary_tenant_id: 'owner-1', shared_with_user_id: 'user-1', unit_id: 'unit-1', is_active: true, expires_at: null }
       ],
       total: 1
     }),
     findById: jest.fn().mockImplementation((id) => Promise.resolve({
       id,
-      userId: 'user-1',
-      unitId: 'unit-1',
-      status: 'active'
+      primary_tenant_id: 'owner-1',
+      shared_with_user_id: 'invitee-1',
+      unit_id: 'unit-1',
+      is_active: false,
+      expires_at: null
     })),
     create: jest.fn().mockResolvedValue({ id: 'new-sharing-id' }),
     updateById: jest.fn().mockResolvedValue(true),
@@ -102,13 +105,13 @@ jest.mock('@/models/key-sharing.model', () => ({
     getExpiredSharings: jest.fn().mockResolvedValue([]),
     getUserOwnedKeys: jest.fn().mockResolvedValue({
       sharings: [
-        { id: 'sharing-1', userId: 'user-1', unitId: 'unit-1', status: 'active' }
+        { id: 'sharing-1', primary_tenant_id: 'owner-1', shared_with_user_id: 'user-1', unit_id: 'unit-1', is_active: true, expires_at: null }
       ],
       total: 1
     }),
     getUserSharedKeys: jest.fn().mockResolvedValue({
       sharings: [
-        { id: 'sharing-2', userId: 'user-2', unitId: 'unit-1', status: 'active' }
+        { id: 'sharing-2', primary_tenant_id: 'owner-2', shared_with_user_id: 'user-2', unit_id: 'unit-1', is_active: true, expires_at: null }
       ],
       total: 1
     }),
@@ -116,7 +119,14 @@ jest.mock('@/models/key-sharing.model', () => ({
       sharings: [],
       total: 0
     }),
-    update: jest.fn().mockResolvedValue(true),
+    update: jest.fn().mockImplementation((_id, data) => Promise.resolve({
+      id: _id,
+      primary_tenant_id: 'owner-1',
+      shared_with_user_id: 'invitee-1',
+      unit_id: 'unit-1',
+      is_active: data?.is_active ?? true,
+      expires_at: data?.expires_at ?? null,
+    })),
     revokeSharing: jest.fn().mockResolvedValue(true)
   }))
 }));

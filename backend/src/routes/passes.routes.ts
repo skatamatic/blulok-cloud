@@ -16,148 +16,31 @@ import Joi from 'joi';
 import { passRequestLimiter } from '@/middleware/security-limits';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
-import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
-import { DatabaseService } from '@/services/database.service';
-import { PassesService } from '@/services/passes.service';
-import { Ed25519Service } from '@/services/crypto/ed25519.service';
-import { RoutePassIssuanceModel } from '@/models/route-pass-issuance.model';
-import { Knex } from 'knex';
-import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
-import { logger } from '@/utils/logger';
-import { config } from '@/config/environment';
+import { AuthenticatedRequest } from '@/types/auth.types';
+import { RoutePassOrchestrator, RoutePassError } from '@/services/passes/route-pass.orchestrator';
 
 const router = Router();
 
 // Rate limit pass requests
 
-/**
- * Resolve lock audiences based on user role and permissions.
- * No test-only fallbacks; tests must mock DB correctly.
- */
-async function resolveAudiences(db: Knex, userId: string, userRole: UserRole, facilityIds?: string[]): Promise<string[]> {
-  let lockIds: string[] = [];
-
-  if (userRole === UserRole.DEV_ADMIN || userRole === UserRole.ADMIN) {
-    // Global admins: all locks
-    const rows = await db('blulok_devices').select('id');
-    lockIds = rows.map((r: any) => r.id);
-  } else if (userRole === UserRole.FACILITY_ADMIN) {
-    // Facility admins: locks in their facilities
-    if (!facilityIds || facilityIds.length === 0) {
-      return [];
-    }
-    const rows = await db('blulok_devices as bd')
-      .join('units as u', 'bd.unit_id', 'u.id')
-      .whereIn('u.facility_id', facilityIds)
-      .select('bd.id');
-    lockIds = rows.map((r: any) => r.id);
-  } else if (userRole === UserRole.TENANT) {
-    // Tenants: locks for their assigned units (primary)
-    const assignmentsQuery = db('blulok_devices as bd')
-      .join('unit_assignments as ua', 'ua.unit_id', 'bd.unit_id')
-      .where('ua.tenant_id', userId)
-      .select('bd.id');
-
-    // Plus locks for units shared with them (active, not expired)
-    const sharedQuery = db('blulok_devices as bd')
-      .join('key_sharing as ks', 'ks.unit_id', 'bd.unit_id')
-      .where('ks.shared_with_user_id', userId)
-      .where('ks.is_active', true)
-      .where(function(this: any) {
-        this.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', db.fn.now());
-      })
-      .select('bd.id');
-
-    const rows = await assignmentsQuery.union(sharedQuery);
-    lockIds = rows.map((r: any) => r.id);
-  } else if (userRole === UserRole.MAINTENANCE) {
-    // Maintenance: locks for explicitly granted units (future; stub for now)
-    // TODO: Implement maintenance_unit_access table join when available
-    lockIds = [];
-  } else {
-    // Other roles have no lock access
-    lockIds = [];
-  }
-
-  return lockIds.map((id: string) => `lock:${id}`);
-}
-
 // POST /api/v1/passes/request
 router.post('/request', authenticateToken, passRequestLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const userId = req.user!.userId;
-  const userRole = req.user!.role;
-  let facilityIds = req.user!.facilityIds as string[] | undefined;
-  const db = DatabaseService.getInstance().connection;
-
-  // Prefer the requesting device when provided
   const rawHeader = req.header('X-App-Device-Id');
-  if (rawHeader !== undefined && rawHeader.trim().length === 0) {
-    res.status(400).json({ success: false, message: 'X-App-Device-Id header, if provided, must be non-empty' });
-    return;
-  }
-  const appDeviceId = (rawHeader || '').trim();
-  let device: any | undefined;
+  try {
+    const routePass = await RoutePassOrchestrator.issueForUser({
+      userId: req.user!.userId,
+      role: req.user!.role,
+      facilityIds: req.user!.facilityIds as string[] | undefined,
+    }, rawHeader);
 
-  if (appDeviceId) {
-    device = await db('user_devices')
-      .where({ user_id: userId, app_device_id: appDeviceId })
-      .whereIn('status', ['pending_key', 'active'])
-      .first();
-    if (!device?.public_key) {
-      res.status(400).json({ success: false, message: 'Unknown or unregistered device for user' });
+    res.json({ success: true, routePass });
+  } catch (e: any) {
+    if (e instanceof RoutePassError) {
+      res.status(e.status).json({ success: false, message: e.message });
       return;
     }
-  } else {
-    device = await db('user_devices')
-      .where({ user_id: userId })
-      .whereIn('status', ['pending_key', 'active'])
-      .orderBy('updated_at', 'desc')
-      .first();
+    res.status(500).json({ success: false, message: 'Failed to issue route pass' });
   }
-
-  if (!device?.public_key) {
-    res.status(409).json({ success: false, message: 'No registered device key' });
-    return;
-  }
-
-  // Resolve audiences based on role
-  if (userRole === UserRole.FACILITY_ADMIN && (!facilityIds || facilityIds.length === 0)) {
-    // Fallback: load facility IDs from DB when not present on token
-    facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
-  }
-  const audiences = await resolveAudiences(db, userId, userRole, facilityIds);
-
-  const routePass = await PassesService.issueRoutePass({ userId, devicePublicKey: device.public_key, audiences });
-  
-  // Log route pass issuance for auditing and optimization
-  try {
-    const routePassModel = new RoutePassIssuanceModel();
-    // Decode JWT to get jti, iat, exp
-    const payload = await Ed25519Service.verifyJwt(routePass);
-    const jti = payload.jti as string;
-    const iat = payload.iat as number;
-    const exp = payload.exp as number;
-    
-    const issuedAt = new Date(iat * 1000);
-    const expiresAt = new Date(exp * 1000);
-    
-    await routePassModel.create({
-      userId,
-      deviceId: device.id,
-      audiences,
-      jti,
-      issuedAt,
-      expiresAt,
-    });
-    
-    logger.debug(`Logged route pass issuance: user=${userId} device=${device.id} jti=${jti}`);
-  } catch (error) {
-    // Log error but don't fail the request - issuance logging is non-critical
-    logger.error(`Failed to log route pass issuance for user ${userId}:`, error);
-  }
-  
-  logger.info(`Issued Route Pass: user=${userId} device=${appDeviceId || 'latest'} audCount=${audiences.length}`);
-  res.json({ success: true, routePass });
 }));
 
 export { router as passesRouter };

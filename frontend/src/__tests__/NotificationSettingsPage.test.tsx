@@ -63,19 +63,22 @@ describe('NotificationSettingsPage - Send Test Notifications', () => {
     });
 
     // Click "Send Test Notifications"
-    const btn = await screen.findByRole('button', { name: /send test notifications/i });
-    await userEvent.click(btn);
+    const openBtn = await screen.findByRole('button', { name: /send test notifications/i });
+    await userEvent.click(openBtn);
+
+    const confirmBtn = await screen.findByRole('button', { name: /send tests/i });
+    await userEvent.click(confirmBtn);
 
     await waitFor(() => {
-      expect(apiService.sendTestNotifications).toHaveBeenCalledWith();
+      expect(apiService.sendTestNotifications).toHaveBeenCalled();
     });
 
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'success',
-          title: 'Test notifications dispatched',
-          message: expect.stringContaining('sent: sms_invite, email_invite, sms_otp, email_otp'),
+          title: 'Test notifications result',
+          message: expect.stringContaining('Sent: sms_invite, email_invite, sms_otp, email_otp'),
         })
       );
     });
@@ -92,8 +95,11 @@ describe('NotificationSettingsPage - Send Test Notifications', () => {
       expect(apiService.getNotificationSettings).toHaveBeenCalled();
     });
 
-    const btn = await screen.findByRole('button', { name: /send test notifications/i });
-    await userEvent.click(btn);
+    const openBtn = await screen.findByRole('button', { name: /send test notifications/i });
+    await userEvent.click(openBtn);
+
+    const confirmBtn = await screen.findByRole('button', { name: /send tests/i });
+    await userEvent.click(confirmBtn);
 
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(

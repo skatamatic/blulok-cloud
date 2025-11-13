@@ -141,24 +141,53 @@ describe('Passes Routes', () => {
       expect(callArgs.expiresAt).toBeInstanceOf(Date);
     });
 
-    it('includes shared-key locks in audiences', async () => {
-      // Mock DB: user device present; union returns both assigned + shared
+    it('includes shared_key:{grantingUserId}:{lockId} for shared access', async () => {
+      // Mock DB: differentiate assigned vs shared joins
       const mockKnex = jest.fn((table: string) => {
-        const qb: any = {
+        if (table === 'user_devices') {
+          return {
+            where: jest.fn().mockReturnThis(),
+            whereIn: jest.fn().mockReturnThis(),
+            orderBy: jest.fn().mockReturnThis(),
+            first: jest.fn().mockResolvedValue({ id: 'dev-1', public_key: 'cHVibGlj', status: 'active' }),
+          };
+        }
+        if (table === 'blulok_devices as bd') {
+          const builder: any = {};
+          builder._joinTarget = '';
+          builder.join = jest.fn().mockImplementation((target: string) => {
+            builder._joinTarget = target;
+            return builder;
+          });
+          builder.where = jest.fn().mockReturnThis();
+          builder.whereIn = jest.fn().mockReturnThis();
+          builder.whereNull = jest.fn().mockReturnThis();
+          builder.orWhere = jest.fn().mockReturnThis();
+          builder.select = jest.fn().mockImplementation(() => {
+            if (builder._joinTarget.includes('unit_assignments')) {
+              return Promise.resolve([{ id: 'lock-assigned' }]);
+            }
+            if (builder._joinTarget.includes('key_sharing')) {
+              return Promise.resolve([{ device_id: 'lock-shared', owner_user_id: 'owner-123' }]);
+            }
+            return Promise.resolve([]);
+          });
+          builder.fn = { now: () => new Date() };
+          return builder;
+        }
+        // default qb
+        return {
           where: jest.fn().mockReturnThis(),
           whereIn: jest.fn().mockReturnThis(),
-          select: jest.fn().mockReturnThis(),
-          join: jest.fn().mockReturnThis(),
-          first: jest.fn(),
-          then: jest.fn((onFulfilled?: any) => Promise.resolve(onFulfilled ? onFulfilled([]) : [])),
-          union: jest.fn().mockImplementation(function () { return Promise.resolve([{ id: 'lock-assigned' }, { id: 'lock-shared' }]); }),
+          whereNull: jest.fn().mockReturnThis(),
+          orWhere: jest.fn().mockReturnThis(),
+          select: jest.fn().mockResolvedValue([]),
+          first: jest.fn().mockResolvedValue(null),
           orderBy: jest.fn().mockReturnThis(),
+          fn: { now: () => new Date() },
         };
-        if (table === 'user_devices') {
-          qb.first.mockResolvedValue({ id: 'dev-1', user_id: 'tenant-1', status: 'active', public_key: 'cHVibGlj' });
-        }
-        return qb;
       });
+
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: mockKnex });
 
       const res = await request(app)
@@ -168,7 +197,7 @@ describe('Passes Routes', () => {
 
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
-      expect(payload.aud).toEqual(expect.arrayContaining(['lock:lock-assigned', 'lock:lock-shared']));
+      expect(payload.aud).toEqual(expect.arrayContaining(['lock:lock-assigned', 'shared_key:owner-123:lock-shared']));
     });
   });
 
