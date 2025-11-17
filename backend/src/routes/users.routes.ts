@@ -121,12 +121,13 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   // Apply search filter
   if (search) {
     const searchTerm = String(search).toLowerCase();
-    filteredUsers = filteredUsers.filter(user => 
-      user.first_name.toLowerCase().includes(searchTerm) ||
-      user.last_name.toLowerCase().includes(searchTerm) ||
-      user.email.toLowerCase().includes(searchTerm) ||
-      (user.facility_names && user.facility_names.toLowerCase().includes(searchTerm))
-    );
+    filteredUsers = filteredUsers.filter(user => {
+      const first = (user.first_name || '').toLowerCase();
+      const last = (user.last_name || '').toLowerCase();
+      const email = (user.email || '').toLowerCase();
+      const facNames = (user.facility_names || '').toLowerCase();
+      return first.includes(searchTerm) || last.includes(searchTerm) || email.includes(searchTerm) || facNames.includes(searchTerm);
+    });
   }
 
   // Apply role filter
@@ -157,8 +158,8 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
         bVal = `${b.first_name} ${b.last_name}`.toLowerCase();
         break;
       case 'email':
-        aVal = a.email.toLowerCase();
-        bVal = b.email.toLowerCase();
+        aVal = (a.email || '').toLowerCase();
+        bVal = (b.email || '').toLowerCase();
         break;
       case 'role':
         aVal = a.role;

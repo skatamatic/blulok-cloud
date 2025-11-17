@@ -40,7 +40,7 @@ export class InviteService {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + INVITE_TTL_HOURS * 60 * 60 * 1000);
 
-    const [inviteId] = await this.db('user_invites').insert({
+    await this.db('user_invites').insert({
       user_id: userId,
       token_hash: tokenHash,
       expires_at: expiresAt,
@@ -49,7 +49,13 @@ export class InviteService {
       metadata: metadata ? JSON.stringify(metadata) : null,
     });
 
-    return { token, inviteId: String(inviteId), expiresAt };
+    // MySQL does not return inserted UUID ids by default; fetch the row we just inserted
+    const row = await this.db('user_invites')
+      .where({ user_id: userId, token_hash: tokenHash })
+      .orderBy('created_at', 'desc')
+      .first();
+    const inviteId = row?.id as string | undefined;
+    return { token, inviteId: inviteId || '', expiresAt };
   }
 
   /**

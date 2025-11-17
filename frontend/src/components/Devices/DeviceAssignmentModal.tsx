@@ -9,6 +9,7 @@ import { Modal } from '@/components/Modal/Modal';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
+import { DeviceFilter } from '@/components/Common/DeviceFilter';
 
 interface Device {
   id: string;
@@ -217,21 +218,14 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       Available Devices
                     </label>
-                    <select
+                    <DeviceFilter
                       value={selectedDevice}
-                      onChange={(e) => setSelectedDevice(e.target.value)}
-                      className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    >
-                      <option value="">Choose a device</option>
-                      {devices.map((device) => (
-                        <option key={device.id} value={device.id}>
-                          {device.device_serial} 
-                          {device.firmware_version && ` (v${device.firmware_version})`}
-                          {device.facility_name && ` - ${device.facility_name}`}
-                          {device.device_status && ` - ${device.device_status}`}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setSelectedDevice}
+                      placeholder="Search devices..."
+                      className="w-full"
+                      facilityId={unit!.facility_id}
+                      excludeDeviceIds={unit?.blulok_device?.id ? [unit.blulok_device.id] : []}
+                    />
                   </div>
 
                   {devices.length === 0 && (

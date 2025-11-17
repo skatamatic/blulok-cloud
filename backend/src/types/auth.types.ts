@@ -66,8 +66,16 @@ export interface JWTPayload {
  * Security: Transmitted over HTTPS, validated server-side.
  */
 export interface LoginRequest {
-  /** User's email address */
-  email: string;
+  /**
+   * Flexible login identifier.
+   * Can be an email address or a phone number (raw; will be normalized server-side).
+   */
+  identifier?: string;
+  /**
+   * Legacy email field for backwards compatibility.
+   * If provided and identifier is missing, email will be used as the identifier.
+   */
+  email?: string;
   /** User's password (plaintext, hashed server-side) */
   password: string;
 }

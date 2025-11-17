@@ -84,6 +84,8 @@ const bluLokDeviceSchema = Joi.object({
   device_type: Joi.string().valid('blulok').required(),
   location_description: Joi.string().required(),
   unit_id: Joi.string().required(),
+  // Optional if the device already exists on gateway and will be assigned later
+  device_serial: Joi.string().optional(),
 });
 
 const lockStatusSchema = Joi.object({
@@ -203,6 +205,40 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
     res.status(500).json({ success: false, message: 'Failed to fetch devices' });
   }
 });
+
+// GET /api/devices/blulok/:id - Get single BluLok device by id
+router.get('/blulok/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const user = req.user!;
+
+    // Facility-scoped users must have access to the facility that owns this device (via gateway)
+    if (AuthService.isFacilityScoped(user.role)) {
+      const knex = DatabaseService.getInstance().connection;
+      const gatewayRow = await knex('blulok_devices')
+        .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
+        .where('blulok_devices.id', id)
+        .select('gateways.facility_id')
+        .first();
+
+      if (!gatewayRow || !user.facilityIds?.includes(gatewayRow.facility_id)) {
+        res.status(403).json({ success: false, message: 'Access denied to this device' });
+        return;
+      }
+    }
+
+    const device = await deviceModel.findBluLokDeviceById(String(id));
+    if (!device) {
+      res.status(404).json({ success: false, message: 'Device not found' });
+      return;
+    }
+
+    res.json({ success: true, device });
+  } catch (error) {
+    console.error('Error fetching device:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch device' });
+  }
+}));
 
 // GET /api/devices/facility/:facilityId/hierarchy - Get facility device hierarchy
 router.get('/facility/:facilityId/hierarchy', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -352,27 +388,42 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
       return;
     }
 
-    // Proper access control - users can only control locks for units they have access to
-    const { UnitsService } = await import('@/services/units.service');
-    const unitsService = UnitsService.getInstance();
-    
-    // Get the unit ID for this device by querying the blulok_devices table
     const knex = deviceModel['db'].connection;
-    const device = await knex('blulok_devices')
-      .select('unit_id')
-      .where('id', String(id))
+    const deviceRow = await knex('blulok_devices')
+      .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
+      .select('blulok_devices.unit_id', 'gateways.facility_id')
+      .where('blulok_devices.id', String(id))
       .first();
-    
-    if (!device || !device.unit_id) {
-      res.status(404).json({ success: false, message: 'Device or associated unit not found' });
+
+    if (!deviceRow) {
+      res.status(404).json({ success: false, message: 'Device not found' });
       return;
     }
 
-    // Check if user has access to the unit
-    const hasAccess = await unitsService.hasUserAccessToUnit(device.unit_id, user.userId, user.role);
-    if (!hasAccess) {
-      res.status(403).json({ success: false, message: 'Insufficient permissions - unit access required' });
-      return;
+    // Access control:
+    // - If device has a unit: user must have access to that unit
+    // - If device has no unit: allow admin/dev_admin; facility_admin must have facility access
+    if (deviceRow.unit_id) {
+      const { UnitsService } = await import('@/services/units.service');
+      const unitsService = UnitsService.getInstance();
+      const hasAccess = await unitsService.hasUserAccessToUnit(deviceRow.unit_id, user.userId, user.role);
+      if (!hasAccess) {
+        res.status(403).json({ success: false, message: 'Insufficient permissions - unit access required' });
+        return;
+      }
+    } else {
+      // No unit associated
+      if (user.role === UserRole.ADMIN || user.role === UserRole.DEV_ADMIN) {
+        // allowed
+      } else if (user.role === UserRole.FACILITY_ADMIN) {
+        if (!user.facilityIds?.includes(deviceRow.facility_id)) {
+          res.status(403).json({ success: false, message: 'Insufficient permissions - facility access required' });
+          return;
+        }
+      } else {
+        res.status(403).json({ success: false, message: 'Insufficient permissions' });
+        return;
+      }
     }
 
     await deviceModel.updateLockStatus(String(id), value.lock_status);

@@ -90,17 +90,37 @@ export class KeySharingService {
         if (primary?.tenant_id) primaryTenantId = primary.tenant_id;
       }
 
-      const created = await this.keySharings.create({
-        unit_id: unitId,
-        primary_tenant_id: primaryTenantId,
-        shared_with_user_id: invitee.id,
-        access_level: accessLevel,
-        expires_at: expiresAt ?? undefined,
-        granted_by: grantedBy,
-      });
-      shareId = created.id;
-      isActive = true;
-      effectiveExpiresAt = created.expires_at;
+      try {
+        const created = await this.keySharings.create({
+          unit_id: unitId,
+          primary_tenant_id: primaryTenantId,
+          shared_with_user_id: invitee.id,
+          access_level: accessLevel,
+          expires_at: expiresAt ?? undefined,
+          granted_by: grantedBy,
+        });
+        shareId = created.id;
+        isActive = true;
+        effectiveExpiresAt = created.expires_at;
+      } catch (e: any) {
+        const msg = String(e?.message || '');
+        // If a duplicate key violation occurs, fall back to fetching the existing row
+        if (msg.includes('Duplicate entry') && msg.includes('key_sharing_unit_id_shared_with_user_id_unique') || msg.includes('key_sharing_unit_id_shared_with_user_id_unique')) {
+          const dupExisting = await this.keySharings.getUnitSharedKeys(unitId, {
+            shared_with_user_id: invitee.id,
+          });
+          if (dupExisting.sharings.length > 0) {
+            const current = dupExisting.sharings[0] as any;
+            shareId = current.id;
+            isActive = Boolean(current.is_active);
+            effectiveExpiresAt = current.expires_at;
+          } else {
+            throw e;
+          }
+        } else {
+          throw e;
+        }
+      }
     }
 
     // ---- Denylist removal on (re)grant for active/unexpired share (Flow H) ----
@@ -168,18 +188,47 @@ export class KeySharingService {
       throw new Error('Insufficient permissions to share keys');
     }
 
-    // Prevent duplicate active share
-    const existingSharings = await this.keySharings.getUnitSharedKeys(unit_id, {
+    // If there is an existing share (active or inactive) for this user+unit:
+    // - If active, reject as duplicate
+    // - If inactive, reactivate and update fields (treat as re-grant)
+    const existingAny = await this.keySharings.getUnitSharedKeys(unit_id, {
       shared_with_user_id,
-      is_active: true
     });
-    if (existingSharings.sharings.length > 0) {
-      throw new Error('Key sharing already exists for this user and unit');
+    if (existingAny.sharings.length > 0) {
+      const current = existingAny.sharings[0] as any;
+      if (Boolean(current.is_active)) {
+        throw new Error('Key sharing already exists for this user and unit');
+      }
+      // Reactivate existing instead of creating a new row (avoids unique constraint collisions)
+      const reactivated = await this.updateShare(
+        ctx,
+        current.id,
+        {
+          is_active: true,
+          access_level: access_level,
+          expires_at: expires_at ?? null,
+          notes,
+          access_restrictions,
+        }
+      );
+      // Ensure non-null return object
+      if (reactivated) return reactivated;
+      const refetched = await this.keySharings.findById(current.id);
+      return refetched;
     }
+
+    // Resolve primary tenant id for the unit; fallback to ctx.userId
+    let primaryTenantId = ctx.userId;
+    try {
+      const primary = await this.db('unit_assignments')
+        .where({ unit_id, is_primary: true })
+        .first('tenant_id');
+      if (primary?.tenant_id) primaryTenantId = primary.tenant_id;
+    } catch {}
 
     const sharingData = {
       unit_id,
-      primary_tenant_id: ctx.userId,
+      primary_tenant_id: primaryTenantId,
       shared_with_user_id,
       access_level: normalizedLevel,
       expires_at: expires_at ?? null,
@@ -270,7 +319,10 @@ export class KeySharingService {
       logger.error('Failed to process denylist removal on share reactivation:', e);
     }
 
-    return updatedSharing;
+    if (updatedSharing) return updatedSharing;
+    // Fallback: fetch and return latest row if dialect didn't return updated row
+    const refetched = await this.keySharings.findById(id);
+    return refetched;
   }
 
   public async revokeShare(ctx: { userId: string; role: UserRole }, id: string, performedBy: string): Promise<boolean> {
@@ -318,7 +370,10 @@ export class KeySharingService {
         const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(existingSharing.shared_with_user_id);
         if (!shouldSkip) {
           const packet = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], deviceIds);
+          logger.info(`Sending DENYLIST_ADD for revoked share user=${existingSharing.shared_with_user_id} devices=${deviceIds.length} facility=${unit.facility_id}`);
           GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
+        } else {
+          logger.info(`Skipping DENYLIST_ADD after share revocation user=${existingSharing.shared_with_user_id} (no active route pass)`);
         }
       } catch (error) {
         logger.error('Failed to push denylist on key sharing revocation:', error);

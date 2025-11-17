@@ -16,6 +16,8 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
+import { DeviceSyncService } from '@/services/device-sync.service';
+import { GatewayModel } from '@/models/gateway.model';
 
 const router = Router();
 
@@ -56,6 +58,61 @@ router.post('/fallback-pass', authenticateToken, requireFacilityAdmin, asyncHand
   }
   const routePass = await new FallbackService().processFallbackJwt(value.fallbackJwt);
   res.json({ success: true, routePass });
+}));
+
+// POST /api/v1/internal/gateway/device-sync
+// Simulate a gateway device inventory sync (used by inbound WS test app)
+const deviceSyncSchema = Joi.object({
+  // Optional facility_id to support direct HTTP testing; for WS proxy the X-Gateway-Facility-Id header will be present
+  facility_id: Joi.string().optional(),
+  devices: Joi.array().items(Joi.object({
+    serial: Joi.string().optional(),
+    id: Joi.string().optional(),
+    lockId: Joi.string().optional(),
+    firmwareVersion: Joi.string().optional(),
+    online: Joi.boolean().optional(),
+    locked: Joi.boolean().optional(),
+    batteryLevel: Joi.number().optional(),
+    lastSeen: Joi.string().optional()
+  })).required()
+});
+
+router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { error, value } = deviceSyncSchema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  // Resolve facility and gateway
+  const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
+  const facilityId = value.facility_id || facilityIdHeader;
+  if (!facilityId) {
+    res.status(400).json({ success: false, message: 'Missing facility_id (body or X-Gateway-Facility-Id header)' });
+    return;
+  }
+
+  const gatewayModel = new GatewayModel();
+  const gateway = await gatewayModel.findByFacilityId(facilityId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
+    return;
+  }
+
+  // Perform sync
+  const devices = value.devices as any[];
+  await DeviceSyncService.getInstance().syncGatewayDevices(gateway.id, devices);
+  await DeviceSyncService.getInstance().updateDeviceStatuses(gateway.id, devices);
+
+  res.json({
+    success: true,
+    message: 'Device sync applied',
+    data: {
+      gateway_id: gateway.id,
+      facility_id: facilityId,
+      received: devices.length
+    }
+  });
 }));
 
 export { router as internalGatewayRouter };

@@ -309,9 +309,9 @@ export default function UnitsPage() {
           </div>
         )}
 
-        {/* Unit Details */}
+        {/* Unit Details / Device Warning */}
         <div className="space-y-3">
-          {unit.blulok_device && (
+          {unit.blulok_device ? (
             <>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
@@ -334,6 +334,11 @@ export default function UnitsPage() {
                 </div>
               )}
             </>
+          ) : (
+            <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg flex items-center text-sm text-yellow-800 dark:text-yellow-300">
+              <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
+              No device attached
+            </div>
           )}
         </div>
 
@@ -355,7 +360,7 @@ export default function UnitsPage() {
           </div>
         )}
 
-        {/* Actions */}
+        {/* Footer: keep facility link only, remove lock button */}
         <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -371,21 +376,7 @@ export default function UnitsPage() {
                 <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
               </button>
             </div>
-            {canManage && unit.blulok_device && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleLockToggle(unit);
-                }}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  unit.blulok_device.lock_status === 'locked'
-                    ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                    : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
-                }`}
-              >
-                {unit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
-              </button>
-            )}
+            <span className="text-xs text-transparent">.</span>
           </div>
         </div>
       </div>

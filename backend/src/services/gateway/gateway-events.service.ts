@@ -1,23 +1,18 @@
 import { Server as HTTPServer } from 'http';
-import WebSocket, { WebSocketServer } from 'ws';
-import { AuthService } from '@/services/auth.service';
-import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
+import { GatewayTransport } from './gateway-transport.interface';
+import { WebsocketGatewayTransport } from './websocket-gateway.transport';
 
 /**
  * Gateway Client Information Interface
  *
  * Represents an authenticated gateway WebSocket connection with facility scoping.
  */
-interface ClientInfo {
-  /** The WebSocket connection instance */
-  ws: WebSocket;
-  /** Authenticated user ID */
-  userId: string;
-  /** User's role (must be FACILITY_ADMIN, ADMIN, or DEV_ADMIN) */
-  role: UserRole;
-  /** Facilities this user can manage */
-  facilityIds: string[];
+// Internal no-op transport for tests or disabled mode
+class NoopTransport implements GatewayTransport {
+  initialize(_server: HTTPServer): void { /* noop */ }
+  broadcast(_payload: any): void { /* noop */ }
+  unicastToFacility(_facilityId: string, _payload: any): void { /* noop */ }
 }
 
 /**
@@ -53,59 +48,60 @@ interface ClientInfo {
  */
 export class GatewayEventsService {
   private static instance: GatewayEventsService;
-  private wss?: WebSocketServer;
-
-  // Registry of authenticated gateway clients
-  private clients = new Set<ClientInfo>();
+  private transport: GatewayTransport;
 
   public static getInstance(): GatewayEventsService {
     if (!this.instance) this.instance = new GatewayEventsService();
     return this.instance;
   }
 
+  private constructor() {
+    // Default to WebSocket transport; tests may replace with mocks or Noop
+    this.transport = new WebsocketGatewayTransport();
+  }
+
+  // Allow tests/bootstrappers to override transport if needed
+  public setTransport(transport: GatewayTransport): void {
+    this.transport = transport || new NoopTransport();
+  }
+
   public initialize(server: HTTPServer): void {
-    if (this.wss) return;
-    this.wss = new WebSocketServer({ noServer: true, path: '/ws/gateway' });
-    server.on('upgrade', (request, socket, head) => {
-      const url = new URL(request.url!, `http://${request.headers.host}`);
-      if (url.pathname !== '/ws/gateway') return;
-      const auth = url.searchParams.get('token') || '';
-      const decoded = AuthService.verifyToken(auth);
-      if (!decoded) {
-        socket.destroy();
-        return;
-      }
-      // Facility-scoped only
-      const role = decoded.role;
-      if (![UserRole.FACILITY_ADMIN, UserRole.ADMIN, UserRole.DEV_ADMIN].includes(role)) {
-        socket.destroy();
-        return;
-      }
-      this.wss!.handleUpgrade(request, socket as any, head, (ws) => {
-        const client: ClientInfo = { ws, userId: decoded.userId, role, facilityIds: decoded.facilityIds || [] };
-        this.clients.add(client);
-        logger.info(`Gateway WS connected: ${client.userId}`);
-        ws.on('close', () => {
-          this.clients.delete(client);
-        });
-      });
-    });
+    try {
+      this.transport.initialize(server);
+      logger.info('GatewayEventsService transport initialized');
+    } catch (e) {
+      logger.error('Failed to initialize GatewayEventsService transport:', e);
+    }
   }
 
   public broadcast(payload: any): void {
-    const data = JSON.stringify(payload);
-    for (const c of this.clients) {
-      if (c.ws.readyState === WebSocket.OPEN) c.ws.send(data);
-    }
+    this.transport.broadcast(payload);
   }
 
   public unicastToFacility(facilityId: string, payload: any): void {
-    const data = JSON.stringify(payload);
-    for (const c of this.clients) {
-      if (c.ws.readyState === WebSocket.OPEN && (c.facilityIds || []).includes(facilityId)) {
-        c.ws.send(data);
+    try {
+      // Log a concise summary to help debugging command delivery
+      const summary = (() => {
+        const p = Array.isArray(payload) ? payload[0] : payload;
+        const type = p?.cmd_type || p?.type || typeof p;
+        const targets = p?.targets?.device_ids?.length ?? undefined;
+        return { type, targets };
+      })();
+      logger.info(`GatewayEventsService.unicastToFacility facility=${facilityId} summary=${JSON.stringify(summary)}`);
+    } catch {}
+    this.transport.unicastToFacility(facilityId, payload);
+  }
+
+  // Lightweight connection status for a facility (for UI/status endpoints)
+  public getFacilityConnectionStatus(facilityId: string): { connected: boolean; lastPongAt?: number } {
+    const t: any = this.transport as any;
+    if (t && t['facilityToClient'] && typeof t['facilityToClient'].get === 'function') {
+      const client = t['facilityToClient'].get(facilityId);
+      if (client) {
+        return { connected: true, lastPongAt: client.lastPongAt };
       }
     }
+    return { connected: false };
   }
 }
 

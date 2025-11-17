@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { LockClosedIcon, EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -94,7 +94,7 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await login({ email, password });
+      const response = await login({ identifier, password });
       
       if (response.success) {
         navigate(from, { replace: true });
@@ -120,15 +120,15 @@ export default function LoginPage() {
     }
   };
 
-  const handleTestAccountLogin = async (email: string, password: string) => {
-    setEmail(email);
+  const handleTestAccountLogin = async (emailOrPhone: string, password: string) => {
+    setIdentifier(emailOrPhone);
     setPassword(password);
     setError('');
     setIsLoading(true);
     setIsSubmitting(true);
 
     try {
-      const response = await login({ email, password });
+      const response = await login({ identifier: emailOrPhone, password });
       
       if (response.success) {
         navigate(from, { replace: true });
@@ -189,19 +189,19 @@ export default function LoginPage() {
           <form ref={formRef} className="space-y-6" onSubmit={handleSubmit}>
             <div className="space-y-4">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Email address
+                <label htmlFor="identifier" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Email or phone
                 </label>
                 <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
+                  id="identifier"
+                  name="identifier"
+                  type="text"
+                  autoComplete="username"
                   required
-                  value={email}
-                  onChange={handleInputChange(setEmail)}
+                  value={identifier}
+                  onChange={handleInputChange(setIdentifier)}
                   className="input"
-                  placeholder="Enter your email"
+                  placeholder="Enter your email or phone"
                 />
               </div>
 

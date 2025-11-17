@@ -100,6 +100,7 @@ export class WebSocketService {
   private subscriptions: Map<string, Subscription> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private subscriptionRegistry: SubscriptionRegistry;
+  private readonly path = '/ws';
 
   private constructor() {
     this.subscriptionRegistry = new SubscriptionRegistry();
@@ -118,13 +119,26 @@ export class WebSocketService {
   }
 
   public initialize(server: any): void {
-    this.wss = new WebSocketServer({ server });
-    
+    if (this.wss) return;
+    this.wss = new WebSocketServer({ noServer: true, path: this.path });
+
+    server.on('upgrade', (request: IncomingMessage, socket: import('net').Socket, head: Buffer) => {
+      try {
+        const url = new URL(request.url || '', `http://${request.headers.host}`);
+        if (url.pathname !== this.path) return;
+        this.wss!.handleUpgrade(request, socket as any, head, (ws) => {
+          this.wss!.emit('connection', ws, request);
+        });
+      } catch (e) {
+        try { socket.destroy(); } catch {}
+      }
+    });
+
     this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       this.handleConnection(ws, req);
     });
 
-    logger.info('🔌 WebSocket server initialized');
+    logger.info(`🔌 WebSocket server initialized on path ${this.path}`);
   }
 
   private async handleConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {

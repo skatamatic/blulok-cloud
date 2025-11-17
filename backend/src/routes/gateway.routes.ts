@@ -45,6 +45,7 @@ import { authenticateToken, requireAdmin, requireRoles } from '../middleware/aut
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthService } from '../services/auth.service';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 
 const router = Router();
 const gatewayModel = new GatewayModel();
@@ -75,6 +76,23 @@ function validateGatewayConfigurationForTesting(gateway: any): boolean {
 
 // Apply auth middleware to all routes
 router.use(authenticateToken);
+
+// GET /api/gateways/status/:facilityId - Inbound WS connection status for a facility
+router.get('/status/:facilityId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+  const facilityId = String(req.params.facilityId);
+
+  // Facility admins must be scoped to this facility
+  if (user.role === UserRole.FACILITY_ADMIN) {
+    if (!user.facilityIds?.includes(facilityId)) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return;
+    }
+  }
+
+  const status = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+  res.json({ success: true, facilityId, ...status });
+}));
 
 // POST /api/gateways - Create new gateway
 router.post('/', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {

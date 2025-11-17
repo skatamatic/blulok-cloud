@@ -103,6 +103,8 @@ export interface KeySharingFilters {
   access_level?: string;
   is_active?: boolean;
   expires_before?: Date;
+  /** Optional facility scoping for admin/facility_admin views */
+  facility_ids?: string[];
   limit?: number;
   offset?: number;
   sort_by?: 'shared_at' | 'expires_at' | 'unit_number' | 'shared_with_name';
@@ -151,9 +153,13 @@ export class KeySharingModel {
     if (filters.expires_before) {
       query = query.where('key_sharing.expires_at', '<=', filters.expires_before);
     }
+    if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('units.facility_id', filters.facility_ids);
+    }
 
     // Get total count
-    const countQuery = knex('key_sharing');
+    const countQuery = knex('key_sharing')
+      .leftJoin('units', 'key_sharing.unit_id', 'units.id');
     
     // Apply same filters to count query
     if (filters.unit_id) {
@@ -173,6 +179,9 @@ export class KeySharingModel {
     }
     if (filters.expires_before) {
       countQuery.where('expires_at', '<=', filters.expires_before);
+    }
+    if (filters.facility_ids && filters.facility_ids.length > 0) {
+      countQuery.whereIn('units.facility_id', filters.facility_ids);
     }
     
     const countResult = await countQuery.count('* as total').first();
@@ -221,17 +230,39 @@ export class KeySharingModel {
 
   async create(data: CreateKeySharingData): Promise<KeySharing> {
     const knex = this.db.connection;
-    const [sharing] = await knex('key_sharing').insert(data).returning('*');
-    return sharing;
+    await knex('key_sharing').insert(data);
+
+    // MySQL-only backend: fetch the freshly inserted row via the unique key
+    const row = await knex('key_sharing')
+      .where({
+        unit_id: data.unit_id,
+        shared_with_user_id: data.shared_with_user_id,
+      })
+      .orderBy('created_at', 'desc')
+      .first();
+
+    if (!row) {
+      throw new Error('Failed to fetch key_sharing row after insert');
+    }
+
+    return row as KeySharing;
   }
 
   async update(id: string, data: Partial<KeySharing>): Promise<KeySharing | null> {
     const knex = this.db.connection;
-    const [sharing] = await knex('key_sharing')
-      .where('id', id)
-      .update({ ...data, updated_at: knex.fn.now() })
-      .returning('*');
-    return sharing || null;
+    try {
+      const [sharing] = await knex('key_sharing')
+        .where('id', id)
+        .update({ ...data, updated_at: knex.fn.now() })
+        .returning('*');
+      if (sharing) return sharing as KeySharing;
+    } catch (_e) {
+      // Some dialects may not support "returning(*)" on update
+    }
+    // Portable fallback: perform update, then fetch
+    await knex('key_sharing').where('id', id).update({ ...data, updated_at: knex.fn.now() });
+    const row = await knex('key_sharing').where('id', id).first();
+    return (row as KeySharing) || null;
   }
 
   async delete(id: string): Promise<boolean> {
@@ -285,6 +316,22 @@ export class KeySharingModel {
       .first();
     
     return !!sharedAccessCheck;
+  }
+
+  /**
+   * Determine if a user is the primary tenant for a unit.
+   * Used for RBAC decisions where primary tenants have broader visibility
+   * than shared users.
+   */
+  async isPrimaryTenantForUnit(userId: string, unitId: string): Promise<boolean> {
+    const knex = this.db.connection;
+    const row = await knex('unit_assignments')
+      .where('unit_id', unitId)
+      .where('tenant_id', userId)
+      .where('is_primary', true)
+      .first();
+
+    return !!row;
   }
 
   async getExpiredSharings(): Promise<KeySharingWithDetails[]> {

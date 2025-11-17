@@ -75,10 +75,8 @@ async function bootstrap(): Promise<void> {
     const deviceEventService = DeviceEventService.getInstance();
     deviceEventService.initialize();
 
-    // Initialize GatewayService
-    const { GatewayService } = await import('./services/gateway/gateway.service');
-    const gatewayService = GatewayService.getInstance();
-    await gatewayService.initializeAllGateways();
+    // Outbound legacy gateway polling is deprecated and disabled.
+    logger.info('Outbound legacy gateway polling is disabled (using inbound WS gateways)');
 
     // Initialize access revocation listener (denylist on unassign)
     const { AccessRevocationListenerService } = await import('@/services/access-revocation-listener.service');

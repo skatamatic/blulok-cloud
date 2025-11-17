@@ -69,10 +69,10 @@ describe('DeviceDetailsPage', () => {
       },
     });
 
-    mockApiService.getDevices.mockResolvedValue({
-      devices: [mockDevice],
-      total: 1,
-    });
+    mockApiService.getBluLokDevice.mockResolvedValue({
+      success: true,
+      device: mockDevice,
+    } as any);
     mockApiService.getDeviceDenylist.mockResolvedValue({
       success: true,
       entries: [],
@@ -93,7 +93,8 @@ describe('DeviceDetailsPage', () => {
     });
 
     expect(screen.getByText('SN123456')).toBeInTheDocument();
-    expect(screen.getByText('Unit A-101')).toBeInTheDocument();
+    const matches = screen.getAllByText((_, node) => node?.textContent?.includes('Unit A-101') || false);
+    expect(matches.length).toBeGreaterThan(0);
   });
 
   it('switches to denylist tab and loads entries', async () => {
@@ -159,10 +160,10 @@ describe('DeviceDetailsPage', () => {
   });
 
   it('handles device not found error', async () => {
-    mockApiService.getDevices.mockResolvedValue({
-      devices: [],
-      total: 0,
-    });
+    mockApiService.getBluLokDevice.mockResolvedValue({
+      success: false,
+      error: 'Not found',
+    } as any);
 
     render(
       <MemoryRouter initialEntries={['/devices/device-1']}>
@@ -190,10 +191,10 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Back to Devices')).toBeInTheDocument();
+      expect(screen.getByText('Back')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('Back to Devices'));
+    fireEvent.click(screen.getByText('Back'));
     expect(mockNavigate).toHaveBeenCalledWith('/devices');
   });
 });

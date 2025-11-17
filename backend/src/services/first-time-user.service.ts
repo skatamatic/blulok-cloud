@@ -41,12 +41,54 @@ export class FirstTimeUserService {
     logger.info(`Invite sent to user ${user.id} via ${user.phone_number ? 'sms' : 'email'}`);
   }
 
-  /** Request an OTP after validating invite token and user contact ownership */
-  public async requestOtp(params: { token: string; phone?: string; email?: string; }): Promise<{ expiresAt: Date; userId: string; inviteId: string; }> {
+  /**
+   * Request an OTP after validating invite token and user contact ownership.
+   *
+   * For users that were created via a phone-only invite (no first/last name populated yet),
+   * we require the caller to supply firstName and lastName (and optionally email) so the
+   * account can be fully initialized before OTP delivery. This prevents half-configured
+   * accounts from being activated without a proper profile.
+   *
+   * For existing users that already have a profile (non-empty first_name/last_name), the
+   * additional fields remain optional and are ignored by this method.
+   */
+  public async requestOtp(params: { token: string; phone?: string; email?: string; firstName?: string; lastName?: string; }): Promise<{ expiresAt: Date; userId: string; inviteId: string; }> {
     const invite = await this.invites.findActiveInviteByToken(params.token);
     if (!invite) throw new Error('Invalid or expired invite token');
     const user = await UserModel.findById(invite.user_id) as User | undefined;
     if (!user) throw new Error('User not found for invite');
+
+    // Ensure profile is populated for newly created (phone-only) users
+    const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;
+    const hasLastName = typeof user.last_name === 'string' && user.last_name.trim().length > 0;
+    if (!hasFirstName || !hasLastName) {
+      const firstName = (params.firstName || '').trim();
+      const lastName = (params.lastName || '').trim();
+      if (!firstName || !lastName) {
+        throw new Error('First name and last name are required to complete your account setup');
+      }
+
+      const updates: Partial<User> = {
+        first_name: firstName,
+        last_name: lastName,
+      };
+
+      // Optional email, only if user does not yet have one
+      if (!user.email && params.email) {
+        const emailLower = params.email.trim().toLowerCase();
+        if (emailLower) {
+          const existing = await UserModel.findByEmail(emailLower);
+          if (existing && existing.id !== user.id) {
+            throw new Error('Email is already in use');
+          }
+          (updates as any).email = emailLower;
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await UserModel.updateById(user.id, updates as any);
+      }
+    }
 
     // Enforce resend throttle based on the last OTP sent for this invite
     const minSeconds = parseInt(process.env.OTP_RESEND_MIN_SECONDS || '30', 10);

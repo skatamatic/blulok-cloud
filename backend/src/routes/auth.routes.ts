@@ -70,9 +70,16 @@ const inviteVerifyLimiter = rateLimit({
 
 // Input validation schemas with security constraints
 const loginSchema = Joi.object({
-  email: Joi.string().email().required(),
+  // Flexible identifier: email or phone. For backwards compatibility, we also accept legacy email field.
+  identifier: Joi.string().trim().min(1).optional(),
+  email: Joi.string().email().optional(),
   password: Joi.string().min(6).required()
-});
+}).custom((value, helpers) => {
+  if (!value.identifier && !value.email) {
+    return helpers.error('any.custom', { message: 'identifier or email is required' });
+  }
+  return value;
+}, 'identifier or email required');
 
 const changePasswordSchema = Joi.object({
   currentPassword: Joi.string().required(),
@@ -257,12 +264,14 @@ export { router as authRouter };
 
 // ----- First-time Invite Flow Endpoints -----
 
-// POST /auth/invite/request-otp { token, phone? | email? }
+// POST /auth/invite/request-otp { token, phone? | email?, firstName?, lastName? }
 router.post('/invite/request-otp', inviteRequestLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({
     token: Joi.string().required(),
     phone: Joi.string().optional(),
     email: Joi.string().email().optional(),
+    firstName: Joi.string().trim().min(1).max(100).optional(),
+    lastName: Joi.string().trim().min(1).max(100).optional(),
   }).xor('phone', 'email');
   const { error, value } = schema.validate(req.body);
   if (error) {
@@ -273,7 +282,13 @@ router.post('/invite/request-otp', inviteRequestLimiter, asyncHandler(async (req
   const { FirstTimeUserService } = await import('@/services/first-time-user.service');
   const svc = FirstTimeUserService.getInstance();
   try {
-    const result = await svc.requestOtp({ token: value.token, phone: value.phone, email: value.email });
+    const result = await svc.requestOtp({
+      token: value.token,
+      phone: value.phone,
+      email: value.email,
+      firstName: value.firstName,
+      lastName: value.lastName,
+    });
     res.json({ success: true, expiresAt: result.expiresAt });
   } catch (e: any) {
     res.status(400).json({ success: false, message: e?.message || 'Unable to send OTP' });

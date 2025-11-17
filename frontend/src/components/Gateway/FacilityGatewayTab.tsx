@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   ServerIcon,
   Cog6ToothIcon,
@@ -100,6 +100,33 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
   const [rotationPayloadInput, setRotationPayloadInput] = useState('');
   const [rotationSignatureInput, setRotationSignatureInput] = useState('');
   const { authState } = useAuth();
+
+  // Inbound WS status (gateway connects to cloud)
+  const [wsStatus, setWsStatus] = useState<{ connected: boolean; lastPongAt?: number } | null>(null);
+  const gatewayWsUrl = useMemo(() => {
+    try {
+      const loc = window.location;
+      const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${proto}//${loc.host}/ws/gateway`;
+    } catch {
+      return 'wss://<your-domain>/ws/gateway';
+    }
+  }, []);
+
+  useEffect(() => {
+    let timer: any;
+    const poll = async () => {
+      try {
+        const res = await apiService.getGatewayWsStatus(facilityId);
+        if (res?.success) setWsStatus({ connected: !!res.connected, lastPongAt: res.lastPongAt });
+      } catch {
+        setWsStatus(null);
+      }
+    };
+    poll();
+    timer = setInterval(poll, 5000);
+    return () => { if (timer) clearInterval(timer); };
+  }, [facilityId]);
 
   // Check if gateway is properly configured
   const isGatewayProperlyConfigured = (gw: Gateway | null) => {
@@ -391,7 +418,32 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     }
 
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="space-y-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Inbound Gateway Connection</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Gateways connect to the cloud WebSocket and authenticate using an Admin/Dev Admin JWT, or a Facility Admin JWT scoped to this facility.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">WebSocket URL</div>
+              <div className="mt-1 font-mono text-sm text-gray-900 dark:text-white break-all">{gatewayWsUrl}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Facility ID</div>
+              <div className="mt-1 font-mono text-sm text-gray-900 dark:text-white">{facilityId}</div>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center space-x-3">
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${wsStatus?.connected ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'}`}>
+              {wsStatus?.connected ? 'Connected' : 'Disconnected'}
+            </span>
+            {wsStatus?.lastPongAt && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">Last heartbeat: {new Date(wsStatus.lastPongAt).toLocaleTimeString()}</span>
+            )}
+          </div>
+        </div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">Gateway Overview</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
@@ -503,349 +555,19 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
             )}
           </div>
         </div>
+        </div>
       </div>
     );
   };
 
   // Render Setup Tab
   const renderSetupTab = () => {
-    if (!gateway && !canManageGateway) {
-      return (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="text-center py-8">
-            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
-            <p className="text-gray-600 dark:text-gray-400">
-              You don't have permission to configure gateways.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        {gateway ? (
-          <>
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                Gateway Configuration
-              </h3>
-              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                isGatewayProperlyConfigured(gateway) 
-                  ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' 
-                  : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-              }`}>
-                {isGatewayProperlyConfigured(gateway) ? 'Configured' : 'Needs Setup'}
-              </span>
-            </div>
-            {canManageGateway && (
-              <>
-                {!configExpanded && (
-                  <button
-                    onClick={() => setConfigExpanded(true)}
-                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 mb-4"
-                  >
-                    <ChevronDownIcon className="h-4 w-4 inline mr-2" />
-                    Show Configuration
-                  </button>
-                )}
-                {configExpanded && (
-                  <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Gateway Type
-                </label>
-                <select
-                  value={configForm.gateway_type}
-                  onChange={(e) => setConfigForm(prev => ({ ...prev, gateway_type: e.target.value as any }))}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                >
-                  <option value="http">HTTP (Mesh Manager API)</option>
-                  <option value="physical">Physical (WebSocket)</option>
-                  <option value="simulated">Simulated (Testing)</option>
-                </select>
-              </div>
-
-              {configForm.gateway_type === 'http' && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Base URL
-                    </label>
-                    <input
-                      type="url"
-                      value={configForm.base_url}
-                      onChange={(e) => setConfigForm(prev => ({ ...prev, base_url: e.target.value }))}
-                      placeholder="https://mesh-manager.example.com/api"
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      API Key
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showApiKey ? "text" : "password"}
-                        value={configForm.api_key}
-                        onChange={(e) => setConfigForm(prev => ({ ...prev, api_key: e.target.value }))}
-                        className="w-full pr-10 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                      >
-                        {showApiKey ? (
-                          <EyeSlashIcon className="h-4 w-4" />
-                        ) : (
-                          <EyeIcon className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Username
-                      </label>
-                      <input
-                        type="text"
-                        value={configForm.username}
-                        onChange={(e) => setConfigForm(prev => ({ ...prev, username: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Password
-                      </label>
-                      <div className="relative">
-                        <input
-                          type={showPassword ? "text" : "password"}
-                          value={configForm.password}
-                          onChange={(e) => setConfigForm(prev => ({ ...prev, password: e.target.value }))}
-                          placeholder="Leave empty to keep current"
-                          className="w-full pr-10 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                        >
-                          {showPassword ? (
-                            <EyeSlashIcon className="h-4 w-4" />
-                          ) : (
-                            <EyeIcon className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Poll Frequency (ms)
-                    </label>
-                    <input
-                      type="number"
-                      value={configForm.poll_frequency_ms}
-                      onChange={(e) => setConfigForm(prev => ({ ...prev, poll_frequency_ms: parseInt(e.target.value) || 30000 }))}
-                      min="5000"
-                      max="300000"
-                      step="5000"
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                    />
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      How often to poll for updates (5-300 seconds)
-                    </p>
-                  </div>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="ignore_ssl_cert"
-                      checked={configForm.ignore_ssl_cert}
-                      onChange={(e) => setConfigForm(prev => ({ ...prev, ignore_ssl_cert: e.target.checked }))}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded"
-                    />
-                    <label htmlFor="ignore_ssl_cert" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
-                      <div className="flex items-center">
-                        <ShieldCheckIcon className="h-4 w-4 mr-1 text-primary-500" />
-                        Ignore SSL Certificate Errors
-                      </div>
-                    </label>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 ml-6">
-                    Allow connections to gateways with self-signed or invalid SSL certificates (useful for testing)
-                  </p>
-                </>
-              )}
-
-              {configForm.gateway_type === 'physical' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Connection URL
-                  </label>
-                  <input
-                    type="url"
-                    value={configForm.connection_url}
-                    onChange={(e) => setConfigForm(prev => ({ ...prev, connection_url: e.target.value }))}
-                    placeholder="ws://gateway.example.com:8080"
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Protocol Version
-                </label>
-                <select
-                  value={configForm.protocol_version}
-                  onChange={(e) => setConfigForm(prev => ({ ...prev, protocol_version: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                >
-                  <option value="1.0">1.0</option>
-                  <option value="1.1">1.1</option>
-                  <option value="2.0">2.0</option>
-                  <option value="simulated">Simulated</option>
-                </select>
-              </div>
-
-              <div className="flex justify-end space-x-3 pt-2">
-                <button
-                  onClick={handleSaveConfiguration}
-                  className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-                >
-                  {gateway ? 'Update Configuration' : 'Create Gateway'}
-                </button>
-              </div>
-
-              {/* Configuration Status and Actions */}
-              <div className="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-700">
-                <button
-                  onClick={() => setConfigExpanded(false)}
-                  className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-                >
-                  <ChevronUpIcon className="h-4 w-4 inline mr-1" />
-                  Hide Configuration
-                </button>
-                {gateway && (
-                  <button
-                    onClick={handleTestConnection}
-                    disabled={testingConnection}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
-                  >
-                    {testingConnection ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600 mr-2"></div>
-                        Testing...
-                      </>
-                    ) : (
-                      <>
-                        <WifiIcon className="h-4 w-4 mr-2" />
-                        Test Connection
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-          </>
-        )}
-      </>
-    ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="text-center py-8">
-            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
-              This facility doesn't have a gateway configured yet.
-            </p>
-            {canManageGateway && (
-              <button
-                onClick={() => setConfigExpanded(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
-              >
-                <Cog6ToothIcon className="h-4 w-4 mr-2" />
-                Configure Gateway
-              </button>
-            )}
-          </div>
-          {configExpanded && canManageGateway && (
-            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700 space-y-4 text-left">
-              {/* Reuse the same form (without Test Connection for non-existent gateway) */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Gateway Type</label>
-                <select
-                  value={configForm.gateway_type}
-                  onChange={(e) => setConfigForm(prev => ({ ...prev, gateway_type: e.target.value as any }))}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                >
-                  <option value="http">HTTP (Mesh Manager API)</option>
-                  <option value="physical">Physical (WebSocket)</option>
-                  <option value="simulated">Simulated (Testing)</option>
-                </select>
-              </div>
-
-              {configForm.gateway_type === 'http' && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Base URL</label>
-                    <input type="url" value={configForm.base_url} onChange={(e) => setConfigForm(prev => ({ ...prev, base_url: e.target.value }))}
-                      placeholder="https://mesh-manager.example.com/api"
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
-                    <div className="relative">
-                      <input type={showApiKey ? "text" : "password"} value={configForm.api_key} onChange={(e) => setConfigForm(prev => ({ ...prev, api_key: e.target.value }))}
-                        className="w-full pr-10 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400" />
-                      <button
-                        type="button"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                      >
-                        {showApiKey ? (
-                          <EyeSlashIcon className="h-4 w-4" />
-                        ) : (
-                          <EyeIcon className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {configForm.gateway_type === 'physical' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Connection URL
-                  </label>
-                  <input
-                    type="url"
-                    value={configForm.connection_url}
-                    onChange={(e) => setConfigForm(prev => ({ ...prev, connection_url: e.target.value }))}
-                    placeholder="ws://gateway.example.com:8080"
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                  />
-                </div>
-              )}
-
-              <div className="flex justify-end">
-                <button onClick={handleSaveConfiguration} className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
-                  Create Gateway
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Setup</h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Configure inbound gateway connections for this facility.
+        </p>
       </div>
     );
   };
@@ -939,18 +661,18 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center space-x-3">
                       <div className={`w-3 h-3 rounded-full ${device.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                      <h4 className="font-medium text-gray-900 dark:text-white">
-                        Device: {device.serial || device.id}
-                      </h4>
+                      <div>
+                        <h4 className="font-medium text-gray-900 dark:text-white">
+                          {device.serial || device.id}
+                        </h4>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{device.id}</div>
+                      </div>
                       <span className={`px-2 py-1 text-xs rounded-full ${
                         device.locked ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
                         'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                       }`}>
                         {device.locked ? 'Locked' : 'Unlocked'}
                       </span>
-                    </div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
-                      Battery: {device.batteryLevel}%
                     </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3 text-sm">
@@ -967,8 +689,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
                       <span className="ml-1 font-medium">{device.keys?.length || 0}</span>
                     </div>
                     <div>
-                      <span className="text-gray-500 dark:text-gray-400">ID:</span>
-                      <span className="ml-1 font-medium font-mono text-xs">{device.id}</span>
+                      <span className="text-gray-500 dark:text-gray-400">Status:</span>
+                      <span className="ml-1 font-medium">{device.online ? 'online' : 'offline'}</span>
                     </div>
                   </div>
                   {device.keys && device.keys.length > 0 && (

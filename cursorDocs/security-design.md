@@ -33,7 +33,15 @@ This document summarizes the new centralized trust model implemented in the back
   - App: `POST /api/v1/passes/request` (rate-limited)
   - Gateway: `GET /api/v1/internal/gateway/time-sync`, `POST /api/v1/internal/gateway/request-time-sync`, `POST /api/v1/internal/gateway/fallback-pass`
   - Admin: `POST /api/v1/admin/ops-key-rotation/broadcast` (DEV_ADMIN only)
-- Gateway WS at `/ws/gateway` for event push (denylist/time-sync broadcast/unicast).
+- Websocket Gateway at `/ws/gateway` (facility-scoped) for:
+  - Secure command delivery (denylist add/remove, time sync) via unicast/broadcast
+  - Full REST API proxying over WS using loopback HTTP with facility guard
+  - Auth: JWT required; roles allowed: DEV_ADMIN, ADMIN, FACILITY_ADMIN; one facilityId per connection
+  - Protocol (JSON frames):
+    - Client→Server: `{type:'AUTH', token, facilityId}`, `{type:'PROXY_REQUEST', id, method, path, headers?, query?, body?}`, `{type:'PONG'}`, `{type:'COMMAND_ACK', id, status, message?}`
+    - Server→Client: `{type:'AUTH_OK', facilityId}`, `{type:'PROXY_RESPONSE', id, status, headers?, body?}`, `{type:'PING'}`
+  - Facility Guard: FACILITY_ADMIN requests must not target other facilities (path/body checked)
+  - Proxy Security: server re-signs a short-lived passthrough JWT with same identity and injects `Authorization: Bearer <token>`
 - Login now returns `isDeviceRegistered` for the presented `X-App-Device-Id`.
 
 ### RBAC for Route Pass Issuance
@@ -60,5 +68,15 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 
 ### Legacy Cleanup
 - Legacy per-lock key distribution and queues are deprecated. A migration exists to drop `device_key_distributions`, `gateway_commands`, `gateway_command_attempts`, and `users.key_status` when ready to finalize removal.
+
+### Implementation Notes
+- Abstractions:
+  - `GatewayTransport` interface enables swapping transports (WebSocket/MQTT) without changing callers.
+  - `GatewayEventsService` delegates to the active transport (`WebsocketGatewayTransport` by default).
+  - `ApiProxyService` handles loopback proxying with optional `GATEWAY_PROXY_BASE_URL` override.
+  - `FacilityGuardService` centrally enforces facility scoping for FACILITY_ADMIN proxy calls.
+- Defaults and limits:
+  - `GATEWAY_MAX_MESSAGE_BYTES` (default 512KB), `GATEWAY_PING_INTERVAL_SEC` (25s), `GATEWAY_PONG_TIMEOUT_SEC` (20s).
+  - One active connection per facility (latest connection replaces previous).
 
 

@@ -10,8 +10,9 @@ jest.mock('../services/database.service', () => ({
 jest.mock('../services/auth.service', () => ({
   AuthService: {
     login: jest.fn().mockImplementation((credentials: any) => {
+      const identifier = (credentials.identifier || credentials.email || '').trim();
       // Mock successful login for test users
-      if (credentials.email === 'tenant@test.com' && credentials.password === 'password123') {
+      if (identifier === 'tenant@test.com' && credentials.password === 'password123') {
         return Promise.resolve({
           success: true,
           token: 'mock-jwt-token',
@@ -24,7 +25,7 @@ jest.mock('../services/auth.service', () => ({
           }
         });
       }
-      if (credentials.email === 'admin@test.com' && credentials.password === 'password123') {
+      if (identifier === 'admin@test.com' && credentials.password === 'password123') {
         return Promise.resolve({
           success: true,
           token: 'mock-jwt-token',
@@ -37,7 +38,7 @@ jest.mock('../services/auth.service', () => ({
           }
         });
       }
-      if (credentials.email === 'valid@example.com' && credentials.password === 'plaintextpassword') {
+      if (identifier === 'valid@example.com' && credentials.password === 'plaintextpassword') {
         return Promise.resolve({
           success: true,
           token: 'mock-jwt-token',
@@ -50,7 +51,7 @@ jest.mock('../services/auth.service', () => ({
           }
         });
       }
-      if (credentials.email === 'inactive@example.com') {
+      if (identifier === 'inactive@example.com') {
         return Promise.resolve({
           success: false,
           message: 'Account is deactivated. Please contact administrator.'
@@ -59,7 +60,7 @@ jest.mock('../services/auth.service', () => ({
       // Mock failed login for other cases
       return Promise.resolve({
         success: false,
-        message: 'Invalid email or password'
+        message: 'Invalid credentials'
       });
     }),
     createUser: jest.fn().mockImplementation((userData: any) => {
@@ -967,6 +968,14 @@ jest.mock('../models/key-sharing.model', () => ({
             access_level: 'temporary',
             is_active: true,
             expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          },
+          {
+            id: 'sharing-3',
+            primary_tenant_id: 'tenant-1',
+            shared_with_user_id: 'facility2-tenant-1',
+            access_level: 'full',
+            is_active: true,
+            expires_at: null
           }
         ];
         return Promise.resolve({ sharings: sharedKeys, total: sharedKeys.length });
@@ -1028,6 +1037,21 @@ jest.mock('../models/key-sharing.model', () => ({
       }
       return Promise.resolve({ sharings: [], total: 0 });
     }),
+    isPrimaryTenantForUnit: jest.fn().mockImplementation((userId: string, unitId: string) => {
+      const unit1Ids = ['550e8400-e29b-41d4-a716-446655440011', 'unit-1'];
+      const unit2Ids = ['550e8400-e29b-41d4-a716-446655440012', 'unit-2'];
+
+      if (userId === 'tenant-1' && unit1Ids.includes(unitId)) {
+        return Promise.resolve(true); // primary tenant for unit-1
+      }
+      if (userId === 'other-tenant-1' && unit1Ids.includes(unitId)) {
+        return Promise.resolve(false); // shared user on unit-1
+      }
+      if (userId === 'other-tenant-1' && unit2Ids.includes(unitId)) {
+        return Promise.resolve(true); // primary tenant for unit-2
+      }
+      return Promise.resolve(false);
+    }),
     update: jest.fn().mockImplementation((id: string, data: any) => {
       return Promise.resolve({
         id,
@@ -1054,6 +1078,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'tenant-1',
       email: 'tenant@test.com',
+      login_identifier: 'tenant@test.com',
       password_hash: 'hashed-password',
       first_name: 'Tenant',
       last_name: 'User',
@@ -1065,6 +1090,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'tenant-2',
       email: 'tenant2@test.com',
+      login_identifier: 'tenant2@test.com',
       password_hash: 'hashed-password',
       first_name: 'Tenant',
       last_name: 'Two',
@@ -1076,6 +1102,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'other-tenant-1',
       email: 'othertenant@test.com',
+      login_identifier: 'othertenant@test.com',
       password_hash: 'hashed-password',
       first_name: 'Other',
       last_name: 'Tenant',
@@ -1087,6 +1114,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'facility2-tenant-1',
       email: 'facility2tenant@test.com',
+      login_identifier: 'facility2tenant@test.com',
       password_hash: 'hashed-password',
       first_name: 'Facility2',
       last_name: 'Tenant',
@@ -1098,6 +1126,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'facility-admin-1',
       email: 'facilityadmin@test.com',
+      login_identifier: 'facilityadmin@test.com',
       password_hash: 'hashed-password',
       first_name: 'Facility',
       last_name: 'Admin',
@@ -1109,6 +1138,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'admin-1',
       email: 'admin@test.com',
+      login_identifier: 'admin@test.com',
       password_hash: 'hashed-password',
       first_name: 'Admin',
       last_name: 'User',
@@ -1120,6 +1150,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'dev-admin-1',
       email: 'devadmin@test.com',
+      login_identifier: 'devadmin@test.com',
       password_hash: 'hashed-password',
       first_name: 'Dev',
       last_name: 'Admin',
@@ -1131,6 +1162,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'maintenance-1',
       email: 'maintenance@test.com',
+      login_identifier: 'maintenance@test.com',
       password_hash: 'hashed-password',
       first_name: 'Maintenance',
       last_name: 'User',
@@ -1199,6 +1231,14 @@ jest.mock('../models/user.model', () => {
       }),
       findByEmail: jest.fn().mockImplementation((email: string) => {
         const user = Array.from(mockUsers.values()).find(u => u.email === email);
+        return Promise.resolve(user || undefined);
+      }),
+      findByLoginIdentifier: jest.fn().mockImplementation((identifier: string) => {
+        const normalized = (identifier || '').toLowerCase();
+        const user = Array.from(mockUsers.values()).find(u => {
+          const loginId = (u.login_identifier || u.email || '').toLowerCase();
+          return loginId === normalized;
+        });
         return Promise.resolve(user || undefined);
       }),
       findActiveUsers: jest.fn().mockImplementation(() => {

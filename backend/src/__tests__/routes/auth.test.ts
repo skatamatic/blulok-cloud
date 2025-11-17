@@ -20,7 +20,7 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: 'tenant@test.com',
+          identifier: 'tenant@test.com',
           password: 'password123',
         })
         .expect(200);
@@ -36,7 +36,7 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: 'nonexistent@test.com',
+          identifier: 'nonexistent@test.com',
           password: 'password123',
         })
         .expect(401);
@@ -48,7 +48,7 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: 'tenant@test.com',
+          identifier: 'tenant@test.com',
           password: 'wrongpassword',
         })
         .expect(401);
@@ -56,7 +56,7 @@ describe('Auth Routes', () => {
       expectUnauthorized(response);
     });
 
-    it('should return 400 for missing email', async () => {
+    it('should return 400 for missing identifier and email', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
@@ -71,18 +71,18 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: 'tenant@test.com',
+          identifier: 'tenant@test.com',
         })
         .expect(400);
 
       expectBadRequest(response);
     });
 
-    it('should return 400 for empty email', async () => {
+    it('should return 400 for empty identifier', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: '',
+          identifier: '',
           password: 'password123',
         })
         .expect(400);
@@ -94,20 +94,8 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: 'tenant@test.com',
+          identifier: 'tenant@test.com',
           password: '',
-        })
-        .expect(400);
-
-      expectBadRequest(response);
-    });
-
-    it('should return 400 for invalid email format', async () => {
-      const response = await request(app)
-        .post('/api/v1/auth/login')
-        .send({
-          email: 'invalid-email',
-          password: 'password123',
         })
         .expect(400);
 
@@ -118,7 +106,7 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: 'tenant@test.com',
+          identifier: 'tenant@test.com',
           password: '123',
         })
         .expect(400);
@@ -126,11 +114,13 @@ describe('Auth Routes', () => {
       expectBadRequest(response);
     });
 
+    // NOTE: Phone-based login is covered at the service/flow level; route tests focus on payload/validation.
+
     it('should handle inactive user accounts', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          email: 'inactive@test.com',
+          identifier: 'inactive@test.com',
           password: 'password123',
         })
         .expect(401);

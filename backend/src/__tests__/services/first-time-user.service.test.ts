@@ -46,6 +46,7 @@ jest.mock('@/models/system-settings.model', () => ({
 jest.mock('@/models/user.model', () => ({
   UserModel: {
     findById: jest.fn(),
+    findByEmail: jest.fn(),
     updateById: jest.fn(),
   },
 }));
@@ -115,7 +116,9 @@ describe('FirstTimeUserService', () => {
     const user = {
       id: 'user-456',
       phone_number: '+1 555-000-1235',
-      email: 'tenant2@example.com'
+      email: 'tenant2@example.com',
+      first_name: 'John',
+      last_name: 'Smith',
     };
 
     const invite = {
@@ -127,6 +130,7 @@ describe('FirstTimeUserService', () => {
     mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
     const { UserModel } = require('@/models/user.model');
     UserModel.findById.mockResolvedValue(user);
+    UserModel.findByEmail.mockResolvedValue(null);
     mockOtps.sendOtp.mockResolvedValue({ expiresAt: new Date() });
 
     const res = await svc.requestOtp({ token: 'token-123', phone: '+15550001235' });
@@ -143,11 +147,51 @@ describe('FirstTimeUserService', () => {
     expect(res.inviteId).toBe(invite.id);
   });
 
+  test('requestOtp requires first and last name when user profile is empty', async () => {
+    const user: any = {
+      id: 'user-000',
+      phone_number: '+15550001111',
+      email: null,
+      first_name: '',
+      last_name: '',
+    };
+    const invite = { id: 'invite-000', user_id: user.id };
+
+    mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue(user);
+    UserModel.findByEmail.mockResolvedValue(null);
+
+    await expect(
+      svc.requestOtp({ token: 'token-000', phone: '+1 (555) 000-1111' })
+    ).rejects.toThrow(/First name and last name are required/);
+
+    // When names are provided, it should update the user and send OTP
+    mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
+    UserModel.findById.mockResolvedValue(user);
+    mockOtps.sendOtp.mockResolvedValue({ expiresAt: new Date() });
+
+    await svc.requestOtp({
+      token: 'token-000',
+      phone: '+1 (555) 000-1111',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: 'jane@example.com',
+    });
+
+    expect(UserModel.updateById).toHaveBeenCalledWith(
+      user.id,
+      expect.objectContaining({ first_name: 'Jane', last_name: 'Doe', email: 'jane@example.com' })
+    );
+  });
+
   test('requestOtp with wrong phone is rejected', async () => {
     const user = {
       id: 'user-789',
       phone_number: '+1 555-000-9999',
-      email: 'tenant3@example.com'
+      email: 'tenant3@example.com',
+      first_name: 'Wrong',
+      last_name: 'Phone',
     };
 
     mockInvites.findActiveInviteByToken.mockResolvedValue({
@@ -165,7 +209,9 @@ describe('FirstTimeUserService', () => {
     const user = {
       id: 'user-999',
       phone_number: null,
-      email: 'tenant4@example.com'
+      email: 'tenant4@example.com',
+      first_name: 'Email',
+      last_name: 'Only',
     };
 
     const invite = {
@@ -190,7 +236,7 @@ describe('FirstTimeUserService', () => {
   });
 
   test('requestOtp enforces resend throttle window', async () => {
-    const user = { id: 'user-888', phone_number: '+15550007777' };
+    const user = { id: 'user-888', phone_number: '+15550007777', first_name: 'Throttle', last_name: 'User' };
     const invite = { id: 'invite-888', user_id: user.id };
 
     mockInvites.findActiveInviteByToken.mockResolvedValue(invite);

@@ -37,23 +37,39 @@ export class AuthService {
    */
   public static async login(credentials: LoginRequest, deviceCtx?: { appDeviceId?: string | undefined; appPlatform?: string | undefined }): Promise<LoginResponse & { key_generation_required?: boolean }> {
     try {
-      const { email, password } = credentials;
+      const { identifier, email, password } = credentials;
+      // Determine the raw identifier: prefer explicit identifier, fallback to legacy email field
+      const rawIdentifier = (identifier || email || '').trim();
 
       // Database connectivity check
       try {
-        // Find user by email
-        const user = await UserModel.findByEmail(email.toLowerCase());
+        // Resolve user by identifier:
+        // - if looks like email: prefer direct email match
+        // - otherwise: normalize as phone (E.164) and match by phone_number
+        const isEmail = rawIdentifier.includes('@');
+        let user: User | undefined;
+        if (isEmail) {
+          const emailLower = rawIdentifier.toLowerCase();
+          user = await UserModel.findByEmail(emailLower) as User | undefined;
+        } else {
+          const { toE164 } = await import('@/utils/phone.util');
+          const phoneE164 = toE164(rawIdentifier);
+          if (phoneE164) {
+            user = await UserModel.findByPhone(phoneE164) as User | undefined;
+          }
+        }
+
         if (!user) {
-          logger.warn(`Login attempt with invalid email: ${email}`);
+          logger.warn(`Login attempt with invalid identifier: ${rawIdentifier}`);
           return {
             success: false,
-            message: 'Invalid email or password'
+            message: 'Invalid credentials'
           };
         }
 
         // Check if user is active
         if (!user.is_active) {
-          logger.warn(`Login attempt with inactive account: ${email}`);
+          logger.warn(`Login attempt with inactive account: ${rawIdentifier}`);
           return {
             success: false,
             message: 'Account is deactivated. Please contact administrator.'
@@ -63,10 +79,10 @@ export class AuthService {
         // Verify password
         const isValidPassword = await bcrypt.compare(password, user.password_hash);
         if (!isValidPassword) {
-          logger.warn(`Login attempt with invalid password: ${email}`);
+          logger.warn(`Login attempt with invalid password for identifier: ${rawIdentifier}`);
           return {
             success: false,
-            message: 'Invalid email or password'
+            message: 'Invalid credentials'
           };
         }
 
@@ -110,7 +126,7 @@ export class AuthService {
           logger.warn('Device detection failed during login', e);
         }
 
-        logger.info(`Successful login: ${email}`);
+        logger.info(`Successful login for user ${user.id} (${user.email ?? user.phone_number ?? 'no-email'})`);
 
         return {
           success: true,
@@ -127,7 +143,7 @@ export class AuthService {
         };
 
       } catch (dbError) {
-        logger.error(`Database error during login for ${email}:`, dbError);
+        logger.error(`Database error during login for identifier ${rawIdentifier}:`, dbError);
         return {
           success: false,
           message: 'Database temporarily unavailable. Please try again later.'

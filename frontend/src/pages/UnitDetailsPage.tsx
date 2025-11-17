@@ -126,6 +126,7 @@ export default function UnitDetailsPage() {
   const [selectedSharedTenant, setSelectedSharedTenant] = useState<string>('');
   const [showPrimaryTenantChange, setShowPrimaryTenantChange] = useState(false);
   const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
+  const [updatingLock, setUpdatingLock] = useState(false);
 
   const canManageUnits = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canChangePrimaryTenant = canManageUnits; // Only admins can change primary tenant
@@ -197,6 +198,20 @@ export default function UnitDetailsPage() {
 
   const handleBack = () => {
     navigate('/units');
+  };
+
+  const handleToggleLock = async () => {
+    if (!unit?.blulok_device) return;
+    try {
+      setUpdatingLock(true);
+      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
+      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
+      await loadUnitDetails();
+    } catch (e) {
+      // noop; could add toast
+    } finally {
+      setUpdatingLock(false);
+    }
   };
 
   const tabs = [
@@ -581,6 +596,65 @@ export default function UnitDetailsPage() {
                     )}
                   </div>
 
+                  {/* Inline Add Shared Access form (moved above list) */}
+                  {canManageSharedAccess && unit.primary_tenant && selectedSharedTenant === '' && (!unit.shared_tenants || unit.shared_tenants.length < 4) && (
+                    <div className="mt-3 mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h4 className="text-sm font-medium text-green-900 dark:text-green-200 flex items-center">
+                            <PlusIcon className="h-4 w-4 mr-1" />
+                            Add Shared Access
+                          </h4>
+                          <p className="text-xs text-green-700 dark:text-green-300 mt-1">
+                            Search for a tenant below and click Add to grant them access.
+                            {unit.shared_tenants && ` (${4 - unit.shared_tenants.length} slot${4 - unit.shared_tenants.length !== 1 ? 's' : ''} remaining)`}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setSelectedSharedTenant(' ')} // Use space to hide form
+                          className="text-green-700 dark:text-green-300 hover:text-green-900 dark:hover:text-green-100"
+                        >
+                          <XMarkIcon className="h-5 w-5" />
+                        </button>
+                      </div>
+                      <div className="relative z-10">
+                        <UserFilter
+                          value=""
+                          onChange={(tenantId) => {
+                            if (tenantId) {
+                              setSelectedSharedTenant(tenantId);
+                            }
+                          }}
+                          placeholder="Search for tenant..."
+                          className="w-full"
+                          facilityId={unit.facility_id}
+                          roleFilter="tenant"
+                          excludeUserIds={[authState.user?.id || '']}
+                        />
+                      </div>
+                      {selectedSharedTenant && selectedSharedTenant !== '' && selectedSharedTenant !== ' ' && (
+                        <div className="mt-3 flex justify-end space-x-2">
+                          <button
+                            onClick={() => setSelectedSharedTenant('')}
+                            className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleAssignTenant(selectedSharedTenant, false);
+                              setSelectedSharedTenant(' '); // Hide form after adding
+                            }}
+                            disabled={assigningTenant}
+                            className="px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {assigningTenant ? 'Adding...' : 'Add Access'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {unit.shared_tenants && unit.shared_tenants.length > 0 ? (
                     <div className="space-y-3">
                       {unit.shared_tenants.map((tenant, index) => (
@@ -633,63 +707,7 @@ export default function UnitDetailsPage() {
                     </div>
                   )}
 
-                  {/* Add Shared Access Form */}
-                  {canManageSharedAccess && unit.primary_tenant && selectedSharedTenant === '' && (!unit.shared_tenants || unit.shared_tenants.length < 4) && (
-                    <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h4 className="text-sm font-medium text-green-900 dark:text-green-200 flex items-center">
-                            <PlusIcon className="h-4 w-4 mr-1" />
-                            Add Shared Access
-                          </h4>
-                          <p className="text-xs text-green-700 dark:text-green-300 mt-1">
-                            Search for a tenant below and click Add to grant them access.
-                            {unit.shared_tenants && ` (${4 - unit.shared_tenants.length} slot${4 - unit.shared_tenants.length !== 1 ? 's' : ''} remaining)`}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => setSelectedSharedTenant(' ')} // Use space to hide form
-                          className="text-green-700 dark:text-green-300 hover:text-green-900 dark:hover:text-green-100"
-                        >
-                          <XMarkIcon className="h-5 w-5" />
-                        </button>
-                      </div>
-                      <div className="relative z-10">
-                        <UserFilter
-                          value=""
-                          onChange={(tenantId) => {
-                            if (tenantId) {
-                              setSelectedSharedTenant(tenantId);
-                            }
-                          }}
-                          placeholder="Search for tenant..."
-                          className="w-full"
-                          facilityId={unit.facility_id}
-                          roleFilter="tenant"
-                        />
-                      </div>
-                      {selectedSharedTenant && selectedSharedTenant !== '' && selectedSharedTenant !== ' ' && (
-                        <div className="mt-3 flex justify-end space-x-2">
-                          <button
-                            onClick={() => setSelectedSharedTenant('')}
-                            className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={() => {
-                              handleAssignTenant(selectedSharedTenant, false);
-                              setSelectedSharedTenant(' '); // Hide form after adding
-                            }}
-                            disabled={assigningTenant}
-                            className="px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          >
-                            {assigningTenant ? 'Adding...' : 'Add Access'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {/* Removed bottom add form in favor of inline form above */}
 
                   {/* Max limit reached message */}
                   {canManageSharedAccess && unit.primary_tenant && unit.shared_tenants && unit.shared_tenants.length >= 4 && (
@@ -812,19 +830,29 @@ export default function UnitDetailsPage() {
                             <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
                           </Link>
                         </div>
-                        {canManageSharedAccess && (
+                        {canManageUnits && (
                           <div className="flex items-center space-x-2">
                             <button
                               onClick={() => setShowDeviceAssignmentModal(true)}
-                              className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-900/20 dark:text-gray-400 dark:hover:bg-gray-800"
-                              title="Change device assignment"
+                              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-900/20 dark:text-gray-300 dark:hover:bg-gray-800"
                             >
-                              <ArrowPathIcon className="h-4 w-4" />
+                              <ArrowPathIcon className="h-4 w-4 mr-2" />
+                              Change Device
+                            </button>
+                            <button
+                              onClick={handleToggleLock}
+                              disabled={updatingLock}
+                              className={`inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                                unit.blulok_device.lock_status === 'locked'
+                                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                                  : 'bg-red-600 hover:bg-red-700 text-white'
+                              } ${updatingLock ? 'opacity-70 cursor-not-allowed' : ''}`}
+                            >
+                              {unit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
                             </button>
                             <button
                               onClick={() => setShowShareModal(true)}
-                              className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-primary-600 text-white hover:bg-primary-700"
-                              title="Share key access"
+                              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-primary-600 text-white hover:bg-primary-700"
                             >
                               Share Key
                             </button>

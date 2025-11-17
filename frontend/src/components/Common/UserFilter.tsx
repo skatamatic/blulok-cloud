@@ -19,6 +19,7 @@ interface UserFilterProps {
   className?: string;
   facilityId?: string; // Optional facility filter for scoping
   roleFilter?: string; // Optional role filter (e.g., 'tenant')
+  excludeUserIds?: string[]; // Optional list of user IDs to exclude (e.g., self)
 }
 
 export const UserFilter: React.FC<UserFilterProps> = ({
@@ -27,7 +28,8 @@ export const UserFilter: React.FC<UserFilterProps> = ({
   placeholder = 'Search users...',
   className = '',
   facilityId,
-  roleFilter
+  roleFilter,
+  excludeUserIds = []
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -91,12 +93,17 @@ export const UserFilter: React.FC<UserFilterProps> = ({
       const response = await apiService.getUsers(params);
       
       if (response.success) {
-        const newUsers = response.users || [];
+        let newUsers = response.users || [];
+        // Exclude any users by ID (e.g., current self)
+        if (excludeUserIds && excludeUserIds.length > 0) {
+          const exclude = new Set(excludeUserIds);
+          newUsers = newUsers.filter((u: User) => !exclude.has(u.id));
+        }
         const total = response.total || 0;
         
         setUsers(newUsers);
         setFilteredUsers(newUsers);
-        setTotalUsers(total);
+        setTotalUsers(total - (excludeUserIds?.length || 0));
       }
     } catch (error) {
       console.error('Error loading users:', error);

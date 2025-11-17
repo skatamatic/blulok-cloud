@@ -25,7 +25,11 @@ export interface AuthState {
 }
 
 export interface LoginCredentials {
-  email: string;
+  /**
+   * Flexible login identifier. Can be an email address or a phone number.
+   * Backend will normalize and decide which identifier to use.
+   */
+  identifier: string;
   password: string;
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import {
@@ -14,6 +14,7 @@ import {
   ShieldExclamationIcon,
   ArrowTopRightOnSquareIcon,
 } from '@heroicons/react/24/outline';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface DeviceDetails {
   id: string;
@@ -78,7 +79,9 @@ const sourceLabels = {
 export default function DeviceDetailsPage() {
   const { deviceId } = useParams<{ deviceId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { addToast } = useToast();
+  const { authState } = useAuth();
   const [device, setDevice] = useState<DeviceDetails | null>(null);
   const [denylistEntries, setDenylistEntries] = useState<DenylistEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,17 +114,13 @@ export default function DeviceDetailsPage() {
       setLoading(true);
       setError(null);
       
-      // Get device from devices list - we'll need to fetch and filter
-      const response = await apiService.getDevices({ device_type: 'blulok' });
-      const devices = response.devices || [];
-      const foundDevice = devices.find((d: any) => d.id === deviceId);
-      
-      if (!foundDevice) {
+      // Load single device details directly to avoid backend filter issues
+      const response = await apiService.getBluLokDevice(deviceId);
+      if (!response?.device) {
         setError('Device not found');
         return;
       }
-
-      setDevice(foundDevice);
+      setDevice(response.device);
     } catch (error: any) {
       console.error('Failed to load device details:', error);
       setError(error?.response?.data?.message || 'Failed to load device details');
@@ -194,6 +193,19 @@ export default function DeviceDetailsPage() {
     return '< 1 hour';
   };
 
+  const backTarget = (() => {
+    const state = (location.state as any) || {};
+    if (state.from === 'facility' && state.facilityId) {
+      return `/facilities/${state.facilityId}`;
+    }
+    if (state.from === 'devices') {
+      return '/devices';
+    }
+    return '/devices';
+  })();
+
+  const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -206,11 +218,11 @@ export default function DeviceDetailsPage() {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <button
-          onClick={() => navigate('/devices')}
+          onClick={() => navigate(backTarget)}
           className="mb-4 inline-flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
         >
           <ArrowLeftIcon className="h-4 w-4 mr-2" />
-          Back to Devices
+          Back
         </button>
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
           <p className="text-red-800 dark:text-red-400">{error || 'Device not found'}</p>
@@ -228,11 +240,11 @@ export default function DeviceDetailsPage() {
       {/* Header */}
       <div className="mb-6">
         <button
-          onClick={() => navigate('/devices')}
+          onClick={() => navigate(backTarget)}
           className="mb-4 inline-flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
         >
           <ArrowLeftIcon className="h-4 w-4 mr-2" />
-          Back to Devices
+          Back
         </button>
 
         <div className="flex items-center justify-between">
@@ -245,6 +257,29 @@ export default function DeviceDetailsPage() {
               {device.unit_number && ` • Unit ${device.unit_number}`}
             </p>
           </div>
+          {canManage && (
+            <div>
+              <button
+                onClick={async () => {
+                  try {
+                    const newStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
+                    await apiService.updateLockStatus(device.id, newStatus);
+                    setDevice(prev => prev ? { ...prev, lock_status: newStatus } : prev);
+                    addToast({ type: 'success', title: `Lock ${newStatus}` });
+                  } catch (e) {
+                    addToast({ type: 'error', title: 'Failed to update lock status' });
+                  }
+                }}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  device.lock_status === 'locked'
+                    ? 'bg-green-600 hover:bg-green-700 text-white'
+                    : 'bg-red-600 hover:bg-red-700 text-white'
+                }`}
+              >
+                {device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -293,6 +328,27 @@ export default function DeviceDetailsPage() {
       {activeTab === 'overview' && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
           <div className="p-6 space-y-6">
+            {/* Quick Links */}
+            <div className="flex flex-wrap gap-3">
+              {device.primary_tenant && (
+                <button
+                  onClick={() => navigate(`/users/${device.primary_tenant?.id}`)}
+                  className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                  <UserIcon className="h-4 w-4 mr-2" />
+                  {device.primary_tenant.first_name} {device.primary_tenant.last_name}
+                </button>
+              )}
+              {device.unit_id && device.unit_number && (
+                <button
+                  onClick={() => navigate(`/units/${device.unit_id}`)}
+                  className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                  <ArrowTopRightOnSquareIcon className="h-4 w-4 mr-2" />
+                  Unit {device.unit_number}
+                </button>
+              )}
+            </div>
             {/* Device Status */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <div>

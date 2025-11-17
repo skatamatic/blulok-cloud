@@ -13,6 +13,7 @@ describe('AuthService', () => {
       const userData = {
         id: 'user-1',
         email: 'valid@example.com',
+        login_identifier: 'valid@example.com',
         password_hash: 'hashed-password',
         first_name: 'Valid',
         last_name: 'User',
@@ -22,12 +23,12 @@ describe('AuthService', () => {
         updated_at: new Date(),
       };
 
-      // Mock UserModel.findByEmail to return our test user
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(userData as any);
+      // Mock UserModel.findByLoginIdentifier to return our test user
+      jest.spyOn(UserModel, 'findByLoginIdentifier').mockResolvedValue(userData as any);
 
       const result = await AuthService.login({
-        email: 'valid@example.com',
-        password: 'plaintextpassword'
+        identifier: 'valid@example.com',
+        password: 'plaintextpassword',
       });
 
       expect(result.success).toBe(true);
@@ -40,6 +41,7 @@ describe('AuthService', () => {
       const userData = {
         id: 'user-1',
         email: 'invalid@example.com',
+        login_identifier: 'invalid@example.com',
         password_hash: 'hashed-password',
         first_name: 'Invalid',
         last_name: 'User',
@@ -49,29 +51,29 @@ describe('AuthService', () => {
         updated_at: new Date(),
       };
 
-      // Mock UserModel.findByEmail to return our test user
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(userData as any);
+      // Mock UserModel.findByLoginIdentifier to return our test user
+      jest.spyOn(UserModel, 'findByLoginIdentifier').mockResolvedValue(userData as any);
 
       const result = await AuthService.login({
-        email: 'invalid@example.com',
-        password: 'wrongpassword'
+        identifier: 'invalid@example.com',
+        password: 'wrongpassword',
       });
 
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Invalid email or password');
+      expect(result.message).toBe('Invalid credentials');
     });
 
     it('should reject non-existent user', async () => {
-      // Mock UserModel.findByEmail to return undefined
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined);
+      // Mock UserModel.findByLoginIdentifier to return undefined
+      jest.spyOn(UserModel, 'findByLoginIdentifier').mockResolvedValue(undefined);
 
       const result = await AuthService.login({
-        email: 'nonexistent@example.com',
-        password: 'anypassword'
+        identifier: 'nonexistent@example.com',
+        password: 'anypassword',
       });
 
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Invalid email or password');
+      expect(result.message).toBe('Invalid credentials');
     });
 
     it('should reject inactive user', async () => {
@@ -79,6 +81,7 @@ describe('AuthService', () => {
       const userData = {
         id: 'user-1',
         email: 'inactive@example.com',
+        login_identifier: 'inactive@example.com',
         password_hash: 'hashed-password',
         first_name: 'Inactive',
         last_name: 'User',
@@ -88,12 +91,12 @@ describe('AuthService', () => {
         updated_at: new Date(),
       };
 
-      // Mock UserModel.findByEmail to return inactive user
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(userData as any);
+      // Mock UserModel.findByLoginIdentifier to return inactive user
+      jest.spyOn(UserModel, 'findByLoginIdentifier').mockResolvedValue(userData as any);
 
       const result = await AuthService.login({
-        email: 'inactive@example.com',
-        password: 'plaintextpassword'
+        identifier: 'inactive@example.com',
+        password: 'plaintextpassword',
       });
 
       expect(result.success).toBe(false);

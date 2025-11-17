@@ -53,7 +53,7 @@ Facility
 - Device cards → Device details
 - Unit cards → Unit management
 - Gateway status → Device dashboard
-- "View Facility" from all related pages
+- Minimized quick links; navigation primarily via card click
 
 ### 3. Devices Overview (`/devices`)
 
@@ -84,7 +84,7 @@ Facility
 - Feature and amenity display
 
 **Cross-linking**:
-- Unit cards → Facility view
+- Unit cards → Unit details (facility link removed on cards)
 - Tenant info → User management
 - Device status → Device controls
 - "My Units" for tenants
@@ -102,7 +102,7 @@ Facility
 
 - **Facility Cards**: Link to devices, units, and details
 - **Device Cards**: Link to parent facility and associated units
-- **Unit Cards**: Link to facility, tenant info, and device controls
+ - **Unit Cards**: Link to unit details, tenant info, and device controls
 - **Status Indicators**: Direct links to problem resolution
 - **Search Integration**: Global search with entity linking
 

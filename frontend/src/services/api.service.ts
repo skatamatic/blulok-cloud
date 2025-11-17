@@ -313,6 +313,11 @@ class ApiService {
     return response.data;
   }
 
+  async getGatewayWsStatus(facilityId: string) {
+    const response = await this.api.get(`/gateways/status/${facilityId}`);
+    return response.data as { success: boolean; facilityId: string; connected: boolean; lastPongAt?: number };
+  }
+
   // Internal Gateway endpoints
   async getSecureTimeSyncPacket() {
     const response = await this.api.get('/internal/gateway/time-sync');
@@ -338,6 +343,11 @@ class ApiService {
   // Devices Management
   async getDevices(filters?: any) {
     const response = await this.api.get('/devices', { params: filters });
+    return response.data;
+  }
+
+  async getBluLokDevice(id: string) {
+    const response = await this.api.get(`/devices/blulok/${id}`);
     return response.data;
   }
 

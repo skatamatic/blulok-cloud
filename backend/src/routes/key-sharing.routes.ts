@@ -46,9 +46,11 @@ import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 import { toE164 } from '@/utils/phone.util';
+import { AccessLogModel } from '../models/access-log.model';
 
 const router = Router();
 const keySharingModel = new KeySharingModel();
+const accessLogModel = new AccessLogModel();
 
 // Apply authentication middleware to all routes
 router.use(authenticateToken);
@@ -105,14 +107,60 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     }
 
     const result = await keySharingModel.findAll(filters);
-    
-    res.json({
+
+    // Default flat response
+    const response: any = {
       success: true,
       sharings: result.sharings,
       total: result.total,
       limit: filters.limit,
       offset: filters.offset
-    });
+    };
+
+    // Optional grouped-by-unit view when explicitly requested.
+    // This preserves backwards compatibility for existing clients.
+    const groupByUnit = (req.query.group_by_unit as string | undefined)?.toLowerCase();
+    if (groupByUnit === 'true' || groupByUnit === '1') {
+      const unitsMap = new Map<string, any>();
+
+      for (const sharing of result.sharings) {
+        const unitId = sharing.unit_id;
+        if (!unitsMap.has(unitId)) {
+          unitsMap.set(unitId, {
+            unit_id: unitId,
+            unit_number: sharing.unit_number,
+            facility_name: sharing.facility_name,
+            primary_tenant_id: sharing.primary_tenant_id,
+            primary_tenant_name: sharing.primary_tenant_name,
+            primary_tenant_email: sharing.primary_tenant_email,
+            sharings: [] as any[]
+          });
+        }
+
+        const unitEntry = unitsMap.get(unitId);
+        unitEntry.sharings.push({
+          id: sharing.id,
+          shared_with_user_id: sharing.shared_with_user_id,
+          shared_with_name: sharing.shared_with_name,
+          shared_with_email: sharing.shared_with_email,
+          access_level: sharing.access_level,
+          shared_at: sharing.shared_at,
+          expires_at: sharing.expires_at,
+          granted_by: sharing.granted_by,
+          granted_by_name: sharing.granted_by_name,
+          notes: sharing.notes,
+          is_active: sharing.is_active,
+          access_restrictions: sharing.access_restrictions
+        });
+      }
+
+      const units = Array.from(unitsMap.values());
+      response.units = units;
+      response.total_units = units.length;
+      response.total_sharings = result.total;
+    }
+
+    res.json(response);
   } catch (error) {
     console.error('Error fetching key sharing records:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch key sharing records' });
@@ -166,11 +214,13 @@ router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
     
-    // Check if user exists (for non-admin users, this is already validated by the permission check above)
-    if (!AuthService.isAdmin(user.role)) {
-      // For non-admin users, we already validated they can only access their own records
-      // So we can proceed without additional user existence check
-    } else {
+    // For facility admins, scope the query to their assigned facilities
+    if (AuthService.isFacilityAdmin(user.role) && user.facilityIds && user.facilityIds.length > 0) {
+      filters.facility_ids = user.facilityIds;
+    }
+
+    // Check if target user exists (admins and facility admins can inspect others)
+    if (AuthService.isAdmin(user.role) || AuthService.isFacilityAdmin(user.role)) {
       // For admin users, we should check if the user exists
       const { UserModel } = await import('../models/user.model');
       const targetUser = await UserModel.findById(userId);
@@ -178,6 +228,8 @@ router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Pr
         res.status(404).json({ error: 'User not found' });
         return;
       }
+    } else {
+      // For non-admin/non-facility-admin users, we already validated they can only access their own records
     }
     
     const ownedKeys = await keySharingModel.getUserOwnedKeys(userId, filters);
@@ -250,12 +302,52 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
     if (expires_before) filters.expires_before = new Date(expires_before as string);
 
     const result = await keySharingModel.getUnitSharedKeys(unitId, filters);
-    
+
+    // Convenience: include a small slice of recent activity logs for this unit.
+    // We reuse the access history model but keep this response focused on key sharing.
+    const recentActivityLimit = 20;
+    const activityResult = await accessLogModel.getUnitAccessHistory(unitId, {
+      limit: recentActivityLimit,
+      sort_by: 'occurred_at',
+      sort_order: 'desc'
+    } as any);
+
+    // RBAC: Primary tenants (owners) and managers (admin/dev_admin/facility_admin)
+    // can see the full sharing roster for the unit. Shared users (tenants with
+    // non-primary shared access) should only see their own sharing record(s) and
+    // their own activity.
+    let sharings = result.sharings;
+    let totalSharings = result.total;
+    let recentActivity = activityResult.logs;
+    let totalActivity = activityResult.total;
+
+    const isManager = AuthService.canManageUsers(user.role);
+    if (user.role === UserRole.TENANT && !isManager) {
+      const isPrimary = await keySharingModel.isPrimaryTenantForUnit(user.userId, unitId);
+      if (!isPrimary) {
+        // Shared user: restrict view to their own sharing + activity
+        sharings = sharings.filter((s: any) => s.shared_with_user_id === user.userId);
+        totalSharings = sharings.length;
+        recentActivity = recentActivity.filter((log: any) => log.user_id === user.userId);
+        totalActivity = recentActivity.length;
+      }
+    }
+
     res.json({
-      sharings: result.sharings,
-      total: result.total,
+      success: true,
+      unit: {
+        id: unit.id,
+        unit_number: unit.unit_number,
+        facility_id: unit.facility_id,
+        facility_name: (unit as any).facility_name || undefined,
+        primary_tenant_id: (unit as any).primary_tenant_id || undefined
+      },
+      sharings,
+      total: totalSharings,
       limit: filters.limit,
-      offset: filters.offset
+      offset: filters.offset,
+      recent_activity: recentActivity,
+      total_activity: totalActivity
     });
   } catch (error) {
     console.error('Error fetching unit key sharing records:', error);

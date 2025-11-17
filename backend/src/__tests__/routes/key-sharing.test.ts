@@ -148,6 +148,21 @@ describe('Key Sharing Routes', () => {
       expectSuccess(response);
       expect(response.body).toHaveProperty('sharings');
     });
+
+    it('should support grouped-by-unit view when requested', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing?group_by_unit=true')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('units');
+      expect(Array.isArray(response.body.units)).toBe(true);
+      expect(response.body).toHaveProperty('total_units');
+      expect(response.body).toHaveProperty('total_sharings');
+      // total_sharings should match flat total for consistency
+      expect(response.body.total_sharings).toBe(response.body.total);
+    });
   });
 
   describe('GET /api/v1/key-sharing/user/:userId - Get User Key Sharing Records', () => {
@@ -229,6 +244,39 @@ describe('Key Sharing Routes', () => {
         .expect(404);
 
       expectNotFound(response);
+    });
+
+    it('should return full sharing roster for primary tenant', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing/unit/unit-1')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`) // tenant-1 is primary for unit-1 in mocks
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      expect(Array.isArray(response.body.sharings)).toBe(true);
+      // With mocked data, primary tenant should see all sharings for unit-1 (2 entries)
+      expect(response.body.sharings.length).toBeGreaterThanOrEqual(2);
+      const sharedWithIds = response.body.sharings.map((s: any) => s.shared_with_user_id);
+      expect(sharedWithIds).toEqual(
+        expect.arrayContaining(['other-tenant-1', 'facility2-tenant-1'])
+      );
+    });
+
+    it('should restrict shared tenant to only their own share', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing/unit/unit-1')
+        .set('Authorization', `Bearer ${testData.users.otherTenant.token}`) // other-tenant-1 has shared access to unit-1
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      expect(Array.isArray(response.body.sharings)).toBe(true);
+      // Shared user should only see their own share(s)
+      expect(response.body.sharings.length).toBeGreaterThanOrEqual(1);
+      for (const sharing of response.body.sharings) {
+        expect(sharing.shared_with_user_id).toBe('other-tenant-1');
+      }
     });
   });
 

@@ -229,6 +229,10 @@ export class DeviceModel {
       .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
       .join('facilities', 'gateways.facility_id', 'facilities.id'); // Facility via gateway - authoritative source
 
+    if ((filters as any).id) {
+      query = query.where('blulok_devices.id', (filters as any).id);
+    }
+
     if (filters.facility_id) {
       // Filter by gateway's facility - this is the authoritative facility for the device
       query = query.where('gateways.facility_id', filters.facility_id);
@@ -296,6 +300,7 @@ export class DeviceModel {
       const base: any = {
         id: row.id,
         gateway_id: row.gateway_id,
+        facility_id: row.gateway_facility_id,
         unit_id: row.unit_id,
         device_serial: row.device_serial,
         firmware_version: row.firmware_version,
@@ -327,6 +332,11 @@ export class DeviceModel {
     }
 
     return mapped;
+  }
+
+  async findBluLokDeviceById(id: string): Promise<DeviceWithContext | null> {
+    const results = await this.findBluLokDevices({ ...(undefined as any), id } as any);
+    return results[0] || null;
   }
 
   async createAccessControlDevice(data: CreateAccessControlDeviceData): Promise<AccessControlDevice> {

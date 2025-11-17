@@ -10,10 +10,9 @@ import {
   LockClosedIcon,
   LockOpenIcon,
   PlusIcon,
-  ArrowTopRightOnSquareIcon,
   Squares2X2Icon,
   ListBulletIcon,
-  BuildingOfficeIcon
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit, UnitFilters } from '@/types/facility.types';
@@ -291,8 +290,8 @@ export default function UnitsManagementPage() {
         )}
 
 
-        {/* Lock Status */}
-        {unit.blulok_device && (
+        {/* Lock Status or Missing Device Warning */}
+        {unit.blulok_device ? (
           <div className="flex items-center justify-between mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
             <div className="flex items-center space-x-2">
               {unit.blulok_device.lock_status === 'locked' ? 
@@ -308,6 +307,11 @@ export default function UnitsManagementPage() {
                 {unit.blulok_device.battery_level}%
               </span>
             )}
+          </div>
+        ) : (
+          <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg flex items-center text-sm text-yellow-800 dark:text-yellow-300">
+            <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
+            No device attached
           </div>
         )}
 
@@ -329,56 +333,9 @@ export default function UnitsManagementPage() {
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex space-x-2">
-          {canManage && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleTenantManagement(unit);
-              }}
-              className="flex-1 flex items-center justify-center space-x-1 py-2 px-3 text-sm font-medium text-primary-700 bg-primary-100 hover:bg-primary-200 dark:bg-primary-900/20 dark:text-primary-400 rounded-lg transition-colors"
-            >
-              <UserIcon className="h-4 w-4" />
-              <span>Manage</span>
-            </button>
-          )}
-          
-          {canManage && unit.blulok_device && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleLockToggle(unit);
-              }}
-              className={`flex-1 flex items-center justify-center space-x-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors ${
-                unit.blulok_device.lock_status === 'locked'
-                  ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                  : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
-              }`}
-            >
-              {unit.blulok_device.lock_status === 'locked' ? 
-                <LockOpenIcon className="h-4 w-4" /> : 
-                <LockClosedIcon className="h-4 w-4" />
-              }
-              <span>{unit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}</span>
-            </button>
-          )}
-        </div>
+        {/* Actions removed per design (Manage/Lock) */}
 
-        {/* Quick links */}
-        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/facilities/${unit.facility_id}`, { state: { tab: 'units' } });
-            }}
-            className="flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-          >
-            <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-            View Facility
-            <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-          </button>
-        </div>
+        {/* Quick links removed per design: no footer or facility link */}
       </div>
     );
   };

@@ -617,7 +617,11 @@ export class FMSService {
 
     // SECURITY: Get all existing TENANT users ONLY (never admin/maintenance)
     const existingUsers = await UserModel.findAll({ role: UserRole.TENANT });
-    const usersByEmail = new Map(existingUsers.map((u: any) => [u.email.toLowerCase(), u]));
+    const usersByEmail = new Map(
+      existingUsers
+        .filter((u: any) => typeof u.email === 'string' && u.email.trim().length > 0)
+        .map((u: any) => [u.email.toLowerCase(), u])
+    );
     const usersById = new Map(existingUsers.map((u: any) => [u.id, u]));
 
     for (const fmsTenant of fmsTenants) {
@@ -1272,28 +1276,77 @@ export class FMSService {
     // Determine preferred login identifier: email (preferred) or normalized phone
     const rawEmail = tenantData.email?.trim() || '';
     const rawPhone = tenantData.phone?.trim() || '';
-    const preferredIdentifier = rawEmail ? rawEmail.toLowerCase() : (rawPhone ? rawPhone.replace(/[^\d+]/g, '') : '');
+    const { toE164 } = await import('@/utils/phone.util');
+    const phoneE164 = rawPhone ? toE164(rawPhone) : '';
+    const preferredIdentifier = rawEmail ? rawEmail.toLowerCase() : (phoneE164 ? phoneE164.toLowerCase() : '');
 
     // Check if user already exists by login identifier when available, fallback to email scan
     let existingUser: User | undefined;
     if (preferredIdentifier) {
       existingUser = await UserModel.findByLoginIdentifier(preferredIdentifier);
     }
-    if (!existingUser && rawEmail) {
-      const existingUsers = await UserModel.findAll({ role: UserRole.TENANT });
-      existingUser = existingUsers.find((u: any) => (u.email || '').toLowerCase() === rawEmail.toLowerCase()) as any;
+    if (!existingUser && (rawEmail || phoneE164)) {
+      const existingUsers = await UserModel.findAll({ role: UserRole.TENANT }) as unknown as User[];
+      const byEmail: User | undefined = rawEmail
+        ? existingUsers.find((u) => (u.email || '').toLowerCase() === rawEmail.toLowerCase())
+        : undefined;
+      const byPhone: User | undefined = phoneE164
+        ? existingUsers.find((u) => (u.phone_number || '').toLowerCase() === phoneE164.toLowerCase())
+        : undefined;
+
+      // Conflict: email points to one user and phone to a different user
+      if (byEmail && byPhone && byEmail.id !== byPhone.id) {
+        logger.error('[FMS] Tenant email/phone conflict with existing users', {
+          fms_sync: true,
+          sync_log_id: change.sync_log_id,
+          facility_id: facilityId,
+          tenant_email: rawEmail || null,
+          tenant_phone: rawPhone || null,
+          email_user_id: byEmail.id,
+          phone_user_id: byPhone.id,
+        });
+        throw new Error('FMS tenant email/phone conflict with existing users');
+      }
+
+      existingUser = (byEmail || byPhone) as any;
     }
 
     let user: User;
     if (existingUser) {
-      // User already exists - just ensure they're associated with the facility and have a mapping
-      logger.info(`[FMS] User ${tenantData.email} already exists. Ensuring facility association and mapping.`, {
+      // User already exists - ensure their core identity fields are up to date and they are
+      // associated with this facility and mapped to the FMS tenant.
+      logger.info(`[FMS] User ${tenantData.email} already exists. Ensuring data, facility association and mapping.`, {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
         user_id: existingUser.id,
       });
-      user = existingUser;
+
+      const updates: Partial<User> = {};
+      const normalizedEmail = rawEmail ? rawEmail.toLowerCase() : null;
+
+      // Update email if FMS has a (possibly new) email
+      if (normalizedEmail && existingUser.email !== normalizedEmail) {
+        updates.email = normalizedEmail;
+      }
+
+      // Update phone_number if FMS has a normalized phone
+      if (phoneE164 && existingUser.phone_number !== phoneE164) {
+        updates.phone_number = phoneE164;
+      }
+
+      // Keep login_identifier aligned with our preferred identifier (email > phone)
+      const newLoginIdentifier = preferredIdentifier || (existingUser.email || existingUser.phone_number || existingUser.login_identifier);
+      if (newLoginIdentifier && existingUser.login_identifier !== newLoginIdentifier) {
+        updates.login_identifier = newLoginIdentifier.toLowerCase();
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await UserModel.updateById(existingUser.id, updates as any);
+        user = await UserModel.findById(existingUser.id) as User;
+      } else {
+        user = existingUser;
+      }
 
       // Ensure facility association
       await UserFacilityAssociationModel.addUserToFacility(user.id, facilityId);
@@ -1301,9 +1354,9 @@ export class FMSService {
       // SECURITY: Create user with TENANT role ONLY (FMS never creates admin/maintenance)
       // Backfill fields: login_identifier and phone_number
       user = await UserModel.create({
-        login_identifier: preferredIdentifier || (tenantData.email?.toLowerCase() || tenantData.externalId),
+        login_identifier: preferredIdentifier || (tenantData.externalId || '').toLowerCase(),
         email: rawEmail || null,
-        phone_number: rawPhone || null,
+        phone_number: phoneE164 || null,
         first_name: tenantData.firstName,
         last_name: tenantData.lastName,
         role: UserRole.TENANT, // ← ALWAYS TENANT, never admin/maintenance
