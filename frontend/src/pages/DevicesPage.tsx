@@ -14,20 +14,13 @@ import {
   CubeIcon,
   KeyIcon,
   LockClosedIcon,
-  LockOpenIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
   WrenchScrewdriverIcon,
-  QuestionMarkCircleIcon,
   BuildingOfficeIcon,
-  UserIcon,
-  EyeIcon,
   ArrowTopRightOnSquareIcon,
-  HomeIcon,
   Squares2X2Icon,
-  ListBulletIcon,
-  CpuChipIcon,
-  XMarkIcon
+  ListBulletIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { AccessControlDevice, BluLokDevice, DeviceFilters } from '@/types/facility.types';
@@ -201,18 +194,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     filters.limit || 30,
     handlePageChange
   );
-
-  const handleLockToggle = async (device: BluLokDevice & { device_category: string }) => {
-    if (device.device_category !== 'blulok') return;
-    
-    try {
-      const newStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(device.id, newStatus);
-      await loadDevices(); // Refresh data
-    } catch (error) {
-      console.error('Failed to toggle lock:', error);
-    }
-  };
 
   const handleUnassignDevice = async () => {
     if (!showUnassignConfirm) return;

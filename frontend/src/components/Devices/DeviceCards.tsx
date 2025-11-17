@@ -1,6 +1,6 @@
-import React from 'react';
+import { MouseEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BuildingOfficeIcon, CpuChipIcon, EyeIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AccessControlDevice, BluLokDevice } from '@/types/facility.types';
 
 const statusColors = {
@@ -68,23 +68,72 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice }
         </div>
       </div>
 
-      {/* Footer removed as per design - card click opens details */}
+      {(onViewFacility || onViewDevice) && (
+        <div className="mt-6 flex flex-wrap gap-2">
+          {onViewFacility && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onViewFacility();
+              }}
+              className="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              View Facility
+            </button>
+          )}
+          {onViewDevice && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onViewDevice();
+              }}
+              className="inline-flex items-center rounded-lg border border-transparent bg-primary-50 dark:bg-primary-900/20 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
+            >
+              View Details
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-export function BluLokDeviceCard({ device, onViewDevice, onViewUnit }: {
+export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, onToggleLock }: {
   device: BluLokDevice;
   onViewDevice?: () => void;
   onViewUnit?: () => void;
+  canManage?: boolean;
+  onToggleLock?: () => Promise<void> | void;
 }) {
   const navigate = useNavigate();
   const StatusIcon = (statusIcons as any)[device.device_status] || CheckCircleIcon;
+  const [isToggling, setIsToggling] = useState(false);
+
+  const handleToggleLock = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!onToggleLock) return;
+    try {
+      setIsToggling(true);
+      await onToggleLock();
+    } finally {
+      setIsToggling(false);
+    }
+  };
+
+  const handleCardClick = () => {
+    if (onViewDevice) {
+      onViewDevice();
+    } else {
+      navigate(`/devices/${device.id}`);
+    }
+  };
   return (
     <div
       id={`device-${device.id}`}
       className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
-      onClick={() => onViewDevice ? onViewDevice() : navigate(`/devices/${device.id}`)}
+      onClick={handleCardClick}
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center">
@@ -127,7 +176,44 @@ export function BluLokDeviceCard({ device, onViewDevice, onViewUnit }: {
         </div>
       </div>
 
-      {/* Footer removed as per design - card click opens details */}
+      {(onViewUnit || onViewDevice || (canManage && onToggleLock)) && (
+        <div className="mt-6 flex flex-wrap gap-2">
+          {onViewUnit && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onViewUnit();
+              }}
+              className="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              View Unit
+            </button>
+          )}
+          {onViewDevice && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onViewDevice();
+              }}
+              className="inline-flex items-center rounded-lg border border-transparent bg-primary-50 dark:bg-primary-900/20 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
+            >
+              View Details
+            </button>
+          )}
+          {canManage && onToggleLock && (
+            <button
+              type="button"
+              onClick={handleToggleLock}
+              disabled={isToggling}
+              className="inline-flex items-center rounded-lg border border-transparent bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+            >
+              {isToggling ? 'Updating…' : device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

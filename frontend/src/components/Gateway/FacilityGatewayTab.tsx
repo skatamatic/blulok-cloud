@@ -3,17 +3,11 @@ import {
   ServerIcon,
   Cog6ToothIcon,
   ArrowPathIcon,
-  WifiIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
   ClockIcon,
   PlayIcon,
   CloudIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  EyeIcon,
-  EyeSlashIcon,
-  ShieldCheckIcon,
   InformationCircleIcon,
   WrenchScrewdriverIcon
 } from '@heroicons/react/24/outline';
@@ -66,7 +60,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
 
   const [gateway, setGateway] = useState<Gateway | null>(null);
   const [loading, setLoading] = useState(true);
-  const [testingConnection, setTestingConnection] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
@@ -80,9 +73,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     };
   } | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'setup' | 'sync' | 'devtools'>('overview');
-  const [configExpanded, setConfigExpanded] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [configForm, setConfigForm] = useState({
     gateway_type: 'http' as 'physical' | 'http' | 'simulated',
     base_url: '',
@@ -197,55 +187,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     };
   }, [ws]);
 
-  const handleTestConnection = async () => {
-    console.log('handleTestConnection called');
-    if (!gateway) {
-      console.error('No gateway selected');
-      addToast({ type: 'error', title: 'No gateway selected' });
-      return;
-    }
-
-    console.log('Testing connection for gateway:', gateway.id, gateway);
-
-    // Validate gateway has required fields for HTTP
-    if (gateway.gateway_type === 'http') {
-      if (!gateway.base_url || gateway.base_url.trim() === '') {
-        addToast({ type: 'error', title: 'Gateway base URL is required for connection test' });
-        return;
-      }
-    }
-
-    setTestingConnection(true);
-    try {
-      console.log('Making API call to test connection...');
-      const result = await apiService.testGatewayConnection(gateway.id);
-      console.log('Connection test result:', result);
-      // Keep toast concise and consistent
-      addToast({ type: 'success', title: 'Gateway connection test successful' });
-    } catch (error: any) {
-      console.error('Connection test failed:', error);
-      console.error('Error response:', error?.response);
-      console.error('Error message:', error?.message);
-
-      let message = 'Gateway lock fetch failed';
-
-      if (error?.response?.data?.message) {
-        message = error.response.data.message;
-      } else if (error?.response?.status) {
-        message = `Lock fetch failed (HTTP ${error.response.status})`;
-      } else if (error?.message) {
-        message = `Connection failed: ${error.message}`;
-      } else if (error?.code === 'NETWORK_ERROR') {
-        message = 'Network error: Cannot reach gateway. Please check the URL and network connection.';
-      }
-
-      addToast({ type: 'error', title: message });
-    } finally {
-      // Clear flag after a short delay to catch any lingering status updates
-      setTimeout(() => setTestingConnection(false), 2000);
-    }
-  };
-
   const handleManualSync = async () => {
     if (!gateway) return;
 
@@ -339,42 +280,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     return null;
   };
 
-  const handleSaveConfiguration = async () => {
-    try {
-      const updateData = {
-        gateway_type: configForm.gateway_type,
-        base_url: configForm.base_url,
-        connection_url: configForm.connection_url,
-        api_key: configForm.api_key,
-        username: configForm.username,
-        password: configForm.password || undefined, // Only update if provided
-        protocol_version: configForm.protocol_version,
-        poll_frequency_ms: configForm.poll_frequency_ms,
-        ignore_ssl_cert: configForm.ignore_ssl_cert
-      };
-
-      if (gateway) {
-        await apiService.updateGateway(gateway.id, updateData);
-        addToast({ type: 'success', title: 'Gateway configuration updated successfully' });
-        loadGateway();
-      } else {
-        const createData = {
-          ...updateData,
-          facility_id: facilityId,
-          name: `${facilityName} Gateway`
-        };
-        await apiService.createGateway(createData);
-        addToast({ type: 'success', title: 'Gateway created successfully' });
-        loadGateway();
-      }
-
-      setConfigExpanded(false);
-    } catch (error) {
-      console.error('Failed to save configuration:', error);
-      addToast({ type: 'error', title: 'Failed to save gateway configuration' });
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -432,6 +337,10 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
             <div>
               <div className="text-xs text-gray-500 dark:text-gray-400">Facility ID</div>
               <div className="mt-1 font-mono text-sm text-gray-900 dark:text-white">{facilityId}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Facility Name</div>
+              <div className="mt-1 text-sm font-medium text-gray-900 dark:text-white break-words">{facilityName}</div>
             </div>
           </div>
           <div className="mt-4 flex items-center space-x-3">

@@ -14,15 +14,12 @@ import {
   LockClosedIcon,
   LockOpenIcon,
   BoltIcon,
-  KeyIcon,
   UserIcon,
-  EyeIcon,
   CloudIcon,
-  QuestionMarkCircleIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit } from '@/types/facility.types';
+import { Facility, DeviceHierarchy, BluLokDevice, Unit } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
@@ -48,12 +45,6 @@ const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
-};
-
-const deviceTypeIcons = {
-  gate: BoltIcon,
-  elevator: CubeIcon,
-  door: KeyIcon
 };
 
 export default function FacilityDetailsPage() {
@@ -210,11 +201,6 @@ export default function FacilityDetailsPage() {
   // Using shared device cards for parity with Devices Management
 
   const UnitCard = ({ unit }: { unit: Unit }) => {
-    const handleTenantManagement = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      navigate(`/units/${unit.id}?tab=tenant`);
-    };
-
     return (
       <div 
         className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-md hover:bg-blue-50 dark:hover:bg-blue-900/20 group"

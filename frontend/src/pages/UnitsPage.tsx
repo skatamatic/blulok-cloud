@@ -16,7 +16,8 @@ import {
   BuildingOfficeIcon,
   PlusIcon,
   ArrowTopRightOnSquareIcon,
-  QuestionMarkCircleIcon
+  QuestionMarkCircleIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit, UnitFilters } from '@/types/facility.types';

@@ -48,12 +48,12 @@ describe('APIService', () => {
       mockAxios.post.mockResolvedValueOnce(mockResponse);
 
       const result = await apiService.login({
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'password123'
       });
 
       expect(mockAxios.post).toHaveBeenCalledWith('/auth/login', {
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'password123'
       });
 
@@ -71,7 +71,7 @@ describe('APIService', () => {
       mockAxios.post.mockRejectedValueOnce(error);
 
       await expect(apiService.login({
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'wrongpassword'
       })).rejects.toEqual(error);
     });
@@ -81,7 +81,7 @@ describe('APIService', () => {
       mockAxios.post.mockRejectedValueOnce(error);
 
       await expect(apiService.login({
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'password123'
       })).rejects.toThrow('Network Error');
     });
