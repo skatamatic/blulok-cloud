@@ -71,7 +71,6 @@ export default function FacilityDetailsPage() {
   const { addToast } = useToast();
   const [facility, setFacility] = useState<Facility | null>(null);
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
-  const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway'>('overview');
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
@@ -154,7 +153,7 @@ export default function FacilityDetailsPage() {
       setFacility(facilityResponse.facility);
       setDeviceHierarchy(facilityResponse.deviceHierarchy);
       const allUnits: Unit[] = unitsResponse.units || [];
-      setUnits(isTenant ? allUnits.filter(u => String(u.facility_id) === String(id)) : allUnits);
+      setFacilityUnitsPageData(isTenant ? allUnits.filter(u => String(u.facility_id) === String(id)) : allUnits);
     } catch (error) {
       console.error('Failed to load facility data:', error);
     } finally {

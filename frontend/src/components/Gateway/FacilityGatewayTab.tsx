@@ -63,7 +63,7 @@ interface FacilityGatewayTabProps {
   canManageGateway: boolean;
 }
 
-function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: FacilityGatewayTabProps) {
+function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProps) {
   const { addToast } = useToast();
   const ws = useWebSocket();
 
