@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { 
   BuildingOfficeIcon, 
@@ -16,10 +16,11 @@ import {
   BoltIcon,
   UserIcon,
   CloudIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  FunnelIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { Facility, DeviceHierarchy, BluLokDevice, Unit } from '@/types/facility.types';
+import { Facility, DeviceHierarchy, BluLokDevice, Unit, DeviceFilters, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
@@ -30,6 +31,11 @@ import { useWebSocket } from '@/contexts/WebSocketContext';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
+import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+
+const DEVICES_PAGE_LIMIT = 30;
+const UNITS_PAGE_LIMIT = 20;
+const DEFAULT_UNIT_TYPES = ['Small', 'Medium', 'Large', 'Extra Large', 'XL', 'XXL'];
 
 const statusColors = {
   active: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -45,6 +51,16 @@ const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
+};
+
+const sanitizeFilters = (filters: Record<string, any>) => {
+  const sanitized: Record<string, any> = {};
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    if (typeof value === 'string' && value.trim() === '') return;
+    sanitized[key] = value;
+  });
+  return sanitized;
 };
 
 export default function FacilityDetailsPage() {
@@ -64,6 +80,32 @@ export default function FacilityDetailsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteImpact, setDeleteImpact] = useState<{ units: number; devices: number; gateways: number } | null>(null);
   const [loadingImpact, setLoadingImpact] = useState(false);
+  const [facilityDevices, setFacilityDevices] = useState<any[]>([]);
+  const [deviceTotal, setDeviceTotal] = useState(0);
+  const [devicePage, setDevicePage] = useState(1);
+  const [deviceTotalPages, setDeviceTotalPages] = useState(1);
+  const [deviceFiltersExpanded, setDeviceFiltersExpanded] = useState(false);
+  const [deviceFilters, setDeviceFilters] = useState<DeviceFilters>({
+    search: '',
+    device_type: 'all',
+    status: '',
+    sortBy: 'name',
+    sortOrder: 'asc',
+  });
+  const [deviceLoading, setDeviceLoading] = useState(false);
+  const [unitFiltersExpanded, setUnitFiltersExpanded] = useState(false);
+  const [unitFilters, setUnitFilters] = useState<UnitFilters>({
+    search: '',
+    status: '',
+    unit_type: '',
+    sortBy: 'unit_number',
+    sortOrder: 'asc',
+  });
+  const [facilityUnitsPageNumber, setFacilityUnitsPageNumber] = useState(1);
+  const [unitTotal, setUnitTotal] = useState(0);
+  const [unitTotalPages, setUnitTotalPages] = useState(1);
+  const [facilityUnitsPageData, setFacilityUnitsPageData] = useState<Unit[]>([]);
+  const [unitLoading, setUnitLoading] = useState(false);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
@@ -120,11 +162,70 @@ export default function FacilityDetailsPage() {
     }
   };
 
+  const loadFacilityDevices = useCallback(async () => {
+    if (!facility?.id) return;
+    try {
+      setDeviceLoading(true);
+      const params = sanitizeFilters({
+        ...deviceFilters,
+        facility_id: facility.id,
+        limit: DEVICES_PAGE_LIMIT,
+        offset: (devicePage - 1) * DEVICES_PAGE_LIMIT,
+      }) as DeviceFilters;
+
+      const response = await apiService.getDevices(params);
+      const devicesData = response.devices || [];
+      const total = response.total ?? devicesData.length ?? 0;
+      setFacilityDevices(devicesData);
+      setDeviceTotal(total);
+      setDeviceTotalPages(Math.max(1, Math.ceil(total / DEVICES_PAGE_LIMIT)));
+    } catch (error) {
+      console.error('Failed to load facility devices:', error);
+    } finally {
+      setDeviceLoading(false);
+    }
+  }, [facility?.id, deviceFilters, devicePage]);
+
+  const loadFacilityUnitsPageData = useCallback(async () => {
+    if (!facility?.id) return;
+    try {
+      setUnitLoading(true);
+      const params = sanitizeFilters({
+        ...unitFilters,
+        facility_id: facility.id,
+        limit: UNITS_PAGE_LIMIT,
+        offset: (facilityUnitsPageNumber - 1) * UNITS_PAGE_LIMIT,
+      }) as UnitFilters;
+
+      const response = await apiService.getUnits(params);
+      const unitsData: Unit[] = response.units || [];
+      const total = response.total ?? unitsData.length ?? 0;
+      setFacilityUnitsPageData(unitsData);
+      setUnitTotal(total);
+      setUnitTotalPages(Math.max(1, Math.ceil(total / UNITS_PAGE_LIMIT)));
+    } catch (error) {
+      console.error('Failed to load facility units:', error);
+    } finally {
+      setUnitLoading(false);
+    }
+  }, [facility?.id, unitFilters, facilityUnitsPageNumber]);
+
+  useEffect(() => {
+    if (activeTab !== 'devices') return;
+    loadFacilityDevices();
+  }, [activeTab, loadFacilityDevices]);
+
+  useEffect(() => {
+    if (activeTab !== 'units') return;
+    loadFacilityUnitsPageData();
+  }, [activeTab, loadFacilityUnitsPageData]);
+
   const handleLockToggle = async (device: BluLokDevice) => {
     try {
       const newStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
       await apiService.updateLockStatus(device.id, newStatus);
       await loadFacilityData(); // Refresh data
+      await loadFacilityDevices();
     } catch (error) {
       console.error('Failed to toggle lock:', error);
     }
@@ -159,6 +260,36 @@ export default function FacilityDetailsPage() {
     } finally {
       setShowDeleteConfirm(false);
     }
+  };
+
+  const handleDeviceSearch = (value: string) => {
+    setDeviceFilters(prev => ({ ...prev, search: value }));
+    setDevicePage(1);
+  };
+
+  const handleDeviceTypeFilter = (type: string) => {
+    setDeviceFilters(prev => ({ ...prev, device_type: type as DeviceFilters['device_type'] }));
+    setDevicePage(1);
+  };
+
+  const handleDeviceStatusFilter = (status: string) => {
+    setDeviceFilters(prev => ({ ...prev, status: status === prev.status ? '' : status }));
+    setDevicePage(1);
+  };
+
+  const handleUnitSearch = (value: string) => {
+    setUnitFilters(prev => ({ ...prev, search: value }));
+    setFacilityUnitsPageNumber(1);
+  };
+
+  const handleUnitStatusFilter = (status: string) => {
+    setUnitFilters(prev => ({ ...prev, status: status === prev.status ? '' : status }));
+    setFacilityUnitsPageNumber(1);
+  };
+
+  const handleUnitTypeFilter = (type: string) => {
+    setUnitFilters(prev => ({ ...prev, unit_type: type }));
+    setFacilityUnitsPageNumber(1);
   };
 
   if (loading) {
@@ -466,41 +597,15 @@ export default function FacilityDetailsPage() {
               />
             )}
 
-            {!isTenant && (
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Quick Actions</h3>
-                <div className="space-y-2">
-                  <button
-                    onClick={() => setActiveTab('devices')}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-                  >
-                    View All Devices
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('units')}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-                  >
-                    Manage Units
-                  </button>
-                  <button
-                    onClick={() => navigate('/devices', { state: { facilityFilter: facility.id } })}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-                  >
-                    Device Dashboard
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
 
       {activeTab === 'devices' && (
         <div className="space-y-6">
-          {/* Add Device Actions */}
           {canManage && (
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">Devices</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">Manage facility devices</p>
               <div className="flex space-x-2">
                 <button
                   onClick={() => {
@@ -526,49 +631,143 @@ export default function FacilityDetailsPage() {
             </div>
           )}
 
-          {/* Access Control Devices */}
-          {deviceHierarchy?.accessControlDevices && deviceHierarchy.accessControlDevices.length > 0 && (
-            <div>
-              <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">Access Control Devices</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {deviceHierarchy.accessControlDevices.map((device) => (
-                  <ACDeviceCardShared
-                    key={device.id}
-                    device={device}
-                    onViewFacility={() => navigate(`/facilities/${facility.id}`)}
-                    onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'facility', facilityId: facility.id } })}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          <ExpandableFilters
+            searchValue={deviceFilters.search || ''}
+            onSearchChange={handleDeviceSearch}
+            searchPlaceholder="Search devices..."
+            isExpanded={deviceFiltersExpanded}
+            onToggleExpanded={() => setDeviceFiltersExpanded(!deviceFiltersExpanded)}
+            onClearFilters={() => {
+              setDeviceFilters({
+                search: '',
+                device_type: 'all',
+                status: '',
+                sortBy: 'name',
+                sortOrder: 'asc',
+              });
+              setDevicePage(1);
+            }}
+            sections={[
+              {
+                title: 'Device Type',
+                icon: <FunnelIcon className="h-5 w-5" />,
+                options: [
+                  { key: 'all', label: 'All Devices', color: 'primary' },
+                  { key: 'access_control', label: 'Access Control', color: 'blue' },
+                  { key: 'blulok', label: 'BluLok', color: 'green' },
+                ],
+                selected: deviceFilters.device_type || 'all',
+                onSelect: handleDeviceTypeFilter,
+              },
+              {
+                title: 'Status',
+                icon: <BoltIcon className="h-5 w-5" />,
+                options: [
+                  { key: '', label: 'All Status', color: 'primary' },
+                  { key: 'online', label: 'Online', color: 'green' },
+                  { key: 'offline', label: 'Offline', color: 'red' },
+                  { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
+                  { key: 'error', label: 'Error', color: 'red' },
+                ],
+                selected: deviceFilters.status || '',
+                onSelect: handleDeviceStatusFilter,
+              },
+            ]}
+          />
 
-          {/* BluLok Devices */}
-          {deviceHierarchy?.blulokDevices && deviceHierarchy.blulokDevices.length > 0 && (
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">BluLok Devices</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {deviceHierarchy.blulokDevices.map((device) => (
-                  <BluLokDeviceCardShared
-                    key={device.id}
-                    device={device}
-                    canManage={canManage}
-                    onToggleLock={() => handleLockToggle(device)}
-                    onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'facility', facilityId: facility.id } })}
-                    onViewUnit={() => navigate(`/units/${device.unit_id}`)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="flex items-center justify-between mt-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Showing {facilityDevices.length} of {deviceTotal} devices
+            </p>
+          </div>
 
-          {(!deviceHierarchy?.accessControlDevices?.length && !deviceHierarchy?.blulokDevices?.length) && (
+          {deviceLoading ? (
+            <div className="text-center py-12">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Loading devices...</p>
+            </div>
+          ) : facilityDevices.length === 0 ? (
             <div className="text-center py-12">
               <ServerIcon className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No devices found</h3>
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                This facility doesn't have any devices configured yet.
+                {deviceFilters.search || deviceFilters.status || (deviceFilters.device_type && deviceFilters.device_type !== 'all')
+                  ? 'Try adjusting your filters.'
+                  : 'This facility does not have any devices yet.'}
               </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {facilityDevices.map((device: any) =>
+                device.device_category === 'blulok' ? (
+                  <BluLokDeviceCardShared
+                    key={device.id}
+                    device={device as BluLokDevice}
+                    canManage={canManage}
+                    onToggleLock={() => handleLockToggle(device as BluLokDevice)}
+                    onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'facility', facilityId: facility.id } })}
+                    onViewUnit={device.unit_id ? () => navigate(`/units/${device.unit_id}`) : undefined}
+                  />
+                ) : (
+                  <ACDeviceCardShared
+                    key={device.id}
+                    device={device}
+                    onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'facility', facilityId: facility.id } })}
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {deviceTotalPages > 1 && (
+            <div className="bg-white dark:bg-gray-800 px-4 py-3 flex items-center justify-between border-t border-gray-200 dark:border-gray-700 sm:px-6">
+              <div className="flex-1 flex justify-between sm:hidden">
+                <button
+                  onClick={() => setDevicePage(prev => Math.max(prev - 1, 1))}
+                  disabled={devicePage === 1}
+                  className="relative inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setDevicePage(prev => Math.min(prev + 1, deviceTotalPages))}
+                  disabled={devicePage === deviceTotalPages}
+                  className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+              <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    Showing{' '}
+                    <span className="font-medium">{(devicePage - 1) * DEVICES_PAGE_LIMIT + 1}</span>
+                    {' '}to{' '}
+                    <span className="font-medium">{Math.min(devicePage * DEVICES_PAGE_LIMIT, deviceTotal)}</span>
+                    {' '}of{' '}
+                    <span className="font-medium">{deviceTotal}</span>
+                    {' '}devices
+                  </p>
+                </div>
+                <div>
+                  <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                    <button
+                      onClick={() => setDevicePage(prev => Math.max(prev - 1, 1))}
+                      disabled={devicePage === 1}
+                      className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setDevicePage(prev => Math.min(prev + 1, deviceTotalPages))}
+                      disabled={devicePage === deviceTotalPages}
+                      className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+                  </nav>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -587,9 +786,67 @@ export default function FacilityDetailsPage() {
             </div>
           )}
 
-          {units.length > 0 ? (
+          <ExpandableFilters
+            searchValue={unitFilters.search || ''}
+            onSearchChange={handleUnitSearch}
+            searchPlaceholder="Search units..."
+            isExpanded={unitFiltersExpanded}
+            onToggleExpanded={() => setUnitFiltersExpanded(!unitFiltersExpanded)}
+            onClearFilters={() => {
+              setUnitFilters({
+                search: '',
+                status: '',
+                unit_type: '',
+                sortBy: 'unit_number',
+                sortOrder: 'asc',
+              });
+              setFacilityUnitsPageNumber(1);
+            }}
+            sections={[
+              {
+                title: 'Status',
+                icon: <SignalIcon className="h-5 w-5" />,
+                options: [
+                  { key: '', label: 'All Status', color: 'primary' },
+                  { key: 'available', label: 'Available', color: 'green' },
+                  { key: 'occupied', label: 'Occupied', color: 'blue' },
+                  { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
+                  { key: 'reserved', label: 'Reserved', color: 'purple' },
+                ],
+                selected: unitFilters.status || '',
+                onSelect: handleUnitStatusFilter,
+              },
+              {
+                title: 'Unit Type',
+                icon: <HomeIcon className="h-5 w-5" />,
+                options: [
+                  { key: '', label: 'All Types', color: 'primary' },
+                  ...DEFAULT_UNIT_TYPES.map(type => ({
+                    key: type,
+                    label: type,
+                    color: 'gray',
+                  })),
+                ],
+                selected: unitFilters.unit_type || '',
+                onSelect: handleUnitTypeFilter,
+              },
+            ]}
+          />
+
+          <div className="flex items-center justify-between mt-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Showing {facilityUnitsPageData.length} of {unitTotal} units
+            </p>
+          </div>
+
+          {unitLoading ? (
+            <div className="text-center py-12">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Loading units...</p>
+            </div>
+          ) : facilityUnitsPageData.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {units.map((unit) => (
+              {facilityUnitsPageData.map((unit) => (
                 <UnitCard key={unit.id} unit={unit} />
               ))}
             </div>
@@ -598,8 +855,62 @@ export default function FacilityDetailsPage() {
               <HomeIcon className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No units found</h3>
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                This facility doesn't have any units configured yet.
+                {unitFilters.search || unitFilters.status || unitFilters.unit_type
+                  ? 'Try adjusting your filters.'
+                  : 'This facility does not have any units yet.'}
               </p>
+            </div>
+          )}
+
+          {unitTotalPages > 1 && (
+            <div className="bg-white dark:bg-gray-800 px-4 py-3 flex items-center justify-between border-t border-gray-200 dark:border-gray-700 sm:px-6">
+              <div className="flex-1 flex justify-between sm:hidden">
+                <button
+                  onClick={() => setFacilityUnitsPageNumber(prev => Math.max(prev - 1, 1))}
+                  disabled={facilityUnitsPageNumber === 1}
+                  className="relative inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setFacilityUnitsPageNumber(prev => Math.min(prev + 1, unitTotalPages))}
+                  disabled={facilityUnitsPageNumber === unitTotalPages}
+                  className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+              <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    Showing{' '}
+                    <span className="font-medium">{(facilityUnitsPageNumber - 1) * UNITS_PAGE_LIMIT + 1}</span>
+                    {' '}to{' '}
+                    <span className="font-medium">{Math.min(facilityUnitsPageNumber * UNITS_PAGE_LIMIT, unitTotal)}</span>
+                    {' '}of{' '}
+                    <span className="font-medium">{unitTotal}</span>
+                    {' '}units
+                  </p>
+                </div>
+                <div>
+                  <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                    <button
+                      onClick={() => setFacilityUnitsPageNumber(prev => Math.max(prev - 1, 1))}
+                      disabled={facilityUnitsPageNumber === 1}
+                      className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setFacilityUnitsPageNumber(prev => Math.min(prev + 1, unitTotalPages))}
+                      disabled={facilityUnitsPageNumber === unitTotalPages}
+                      className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+                  </nav>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -630,6 +941,7 @@ export default function FacilityDetailsPage() {
         onClose={() => setShowAddDeviceModal(false)}
         onSuccess={() => {
           loadFacilityData();
+          loadFacilityDevices();
           setShowAddDeviceModal(false);
         }}
         facilityId={facility?.id}
@@ -642,6 +954,7 @@ export default function FacilityDetailsPage() {
         onClose={() => setShowAddUnitModal(false)}
         onSuccess={() => {
           loadFacilityData();
+          loadFacilityUnitsPageData();
           setShowAddUnitModal(false);
         }}
         facilityId={facility?.id}

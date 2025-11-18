@@ -51,7 +51,7 @@ import { UserModel, User } from '@/models/user.model';
 const router = Router();
 
 const updateSettingsSchema = Joi.object({
-  'security.max_devices_per_user': Joi.number().integer().min(1).max(10).optional(),
+  'security.max_devices_per_user': Joi.number().integer().min(0).max(250).optional(),
 }).min(1); // At least one setting must be provided
 
 const notificationsSchema = Joi.object({
@@ -89,10 +89,12 @@ router.get('/', authenticateToken as any, asyncHandler(async (req: Authenticated
 
   const model = new SystemSettingsModel();
   const maxDevices = await model.get('security.max_devices_per_user');
+  const parsed = maxDevices !== undefined ? parseInt(maxDevices, 10) : NaN;
+  const safeValue = Number.isNaN(parsed) ? 2 : parsed;
   res.json({
     success: true,
     settings: {
-      'security.max_devices_per_user': parseInt(maxDevices || '2', 10)
+      'security.max_devices_per_user': safeValue
     }
   });
 }));

@@ -14,6 +14,7 @@ import { authenticateToken, requireDevAdmin, requireTenant } from '@/middleware/
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { UserDeviceModel, UserDeviceStatus, AppPlatform } from '@/models/user-device.model';
 import { DatabaseService } from '@/services/database.service';
+import { SystemSettingsModel } from '@/models/system-settings.model';
 
 const router = Router();
 
@@ -47,16 +48,18 @@ router.post('/register-key', authenticateToken, requireTenant, asyncHandler(asyn
   const userId = req.user!.userId;
   const { app_device_id, platform, device_name, public_key } = value as { app_device_id: string; platform: AppPlatform; device_name?: string; public_key: string };
 
-  // Enforce cap from settings (system-wide default 2)
-  const db = DatabaseService.getInstance().connection;
-  const settings = await db('system_settings').where({ key: 'security.max_devices_per_user' }).first();
-  const maxDevices = parseInt(settings?.value || '2', 10) || 2;
+  // Enforce cap from settings (system-wide default 2; 0 = unlimited)
+  const settingsModel = new SystemSettingsModel();
+  const rawSetting = await settingsModel.get('security.max_devices_per_user');
+  const parsedSetting = rawSetting !== undefined ? parseInt(rawSetting, 10) : NaN;
+  const maxDevices = Number.isNaN(parsedSetting) ? 2 : parsedSetting;
+  const enforceDeviceCap = maxDevices > 0;
 
   const model = new UserDeviceModel();
   const count = await model.countActiveByUser(userId);
   const existing = await model.findByUserAndAppDeviceId(userId, app_device_id);
   const isNew = !existing;
-  if (isNew && count >= maxDevices) {
+  if (enforceDeviceCap && isNew && count >= maxDevices) {
     const current = await model.listByUser(userId);
     res.status(409).json({ success: false, message: 'Device limit reached', maxDevices, devices: current });
     return;

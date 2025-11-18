@@ -33,42 +33,129 @@ import { InviteService } from '@/services/invite.service';
 import { OTPService } from '@/services/otp.service';
 import { DatabaseService } from '@/services/database.service';
 import { v4 as uuidv4 } from 'uuid';
+import { config } from '@/config/environment';
+import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
+import { generateKeyPair, exportJWK, KeyLike } from 'jose';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
 
 const router = Router();
-
-const rotationSchema = Joi.object({
-  payload: Joi.object({
-    cmd_type: Joi.string().valid('ROTATE_OPERATIONS_KEY').required(),
-    new_ops_pubkey: Joi.string().base64().required(),
-    ts: Joi.number().integer().required(),
-  }).required(),
-  signature: Joi.string().required(),
-});
 
 // Rate limit sensitive admin endpoint
 const rotationLimiter = adminWriteLimiter;
 
-// POST /api/v1/admin/ops-key-rotation/broadcast
-router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, validate(rotationSchema), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const value = req.body as any;
+const rateLimitBypassSchema = Joi.object({
+  enabled: Joi.boolean().required(),
+  durationSeconds: Joi.number().integer().min(1).max(900)
+    .when('enabled', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
+  ip: Joi.string().ip({ version: ['ipv4', 'ipv6'], cidr: 'forbidden' }).optional(),
+  reason: Joi.string().max(200).optional()
+});
 
-  // Monotonic ts: persist last in system_settings
+// POST /api/v1/admin/ops-key-rotation/broadcast
+router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const body = (req.body || {}) as any;
   const db = DatabaseService.getInstance().connection;
   const settingKey = 'security.last_root_rotation_ts';
-  const row = await db('system_settings').where({ key: settingKey }).first();
-  const lastTs = row ? parseInt(row.value, 10) || 0 : 0;
-  if (value.payload.ts <= lastTs) {
-    res.status(409).json({ success: false, message: 'Rotation ts must be greater than last recorded' });
+
+  const persistTimestamp = async (ts: number) => {
+    const row = await db('system_settings').where({ key: settingKey }).first();
+    const lastTs = row ? parseInt(row.value, 10) || 0 : 0;
+    if (ts <= lastTs) {
+      throw new Error('Rotation ts must be greater than last recorded');
+    }
+    if (row) {
+      await db('system_settings').where({ key: settingKey }).update({ value: String(ts), updated_at: db.fn.now() });
+    } else {
+      await db('system_settings').insert({ key: settingKey, value: String(ts), created_at: db.fn.now(), updated_at: db.fn.now() });
+    }
+  };
+
+  const broadcast = (payload: any, signature: string) => {
+    GatewayEventsService.getInstance().broadcast([payload, signature]);
+  };
+
+  // Legacy passthrough (pre-managed flow)
+  if (body.payload && body.signature) {
+    if (
+      !body.payload ||
+      body.payload.cmd_type !== 'ROTATE_OPERATIONS_KEY' ||
+      typeof body.payload.new_ops_pubkey !== 'string' ||
+      typeof body.payload.ts !== 'number' ||
+      typeof body.signature !== 'string'
+    ) {
+      res.status(400).json({ success: false, message: 'Invalid rotation packet' });
+      return;
+    }
+    try {
+      await persistTimestamp(body.payload.ts);
+    } catch (err: any) {
+      res.status(409).json({ success: false, message: err.message || 'Rotation ts must be greater than last recorded' });
+      return;
+    }
+    broadcast(body.payload, body.signature);
+    res.json({ success: true });
     return;
   }
-  // Broadcast as-is (locks verify with Root key)
-  GatewayEventsService.getInstance().broadcast([value.payload, value.signature]);
-  if (row) {
-    await db('system_settings').where({ key: settingKey }).update({ value: String(value.payload.ts), updated_at: db.fn.now() });
-  } else {
-    await db('system_settings').insert({ key: settingKey, value: String(value.payload.ts), created_at: db.fn.now(), updated_at: db.fn.now() });
+
+  // Managed rotation flow
+  if (typeof body.root_private_key_b64 !== 'string') {
+    res.status(400).json({ success: false, message: 'root_private_key_b64 is required' });
+    return;
   }
-  res.json({ success: true });
+
+  const rootPrivateKeyB64: string = body.root_private_key_b64;
+  const customOpsPublicKeyB64: string | undefined = body.custom_ops_public_key_b64;
+
+  const normalizedRootKey = Ed25519Service.normalizeBase64(rootPrivateKeyB64);
+  let newOpsPublicKey = customOpsPublicKeyB64 ? Ed25519Service.normalizeBase64(customOpsPublicKeyB64) : undefined;
+  let generatedOpsKeyPair: { private_key_b64: string; public_key_b64: string } | undefined;
+
+  if (!newOpsPublicKey) {
+    const { privateKey, publicKey } = await generateKeyPair('EdDSA');
+    const jwkPriv = await exportJWK(privateKey as unknown as KeyLike);
+    const jwkPub = await exportJWK(publicKey as unknown as KeyLike);
+    if (!jwkPriv.d || !jwkPub.x) {
+      throw new Error('Generated key pair is invalid');
+    }
+    generatedOpsKeyPair = {
+      private_key_b64: jwkPriv.d,
+      public_key_b64: jwkPub.x,
+    };
+    newOpsPublicKey = jwkPub.x;
+  } else {
+    newOpsPublicKey = Ed25519Service.normalizeBase64(newOpsPublicKey);
+  }
+
+  const payload = {
+    cmd_type: 'ROTATE_OPERATIONS_KEY',
+    new_ops_pubkey: newOpsPublicKey!,
+    ts: Math.floor(Date.now() / 1000),
+  };
+
+  let signature: string;
+  try {
+    ({ signature } = await Ed25519Service.signPayloadWithRootKey(normalizedRootKey, payload));
+  } catch (error) {
+    res.status(400).json({ success: false, message: 'Invalid root private key' });
+    return;
+  }
+
+  // For managed flow, treat timestamp monotonicity as best-effort: we persist it,
+  // but do not fail the rotation if an older ts is used (to avoid blocking tooling).
+  try {
+    await persistTimestamp(payload.ts);
+  } catch {
+    // Swallow timestamp conflicts for managed flows
+  }
+
+  broadcast(payload, signature);
+
+  res.json({
+    success: true,
+    payload,
+    signature,
+    generated_ops_key_pair: generatedOpsKeyPair,
+  });
 }));
 
 /**
@@ -105,6 +192,42 @@ router.post('/testing/otp', authenticateToken, requireDevAdmin, asyncHandler(asy
   }
   const { code, expiresAt } = await OTPService.getInstance().issueOtpForDev({ userId, inviteId: inviteId || null, delivery });
   res.json({ success: true, code, expiresAt });
+}));
+
+/**
+ * POST /api/v1/admin/rate-limits/bypass
+ * DEV_ADMIN only - Temporarily bypass rate limiting for local testing
+ */
+router.post('/rate-limits/bypass', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Rate limit bypass is disabled in production' });
+    return;
+  }
+  const { error, value } = rateLimitBypassSchema.validate(req.body || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+  const svc = RateLimitBypassService.getInstance();
+  if (!value.enabled) {
+    svc.disable();
+    res.json({ success: true, message: 'Rate limit bypass disabled' });
+    return;
+  }
+  const durationMs = value.durationSeconds * 1000;
+  const effectiveIp = value.ip || req.ip || req.socket?.remoteAddress || null;
+  svc.enable({
+    durationMs,
+    ip: effectiveIp,
+    reason: value.reason || `dev_admin:${req.user?.userId || 'unknown'}`
+  });
+  const state = svc.getState();
+  res.json({
+    success: true,
+    message: 'Rate limit bypass enabled',
+    expiresAt: state.expiresAt,
+    ip: state.ip
+  });
 }));
 
 /**

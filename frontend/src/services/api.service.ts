@@ -335,9 +335,17 @@ class ApiService {
   }
 
   // Admin Ops-Key Rotation relay (DEV_ADMIN)
-  async broadcastOpsKeyRotation(payload: { cmd_type: 'ROTATE_OPERATIONS_KEY'; new_ops_pubkey: string; ts: number }, signature: string) {
-    const response = await this.api.post('/admin/ops-key-rotation/broadcast', { payload, signature });
-    return response.data as { success: boolean };
+  async rotateOpsKey(params: { rootPrivateKeyB64: string; customOpsPublicKeyB64?: string }) {
+    const response = await this.api.post('/admin/ops-key-rotation/broadcast', {
+      root_private_key_b64: params.rootPrivateKeyB64,
+      custom_ops_public_key_b64: params.customOpsPublicKeyB64 || undefined,
+    });
+    return response.data as {
+      success: boolean;
+      payload: { cmd_type: 'ROTATE_OPERATIONS_KEY'; new_ops_pubkey: string; ts: number };
+      signature: string;
+      generated_ops_key_pair?: { private_key_b64: string; public_key_b64: string };
+    };
   }
 
   // Devices Management

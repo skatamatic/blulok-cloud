@@ -79,6 +79,7 @@ describe('User Devices Routes', () => {
       set: jest.fn(),
     } as any;
 
+    mockSystemSettingsModel.get.mockResolvedValue('2');
     (SystemSettingsModel as jest.MockedClass<typeof SystemSettingsModel>).mockImplementation(() => mockSystemSettingsModel);
   });
 
@@ -203,6 +204,36 @@ describe('User Devices Routes', () => {
       expect(response.body).toHaveProperty('devices');
       expect(response.body.maxDevices).toBe(2);
       expect(mockUserDeviceModel.listByUser).toHaveBeenCalledWith(testData.users.tenant.id);
+    });
+
+    it('should treat 0 max devices as unlimited (no cap enforced)', async () => {
+      mockSystemSettingsModel.get.mockResolvedValue('0');
+
+      const mockDevice: any = {
+        id: 'new-device-id',
+        user_id: testData.users.tenant.id,
+        app_device_id: 'test-device-123',
+        platform: 'ios',
+        device_name: 'iPhone 12',
+        public_key: 'SGVsbG8gV29ybGQ=',
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      mockUserDeviceModel.countActiveByUser.mockResolvedValue(25);
+      mockUserDeviceModel.findByUserAndAppDeviceId.mockResolvedValue(undefined);
+      mockUserDeviceModel.upsertByUserAndAppDeviceId.mockResolvedValue(mockDevice);
+
+      const response = await request(app)
+        .post('/api/v1/user-devices/register-key')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send(validRequest)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(mockUserDeviceModel.upsertByUserAndAppDeviceId).toHaveBeenCalled();
+      expect(mockUserDeviceModel.listByUser).not.toHaveBeenCalled();
     });
 
     it('should validate public key format', async () => {
@@ -420,6 +451,45 @@ describe('User Devices Routes', () => {
     it('should return 403 for non-tenant users', async () => {
       const response = await request(app)
         .delete('/api/v1/user-devices/me/device-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+  });
+
+  describe('DELETE /api/v1/user-devices/admin/:id', () => {
+    beforeEach(() => {
+      (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+        connection: jest.fn((tableName: string) => {
+          if (tableName === 'user_devices') {
+            return {
+              where: jest.fn().mockReturnThis(),
+              first: jest.fn().mockResolvedValue({
+                id: 'device-admin',
+                user_id: testData.users.tenant.id,
+              }),
+            };
+          }
+          return mockDb(tableName);
+        })
+      });
+      mockUserDeviceModel.revoke.mockResolvedValue(undefined);
+    });
+
+    it('should allow DEV_ADMIN to delete any user device', async () => {
+      const response = await request(app)
+        .delete('/api/v1/user-devices/admin/device-admin')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(mockUserDeviceModel.revoke).toHaveBeenCalledWith('device-admin');
+    });
+
+    it('should return 403 for non DEV_ADMIN users', async () => {
+      const response = await request(app)
+        .delete('/api/v1/user-devices/admin/device-admin')
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .expect(403);
 

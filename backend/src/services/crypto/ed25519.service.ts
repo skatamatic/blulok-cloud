@@ -104,6 +104,27 @@ export class Ed25519Service {
 		const signature = jws.split('.')[2];
 		return { payload, signature };
 	}
+
+  private static normalizeToBase64Url(value: string): string {
+    if (!value) return value;
+    return value.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  public static async signPayloadWithRootKey(rootPrivateKeyB64: string, payload: Record<string, any>): Promise<{ signature: string }> {
+    const d = this.normalizeToBase64Url(rootPrivateKeyB64);
+    const x = this.normalizeToBase64Url(config.security.rootPublicKeyB64);
+    const jwk: JWK = { kty: 'OKP', crv: 'Ed25519', d, x };
+    const rootKey = await importJWK(jwk, 'EdDSA');
+    const data = new TextEncoder().encode(this.canonicalJSONStringify(payload));
+    const signer = new CompactSign(data).setProtectedHeader({ alg: 'EdDSA' });
+    const jws = await signer.sign(rootKey);
+    const signature = jws.split('.')[2];
+    return { signature };
+  }
+
+  public static normalizeBase64(value: string): string {
+    return this.normalizeToBase64Url(value);
+  }
 }
 
 

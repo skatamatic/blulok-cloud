@@ -127,13 +127,14 @@ export class UserDeviceModel {
    * @returns Created device registration object
    */
   async create(data: Omit<UserDevice, 'id' | 'created_at' | 'updated_at'>): Promise<UserDevice> {
-    const [created] = await this.db('user_devices')
-      .insert({
-        ...data,
-        created_at: this.db.fn.now(),
-        updated_at: this.db.fn.now(),
-      })
-      .returning('*');
+    const insertResult = await this.db('user_devices').insert({
+      ...data,
+      created_at: this.db.fn.now(),
+      updated_at: this.db.fn.now(),
+    });
+
+    const insertedId = this.extractInsertedId(insertResult);
+    const created = await this.db('user_devices').where({ id: insertedId }).first();
     return created as UserDevice;
   }
 
@@ -150,10 +151,10 @@ export class UserDeviceModel {
   async upsertByUserAndAppDeviceId(userId: string, appDeviceId: string, data: Partial<UserDevice>): Promise<UserDevice> {
     const existing = await this.findByUserAndAppDeviceId(userId, appDeviceId);
     if (existing) {
-      const [updated] = await this.db('user_devices')
+      await this.db('user_devices')
         .where({ id: existing.id })
-        .update({ ...data, updated_at: this.db.fn.now() })
-        .returning('*');
+        .update({ ...data, updated_at: this.db.fn.now() });
+      const updated = await this.db('user_devices').where({ id: existing.id }).first();
       return updated as UserDevice;
     }
     return this.create({
@@ -176,10 +177,10 @@ export class UserDeviceModel {
    * @returns Updated device registration, or undefined if not found
    */
   async updateById(id: string, data: Partial<UserDevice>): Promise<UserDevice | undefined> {
-    const [updated] = await this.db('user_devices')
+    await this.db('user_devices')
       .where({ id })
-      .update({ ...data, updated_at: this.db.fn.now() })
-      .returning('*');
+      .update({ ...data, updated_at: this.db.fn.now() });
+    const updated = await this.db('user_devices').where({ id }).first();
     return updated as UserDevice | undefined;
   }
 
@@ -194,6 +195,20 @@ export class UserDeviceModel {
     await this.db('user_devices')
       .where({ id })
       .update({ status: 'revoked', updated_at: this.db.fn.now() });
+  }
+
+  private extractInsertedId(result: any): string | number {
+    if (Array.isArray(result)) {
+      const first = result[0];
+      if (first && typeof first === 'object' && 'id' in first) {
+        return first.id as string | number;
+      }
+      return first;
+    }
+    if (result && typeof result === 'object' && 'id' in result) {
+      return result.id as string | number;
+    }
+    return result;
   }
 }
 

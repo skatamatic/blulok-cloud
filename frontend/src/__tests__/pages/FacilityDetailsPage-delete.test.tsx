@@ -89,4 +89,87 @@ describe('FacilityDetailsPage - Delete flow', () => {
   });
 });
 
+describe('FacilityDetailsPage - Devices and Units tabs', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockApi.getFacility.mockResolvedValue({
+      facility: {
+        id: 'fac-1',
+        name: 'Test Facility',
+        address: '123 St',
+        stats: { totalUnits: 10, occupiedUnits: 6, devicesOnline: 3, devicesTotal: 5 },
+      },
+      deviceHierarchy: { accessControlDevices: [], blulokDevices: [] },
+    } as any);
+    mockApi.getUnits.mockResolvedValue({ units: [], total: 0 } as any);
+    mockApi.getDevices.mockResolvedValue({ devices: [], total: 0 } as any);
+  });
+
+  it('loads paginated devices when Devices tab is opened', async () => {
+    mockApi.getDevices.mockResolvedValue({
+      devices: [
+        {
+          id: 'device-1',
+          device_category: 'blulok',
+          facility_id: 'fac-1',
+          unit_id: 'unit-1',
+          unit_number: '101',
+          device_serial: 'ABC123',
+          lock_status: 'locked',
+          device_status: 'online',
+        },
+      ],
+      total: 1,
+    } as any);
+
+    renderWithProviders(<FacilityDetailsPage />);
+
+    await waitFor(() => expect(screen.getByText('Test Facility')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Devices'));
+
+    await waitFor(() => {
+      expect(mockApi.getDevices).toHaveBeenCalledWith(expect.objectContaining({
+        facility_id: 'fac-1',
+        limit: 30,
+        offset: 0,
+      }));
+      expect(screen.getByPlaceholderText('Search devices...')).toBeInTheDocument();
+    });
+
+    expect(await screen.findByText(/Showing 1 of 1 devices/i)).toBeInTheDocument();
+  });
+
+  it('loads paginated units when Units tab is opened', async () => {
+    const pagedUnits = [{
+      id: 'unit-1',
+      facility_id: 'fac-1',
+      unit_number: '101',
+      unit_type: 'Large',
+      status: 'available',
+    }];
+
+    mockApi.getUnits
+      .mockResolvedValueOnce({ units: [], total: 0 } as any) // initial facility load
+      .mockResolvedValue({ units: pagedUnits, total: 4 } as any);
+
+    renderWithProviders(<FacilityDetailsPage />);
+
+    await waitFor(() => expect(screen.getByText('Test Facility')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Units'));
+
+    await waitFor(() => {
+      expect(mockApi.getUnits).toHaveBeenCalledWith(expect.objectContaining({
+        facility_id: 'fac-1',
+        limit: 20,
+        offset: 0,
+      }));
+      expect(screen.getByPlaceholderText('Search units...')).toBeInTheDocument();
+    });
+
+    expect(await screen.findByText(/Showing 1 of 4 units/i)).toBeInTheDocument();
+  });
+});
+
 

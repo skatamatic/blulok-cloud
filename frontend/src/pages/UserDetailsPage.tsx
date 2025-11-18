@@ -111,6 +111,7 @@ export default function UserDetailsPage() {
   });
 
   const canViewDevices = authState.user?.role === UserRole.DEV_ADMIN;
+  const canDeleteDevices = authState.user?.role === UserRole.DEV_ADMIN;
   const canViewRoutePasses = authState.user?.role === UserRole.DEV_ADMIN;
 
   const [routePassHistory, setRoutePassHistory] = useState<any[]>([]);
@@ -212,6 +213,7 @@ export default function UserDetailsPage() {
   };
 
   const handleDeleteDevice = async (device: UserDevice) => {
+    if (!canDeleteDevices) return;
     setDeleteDeviceModal({ isOpen: true, device });
   };
 
@@ -929,13 +931,15 @@ export default function UserDetailsPage() {
                         }`}>
                           {device.status}
                         </span>
-                        <button
-                          onClick={() => handleDeleteDevice(device)}
-                          className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                          title="Delete device"
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </button>
+                        {canDeleteDevices && (
+                          <button
+                            onClick={() => handleDeleteDevice(device)}
+                            className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+                            title="Delete device"
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="p-6">

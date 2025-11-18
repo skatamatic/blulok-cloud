@@ -225,13 +225,21 @@ describe('APIService', () => {
   });
 
   describe('admin ops-key rotation relay', () => {
-    it('should POST broadcast rotation packet', async () => {
-      const payload = { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'b64', ts: 1000 } as any;
-      const signature = 'sig';
-      const mockData = { data: { success: true } };
+    it('should rotate ops key with managed flow', async () => {
+      const mockData = {
+        data: {
+          success: true,
+          payload: { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'pub', ts: 1 },
+          signature: 'sig',
+          generated_ops_key_pair: { private_key_b64: 'priv', public_key_b64: 'pub' },
+        },
+      };
       mockAxios.post.mockResolvedValueOnce(mockData);
-      const res = await apiService.broadcastOpsKeyRotation(payload, signature);
-      expect(mockAxios.post).toHaveBeenCalledWith('/admin/ops-key-rotation/broadcast', { payload, signature });
+      const res = await apiService.rotateOpsKey({ rootPrivateKeyB64: 'rootkey' });
+      expect(mockAxios.post).toHaveBeenCalledWith('/admin/ops-key-rotation/broadcast', {
+        root_private_key_b64: 'rootkey',
+        custom_ops_public_key_b64: undefined,
+      });
       expect(res).toEqual(mockData.data);
     });
   });

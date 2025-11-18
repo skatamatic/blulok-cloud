@@ -26,6 +26,166 @@ const C = {
   gray: (s) => `\x1b[90m${s}\x1b[0m`,
 };
 
+const TEST_FACILITY_NAME = 'E2E-Test-Facility';
+const STALE_USER_EMAIL_PREFIXES = [
+  'fac-admin-',
+  'fms-primary-',
+  'fms-share1-',
+  'fms-share2-',
+  'e2e-primary-',
+  'e2e-share',
+];
+
+function authHeaders(token) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function listFacilities(token, offset = 0, limit = 50) {
+  const res = await axios.get(`${API_BASE}/facilities`, {
+    headers: authHeaders(token),
+    params: { limit, offset }
+  });
+  const facilities = res.data?.facilities || res.data?.items || [];
+  const total = res.data?.total ?? facilities.length;
+  return { facilities, total };
+}
+
+async function deleteFmsConfigIfExists(token, facilityId) {
+  try {
+    const res = await axios.get(`${API_BASE}/fms/config/${facilityId}`, { headers: authHeaders(token) });
+    const configId = res.data?.config?.id;
+    if (configId) {
+      await axios.delete(`${API_BASE}/fms/config/${configId}`, { headers: authHeaders(token) });
+      ok(`Deleted stale FMS config ${configId} (facility ${facilityId})`);
+    }
+  } catch (err) {
+    if (err?.response?.status !== 404) {
+      warn(`Failed to delete FMS config for ${facilityId}: ${err?.response?.data || err?.message || err}`);
+    }
+  }
+}
+
+async function cleanupStaleFacilities(token) {
+  try {
+    step('Checking for stale E2E facilities');
+    let offset = 0;
+    const limit = 50;
+    let total = null;
+    let removed = 0;
+    do {
+      const { facilities, total: reportedTotal } = await listFacilities(token, offset, limit);
+      total = reportedTotal ?? facilities.length;
+      const stale = facilities.filter((f) => (f.name || '').toLowerCase().includes(TEST_FACILITY_NAME.toLowerCase()));
+      for (const facility of stale) {
+        try {
+          await deleteFmsConfigIfExists(token, facility.id);
+          step(`Hard deleting stale facility ${facility.id} (${facility.name})`);
+          await axios.delete(`${API_BASE}/admin/facilities/${facility.id}/hard`, { headers: authHeaders(token) });
+          removed += 1;
+          ok(`Removed stale facility ${facility.id}`);
+        } catch (err) {
+          warn(`Failed to delete stale facility ${facility.id}: ${err?.response?.data || err?.message || err}`);
+        }
+      }
+      if (!facilities.length || facilities.length < limit) {
+        break;
+      }
+      offset += facilities.length;
+    } while (offset < (total ?? 0));
+    if (removed === 0) {
+      info('No stale E2E facilities detected');
+    }
+  } catch (err) {
+    warn(`Pre-run facility cleanup failed: ${err?.response?.data || err?.message || err}`);
+  }
+}
+
+async function fetchUsersBySearch(token, searchTerm, offset = 0, limit = 50) {
+  const res = await axios.get(`${API_BASE}/users`, {
+    headers: authHeaders(token),
+    params: { search: searchTerm, offset, limit }
+  });
+  const users = res.data?.users || [];
+  const total = res.data?.total ?? users.length;
+  return { users, total };
+}
+
+async function hardDeleteUser(token, userId) {
+  await axios.delete(`${API_BASE}/admin/users/${userId}/hard`, { headers: authHeaders(token) });
+}
+
+async function cleanupStaleFacilityAdmins(token) {
+  try {
+    step('Checking for stale test users');
+    const toDelete = new Set();
+    for (const prefix of STALE_USER_EMAIL_PREFIXES) {
+      let offset = 0;
+      const limit = 50;
+      let total = null;
+      do {
+        const { users, total: reportedTotal } = await fetchUsersBySearch(token, prefix, offset, limit);
+        total = reportedTotal ?? users.length;
+        users
+          .filter((user) => (user.email || '').toLowerCase().startsWith(prefix))
+          .forEach((user) => toDelete.add(user.id));
+        if (!users.length || users.length < limit) {
+          break;
+        }
+        offset += users.length;
+      } while (offset < (total ?? 0));
+    }
+    // Handle phone-based "New Invitee" users (no email)
+    let offset = 0;
+    const inviteeSearch = 'invitee';
+    do {
+      const { users, total } = await fetchUsersBySearch(token, inviteeSearch, offset, 50);
+      users
+        .filter((user) => !user.email && user.firstName === 'New' && (user.lastName || '').startsWith('Invitee'))
+        .forEach((user) => toDelete.add(user.id));
+      if (!users.length || users.length < 50) break;
+      offset += users.length;
+      if (offset >= (total ?? 0)) break;
+    } while (true);
+
+    if (toDelete.size === 0) {
+      info('No stale test users detected');
+      return;
+    }
+
+    for (const userId of toDelete) {
+      try {
+        step(`Hard deleting stale user ${userId}`);
+        await hardDeleteUser(token, userId);
+        ok(`Removed stale user ${userId}`);
+      } catch (err) {
+        warn(`Failed to delete user ${userId}: ${err?.response?.data || err?.message || err}`);
+      }
+    }
+  } catch (err) {
+    warn(`Pre-run user cleanup failed: ${err?.response?.data || err?.message || err}`);
+  }
+}
+
+async function cleanupPreviousArtifacts(token) {
+  heading('Pre-run Cleanup');
+  await cleanupStaleFacilities(token);
+  await cleanupStaleFacilityAdmins(token);
+}
+
+async function setRateLimitBypass(token, enabled, durationSeconds = 600) {
+  try {
+    const body = enabled
+      ? { enabled: true, durationSeconds, reason: 'ws-gateway-e2e' }
+      : { enabled: false };
+    await axios.post(`${API_BASE}/admin/rate-limits/bypass`, body, { headers: authHeaders(token) });
+    info(`Rate limit bypass ${enabled ? 'enabled' : 'disabled'}`);
+    return true;
+  } catch (err) {
+    warn(`Rate limit bypass ${enabled ? 'enable' : 'disable'} failed: ${err?.response?.status || ''} ${err?.response?.data || err?.message || err}`);
+    return false;
+  }
+}
+
 // Track overall E2E success so we can print a clean result after cleanup
 let success = false;
 
@@ -221,9 +381,18 @@ if (VERBOSE) {
   });
 }
 
-async function login() {
-  const res = await axios.post(`${API_BASE}/auth/login`, { email: EMAIL, password: PASSWORD });
-  return res.data.token;
+async function login(attempt = 1) {
+  try {
+    const res = await axios.post(`${API_BASE}/auth/login`, { email: EMAIL, password: PASSWORD });
+    return res.data.token;
+  } catch (err) {
+    if (err?.response?.status === 429 && attempt < 6) {
+      const waitMs = 750 * attempt * attempt;
+      await delay(waitMs);
+      return login(attempt + 1);
+    }
+    throw err;
+  }
 }
 
 async function getFirstFacility(token) {
@@ -316,6 +485,12 @@ async function assignTenantToUnit(token, unitId, userId, isPrimary) {
     access_type: 'full'
   }, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.data?.success) throw new Error(`Assign tenant failed: ${res.data?.message}`);
+}
+
+async function assignUserToFacility(token, userId, facilityId) {
+  await axios.post(`${API_BASE}/user-facilities/${userId}/facilities/${facilityId}`, {}, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
 }
 
 async function createBlulokDevice(token, gatewayId, unitId, serial) {
@@ -425,11 +600,20 @@ async function shareKey(token, unitId, sharedWithUserId, accessLevel = 'limited'
   return id;
 }
 
-async function tenantLogin(identifier, password) {
-  // Backends accepts either identifier (email/phone) or email; use identifier for both cases
-  const res = await axios.post(`${API_BASE}/auth/login`, { identifier, password });
-  if (!res.data?.token) throw new Error('Tenant login failed');
-  return res.data.token;
+async function tenantLogin(identifier, password, attempt = 1) {
+  // Backend accepts either identifier (email/phone) or email; use identifier for both cases
+  try {
+    const res = await axios.post(`${API_BASE}/auth/login`, { identifier, password });
+    if (!res.data?.token) throw new Error('Tenant login failed');
+    return res.data.token;
+  } catch (err) {
+    if (err?.response?.status === 429 && attempt < 6) {
+      const waitMs = 1000 * attempt * attempt;
+      await delay(waitMs);
+      return tenantLogin(identifier, password, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 async function registerUserDevice(userToken, appDeviceId, publicKeyB64) {
@@ -571,6 +755,8 @@ async function run() {
   console.log(C.gray(`WS_URL=${WS_URL}`));
 
   const token = await login();
+  let rateLimitBypassEnabled = await setRateLimitBypass(token, true, 900);
+  await cleanupPreviousArtifacts(token);
   // Create a dedicated E2E facility and work exclusively against it
   heading('Setup Facility');
   step('Creating E2E test facility');
@@ -580,25 +766,59 @@ async function run() {
   step('Ensuring gateway exists for facility');
   let gatewayId = await createGateway(token, facilityId, 'E2E Test Gateway').catch(() => null);
   ok(`Gateway record ${gatewayId ? 'created' : 'will be created by sync'}`);
+  // Track created resources for cleanup
+  const created = {
+    facilityId,
+    gatewayId,
+    fmsConfigId: null,
+    unitId: null,
+    deviceId: null,
+    primaryTenantId: null,
+    users: [],
+    shares: []
+  };
+  const facilityAdmin = { id: null, token: null, email: null };
+  let share1Token = null;
+  let share2Token = null;
+  let primaryToken = null;
+
   heading('Environment');
   info(`Using facility=${facilityId}`);
   info(`Gateway=${gatewayId || 'pending (after device-sync)'}`);
 
-  // Track created resources for cleanup
-  const created = {
-    facilityId,
-    unitId: null,
-    deviceId: null,
-    users: [],
-    shares: []
-  };
+  step('Provisioning facility admin for coverage');
+  const facilityAdminEmail = `fac-admin-${Date.now()}@test.com`;
+  const facilityAdminPassword = 'TestUser123!';
+  facilityAdmin.id = await createUser(token, facilityAdminEmail, 'facility_admin');
+  facilityAdmin.email = facilityAdminEmail;
+  created.users.push(facilityAdmin.id);
+  await assignUserToFacility(token, facilityAdmin.id, facilityId);
+  const facilityAdminLogin = await axios.post(`${API_BASE}/auth/login`, {
+    email: facilityAdminEmail,
+    password: facilityAdminPassword
+  });
+  facilityAdmin.token = facilityAdminLogin.data?.token;
+  if (!facilityAdmin.token) throw new Error('Facility admin login failed');
+  ok('Facility admin ready');
   // Remember original FMS config if present to restore after test
   let existingConfig = null;
+  let mockFmsServer = null;
 
   // Connect gateway WS
-  const ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+  let ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
   heading('Gateway WebSocket');
   ok('Gateway AUTH_OK');
+
+  step('Checking gateway connection status via admin endpoint');
+  try {
+    const gatewayStatus = await axios.get(`${API_BASE}/gateways/status/${facilityId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!gatewayStatus.data?.success) throw new Error('Gateway status endpoint failed');
+    ok('Gateway status reported successfully');
+  } catch (err) {
+    warn(`Gateway status endpoint unavailable (${err?.response?.status || err?.message || err})`);
+  }
 
   try {
     // ---------------- FMS Mock + Config + Sync ----------------
@@ -658,12 +878,13 @@ async function run() {
       ]
     };
     const { server: fmsServer, port: fmsPort } = await startMockFmsServer(datasetPhase1);
+    mockFmsServer = fmsServer;
     info(`Mock FMS started at http://127.0.0.1:${fmsPort}`);
 
     // Create or reuse config
     step('Create FMS config (storedge)');
     let configId = null;
-    let existingConfig = null;
+    let createdFmsConfig = false;
     try {
       const created = await axios.post(`${API_BASE}/fms/config`, {
         facility_id: facilityId,
@@ -679,6 +900,7 @@ async function run() {
         }
       }, { headers: { Authorization: `Bearer ${token}` } });
       configId = created.data?.config?.id || null;
+      createdFmsConfig = true;
     } catch {
       // If already exists, fetch
       const existing = await axios.get(`${API_BASE}/fms/config/${facilityId}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -686,6 +908,9 @@ async function run() {
       configId = existingConfig?.id || null;
     }
     if (!configId) throw new Error('FMS config id missing');
+    if (createdFmsConfig) {
+      created.fmsConfigId = configId;
+    }
 
     // Force the config to use our mock Storedge server for this run, remembering original to restore later
     await axios.put(`${API_BASE}/fms/config/${configId}`, {
@@ -700,7 +925,7 @@ async function run() {
         customSettings: { facilityId: 'mock-fac' }
       }
     }, { headers: { Authorization: `Bearer ${token}` } });
-    ok('FMS config ready');
+      ok('FMS config ready');
 
     // Test connection
     const testConn = await axios.post(`${API_BASE}/fms/config/${configId}/test`, {}, { headers: { Authorization: `Bearer ${token}` } });
@@ -750,6 +975,7 @@ async function run() {
     if (respSync1.status !== 200 || !respSync1.body?.success) throw new Error(`Device sync (add) failed: ${respSync1.status}`);
     if (respSync1.body?.data?.gateway_id) {
       gatewayId = respSync1.body.data.gateway_id;
+      created.gatewayId = gatewayId;
       info(`Resolved gateway_id=${gatewayId}`);
     }
     ok(`Added ${initialDevices.length} devices via device-sync`);
@@ -846,12 +1072,13 @@ async function run() {
     if (!primaryId || !share1Id || !share2Id) {
       throw new Error(`FMS did not create expected users: primary=${!!primaryId} share1=${!!share1Id} share2=${!!share2Id}`);
     }
+    created.primaryTenantId = primaryId;
     created.users.push(primaryId, share1Id, share2Id);
     ok(`Users resolved primary=${primaryId} share1=${share1Id} share2=${share2Id}`);
 
     // First-time invite + OTP + set-password flows (dev-admin testing)
     heading('First-time Login (Invite + OTP)');
-    async function completeFirstTimeLogin(userId, newPassword = 'TestUser123!') {
+    async function completeFirstTimeLogin(userId, email, newPassword = 'TestUser123!') {
       // Create invite token
       step(`Issuing invite token for user ${userId}`);
       const invite = await axios.post(`${API_BASE}/admin/testing/invite-token`, { userId }, { headers: { Authorization: `Bearer ${token}` } });
@@ -875,11 +1102,12 @@ async function run() {
       const setPwd = await axios.post(`${API_BASE}/auth/invite/set-password`, { token: inviteToken, otp, newPassword });
       if (!setPwd.data?.success) throw new Error('Set password failed');
       ok('First-time login completed');
+      return tenantLogin(email, newPassword);
     }
     // Run first-time login flow for all three FMS-created users
-    await completeFirstTimeLogin(primaryId);
-    await completeFirstTimeLogin(share1Id);
-    await completeFirstTimeLogin(share2Id);
+    primaryToken = await completeFirstTimeLogin(primaryId, primaryEmail);
+    share1Token = await completeFirstTimeLogin(share1Id, share1Email);
+    share2Token = await completeFirstTimeLogin(share2Id, share2Email);
     ok('First-time login flows completed for all users');
 
     // -------------------------------------------------------------------
@@ -995,6 +1223,7 @@ async function run() {
     ok('First-time login completed for new sharee');
 
     // Sanity check: new sharee can log in using phone identifier
+    await delay(4000);
     const newShareeToken = await tenantLogin(newInvitePhone, newPassword);
     if (!newShareeToken) throw new Error('New sharee login failed after first-time setup');
     ok('New sharee can log in with phone identifier');
@@ -1020,9 +1249,11 @@ async function run() {
     // Ensure shared users have active route passes (so DENYLIST_ADD/REMOVE commands are sent)
     // Register a dummy device and request a pass for each shared user
     const dummyPubKeyB64 = Buffer.alloc(32, 1).toString('base64'); // 32 bytes base64
+    if (!share1Token || !share2Token || !primaryToken) {
+      throw new Error('Missing cached tokens for route pass verification');
+    }
     // Share2 (to be revoked first)
     const share2AppDevId = `e2e-dev-${Date.now()}-s2`;
-    const share2Token = await tenantLogin(share2Email, 'TestUser123!');
     step(`Registering user-device ${share2AppDevId} for share2`);
     await registerUserDevice(share2Token, share2AppDevId, dummyPubKeyB64);
     step('Requesting route pass for share2');
@@ -1038,7 +1269,6 @@ async function run() {
     info(`Share2 pass: sub=${share2Claims.sub} audCount=${share2Claims.aud.length} hasExpected=${share2Claims.aud.includes(expectedSharedAud2)} lifetimeSec=${(share2Claims.exp - share2Claims.iat) || 'n/a'} aud=[${share2Claims.aud.join(', ')}]`);
     // Share1 (to test regrant remove path)
     const share1AppDevId = `e2e-dev-${Date.now()}-s1`;
-    const share1Token = await tenantLogin(share1Email, 'TestUser123!');
     step(`Registering user-device ${share1AppDevId} for share1`);
     await registerUserDevice(share1Token, share1AppDevId, dummyPubKeyB64);
     step('Requesting route pass for share1');
@@ -1053,7 +1283,6 @@ async function run() {
 
     // Primary tenant: ensure an active route pass so DENYLIST_ADD will be emitted on deactivation
     const primaryAppDevId = `e2e-dev-${Date.now()}-primary`;
-    const primaryToken = await tenantLogin(primaryEmail, 'TestUser123!');
     step(`Registering user-device ${primaryAppDevId} for primary tenant`);
     await registerUserDevice(primaryToken, primaryAppDevId, dummyPubKeyB64);
     step('Requesting route pass for primary tenant');
@@ -1106,6 +1335,103 @@ async function run() {
     }
     ok('Admin sees all shared users for unit');
 
+    heading('Key Sharing API Coverage');
+    step('Admin grouped listing with units and totals');
+    const groupedAdmin = await axios.get(`${API_BASE}/key-sharing`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { group_by_unit: 'true' }
+    });
+    const groupedUnits = groupedAdmin.data?.units || [];
+    const groupedUnit = groupedUnits.find((u) => u.unit_id === unitId);
+    if (!groupedUnit || (groupedAdmin.data?.total_sharings || 0) < 3) {
+      throw new Error('Grouped key-sharing response missing expected unit data');
+    }
+    ok('Admin grouped listing includes our unit and sharings');
+
+    step('Facility admin grouped listing limited to assigned facility');
+    if (!facilityAdmin.token) throw new Error('Facility admin token missing');
+    const facilityAdminGrouped = await axios.get(`${API_BASE}/key-sharing`, {
+      headers: { Authorization: `Bearer ${facilityAdmin.token}` },
+      params: { group_by_unit: 'true' }
+    });
+    const facilityUnits = facilityAdminGrouped.data?.units || [];
+    if (facilityUnits.length !== 1 || facilityUnits[0].unit_id !== unitId) {
+      throw new Error('Facility admin grouped listing is not scoped to their facility');
+    }
+    ok('Facility admin grouped listing scoped correctly');
+
+    step('Admin updating share metadata via PUT');
+    const updatedNotes = 'Updated via E2E';
+    const newExpiry = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const updateShareRes = await axios.put(`${API_BASE}/key-sharing/${share1}`, {
+      notes: updatedNotes,
+      expires_at: newExpiry
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    const updatedNotesResponse = updateShareRes.data?.notes ?? updateShareRes.data?.data?.notes;
+    if (updatedNotesResponse !== updatedNotes) {
+      throw new Error('Failed to update share metadata');
+    }
+    const verifyUpdateRes = await axios.get(`${API_BASE}/key-sharing/unit/${unitId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const updatedShareRecord = (verifyUpdateRes.data?.sharings || []).find((s) => s.id === share1);
+    if (!updatedShareRecord || updatedShareRecord.notes !== updatedNotes) {
+      throw new Error('Share metadata update not reflected in unit listing');
+    }
+    ok('Share metadata updates are reflected in listings');
+
+    step('Admin fetching key-sharing records for a specific user');
+    const adminUserSharings = await axios.get(`${API_BASE}/key-sharing/user/${share1Id}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const adminSharedKeys = adminUserSharings.data?.shared_keys ?? adminUserSharings.data?.sharings ?? [];
+    if (!adminUserSharings.data?.success || adminSharedKeys.length === 0) {
+      throw new Error('Admin user-specific key-sharing lookup failed');
+    }
+    ok('Admin user-specific key-sharing lookup succeeded');
+
+    step('Tenant fetching their own key-sharing via /user endpoint');
+    const tenantSelfSharings = await axios.get(`${API_BASE}/key-sharing/user/${share1Id}`, {
+      headers: { Authorization: `Bearer ${share1Token}` }
+    });
+    if (!tenantSelfSharings.data?.success || (tenantSelfSharings.data?.sharings || []).some((s) => s.shared_with_user_id !== share1Id)) {
+      throw new Error('Tenant self key-sharing lookup returned unexpected data');
+    }
+    ok('Tenant can view their own key-sharing records');
+
+    step('Tenant blocked from viewing other user key-sharing records');
+    let prevented = false;
+    try {
+      await axios.get(`${API_BASE}/key-sharing/user/${share2Id}`, {
+        headers: { Authorization: `Bearer ${share1Token}` }
+      });
+    } catch (err) {
+      if (err?.response?.status === 403) prevented = true;
+      else throw err;
+    }
+    if (!prevented) throw new Error('Tenant was able to fetch another user’s key-sharing records');
+    ok('Tenant prevented from viewing other user key-sharing records');
+
+    heading('Facility Admin Gateway Coverage');
+    step('Switching primary gateway session to facility admin');
+    try {
+      ws.close(4000, 'facility-admin-coverage');
+    } catch {}
+    let wsFacilityAdmin = await connectGatewayWsAndAuth(WS_URL, facilityAdmin.token, facilityId);
+    step('Facility admin proxying facility-scoped device list');
+    const facDevices = await proxyWs(wsFacilityAdmin, 'fac-devices', 'GET', `/devices`, { query: { facility_id: facilityId, limit: 1 } });
+    if (facDevices.status !== 200) throw new Error(`Facility admin proxy devices failed: ${facDevices.status}`);
+    ok('Facility admin can proxy facility-scoped devices');
+    step('Facility admin blocked from proxying other facilities');
+    const facForbidden = await proxyWs(wsFacilityAdmin, 'fac-devices-forbidden', 'GET', `/devices`, { query: { facility_id: '00000000-0000-0000-0000-000000000000', limit: 1 } });
+    if (facForbidden.status !== 403) throw new Error('Expected facility guard to block cross-facility proxy access');
+    ok('Facility guard prevented cross-facility proxy access');
+    wsFacilityAdmin.close();
+    wsFacilityAdmin = null;
+    step('Reconnecting primary gateway session after facility admin coverage');
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    ok('Gateway connection re-established for admin session');
+
     // Unshare user3 -> expect DENYLIST_ADD for sub=share2Id
     heading('Denylist Command Flow');
     const expectAddShare3 = waitForCommand(ws, (cmd) => cmd.cmd_type === 'DENYLIST_ADD' && Array.isArray(cmd.denylist_add) && cmd.denylist_add.some(e => e.sub === share2Id));
@@ -1156,6 +1482,16 @@ async function run() {
           config: existingConfig.config,
         }, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
         ok('Original FMS config restored');
+      } else if (created.fmsConfigId) {
+        step(`Deleting FMS config ${created.fmsConfigId}`);
+        await axios.delete(`${API_BASE}/fms/config/${created.fmsConfigId}`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+        ok(`Deleted FMS config ${created.fmsConfigId}`);
+      }
+      if (mockFmsServer) {
+        step('Stopping mock FMS server');
+        await new Promise((resolve) => mockFmsServer.close(resolve)).catch(() => {});
+        ok('Mock FMS server stopped');
+        mockFmsServer = null;
       }
       // Revoke any remaining shares
       for (const shareId of created.shares) {
@@ -1170,13 +1506,14 @@ async function run() {
         ok(`Unassigned device ${created.deviceId}`);
       }
       // Unassign primary tenant from unit (if both exist)
-      if (created.unitId && created.users[0]) {
-        step(`Removing primary tenant ${created.users[0]} from unit ${created.unitId}`);
-        await unassignTenantFromUnit(token, created.unitId, created.users[0]).catch(() => {});
-        ok(`Removed tenant ${created.users[0]} from unit`);
+    if (created.unitId && created.primaryTenantId) {
+      step(`Removing primary tenant ${created.primaryTenantId} from unit ${created.unitId}`);
+      await unassignTenantFromUnit(token, created.unitId, created.primaryTenantId).catch(() => {});
+      ok(`Removed tenant ${created.primaryTenantId} from unit`);
       }
       // Hard delete created users (dev-admin utility)
-      for (const userId of created.users) {
+      const uniqueUserIds = Array.from(new Set(created.users));
+      for (const userId of uniqueUserIds) {
         step(`Hard deleting user ${userId}`);
         await axios.delete(`${API_BASE}/admin/users/${userId}/hard`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
         ok(`Hard deleted user ${userId}`);
@@ -1190,6 +1527,10 @@ async function run() {
       console.error(C.red(`Cleanup encountered errors: ${e?.response?.data || e?.message || e}`));
     } finally {
       try { ws.close(1000, 'e2e_cleanup'); } catch {}
+      if (rateLimitBypassEnabled) {
+        await setRateLimitBypass(token, false);
+        rateLimitBypassEnabled = false;
+      }
     }
 
     if (success) {

@@ -5,9 +5,14 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { apiService } from '@/services/api.service';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
+import { getWsBaseUrl } from '@/services/appConfig';
 
 // Mock the API service
 jest.mock('@/services/api.service');
+jest.mock('@/services/appConfig', () => ({
+  getWsBaseUrl: jest.fn(() => 'ws://backend.example.com'),
+  getApiBaseUrl: jest.fn(() => 'http://localhost:3000'),
+}));
 
 // Mock the toast context
 const mockAddToast = jest.fn();
@@ -31,6 +36,7 @@ jest.mock('@/contexts/AuthContext', () => {
 });
 
 const mockApiService = apiService as jest.Mocked<typeof apiService>;
+const mockGetWsBaseUrl = getWsBaseUrl as jest.Mock;
 
 describe('FacilityGatewayTab', () => {
   const facilityId = 'test-facility-1';
@@ -43,6 +49,44 @@ describe('FacilityGatewayTab', () => {
     mockApiService.getGateways.mockResolvedValue({
       success: true,
       gateways: []
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+      configurable: true,
+    });
+  });
+  describe('WebSocket URL display', () => {
+    it('uses backend WebSocket base URL and copies to clipboard', async () => {
+      mockGetWsBaseUrl.mockReturnValue('wss://api.backend.com');
+      const mockGateway = {
+        id: 'gateway-1',
+        facility_id: facilityId,
+        name: 'Test Gateway',
+        status: 'online',
+        gateway_type: 'physical',
+      };
+      mockApiService.getGateways.mockResolvedValue({
+        success: true,
+        gateways: [mockGateway],
+      });
+
+      renderComponent();
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Gateway')).toBeInTheDocument();
+      });
+
+      expect(screen.getAllByText('wss://api.backend.com/ws/gateway')[0]).toBeInTheDocument();
+
+      const copyButtons = screen.getAllByRole('button', { name: /copy websocket url/i });
+      fireEvent.click(copyButtons[0]);
+
+      await waitFor(() => {
+        expect((navigator.clipboard as any).writeText).toHaveBeenCalledWith('wss://api.backend.com/ws/gateway');
+        expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Copied WebSocket URL' });
+      });
     });
   });
 
@@ -106,29 +150,12 @@ describe('FacilityGatewayTab', () => {
       });
     });
 
-    it('should render setup and tabs for non-admin users', async () => {
+    it('should render tabs for non-admin users', async () => {
       renderComponent(false);
       await waitFor(() => {
         expect(screen.getByText('Overview')).toBeInTheDocument();
-        expect(screen.getByText('Setup')).toBeInTheDocument();
         expect(screen.getByText('Sync')).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe('Configuration', () => {
-    it('should show setup guidance when Setup tab is clicked', async () => {
-      renderComponent();
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      await waitFor(() => {
-        expect(screen.getByText('Gateway Setup')).toBeInTheDocument();
-        expect(screen.getByText('Configure inbound gateway connections for this facility.')).toBeInTheDocument();
+        expect(screen.getByText('DevTools/Diag')).toBeInTheDocument();
       });
     });
   });
@@ -309,7 +336,14 @@ describe('FacilityGatewayTab', () => {
       const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
       mockApiService.getGateways.mockResolvedValue({ success: true, gateways: [mockGateway] } as any);
       mockApiService.requestFallbackPass.mockResolvedValue({ success: true } as any);
-      mockApiService.broadcastOpsKeyRotation.mockResolvedValue({ success: true } as any);
+      mockApiService.rotateOpsKey.mockResolvedValue({
+        payload: { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'pub', ts: 1700000000 },
+        signature: 'sig',
+        generated_ops_key_pair: {
+          private_key_b64: 'priv',
+          public_key_b64: 'pub',
+        },
+      } as any);
 
       // Elevate role to dev_admin for this test so rotation button is visible
       const { useAuth } = require('@/contexts/AuthContext') as { useAuth: jest.Mock };
@@ -344,14 +378,27 @@ describe('FacilityGatewayTab', () => {
       await act(async () => { fireEvent.click(screen.getByText('Submit Fallback')); });
       await waitFor(() => expect(mockApiService.requestFallbackPass).toHaveBeenCalledWith('jwt'));
 
-      // Rotation (select textarea by traversing from label)
-      const rotationLabel = screen.getByText('Rotation Payload (Root-signed)');
-      const rotationTextarea = rotationLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
-      fireEvent.change(rotationTextarea, { target: { value: '{"cmd_type":"ROTATE_OPERATIONS_KEY","new_ops_pubkey":"b64","ts":1}' } });
-      const sigInput = screen.getByText('Signature (base64url)').parentElement?.querySelector('input') as HTMLInputElement;
-      fireEvent.change(sigInput, { target: { value: 'sig' } });
-      await act(async () => { fireEvent.click(screen.getByText('Broadcast Rotation')); });
-      await waitFor(() => expect(mockApiService.broadcastOpsKeyRotation).toHaveBeenCalled());
+      // Rotation flow (new managed UI)
+      const rootKeyLabel = screen.getByText('Root Private Key (base64url, 32-byte)');
+      const rootKeyTextarea = rootKeyLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
+      fireEvent.change(rootKeyTextarea, { target: { value: 'root-key' } });
+
+      const rotateButton = screen.getByText('Rotate Ops Key');
+      await act(async () => { fireEvent.click(rotateButton); });
+
+      await waitFor(() => expect(screen.getByText('Confirm Operations Key Rotation')).toBeInTheDocument());
+
+      const modalRotateBtn = screen.getAllByRole('button', { name: 'Rotate Ops Key' }).pop() as HTMLElement;
+      await act(async () => { fireEvent.click(modalRotateBtn); });
+
+      await waitFor(() => {
+        expect(mockApiService.rotateOpsKey).toHaveBeenCalledWith({
+          rootPrivateKeyB64: 'root-key',
+          customOpsPublicKeyB64: undefined,
+        });
+        expect(screen.getByText('Ops Key Rotation Broadcasted')).toBeInTheDocument();
+        expect(screen.getByText('OPS_ED25519_PRIVATE_KEY_B64')).toBeInTheDocument();
+      });
     });
   });
 });

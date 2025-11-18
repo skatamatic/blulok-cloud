@@ -44,6 +44,11 @@ export default function SettingsPage() {
     },
   ];
 
+  const clampDeviceLimit = (value: number) => {
+    if (Number.isNaN(value)) return 0;
+    return Math.max(0, Math.min(250, value));
+  };
+
   useEffect(() => {
     const loadSettings = async () => {
       if (authState.user?.role === UserRole.ADMIN || authState.user?.role === UserRole.DEV_ADMIN) {
@@ -51,7 +56,7 @@ export default function SettingsPage() {
         try {
           const response = await apiService.getSystemSettings();
           if (response.success) {
-            setMaxDevicesPerUser(response.settings['security.max_devices_per_user']);
+            setMaxDevicesPerUser(clampDeviceLimit(response.settings['security.max_devices_per_user']));
           }
         } catch (error) {
           console.error('Failed to load system settings:', error);
@@ -63,6 +68,15 @@ export default function SettingsPage() {
 
     loadSettings();
   }, [authState.user?.role]);
+
+  const handleDeviceLimitChange = (rawValue: string) => {
+    if (rawValue === '') {
+      setMaxDevicesPerUser(0);
+      return;
+    }
+    const parsed = parseInt(rawValue, 10);
+    setMaxDevicesPerUser(clampDeviceLimit(parsed));
+  };
 
   const handleSaveSettings = async () => {
     setIsSavingSettings(true);
@@ -262,7 +276,10 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-6">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <label
+                      htmlFor="max-devices-per-user"
+                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                    >
                       <div className="flex items-center">
                         <DevicePhoneMobileIcon className="h-4 w-4 text-gray-400 mr-2" />
                         Maximum Devices Per User
@@ -270,16 +287,19 @@ export default function SettingsPage() {
                     </label>
                     <div className="flex items-center space-x-4">
                       <input
+                        id="max-devices-per-user"
                         type="number"
-                        min="1"
-                        max="10"
+                        min={0}
+                        max={250}
                         value={maxDevicesPerUser}
-                        onChange={(e) => setMaxDevicesPerUser(parseInt(e.target.value) || 1)}
-                        className="w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        onChange={(e) => handleDeviceLimitChange(e.target.value)}
+                        className="w-24 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                         disabled={isSavingSettings}
                       />
                       <span className="text-sm text-gray-600 dark:text-gray-400">
-                        devices (1-10 allowed)
+                        {maxDevicesPerUser === 0
+                          ? 'Unlimited devices enabled (0 = unlimited, max 250)'
+                          : 'devices (0 = unlimited, max 250)'}
                       </span>
                     </div>
                     <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">

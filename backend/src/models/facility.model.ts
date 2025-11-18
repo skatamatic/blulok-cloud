@@ -358,15 +358,15 @@ export class FacilityModel {
       )
       .first();
 
-    // Get device connectivity statistics across all device types
-    // Combines gateways, access control devices, and BluLok devices
+    // Get device connectivity statistics across all physical lock endpoints
+    // (access control devices + BluLok devices). Gateways themselves are not
+    // counted as "devices" for this metric so that counts align with the
+    // number of controllable locks the user sees.
     const deviceStats = await knex.raw(`
       SELECT
         COUNT(*) as devices_total,
         SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) as devices_online
       FROM (
-        SELECT status FROM gateways WHERE facility_id = ?
-        UNION ALL
         SELECT acd.status FROM access_control_devices acd
         JOIN gateways g ON acd.gateway_id = g.id
         WHERE g.facility_id = ?
@@ -375,7 +375,7 @@ export class FacilityModel {
         JOIN gateways g ON bd.gateway_id = g.id
         WHERE g.facility_id = ?
       ) all_devices
-    `, [facilityId, facilityId, facilityId]);
+    `, [facilityId, facilityId]);
 
     return {
       totalUnits: parseInt(unitStats?.total_units || '0'),
