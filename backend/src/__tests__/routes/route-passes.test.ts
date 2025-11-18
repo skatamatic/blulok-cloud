@@ -2,13 +2,15 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { UserRole } from '@/types/auth.types';
 
+let mockUserRole: UserRole = UserRole.DEV_ADMIN;
+
 // Mock authentication middleware
 jest.mock('@/middleware/auth.middleware', () => ({
   authenticateToken: (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
-        userId: 'admin-1',
-        role: UserRole.DEV_ADMIN,
+        userId: 'mock-user',
+        role: mockUserRole,
       };
     }
     next();
@@ -18,21 +20,32 @@ jest.mock('@/middleware/auth.middleware', () => ({
   requireUserManagement: (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
-        userId: 'admin-1',
-        role: UserRole.DEV_ADMIN,
+        userId: 'mock-user',
+        role: mockUserRole,
       };
     }
     next();
   },
   requireAdmin: (req: any, res: any, next: any) => next(),
-  requireDevAdmin: (req: any, res: any, next: any) => next(),
+  requireDevAdmin: (req: any, res: any, next: any) => {
+    if (!req.user) {
+      req.user = {
+        userId: 'mock-user',
+        role: mockUserRole,
+      };
+    }
+    if (req.user.role !== UserRole.DEV_ADMIN) {
+      return res.status(403).json({ success: false, message: 'dev_admin required' });
+    }
+    next();
+  },
   requireAdminOrFacilityAdmin: (req: any, res: any, next: any) => next(),
   requireUserManagementOrSelf: (req: any, res: any, next: any) => next(),
   requireRoles: () => (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
-        userId: 'admin-1',
-        role: UserRole.DEV_ADMIN,
+        userId: 'mock-user',
+        role: mockUserRole,
       };
     }
     next();
@@ -54,6 +67,7 @@ describe('Route Passes Routes', () => {
   let app: any;
 
   beforeEach(() => {
+    mockUserRole = UserRole.DEV_ADMIN;
     app = createApp();
     mockGetUserHistory.mockClear();
     mockGetUserHistoryCount.mockClear();
@@ -134,30 +148,9 @@ describe('Route Passes Routes', () => {
     });
 
     it('rejects non-dev-admin users', async () => {
-      // Create a fresh app with tenant user mock
-      jest.resetModules();
-      jest.doMock('@/middleware/auth.middleware', () => ({
-        authenticateToken: (req: any, res: any, next: any) => {
-          req.user = {
-            userId: 'user-1',
-            role: UserRole.TENANT,
-          };
-          next();
-        },
-        requireTenant: (req: any, res: any, next: any) => next(),
-        requireNotTenant: (req: any, res: any, next: any) => next(),
-        requireUserManagement: (req: any, res: any, next: any) => next(),
-        requireAdmin: (req: any, res: any, next: any) => next(),
-        requireDevAdmin: (_req: any, res: any, _next: any) => res.status(403).json({ success: false, message: 'dev_admin required' }),
-        requireAdminOrFacilityAdmin: (req: any, res: any, next: any) => next(),
-        requireUserManagementOrSelf: (req: any, res: any, next: any) => next(),
-        requireRoles: () => (_req: any, _res: any, next: any) => next(),
-      }));
-      
-      const { createApp: createFreshApp } = require('@/app');
-      const tenantApp = createFreshApp();
-      
-      const response = await request(tenantApp)
+      mockUserRole = UserRole.TENANT;
+
+      const response = await request(app)
         .get('/api/v1/route-passes/users/user-1')
         .expect(403);
 
