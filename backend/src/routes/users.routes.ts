@@ -371,33 +371,43 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
     const userDeviceModel = new UserDeviceModel();
     userDevices = await userDeviceModel.listByUser(id);
 
-    // For each device, get associated locks and recent distribution errors
-    for (const device of userDevices) {
-      const deviceLocks = await db('device_key_distributions as dkd')
-        .join('blulok_devices as bd', 'dkd.target_id', 'bd.id')
+    let lockAssociations: any[] = [];
+    let distributionErrors: any[] = [];
+
+    try {
+      lockAssociations = await db('device_lock_associations as dla')
+        .join('blulok_devices as bd', 'dla.lock_id', 'bd.id')
         .join('units as u', 'bd.unit_id', 'u.id')
         .join('facilities as f', 'u.facility_id', 'f.id')
         .select(
+          'dla.user_device_id',
           'bd.id as lock_id',
           'bd.device_serial',
           'u.unit_number',
           'f.name as facility_name',
-          'dkd.status as key_status',
-          'dkd.error as last_error',
-          'dkd.key_version as key_version',
-          'dkd.key_code as key_code'
+          'dla.key_status',
+          'dla.last_error',
+          'dla.key_version',
+          'dla.key_code'
         )
-        .where('dkd.user_device_id', device.id)
-        .where('dkd.target_type', 'blulok');
+        .whereIn('dla.user_device_id', userDevices.map(device => device.id));
 
-      device.associatedLocks = deviceLocks;
+      distributionErrors = await db('device_lock_associations')
+        .select('user_device_id', 'last_error', 'updated_at')
+        .whereIn('user_device_id', userDevices.map(device => device.id))
+        .whereNotNull('last_error')
+        .orderBy('updated_at', 'desc');
+    } catch (error) {
+      logger.warn('Failed to load device lock associations', {
+        error: (error as Error)?.message || error,
+      });
+    }
 
-      const distErrors = await db('device_key_distributions')
-        .where({ user_device_id: device.id })
-        .whereNotNull('error')
-        .orderBy('updated_at', 'desc')
-        .limit(10);
-      device.distributionErrors = distErrors;
+    for (const device of userDevices) {
+      device.associatedLocks = lockAssociations.filter(lock => lock.user_device_id === device.id);
+      device.distributionErrors = distributionErrors
+        .filter(error => error.user_device_id === device.id)
+        .slice(0, 10);
     }
   }
 

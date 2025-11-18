@@ -1,6 +1,37 @@
 import request from 'supertest';
 import { createApp } from '@/app';
+import { DatabaseService } from '@/services/database.service';
+import { UserModel } from '@/models/user.model';
+import { UserDeviceModel } from '@/models/user-device.model';
 import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectForbidden, expectNotFound, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
+
+const createMockQuery = (config: { rows?: any[]; reject?: boolean } = {}) => {
+  const rows = config.rows ?? [];
+  const reject = config.reject ?? false;
+  const promise = reject ? Promise.reject(new Error('mock query failed')) : Promise.resolve(rows);
+  const chain: any = {
+    join: () => chain,
+    select: () => chain,
+    where: () => chain,
+    whereIn: () => chain,
+    whereNotNull: () => chain,
+    orderBy: () => chain,
+    limit: () => chain,
+    first: () => promise.then((res) => (Array.isArray(res) ? res[0] : res)),
+    then: (resolve: any, rejectFn?: any) => promise.then(resolve, rejectFn),
+    catch: (rejectFn: any) => promise.catch(rejectFn),
+  };
+  return chain;
+};
+
+const createMockKnex = (tables: Record<string, { rows?: any[]; reject?: boolean }> = {}) => {
+  const fn: any = (tableName: string) => {
+    const entry = tables[tableName] ?? tables.default ?? { rows: [] };
+    return createMockQuery(entry);
+  };
+  fn.schema = { hasTable: jest.fn().mockResolvedValue(true) };
+  return fn;
+};
 
 describe('Users Routes', () => {
   let app: any;
@@ -630,96 +661,124 @@ describe('Users Routes', () => {
   });
 
   describe('GET /api/v1/users/:id/details - Get User Details', () => {
-    it.skip('should return detailed user information for DEV_ADMIN', async () => {
-      const response = await request(app)
-        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
-        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
-        .timeout(10000) // Increase timeout for complex queries
-        .expect(200);
+    let getInstanceSpy: jest.SpyInstance;
+    let userModelSpy: jest.SpyInstance;
+    let listDevicesSpy: jest.SpyInstance;
 
-      expectSuccess(response);
-      expect(response.body.user).toBeDefined();
-      expect(response.body.user.id).toBe(testData.users.tenant.id);
-      expect(response.body.user).toHaveProperty('facilities');
-      expect(response.body.user).toHaveProperty('devices');
-      expect(Array.isArray(response.body.user.facilities)).toBe(true);
-      expect(Array.isArray(response.body.user.devices)).toBe(true);
-    }, 15000);
-
-    it.skip('should return detailed user information for ADMIN', async () => {
-      const response = await request(app)
-        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
-        .set('Authorization', `Bearer ${testData.users.admin.token}`)
-        .timeout(10000)
-        .expect(200);
-
-      expectSuccess(response);
-      expect(response.body.user).toBeDefined();
-      expect(response.body.user.id).toBe(testData.users.tenant.id);
-    }, 15000);
-
-    it.skip('should return detailed user information for FACILITY_ADMIN with access', async () => {
-      const response = await request(app)
-        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .timeout(10000)
-        .expect(200);
-
-      expectSuccess(response);
-      expect(response.body.user).toBeDefined();
-    }, 15000);
-
-    it.skip('should allow users to view their own details', async () => {
-      const response = await request(app)
-        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
-        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .timeout(10000)
-        .expect(200);
-
-      expectSuccess(response);
-      expect(response.body.user.id).toBe(testData.users.tenant.id);
-    }, 15000);
-
-    it.skip('should not include devices for non-DEV_ADMIN users', async () => {
-      const response = await request(app)
-        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
-        .set('Authorization', `Bearer ${testData.users.admin.token}`)
-        .timeout(10000)
-        .expect(200);
-
-      expectSuccess(response);
-      expect(response.body.user.devices).toEqual([]);
-    }, 15000);
-
-    it.skip('should deny access for FACILITY_ADMIN without facility access', async () => {
-      // This test assumes there's a user that the facility admin doesn't have access to
-      // In a real scenario, we'd need to set up test data accordingly
-      const response = await request(app)
-        .get(`/api/v1/users/${testData.users.devAdmin.id}/details`)
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .timeout(10000)
-        .expect(403);
-
-      expectForbidden(response);
-    }, 15000);
-
-    it.skip('should return 404 for non-existent user', async () => {
-      const response = await request(app)
-        .get('/api/v1/users/non-existent-id/details')
-        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
-        .timeout(10000)
-        .expect(404);
-
-      expectNotFound(response);
-    }, 15000);
-
-    it.skip('should require authentication', async () => {
-      const response = await request(app)
-        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
-        .expect(401);
-
-      expectUnauthorized(response);
+    afterEach(() => {
+      getInstanceSpy?.mockRestore();
+      userModelSpy?.mockRestore();
+      listDevicesSpy?.mockRestore();
     });
+
+    it('should return detailed user information for DEV_ADMIN', async () => {
+      const baseUser = {
+        id: testData.users.tenant.id,
+        email: 'tenant@test.com',
+        first_name: 'Tenant',
+        last_name: 'User',
+        role: 'tenant',
+        is_active: true,
+        last_login: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const baseDevice = {
+        id: 'device-1',
+        user_id: testData.users.tenant.id,
+        app_device_id: 'app-1',
+        platform: 'ios',
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const mockDb = createMockKnex({
+        'user_facility_associations as ufa': { rows: [] },
+        'device_lock_associations as dla': {
+          rows: [{
+            user_device_id: 'device-1',
+            lock_id: 'lock-123',
+            device_serial: 'ABC123',
+            unit_number: '101',
+            facility_name: 'Test Facility',
+            key_status: 'active',
+            last_error: null,
+            key_version: 1,
+            key_code: 42,
+          }],
+        },
+        'device_lock_associations': {
+          rows: [{
+            user_device_id: 'device-1',
+            last_error: 'timeout',
+            updated_at: new Date(),
+          }],
+        },
+      });
+
+      getInstanceSpy = jest.spyOn(DatabaseService, 'getInstance').mockReturnValue({ connection: mockDb } as any);
+      userModelSpy = jest.spyOn(UserModel, 'findById').mockResolvedValue(baseUser as any);
+      listDevicesSpy = jest.spyOn(UserDeviceModel.prototype, 'listByUser').mockResolvedValue([baseDevice] as any);
+
+      const response = await request(app)
+        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .timeout(10000)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.user).toBeDefined();
+      expect(response.body.user.id).toBe(testData.users.tenant.id);
+      expect(response.body.user.devices[0].associatedLocks).toHaveLength(1);
+      expect(response.body.user.devices[0].distributionErrors).toHaveLength(1);
+    }, 15000);
+
+    it('should gracefully handle lock association query failures', async () => {
+      const baseUser = {
+        id: testData.users.tenant.id,
+        email: 'tenant@test.com',
+        first_name: 'Tenant',
+        last_name: 'User',
+        role: 'tenant',
+        is_active: true,
+        last_login: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const baseDevice = {
+        id: 'device-1',
+        user_id: testData.users.tenant.id,
+        app_device_id: 'app-1',
+        platform: 'ios',
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const mockDb = createMockKnex({
+        'user_facility_associations as ufa': { rows: [] },
+        'device_lock_associations as dla': { reject: true },
+        'device_lock_associations': { reject: true },
+      });
+
+      getInstanceSpy = jest.spyOn(DatabaseService, 'getInstance').mockReturnValue({ connection: mockDb } as any);
+      userModelSpy = jest.spyOn(UserModel, 'findById').mockResolvedValue(baseUser as any);
+      listDevicesSpy = jest.spyOn(UserDeviceModel.prototype, 'listByUser').mockResolvedValue([baseDevice] as any);
+
+      const response = await request(app)
+        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .timeout(10000)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.user).toBeDefined();
+      expect(response.body.user.devices[0].associatedLocks).toEqual([]);
+      expect(response.body.user.devices[0].distributionErrors).toEqual([]);
+    }, 15000);
   });
 
   describe('DELETE /api/v1/user-devices/admin/:id - Delete User Device', () => {

@@ -395,6 +395,20 @@ async function login(attempt = 1) {
   }
 }
 
+async function fetchAuthProfile(token) {
+  const res = await axios.get(`${API_BASE}/auth/profile`, { headers: authHeaders(token) });
+  return res.data?.user || res.data;
+}
+
+async function verifyUserDetailsEndpoint(token, userId) {
+  const res = await axios.get(`${API_BASE}/users/${userId}/details`, { headers: authHeaders(token) });
+  if (!res.data?.user) {
+    throw new Error('User details response missing user payload');
+  }
+  ok('User details endpoint verified for authenticated user');
+  return res.data.user;
+}
+
 async function getFirstFacility(token) {
   const res = await axios.get(`${API_BASE}/facilities`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -755,6 +769,16 @@ async function run() {
   console.log(C.gray(`WS_URL=${WS_URL}`));
 
   const token = await login();
+  const devAdminProfile = await fetchAuthProfile(token).catch((err) => {
+    warn(`Failed to fetch auth profile: ${err?.response?.status || err?.message || err}`);
+    return null;
+  });
+  if (devAdminProfile?.id) {
+    step('Verifying user details endpoint');
+    await verifyUserDetailsEndpoint(token, devAdminProfile.id);
+  } else {
+    warn('Skipping user details verification (profile missing id)');
+  }
   let rateLimitBypassEnabled = await setRateLimitBypass(token, true, 900);
   await cleanupPreviousArtifacts(token);
   // Create a dedicated E2E facility and work exclusively against it
