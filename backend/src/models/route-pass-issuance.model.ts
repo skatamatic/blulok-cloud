@@ -1,4 +1,5 @@
 import { DatabaseService } from '@/services/database.service';
+import { logger } from '@/utils/logger';
 import { randomUUID } from 'crypto';
 
 /**
@@ -33,6 +34,49 @@ export class RoutePassIssuanceModel {
 
   constructor() {
     this.db = DatabaseService.getInstance().connection;
+  }
+
+  private parseAudiences(raw: unknown, entryId?: string): string[] {
+    if (Array.isArray(raw)) {
+      return raw.filter((audience): audience is string => typeof audience === 'string');
+    }
+
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return [];
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        logger.warn('Failed to parse audiences JSON string', {
+          entryId,
+          raw,
+          error: (error as Error).message,
+        });
+        return [];
+      }
+    }
+
+    if (raw == null) {
+      return [];
+    }
+
+    try {
+      const serialized = JSON.stringify(raw);
+      if (!serialized) {
+        return [];
+      }
+      const parsed = JSON.parse(serialized);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      logger.warn('Failed to serialize and parse audiences payload', {
+        entryId,
+        error: (error as Error).message,
+      });
+      return [];
+    }
   }
 
   /**
@@ -74,7 +118,7 @@ export class RoutePassIssuanceModel {
 
     return {
       ...entry,
-      audiences: JSON.parse(entry.audiences),
+      audiences: this.parseAudiences(entry.audiences, entry.id),
     };
   }
 
@@ -96,7 +140,7 @@ export class RoutePassIssuanceModel {
 
     return {
       ...entry,
-      audiences: JSON.parse(entry.audiences),
+      audiences: this.parseAudiences(entry.audiences, entry.id),
     };
   }
 
@@ -157,7 +201,7 @@ export class RoutePassIssuanceModel {
 
     return entries.map((entry: any) => ({
       ...entry,
-      audiences: JSON.parse(entry.audiences),
+      audiences: this.parseAudiences(entry.audiences, entry.id),
     }));
   }
 

@@ -1,7 +1,16 @@
 import { RoutePassIssuanceModel, RoutePassIssuanceLog } from '@/models/route-pass-issuance.model';
 import { DatabaseService } from '@/services/database.service';
+import { logger } from '@/utils/logger';
 
 jest.mock('@/services/database.service');
+jest.mock('@/utils/logger', () => ({
+  logger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
 
 describe('RoutePassIssuanceModel', () => {
   let model: RoutePassIssuanceModel;
@@ -315,6 +324,36 @@ describe('RoutePassIssuanceModel', () => {
       expect(mockKnex).toHaveBeenCalledWith('route_pass_issuance_log');
       expect(builder.where).toHaveBeenCalledWith('issued_at', '>=', startDate);
       expect(builder.where).toHaveBeenCalledWith('issued_at', '<=', endDate);
+    });
+
+    it('sanitizes malformed audience payloads', async () => {
+      const malformedEntries = [
+        { id: 'log-1', audiences: '' },
+        { id: 'log-2', audiences: 'not-json' },
+        { id: 'log-3', audiences: null },
+      ];
+
+      const builder: any = {
+        where: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockResolvedValue(malformedEntries),
+      };
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'route_pass_issuance_log') {
+          return builder;
+        }
+        return {};
+      });
+
+      const result = await model.getUserHistory('user-1', { limit: 50, offset: 0 });
+
+      expect(result).toHaveLength(3);
+      for (const entry of result) {
+        expect(entry.audiences).toEqual([]);
+      }
+      expect(logger.warn).toHaveBeenCalled();
     });
   });
 
