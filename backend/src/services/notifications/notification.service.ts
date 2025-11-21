@@ -1,6 +1,7 @@
 import { SystemSettingsModel } from '@/models/system-settings.model';
 import { NotificationsConfig, SendInviteParams, SendOtpParams } from '@/types/notification.types';
 import { logger } from '@/utils/logger';
+import { NotificationDebugService } from './notification-debug.service';
 
 interface SmsProvider {
   sendSms(to: string, body: string): Promise<void>;
@@ -106,6 +107,35 @@ export class NotificationService {
     const smsTemplate = config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}}';
     const emailTemplate = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
 
+    const debug = NotificationDebugService.getInstance();
+    // When debug test mode is enabled, publish events instead of calling real providers
+    if (debug.isEnabled()) {
+      const createdAt = new Date();
+      if (smsEnabled && params.toPhone) {
+        const body = smsTemplate.replace('{{deeplink}}', params.deeplink);
+        debug.publish({
+          kind: 'invite',
+          delivery: 'sms',
+          toPhone: params.toPhone,
+          body,
+          meta: { deeplink: params.deeplink },
+          createdAt,
+        });
+      }
+      if (emailEnabled && params.toEmail) {
+        const html = emailTemplate.replace('{{deeplink}}', params.deeplink);
+        debug.publish({
+          kind: 'invite',
+          delivery: 'email',
+          toEmail: params.toEmail,
+          body: html,
+          meta: { deeplink: params.deeplink },
+          createdAt,
+        });
+      }
+      return;
+    }
+
     if (smsEnabled && params.toPhone) {
       const provider = this.getSmsProvider(config);
       const body = smsTemplate.replace('{{deeplink}}', params.deeplink);
@@ -124,6 +154,35 @@ export class NotificationService {
     const config = await this.loadConfig();
     const smsTemplate = config.templates?.otpSms || 'Your verification code is: {{code}}';
     const emailTemplate = config.templates?.otpEmail || 'Your verification code is: {{code}}';
+
+    const debug = NotificationDebugService.getInstance();
+    if (debug.isEnabled()) {
+      const createdAt = new Date();
+      if (params.toPhone) {
+        const body = smsTemplate.replace('{{code}}', params.code);
+        debug.publish({
+          kind: 'otp',
+          delivery: 'sms',
+          toPhone: params.toPhone,
+          body,
+          meta: { code: params.code },
+          createdAt,
+        });
+        return;
+      }
+      if (params.toEmail) {
+        const html = emailTemplate.replace('{{code}}', params.code);
+        debug.publish({
+          kind: 'otp',
+          delivery: 'email',
+          toEmail: params.toEmail,
+          body: html,
+          meta: { code: params.code },
+          createdAt,
+        });
+        return;
+      }
+    }
 
     if (params.toPhone) {
       const provider = this.getSmsProvider(config);

@@ -298,7 +298,12 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
 
     // Add query filters
     if (access_level) filters.access_level = access_level as string;
-    if (is_active !== undefined) filters.is_active = is_active === 'true';
+    // By default only return active sharings; allow explicit override via query
+    if (is_active === undefined) {
+      filters.is_active = true;
+    } else {
+      filters.is_active = is_active === 'true';
+    }
     if (expires_before) filters.expires_before = new Date(expires_before as string);
 
     const result = await keySharingModel.getUnitSharedKeys(unitId, filters);

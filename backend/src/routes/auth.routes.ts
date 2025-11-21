@@ -11,6 +11,7 @@ import { OTPService } from '@/services/otp.service';
 import { UserModel, User } from '@/models/user.model';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { logger } from '@/utils/logger';
+import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
 import bcrypt from 'bcrypt';
 
 /**
@@ -53,20 +54,32 @@ import bcrypt from 'bcrypt';
  */
 
 const router = Router();
-// Strict rate limiters for invite/OTP endpoints
-const inviteRequestLimiter = rateLimit({
+// Strict rate limiters for invite/OTP endpoints (wrapped so dev bypass can opt out)
+const inviteRequestLimiterRaw = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-const inviteVerifyLimiter = rateLimit({
+const inviteVerifyLimiterRaw = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+const bypassSvc = RateLimitBypassService.getInstance();
+
+const inviteRequestLimiter: typeof inviteRequestLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return inviteRequestLimiterRaw(req, res, next);
+}) as any;
+
+const inviteVerifyLimiter: typeof inviteVerifyLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return inviteVerifyLimiterRaw(req, res, next);
+}) as any;
 
 // Input validation schemas with security constraints
 const loginSchema = Joi.object({

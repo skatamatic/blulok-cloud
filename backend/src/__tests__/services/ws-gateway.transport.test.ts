@@ -78,6 +78,26 @@ describe('WebsocketGatewayTransport', () => {
     expect(msg).toEqual(payload);
     ws.close();
   });
+
+  it('maintains connection with heartbeat PING/PONG', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+    await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+    ws.on('message', (data) => {
+      const msg = JSON.parse(typeof data === 'string' ? data : data.toString('utf8'));
+      if (msg.type === 'PING') {
+        ws.send(JSON.stringify({ type: 'PONG' }));
+      }
+    });
+
+    ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+    await waitForMessage(ws); // AUTH_OK
+
+    // Wait long enough for at least one heartbeat cycle
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+  });
 });
 
 

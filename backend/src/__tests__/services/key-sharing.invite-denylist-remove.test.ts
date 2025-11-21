@@ -11,6 +11,12 @@ jest.mock('@/services/denylist-optimization.service', () => ({
     shouldSkipDenylistRemove: jest.fn().mockReturnValue(false),
   },
 }));
+const sendInviteMock = jest.fn();
+jest.mock('@/services/first-time-user.service', () => ({
+  FirstTimeUserService: {
+    getInstance: () => ({ sendInvite: sendInviteMock }),
+  },
+}));
 
 import { KeySharingService } from '@/services/key-sharing.service';
 import { DatabaseService } from '@/services/database.service';
@@ -69,6 +75,7 @@ describe('KeySharingService.inviteByPhone - denylist removal on re-grant', () =>
 
   afterEach(() => {
     jest.clearAllMocks();
+    sendInviteMock.mockReset();
   });
 
   it('removes denylist entries and sends DENYLIST_REMOVE when share is active/unexpired', async () => {

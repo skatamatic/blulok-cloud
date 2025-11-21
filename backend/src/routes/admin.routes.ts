@@ -51,6 +51,10 @@ const rateLimitBypassSchema = Joi.object({
   reason: Joi.string().max(200).optional()
 });
 
+const notificationsTestModeSchema = Joi.object({
+  enabled: Joi.boolean().required(),
+});
+
 // POST /api/v1/admin/ops-key-rotation/broadcast
 router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const body = (req.body || {}) as any;
@@ -159,42 +163,6 @@ router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, r
 }));
 
 /**
- * POST /api/v1/admin/testing/invite-token
- * DEV_ADMIN only - Create a fresh invite token for a user and return it (no notification)
- */
-router.post('/testing/invite-token', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-    res.status(403).json({ success: false, message: 'Not available in production' });
-    return;
-  }
-  const { userId, metadata } = req.body || {};
-  if (!userId) {
-    res.status(400).json({ success: false, message: 'userId is required' });
-    return;
-  }
-  const { token, inviteId, expiresAt } = await InviteService.getInstance().createInvite(userId, metadata || undefined);
-  res.json({ success: true, token, inviteId, expiresAt });
-}));
-
-/**
- * POST /api/v1/admin/testing/otp
- * DEV_ADMIN only - Issue an OTP for a user and return the plaintext code (no notification)
- */
-router.post('/testing/otp', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-    res.status(403).json({ success: false, message: 'Not available in production' });
-    return;
-  }
-  const { userId, inviteId, delivery } = req.body || {};
-  if (!userId || (delivery !== 'sms' && delivery !== 'email')) {
-    res.status(400).json({ success: false, message: 'userId and delivery (sms|email) are required' });
-    return;
-  }
-  const { code, expiresAt } = await OTPService.getInstance().issueOtpForDev({ userId, inviteId: inviteId || null, delivery });
-  res.json({ success: true, code, expiresAt });
-}));
-
-/**
  * POST /api/v1/admin/rate-limits/bypass
  * DEV_ADMIN only - Temporarily bypass rate limiting for local testing
  */
@@ -228,6 +196,33 @@ router.post('/rate-limits/bypass', authenticateToken, requireDevAdmin, asyncHand
     expiresAt: state.expiresAt,
     ip: state.ip
   });
+}));
+
+/**
+ * POST /api/v1/admin/dev-tools/notifications-test-mode
+ * DEV_ADMIN only - Enable or disable notification debug test mode.
+ * When enabled (non-production only), NotificationService will publish
+ * invite/OTP events to in-memory debug subscribers instead of calling
+ * real SMS/email providers. Intended for local/E2E testing.
+ */
+router.post('/dev-tools/notifications-test-mode', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Notifications test mode is disabled in production' });
+    return;
+  }
+  const { error, value } = notificationsTestModeSchema.validate(req.body || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+  const { NotificationDebugService } = await import('@/services/notifications/notification-debug.service');
+  const svc = NotificationDebugService.getInstance();
+  if (value.enabled) {
+    svc.enable();
+  } else {
+    svc.disable();
+  }
+  res.json({ success: true, enabled: svc.isEnabled() });
 }));
 
 /**

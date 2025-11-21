@@ -162,6 +162,16 @@ export class KeySharingService {
       logger.error('Failed to process denylist removal on invite grant:', e);
     }
 
+    // For existing users that still require onboarding, send a fresh invite
+    // so they receive the same SMS/OTP flow as cloud-created invites.
+    if (!createdUser && invitee && invitee.requires_password_reset) {
+      try {
+        await FirstTimeUserService.getInstance().sendInvite(invitee);
+      } catch (e) {
+        logger.error('Failed to dispatch invite SMS for existing invitee', e);
+      }
+    }
+
     return { shareId, invitee, createdUser };
   }
 

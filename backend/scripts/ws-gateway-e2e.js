@@ -4,6 +4,7 @@ const WebSocket = require('ws');
 
 const API_BASE = process.env.API_BASE_URL || 'http://127.0.0.1:3000/api/v1';
 const WS_URL = process.env.WS_URL || 'ws://127.0.0.1:3000/ws/gateway';
+const UI_WS_URL = process.env.UI_WS_URL || 'ws://127.0.0.1:3000/ws';
 const EMAIL = process.env.DEV_ADMIN_EMAIL || 'devadmin@blulok.com';
 const PASSWORD = process.env.DEV_ADMIN_PASSWORD || 'DevAdmin123!@#';
 const VERBOSE = process.env.E2E_VERBOSE === '1' || process.env.VERBOSE === '1' || process.argv.includes('--verbose');
@@ -186,8 +187,22 @@ async function setRateLimitBypass(token, enabled, durationSeconds = 600) {
   }
 }
 
+async function setNotificationsTestMode(token, enabled) {
+  try {
+    const body = { enabled: !!enabled };
+    await axios.post(`${API_BASE}/admin/dev-tools/notifications-test-mode`, body, { headers: authHeaders(token) });
+    info(`Notifications test mode ${enabled ? 'enabled' : 'disabled'}`);
+    return true;
+  } catch (err) {
+    warn(`Notifications test mode ${enabled ? 'enable' : 'disable'} failed: ${err?.response?.status || ''} ${err?.response?.data || err?.message || err}`);
+    return false;
+  }
+}
+
 // Track overall E2E success so we can print a clean result after cleanup
 let success = false;
+let notificationsWs = null;
+const notificationEvents = [];
 
 function heading(text) {
   console.log(C.bold(C.cyan(`\n▸ ${text}`)));
@@ -317,6 +332,38 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId) {
     });
   });
   return ws;
+}
+
+async function connectNotificationsWs(token) {
+  const url = `${UI_WS_URL}?token=${token}`;
+  const ws = new WebSocket(url);
+  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (VERBOSE) console.log('[WS-DEV <-]', data.toString());
+      if (msg.type === 'dev_notifications_update' && msg.data) {
+        notificationEvents.push(msg.data);
+      }
+    } catch {}
+  });
+  ws.send(JSON.stringify({
+    type: 'subscription',
+    subscriptionType: 'dev_notifications',
+  }));
+  return ws;
+}
+
+async function waitForNotification(predicate, timeoutMs = 15000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const idx = notificationEvents.findIndex(predicate);
+    if (idx >= 0) {
+      return notificationEvents.splice(idx, 1)[0];
+    }
+    await delay(200);
+  }
+  throw new Error('Timed out waiting for DEV_NOTIFICATION event');
 }
 
 function deviceSync(ws, facilityId, devices, id) {
@@ -780,6 +827,7 @@ async function run() {
     warn('Skipping user details verification (profile missing id)');
   }
   let rateLimitBypassEnabled = await setRateLimitBypass(token, true, 900);
+  let notificationsTestModeEnabled = await setNotificationsTestMode(token, true);
   await cleanupPreviousArtifacts(token);
   // Create a dedicated E2E facility and work exclusively against it
   heading('Setup Facility');
@@ -827,6 +875,9 @@ async function run() {
   // Remember original FMS config if present to restore after test
   let existingConfig = null;
   let mockFmsServer = null;
+
+  // Connect dev-notifications WebSocket for observing invites/OTPs
+  notificationsWs = await connectNotificationsWs(token);
 
   // Connect gateway WS
   let ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
@@ -1100,23 +1151,36 @@ async function run() {
     created.users.push(primaryId, share1Id, share2Id);
     ok(`Users resolved primary=${primaryId} share1=${share1Id} share2=${share2Id}`);
 
-    // First-time invite + OTP + set-password flows (dev-admin testing)
+    // First-time invite + OTP + set-password flows using notification WS
     heading('First-time Login (Invite + OTP)');
     async function completeFirstTimeLogin(userId, email, newPassword = 'TestUser123!') {
-      // Create invite token
-      step(`Issuing invite token for user ${userId}`);
-      const invite = await axios.post(`${API_BASE}/admin/testing/invite-token`, { userId }, { headers: { Authorization: `Bearer ${token}` } });
-      const inviteToken = invite.data?.token;
-      const inviteId = invite.data?.inviteId;
-      if (!inviteToken) throw new Error('No invite token returned');
-      ok(`Invite created (id=${inviteId})`);
-      // Issue OTP (dev-only) and verify
-      step('Issuing OTP (dev-only)');
-      const otpRes = await axios.post(`${API_BASE}/admin/testing/otp`, { userId, inviteId, delivery: 'sms' }, { headers: { Authorization: `Bearer ${token}` } });
-      const otp = otpRes.data?.code;
-      if (!otp) throw new Error('No OTP code returned');
+      // Trigger a real invite via FirstTimeUserService
+      step(`Sending invite for user ${userId}`);
+      // Clear any previous DEV_NOTIFICATION events so we only see fresh invites/OTPs
+      notificationEvents.length = 0;
+      await axios.post(`${API_BASE}/users/${userId}/resend-invite`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      // Wait for invite SMS to capture deeplink/token
+      const inviteEvent = await waitForNotification((e) =>
+        e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
+      );
+      ok(`Received invite notification for ${inviteEvent.toPhone || inviteEvent.toEmail || 'unknown-recipient'}`);
+      const deeplinkMatch = String(inviteEvent.body).match(/token=([^&\s]+)/);
+      if (!deeplinkMatch) throw new Error('Failed to parse invite token from SMS body');
+      const inviteToken = decodeURIComponent(deeplinkMatch[1]);
+      // Request OTP via invite endpoint (this will generate OTP SMS)
+      step('Requesting OTP via invite/request-otp');
+      await axios.post(`${API_BASE}/auth/invite/request-otp`, {
+        token: inviteToken,
+        phone: inviteEvent.toPhone,
+      });
+      const otpEvent = await waitForNotification((e) =>
+        e.kind === 'otp' && e.delivery === 'sms'
+      );
+      const otpMatch = String(otpEvent.body).match(/(\d{6})/);
+      if (!otpMatch) throw new Error('Failed to parse OTP code from SMS body');
+      const otp = otpMatch[1];
       ok(`Entering OTP ${otp}`);
-      // Verify OTP (optional but we assert success)
+      // Verify OTP
       step('Verifying OTP');
       const verify = await axios.post(`${API_BASE}/auth/invite/verify-otp`, { token: inviteToken, otp });
       if (!verify.data?.success) throw new Error('OTP verify failed');
@@ -1177,15 +1241,20 @@ async function run() {
     created.users.push(newInviteeId);
     ok(`Invited user resolved as ${newInviteeId}`);
 
-    // Dev-admin helper: create invite token for this new user
-    step(`Issuing invite token for new sharee ${newInviteeId}`);
-    const newInvite = await axios.post(`${API_BASE}/admin/testing/invite-token`, { userId: newInviteeId }, {
+    // Dev-admin helper: send invite for this new user and capture token via notifications WS
+    step(`Sending invite for new sharee ${newInviteeId}`);
+    // Clear any prior notification events so we only capture fresh invite/OTP for this user
+    notificationEvents.length = 0;
+    await axios.post(`${API_BASE}/users/${newInviteeId}/resend-invite`, {}, {
       headers: { Authorization: `Bearer ${token}` }
     });
-    const newInviteToken = newInvite.data?.token;
-    const newInviteId = newInvite.data?.inviteId;
-    if (!newInviteToken || !newInviteId) throw new Error('No invite token returned for new sharee');
-    ok(`Invite created for new sharee (id=${newInviteId})`);
+    const newInviteEvent = await waitForNotification((e) =>
+      e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
+    );
+    ok('Invite SMS received for new sharee');
+    const newDeeplinkMatch = String(newInviteEvent.body).match(/token=([^&\s]+)/);
+    if (!newDeeplinkMatch) throw new Error('No invite token found in SMS for new sharee');
+    const newInviteToken = decodeURIComponent(newDeeplinkMatch[1]);
 
     // First attempt: request OTP WITHOUT profile details → should be rejected
     step('Requesting OTP without profile details (expected to fail)');
@@ -1217,15 +1286,18 @@ async function run() {
     }, { headers: { Authorization: `Bearer ${token}` } });
     ok('Profile updated for new sharee');
 
-    // Now issue a dev-only OTP for this invitee and complete the flow
-    step('Issuing OTP (dev-only) for new sharee');
-    const newOtpRes = await axios.post(`${API_BASE}/admin/testing/otp`, {
-      userId: newInviteeId,
-      inviteId: newInviteId,
-      delivery: 'sms',
-    }, { headers: { Authorization: `Bearer ${token}` } });
-    const newOtp = newOtpRes.data?.code;
-    if (!newOtp) throw new Error('No OTP code returned for new sharee');
+    // Now drive OTP via normal invite/request-otp + notifications WS
+    step('Requesting OTP for new sharee');
+    await axios.post(`${API_BASE}/auth/invite/request-otp`, {
+      token: newInviteToken,
+      phone: newInvitePhone,
+    });
+    const newOtpEvent = await waitForNotification((e) =>
+      e.kind === 'otp' && e.delivery === 'sms'
+    );
+    const newOtpMatch = String(newOtpEvent.body).match(/(\d{6})/);
+    const newOtp = newOtpMatch && newOtpMatch[1];
+    if (!newOtp) throw new Error('No OTP code parsed for new sharee');
     ok(`Entering OTP ${newOtp}`);
 
     step('Verifying OTP for new sharee');
@@ -1551,9 +1623,14 @@ async function run() {
       console.error(C.red(`Cleanup encountered errors: ${e?.response?.data || e?.message || e}`));
     } finally {
       try { ws.close(1000, 'e2e_cleanup'); } catch {}
+      try { if (notificationsWs) notificationsWs.close(1000, 'e2e_cleanup'); } catch {}
       if (rateLimitBypassEnabled) {
         await setRateLimitBypass(token, false);
         rateLimitBypassEnabled = false;
+      }
+      if (notificationsTestModeEnabled) {
+        await setNotificationsTestMode(token, false);
+        notificationsTestModeEnabled = false;
       }
     }
 
