@@ -55,6 +55,10 @@ const notificationsTestModeSchema = Joi.object({
   enabled: Joi.boolean().required(),
 });
 
+const gatewayPingSchema = Joi.object({
+  facilityId: Joi.string().required(),
+});
+
 // POST /api/v1/admin/ops-key-rotation/broadcast
 router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const body = (req.body || {}) as any;
@@ -223,6 +227,29 @@ router.post('/dev-tools/notifications-test-mode', authenticateToken, requireDevA
     svc.disable();
   }
   res.json({ success: true, enabled: svc.isEnabled() });
+}));
+
+/**
+ * POST /api/v1/admin/dev-tools/gateway-ping
+ * DEV_ADMIN only - Force an immediate PING to a connected gateway for a facility.
+ * This is intended solely for local/E2E testing of the heartbeat PING/PONG flow.
+ */
+router.post('/dev-tools/gateway-ping', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Gateway dev ping is disabled in production' });
+    return;
+  }
+
+  const { error, value } = gatewayPingSchema.validate(req.body || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  const facilityId = String(value.facilityId);
+  // Use the same command shape that the heartbeat uses so gateways can treat it uniformly.
+  GatewayEventsService.getInstance().unicastToFacility(facilityId, { type: 'PING' });
+  res.json({ success: true, facilityId });
 }));
 
 /**

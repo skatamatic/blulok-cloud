@@ -2,12 +2,12 @@ import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
-import rateLimit from 'express-rate-limit';
 
 import { config } from '@/config/environment';
 import { errorHandler } from '@/middleware/error.middleware';
 import { requestLogger } from '@/middleware/logger.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
+import { defaultLimiter } from '@/middleware/security-limits';
 import { healthRouter } from '@/routes/health.routes';
 import { authRouter } from '@/routes/auth.routes';
 import { usersRouter } from '@/routes/users.routes';
@@ -69,17 +69,8 @@ export function createApp(): Application {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform', 'X-Requested-With'],
   }));
 
-  // Rate limiting (disabled in test mode to avoid test failures)
-  if (config.nodeEnv !== 'test') {
-  const limiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 100, // Limit each IP to 100 requests per windowMs
-    message: 'Too many requests from this IP, please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-  app.use(limiter);
-  }
+  // Global rate limiting (wrapped with RateLimitBypassService and disabled in test)
+  app.use(defaultLimiter);
 
   // Compression and parsing middleware
   app.use(compression());

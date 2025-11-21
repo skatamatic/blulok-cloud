@@ -98,7 +98,8 @@ export class GatewayEventsService {
     if (t && t['facilityToClient'] && typeof t['facilityToClient'].get === 'function') {
       const client = t['facilityToClient'].get(facilityId);
       if (client) {
-        return { connected: true, lastPongAt: client.lastPongAt };
+        const lastPongAt = client.lastPongAt ?? client.lastActivityAt ?? undefined;
+        return { connected: true, lastPongAt };
       }
     }
     return { connected: false };

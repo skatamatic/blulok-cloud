@@ -13,11 +13,14 @@ type JWTPayload = {
   email?: string;
 };
 
+type RemoteWebSocket = WebSocket & { __remote?: string };
+
 type AuthedClient = {
-  ws: WebSocket;
+  ws: RemoteWebSocket;
   user: JWTPayload;
   facilityId: string;
-  lastPongAt: number;
+  /** Timestamp of last observed activity (any valid message or PONG) */
+  lastActivityAt: number;
 };
 
 /**
@@ -33,8 +36,11 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   private wss?: WebSocketServer;
   private facilityToClient = new Map<string, AuthedClient>();
   private readonly path = '/ws/gateway';
-  private readonly pingIntervalMs = (Number(process.env.GATEWAY_PING_INTERVAL_SEC) || 25) * 1000;
-  private readonly pongTimeoutMs = (Number(process.env.GATEWAY_PONG_TIMEOUT_SEC) || 20) * 1000;
+  // Heartbeat configuration:
+  // - pingIntervalMs: how long of inactivity before we proactively send a PING
+  // - inactivityTimeoutMs: maximum allowed silence (no messages or PONG) before we close
+  private readonly pingIntervalMs = (Number(process.env.GATEWAY_PING_INTERVAL_SEC) || 10) * 1000;
+  private readonly inactivityTimeoutMs = (Number(process.env.GATEWAY_PONG_TIMEOUT_SEC) || 20) * 1000;
   private heartbeatTimer?: NodeJS.Timer;
 
   public initialize(server: HTTPServer): void {
@@ -87,7 +93,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     }
   }
 
-  private bindConnection(ws: WebSocket): void {
+  private bindConnection(ws: RemoteWebSocket): void {
     let authed: AuthedClient | null = null;
 
     const closeAndCleanup = () => {
@@ -104,16 +110,39 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     ws.on('message', async (raw: WebSocket.RawData) => {
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');
       let msg: any;
-      try { msg = JSON.parse(text); } catch { return; }
+      try {
+        msg = JSON.parse(text);
+      } catch {
+        logger.warn('Gateway WS received non-JSON message, ignoring');
+        return;
+      }
 
-      const type = String(msg?.type || '');
+      const typeField = msg?.type;
+      const type = typeof typeField === 'string' ? typeField : '';
+
+      // Any valid message from the gateway counts as activity/keep-alive
+      if (authed) {
+        authed.lastActivityAt = Date.now();
+      }
+
       if (type === 'PONG') {
-        if (authed) authed.lastPongAt = Date.now();
+        const remote = getRemoteAddress(ws);
+        if (authed) {
+          logger.info('Gateway WS PONG received', {
+            facilityId: authed.facilityId,
+            userId: authed.user.userId,
+            remote,
+          });
+          // Acknowledge so gateways can confirm their PONG was processed
+          safeSend(ws, { type: 'PONG_OK', ts: Date.now() });
+        } else {
+          logger.info('Gateway WS PONG received before AUTH completed', { remote });
+        }
         return;
       }
 
       if (type === 'AUTH') {
-        const remote = (ws as any).__remote || (ws as any)?._socket?.remoteAddress || 'unknown';
+        const remote = getRemoteAddress(ws);
         const token = String(msg?.token || '');
         const facilityId = String(msg?.facilityId || '');
         const decoded = AuthService.verifyToken(token) as JWTPayload | null;
@@ -146,7 +175,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         if (existing && existing.ws !== ws) {
           try { existing.ws.close(4000, 'replaced'); } catch {}
         }
-        authed = { ws, user: decoded, facilityId, lastPongAt: Date.now() };
+        authed = { ws, user: decoded, facilityId, lastActivityAt: Date.now() };
         this.facilityToClient.set(facilityId, authed);
         safeSend(ws, { type: 'AUTH_OK', facilityId });
         logger.info(`Gateway WS authenticated: facility=${facilityId} user=${decoded.userId} role=${decoded.role} remote=${remote}`);
@@ -154,8 +183,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       }
 
       if (!authed) {
-        const remote = (ws as any).__remote || (ws as any)?._socket?.remoteAddress || 'unknown';
-        logger.warn(`Gateway WS message before AUTH (type=${type}) remote=${remote} - closing`);
+        const remote = getRemoteAddress(ws);
+        logger.warn(`Gateway WS message before AUTH (type=${typeField}) remote=${remote} - closing`);
         safeSend(ws, { type: 'ERROR', code: 'NOT_AUTHENTICATED', message: 'Send AUTH first' });
         return;
       }
@@ -180,8 +209,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       }
 
       // Unknown message
-      logger.warn(`Gateway WS unknown message type=${type} facility=${authed?.facilityId || 'n/a'}`);
-      safeSend(ws, { type: 'ERROR', code: 'UNKNOWN_TYPE', message: `Unknown type ${type}` });
+      logger.warn(`Gateway WS unknown message type=${typeField} facility=${authed?.facilityId || 'n/a'}`);
+      safeSend(ws, { type: 'ERROR', code: 'UNKNOWN_TYPE', message: `Unknown type ${typeField}` });
     });
 
     ws.on('close', closeAndCleanup);
@@ -200,13 +229,17 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           this.facilityToClient.delete(facilityId);
           continue;
         }
-        if (now - client.lastPongAt > this.pongTimeoutMs) {
-          logger.warn(`Gateway heartbeat missed, closing facility ${facilityId}`);
+        const inactiveMs = now - client.lastActivityAt;
+        if (inactiveMs > this.inactivityTimeoutMs) {
+          logger.warn(`Gateway heartbeat inactivity timeout, closing facility ${facilityId}`);
           try { client.ws.close(4001, 'heartbeat timeout'); } catch {}
           this.facilityToClient.delete(facilityId);
           continue;
         }
-        safeSend(client.ws, { type: 'PING' });
+        // Only send PING after a period of inactivity; any gateway message counts as activity.
+        if (inactiveMs >= this.pingIntervalMs) {
+          safeSend(client.ws, { type: 'PING' });
+        }
       }
     }, this.pingIntervalMs);
   }
@@ -233,6 +266,17 @@ function safeSend(ws: WebSocket, obj: any): void {
   } catch {}
 }
 
-// keep file-local helpers minimal; complex logic moved to services
-
+/**
+ * Best-effort extraction of the remote peer address from a WebSocket.
+ * Prefer the captured __remote address from the HTTP upgrade, with a
+ * safe fallback to the underlying socket's remoteAddress if exposed.
+ */
+function getRemoteAddress(ws: RemoteWebSocket): string {
+  if (ws.__remote) {
+    return ws.__remote;
+  }
+  const anyWs = ws as unknown as { socket?: { remoteAddress?: string }; _socket?: { remoteAddress?: string } };
+  const candidate = anyWs.socket?.remoteAddress ?? anyWs._socket?.remoteAddress;
+  return typeof candidate === 'string' ? candidate : 'unknown';
+}
 

@@ -167,6 +167,13 @@ async function cleanupStaleFacilityAdmins(token) {
   }
 }
 
+async function forceGatewayPing(token, facilityId) {
+  const res = await axios.post(`${API_BASE}/admin/dev-tools/gateway-ping`, { facilityId }, {
+    headers: authHeaders(token),
+  });
+  return res.data;
+}
+
 async function cleanupPreviousArtifacts(token) {
   heading('Pre-run Cleanup');
   await cleanupStaleFacilities(token);
@@ -203,6 +210,7 @@ async function setNotificationsTestMode(token, enabled) {
 let success = false;
 let notificationsWs = null;
 const notificationEvents = [];
+const gatewayWsEvents = [];
 
 function heading(text) {
   console.log(C.bold(C.cyan(`\n▸ ${text}`)));
@@ -314,6 +322,7 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId) {
     try {
       if (VERBOSE) console.log('[WS <-]', data.toString());
       const msg = JSON.parse(data.toString());
+      gatewayWsEvents.push(msg);
       if (msg?.type === 'PING') ws.send(JSON.stringify({ type: 'PONG' }));
     } catch {}
   });
@@ -364,6 +373,18 @@ async function waitForNotification(predicate, timeoutMs = 15000) {
     await delay(200);
   }
   throw new Error('Timed out waiting for DEV_NOTIFICATION event');
+}
+
+async function waitForGatewayEvent(predicate, timeoutMs = 5000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const idx = gatewayWsEvents.findIndex(predicate);
+    if (idx >= 0) {
+      return gatewayWsEvents.splice(idx, 1)[0];
+    }
+    await delay(100);
+  }
+  throw new Error('Timed out waiting for gateway WS event');
 }
 
 function deviceSync(ws, facilityId, devices, id) {
@@ -894,6 +915,16 @@ async function run() {
   } catch (err) {
     warn(`Gateway status endpoint unavailable (${err?.response?.status || err?.message || err})`);
   }
+
+  step('Forcing gateway PING via dev-tools endpoint and asserting PONG_OK');
+  gatewayWsEvents.length = 0;
+  await forceGatewayPing(token, facilityId);
+  await waitForGatewayEvent((e) => e.type === 'PING', 3000);
+  const pongOk = await waitForGatewayEvent((e) => e.type === 'PONG_OK', 3000);
+  if (!pongOk || typeof pongOk.ts !== 'number') {
+    throw new Error('Did not receive PONG_OK with timestamp from gateway');
+  }
+  ok('Gateway responded to forced PING with PONG_OK');
 
   try {
     // ---------------- FMS Mock + Config + Sync ----------------
