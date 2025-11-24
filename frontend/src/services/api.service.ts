@@ -318,6 +318,12 @@ class ApiService {
     return response.data as { success: boolean; facilityId: string; connected: boolean; lastPongAt?: number };
   }
 
+  // Dev tools: force a single PING to a connected gateway (DEV_ADMIN only)
+  async pingGatewayDev(facilityId: string) {
+    const response = await this.api.post('/admin/dev-tools/gateway-ping', { facilityId });
+    return response.data as { success: boolean; facilityId: string };
+  }
+
   // Internal Gateway endpoints
   async getSecureTimeSyncPacket() {
     const response = await this.api.get('/internal/gateway/time-sync');

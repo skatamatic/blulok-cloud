@@ -10,6 +10,7 @@ import { FMSSyncProgressSubscriptionManager } from './fms-sync-progress-subscrip
 import { GatewayStatusSubscriptionManager } from './gateway-status-subscription-manager';
 import { CommandQueueSubscriptionManager } from './command-queue-subscription-manager';
 import { DevNotificationsSubscriptionManager } from './dev-notifications-subscription-manager';
+import { GatewayDebugSubscriptionManager } from './gateway-debug-subscription-manager';
 
 /**
  * Subscription Registry
@@ -52,6 +53,7 @@ export class SubscriptionRegistry {
     this.registerManager(new GatewayStatusSubscriptionManager());
     this.registerManager(new CommandQueueSubscriptionManager());
     this.registerManager(new DevNotificationsSubscriptionManager());
+    this.registerManager(new GatewayDebugSubscriptionManager());
   }
 
   private registerManager(manager: SubscriptionManager): void {

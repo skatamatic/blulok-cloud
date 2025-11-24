@@ -10,6 +10,7 @@ import { DenylistService } from '@/services/denylist.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { config } from '@/config/environment';
 import { UserRole } from '@/types/auth.types';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 
 export class KeySharingService {
   private static instance: KeySharingService;
@@ -55,6 +56,31 @@ export class KeySharingService {
       }) as User;
       invitee = created;
       createdUser = true;
+
+      // Automatically associate newly created share invitees with the facility
+      // that owns the shared unit. This ensures they can see/access that facility
+      // once they complete first-time setup.
+      try {
+        const unitRow = await this.db('units')
+          .where({ id: unitId })
+          .first('facility_id');
+        const facilityId = unitRow?.facility_id as string | undefined;
+        if (facilityId) {
+          await UserFacilityAssociationModel.addUserToFacility(invitee.id, facilityId);
+        } else {
+          logger.warn('KeySharingService.inviteByPhone: no facility found for unit when associating invitee', {
+            unitId,
+            userId: invitee.id,
+          });
+        }
+      } catch (err) {
+        logger.warn('KeySharingService.inviteByPhone: failed to associate invitee to facility', {
+          unitId,
+          userId: invitee.id,
+          error: (err as Error)?.message ?? String(err),
+        });
+      }
+
       try {
         await FirstTimeUserService.getInstance().sendInvite(invitee);
       } catch (e) {

@@ -5,6 +5,7 @@ import { AuthService } from '@/services/auth.service';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { ApiProxyService } from './api-proxy.service';
+import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
 
 type JWTPayload = {
   userId: string;
@@ -88,6 +89,17 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     }
     if (client.ws.readyState === WebSocket.OPEN) {
       client.ws.send(JSON.stringify(payload));
+      try {
+        const msgType = (payload && typeof payload === 'object' && (payload.type || payload.cmd_type)) || typeof payload;
+        GatewayDebugService.getInstance().publish({
+          kind: 'message_outbound',
+          facilityId,
+          type: String(msgType),
+          direction: 'outgoing',
+          ts: Date.now(),
+          lastActivityAt: client.lastActivityAt,
+        });
+      } catch {}
     } else {
       logger.warn(`Gateway socket not open for facility ${facilityId}`);
     }
@@ -102,6 +114,13 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         if (current?.ws === ws) {
           this.facilityToClient.delete(authed.facilityId);
           logger.info(`Gateway disconnected for facility ${authed.facilityId} (user=${authed.user.userId})`);
+          GatewayDebugService.getInstance().publish({
+            kind: 'connection_closed',
+            facilityId: authed.facilityId,
+            userId: authed.user.userId,
+            ts: Date.now(),
+            lastActivityAt: authed.lastActivityAt,
+          });
         }
       }
       try { ws.close(); } catch {}
@@ -120,11 +139,6 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       const typeField = msg?.type;
       const type = typeof typeField === 'string' ? typeField : '';
 
-      // Any valid message from the gateway counts as activity/keep-alive
-      if (authed) {
-        authed.lastActivityAt = Date.now();
-      }
-
       if (type === 'PONG') {
         const remote = getRemoteAddress(ws);
         if (authed) {
@@ -133,12 +147,37 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             userId: authed.user.userId,
             remote,
           });
+          const now = Date.now();
+          authed.lastActivityAt = now;
+          GatewayDebugService.getInstance().publish({
+            kind: 'pong_received',
+            facilityId: authed.facilityId,
+            userId: authed.user.userId,
+            ts: now,
+            lastActivityAt: authed.lastActivityAt,
+            remote,
+          });
           // Acknowledge so gateways can confirm their PONG was processed
           safeSend(ws, { type: 'PONG_OK', ts: Date.now() });
         } else {
           logger.info('Gateway WS PONG received before AUTH completed', { remote });
         }
         return;
+      }
+
+      // Any other valid message from the gateway counts as activity/keep-alive
+      if (authed) {
+        const now = Date.now();
+        authed.lastActivityAt = now;
+        GatewayDebugService.getInstance().publish({
+          kind: 'message_inbound',
+          facilityId: authed.facilityId,
+          userId: authed.user.userId,
+          type,
+          direction: 'incoming',
+          ts: now,
+          lastActivityAt: authed.lastActivityAt,
+        });
       }
 
       if (type === 'AUTH') {
@@ -175,10 +214,19 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         if (existing && existing.ws !== ws) {
           try { existing.ws.close(4000, 'replaced'); } catch {}
         }
-        authed = { ws, user: decoded, facilityId, lastActivityAt: Date.now() };
+        const now = Date.now();
+        authed = { ws, user: decoded, facilityId, lastActivityAt: now };
         this.facilityToClient.set(facilityId, authed);
         safeSend(ws, { type: 'AUTH_OK', facilityId });
         logger.info(`Gateway WS authenticated: facility=${facilityId} user=${decoded.userId} role=${decoded.role} remote=${remote}`);
+        GatewayDebugService.getInstance().publish({
+          kind: 'connection_opened',
+          facilityId,
+          userId: decoded.userId,
+          ts: now,
+          lastActivityAt: now,
+          remote,
+        });
         return;
       }
 
@@ -234,11 +282,23 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           logger.warn(`Gateway heartbeat inactivity timeout, closing facility ${facilityId}`);
           try { client.ws.close(4001, 'heartbeat timeout'); } catch {}
           this.facilityToClient.delete(facilityId);
+          GatewayDebugService.getInstance().publish({
+            kind: 'heartbeat_timeout',
+            facilityId,
+            ts: now,
+            lastActivityAt: client.lastActivityAt,
+          });
           continue;
         }
         // Only send PING after a period of inactivity; any gateway message counts as activity.
         if (inactiveMs >= this.pingIntervalMs) {
           safeSend(client.ws, { type: 'PING' });
+          GatewayDebugService.getInstance().publish({
+            kind: 'ping_sent',
+            facilityId,
+            ts: now,
+            lastActivityAt: client.lastActivityAt,
+          });
         }
       }
     }, this.pingIntervalMs);

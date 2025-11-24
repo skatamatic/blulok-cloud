@@ -109,6 +109,11 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
 
   // Inbound WS status (gateway connects to cloud)
   const [wsStatus, setWsStatus] = useState<{ connected: boolean; lastPongAt?: number } | null>(null);
+  // Gateway debug stream (DEV tools)
+  const [gatewayDebugEvents, setGatewayDebugEvents] = useState<any[]>([]);
+  const [lastGatewayActivityAt, setLastGatewayActivityAt] = useState<number | null>(null);
+  const [lastPingTs, setLastPingTs] = useState<number | null>(null);
+  const [lastPongTs, setLastPongTs] = useState<number | null>(null);
   const gatewayWsUrl = useMemo(() => {
     const base = getWsBaseUrl();
     return `${base}/ws/gateway`;
@@ -180,6 +185,37 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
     timer = setInterval(poll, 5000);
     return () => { if (timer) clearInterval(timer); };
   }, [facilityId]);
+
+  // Subscribe to gateway debug WS stream (DEV admin only)
+  useEffect(() => {
+    if (!ws || !isDevAdmin) return;
+
+    const subscriptionId = ws.subscribe('gateway_debug', (event: any) => {
+      if (!event || (event.facilityId && event.facilityId !== facilityId)) {
+        return;
+      }
+      setGatewayDebugEvents(prev => {
+        const next = [...prev, event];
+        // Keep the most recent 200 events to avoid unbounded growth
+        return next.slice(-200);
+      });
+      if (typeof event.lastActivityAt === 'number') {
+        setLastGatewayActivityAt(event.lastActivityAt);
+      }
+      if (event.kind === 'ping_sent') {
+        setLastPingTs(event.ts || Date.now());
+      }
+      if (event.kind === 'pong_received') {
+        setLastPongTs(event.ts || Date.now());
+      }
+    });
+
+    return () => {
+      if (subscriptionId) {
+        ws.unsubscribe(subscriptionId);
+      }
+    };
+  }, [ws, facilityId, isDevAdmin]);
 
   // Check if gateway is properly configured
   const isGatewayProperlyConfigured = (gw: Gateway | null) => {
@@ -865,9 +901,109 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
         </div>
 
         {/* Gateway Debug */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway Debug</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Debug</h3>
+          {/* Live WS monitor + ping tester */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-1">
+              <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">WS Heartbeat / Last Activity</h4>
+              <div className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">Last gateway activity</span>
+                  <span className="font-mono">
+                    {lastGatewayActivityAt
+                      ? new Date(lastGatewayActivityAt).toLocaleTimeString()
+                      : '—'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">Last PING</span>
+                  <span className="font-mono">
+                    {lastPingTs ? new Date(lastPingTs).toLocaleTimeString() : '—'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">Last PONG</span>
+                  <span className="font-mono">
+                    {lastPongTs ? new Date(lastPongTs).toLocaleTimeString() : '—'}
+                  </span>
+                </div>
+                {lastPingTs && lastPongTs && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">Last RTT</span>
+                    <span className="font-mono">
+                      {Math.max(0, lastPongTs - lastPingTs)} ms
+                    </span>
+                  </div>
+                )}
+                <button
+                  onClick={async () => {
+                    try {
+                      await apiService.pingGatewayDev(facilityId);
+                      addToast({ type: 'success', title: 'Forced PING requested' });
+                    } catch (err: any) {
+                      const message = err?.response?.data?.message || 'Failed to request gateway PING';
+                      addToast({ type: 'error', title: message });
+                    }
+                  }}
+                  disabled={!isDevAdmin}
+                  className={`mt-3 inline-flex items-center px-3 py-2 text-sm rounded-md ${
+                    isDevAdmin
+                      ? 'bg-primary-600 text-white hover:bg-primary-700'
+                      : 'bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Send Test PING
+                </button>
+                {!isDevAdmin && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Dev Admin required for PING tester.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="md:col-span-2">
+              <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Live Gateway WS Events</h4>
+              <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/30 max-h-64 overflow-y-auto text-xs font-mono p-2 space-y-1">
+                {gatewayDebugEvents.length === 0 && (
+                  <div className="text-gray-500 dark:text-gray-400">
+                    No events yet. Once a gateway connects and starts talking, events will appear here.
+                  </div>
+                )}
+                {gatewayDebugEvents
+                  .filter((e) => !e.facilityId || e.facilityId === facilityId)
+                  .slice(-100)
+                  .reverse()
+                  .map((event, index) => (
+                    <div key={index} className="flex items-start gap-2">
+                      <span className="text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                        {event.ts ? new Date(event.ts).toLocaleTimeString() : ''}
+                      </span>
+                      <span
+                        className={`px-1 rounded ${
+                          event.kind === 'ping_sent'
+                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300'
+                            : event.kind === 'pong_received'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                            : event.kind === 'heartbeat_timeout' || event.kind === 'connection_closed'
+                            ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                            : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
+                        }`}
+                      >
+                        {event.kind}
+                      </span>
+                      <span className="truncate">
+                        {event.type && <span className="mr-2">type={event.type}</span>}
+                        {event.direction && <span className="mr-2">dir={event.direction}</span>}
+                        {event.remote && <span className="mr-2">ip={event.remote}</span>}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Fallback JWT (App-signed)

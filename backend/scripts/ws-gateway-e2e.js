@@ -1355,6 +1355,20 @@ async function run() {
     if (!newShareeToken) throw new Error('New sharee login failed after first-time setup');
     ok('New sharee can log in with phone identifier');
 
+    // Ensure new sharee is associated to the facility that owns the shared unit
+    step('Verifying new sharee has facility association for unit facility');
+    const facilitiesRes = await axios.get(`${API_BASE}/user-facilities/${newInviteeId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!facilitiesRes.data?.success) {
+      throw new Error(`Failed to fetch user facilities for new sharee: ${JSON.stringify(facilitiesRes.data)}`);
+    }
+    const facilityIds = facilitiesRes.data.facilityIds || [];
+    if (!facilityIds.includes(facilityId)) {
+      throw new Error(`Expected new sharee to be associated with facility ${facilityId}, got: [${facilityIds.join(', ')}]`);
+    }
+    ok('New sharee has correct facility association');
+
 
     // Assign primary tenant to unit
     step('Assigning primary tenant to unit');

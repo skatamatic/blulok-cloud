@@ -143,7 +143,24 @@ export class FirstTimeUserService {
     if (!valid) throw new Error('Invalid OTP');
 
     const passwordHash = await bcrypt.hash(params.newPassword, 12);
-    await UserModel.updateById(invite.user_id, { password_hash: passwordHash, requires_password_reset: false });
+    // Load user to decide whether to activate on successful first-time setup
+    const user = await UserModel.findById(invite.user_id) as User | undefined;
+    if (!user) {
+      throw new Error('User not found for invite');
+    }
+
+    const updates: Partial<User> = {
+      password_hash: passwordHash,
+      requires_password_reset: false,
+    };
+
+    // If the account is currently inactive, treat successful invite completion
+    // (valid OTP + password set) as the point where the account becomes active.
+    if (!user.is_active) {
+      updates.is_active = true;
+    }
+
+    await UserModel.updateById(user.id, updates as any);
     await this.invites.consumeInvite(invite.id);
     logger.info(`User ${invite.user_id} set password via invite ${invite.id}`);
   }
