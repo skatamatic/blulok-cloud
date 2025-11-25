@@ -1071,7 +1071,19 @@ async function run() {
     heading('Gateway Device Sync');
     step('Initial device sync (add 3 devices)');
     const initialDevices = [
-      { serial: `GW-E2E-${Date.now()}-1`, firmwareVersion: '3A0-001', online: true, locked: false, batteryLevel: 3450 },
+      {
+        serial: `GW-E2E-${Date.now()}-1`,
+        firmwareVersion: '3A0-001',
+        online: true,
+        locked: false,
+        batteryLevel: 3450,
+        lockNumber: 495,
+        batteryUnit: 'mV',
+        signalStrength: 80,
+        temperatureValue: 21.5,
+        temperatureUnit: 'C',
+        lastSeen: new Date().toISOString(),
+      },
       { serial: `GW-E2E-${Date.now()}-2`, firmwareVersion: '3A0-001', online: false, locked: false, batteryLevel: 3400 },
       { serial: `GW-E2E-${Date.now()}-3`, firmwareVersion: '3A0-001', online: true, locked: true, batteryLevel: 3300 },
     ];
@@ -1103,6 +1115,34 @@ async function run() {
       const list = resDevices.data?.devices || [];
       const match = list.find((d) => (d.device_serial || '').toLowerCase() === remainingSerial.toLowerCase());
       deviceId = match?.id || null;
+
+      if (!match) {
+        throw new Error('Remaining device not found in unassigned devices list');
+      }
+
+      // Validate that gateway device sync telemetry and extra fields were preserved
+      const gatewayData = (match.device_settings && match.device_settings.gatewayData) || {};
+      if (!gatewayData || typeof gatewayData !== 'object') {
+        throw new Error('gatewayData missing on synced device');
+      }
+
+      // Check that key telemetry fields and extras came through from internal gateway/device-sync
+      if (gatewayData.serial !== remainingSerial) {
+        throw new Error(`gatewayData.serial mismatch; expected ${remainingSerial}, got ${gatewayData.serial}`);
+      }
+      if (gatewayData.lockNumber !== initialDevices[0].lockNumber) {
+        throw new Error(`gatewayData.lockNumber mismatch; expected ${initialDevices[0].lockNumber}, got ${gatewayData.lockNumber}`);
+      }
+      if (gatewayData.signalStrength !== initialDevices[0].signalStrength) {
+        throw new Error(`gatewayData.signalStrength mismatch; expected ${initialDevices[0].signalStrength}, got ${gatewayData.signalStrength}`);
+      }
+      if (gatewayData.temperatureValue !== initialDevices[0].temperatureValue) {
+        throw new Error(`gatewayData.temperatureValue mismatch; expected ${initialDevices[0].temperatureValue}, got ${gatewayData.temperatureValue}`);
+      }
+      // Normalized temperature field should mirror temperatureValue
+      if (gatewayData.temperature !== initialDevices[0].temperatureValue) {
+        throw new Error(`gatewayData.temperature normalization mismatch; expected ${initialDevices[0].temperatureValue}, got ${gatewayData.temperature}`);
+      }
     } catch {}
     if (!deviceId) throw new Error('Remaining device not found after sync');
     ok(`Using device ${deviceId} (serial=${remainingSerial})`);
@@ -1140,12 +1180,39 @@ async function run() {
     const respTs = await waitForProxyResponse(ws, reqTs);
     if (respTs.status !== 200 || !respTs.body?.success) throw new Error(`Proxy GET time-sync failed: ${respTs.status}`);
 
+    const tsJwt = respTs.body?.timeSyncJwt;
+    if (!tsJwt || typeof tsJwt !== 'string') {
+      throw new Error('timeSyncJwt missing or invalid in time-sync response');
+    }
+    const tsClaims = decodeJwtClaims(tsJwt);
+    if (!tsClaims || tsClaims.cmd_type !== 'SECURE_TIME_SYNC' || typeof tsClaims.ts !== 'number') {
+      throw new Error(`Invalid time-sync JWT claims: ${JSON.stringify(tsClaims)}`);
+    }
+
     // PROXY: Request time sync for a specific lock (use our deviceId)
     const reqTsLock = 'req-time-sync-lock';
     ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqTsLock, method: 'POST', path: `/internal/gateway/request-time-sync`, body: { lock_id: deviceId } }));
     const respTsLock = await waitForProxyResponse(ws, reqTsLock);
     if (respTsLock.status !== 200 || !respTsLock.body?.success) {
       console.warn('⚠️  Proxy POST request-time-sync returned non-200 or unsuccessful:', respTsLock.status);
+    }
+
+    // Negative test: device-sync should reject devices without any identifiers
+    step('Negative device-sync payload (missing identifiers) should be rejected');
+    const badSyncId = 'req-internal-sync-bad';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: badSyncId,
+      method: 'POST',
+      path: `/internal/gateway/device-sync`,
+      body: {
+        facility_id: facilityId,
+        devices: [{ batteryLevel: 10 }],
+      },
+    }));
+    const badSyncResp = await waitForProxyResponse(ws, badSyncId);
+    if (badSyncResp.status !== 400) {
+      throw new Error(`Expected 400 for invalid device-sync payload, got ${badSyncResp.status}`);
     }
 
     // PROXY: Update device status to "online" then fetch device details

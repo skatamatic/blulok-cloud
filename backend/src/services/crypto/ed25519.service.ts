@@ -77,6 +77,19 @@ export class Ed25519Service {
 			.sign(privateKey);
 	}
 
+  /**
+   * Sign a Secure Time Sync JWT.
+   * - Uses the Ops key and EdDSA, like Route Pass, but does NOT set iat/exp.
+   * - Payload contains only cmd_type and ts so the meaning of the signed data is unambiguous.
+   */
+  public static async signTimeSyncJwt(ts: number): Promise<string> {
+    const privateKey = await this.getOpsPrivateKey();
+    const payload = { cmd_type: 'SECURE_TIME_SYNC', ts };
+    return await new SignJWT(payload as any)
+      .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
+      .sign(privateKey);
+  }
+
   /** Verify EdDSA JWT using the Ops public key. */
   public static async verifyJwt(token: string): Promise<Record<string, any>> {
 		const publicKey = await this.getOpsPublicKey();

@@ -16,7 +16,7 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
-import { DeviceSyncService } from '@/services/device-sync.service';
+import { DeviceSyncService, GatewayDeviceData } from '@/services/device-sync.service';
 import { GatewayModel } from '@/models/gateway.model';
 
 const router = Router();
@@ -65,16 +65,31 @@ router.post('/fallback-pass', authenticateToken, requireFacilityAdmin, asyncHand
 const deviceSyncSchema = Joi.object({
   // Optional facility_id to support direct HTTP testing; for WS proxy the X-Gateway-Facility-Id header will be present
   facility_id: Joi.string().optional(),
-  devices: Joi.array().items(Joi.object({
-    serial: Joi.string().optional(),
-    id: Joi.string().optional(),
-    lockId: Joi.string().optional(),
-    firmwareVersion: Joi.string().optional(),
-    online: Joi.boolean().optional(),
-    locked: Joi.boolean().optional(),
-    batteryLevel: Joi.number().optional(),
-    lastSeen: Joi.string().optional()
-  })).required()
+  devices: Joi.array().items(
+    Joi.object({
+      // Core identifiers – at least one of these is REQUIRED for proper mapping
+      serial: Joi.string().optional(),
+      id: Joi.string().optional(),
+      lockId: Joi.string().optional(),
+
+      // Status and telemetry fields we actively use
+      firmwareVersion: Joi.string().optional(),
+      online: Joi.boolean().optional(),
+      locked: Joi.boolean().optional(),
+      batteryLevel: Joi.number().optional(),
+      lastSeen: Joi.string().optional(),
+
+      // Additional optional telemetry from gateway
+      lockNumber: Joi.number().optional(),
+      batteryUnit: Joi.string().optional(),
+      signalStrength: Joi.number().optional(),
+      temperatureValue: Joi.number().optional(),
+      temperatureUnit: Joi.string().optional(),
+    })
+      // Enforce that at least one identifier is present; otherwise reject the device payload
+      .or('serial', 'id', 'lockId')
+      .unknown(true) // Allow extra fields; we will ignore anything we don't need
+  ).required()
 });
 
 router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -100,7 +115,28 @@ router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandle
   }
 
   // Perform sync
-  const devices = value.devices as any[];
+  const rawDevices = value.devices as any[];
+
+  // Normalize incoming gateway device payloads into our internal GatewayDeviceData shape.
+  // - Accept both camelCase and snake_case for some fields (e.g. lockId / lock_id)
+  // - Map temperatureValue -> temperature
+  // - Preserve extra fields via spread so they are available in device_settings.gatewayData
+  const devices: GatewayDeviceData[] = rawDevices.map((d: any) => {
+    const normalized: GatewayDeviceData = {
+      ...d,
+      lockId: d.lockId ?? d.lock_id,
+      // Prefer explicit temperature field if present, otherwise fall back to temperatureValue
+      temperature: d.temperature ?? d.temperatureValue,
+    };
+
+    // Normalize lastSeen to Date when provided as string; otherwise let downstream logic handle defaults
+    if (typeof d.lastSeen === 'string') {
+      normalized.lastSeen = new Date(d.lastSeen);
+    }
+
+    return normalized;
+  });
+
   await DeviceSyncService.getInstance().syncGatewayDevices(gateway.id, devices);
   await DeviceSyncService.getInstance().updateDeviceStatuses(gateway.id, devices);
 
