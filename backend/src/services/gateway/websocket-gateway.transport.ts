@@ -142,7 +142,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       if (type === 'PONG') {
         const remote = getRemoteAddress(ws);
         if (authed) {
-          logger.info('Gateway WS PONG received', {
+          logger.debug?.('Gateway WS PONG received', {
             facilityId: authed.facilityId,
             userId: authed.user.userId,
             remote,
@@ -160,7 +160,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           // Acknowledge so gateways can confirm their PONG was processed
           safeSend(ws, { type: 'PONG_OK', ts: Date.now() });
         } else {
-          logger.info('Gateway WS PONG received before AUTH completed', { remote });
+          logger.debug?.('Gateway WS PONG received before AUTH completed', { remote });
         }
         return;
       }

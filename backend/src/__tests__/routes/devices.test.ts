@@ -10,6 +10,26 @@ jest.mock('@/services/devices.service');
 // Mock DatabaseService
 jest.mock('@/services/database.service');
 
+// Mock LockCommandService so lock route tests don't depend on real gateways
+jest.mock('@/services/lock-command.service', () => {
+  const issueLockCommandMock = jest.fn().mockResolvedValue({
+    success: true,
+    message: 'Lock command accepted and in progress',
+    lock_status: 'locking',
+    previous_status: 'locked',
+  });
+  return {
+    LockCommandService: {
+      getInstance: jest.fn(() => ({
+        issueLockCommand: issueLockCommandMock,
+      })),
+    },
+    __mocks: {
+      issueLockCommandMock,
+    },
+  };
+});
+
 // Create a shared mock instance that will be returned by DeviceModel
 // This must be defined before jest.mock to be accessible
 let sharedMockDeviceModel: any;
@@ -600,12 +620,12 @@ describe('Devices Routes', () => {
       });
     });
 
-    describe('PUT /api/v1/devices/blulok/:id/lock - Update Lock Status', () => {
+    describe('PUT /api/v1/devices/blulok/:id/lock - Update Lock Status / Command', () => {
       const validLockData = {
         lock_status: 'unlocked'
       };
 
-      it('should update lock status for DEV_ADMIN', async () => {
+      it('should send lock command and enter transitional state for DEV_ADMIN', async () => {
         // Setup mock knex for device lookup
         mockDeviceModel.db.connection = jest.fn((table: string) => ({
           select: jest.fn().mockReturnThis(),

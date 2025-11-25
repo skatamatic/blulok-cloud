@@ -89,6 +89,9 @@ const bluLokDeviceSchema = Joi.object({
 });
 
 const lockStatusSchema = Joi.object({
+  // API accepts target state for command-style operations.
+  // For direct overrides (admin tools), we still allow 'error' but the primary
+  // path is 'locked'/'unlocked' which goes through the lock command pipeline.
   lock_status: Joi.string().valid('locked', 'unlocked', 'error').required(),
 });
 
@@ -371,7 +374,7 @@ router.put('/:deviceType/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV
   }
 });
 
-// PUT /api/devices/blulok/:id/lock - Update BluLok lock status
+// PUT /api/devices/blulok/:id/lock - Issue BluLok lock/unlock command
 router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
@@ -391,7 +394,7 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
     const knex = deviceModel['db'].connection;
     const deviceRow = await knex('blulok_devices')
       .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
-      .select('blulok_devices.unit_id', 'gateways.facility_id')
+      .select('blulok_devices.unit_id', 'gateways.facility_id', 'gateways.id as gateway_id', 'blulok_devices.lock_status')
       .where('blulok_devices.id', String(id))
       .first();
 
@@ -426,9 +429,31 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
       }
     }
 
-    await deviceModel.updateLockStatus(String(id), value.lock_status);
-    
-    res.json({ message: 'Lock status updated successfully' });
+    // If caller is explicitly setting lock_status=error, treat as direct override.
+    // This is primarily for admin tooling and does not go through gateway commands.
+    if (value.lock_status === 'error') {
+      await deviceModel.updateLockStatus(String(id), 'error');
+      res.json({ success: true, message: 'Lock status overridden to error' });
+      return;
+    }
+
+    // For locked/unlocked, route through the LockCommandService so the device
+    // enters a transitional state ('locking'/'unlocking') and we wait on device-sync.
+    const { LockCommandService } = await import('@/services/lock-command.service');
+    const lockCommandService = LockCommandService.getInstance();
+    const result = await lockCommandService.issueLockCommand(String(id), value.lock_status);
+
+    if (!result.success) {
+      res.status(502).json({ success: false, message: result.message });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: result.message,
+      lock_status: result.lock_status,
+      previous_status: result.previous_status,
+    });
   } catch (error) {
     console.error('Error updating lock status:', error);
     res.status(500).json({ success: false, message: 'Failed to update lock status' });

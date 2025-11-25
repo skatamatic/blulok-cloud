@@ -23,7 +23,7 @@ interface DeviceDetails {
   unit_number?: string;
   facility_id: string;
   facility_name: string;
-  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   battery_level?: number;
   last_activity?: string;
@@ -61,9 +61,11 @@ const statusColors = {
   error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
 };
 
-const lockStatusColors = {
+const lockStatusColors: Record<DeviceDetails['lock_status'], string> = {
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
   unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
+  locking: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 animate-pulse',
+  unlocking: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 animate-pulse',
   error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
   maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
@@ -262,11 +264,41 @@ export default function DeviceDetailsPage() {
               <button
                 onClick={async () => {
                   try {
-                    const newStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
-                    await apiService.updateLockStatus(device.id, newStatus);
-                    setDevice(prev => prev ? { ...prev, lock_status: newStatus } : prev);
-                    addToast({ type: 'success', title: `Lock ${newStatus}` });
+                    const targetStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
+                    // Optimistically show transitional state while backend issues command
+                    setDevice(prev =>
+                      prev
+                        ? {
+                            ...prev,
+                            lock_status:
+                              targetStatus === 'locked' ? 'locking' : 'unlocking',
+                          }
+                        : prev,
+                    );
+
+                    const response = await apiService.updateLockStatus(
+                      device.id,
+                      targetStatus,
+                    );
+
+                    const nextStatus =
+                      (response?.lock_status as DeviceDetails['lock_status']) ||
+                      (targetStatus === 'locked' ? 'locking' : 'unlocking');
+
+                    setDevice(prev =>
+                      prev ? { ...prev, lock_status: nextStatus } : prev,
+                    );
+
+                    addToast({
+                      type: 'success',
+                      title:
+                        targetStatus === 'locked'
+                          ? 'Lock command sent'
+                          : 'Unlock command sent',
+                    });
                   } catch (e) {
+                    // Reload device details to ensure we show the true backend state
+                    await loadDeviceDetails();
                     addToast({ type: 'error', title: 'Failed to update lock status' });
                   }
                 }}
@@ -276,7 +308,9 @@ export default function DeviceDetailsPage() {
                     : 'bg-red-600 hover:bg-red-700 text-white'
                 }`}
               >
-                {device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
+                {device.lock_status === 'locked' || device.lock_status === 'locking'
+                  ? 'Unlock'
+                  : 'Lock'}
               </button>
             </div>
           )}
@@ -364,10 +398,16 @@ export default function DeviceDetailsPage() {
               <div>
                 <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Lock Status</label>
                 <div className="mt-1">
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${lockStatusColors[device.lock_status] || lockStatusColors.unknown}`}>
-                    {device.lock_status === 'locked' ? (
+                  <span
+                    className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                      lockStatusColors[device.lock_status] || lockStatusColors.unknown
+                    }`}
+                  >
+                    {device.lock_status === 'locked' ||
+                    device.lock_status === 'locking' ? (
                       <LockClosedIcon className="h-4 w-4 mr-1" />
-                    ) : device.lock_status === 'unlocked' ? (
+                    ) : device.lock_status === 'unlocked' ||
+                      device.lock_status === 'unlocking' ? (
                       <LockOpenIcon className="h-4 w-4 mr-1" />
                     ) : (
                       <ExclamationTriangleIcon className="h-4 w-4 mr-1" />

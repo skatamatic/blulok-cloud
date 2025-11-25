@@ -327,12 +327,12 @@ class ApiService {
   // Internal Gateway endpoints
   async getSecureTimeSyncPacket() {
     const response = await this.api.get('/internal/gateway/time-sync');
-    return response.data as { success: boolean; timeSyncPacket: [any, string] };
+    return response.data as { success: boolean; timeSyncJwt: string };
   }
 
   async requestTimeSyncForLock(lockId: string) {
     const response = await this.api.post('/internal/gateway/request-time-sync', { lock_id: lockId });
-    return response.data as { success: boolean; timeSyncPacket: [any, string] };
+    return response.data as { success: boolean; timeSyncJwt: string };
   }
 
   async requestFallbackPass(fallbackJwt: string) {

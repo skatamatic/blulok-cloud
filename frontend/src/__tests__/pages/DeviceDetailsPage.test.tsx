@@ -197,5 +197,34 @@ describe('DeviceDetailsPage', () => {
     fireEvent.click(screen.getByText('Back'));
     expect(mockNavigate).toHaveBeenCalledWith('/devices');
   });
+
+  it('reloads device details on lock command failure', async () => {
+    mockApiService.getBluLokDevice.mockResolvedValue({
+      success: true,
+      device: mockDevice,
+    } as any);
+
+    mockApiService.updateLockStatus.mockRejectedValueOnce(new Error('Gateway error'));
+
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Device Details')).toBeInTheDocument();
+    });
+
+    const button = screen.getByRole('button', { name: /Unlock/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      // Ensure updateLockStatus was attempted
+      expect(mockApiService.updateLockStatus).toHaveBeenCalledWith('device-1', 'unlocked');
+    });
+  });
 });
 

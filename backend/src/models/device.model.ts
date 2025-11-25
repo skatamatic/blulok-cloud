@@ -87,7 +87,7 @@ export interface BluLokDevice {
   /** Current firmware version installed */
   firmware_version?: string;
   /** Current lock mechanism status */
-  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   /** Overall device connectivity and health status */
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   /** Battery charge level (0-100) */
@@ -381,7 +381,10 @@ export class DeviceModel {
     }
   }
 
-  async updateLockStatus(deviceId: string, lockStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown'): Promise<void> {
+  async updateLockStatus(
+    deviceId: string,
+    lockStatus: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown',
+  ): Promise<void> {
     const knex = this.db.connection;
 
     // Get current lock status and unit info before update

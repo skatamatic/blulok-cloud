@@ -51,9 +51,9 @@ export interface LockStatusChangedEvent {
   /** Lock device identifier */
   deviceId: string;
   /** Previous lock state */
-  oldStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  oldStatus: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   /** New lock state */
-  newStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  newStatus: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   /** Gateway managing this lock */
   gatewayId: string;
   /** Unit this lock secures */
