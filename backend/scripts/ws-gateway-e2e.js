@@ -868,7 +868,8 @@ async function run() {
     deviceId: null,
     primaryTenantId: null,
     users: [],
-    shares: []
+    shares: [],
+    scheduleId: null
   };
   const facilityAdmin = { id: null, token: null, email: null };
   let share1Token = null;
@@ -1675,6 +1676,71 @@ async function run() {
     await expectRemovePrimary;
     ok('Received DENYLIST_REMOVE for primary tenant activation');
 
+    // Schedule Management Tests
+    heading('Schedule Management');
+    if (created.facilityId && created.primaryTenantId) {
+      step('Testing schedule creation and management');
+      try {
+        // Get facility schedules
+        const schedulesResp = await axios.get(`${API_BASE}/facilities/${created.facilityId}/schedules`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        ok(`Retrieved ${schedulesResp.data?.schedules?.length || 0} schedules for facility`);
+
+        // Create a custom schedule
+        const customScheduleResp = await axios.post(
+          `${API_BASE}/facilities/${created.facilityId}/schedules`,
+          {
+            name: 'E2E Test Schedule',
+            schedule_type: 'custom',
+            is_active: true,
+            time_windows: [
+              { day_of_week: 1, start_time: '09:00:00', end_time: '17:00:00' },
+              { day_of_week: 2, start_time: '09:00:00', end_time: '17:00:00' },
+            ],
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const customScheduleId = customScheduleResp.data?.schedule?.id;
+        if (customScheduleId) {
+          created.scheduleId = customScheduleId;
+          ok(`Created custom schedule ${customScheduleId}`);
+
+          // Assign schedule to user
+          await axios.put(
+            `${API_BASE}/users/${created.primaryTenantId}/facilities/${created.facilityId}/schedule`,
+            { scheduleId: customScheduleId },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          ok(`Assigned schedule to user ${created.primaryTenantId}`);
+
+          // Verify route pass includes schedule
+          step('Verifying route pass includes schedule data');
+          if (created.deviceId && primaryToken) {
+            const routePassResp = await axios.post(
+              `${API_BASE}/passes/request`,
+              {},
+              { headers: { Authorization: `Bearer ${primaryToken}`, 'X-App-Device-Id': created.deviceId } }
+            );
+            if (routePassResp.data?.routePass) {
+              // Decode JWT to check for schedule (simplified check)
+              const parts = routePassResp.data.routePass.split('.');
+              if (parts.length === 3) {
+                const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+                if (payload.schedule) {
+                  ok('Route pass includes schedule data');
+                } else {
+                  console.warn('Route pass does not include schedule data');
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Schedule management tests failed:', e?.response?.data || e?.message || e);
+      }
+    }
+
     // mark success; we'll print Result after cleanup
     success = true;
   } finally {
@@ -1719,6 +1785,15 @@ async function run() {
       await unassignTenantFromUnit(token, created.unitId, created.primaryTenantId).catch(() => {});
       ok(`Removed tenant ${created.primaryTenantId} from unit`);
       }
+      // Delete custom schedule if created
+      if (created.scheduleId && created.facilityId) {
+        step(`Deleting custom schedule ${created.scheduleId}`);
+        await axios.delete(`${API_BASE}/facilities/${created.facilityId}/schedules/${created.scheduleId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+        ok(`Deleted schedule ${created.scheduleId}`);
+      }
+
       // Hard delete created users (dev-admin utility)
       const uniqueUserIds = Array.from(new Set(created.users));
       for (const userId of uniqueUserIds) {

@@ -269,6 +269,16 @@ export class FacilityModel {
     // Fetch and return the created facility
     const facility = await this.findById(facilityId) as Facility;
 
+    // Initialize default schedules for the new facility
+    try {
+      const { SchedulesService } = await import('@/services/schedules.service');
+      await SchedulesService.initializeDefaultSchedules(facilityId);
+    } catch (error) {
+      // Log but don't fail facility creation if schedule initialization fails
+      const { logger } = await import('@/utils/logger');
+      logger.error(`Failed to initialize default schedules for facility ${facilityId}:`, error);
+    }
+
     // Trigger model change hook for event-driven operations
     await this.hooks.onFacilityChange('create', facility.id, facility);
 

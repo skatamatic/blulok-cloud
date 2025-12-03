@@ -35,6 +35,18 @@ export interface RoutePassClaims {
   jti: string;
   /** Device-bound public key for challenge-response verification */
   device_pubkey: string;
+  /**
+   * Schedule data for time-based access control
+   * Maps facility IDs to their schedule time windows
+   */
+  schedule?: {
+    facility_id: string;
+    time_windows: Array<{
+      day_of_week: number; // 0=Sunday, 6=Saturday
+      start_time: string;  // "HH:MM:SS"
+      end_time: string;    // "HH:MM:SS"
+    }>;
+  };
 }
 
 /**
@@ -76,7 +88,15 @@ export class PassesService {
   public static async issueRoutePass(params: {
     userId: string;
     devicePublicKey: string;
-    audiences: string[]
+    audiences: string[];
+    schedule?: {
+      facility_id: string;
+      time_windows: Array<{
+        day_of_week: number;
+        start_time: string;
+        end_time: string;
+      }>;
+    };
   }): Promise<string> {
     const claims: RoutePassClaims = {
       iss: 'BluCloud:Root',
@@ -85,6 +105,11 @@ export class PassesService {
       jti: randomUUID(),
       device_pubkey: params.devicePublicKey,
     } as RoutePassClaims;
+
+    // Include schedule if provided
+    if (params.schedule) {
+      claims.schedule = params.schedule;
+    }
 
     return await Ed25519Service.signJwt(claims as any);
   }

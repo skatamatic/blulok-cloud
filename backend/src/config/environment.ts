@@ -35,6 +35,7 @@ const envSchema = Joi.object({
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'debug')
     .default('info'),
+  TRUST_PROXY_DEPTH: Joi.number().integer().min(0).default(0),
 }).unknown();
 
 const { error, value: envVars } = envSchema.validate(process.env);
@@ -59,6 +60,9 @@ export interface Config {
   };
   corsOrigins: string[];
   logLevel: string;
+  server: {
+    trustProxyDepth: number;
+  };
   security: {
     opsPrivateKeyB64: string;
     opsPublicKeyB64: string;
@@ -84,6 +88,9 @@ export const config: Config = {
   },
   corsOrigins: envVars.CORS_ORIGINS.split(',').map((origin: string) => origin.trim()),
   logLevel: envVars.LOG_LEVEL,
+  server: {
+    trustProxyDepth: envVars.TRUST_PROXY_DEPTH,
+  },
   security: {
     opsPrivateKeyB64: envVars.OPS_ED25519_PRIVATE_KEY_B64,
     opsPublicKeyB64: envVars.OPS_ED25519_PUBLIC_KEY_B64,

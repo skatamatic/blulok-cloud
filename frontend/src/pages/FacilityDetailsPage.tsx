@@ -17,7 +17,8 @@ import {
   UserIcon,
   CloudIcon,
   ExclamationTriangleIcon,
-  FunnelIcon
+  FunnelIcon,
+  ClockIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, BluLokDevice, Unit, DeviceFilters, UnitFilters } from '@/types/facility.types';
@@ -27,6 +28,7 @@ import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
+import { FacilitySchedulesTab } from '@/components/Schedules/FacilitySchedulesTab';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
@@ -72,7 +74,7 @@ export default function FacilityDetailsPage() {
   const [facility, setFacility] = useState<Facility | null>(null);
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules'>('overview');
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
@@ -476,6 +478,7 @@ export default function FacilityDetailsPage() {
             { key: 'overview', label: 'Overview', icon: BuildingOfficeIcon },
             ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
             { key: 'units', label: 'Units', icon: HomeIcon },
+            { key: 'schedules', label: 'Schedules', icon: ClockIcon },
             ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
             ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : [])
           ].map(({ key, label, icon: Icon }) => (
@@ -604,7 +607,7 @@ export default function FacilityDetailsPage() {
         <div className="space-y-6">
           {canManage && (
             <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-600 dark:text-gray-400">Manage facility devices</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400"/>
               <div className="flex space-x-2">
                 <button
                   onClick={() => {
@@ -921,6 +924,14 @@ export default function FacilityDetailsPage() {
           facilityId={facility.id}
           facilityName={facility.name}
           canManageGateway={canManageGateway}
+        />
+      )}
+
+      {/* Schedules Tab */}
+      {activeTab === 'schedules' && facility && (
+        <FacilitySchedulesTab
+          facilityId={facility.id}
+          userId={authState.user?.id}
         />
       )}
 

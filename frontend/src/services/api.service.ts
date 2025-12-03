@@ -247,6 +247,44 @@ class ApiService {
     return response.data;
   }
 
+  // Schedule Management
+  async getFacilitySchedules(facilityId: string) {
+    const response = await this.api.get(`/facilities/${facilityId}/schedules`);
+    return response.data;
+  }
+
+  async getSchedule(facilityId: string, scheduleId: string) {
+    const response = await this.api.get(`/facilities/${facilityId}/schedules/${scheduleId}`);
+    return response.data;
+  }
+
+  async createSchedule(facilityId: string, data: any) {
+    const response = await this.api.post(`/facilities/${facilityId}/schedules`, data);
+    return response.data;
+  }
+
+  async updateSchedule(facilityId: string, scheduleId: string, data: any) {
+    const response = await this.api.put(`/facilities/${facilityId}/schedules/${scheduleId}`, data);
+    return response.data;
+  }
+
+  async deleteSchedule(facilityId: string, scheduleId: string) {
+    const response = await this.api.delete(`/facilities/${facilityId}/schedules/${scheduleId}`);
+    return response.data;
+  }
+
+  async getUserScheduleForFacility(userId: string, facilityId: string) {
+    const response = await this.api.get(`/users/${userId}/facilities/${facilityId}/schedule`);
+    return response.data;
+  }
+
+  async setUserScheduleForFacility(userId: string, facilityId: string, scheduleId: string) {
+    const response = await this.api.put(`/users/${userId}/facilities/${facilityId}/schedule`, {
+      scheduleId,
+    });
+    return response.data;
+  }
+
   async createGateway(data: any) {
     const response = await this.api.post('/gateways', data);
     return response.data;

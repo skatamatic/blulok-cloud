@@ -52,6 +52,7 @@ const router = Router();
 
 const updateSettingsSchema = Joi.object({
   'security.max_devices_per_user': Joi.number().integer().min(0).max(250).optional(),
+  'dev.blufms_demo_enabled': Joi.boolean().optional(),
 }).min(1); // At least one setting must be provided
 
 const notificationsSchema = Joi.object({
@@ -91,10 +92,15 @@ router.get('/', authenticateToken as any, asyncHandler(async (req: Authenticated
   const maxDevices = await model.get('security.max_devices_per_user');
   const parsed = maxDevices !== undefined ? parseInt(maxDevices, 10) : NaN;
   const safeValue = Number.isNaN(parsed) ? 2 : parsed;
+  
+  const blufmsDemoEnabled = await model.get('dev.blufms_demo_enabled');
+  const blufmsDemoValue = blufmsDemoEnabled === 'true';
+  
   res.json({
     success: true,
     settings: {
-      'security.max_devices_per_user': safeValue
+      'security.max_devices_per_user': safeValue,
+      'dev.blufms_demo_enabled': blufmsDemoValue
     }
   });
 }));
@@ -115,6 +121,9 @@ router.put('/', authenticateToken as any, asyncHandler(async (req: Authenticated
   const model = new SystemSettingsModel();
   if (value['security.max_devices_per_user'] !== undefined) {
     await model.set('security.max_devices_per_user', value['security.max_devices_per_user'].toString());
+  }
+  if (value['dev.blufms_demo_enabled'] !== undefined) {
+    await model.set('dev.blufms_demo_enabled', value['dev.blufms_demo_enabled'].toString());
   }
 
   res.json({ success: true, message: 'Settings updated successfully' });

@@ -7,6 +7,8 @@ import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { WebSocketDebugProvider } from '@/contexts/WebSocketDebugContext';
 import { FMSSyncProvider, useFMSSync } from '@/contexts/FMSSyncContext';
+import { BluFMSDemoProvider } from '@/contexts/BluFMSDemoContext';
+import { BluFMSFacilityProvider } from '@/contexts/BluFMSFacilityContext';
 import { FMSSyncStatusBar } from '@/components/FMS/FMSSyncStatusBar';
 import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
 import { FMSChangeReviewModal } from '@/components/FMS/FMSChangeReviewModal';
@@ -16,6 +18,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useEffect, useRef } from 'react';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { DashboardLayout } from '@/components/Layout/DashboardLayout';
+import { UserRole } from '@/types/auth.types';
 import LandingPage from '@/pages/LandingPage';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
@@ -34,6 +37,8 @@ import UnitDetailsPage from '@/pages/UnitDetailsPage';
 import SimpleSiteMapPage from '@/pages/SimpleSiteMapPage';
 import AccessHistoryPage from '@/pages/AccessHistoryPage';
 import DeveloperToolsPage from '@/pages/DeveloperToolsPage';
+import BluFMSDashboardPage from '@/pages/blufms/BluFMSDashboardPage';
+import BluFMSFacilityMapPage from '@/pages/blufms/BluFMSFacilityMapPage';
 
 // Global FMS modals component
 function FMSModals() {
@@ -114,8 +119,10 @@ function App() {
             <WebSocketDebugProvider>
               <SidebarProvider>
                 <DropdownProvider>
-                  <FMSSyncProvider>
-                    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
+                  <BluFMSDemoProvider>
+                    <BluFMSFacilityProvider>
+                      <FMSSyncProvider>
+                        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
                       <Routes>
                         {/* Public routes */}
                         <Route path="/" element={<LandingPage />} />
@@ -249,6 +256,23 @@ function App() {
                           </ProtectedRoute>
                         } />
 
+                        {/* BluFMS Routes */}
+                        <Route path="/blufms/dashboard" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluFMSDashboardPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/blufms/facility-map" element={
+                          <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]}>
+                            <DashboardLayout>
+                              <BluFMSFacilityMapPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
                         {/* Redirect unknown routes to dashboard if authenticated, otherwise to landing */}
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
@@ -256,8 +280,10 @@ function App() {
                       <ToastContainer />
                       <FMSSyncStatusBar />
                       <FMSModals />
-                    </div>
-                  </FMSSyncProvider>
+                        </div>
+                      </FMSSyncProvider>
+                    </BluFMSFacilityProvider>
+                  </BluFMSDemoProvider>
                 </DropdownProvider>
               </SidebarProvider>
             </WebSocketDebugProvider>

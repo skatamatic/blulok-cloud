@@ -485,4 +485,89 @@
   .bg-gray-600 button, .bg-gray-700 button {
     color: white !important;
   }
+
+  /* Facility Map page - override DashboardLayout overflow behavior */
+  /* Use :has() selector to target main when it contains facility-map-page */
+  main:has(.facility-map-page) {
+    overflow: hidden !important;
+  }
+
+  main:has(.facility-map-page) > div {
+    height: 100%;
+    max-height: 100%;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    /* Keep horizontal padding structure for margins */
+  }
+
+  main:has(.facility-map-page) > div > div {
+    height: 100%;
+    max-height: 100%;
+    /* Match horizontal padding to vertical padding (py-6 = 1.5rem = 24px) */
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+  }
+
+  /* Ensure facility-map-page fills available space */
+  .facility-map-page {
+    height: 100vh;
+    max-height: 100vh;
+  }
+
+  /* Voice waveform bar anti-aliasing */
+  .voice-waveform-bar {
+    transform: translateZ(0);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    backface-visibility: hidden;
+    /* Force pixel-perfect rendering */
+    box-sizing: border-box;
+    border: none;
+    outline: none;
+    /* Prevent sub-pixel rendering */
+    -webkit-transform: translateZ(0);
+    -moz-transform: translateZ(0);
+    -ms-transform: translateZ(0);
+  }
+
+  /* Facility Map card scrollbar handling - hide scrollbars by default */
+  .facility-map-card {
+    scrollbar-width: none; /* Firefox - hide scrollbar */
+    -ms-overflow-style: none; /* IE and Edge - hide scrollbar */
+  }
+
+  .facility-map-card::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera - hide scrollbar */
+    width: 0;
+    height: 0;
+  }
+
+  /* Show scrollbars when viewport is small (half size - ~960px) */
+  @media (max-width: 960px) {
+    .facility-map-card {
+      scrollbar-width: thin; /* Firefox - show thin scrollbar */
+      -ms-overflow-style: auto; /* IE and Edge - show scrollbar */
+    }
+
+    .facility-map-card::-webkit-scrollbar {
+      display: block; /* Chrome, Safari, Opera - show scrollbar */
+      width: 8px;
+      height: 8px;
+    }
+
+    .facility-map-card::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .facility-map-card::-webkit-scrollbar-thumb {
+      background-color: theme('colors.gray.400');
+      border-radius: 4px;
+    }
+
+    .dark .facility-map-card::-webkit-scrollbar-thumb {
+      background-color: theme('colors.gray.600');
+    }
+  }
 }

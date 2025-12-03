@@ -29,12 +29,17 @@ import { internalGatewayRouter } from '@/routes/internal-gateway.routes';
 import { adminRouter } from '@/routes/admin.routes';
 import { denylistRouter } from '@/routes/denylist.routes';
 import { routePassesRouter } from '@/routes/route-passes.routes';
+import { schedulesRouter } from '@/routes/schedules.routes';
 
 export function createApp(): Application {
   const app = express();
 
-  // Behind Cloud Run (proxy) - trust X-Forwarded-* headers for real client IP
-  app.set('trust proxy', true);
+  // Respect proxies only when explicitly configured (prevents rate-limit bypass)
+  if (config.server.trustProxyDepth > 0) {
+    app.set('trust proxy', config.server.trustProxyDepth);
+  } else {
+    app.set('trust proxy', false);
+  }
 
   // Security middleware
   app.use(helmet({
@@ -90,6 +95,7 @@ export function createApp(): Application {
   app.use('/api/v1/user-facilities', userFacilitiesRouter);
   app.use('/api/v1/widget-layouts', widgetLayoutsRouter);
   app.use('/api/v1/facilities', facilitiesRouter);
+  app.use('/api/v1', schedulesRouter);
   app.use('/api/v1/gateways', gatewayRouter);
   app.use('/api/v1/internal/gateway', internalGatewayRouter);
   app.use('/api/v1/admin', adminRouter);

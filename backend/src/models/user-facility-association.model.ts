@@ -100,6 +100,32 @@ export class UserFacilityAssociationModel extends BaseModel {
       throw new Error('Failed to create user-facility association');
     }
     
+    // If user is a tenant, assign default schedule for this facility
+    try {
+      const { UserModel } = await import('@/models/user.model');
+      const user = await UserModel.findById(userId);
+      if (user && (user as any).role === 'tenant') {
+        const { SchedulesService } = await import('@/services/schedules.service');
+        const { UserFacilityScheduleModel } = await import('@/models/user-facility-schedule.model');
+        
+        // Get default tenant schedule for this facility
+        const { ScheduleModel } = await import('@/models/schedule.model');
+        const schedules = await ScheduleModel.findByFacility(facilityId, {
+          schedule_type: 'precanned',
+          is_active: true,
+        });
+        
+        const defaultSchedule = schedules.find(s => s.name === 'Default Tenant Schedule');
+        if (defaultSchedule) {
+          await UserFacilityScheduleModel.setUserSchedule(userId, facilityId, defaultSchedule.id, null);
+        }
+      }
+    } catch (error) {
+      // Log but don't fail association creation if schedule assignment fails
+      const { logger } = await import('@/utils/logger');
+      logger.error(`Failed to assign default schedule to tenant ${userId} for facility ${facilityId}:`, error);
+    }
+    
     // Trigger model change hook
     await this.hooks.onUserFacilityAssociationChange('create', association.id, association);
     
