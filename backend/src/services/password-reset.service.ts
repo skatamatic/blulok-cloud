@@ -33,9 +33,11 @@ export class PasswordResetService {
 
   /**
    * Generate a secure random token
+   * Uses 24 bytes (192 bits) = ~32 characters in base64url encoding
+   * This provides strong security while keeping SMS messages concise
    */
   private generateToken(): string {
-    return crypto.randomBytes(48).toString('base64url');
+    return crypto.randomBytes(24).toString('base64url');
   }
 
   /**

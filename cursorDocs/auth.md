@@ -323,10 +323,12 @@ useAuth().canManageUsers()              # Check user management access
 #### Database Table: `password_reset_tokens`
 - `id`: UUID primary key
 - `user_id`: Reference to user
-- `token`: Unique 64-character base64url token
+- `token`: Unique ~32-character base64url token (24 bytes = 192 bits of entropy)
 - `expires_at`: Token expiration timestamp
 - `used_at`: When token was used (prevents reuse)
 - `created_at`: Creation timestamp
+
+**Token Security**: 24 bytes provides 2^192 possible tokens, which is cryptographically secure for a time-limited (30-minute) reset token while keeping SMS messages concise.
 
 ### User Management Endpoints
 
