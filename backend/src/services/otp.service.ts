@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { DatabaseService } from '@/services/database.service';
 import { NotificationService } from '@/services/notifications/notification.service';
+import { OtpKind } from '@/types/notification.types';
 import { logger } from '@/utils/logger';
 
 const OTP_TTL_MINUTES = parseInt(process.env.OTP_TTL_MINUTES || '10', 10);
@@ -29,6 +30,7 @@ export class OTPService {
     delivery: OtpDeliveryMethod;
     toPhone?: string;
     toEmail?: string;
+    kind?: OtpKind;
     templateId?: string;
   }): Promise<{ expiresAt: Date }> {
     const code = OTPService.generateCode();
@@ -47,9 +49,9 @@ export class OTPService {
     });
 
     if (params.delivery === 'sms' && params.toPhone) {
-      await this.notifications.sendOtp({ toPhone: params.toPhone, code, templateId: params.templateId });
+      await this.notifications.sendOtp({ toPhone: params.toPhone, code, kind: params.kind, templateId: params.templateId });
     } else if (params.delivery === 'email' && params.toEmail) {
-      await this.notifications.sendOtp({ toEmail: params.toEmail, code, templateId: params.templateId });
+      await this.notifications.sendOtp({ toEmail: params.toEmail, code, kind: params.kind, templateId: params.templateId });
     } else {
       throw new Error('Invalid OTP delivery parameters');
     }

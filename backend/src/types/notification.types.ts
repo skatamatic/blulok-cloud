@@ -5,7 +5,13 @@ export interface NotificationTemplatesConfig {
   otpSms?: string;
   otpEmail?: string;
   otpEmailSubject?: string;
+  // Password reset specific templates
+  passwordResetOtpSms?: string;
+  passwordResetOtpEmail?: string;
+  passwordResetOtpEmailSubject?: string;
 }
+
+export type OtpKind = 'invite' | 'password_reset';
 
 export interface TwilioConfig {
   accountSid: string;
@@ -38,6 +44,7 @@ export interface SendOtpParams {
   toPhone?: string;
   toEmail?: string;
   code: string;
+  kind?: OtpKind; // 'invite' (default) or 'password_reset'
   templateId?: string; // reserved for future use
 }
 

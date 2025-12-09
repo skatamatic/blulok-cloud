@@ -283,6 +283,36 @@ useAuth().canManageUsers()              # Check user management access
 | GET | `/api/v1/auth/verify-token` | Authenticated | Verify token validity |
 | POST | `/api/v1/auth/change-password` | Authenticated | Change password |
 
+### Password Reset Endpoints (Forgot Password with 2FA)
+
+| Method | Endpoint | Access | Description |
+|--------|----------|--------|-------------|
+| POST | `/api/v1/auth/forgot-password/request` | Public (rate-limited) | Request password reset - sends OTP via configured channel |
+| POST | `/api/v1/auth/forgot-password/reset` | Public (rate-limited) | Verify OTP and set new password |
+
+#### Password Reset Flow (Simplified 2-Step)
+
+1. **Request Reset**: User submits email or phone number
+   ```json
+   POST /api/v1/auth/forgot-password/request
+   { "email": "user@example.com" }
+   // OR
+   { "phone": "+15551234567" }
+   ```
+   Response includes `expiresAt` and `deliveryMethod` (sms or email).
+   OTP is sent via the configured notification channel (SMS preferred if enabled and user has phone).
+
+2. **Reset Password**: User submits OTP + new password together
+   ```json
+   POST /api/v1/auth/forgot-password/reset
+   { 
+     "email": "user@example.com",
+     "otp": "123456",
+     "newPassword": "NewPassword123!" 
+   }
+   ```
+   This mirrors the invite flow pattern - OTP verification and password setting happen in one step.
+
 ### User Management Endpoints
 
 | Method | Endpoint | Access | Description |

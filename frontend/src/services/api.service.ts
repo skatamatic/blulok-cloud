@@ -354,6 +354,30 @@ class ApiService {
     };
   }
 
+  // Dev Tools: Send gateway commands (DENYLIST_ADD/REMOVE, LOCK/UNLOCK)
+  async sendGatewayCommand(params: {
+    facilityId: string;
+    command: 'DENYLIST_ADD' | 'DENYLIST_REMOVE' | 'LOCK' | 'UNLOCK';
+    targetDeviceIds: string[];
+    userId?: string;
+    expirationSeconds?: number;
+  }) {
+    const response = await this.api.post('/admin/dev-tools/gateway-command', {
+      facilityId: params.facilityId,
+      command: params.command,
+      targetDeviceIds: params.targetDeviceIds,
+      userId: params.userId,
+      expirationSeconds: params.expirationSeconds,
+    });
+    return response.data as {
+      success: boolean;
+      command: string;
+      payload?: any;
+      signature?: string;
+      targetDeviceIds?: string[];
+    };
+  }
+
   // Devices Management
   async getDevices(filters?: any) {
     const response = await this.api.get('/devices', { params: filters });

@@ -382,6 +382,60 @@ export default function NotificationSettingsPage() {
               </p>
             </div>
           )}
+
+          {/* Password Reset Templates */}
+          <div className="border-t border-gray-200 dark:border-gray-700 pt-6 mt-6">
+            <h3 className="text-md font-medium text-gray-900 dark:text-white mb-4">Password Reset Templates</h3>
+            
+            {config.enabledChannels?.sms && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  SMS Password Reset Template
+                </label>
+                <textarea
+                  value={config.templates?.passwordResetOtpSms || ''}
+                  onChange={(e) => updateConfig('templates.passwordResetOtpSms', e.target.value)}
+                  rows={2}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  placeholder="Your BluLok password reset code is: {{code}}"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Use {'{{code}}'} placeholder for the 6-digit verification code
+                </p>
+              </div>
+            )}
+
+            {config.enabledChannels?.email && (
+              <>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Email Password Reset Subject
+                  </label>
+                  <input
+                    type="text"
+                    value={config.templates?.passwordResetOtpEmailSubject || 'Reset Your BluLok Password'}
+                    onChange={(e) => updateConfig('templates.passwordResetOtpEmailSubject', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Email Password Reset Template
+                  </label>
+                  <textarea
+                    value={config.templates?.passwordResetOtpEmail || ''}
+                    onChange={(e) => updateConfig('templates.passwordResetOtpEmail', e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    placeholder="Your BluLok password reset code is: {{code}}"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Use {'{{code}}'} placeholder for the 6-digit verification code
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

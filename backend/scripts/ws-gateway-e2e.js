@@ -1617,8 +1617,77 @@ async function run() {
       if (err?.response?.status === 403) prevented = true;
       else throw err;
     }
-    if (!prevented) throw new Error('Tenant was able to fetch another user’s key-sharing records');
+    if (!prevented) throw new Error('Tenant was able to fetch another user key-sharing records');
     ok('Tenant prevented from viewing other user key-sharing records');
+
+    // Test that shared users can see units they have access to
+    heading('Shared User Unit Access Tests');
+    
+    step('Shared user can fetch unit details for shared unit');
+    const share1UnitDetails = await axios.get(`${API_BASE}/units/${unitId}`, {
+      headers: { Authorization: `Bearer ${share1Token}` }
+    });
+    if (!share1UnitDetails.data?.success || !share1UnitDetails.data?.unit) {
+      throw new Error(`Shared user could not fetch unit details: ${JSON.stringify(share1UnitDetails.data)}`);
+    }
+    if (share1UnitDetails.data.unit.id !== unitId) {
+      throw new Error('Shared user unit details returned wrong unit');
+    }
+    ok('Shared user can fetch details for shared unit');
+
+    step('Shared user can list units (should include shared unit)');
+    const share1Units = await axios.get(`${API_BASE}/units`, {
+      headers: { Authorization: `Bearer ${share1Token}` },
+      params: { facility_id: facilityId }
+    });
+    if (!share1Units.data?.success) {
+      throw new Error(`Shared user units list failed: ${JSON.stringify(share1Units.data)}`);
+    }
+    const share1UnitsList = share1Units.data.units || [];
+    const hasSharedUnit = share1UnitsList.some(u => u.id === unitId);
+    if (!hasSharedUnit) {
+      throw new Error(`Shared user units list does not include shared unit. Found: ${share1UnitsList.map(u => u.id).join(', ')}`);
+    }
+    ok('Shared user can see shared unit in units list');
+
+    step('Primary tenant can list their units');
+    const primaryUnits = await axios.get(`${API_BASE}/units`, {
+      headers: { Authorization: `Bearer ${primaryToken}` },
+      params: { facility_id: facilityId }
+    });
+    if (!primaryUnits.data?.success) {
+      throw new Error(`Primary tenant units list failed: ${JSON.stringify(primaryUnits.data)}`);
+    }
+    const primaryUnitsList = primaryUnits.data.units || [];
+    const hasPrimaryUnit = primaryUnitsList.some(u => u.id === unitId);
+    if (!hasPrimaryUnit) {
+      throw new Error(`Primary tenant units list does not include their unit. Found: ${primaryUnitsList.map(u => u.id).join(', ')}`);
+    }
+    ok('Primary tenant can see their assigned unit');
+
+    step('New sharee (invited user) can fetch shared unit details');
+    const newShareeUnitDetails = await axios.get(`${API_BASE}/units/${unitId}`, {
+      headers: { Authorization: `Bearer ${newShareeToken}` }
+    });
+    if (!newShareeUnitDetails.data?.success || !newShareeUnitDetails.data?.unit) {
+      throw new Error(`New sharee could not fetch unit details: ${JSON.stringify(newShareeUnitDetails.data)}`);
+    }
+    ok('New sharee (invited user) can fetch shared unit details');
+
+    step('New sharee (invited user) can list units');
+    const newShareeUnits = await axios.get(`${API_BASE}/units`, {
+      headers: { Authorization: `Bearer ${newShareeToken}` },
+      params: { facility_id: facilityId }
+    });
+    if (!newShareeUnits.data?.success) {
+      throw new Error(`New sharee units list failed: ${JSON.stringify(newShareeUnits.data)}`);
+    }
+    const newShareeUnitsList = newShareeUnits.data.units || [];
+    const newShareeHasUnit = newShareeUnitsList.some(u => u.id === unitId);
+    if (!newShareeHasUnit) {
+      throw new Error(`New sharee units list does not include shared unit. Found: ${newShareeUnitsList.map(u => u.id).join(', ')}`);
+    }
+    ok('New sharee (invited user) can see shared unit in units list');
 
     heading('Facility Admin Gateway Coverage');
     step('Switching primary gateway session to facility admin');
@@ -1674,6 +1743,143 @@ async function run() {
     await activateUser(token, primaryId);
     await expectRemovePrimary;
     ok('Received DENYLIST_REMOVE for primary tenant activation');
+
+    heading('Gateway Command DevTools Test');
+    step('Testing dev gateway command: LOCK');
+    const lockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'LOCK',
+      targetDeviceIds: [deviceId],
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!lockRes.data?.success) throw new Error('LOCK command failed');
+    ok('LOCK gateway command sent successfully');
+
+    step('Testing dev gateway command: UNLOCK');
+    const unlockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'UNLOCK',
+      targetDeviceIds: [deviceId],
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!unlockRes.data?.success) throw new Error('UNLOCK command failed');
+    ok('UNLOCK gateway command sent successfully');
+
+    step('Testing dev gateway command: DENYLIST_ADD');
+    const denyAddRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'DENYLIST_ADD',
+      targetDeviceIds: [deviceId],
+      userId: share1Id,
+      expirationSeconds: 3600,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!denyAddRes.data?.success || !denyAddRes.data?.payload) throw new Error('DENYLIST_ADD command failed');
+    ok('DENYLIST_ADD gateway command sent successfully');
+
+    step('Testing dev gateway command: DENYLIST_REMOVE');
+    const denyRemoveRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'DENYLIST_REMOVE',
+      targetDeviceIds: [deviceId],
+      userId: share1Id,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!denyRemoveRes.data?.success || !denyRemoveRes.data?.payload) throw new Error('DENYLIST_REMOVE command failed');
+    ok('DENYLIST_REMOVE gateway command sent successfully');
+
+    heading('Register-Key All Roles Test');
+    step('Admin registering device key');
+    const adminPublicKey = Buffer.from('AdminDeviceKey123').toString('base64');
+    const adminRegRes = await axios.post(`${API_BASE}/user-devices/register-key`, {
+      app_device_id: 'e2e-admin-device-test',
+      platform: 'other',
+      device_name: 'E2E Admin Test Device',
+      public_key: adminPublicKey,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!adminRegRes.data?.success) throw new Error('Admin register-key failed');
+    ok('Admin can register device key');
+
+    step('Facility admin registering device key');
+    const faPublicKey = Buffer.from('FacilityAdminDeviceKey123').toString('base64');
+    const faRegRes = await axios.post(`${API_BASE}/user-devices/register-key`, {
+      app_device_id: 'e2e-fa-device-test',
+      platform: 'other',
+      device_name: 'E2E Facility Admin Test Device',
+      public_key: faPublicKey,
+    }, { headers: { Authorization: `Bearer ${facilityAdmin.token}` } });
+    if (!faRegRes.data?.success) throw new Error('Facility admin register-key failed');
+    ok('Facility admin can register device key');
+
+    heading('Password Reset Flow Test (Full E2E)');
+    // Clear any prior notification events so we only capture fresh password reset OTP
+    notificationEvents.length = 0;
+
+    step('Requesting password reset for primary tenant');
+    const resetReqRes = await axios.post(`${API_BASE}/auth/forgot-password/request`, {
+      email: primaryEmail,
+    }).catch(err => err.response);
+    if (!resetReqRes || resetReqRes.status !== 200) {
+      throw new Error(`Password reset request failed: expected 200, got ${resetReqRes?.status || 'no response'} - ${JSON.stringify(resetReqRes?.data)}`);
+    }
+    if (VERBOSE) console.log(`  • Delivery method: ${resetReqRes.data?.deliveryMethod || 'unknown'}`);
+    ok('Password reset request submitted');
+
+    // Wait for password reset OTP via dev notifications WebSocket
+    step('Waiting for password reset OTP via notifications WebSocket');
+    const resetOtpEvent = await waitForNotification((e) =>
+      e.kind === 'otp' && e.meta?.otpKind === 'password_reset'
+    );
+    if (!resetOtpEvent) {
+      throw new Error('Did not receive password reset OTP notification');
+    }
+    const resetOtpMatch = String(resetOtpEvent.body).match(/(\d{6})/);
+    if (!resetOtpMatch) throw new Error('Failed to parse OTP code from password reset notification body');
+    const resetOtp = resetOtpMatch[1];
+    ok(`Received password reset OTP: ${resetOtp}`);
+
+    step('Password reset with invalid OTP returns error');
+    const resetBadRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
+      email: primaryEmail,
+      otp: '000000',
+      newPassword: 'NewTestPassword123!',
+    }).catch(err => err.response);
+    if (!resetBadRes || resetBadRes.status !== 400) {
+      throw new Error(`Password reset expected 400 for invalid OTP, got ${resetBadRes?.status || 'no response'}`);
+    }
+    ok('Password reset endpoint rejects invalid OTP');
+
+    // Now use the real OTP to reset the password
+    const resetNewPassword = 'ResetTestPwd456!';
+    step('Resetting password with valid OTP');
+    const resetSuccessRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
+      email: primaryEmail,
+      otp: resetOtp,
+      newPassword: resetNewPassword,
+    }).catch(err => err.response);
+    if (!resetSuccessRes || resetSuccessRes.status !== 200 || !resetSuccessRes.data?.success) {
+      throw new Error(`Password reset with valid OTP failed: status=${resetSuccessRes?.status}, data=${JSON.stringify(resetSuccessRes?.data)}`);
+    }
+    ok('Password reset successful with valid OTP');
+
+    // Verify user can log in with the new password
+    step('Verifying login with new password');
+    const newLoginRes = await axios.post(`${API_BASE}/auth/login`, {
+      email: primaryEmail,
+      password: resetNewPassword,
+    }).catch(err => err.response);
+    if (!newLoginRes || newLoginRes.status !== 200 || !newLoginRes.data?.token) {
+      throw new Error(`Login with new password failed: status=${newLoginRes?.status}, data=${JSON.stringify(newLoginRes?.data)}`);
+    }
+    primaryToken = newLoginRes.data.token;
+    ok('Login with new password verified');
+
+    // Also verify old password no longer works
+    step('Verifying old password no longer works');
+    const oldLoginRes = await axios.post(`${API_BASE}/auth/login`, {
+      email: primaryEmail,
+      password: 'TestUser123!', // original password
+    }).catch(err => err.response);
+    if (oldLoginRes && oldLoginRes.status === 200 && oldLoginRes.data?.token) {
+      throw new Error('Old password should no longer work after reset');
+    }
+    ok('Old password correctly rejected after reset');
 
     // mark success; we'll print Result after cleanup
     success = true;

@@ -33,6 +33,7 @@ This document summarizes the new centralized trust model implemented in the back
   - App: `POST /api/v1/passes/request` (rate-limited)
   - Gateway: `GET /api/v1/internal/gateway/time-sync`, `POST /api/v1/internal/gateway/request-time-sync`, `POST /api/v1/internal/gateway/fallback-pass`
   - Admin: `POST /api/v1/admin/ops-key-rotation/broadcast` (DEV_ADMIN only)
+  - Dev Tools (DEV_ADMIN, non-production only): `POST /api/v1/admin/dev-tools/gateway-command` - sends DENYLIST_ADD, DENYLIST_REMOVE, LOCK, UNLOCK commands to gateway for testing
 - Websocket Gateway at `/ws/gateway` (facility-scoped) for:
   - Secure command delivery (denylist add/remove, time sync) via unicast/broadcast
   - Full REST API proxying over WS using loopback HTTP with facility guard

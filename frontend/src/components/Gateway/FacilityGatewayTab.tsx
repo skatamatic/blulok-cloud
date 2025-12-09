@@ -900,6 +900,117 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
           </p>
         </div>
 
+        {/* Gateway Commands Test (DEV_ADMIN only) */}
+        {isDevAdmin && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center">
+              <WrenchScrewdriverIcon className="h-5 w-5 mr-2" />
+              Gateway Commands (Test)
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Send test commands to the connected gateway. These are for development and testing purposes only.
+            </p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Denylist Commands */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Denylist Commands</h4>
+                <button
+                  onClick={async () => {
+                    const userId = prompt('Enter user ID to add to denylist:');
+                    if (!userId) return;
+                    const deviceIds = prompt('Enter device IDs (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'DENYLIST_ADD',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                        userId,
+                      });
+                      addToast({ type: 'success', title: `DENYLIST_ADD sent: ${res.success}` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send DENYLIST_ADD' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700"
+                >
+                  DENYLIST_ADD
+                </button>
+                <button
+                  onClick={async () => {
+                    const userId = prompt('Enter user ID to remove from denylist:');
+                    if (!userId) return;
+                    const deviceIds = prompt('Enter device IDs (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'DENYLIST_REMOVE',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                        userId,
+                      });
+                      addToast({ type: 'success', title: `DENYLIST_REMOVE sent: ${res.success}` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send DENYLIST_REMOVE' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-green-600 text-white hover:bg-green-700"
+                >
+                  DENYLIST_REMOVE
+                </button>
+              </div>
+              
+              {/* Lock/Unlock Commands */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Lock/Unlock Commands</h4>
+                <button
+                  onClick={async () => {
+                    const deviceIds = prompt('Enter device IDs to LOCK (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'LOCK',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                      });
+                      addToast({ type: 'success', title: `LOCK sent to ${res.targetDeviceIds?.length || 0} device(s)` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send LOCK' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  LOCK
+                </button>
+                <button
+                  onClick={async () => {
+                    const deviceIds = prompt('Enter device IDs to UNLOCK (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'UNLOCK',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                      });
+                      addToast({ type: 'success', title: `UNLOCK sent to ${res.targetDeviceIds?.length || 0} device(s)` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send UNLOCK' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-yellow-600 text-white hover:bg-yellow-700"
+                >
+                  UNLOCK
+                </button>
+              </div>
+            </div>
+            
+            <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+              Commands are signed and sent directly to the gateway WebSocket connection.
+            </p>
+          </div>
+        )}
+
         {/* Gateway Debug */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6">
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Debug</h3>

@@ -128,13 +128,31 @@ describe('User Devices Routes', () => {
       expect(mockUserDeviceModel.listByUser).toHaveBeenCalledWith(testData.users.tenant.id);
     });
 
-    it('should return 403 for non-tenant users trying to access tenant endpoints', async () => {
-      const response = await request(app)
+    it('should allow all authenticated users to access their devices', async () => {
+      // All user types should be able to access their own devices
+      const mockDevices: any[] = [];
+      mockUserDeviceModel.listByUser.mockResolvedValue(mockDevices);
+
+      // Admin
+      let response = await request(app)
         .get('/api/v1/user-devices/me')
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
-        .expect(403);
+        .expect(200);
+      expectSuccess(response);
 
-      expectForbidden(response);
+      // Facility Admin
+      response = await request(app)
+        .get('/api/v1/user-devices/me')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(200);
+      expectSuccess(response);
+
+      // Maintenance
+      response = await request(app)
+        .get('/api/v1/user-devices/me')
+        .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
+        .expect(200);
+      expectSuccess(response);
     });
   });
 
@@ -284,14 +302,36 @@ describe('User Devices Routes', () => {
       expectBadRequest(response);
     });
 
-    it('should return 403 for non-tenant users', async () => {
-      const response = await request(app)
+    it('should allow all authenticated users to register device keys', async () => {
+      // Mock settings
+      mockSystemSettingsModel.get.mockResolvedValue('5');
+      mockUserDeviceModel.countActiveByUser.mockResolvedValue(0);
+      mockUserDeviceModel.findByUserAndAppDeviceId.mockResolvedValue(undefined);
+      mockUserDeviceModel.upsertByUserAndAppDeviceId.mockResolvedValue({
+        id: 'new-device-id',
+        user_id: 'test-user',
+        app_device_id: 'test-device-123',
+        platform: 'ios',
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
+      } as any);
+
+      // Admin can register
+      let response = await request(app)
         .post('/api/v1/user-devices/register-key')
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .send(validRequest)
-        .expect(403);
+        .expect(200);
+      expectSuccess(response);
 
-      expectForbidden(response);
+      // Facility Admin can register
+      response = await request(app)
+        .post('/api/v1/user-devices/register-key')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send(validRequest)
+        .expect(200);
+      expectSuccess(response);
     });
   });
 
@@ -343,14 +383,17 @@ describe('User Devices Routes', () => {
       expectNotFound(response);
     });
 
-    it('should return 403 for non-tenant users', async () => {
+    it('should allow all authenticated users to rotate keys', async () => {
+      (mockUserDeviceModel.findByUserAndAppDeviceId as jest.Mock).mockResolvedValue({ id: 'device-1', user_id: testData.users.admin.id });
+      (mockUserDeviceModel.upsertByUserAndAppDeviceId as jest.Mock).mockResolvedValue({ id: 'device-1' });
+
       const response = await request(app)
         .post('/api/v1/user-devices/me/rotate-key')
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .set('X-App-Device-Id', 'app-device-123')
         .send({ public_key: 'UHVibGljS2V5QmFzZTY0' })
-        .expect(403);
-      expectForbidden(response);
+        .expect(200);
+      expectSuccess(response);
     });
   });
 
@@ -448,13 +491,32 @@ describe('User Devices Routes', () => {
       expectNotFound(response);
     });
 
-    it('should return 403 for non-tenant users', async () => {
+    it('should allow all authenticated users to revoke their devices', async () => {
+      (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+        connection: jest.fn((tableName: string) => {
+          if (tableName === 'user_devices') {
+            return {
+              where: jest.fn().mockReturnThis(),
+              first: jest.fn().mockResolvedValue({
+                id: 'device-1',
+                user_id: testData.users.admin.id,
+                app_device_id: 'test-device',
+                status: 'active',
+              }),
+            };
+          }
+          return mockDb(tableName);
+        })
+      });
+
+      mockUserDeviceModel.revoke.mockResolvedValue(undefined);
+
       const response = await request(app)
         .delete('/api/v1/user-devices/me/device-1')
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
-        .expect(403);
+        .expect(200);
 
-      expectForbidden(response);
+      expectSuccess(response);
     });
   });
 
@@ -498,6 +560,10 @@ describe('User Devices Routes', () => {
   });
 
   describe('RBAC and Scope Tests', () => {
+    beforeEach(() => {
+      mockUserDeviceModel.listByUser.mockResolvedValue([]);
+    });
+
     it('should allow TENANT users to access their own devices', async () => {
       const response = await request(app)
         .get('/api/v1/user-devices/me')
@@ -507,58 +573,40 @@ describe('User Devices Routes', () => {
       expectSuccess(response);
     });
 
-    it('should deny ADMIN access to tenant-only endpoints', async () => {
-      const endpoints = [
-        { method: 'get', path: '/api/v1/user-devices/me' },
-        { method: 'post', path: '/api/v1/user-devices/register-key' },
-        { method: 'delete', path: '/api/v1/user-devices/me/device-1' },
-      ];
+    it('should allow ADMIN users to access their own devices', async () => {
+      const response = await request(app)
+        .get('/api/v1/user-devices/me')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
 
-      for (const endpoint of endpoints) {
-        let response;
-        if (endpoint.method === 'get') {
-          response = await request(app).get(endpoint.path)
-            .set('Authorization', `Bearer ${testData.users.admin.token}`)
-            .expect(403);
-        } else if (endpoint.method === 'post') {
-          response = await request(app).post(endpoint.path)
-            .set('Authorization', `Bearer ${testData.users.admin.token}`)
-            .expect(403);
-        } else if (endpoint.method === 'delete') {
-          response = await request(app).delete(endpoint.path)
-            .set('Authorization', `Bearer ${testData.users.admin.token}`)
-            .expect(403);
-        }
-
-        expectForbidden(response);
-      }
+      expectSuccess(response);
     });
 
-    it('should deny FACILITY_ADMIN access to tenant-only endpoints', async () => {
+    it('should allow FACILITY_ADMIN users to access their own devices', async () => {
       const response = await request(app)
         .get('/api/v1/user-devices/me')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .expect(403);
+        .expect(200);
 
-      expectForbidden(response);
+      expectSuccess(response);
     });
 
-    it('should deny MAINTENANCE access to tenant-only endpoints', async () => {
+    it('should allow MAINTENANCE users to access their own devices', async () => {
       const response = await request(app)
         .get('/api/v1/user-devices/me')
         .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-        .expect(403);
+        .expect(200);
 
-      expectForbidden(response);
+      expectSuccess(response);
     });
 
-    it('should deny MAINTENANCE access to tenant-only endpoints', async () => {
+    it('should allow DEV_ADMIN users to access their own devices', async () => {
       const response = await request(app)
         .get('/api/v1/user-devices/me')
-        .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-        .expect(403);
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .expect(200);
 
-      expectForbidden(response);
+      expectSuccess(response);
     });
   });
 });

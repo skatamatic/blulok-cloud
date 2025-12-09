@@ -37,6 +37,8 @@ import { config } from '@/config/environment';
 import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
 import { generateKeyPair, exportJWK, KeyLike } from 'jose';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { DenylistService } from '@/services/denylist.service';
+import { logger } from '@/utils/logger';
 
 const router = Router();
 
@@ -57,6 +59,18 @@ const notificationsTestModeSchema = Joi.object({
 
 const gatewayPingSchema = Joi.object({
   facilityId: Joi.string().required(),
+});
+
+const gatewayCommandSchema = Joi.object({
+  facilityId: Joi.string().required(),
+  command: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE', 'LOCK', 'UNLOCK').required(),
+  targetDeviceIds: Joi.array().items(Joi.string()).min(1).required(),
+  userId: Joi.string().when('command', {
+    is: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE'),
+    then: Joi.required(),
+    otherwise: Joi.optional()
+  }),
+  expirationSeconds: Joi.number().integer().min(60).max(86400 * 365).optional(), // For denylist entries
 });
 
 // POST /api/v1/admin/ops-key-rotation/broadcast
@@ -359,6 +373,82 @@ router.post('/facilities', authenticateToken, requireDevAdmin, asyncHandler(asyn
   });
   res.status(201).json({ success: true, facility: { id, name, address, status } });
 }));
+
+/**
+ * POST /api/v1/admin/dev-tools/gateway-command
+ * DEV_ADMIN only - Send test gateway commands (DENYLIST_ADD/REMOVE, LOCK/UNLOCK)
+ * Intended for testing gateway communication and command delivery.
+ */
+router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Gateway dev commands are disabled in production' });
+    return;
+  }
+
+  const { error, value } = gatewayCommandSchema.validate(req.body || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  const { facilityId, command, targetDeviceIds, userId, expirationSeconds } = value;
+  const gateway = GatewayEventsService.getInstance();
+
+  try {
+    switch (command) {
+      case 'DENYLIST_ADD': {
+        // Default expiration: 1 year from now
+        const exp = expirationSeconds 
+          ? Math.floor(Date.now() / 1000) + expirationSeconds 
+          : Math.floor(Date.now() / 1000) + 86400 * 365;
+        const entries = [{ sub: userId, exp }];
+        const [payload, signature] = await DenylistService.buildDenylistAdd(entries, targetDeviceIds);
+        gateway.unicastToFacility(facilityId, [payload, signature]);
+        logger.info(`Dev gateway command: DENYLIST_ADD sent to facility ${facilityId}`, { userId, targetDeviceIds });
+        res.json({ success: true, command, payload, signature });
+        break;
+      }
+
+      case 'DENYLIST_REMOVE': {
+        const entries = [{ sub: userId, exp: 0 }]; // exp not used for remove
+        const [payload, signature] = await DenylistService.buildDenylistRemove(entries, targetDeviceIds);
+        gateway.unicastToFacility(facilityId, [payload, signature]);
+        logger.info(`Dev gateway command: DENYLIST_REMOVE sent to facility ${facilityId}`, { userId, targetDeviceIds });
+        res.json({ success: true, command, payload, signature });
+        break;
+      }
+
+      case 'LOCK': {
+        // Send lock command for each device
+        for (const deviceId of targetDeviceIds) {
+          const lockPayload = { type: 'DEVICE_COMMAND', deviceId, command: 'LOCK' };
+          gateway.unicastToFacility(facilityId, lockPayload);
+        }
+        logger.info(`Dev gateway command: LOCK sent to facility ${facilityId}`, { targetDeviceIds });
+        res.json({ success: true, command, targetDeviceIds });
+        break;
+      }
+
+      case 'UNLOCK': {
+        // Send unlock command for each device
+        for (const deviceId of targetDeviceIds) {
+          const unlockPayload = { type: 'DEVICE_COMMAND', deviceId, command: 'UNLOCK' };
+          gateway.unicastToFacility(facilityId, unlockPayload);
+        }
+        logger.info(`Dev gateway command: UNLOCK sent to facility ${facilityId}`, { targetDeviceIds });
+        res.json({ success: true, command, targetDeviceIds });
+        break;
+      }
+
+      default:
+        res.status(400).json({ success: false, message: `Unknown command: ${command}` });
+    }
+  } catch (err: any) {
+    logger.error(`Failed to send dev gateway command: ${err.message}`, err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to send gateway command' });
+  }
+}));
+
 export { router as adminRouter };
 
 

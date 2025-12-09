@@ -61,6 +61,90 @@ describe('System Settings Routes', () => {
       expect(mockSettingsModel.get).toHaveBeenCalledWith('security.max_devices_per_user');
     });
   });
+
+  describe('PUT /api/v1/system-settings/notifications', () => {
+    it('allows saving notification config with all template fields', async () => {
+      const notificationConfig = {
+        enabledChannels: { sms: true, email: true },
+        defaultProvider: { sms: 'twilio', email: 'console' },
+        templates: {
+          inviteSms: 'Welcome! {{deeplink}}',
+          inviteEmail: '<p>Welcome! {{deeplink}}</p>',
+          inviteEmailSubject: 'Welcome to BluLok',
+          otpSms: 'Your code is {{code}}',
+          otpEmail: '<p>Your code is {{code}}</p>',
+          otpEmailSubject: 'Your Verification Code',
+          passwordResetOtpSms: 'Your password reset code is {{code}}',
+          passwordResetOtpEmail: '<p>Your password reset code is {{code}}</p>',
+          passwordResetOtpEmailSubject: 'Reset Your BluLok Password',
+        },
+        deeplinkBaseUrl: 'https://app.blulok.com',
+      };
+
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send(notificationConfig)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(mockSettingsModel.set).toHaveBeenCalledWith(
+        'notifications.config',
+        JSON.stringify(notificationConfig)
+      );
+    });
+
+    it('allows saving notification config with only password reset templates', async () => {
+      const notificationConfig = {
+        enabledChannels: { sms: true, email: false },
+        templates: {
+          passwordResetOtpSms: 'Reset code: {{code}}',
+        },
+      };
+
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send(notificationConfig)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(mockSettingsModel.set).toHaveBeenCalled();
+    });
+
+    it('rejects invalid template field names', async () => {
+      const notificationConfig = {
+        enabledChannels: { sms: true },
+        templates: {
+          invalidTemplateField: 'This should fail',
+        },
+      };
+
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send(notificationConfig)
+        .expect(400);
+
+      expectBadRequest(response);
+      expect(mockSettingsModel.set).not.toHaveBeenCalled();
+    });
+
+    it('denies access to non-admin users', async () => {
+      const notificationConfig = {
+        enabledChannels: { sms: true },
+      };
+
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send(notificationConfig)
+        .expect(403);
+
+      expect(response.body.success).toBe(false);
+      expect(mockSettingsModel.set).not.toHaveBeenCalled();
+    });
+  });
 });
 
 

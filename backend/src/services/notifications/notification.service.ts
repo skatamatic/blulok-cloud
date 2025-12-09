@@ -99,6 +99,14 @@ export class NotificationService {
     return new ConsoleEmailProvider();
   }
 
+  /**
+   * Get the current notification configuration
+   * Useful for services that need to check enabled channels before sending
+   */
+  public async getConfig(): Promise<NotificationsConfig> {
+    return this.loadConfig();
+  }
+
   public async sendInvite(params: SendInviteParams): Promise<void> {
     const config = await this.loadConfig();
     const smsEnabled = config.enabledChannels?.sms !== false;
@@ -152,12 +160,50 @@ export class NotificationService {
 
   public async sendOtp(params: SendOtpParams): Promise<void> {
     const config = await this.loadConfig();
-    const smsTemplate = config.templates?.otpSms || 'Your verification code is: {{code}}';
-    const emailTemplate = config.templates?.otpEmail || 'Your verification code is: {{code}}';
+    const smsEnabled = config.enabledChannels?.sms !== false;
+    const emailEnabled = config.enabledChannels?.email === true;
+    
+    // Select templates based on OTP kind
+    const isPasswordReset = params.kind === 'password_reset';
+    const smsTemplate = isPasswordReset
+      ? (config.templates?.passwordResetOtpSms || 'Your BluLok password reset code is: {{code}}')
+      : (config.templates?.otpSms || 'Your verification code is: {{code}}');
+    const emailTemplate = isPasswordReset
+      ? (config.templates?.passwordResetOtpEmail || 'Your BluLok password reset code is: {{code}}')
+      : (config.templates?.otpEmail || 'Your verification code is: {{code}}');
+    const emailSubject = isPasswordReset
+      ? (config.templates?.passwordResetOtpEmailSubject || 'Reset Your BluLok Password')
+      : (config.templates?.otpEmailSubject || 'Your Verification Code');
 
     const debug = NotificationDebugService.getInstance();
     if (debug.isEnabled()) {
       const createdAt = new Date();
+      // Use configured channels - prefer SMS if enabled, else email
+      if (smsEnabled && params.toPhone) {
+        const body = smsTemplate.replace('{{code}}', params.code);
+        debug.publish({
+          kind: 'otp',
+          delivery: 'sms',
+          toPhone: params.toPhone,
+          body,
+          meta: { code: params.code, otpKind: params.kind || 'invite' },
+          createdAt,
+        });
+        return;
+      }
+      if (emailEnabled && params.toEmail) {
+        const html = emailTemplate.replace('{{code}}', params.code);
+        debug.publish({
+          kind: 'otp',
+          delivery: 'email',
+          toEmail: params.toEmail,
+          body: html,
+          meta: { code: params.code, otpKind: params.kind || 'invite' },
+          createdAt,
+        });
+        return;
+      }
+      // Fallback if no channel enabled but destination provided
       if (params.toPhone) {
         const body = smsTemplate.replace('{{code}}', params.code);
         debug.publish({
@@ -165,7 +211,7 @@ export class NotificationService {
           delivery: 'sms',
           toPhone: params.toPhone,
           body,
-          meta: { code: params.code },
+          meta: { code: params.code, otpKind: params.kind || 'invite' },
           createdAt,
         });
         return;
@@ -177,13 +223,27 @@ export class NotificationService {
           delivery: 'email',
           toEmail: params.toEmail,
           body: html,
-          meta: { code: params.code },
+          meta: { code: params.code, otpKind: params.kind || 'invite' },
           createdAt,
         });
         return;
       }
     }
 
+    // Use configured channels - prefer SMS if enabled, else email
+    if (smsEnabled && params.toPhone) {
+      const provider = this.getSmsProvider(config);
+      const body = smsTemplate.replace('{{code}}', params.code);
+      await provider.sendSms(params.toPhone, body);
+      return;
+    }
+    if (emailEnabled && params.toEmail) {
+      const provider = this.getEmailProvider(config);
+      const html = emailTemplate.replace('{{code}}', params.code);
+      await provider.sendEmail(params.toEmail, emailSubject, html, html);
+      return;
+    }
+    // Fallback: if specific channel requested but not enabled, try anyway
     if (params.toPhone) {
       const provider = this.getSmsProvider(config);
       const body = smsTemplate.replace('{{code}}', params.code);
@@ -192,9 +252,8 @@ export class NotificationService {
     }
     if (params.toEmail) {
       const provider = this.getEmailProvider(config);
-      const subject = 'Your Verification Code';
       const html = emailTemplate.replace('{{code}}', params.code);
-      await provider.sendEmail(params.toEmail, subject, html, html);
+      await provider.sendEmail(params.toEmail, emailSubject, html, html);
       return;
     }
     throw new Error('sendOtp requires toPhone or toEmail');
