@@ -130,6 +130,53 @@ describe('System Settings Routes', () => {
       expect(mockSettingsModel.set).not.toHaveBeenCalled();
     });
 
+    it('allows partial updates (e.g., just deeplinkBaseUrl)', async () => {
+      const notificationConfig = {
+        deeplinkBaseUrl: 'blulok://',
+      };
+
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send(notificationConfig)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(mockSettingsModel.set).toHaveBeenCalled();
+    });
+
+    it('allows partial updates (e.g., just templates without enabledChannels)', async () => {
+      const notificationConfig = {
+        templates: {
+          passwordResetSms: 'Reset: {{deeplink}}',
+        },
+      };
+
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send(notificationConfig)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(mockSettingsModel.set).toHaveBeenCalled();
+    });
+
+    it('allows partial enabledChannels (e.g., just sms without email)', async () => {
+      const notificationConfig = {
+        enabledChannels: { sms: true },
+      };
+
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send(notificationConfig)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(mockSettingsModel.set).toHaveBeenCalled();
+    });
+
     it('denies access to non-admin users', async () => {
       const notificationConfig = {
         enabledChannels: { sms: true },

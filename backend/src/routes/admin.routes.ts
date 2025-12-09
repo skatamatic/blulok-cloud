@@ -22,7 +22,7 @@
 
 import { Router, Response } from 'express';
 import Joi from 'joi';
-import { authenticateToken, requireDevAdmin } from '@/middleware/auth.middleware';
+import { authenticateToken, requireDevAdmin, requireAdmin } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
@@ -446,6 +446,35 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
   } catch (err: any) {
     logger.error(`Failed to send dev gateway command: ${err.message}`, err);
     res.status(500).json({ success: false, message: err.message || 'Failed to send gateway command' });
+  }
+}));
+
+/**
+ * POST /api/v1/admin/data-prune - Manually trigger data pruning (admin only)
+ * Prunes expired/consumed invites, OTPs, and password reset tokens
+ */
+router.post('/data-prune', authenticateToken, requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  try {
+    const { DataPruningService } = await import('@/services/data-pruning.service');
+    const pruningService = DataPruningService.getInstance();
+    const results = await pruningService.prune();
+
+    logger.info(`Manual data pruning triggered by ${user.userId}`, results);
+
+    res.json({
+      success: true,
+      message: 'Data pruning completed',
+      results,
+    });
+  } catch (error: any) {
+    logger.error('Error during manual data pruning:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to prune data',
+      error: error?.message || 'Unknown error',
+    });
   }
 }));
 

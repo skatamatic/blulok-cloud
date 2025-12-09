@@ -86,15 +86,21 @@ async function bootstrap(): Promise<void> {
     const { DenylistPruningService } = await import('@/services/denylist-pruning.service');
     DenylistPruningService.getInstance().start();
 
+    // Initialize data pruning service (daily cleanup of expired invites, OTPs, password reset tokens)
+    const { DataPruningService } = await import('@/services/data-pruning.service');
+    DataPruningService.getInstance().start();
+
     // Legacy command worker removed (key distribution queues deprecated)
 
     // Graceful shutdown
     const gracefulShutdown = () => {
       logger.info('Shutting down gracefully');
       
-      // Stop denylist pruning service
+      // Stop pruning services
       const { DenylistPruningService } = require('@/services/denylist-pruning.service');
       DenylistPruningService.getInstance().stop();
+      const { DataPruningService } = require('@/services/data-pruning.service');
+      DataPruningService.getInstance().stop();
       
       // Destroy logger interceptor
       loggerInterceptor.destroy();

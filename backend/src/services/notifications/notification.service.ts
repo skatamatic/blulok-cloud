@@ -64,7 +64,7 @@ export class NotificationService {
           inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
           otpSms: 'Your verification code is: {{code}}',
         },
-        deeplinkBaseUrl: 'blulok://invite',
+        deeplinkBaseUrl: 'blulok://',
       };
     }
     try {
@@ -77,7 +77,7 @@ export class NotificationService {
           inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
           otpSms: 'Your verification code is: {{code}}',
         },
-        deeplinkBaseUrl: 'blulok://invite',
+        deeplinkBaseUrl: 'blulok://',
       };
     }
   }
@@ -260,8 +260,16 @@ export class NotificationService {
     const emailEnabled = config.enabledChannels?.email === true;
 
     // Build deeplink with token
-    const baseUrl = config.deeplinkBaseUrl || 'blulok://';
-    const deeplink = `${baseUrl}${baseUrl.includes('?') ? '&' : baseUrl.endsWith('/') ? '' : '/'}reset-password?token=${encodeURIComponent(params.token)}`;
+    // Base URL should be clean (e.g., blulok:// or https://app.blulok.com/)
+    // Append reset-password path: blulok://reset-password?token=...
+    let baseUrl = config.deeplinkBaseUrl || 'blulok://';
+    
+    // For HTTP/HTTPS URLs, ensure trailing slash; for custom schemes (blulok://), no slash needed
+    if (baseUrl.match(/^https?:\/\//) && !baseUrl.endsWith('/')) {
+      baseUrl = `${baseUrl}/`;
+    }
+    
+    const deeplink = `${baseUrl}reset-password?token=${encodeURIComponent(params.token)}`;
 
     const smsTemplate = config.templates?.passwordResetSms || 'Reset your BluLok password: {{deeplink}}';
     const emailTemplate = config.templates?.passwordResetEmail || '<p>Click to reset your password: <a href="{{deeplink}}">{{deeplink}}</a></p>';
@@ -377,7 +385,14 @@ export class NotificationService {
     const emailProvider = emailEnabled ? this.getEmailProvider(config) : undefined;
 
     // INVITE
-    const deeplink = (config.deeplinkBaseUrl || 'blulok://invite') + (config.deeplinkBaseUrl?.includes('?') ? '&' : '?') + 'test=1';
+    let baseUrl = config.deeplinkBaseUrl || 'blulok://';
+    
+    // For HTTP/HTTPS URLs, ensure trailing slash; for custom schemes (blulok://), no slash needed
+    if (baseUrl.match(/^https?:\/\//) && !baseUrl.endsWith('/')) {
+      baseUrl = `${baseUrl}/`;
+    }
+    
+    const deeplink = `${baseUrl}invite?test=1`;
     const inviteSmsTpl = config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}}';
     const inviteEmailTpl = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
     const inviteEmailSubject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';

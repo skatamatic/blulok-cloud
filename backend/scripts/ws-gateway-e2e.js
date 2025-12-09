@@ -1262,6 +1262,8 @@ async function run() {
         e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
       );
       ok(`Received invite notification for ${inviteEvent.toPhone || inviteEvent.toEmail || 'unknown-recipient'}`);
+      console.log(C.cyan('\n  📧 Full Invite Notification Details:'));
+      console.log(C.gray(JSON.stringify(inviteEvent, null, 2)));
       const deeplinkMatch = String(inviteEvent.body).match(/token=([^&\s]+)/);
       if (!deeplinkMatch) throw new Error('Failed to parse invite token from SMS body');
       const inviteToken = decodeURIComponent(deeplinkMatch[1]);
@@ -1274,6 +1276,9 @@ async function run() {
       const otpEvent = await waitForNotification((e) =>
         e.kind === 'otp' && e.delivery === 'sms'
       );
+      ok(`Received OTP notification for ${otpEvent.toPhone || otpEvent.toEmail || 'unknown-recipient'}`);
+      console.log(C.cyan('\n  📧 Full OTP Notification Details:'));
+      console.log(C.gray(JSON.stringify(otpEvent, null, 2)));
       const otpMatch = String(otpEvent.body).match(/(\d{6})/);
       if (!otpMatch) throw new Error('Failed to parse OTP code from SMS body');
       const otp = otpMatch[1];
@@ -1349,7 +1354,9 @@ async function run() {
     const newInviteEvent = await waitForNotification((e) =>
       e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
     );
-    ok('Invite SMS received for new sharee');
+    ok(`Invite SMS received for new sharee ${newInviteEvent.toPhone || newInviteEvent.toEmail || 'unknown-recipient'}`);
+    console.log(C.cyan('\n  📧 Full New Invitee Invite Notification Details:'));
+    console.log(C.gray(JSON.stringify(newInviteEvent, null, 2)));
     const newDeeplinkMatch = String(newInviteEvent.body).match(/token=([^&\s]+)/);
     if (!newDeeplinkMatch) throw new Error('No invite token found in SMS for new sharee');
     const newInviteToken = decodeURIComponent(newDeeplinkMatch[1]);
@@ -1393,6 +1400,9 @@ async function run() {
     const newOtpEvent = await waitForNotification((e) =>
       e.kind === 'otp' && e.delivery === 'sms'
     );
+    ok(`Received OTP notification for new sharee ${newOtpEvent.toPhone || newOtpEvent.toEmail || 'unknown-recipient'}`);
+    console.log(C.cyan('\n  📧 Full New Invitee OTP Notification Details:'));
+    console.log(C.gray(JSON.stringify(newOtpEvent, null, 2)));
     const newOtpMatch = String(newOtpEvent.body).match(/(\d{6})/);
     const newOtp = newOtpMatch && newOtpMatch[1];
     if (!newOtp) throw new Error('No OTP code parsed for new sharee');
@@ -1827,10 +1837,13 @@ async function run() {
     if (!resetEvent) {
       throw new Error('Did not receive password reset notification');
     }
+    ok(`Received password reset notification for ${resetEvent.toPhone || resetEvent.toEmail || 'unknown-recipient'}`);
+    console.log(C.cyan('\n  📧 Full Password Reset Notification Details:'));
+    console.log(C.gray(JSON.stringify(resetEvent, null, 2)));
     // Extract token from deeplink in notification meta or body
     const resetToken = resetEvent.meta?.token;
     if (!resetToken) throw new Error('Failed to extract token from password reset notification');
-    ok(`Received password reset token`);
+    ok(`Extracted password reset token from notification`);
 
     step('Verifying reset token is valid');
     const verifyRes = await axios.post(`${API_BASE}/auth/forgot-password/verify`, {
