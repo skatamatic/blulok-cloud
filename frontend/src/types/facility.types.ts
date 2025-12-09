@@ -14,6 +14,8 @@ export interface Facility {
   created_at: string;
   updated_at: string;
   stats?: FacilityStats;
+  /** BluDesign 3D facility model ID if linked */
+  bluDesignFacilityId?: string;
 }
 
 export interface FacilityStats {

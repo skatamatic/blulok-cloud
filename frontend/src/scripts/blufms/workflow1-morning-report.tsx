@@ -25,7 +25,12 @@ export const workflow1MorningReport: DemoScript = {
         hasSignificantDetails: true,
       },
     },
-    { type: 'delay', duration: 1800 },
+    { type: 'updateCard', cardId: 'security-card', updates: { loadingProgress: 30 } },
+    { type: 'delay', duration: 600 },
+    { type: 'updateCard', cardId: 'security-card', updates: { loadingProgress: 70 } },
+    { type: 'delay', duration: 600 },
+    { type: 'updateCard', cardId: 'security-card', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 400 },
     {
       type: 'updateCard',
       cardId: 'security-card',
@@ -142,36 +147,7 @@ export const workflow1MorningReport: DemoScript = {
       },
     },
     
-    // Move-ins card - loading then loaded
-    {
-      type: 'addStatusCard',
-      card: {
-        id: 'moveins-card',
-        type: 'moveins',
-        title: 'Move-ins / Move-outs',
-        primaryValue: '',
-        secondaryValue: '',
-        statusColor: 'blue',
-        isLoading: true,
-        loadingMessage: 'Checking reservations...',
-        loadingProgress: 0,
-      },
-    },
-    { type: 'updateCard', cardId: 'moveins-card', updates: { loadingProgress: 50 } },
-    { type: 'delay', duration: 300 },
-    { type: 'updateCard', cardId: 'moveins-card', updates: { loadingProgress: 100 } },
-    { type: 'delay', duration: 300 },
-    {
-      type: 'updateCard',
-      cardId: 'moveins-card',
-      updates: {
-        isLoading: false,
-        primaryValue: '3 Today',
-        secondaryValue: '1 Move-out, 4 Pending reservations',
-      },
-    },
-    
-    // Occupancy card - loading then loaded
+    // Occupancy card - loading then loaded (includes move-ins/move-outs)
     {
       type: 'addStatusCard',
       card: {
@@ -182,7 +158,7 @@ export const workflow1MorningReport: DemoScript = {
         secondaryValue: '',
         statusColor: 'blue',
         isLoading: true,
-        loadingMessage: 'Calculating occupancy metrics...',
+        loadingMessage: 'Calculating occupancy and move-ins...',
         loadingProgress: 0,
         hasSignificantDetails: true,
       },
@@ -199,7 +175,7 @@ export const workflow1MorningReport: DemoScript = {
       updates: {
         isLoading: false,
         primaryValue: '92%',
-        secondaryValue: '44 Vacant units',
+        secondaryValue: '44 Vacant • 3 Move-ins Today',
         showDetails: true,
         detailsContent: (
           <div className="space-y-2 text-sm">
@@ -210,6 +186,10 @@ export const workflow1MorningReport: DemoScript = {
             <div className="flex items-center justify-between">
               <span>Vacant Units</span>
               <span className="font-semibold text-gray-900 dark:text-white">44</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Today's Activity</span>
+              <span className="font-semibold text-gray-900 dark:text-white">3 Move-ins, 1 Move-out</span>
             </div>
             <div className="pt-2 border-t border-gray-200 dark:border-gray-700 mt-2">
               <div className="text-xs text-gray-600 dark:text-gray-400">AI forecast: 94% occupancy projected for next 30 days</div>
@@ -251,37 +231,22 @@ export const workflow1MorningReport: DemoScript = {
         showDetails: true,
       },
     },
-    
-    // Sensor card - loading then loaded
-    {
-      type: 'addStatusCard',
-      card: {
-        id: 'sensor-card',
-        type: 'sensor-cctv',
-        title: 'Sensor/CCTV Highlights',
-        primaryValue: '',
-        secondaryValue: '',
-        statusColor: 'green',
-        isLoading: true,
-        loadingMessage: 'Analyzing sensor data...',
-        loadingProgress: 0,
-      },
-    },
-    { type: 'updateCard', cardId: 'sensor-card', updates: { loadingProgress: 45 } },
-    { type: 'delay', duration: 350 },
-    { type: 'updateCard', cardId: 'sensor-card', updates: { loadingProgress: 90 } },
-    { type: 'delay', duration: 400 },
-    {
-      type: 'updateCard',
-      cardId: 'sensor-card',
-      updates: {
-        isLoading: false,
-        primaryValue: 'Normal',
-        secondaryValue: 'Motion triggers and heat signatures within normal range',
-      },
-    },
-    { type: 'delay', duration: 500 },
     { type: 'updateVoiceStatus', status: 'Morning shift report complete. You have one overnight event that may require review, one overdue work order, and two failed payments flagged for follow-up.' },
+    { type: 'delay', duration: 800 },
+    { type: 'updateVoiceStatus', status: 'Generating comprehensive report...' },
+    { type: 'updateReportGenerationProgress', progress: 10 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 30 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 50 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 70 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 85 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 95 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 100 },
   ],
 };
 

@@ -8,55 +8,95 @@ export const workflow0LoginFacility: DemoScript = {
   actions: [
     { type: 'clearCards' },
     { type: 'updateVoiceStatus', status: 'Voice detected... authenticating user profile...' },
-    { type: 'delay', duration: 2000 },
-    { type: 'addEphemeralStatus', id: 'auth-success', type: 'success', title: 'Voice Authentication Successful', message: 'Logged in as: Max Picton' },
+    { type: 'delay', duration: 500 },
+    
+    // Authentication Status card - appears immediately
+    {
+      type: 'addStatusCard',
+      card: {
+        id: 'auth-status',
+        type: 'security',
+        title: 'Authentication',
+        primaryValue: '',
+        secondaryValue: '',
+        statusColor: 'blue',
+        isLoading: true,
+        loadingMessage: 'Authenticating user profile...',
+        loadingProgress: 0,
+      },
+    },
+    { type: 'updateCard', cardId: 'auth-status', updates: { loadingProgress: 40 } },
+    { type: 'delay', duration: 600 },
+    { type: 'updateCard', cardId: 'auth-status', updates: { loadingProgress: 80 } },
+    { type: 'delay', duration: 600 },
+    { type: 'updateCard', cardId: 'auth-status', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 400 },
+    {
+      type: 'updateCard',
+      cardId: 'auth-status',
+      updates: {
+        isLoading: false,
+        primaryValue: 'Authenticated',
+        secondaryValue: 'Logged in as: Max Picton',
+        badge: {
+          text: 'Active',
+          color: 'green',
+        },
+      },
+    },
     { type: 'updateVoiceStatus', status: 'Good morning, Max. You are now logged in.' },
     { type: 'delay', duration: 1500 },
     { type: 'updateVoiceStatus', status: 'Bringing the facility online for daytime operations.' },
-    { type: 'delay', duration: 1000 },
-    { type: 'addEphemeralStatus', id: 'diagnostics-start', type: 'info', title: 'Running morning diagnostics...' },
-    { type: 'delay', duration: 800 },
-    { type: 'addEphemeralStatus', id: 'cameras-online', type: 'success', title: 'Cameras operational' },
-    { type: 'delay', duration: 600 },
-    { type: 'addEphemeralStatus', id: 'sensors-online', type: 'success', title: 'Sensors online' },
-    { type: 'delay', duration: 600 },
-    { type: 'addEphemeralStatus', id: 'gate-connected', type: 'success', title: 'Gate system connected' },
-    { type: 'delay', duration: 600 },
-    { type: 'addEphemeralStatus', id: 'blulok-connected', type: 'success', title: 'BluLok mesh network connected' },
-    { type: 'delay', duration: 600 },
-    { type: 'addEphemeralStatus', id: 'ai-active', type: 'success', title: 'AI modules active' },
-    { type: 'delay', duration: 800 },
-    { type: 'addEphemeralStatus', id: 'diagnostics-complete', type: 'success', title: 'Diagnostics complete', message: 'All systems online' },
-    { type: 'updateVoiceStatus', status: 'The facility is ready for daytime operations. Would you like to begin with your morning shift report?' },
-    { type: 'delay', duration: 2000 },
+    { type: 'delay', duration: 500 },
+    
+    // System Wake-Up Checklist
     {
-      type: 'addDetailCard',
+      type: 'addChecklistCard',
       card: {
-        id: 'system-status',
-        type: 'detail',
-        title: 'System Status',
-        content: (
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center justify-between">
-              <span>Lighting</span>
-              <span className="text-green-600 dark:text-green-400 font-medium">Active</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>Climate Control</span>
-              <span className="text-green-600 dark:text-green-400 font-medium">Day Mode</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>Security System</span>
-              <span className="text-green-600 dark:text-green-400 font-medium">Day Mode</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>BluLok Network</span>
-              <span className="text-green-600 dark:text-green-400 font-medium">Online</span>
-            </div>
-          </div>
-        ),
+        id: 'system-wakeup-checklist',
+        type: 'checklist',
+        title: 'System Wake-Up',
+        items: [
+          { id: 'cameras', label: 'Cameras operational', completed: false },
+          { id: 'sensors', label: 'Sensors online', completed: false },
+          { id: 'gate', label: 'Gate system connected', completed: false },
+          { id: 'blulok', label: 'BluLok mesh network connected', completed: false },
+          { id: 'ai', label: 'AI modules active', completed: false },
+        ],
+        completionMessage: 'System wake-up complete, all systems active',
+        isLoading: true,
+        loadingProgress: 0,
+        loadingMessage: 'Loading wake-up todos...',
       },
     },
+    { type: 'updateCard', cardId: 'system-wakeup-checklist', updates: { loadingProgress: 20, loadingMessage: 'Initializing system checks...' } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'system-wakeup-checklist', updates: { loadingProgress: 40, loadingMessage: 'Preparing diagnostics...' } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'system-wakeup-checklist', updates: { loadingProgress: 60, loadingMessage: 'Loading checklist items...' } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'system-wakeup-checklist', updates: { loadingProgress: 80, loadingMessage: 'Finalizing...' } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'system-wakeup-checklist', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 300 },
+    {
+      type: 'updateCard',
+      cardId: 'system-wakeup-checklist',
+      updates: {
+        isLoading: false,
+      },
+    },
+    { type: 'delay', duration: 300 },
+    { type: 'updateChecklistItem', cardId: 'system-wakeup-checklist', itemId: 'cameras', completed: true, timestamp: 'Just now' },
+    { type: 'delay', duration: 600 },
+    { type: 'updateChecklistItem', cardId: 'system-wakeup-checklist', itemId: 'sensors', completed: true, timestamp: 'Just now' },
+    { type: 'delay', duration: 600 },
+    { type: 'updateChecklistItem', cardId: 'system-wakeup-checklist', itemId: 'gate', completed: true, timestamp: 'Just now' },
+    { type: 'delay', duration: 600 },
+    { type: 'updateChecklistItem', cardId: 'system-wakeup-checklist', itemId: 'blulok', completed: true, timestamp: 'Just now' },
+    { type: 'delay', duration: 600 },
+    { type: 'updateChecklistItem', cardId: 'system-wakeup-checklist', itemId: 'ai', completed: true, timestamp: 'Just now' },
+    { type: 'updateVoiceStatus', status: 'The facility is ready for daytime operations. Would you like to begin with your morning shift report?' },
   ],
 };
 

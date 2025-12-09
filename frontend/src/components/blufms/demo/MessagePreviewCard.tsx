@@ -1,6 +1,7 @@
 import React from 'react';
 import { EnvelopeIcon, DevicePhoneMobileIcon, CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/24/outline';
 import { MessagePreviewCardData } from '@/scripts/blufms/demoActionTypes';
+import { CardLoadingPlaceholder } from './CardLoadingPlaceholder';
 
 interface MessagePreviewCardProps {
   card: MessagePreviewCardData;
@@ -19,6 +20,20 @@ const statusColors = {
 };
 
 export const MessagePreviewCard: React.FC<MessagePreviewCardProps> = ({ card }) => {
+  // Show loading placeholder if card is loading
+  if (card.isLoading) {
+    const Icon = card.messageType === 'email' ? EnvelopeIcon : DevicePhoneMobileIcon;
+    return (
+      <CardLoadingPlaceholder
+        title={card.messageType === 'email' ? 'Email' : 'SMS'}
+        progress={card.loadingProgress || 0}
+        message={card.loadingMessage}
+        statusColor="blue"
+        icon={Icon}
+      />
+    );
+  }
+
   const StatusIcon = card.status ? statusIcons[card.status] : null;
 
   const borderColor = card.status === 'sent' 
@@ -28,7 +43,7 @@ export const MessagePreviewCard: React.FC<MessagePreviewCardProps> = ({ card }) 
     : 'border-l-yellow-400 dark:border-l-yellow-500';
 
   return (
-    <div className={`bg-white dark:bg-gray-800 rounded-lg border-l-2 ${borderColor} border-r border-t border-b border-gray-200 dark:border-gray-700 p-4 shadow-md hover:shadow-lg transition-all duration-200 animate-in fade-in slide-in-from-bottom-2`}>
+    <div className={`bg-white dark:bg-gray-900 rounded-lg border-l-2 ${borderColor} border-r border-t border-b border-gray-200 dark:border-gray-800 p-4 shadow-md hover:shadow-lg transition-all duration-200 animate-in fade-in slide-in-from-bottom-2`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center space-x-3">
           <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-900/20">

@@ -145,43 +145,42 @@ export class UserWidgetLayoutModel extends BaseModel {
 
   public static async saveUserLayouts(userId: string, layouts: Array<{
     widgetId: string;
+    widgetType?: string;
+    config?: Record<string, unknown>;
     layoutConfig: any;
     displayOrder: number;
     isVisible?: boolean;
   }>): Promise<void> {
-        // saveUserLayouts called
-    
     // Use transaction for atomic updates
     await this.db.transaction(async (trx) => {
       for (const layout of layouts) {
         try {
-          // Processing layout
-          
           const existing = await trx('user_widget_layouts')
             .where('user_id', userId)
             .where('widget_id', layout.widgetId)
             .first();
 
+          // Include widget config in the layout_config
+          const fullLayoutConfig = {
+            ...layout.layoutConfig,
+            config: layout.config, // Store widget-specific config (e.g., facility IDs)
+          };
+          const layoutConfigJson = JSON.stringify(fullLayoutConfig);
+          
+          // Determine widget type - use provided type, or extract from ID
+          const widgetType = layout.widgetType || this.extractWidgetType(layout.widgetId);
+
           if (existing) {
-            // Updating existing layout for widget
-            // Explicitly serialize the layoutConfig to JSON string
-            const layoutConfigJson = JSON.stringify(layout.layoutConfig);
-            
             await trx('user_widget_layouts')
               .where('id', existing.id)
               .update({
+                widget_type: widgetType, // Update widget type
                 layout_config: layoutConfigJson,
                 display_order: layout.displayOrder,
                 is_visible: layout.isVisible !== undefined ? layout.isVisible : true,
                 updated_at: trx.fn.now(),
               });
           } else {
-            // Creating new layout for widget
-            const widgetType = this.extractWidgetType(layout.widgetId);
-            
-            // Explicitly serialize the layoutConfig to JSON string
-            const layoutConfigJson = JSON.stringify(layout.layoutConfig);
-            
             try {
               await trx('user_widget_layouts').insert({
                 user_id: userId,
@@ -196,11 +195,11 @@ export class UserWidgetLayoutModel extends BaseModel {
             } catch (insertError: any) {
               // If duplicate entry error, try to update instead
               if (insertError.code === 'ER_DUP_ENTRY') {
-                console.log(`Duplicate entry detected for widget ${layout.widgetId}, updating instead`);
                 await trx('user_widget_layouts')
                   .where('user_id', userId)
                   .where('widget_id', layout.widgetId)
                   .update({
+                    widget_type: widgetType,
                     layout_config: layoutConfigJson,
                     display_order: layout.displayOrder,
                     is_visible: layout.isVisible !== undefined ? layout.isVisible : true,
@@ -217,8 +216,6 @@ export class UserWidgetLayoutModel extends BaseModel {
         }
       }
     });
-    
-    // saveUserLayouts completed successfully
   }
 
   public static async hideWidget(userId: string, widgetId: string): Promise<void> {

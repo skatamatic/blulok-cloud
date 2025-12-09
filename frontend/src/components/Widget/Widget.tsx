@@ -33,7 +33,7 @@ export const Widget: React.FC<WidgetProps> = ({
   suppressTitleOverlay = false,
 }) => {
   // Size to grid dimensions mapping
-  const sizeToGrid = {
+  const sizeToGrid: Record<WidgetSize, { w: number; h: number }> = {
     tiny: { w: 1, h: 1 },      // 136×136px - Single metric
     small: { w: 2, h: 1 },     // 288×136px - Compact horizontal
     medium: { w: 3, h: 2 },    // 440×288px - Standard widget
@@ -42,6 +42,7 @@ export const Widget: React.FC<WidgetProps> = ({
     huge: { w: 6, h: 4 },      // 880×544px - Maximum dashboard real estate
     'large-wide': { w: 6, h: 3 },  // 880×424px - Wide extended content
     'huge-wide': { w: 9, h: 4 },   // 1304×544px - Ultra-wide dashboard
+    'mega-tall': { w: 9, h: 6 },   // 1304×816px - Ultra-wide tall dashboard
   };
 
   const handleSizeChange = (newSize: WidgetSize) => {

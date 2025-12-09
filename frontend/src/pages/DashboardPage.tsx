@@ -20,6 +20,7 @@ import { SyncFMSWidget } from '@/components/Widget/SyncFMSWidget';
 import { AccessHistoryWidget } from '@/components/Widget/AccessHistoryWidget';
 import { SharedKeysWidget } from '@/components/Widget/SharedKeysWidget';
 import { LockStatusWidget } from '@/components/Widget/LockStatusWidget';
+import { FacilityViewerWidget } from '@/components/Widget/FacilityViewerWidget';
 import { WidgetSize } from '@/components/Widget/WidgetSizeDropdown';
 import { WidgetInstance } from '@/types/widget-management.types';
 import { getWidgetType } from '@/config/widgetRegistry';
@@ -136,14 +137,16 @@ export default function DashboardPage() {
       // Broadcasting layout change to other tabs
       
       try {
-        // Convert grid layouts to API format
+        // Convert grid layouts to API format, including widget type and config
         const layoutsToSave = layouts.lg?.map((item, index) => {
-          // Find the widget instance to get the correct size enum
+          // Find the widget instance to get the correct size enum and config
           const widgetInstance = _instances.find(w => w.id === item.i);
           const widgetSize = widgetInstance?.size || getWidgetSizeFromGrid(item.w, item.h);
           
           return {
             widgetId: item.i,
+            widgetType: widgetInstance?.type, // Include widget type for proper restoration
+            config: widgetInstance?.config,   // Include widget config (e.g., facility IDs)
             layoutConfig: {
               position: { 
                 x: item.x, 
@@ -423,6 +426,8 @@ export default function DashboardPage() {
                 frontendWidgetType = 'battery-status';
               } else if (backendWidgetType === 'activitymonitor') {
                 frontendWidgetType = 'activity-monitor';
+              } else if (backendWidgetType === 'facilityviewer' || backendWidgetType === 'facility-viewer') {
+                frontendWidgetType = 'facility-viewer';
               } else if (backendWidgetType === 'stats') {
                 // For generic stats widgets, try to determine from widget_id
                 if (widget.widgetId.includes('facilities')) {
@@ -459,7 +464,7 @@ export default function DashboardPage() {
                 type: frontendWidgetType,
                 title: widgetTypeConfig.name || 'Unknown Widget',
                 size: widgetSize,
-                config: {}
+                config: widget.config || {} // Restore saved config (e.g., facility IDs)
               };
 
             } else {
@@ -688,12 +693,14 @@ export default function DashboardPage() {
       // Immediately save to backend to prevent WebSocket sync from overwriting
       try {
         const layoutsToSave = newLayouts.lg?.map((item, index) => {
-          // Find the widget instance to get the correct size enum
+          // Find the widget instance to get the correct size enum and type
           const widgetInstance = newInstances.find(w => w.id === item.i);
           const widgetSize = widgetInstance?.size || getWidgetSizeFromGrid(item.w, item.h);
           
           return {
             widgetId: item.i,
+            widgetType: widgetInstance?.type, // Include widget type for proper restoration
+            config: widgetInstance?.config,   // Include widget config (e.g., facility IDs)
             layoutConfig: {
               position: { x: item.x, y: item.y, w: item.w, h: item.h },
               size: widgetSize, // Only save the size enum, not dimensions
@@ -773,23 +780,28 @@ export default function DashboardPage() {
   const handleLayoutSave = useCallback(async (layouts: { [key: string]: Layout[] }) => {
     try {
       // handleLayoutSave called
-      // Convert grid layouts to API format
-      const layoutsToSave = layouts.lg?.map((item, index) => ({
-        widgetId: item.i,
-        layoutConfig: {
-          position: { x: item.x, y: item.y, w: item.w, h: item.h },
-          size: getWidgetSizeFromGrid(item.w, item.h), // Only save size enum, derive dimensions from it
-        },
-        displayOrder: index,
-        isVisible: true, // All widgets in layout are visible
-      })) || [];
+      // Convert grid layouts to API format, including widget type and config for proper restoration
+      const layoutsToSave = layouts.lg?.map((item, index) => {
+        const widgetInstance = widgetInstances.find(w => w.id === item.i);
+        return {
+          widgetId: item.i,
+          widgetType: widgetInstance?.type, // Include widget type for proper restoration
+          config: widgetInstance?.config,   // Include widget config (e.g., facility IDs)
+          layoutConfig: {
+            position: { x: item.x, y: item.y, w: item.w, h: item.h },
+            size: getWidgetSizeFromGrid(item.w, item.h), // Only save size enum, derive dimensions from it
+          },
+          displayOrder: index,
+          isVisible: true, // All widgets in layout are visible
+        };
+      }) || [];
       
       await apiService.saveWidgetLayouts(layoutsToSave);
       // Layouts saved successfully
     } catch (error) {
       console.error('Failed to save widget layout:', error);
     }
-  }, [getWidgetSizeFromGrid]);
+  }, [getWidgetSizeFromGrid, widgetInstances]);
 
 
   // Widget rendering helper
@@ -964,6 +976,16 @@ export default function DashboardPage() {
             currentSize={widget.size as WidgetSize}
             onSizeChange={(size) => handleWidgetGridSizeChange(widget.id, sizeToGrid(size))}
             onRemove={isTenant ? undefined : () => removeWidget(widget.id)}
+          />
+        );
+      
+      case 'facility-viewer':
+        return (
+          <FacilityViewerWidget
+            {...commonProps}
+            bluDesignFacilityId={widget.config?.bluDesignFacilityId || ''}
+            bluLokFacilityId={widget.config?.bluLokFacilityId}
+            facilityName={widget.config?.facilityName}
           />
         );
 

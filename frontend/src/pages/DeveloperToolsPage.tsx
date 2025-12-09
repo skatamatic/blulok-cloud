@@ -16,7 +16,8 @@ import {
   ArrowDownTrayIcon,
   PaintBrushIcon,
   CloudIcon,
-  PresentationChartLineIcon
+  PresentationChartLineIcon,
+  CubeIcon
 } from '@heroicons/react/24/outline';
 
 interface OperationStatus {
@@ -354,6 +355,128 @@ const BluFMSDemoTab: React.FC = () => {
   );
 };
 
+const BluDesignTab: React.FC = () => {
+  const { addToast } = useToast();
+  const [isBluDesignEnabled, setIsBluDesignEnabled] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    const loadSetting = async () => {
+      try {
+        const response = await apiService.getSystemSettings();
+        if (response.success && response.settings['dev.bludesign_enabled'] !== undefined) {
+          setIsBluDesignEnabled(response.settings['dev.bludesign_enabled']);
+        }
+      } catch (error) {
+        console.error('Failed to load BluDesign setting:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadSetting();
+  }, []);
+
+  const toggleBluDesign = async () => {
+    setIsSaving(true);
+    try {
+      const newState = !isBluDesignEnabled;
+      const response = await apiService.updateSystemSettings({
+        'dev.bludesign_enabled': newState
+      });
+      if (response.success) {
+        setIsBluDesignEnabled(newState);
+        addToast({
+          type: 'success',
+          title: 'BluDesign Updated',
+          message: `BluDesign navigation ${newState ? 'enabled' : 'disabled'}. Refresh the page to see changes.`,
+        });
+      } else {
+        addToast({ type: 'error', title: 'Failed to update BluDesign' });
+      }
+    } catch (error) {
+      console.error('Failed to update BluDesign setting:', error);
+      addToast({ type: 'error', title: 'An error occurred while updating settings' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+          BluDesign
+        </h2>
+        <p className="text-gray-600 dark:text-gray-400">
+          Enable BluDesign functionality in the navigation panel. BluDesign provides a full-featured 3D editing system for creating interactive 3D renders of storage facilities.
+        </p>
+      </div>
+
+      {/* BluDesign Toggle */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <CubeIcon className="h-8 w-8 text-primary-500" />
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                Enable BluDesign Navigation
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Show BluDesign section in the navigation panel
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-4">
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+              isBluDesignEnabled
+                ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+            }`}>
+              {isBluDesignEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <button
+              onClick={toggleBluDesign}
+              disabled={isLoading || isSaving}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 ${
+                isBluDesignEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-700'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  isBluDesignEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <CheckCircleIcon className="h-5 w-5 text-blue-400" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                What this does
+              </h3>
+              <div className="mt-2 text-sm text-blue-700 dark:text-blue-200">
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Transforms the navigation panel into collapsible sections (BluLok, BluFMS, and BluDesign)</li>
+                  <li>Adds BluDesign pages: View (catalog), Build (builder), and Assets (textures/skinning)</li>
+                  <li>All existing BluLok functionality remains unchanged</li>
+                  <li>If either BluFMS or BluDesign is enabled, navigation converts to expandable sections</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const UIDebugTab: React.FC = () => {
   const { addToast, clearAllToasts } = useToast();
 
@@ -480,7 +603,7 @@ const UIDebugTab: React.FC = () => {
   );
 };
 
-type DevTabs = 'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms' | 'blufms-demo' | 'deployment';
+type DevTabs = 'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms' | 'blufms-demo' | 'bludesign' | 'deployment';
 
 export default function DeveloperToolsPage() {
   const [activeTab, setActiveTab] = useState<DevTabs>('database');
@@ -1041,6 +1164,7 @@ export default function DeveloperToolsPage() {
                 ['fms', CloudIcon, 'FMS'],
                 ['ui-debug', PaintBrushIcon, 'UI Debug'],
                 ['blufms-demo', PresentationChartLineIcon, 'BluFMS Demo'],
+                ['bludesign', CubeIcon, 'BluDesign'],
                 ['deployment', DocumentTextIcon, 'Deployment']
               ] as const).map(([tab, Icon, label]) => (
                 <button
@@ -1441,6 +1565,10 @@ export default function DeveloperToolsPage() {
 
         {activeTab === 'blufms-demo' && (
           <BluFMSDemoTab />
+        )}
+
+        {activeTab === 'bludesign' && (
+          <BluDesignTab />
         )}
 
         {activeTab === 'ui-debug' && (

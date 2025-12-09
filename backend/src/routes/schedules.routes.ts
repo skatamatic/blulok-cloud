@@ -45,7 +45,7 @@ const createScheduleSchema = Joi.object({
       day_of_week: Joi.number().integer().min(0).max(6).required(),
       start_time: Joi.string().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/).required(),
       end_time: Joi.string().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/).required(),
-    })
+    }).unknown(false) // Reject any additional fields like 'id'
   ).optional().default([]),
 });
 
@@ -57,7 +57,7 @@ const updateScheduleSchema = Joi.object({
       day_of_week: Joi.number().integer().min(0).max(6).required(),
       start_time: Joi.string().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/).required(),
       end_time: Joi.string().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/).required(),
-    })
+    }).unknown(false) // Reject any additional fields like 'id'
   ).optional(),
 });
 
@@ -151,6 +151,19 @@ router.put('/facilities/:facilityId/schedules/:scheduleId', requireAdminOrFacili
   res.json({
     success: true,
     schedule,
+  });
+}));
+
+// GET /api/v1/facilities/:facilityId/schedules/:scheduleId/usage - Get schedule usage
+router.get('/facilities/:facilityId/schedules/:scheduleId/usage', requireAdminOrFacilityAdmin, requireFacilityAccess('facilityId'), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { facilityId, scheduleId } = req.params;
+  const userContext = getUserContext(req);
+
+  const usage = await SchedulesService.getScheduleUsage(facilityId, scheduleId, userContext);
+
+  res.json({
+    success: true,
+    usage,
   });
 }));
 

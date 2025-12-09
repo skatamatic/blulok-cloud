@@ -15,60 +15,57 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   if (markers.length === 0) return null;
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg border-l-2 border-l-primary-400 dark:border-l-primary-500 border-r border-t border-b border-gray-200 dark:border-gray-700 p-4 shadow-md">
-      <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">
-        Workflow Timeline
+    <div className="bg-white dark:bg-gray-900 rounded-lg border-l-2 border-l-primary-400 dark:border-l-primary-500 border-r border-t border-b border-gray-200 dark:border-gray-800 p-3 shadow-md">
+      <h3 className="text-xs font-semibold text-gray-900 dark:text-white mb-2">
+        Event Timeline
       </h3>
-      <div className="space-y-3">
+      <div className="space-y-1.5">
         {markers.map((marker, index) => {
           const isActive = marker.step === currentStep;
           const isPast = marker.step < currentStep;
           const isClickable = onMarkerClick !== undefined;
 
           return (
-            <button
+            <div
               key={marker.id}
-              onClick={() => isClickable && onMarkerClick(marker.step)}
-              disabled={!isClickable}
               className={`
-                w-full flex items-center gap-3 p-3 rounded-lg transition-all duration-200 text-left
-                ${isClickable ? 'hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer' : 'cursor-default'}
-                ${isActive ? 'bg-primary-50 dark:bg-primary-900/20 border border-primary-300 dark:border-primary-700' : 'border border-gray-200 dark:border-gray-700'}
+                flex items-center gap-2 py-1.5 px-2 rounded transition-colors duration-150
+                ${isActive ? 'bg-primary-50 dark:bg-primary-900/20' : ''}
               `}
             >
               <div className={`
-                flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm transition-all duration-200
+                flex-shrink-0 w-1.5 h-1.5 rounded-full transition-all duration-200
                 ${isActive 
-                  ? 'bg-primary-600 dark:bg-primary-400 text-white' 
+                  ? 'bg-primary-600 dark:bg-primary-400' 
                   : isPast 
-                    ? 'bg-green-500 dark:bg-green-400 text-white' 
-                    : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                    ? 'bg-green-500 dark:bg-green-400' 
+                    : 'bg-gray-300 dark:bg-gray-600'
                 }
-              `}>
-                {isPast ? '✓' : marker.step}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={`
-                  text-sm font-medium
+              `} />
+              <div className="flex-1 min-w-0 flex items-center gap-2">
+                <span className={`
+                  text-xs font-medium
                   ${isActive 
                     ? 'text-primary-600 dark:text-primary-400' 
-                    : 'text-gray-900 dark:text-white'
+                    : isPast
+                      ? 'text-gray-700 dark:text-gray-300'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }
+                `}>
+                  {marker.timestamp || ''}
+                </span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                <span className={`
+                  text-xs
+                  ${isActive 
+                    ? 'text-primary-600 dark:text-primary-400 font-medium' 
+                    : 'text-gray-600 dark:text-gray-400'
                   }
                 `}>
                   {marker.label}
-                </div>
-                {marker.timestamp && (
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    {marker.timestamp}
-                  </div>
-                )}
+                </span>
               </div>
-              {isActive && (
-                <div className="flex-shrink-0">
-                  <div className="w-2 h-2 bg-primary-600 dark:bg-primary-400 rounded-full animate-pulse" />
-                </div>
-              )}
-            </button>
+            </div>
           );
         })}
       </div>

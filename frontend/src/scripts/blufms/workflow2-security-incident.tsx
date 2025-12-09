@@ -44,6 +44,7 @@ export const workflow2SecurityIncident: DemoScript = {
           text: 'Priority High',
           color: 'red',
         },
+        videoUrl: '/demo-videos/security_incident_demo1.mp4',
         showDetails: true,
         detailsContent: (
           <div className="space-y-3 text-sm">
@@ -211,6 +212,8 @@ export const workflow2SecurityIncident: DemoScript = {
     { type: 'delay', duration: 1000 },
     { type: 'updateVoiceStatus', status: 'Would you like me to notify the cleaning company that their staff entered an unscheduled area last night?' },
     { type: 'delay', duration: 2000 },
+    
+    // Notification email - loading then loaded
     {
       type: 'addMessageCard',
       card: {
@@ -220,14 +223,73 @@ export const workflow2SecurityIncident: DemoScript = {
         subject: 'Unscheduled Cleaning Activity Recorded',
         to: 'cleaning@example.com',
         from: 'blufms@blulok.com',
+        body: '',
+        isLoading: true,
+        loadingMessage: 'Sending email...',
+        loadingProgress: 0,
+      },
+    },
+    { type: 'updateCard', cardId: 'notification-email', updates: { loadingProgress: 40 } },
+    { type: 'delay', duration: 500 },
+    { type: 'updateCard', cardId: 'notification-email', updates: { loadingProgress: 80 } },
+    { type: 'delay', duration: 500 },
+    { type: 'updateCard', cardId: 'notification-email', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 400 },
+    {
+      type: 'updateCard',
+      cardId: 'notification-email',
+      updates: {
+        isLoading: false,
         body: 'Hi,\n\nBluFMS detected cleaning activity last night in a non-assigned area. No access issues occurred, but please remind your staff to stay within scheduled zones.\n\nTimestamped footage and logs are available on request.\n\nThank you.',
         status: 'sent',
         timestamp: 'Just now',
       },
     },
     { type: 'delay', duration: 1000 },
-    { type: 'addEphemeralStatus', id: 'email-sent', type: 'success', title: 'Email Sent', message: 'Notification sent to cleaning company.' },
+    // Security Incident Resolution Checklist
+    {
+      type: 'addChecklistCard',
+      card: {
+        id: 'security-resolution-checklist',
+        type: 'checklist',
+        title: 'Incident Resolution',
+        items: [
+          { id: 'notification', label: 'Notification sent to cleaning company', completed: true },
+        ],
+        completionMessage: 'Incident resolution complete',
+        isLoading: true,
+        loadingProgress: 0,
+        loadingMessage: 'Loading resolution checklist...',
+      },
+    },
+    { type: 'updateCard', cardId: 'security-resolution-checklist', updates: { loadingProgress: 50, loadingMessage: 'Loading checklist items...' } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'security-resolution-checklist', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 300 },
+    {
+      type: 'updateCard',
+      cardId: 'security-resolution-checklist',
+      updates: {
+        isLoading: false,
+      },
+    },
+    { type: 'delay', duration: 300 },
     { type: 'updateVoiceStatus', status: 'Notification sent to the cleaning company.' },
+    { type: 'delay', duration: 800 },
+    { type: 'updateVoiceStatus', status: 'Generating comprehensive report...' },
+    { type: 'updateReportGenerationProgress', progress: 10 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 30 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 50 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 70 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 85 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 95 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 100 },
   ],
 };
 

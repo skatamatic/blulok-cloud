@@ -50,6 +50,9 @@ export const WIDGET_TYPES = {
   // Demo/Test widgets
   'test-scroll': 'test-scroll',
   'histogram': 'histogram',
+  
+  // Visualization widgets
+  'facility-viewer': 'facility-viewer',
 } as const;
 
 export type WidgetType = typeof WIDGET_TYPES[keyof typeof WIDGET_TYPES];
@@ -237,6 +240,16 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
     allowMultiple: true,
     category: 'analytics',
+    requiredPermissions: ['admin', 'facility_admin']
+  },
+  'facility-viewer': {
+    type: 'facility-viewer',
+    name: 'Facility 3D View',
+    description: 'Interactive 3D visualization of linked facility with real-time lock status',
+    defaultSize: 'huge',
+    availableSizes: ['huge', 'huge-wide'],
+    allowMultiple: false,
+    category: 'status',
     requiredPermissions: ['admin', 'facility_admin']
   }
 };

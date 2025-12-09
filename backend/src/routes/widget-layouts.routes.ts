@@ -146,6 +146,8 @@ const saveLayoutSchema = Joi.object({
   layouts: Joi.array().items(
     Joi.object({
       widgetId: Joi.string().required(),
+      widgetType: Joi.string().optional(), // Widget type for proper restoration
+      config: Joi.object().unknown(true).optional(), // Widget-specific config (e.g., facility IDs)
       layoutConfig: Joi.object({
         position: Joi.object({
           x: Joi.number().min(0).required(),
@@ -210,12 +212,17 @@ router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: Response): P
   const layouts = userLayouts.map(userLayout => {
     const template = availableTemplates.find(t => t.widget_id === userLayout.widget_id);
     
+    // Extract widget-specific config from layout_config if present
+    const layoutConfig = userLayout.layout_config;
+    const widgetConfig = layoutConfig?.config || {};
+    
     return {
       widgetId: userLayout.widget_id,
       widgetType: userLayout.widget_type,
       name: template?.name || userLayout.widget_id, // Keep for backward compatibility, but frontend will use widget type name
       description: template?.description,
       layoutConfig: userLayout.layout_config, // Already a parsed object from Knex
+      config: widgetConfig, // Widget-specific config (e.g., facility IDs)
       availableSizes: template?.available_sizes || ['medium'],
       isVisible: userLayout.is_visible,
       displayOrder: userLayout.display_order,

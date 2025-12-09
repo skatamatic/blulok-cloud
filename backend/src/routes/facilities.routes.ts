@@ -33,17 +33,47 @@
  */
 
 import { Router, Response } from 'express';
-import { FacilityModel } from '../models/facility.model';
+import { FacilityModel, Facility } from '../models/facility.model';
 // import { GatewayModel } from '../models/gateway.model';
 import { DeviceModel } from '../models/device.model';
 import { authenticateToken, requireAdmin, requireRoles } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { AuthService } from '../services/auth.service';
+import { DatabaseService } from '../services/database.service';
 
 const router = Router();
 const facilityModel = new FacilityModel();
 // Removed unused gatewayModel
 const deviceModel = new DeviceModel();
+
+/**
+ * Get linked BluDesign facility ID for a BluLok facility
+ * Returns the BluDesign facility ID if one is linked, null otherwise
+ */
+async function getLinkedBluDesignFacilityId(facilityId: string): Promise<string | null> {
+  try {
+    const db = DatabaseService.getInstance().connection;
+    const result = await db('bludesign_facilities')
+      .select('id')
+      .where('linked_facility_id', facilityId)
+      .first();
+    return result?.id || null;
+  } catch (error) {
+    // Table might not exist in some environments
+    return null;
+  }
+}
+
+/**
+ * Enrich facility with linked BluDesign facility ID
+ */
+async function enrichFacilityWithBluDesignLink(facility: Facility): Promise<Facility & { bluDesignFacilityId?: string }> {
+  const bluDesignFacilityId = await getLinkedBluDesignFacilityId(facility.id);
+  return {
+    ...facility,
+    ...(bluDesignFacilityId && { bluDesignFacilityId }),
+  };
+}
 
 // Apply authentication middleware to all routes
 router.use(authenticateToken);
@@ -97,21 +127,29 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
       result.total = result.facilities.length;
     }
 
-    // Get stats for each facility
-  // For TENANT roles, do not include stats to avoid leaking sensitive data
-  let facilitiesPayload: any[];
-  if (user.role === UserRole.TENANT) {
-    facilitiesPayload = result.facilities.map((f) => ({ ...f, stats: undefined }));
-  } else {
-    facilitiesPayload = await Promise.all(
-      result.facilities.map(async (facility) => {
-        const stats = await facilityModel.getFacilityStats(facility.id);
-        return { ...facility, stats };
-      })
-    );
-  }
+    // Get stats and BluDesign link for each facility
+    // For TENANT roles, do not include stats to avoid leaking sensitive data
+    let facilitiesPayload: any[];
+    if (user.role === UserRole.TENANT) {
+      facilitiesPayload = await Promise.all(
+        result.facilities.map(async (f) => {
+          const enriched = await enrichFacilityWithBluDesignLink(f);
+          return { ...enriched, stats: undefined };
+        })
+      );
+    } else {
+      facilitiesPayload = await Promise.all(
+        result.facilities.map(async (facility) => {
+          const [stats, enriched] = await Promise.all([
+            facilityModel.getFacilityStats(facility.id),
+            enrichFacilityWithBluDesignLink(facility),
+          ]);
+          return { ...enriched, stats };
+        })
+      );
+    }
 
-  res.json({ success: true, facilities: facilitiesPayload, total: result.total });
+    res.json({ success: true, facilities: facilitiesPayload, total: result.total });
   } catch (error) {
     console.error('Error fetching facilities:', error);
     res.status(500).json({ error: 'Failed to fetch facilities' });
@@ -138,25 +176,28 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
       return;
     }
 
-  // Build response based on role
-  if (user.role === UserRole.TENANT) {
-    // Do not include stats or device hierarchy for tenants
+    // Enrich facility with BluDesign link
+    const enrichedFacility = await enrichFacilityWithBluDesignLink(facility);
+
+    // Build response based on role
+    if (user.role === UserRole.TENANT) {
+      // Do not include stats or device hierarchy for tenants
+      res.json({ 
+        success: true,
+        facility: { ...enrichedFacility, stats: undefined },
+        deviceHierarchy: { facility: enrichedFacility, gateway: null, accessControlDevices: [], blulokDevices: [] }
+      });
+      return;
+    }
+
+    const stats = await facilityModel.getFacilityStats(String(id));
+    const deviceHierarchy = await deviceModel.getFacilityDeviceHierarchy(String(id));
+
     res.json({ 
       success: true,
-      facility: { ...facility, stats: undefined },
-      deviceHierarchy: { facility, gateway: null, accessControlDevices: [], blulokDevices: [] }
+      facility: { ...enrichedFacility, stats },
+      deviceHierarchy
     });
-    return;
-  }
-
-  const stats = await facilityModel.getFacilityStats(String(id));
-  const deviceHierarchy = await deviceModel.getFacilityDeviceHierarchy(String(id));
-
-  res.json({ 
-    success: true,
-    facility: { ...facility, stats },
-    deviceHierarchy
-  });
   } catch (error) {
     console.error('Error fetching facility:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch facility' });

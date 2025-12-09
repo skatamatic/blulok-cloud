@@ -149,6 +149,8 @@ class ApiService {
 
   async saveWidgetLayouts(layouts: Array<{
     widgetId: string;
+    widgetType?: string;
+    config?: Record<string, unknown>;
     layoutConfig: any;
     displayOrder: number;
     isVisible?: boolean;
@@ -265,6 +267,11 @@ class ApiService {
 
   async updateSchedule(facilityId: string, scheduleId: string, data: any) {
     const response = await this.api.put(`/facilities/${facilityId}/schedules/${scheduleId}`, data);
+    return response.data;
+  }
+
+  async getScheduleUsage(facilityId: string, scheduleId: string) {
+    const response = await this.api.get(`/facilities/${facilityId}/schedules/${scheduleId}/usage`);
     return response.data;
   }
 

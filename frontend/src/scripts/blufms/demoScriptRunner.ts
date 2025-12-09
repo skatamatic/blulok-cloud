@@ -135,6 +135,15 @@ export class DemoScriptRunner {
         this.callbacks.onCardAdded?.(action.card);
         break;
 
+      case 'addChecklistCard':
+        this.callbacks.onCardAdded?.(action.card);
+        break;
+
+      case 'updateChecklistItem':
+        // This will be handled by the page component which has access to current card state
+        this.callbacks.onChecklistItemUpdated?.(action.cardId, action.itemId, action.completed, action.timestamp);
+        break;
+
       case 'updateCard':
         this.callbacks.onCardUpdated?.(action.cardId, action.updates);
         break;
@@ -164,7 +173,7 @@ export class DemoScriptRunner {
         break;
 
       case 'addEphemeralStatus':
-        this.callbacks.onEphemeralStatusAdded?.(action.id, action.type, action.title, action.message);
+        this.callbacks.onEphemeralStatusAdded?.(action.id, action.statusType, action.title, action.message);
         break;
 
       case 'showTimeline':
@@ -181,6 +190,10 @@ export class DemoScriptRunner {
 
       case 'updateTimelineCard':
         this.callbacks.onCardUpdated?.(action.cardId, { currentStep: action.currentStep } as any);
+        break;
+
+      case 'updateReportGenerationProgress':
+        this.callbacks.onReportGenerationProgress?.(action.progress);
         break;
 
       default:

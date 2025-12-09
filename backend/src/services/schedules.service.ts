@@ -223,10 +223,63 @@ export class SchedulesService {
   }
 
   /**
+   * Get schedule usage impact (how many users are using this schedule)
+   */
+  public static async getScheduleUsage(
+    facilityId: string,
+    scheduleId: string,
+    userContext: UserContext
+  ): Promise<{ tenantCount: number; maintenanceCount: number; totalCount: number }> {
+    // Verify user can manage schedules
+    if (!AuthService.isAdmin(userContext.role) && !AuthService.isFacilityAdmin(userContext.role)) {
+      throw new Error('Insufficient permissions to view schedule usage');
+    }
+
+    // Verify facility access
+    const hasAccess = await FacilityAccessService.hasAccessToFacility(
+      userContext.userId,
+      userContext.role,
+      facilityId
+    );
+
+    if (!hasAccess) {
+      throw new Error('Access denied to this facility');
+    }
+
+    // Get all users assigned to this schedule
+    const userSchedules = await UserFacilityScheduleModel.getUsersForSchedule(facilityId, scheduleId);
+    
+    // Get user roles to count by type
+    const { UserModel } = await import('@/models/user.model');
+    const userIds = userSchedules.map(us => us.user_id);
+    
+    let tenantCount = 0;
+    let maintenanceCount = 0;
+
+    if (userIds.length > 0) {
+      const users = await UserModel.findByIds(userIds);
+      users.forEach((user: any) => {
+        if (user.role === 'tenant') {
+          tenantCount++;
+        } else if (user.role === 'maintenance') {
+          maintenanceCount++;
+        }
+      });
+    }
+
+    return {
+      tenantCount,
+      maintenanceCount,
+      totalCount: userSchedules.length,
+    };
+  }
+
+  /**
    * Delete a schedule
    *
    * Only admins and facility admins can delete schedules.
    * Precanned schedules cannot be deleted (only deactivated).
+   * Users assigned to this schedule will be reassigned to default schedules.
    */
   public static async deleteSchedule(
     facilityId: string,
@@ -260,10 +313,56 @@ export class SchedulesService {
       throw new Error('Precanned schedules cannot be deleted. They can only be deactivated.');
     }
 
+    // Get all users assigned to this schedule
+    const userSchedules = await UserFacilityScheduleModel.getUsersForSchedule(facilityId, scheduleId);
+    
+    // Get default schedules for reassignment
+    const schedules = await ScheduleModel.findByFacility(facilityId, {
+      schedule_type: 'precanned',
+      is_active: true,
+    });
+    
+    const defaultTenantSchedule = schedules.find(s => s.name === 'Default Tenant Schedule');
+    const defaultMaintenanceSchedule = schedules.find(s => s.name === 'Maintenance Schedule');
+
+    // Reassign users to default schedules
+    if (userSchedules.length > 0) {
+      const { UserModel } = await import('@/models/user.model');
+      const userIds = userSchedules.map(us => us.user_id);
+      const users = await UserModel.findByIds(userIds);
+
+      for (const userSchedule of userSchedules) {
+        const user = users.find((u: any) => u.id === userSchedule.user_id);
+        if (!user) continue;
+
+        let defaultScheduleId: string | null = null;
+        
+        if (user.role === 'tenant' && defaultTenantSchedule) {
+          defaultScheduleId = defaultTenantSchedule.id;
+        } else if (user.role === 'maintenance' && defaultMaintenanceSchedule) {
+          defaultScheduleId = defaultMaintenanceSchedule.id;
+        }
+
+        if (defaultScheduleId) {
+          await UserFacilityScheduleModel.setUserSchedule(
+            userSchedule.user_id,
+            facilityId,
+            defaultScheduleId,
+            userContext.userId
+          );
+          logger.info(`Reassigned user ${userSchedule.user_id} from schedule ${scheduleId} to default schedule ${defaultScheduleId}`);
+        } else {
+          // If no default schedule available, remove the assignment
+          await UserFacilityScheduleModel.removeUserSchedule(userSchedule.user_id, facilityId);
+          logger.warn(`Removed schedule assignment for user ${userSchedule.user_id} - no default schedule available`);
+        }
+      }
+    }
+
     // Delete schedule (cascade will delete time windows)
     await ScheduleModel.deleteById(scheduleId);
 
-    logger.info(`Schedule deleted: ${scheduleId} by user ${userContext.userId}`);
+    logger.info(`Schedule deleted: ${scheduleId} by user ${userContext.userId}. Reassigned ${userSchedules.length} users to default schedules.`);
   }
 
   /**

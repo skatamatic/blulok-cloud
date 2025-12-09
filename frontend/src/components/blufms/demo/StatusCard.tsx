@@ -11,6 +11,7 @@ import {
   ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { StatusCardData, CardStatusColor } from '@/scripts/blufms/demoActionTypes';
+import { VideoPlayer } from './VideoPlayer';
 
 interface StatusCardProps {
   card: StatusCardData;
@@ -125,50 +126,78 @@ export const StatusCard: React.FC<StatusCardProps> = ({
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.2, ease: 'easeOut' }}
-      className={`bg-white dark:bg-gray-800 rounded-lg border-l-2 ${accentBorderColor} border-r border-t border-b border-gray-200 dark:border-gray-700 p-3 shadow-md hover:shadow-lg transition-shadow duration-200 ${
+      className={`bg-white dark:bg-gray-900 rounded-lg border-l-2 ${accentBorderColor} border-r border-t border-b border-gray-200 dark:border-gray-800 p-3 shadow-md hover:shadow-lg transition-shadow duration-200 ${
         isCollapsible ? 'cursor-pointer' : ''
       }`}
       onClick={handleCardClick}
     >
-      {/* Loading State - Simultaneous crossfade with content */}
+      {/* Header - Always visible, no animation */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center space-x-2 flex-1 min-w-0">
+          {card.isLoading ? (
+            <motion.div
+              animate={{ scale: [1, 1.05, 1] }}
+              transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+              className={`p-1.5 rounded ${iconBgColor} flex-shrink-0`}
+            >
+              <Icon className={`h-4 w-4 ${iconTextColor}`} />
+            </motion.div>
+          ) : (
+            <div className={`p-1.5 rounded ${iconBgColor} flex-shrink-0`}>
+              <Icon className={`h-4 w-4 ${iconTextColor}`} />
+            </div>
+          )}
+          <h3 className="text-xs font-medium text-gray-900 dark:text-white truncate">
+            {card.title}
+          </h3>
+        </div>
+        {!card.isLoading && (
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {card.badge && (
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusColorClasses[badgeColor]}`}>
+                {card.badge.text}
+              </span>
+            )}
+            {isCollapsible && (
+              <motion.div
+                animate={{ rotate: isExpanded ? 180 : 0 }}
+                transition={{ duration: 0.2, ease: 'easeInOut' }}
+              >
+                <ChevronDownIcon className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
+              </motion.div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Content - Animated transition */}
       <AnimatePresence mode="wait">
         {card.isLoading ? (
           <motion.div
             key="loading"
-            initial={{ opacity: 1 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.4, ease: 'easeInOut' }}
+            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="relative"
           >
-            {/* Header */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2 flex-1 min-w-0">
-                <motion.div
-                  animate={{ scale: [1, 1.1, 1] }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`p-1.5 rounded ${iconBgColor} flex-shrink-0`}
-                >
-                  <Icon className={`h-4 w-4 ${iconTextColor}`} />
-                </motion.div>
-                <h3 className="text-xs font-medium text-gray-900 dark:text-white truncate">
-                  {card.title}
-                </h3>
-              </div>
-            </div>
-
-            {/* Progress Bar with Gradient */}
+            {/* Progress Bar with Smooth Interpolation */}
             <div className="mb-2">
               <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                 <motion.div
                   initial={{ width: 0 }}
                   animate={{ width: `${Math.min(progress, 100)}%` }}
-                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  transition={{ 
+                    duration: 0.5, 
+                    ease: [0.4, 0, 0.2, 1],
+                    type: 'tween'
+                  }}
                   className={`h-full relative ${progressBarColor}`}
                 >
                   <motion.div
-                    animate={{ opacity: [0.5, 1, 0.5] }}
-                    transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
-                    className="absolute inset-0 bg-white/30"
+                    animate={{ opacity: [0.4, 0.8, 0.4] }}
+                    transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                    className="absolute inset-0 bg-white/20"
                   />
                 </motion.div>
               </div>
@@ -176,53 +205,20 @@ export const StatusCard: React.FC<StatusCardProps> = ({
 
             {/* Loading Message */}
             {displayMessage && (
-              <motion.p
-                key={displayMessage}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="text-xs text-gray-500 dark:text-gray-400 truncate"
-              >
+              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                 {displayMessage}
-              </motion.p>
+              </p>
             )}
           </motion.div>
         ) : (
           <motion.div
             key="content"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, ease: 'easeInOut' }}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="relative"
           >
-            {/* Header - Compact single line */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2 flex-1 min-w-0">
-                <div className={`p-1.5 rounded ${iconBgColor} flex-shrink-0`}>
-                  <Icon className={`h-4 w-4 ${iconTextColor}`} />
-                </div>
-                <h3 className="text-xs font-medium text-gray-900 dark:text-white truncate">
-                  {card.title}
-                </h3>
-              </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                {card.badge && (
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusColorClasses[badgeColor]}`}>
-                    {card.badge.text}
-                  </span>
-                )}
-                {isCollapsible && (
-                  <motion.div
-                    animate={{ rotate: isExpanded ? 180 : 0 }}
-                    transition={{ duration: 0.2, ease: 'easeInOut' }}
-                  >
-                    <ChevronDownIcon className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
-                  </motion.div>
-                )}
-              </div>
-            </div>
-
             {/* Primary Value */}
             <div className="mb-2">
               <div className="text-xl font-bold text-gray-900 dark:text-white">
@@ -234,6 +230,13 @@ export const StatusCard: React.FC<StatusCardProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Video Player - shown if videoUrl is provided */}
+            {card.videoUrl && (
+              <div className="mt-3">
+                <VideoPlayer videoUrl={card.videoUrl} className="w-full h-48" />
+              </div>
+            )}
 
             {/* Expanded Details with smooth animation */}
             <AnimatePresence>

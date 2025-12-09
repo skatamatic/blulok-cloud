@@ -49,7 +49,7 @@ export const CardLoadingPlaceholder: React.FC<CardLoadingPlaceholderProps> = ({
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: 0.2 }}
-      className={`bg-white dark:bg-gray-800 rounded-lg border-l-2 ${accentBorderColor} border-r border-t border-b border-gray-200 dark:border-gray-700 p-3 shadow-md`}
+      className={`bg-white dark:bg-gray-900 rounded-lg border-l-2 ${accentBorderColor} border-r border-t border-b border-gray-200 dark:border-gray-800 p-3 shadow-md`}
     >
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center space-x-2 flex-1 min-w-0">
@@ -85,16 +85,17 @@ export const CardLoadingPlaceholder: React.FC<CardLoadingPlaceholderProps> = ({
 
       {/* Loading Message */}
       {message && (
-        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+        <motion.p
+          key={message}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="text-xs text-gray-500 dark:text-gray-400 truncate"
+        >
           {message}
-        </p>
+        </motion.p>
       )}
-
-      {/* Skeleton Content */}
-      <div className="mt-2 space-y-1.5">
-        <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded w-3/4 animate-pulse" />
-        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2 animate-pulse" />
-      </div>
     </motion.div>
   );
 };

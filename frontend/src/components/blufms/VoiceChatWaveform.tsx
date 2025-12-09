@@ -126,7 +126,10 @@ export const VoiceChatWaveform: React.FC<VoiceChatWaveformProps> = ({ className 
   }, []); // Only run on mount/unmount
 
   return (
-    <div className={`flex items-center justify-center ${className}`} style={{ opacity: 0.85 }}>
+    <div 
+      className={`flex items-center justify-center ${className}`} 
+      style={{ opacity: 0.85, zIndex: 9999, position: 'relative' }}
+    >
       <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 px-6 py-4 flex flex-col gap-3 w-[90%] max-w-[95%]">
         {/* Waveform Visualization - Symmetric from center with fade at edges */}
         <div className="flex items-center justify-center gap-1 w-full h-12">

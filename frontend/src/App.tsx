@@ -9,6 +9,7 @@ import { WebSocketDebugProvider } from '@/contexts/WebSocketDebugContext';
 import { FMSSyncProvider, useFMSSync } from '@/contexts/FMSSyncContext';
 import { BluFMSDemoProvider } from '@/contexts/BluFMSDemoContext';
 import { BluFMSFacilityProvider } from '@/contexts/BluFMSFacilityContext';
+import { BluDesignProvider } from '@/contexts/BluDesignContext';
 import { FMSSyncStatusBar } from '@/components/FMS/FMSSyncStatusBar';
 import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
 import { FMSChangeReviewModal } from '@/components/FMS/FMSChangeReviewModal';
@@ -39,6 +40,10 @@ import AccessHistoryPage from '@/pages/AccessHistoryPage';
 import DeveloperToolsPage from '@/pages/DeveloperToolsPage';
 import BluFMSDashboardPage from '@/pages/blufms/BluFMSDashboardPage';
 import BluFMSFacilityMapPage from '@/pages/blufms/BluFMSFacilityMapPage';
+import BluDesignViewPage from '@/pages/bludesign/BluDesignViewPage';
+import BluDesignBuildPage from '@/pages/bludesign/BluDesignBuildPage';
+import BluDesignAssetsPage from '@/pages/bludesign/BluDesignAssetsPage';
+import BluDesignConfigPage from '@/pages/bludesign/BluDesignConfigPage';
 
 // Global FMS modals component
 function FMSModals() {
@@ -121,7 +126,8 @@ function App() {
                 <DropdownProvider>
                   <BluFMSDemoProvider>
                     <BluFMSFacilityProvider>
-                      <FMSSyncProvider>
+                      <BluDesignProvider>
+                        <FMSSyncProvider>
                         <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
                       <Routes>
                         {/* Public routes */}
@@ -273,6 +279,39 @@ function App() {
                           </ProtectedRoute>
                         } />
 
+                        {/* BluDesign Routes */}
+                        <Route path="/bludesign/view" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignViewPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/build" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignBuildPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/assets" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignAssetsPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/config" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignConfigPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
                         {/* Redirect unknown routes to dashboard if authenticated, otherwise to landing */}
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
@@ -281,7 +320,8 @@ function App() {
                       <FMSSyncStatusBar />
                       <FMSModals />
                         </div>
-                      </FMSSyncProvider>
+                        </FMSSyncProvider>
+                      </BluDesignProvider>
                     </BluFMSFacilityProvider>
                   </BluFMSDemoProvider>
                 </DropdownProvider>

@@ -20,6 +20,7 @@ export interface StatusCardData {
   loadingProgress?: number; // 0-100
   loadingMessage?: string;
   hasSignificantDetails?: boolean; // Only show "View Details" if true
+  videoUrl?: string; // URL to MP4 video file
 }
 
 export interface DetailCardData {
@@ -29,6 +30,9 @@ export interface DetailCardData {
   content: React.ReactNode;
   showDetails?: boolean;
   detailsContent?: React.ReactNode;
+  isLoading?: boolean;
+  loadingProgress?: number; // 0-100
+  loadingMessage?: string;
 }
 
 export interface TimelineCardData {
@@ -36,6 +40,24 @@ export interface TimelineCardData {
   type: 'timeline';
   markers: TimelineMarker[];
   currentStep: number;
+}
+
+export interface ChecklistItem {
+  id: string;
+  label: string;
+  completed: boolean;
+  timestamp?: string;
+}
+
+export interface ChecklistCardData {
+  id: string;
+  type: 'checklist';
+  title: string;
+  items: ChecklistItem[];
+  completionMessage?: string;
+  isLoading?: boolean;
+  loadingProgress?: number; // 0-100
+  loadingMessage?: string;
 }
 
 export interface WorkOrderCardData {
@@ -68,9 +90,12 @@ export interface MessagePreviewCardData {
   body: string;
   timestamp?: string;
   status?: 'sent' | 'pending' | 'failed';
+  isLoading?: boolean;
+  loadingProgress?: number; // 0-100
+  loadingMessage?: string;
 }
 
-export type CardData = StatusCardData | DetailCardData | WorkOrderCardData | MessagePreviewCardData | TimelineCardData;
+export type CardData = StatusCardData | DetailCardData | WorkOrderCardData | MessagePreviewCardData | TimelineCardData | ChecklistCardData;
 
 export interface TimelineMarker {
   id: string;
@@ -93,18 +118,21 @@ export type DemoAction =
   | { type: 'addWorkOrderCard'; card: WorkOrderCardData }
   | { type: 'addMessageCard'; card: MessagePreviewCardData }
   | { type: 'addTimelineCard'; card: TimelineCardData }
+  | { type: 'addChecklistCard'; card: ChecklistCardData }
   | { type: 'updateCard'; cardId: string; updates: Partial<CardData> }
+  | { type: 'updateChecklistItem'; cardId: string; itemId: string; completed: boolean; timestamp?: string }
   | { type: 'removeCard'; cardId: string }
   | { type: 'clearCards' }
   | { type: 'changeMapFilter'; layer: MapLayer }
   | { type: 'changeMapContent'; content: string }
   | { type: 'updateVoiceStatus'; status: string }
   | { type: 'showToast'; toast: ToastData }
-  | { type: 'addEphemeralStatus'; id: string; type: 'success' | 'info' | 'warning' | 'error'; title: string; message?: string }
+  | { type: 'addEphemeralStatus'; id: string; statusType: 'success' | 'info' | 'warning' | 'error'; title: string; message?: string }
   | { type: 'showTimeline'; visible: boolean }
   | { type: 'updateTimeline'; markers: TimelineMarker[] }
   | { type: 'setTimelineStep'; step: number }
-  | { type: 'updateTimelineCard'; cardId: string; currentStep: number };
+  | { type: 'updateTimelineCard'; cardId: string; currentStep: number }
+  | { type: 'updateReportGenerationProgress'; progress: number }; // 0-100
 
 export interface DemoScript {
   id: string;
@@ -127,6 +155,8 @@ export interface DemoScriptCallbacks {
   onTimelineUpdated?: (markers: TimelineMarker[]) => void;
   onTimelineStepSet?: (step: number) => void;
   onStepChanged?: (step: number, totalSteps: number) => void;
+  onReportGenerationProgress?: (progress: number) => void; // 0-100
+  onChecklistItemUpdated?: (cardId: string, itemId: string, completed: boolean, timestamp?: string) => void;
   onScriptComplete?: () => void;
   onScriptError?: (error: Error) => void;
 }

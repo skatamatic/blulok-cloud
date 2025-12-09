@@ -139,6 +139,36 @@ return <FullStatsLayout />;
 - **Map Widgets**: Always large or huge (geographic data needs space)
 - **Table Widgets**: Always medium or larger (tabular data requirements)
 
+### Facility Viewer Widget (`facility-viewer`)
+
+**Available Sizes:**
+- **Huge** (6x4): Full 3D facility visualization (default)
+- **Huge-Wide** (8x4): Extended width for wider facilities
+
+**Content:**
+- Interactive 3D view of linked BluDesign facility
+- Floor selector panel (collapsible, bottom-right)
+- Object selection with properties panel
+- Camera rotation controls (bottom center)
+- Real-time smart asset state updates via WebSocket
+
+**Visibility:**
+- Only available for facilities with linked BluDesign 3D models
+- `facility.bluDesignFacilityId` must exist for widget to appear in "Add Widget" modal
+
+**Implementation:**
+```tsx
+<FacilityViewerWidget
+  id={widget.id}
+  title={widget.title}
+  bluDesignFacilityId="uuid-of-3d-model"
+  bluLokFacilityId="uuid-of-facility"
+  facilityName="My Facility"
+  initialSize="huge"
+  onRemove={() => removeWidget(widget.id)}
+/>
+```
+
 ## Responsive Content Design
 
 ### Size-Based Layouts

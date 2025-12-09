@@ -30,6 +30,7 @@ import { adminRouter } from '@/routes/admin.routes';
 import { denylistRouter } from '@/routes/denylist.routes';
 import { routePassesRouter } from '@/routes/route-passes.routes';
 import { schedulesRouter } from '@/routes/schedules.routes';
+import { bluDesignRouter } from '@/bludesign';
 
 export function createApp(): Application {
   const app = express();
@@ -110,6 +111,9 @@ export function createApp(): Application {
     app.use('/api/v1/commands', commandsRouter);
     app.use('/api/v1/dev', authenticateToken, devRouter);
   app.use('/api/v1/system-settings', systemSettingsRouter);
+  
+  // BluDesign routes (isolated 3D facility design system)
+  app.use('/api/v1/bludesign', bluDesignRouter);
 
   // Error handling middleware (must be last)
   app.use(errorHandler);

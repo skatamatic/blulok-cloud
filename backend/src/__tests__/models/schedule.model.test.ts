@@ -7,6 +7,7 @@ describe('ScheduleModel', () => {
   let facilityId: string;
 
   beforeAll(async () => {
+    jest.setTimeout(10000); // Increase timeout for database operations
     db = DatabaseService.getInstance().connection;
     // Create a test facility
     facilityId = uuidv4();
@@ -26,9 +27,9 @@ describe('ScheduleModel', () => {
 
   afterAll(async () => {
     // Cleanup
-    await db('schedule_time_windows').where('schedule_id', 'like', '%').del();
-    await db('schedules').where('facility_id', facilityId).del();
-    await db('facilities').where('id', facilityId).del();
+    await db('schedule_time_windows').where('schedule_id', 'like', '%').delete();
+    await db('schedules').where('facility_id', facilityId).delete();
+    await db('facilities').where('id', facilityId).delete();
   });
 
   describe('createWithTimeWindows', () => {

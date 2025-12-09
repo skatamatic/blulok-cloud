@@ -5,7 +5,8 @@ import {
   ShieldCheckIcon,
   FireIcon,
   BoltIcon,
-  CpuChipIcon
+  CpuChipIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { useBluFMSFacility } from '@/contexts/BluFMSFacilityContext';
 import { VoiceChatWaveform } from '@/components/blufms/VoiceChatWaveform';
@@ -17,6 +18,9 @@ import { ComprehensiveReportView } from '@/components/blufms/demo/ComprehensiveR
 import { DemoScriptRunner } from '@/scripts/blufms/demoScriptRunner';
 import { allDemoScripts } from '@/scripts/blufms';
 import { DemoScript, CardData, MapLayer, TimelineMarker } from '@/scripts/blufms/demoActionTypes';
+import { FacilityViewer3D } from '@/components/bludesign/viewer';
+import * as bludesignApi from '@/api/bludesign';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface LayerTab {
   id: MapLayer;
@@ -35,8 +39,15 @@ const mapLayers: LayerTab[] = [
 export default function BluFMSFacilityMapPage() {
   const { selectedFacility } = useBluFMSFacility();
   const { addToast } = useToast();
+  const { effectiveTheme } = useTheme();
+  const isDark = effectiveTheme === 'dark';
   const [activeLayer, setActiveLayer] = useState<MapLayer>('network');
   const [isTransitioning, setIsTransitioning] = useState(false);
+  
+  // BluDesign facility selection
+  const [bluDesignFacilities, setBluDesignFacilities] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedBluDesignFacilityId, setSelectedBluDesignFacilityId] = useState<string | null>(null);
+  const [isLoadingFacilities, setIsLoadingFacilities] = useState(false);
   
   // Demo system state
   const [cards, setCards] = useState<CardData[]>([]);
@@ -47,6 +58,7 @@ export default function BluFMSFacilityMapPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isWorkflowComplete, setIsWorkflowComplete] = useState(false);
+  const [reportGenerationProgress, setReportGenerationProgress] = useState<number | null>(null);
   
   // Details slide-in state
   const [detailsSlideInOpen, setDetailsSlideInOpen] = useState(false);
@@ -62,6 +74,31 @@ export default function BluFMSFacilityMapPage() {
   const [ephemeralCards, setEphemeralCards] = useState<Array<{ id: string; type: 'success' | 'info' | 'warning' | 'error'; title: string; message?: string }>>([]);
   
   const scriptRunnerRef = useRef<DemoScriptRunner | null>(null);
+
+  // Load available BluDesign facilities
+  useEffect(() => {
+    const loadFacilities = async () => {
+      setIsLoadingFacilities(true);
+      try {
+        const facilities = await bludesignApi.getFacilities();
+        setBluDesignFacilities(facilities.map(f => ({ id: f.id, name: f.name })));
+        
+        // If selected facility has a linked 3D model, use it
+        if (selectedFacility && (selectedFacility as any)?.bluDesignFacilityId) {
+          setSelectedBluDesignFacilityId((selectedFacility as any).bluDesignFacilityId);
+        } else if (facilities.length > 0) {
+          // Otherwise, select the first available
+          setSelectedBluDesignFacilityId(facilities[0].id);
+        }
+      } catch (error) {
+        console.error('Failed to load BluDesign facilities:', error);
+      } finally {
+        setIsLoadingFacilities(false);
+      }
+    };
+    
+    loadFacilities();
+  }, [selectedFacility]);
 
   // Initialize script runner
   useEffect(() => {
@@ -134,9 +171,28 @@ export default function BluFMSFacilityMapPage() {
         setCurrentStep(step);
         setTotalSteps(total);
       },
+      onReportGenerationProgress: (progress: number) => {
+        setReportGenerationProgress(progress);
+      },
+      onChecklistItemUpdated: (cardId: string, itemId: string, completed: boolean, timestamp?: string) => {
+        setCards(prev => prev.map(card => {
+          if (card.id === cardId && card.type === 'checklist') {
+            return {
+              ...card,
+              items: card.items.map(item =>
+                item.id === itemId
+                  ? { ...item, completed, timestamp }
+                  : item
+              )
+            };
+          }
+          return card;
+        }));
+      },
       onScriptComplete: () => {
         setIsPlaying(false);
         setIsPaused(false);
+        setReportGenerationProgress(100);
         setIsWorkflowComplete(true);
         // Don't clear currentScript - we need it to show the report button
       },
@@ -184,6 +240,7 @@ export default function BluFMSFacilityMapPage() {
     setIsPlaying(true);
     setIsPaused(false);
     setIsWorkflowComplete(false);
+    setReportGenerationProgress(null);
     setCurrentStep(0);
     setTotalSteps(script.actions.length);
     setDetailsSlideInOpen(false);
@@ -216,6 +273,7 @@ export default function BluFMSFacilityMapPage() {
       setIsPlaying(false);
       setIsPaused(false);
       setIsWorkflowComplete(false);
+      setReportGenerationProgress(null);
       setCurrentScript(null);
       setCurrentStep(0);
       setTotalSteps(0);
@@ -326,67 +384,116 @@ export default function BluFMSFacilityMapPage() {
                   })}
                 </div>
 
-                {/* Map Content */}
-                <div className="h-full w-full flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 min-h-full relative">
-                  <div className={`text-center transition-all duration-300 ease-in-out ${
-                    isTransitioning ? 'opacity-0 blur-md scale-95' : 'opacity-100 blur-0 scale-100'
-                  }`}>
-                    <div className="mx-auto h-32 w-32 text-gray-400 dark:text-gray-500 mb-4 flex items-center justify-center">
-                      <svg
-                        className="w-full h-full"
-                        viewBox="0 0 200 200"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
+                {/* Facility Selector - Top Right */}
+                {bluDesignFacilities.length > 0 && (
+                  <div className="absolute top-4 right-4 z-30">
+                    <div className={`
+                      flex items-center gap-2 px-3 py-2 rounded-lg backdrop-blur-md shadow-lg border
+                      ${isDark 
+                        ? 'bg-gray-900/90 border-gray-700/60' 
+                        : 'bg-white/90 border-gray-200/80'
+                      }
+                    `}>
+                      <label className={`text-xs font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                        3D Model:
+                      </label>
+                      <select
+                        value={selectedBluDesignFacilityId || ''}
+                        onChange={(e) => setSelectedBluDesignFacilityId(e.target.value || null)}
+                        disabled={isLoadingFacilities}
+                        className={`
+                          text-sm px-2 py-1 rounded border
+                          ${isDark 
+                            ? 'bg-gray-800 border-gray-600 text-white' 
+                            : 'bg-white border-gray-300 text-gray-900'
+                          }
+                          focus:outline-none focus:ring-2 focus:ring-primary-500
+                        `}
                       >
-                        {/* Simple 3D isometric building representation */}
-                        <path
-                          d="M50 150 L100 100 L150 150 L100 200 Z"
-                          fill="currentColor"
-                          opacity="0.2"
-                        />
-                        <path
-                          d="M100 100 L150 150 L150 200 L100 150 Z"
-                          fill="currentColor"
-                          opacity="0.3"
-                        />
-                        <path
-                          d="M50 150 L100 100 L100 150 L50 200 Z"
-                          fill="currentColor"
-                          opacity="0.3"
-                        />
-                        <rect
-                          x="60"
-                          y="110"
-                          width="30"
-                          height="30"
-                          fill="currentColor"
-                          opacity="0.5"
-                        />
-                        <rect
-                          x="110"
-                          y="110"
-                          width="30"
-                          height="30"
-                          fill="currentColor"
-                          opacity="0.5"
-                        />
-                      </svg>
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                      3D Facility Map - {mapLayers.find(l => l.id === activeLayer)?.label}
-                    </h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 max-w-md mx-auto">
-                      Interactive 3D visualization for {selectedFacility.name} will be displayed here.
-                    </p>
-                    <div className="inline-flex items-center px-4 py-2 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-                      <span className="text-xs font-medium text-blue-800 dark:text-blue-300">
-                        Demo Mode - Placeholder Content
-                      </span>
+                        {bluDesignFacilities.map((facility) => (
+                          <option key={facility.id} value={facility.id}>
+                            {facility.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
+                )}
+
+                {/* Map Content */}
+                <div className="h-full w-full flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 min-h-full relative">
+                  {/* 3D Facility Viewer - Show when a BluDesign facility is selected */}
+                  {selectedBluDesignFacilityId ? (
+                    <div className="absolute inset-0 z-0">
+                      <FacilityViewer3D
+                        bluDesignFacilityId={selectedBluDesignFacilityId}
+                        bluLokFacilityId={selectedFacility?.id}
+                        onReady={() => console.log('Facility 3D viewer ready')}
+                        onError={(error) => console.error('Facility 3D viewer error:', error)}
+                      />
+                    </div>
+                  ) : (
+                    /* Placeholder Content - Show when no 3D model is linked */
+                    <div className={`text-center transition-all duration-300 ease-in-out ${
+                      isTransitioning ? 'opacity-0 blur-md scale-95' : 'opacity-100 blur-0 scale-100'
+                    }`}>
+                      <div className="mx-auto h-32 w-32 text-gray-400 dark:text-gray-500 mb-4 flex items-center justify-center">
+                        <svg
+                          className="w-full h-full"
+                          viewBox="0 0 200 200"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          {/* Simple 3D isometric building representation */}
+                          <path
+                            d="M50 150 L100 100 L150 150 L100 200 Z"
+                            fill="currentColor"
+                            opacity="0.2"
+                          />
+                          <path
+                            d="M100 100 L150 150 L150 200 L100 150 Z"
+                            fill="currentColor"
+                            opacity="0.3"
+                          />
+                          <path
+                            d="M50 150 L100 100 L100 150 L50 200 Z"
+                            fill="currentColor"
+                            opacity="0.3"
+                          />
+                          <rect
+                            x="60"
+                            y="110"
+                            width="30"
+                            height="30"
+                            fill="currentColor"
+                            opacity="0.5"
+                          />
+                          <rect
+                            x="110"
+                            y="110"
+                            width="30"
+                            height="30"
+                            fill="currentColor"
+                            opacity="0.5"
+                          />
+                        </svg>
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                        3D Facility Map - {mapLayers.find(l => l.id === activeLayer)?.label}
+                      </h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 max-w-md mx-auto">
+                        Interactive 3D visualization for {selectedFacility.name} will be displayed here.
+                      </p>
+                      <div className="inline-flex items-center px-4 py-2 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                        <span className="text-xs font-medium text-blue-800 dark:text-blue-300">
+                          Link a BluDesign 3D model to enable visualization
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   
-                  {/* Voice Chat Waveform - Centered in visualization area */}
-                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20">
+                  {/* Voice Chat Waveform - Centered in visualization area, always on top */}
+                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2" style={{ zIndex: 9999 }}>
                     <VoiceChatWaveform statusText={voiceStatus} />
                   </div>
                 </div>
@@ -406,13 +513,14 @@ export default function BluFMSFacilityMapPage() {
 
         {/* Right Sidebar - Status/Agentic Flow Cards with rounded card */}
         <div className="w-[23rem] flex flex-col min-h-0">
-          <div className="flex-1 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-300 dark:border-gray-800 shadow-xl overflow-hidden min-h-0 facility-map-card">
+          <div className="flex-1 bg-gray-50 dark:bg-gray-900 rounded-xl border border-gray-300 dark:border-gray-800 shadow-xl overflow-hidden min-h-0 facility-map-card">
             <div className="h-full flex flex-col p-4">
               <RightPanelContent
                 cards={cards}
                 ephemeralCards={ephemeralCards}
                 currentWorkflow={currentScript?.id || null}
                 isWorkflowComplete={isWorkflowComplete}
+                reportGenerationProgress={reportGenerationProgress}
                 onShowCardDetails={handleShowCardDetails}
                 onViewWorkflowReport={handleViewWorkflowReport}
                 onTimelineMarkerClick={handleTimelineMarkerClick}

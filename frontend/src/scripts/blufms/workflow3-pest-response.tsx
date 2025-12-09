@@ -41,8 +41,43 @@ export const workflow3PestResponse: DemoScript = {
         dueDate: 'Today',
       } as any,
     },
-    { type: 'addEphemeralStatus', id: 'workorder-created', type: 'success', title: 'Work Order Created', message: 'Work order #237 has been created.' },
-    { type: 'delay', duration: 1000 },
+    // Pest Response Workflow Checklist
+    {
+      type: 'addChecklistCard',
+      card: {
+        id: 'pest-workflow-checklist',
+        type: 'checklist',
+        title: 'Pest Response Workflow',
+        items: [
+          { id: 'workorder', label: 'Work order #237 created', completed: true },
+          { id: 'tenant-notify', label: 'Tenant notified', completed: false },
+          { id: 'vendor-contact', label: 'Vendor contacted', completed: false },
+          { id: 'access-window', label: 'Access window created', completed: false },
+          { id: 'treatment', label: 'Treatment completed', completed: false },
+          { id: 'workorder-close', label: 'Work order closed', completed: false },
+        ],
+        completionMessage: 'Pest response workflow complete',
+        isLoading: true,
+        loadingProgress: 0,
+        loadingMessage: 'Loading workflow checklist...',
+      },
+    },
+    { type: 'updateCard', cardId: 'pest-workflow-checklist', updates: { loadingProgress: 30, loadingMessage: 'Initializing workflow...' } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'pest-workflow-checklist', updates: { loadingProgress: 60, loadingMessage: 'Loading checklist items...' } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'pest-workflow-checklist', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 300 },
+    {
+      type: 'updateCard',
+      cardId: 'pest-workflow-checklist',
+      updates: {
+        isLoading: false,
+      },
+    },
+    { type: 'delay', duration: 300 },
+    
+    // Tenant notification - loading then loaded
     {
       type: 'addMessageCard',
       card: {
@@ -50,13 +85,30 @@ export const workflow3PestResponse: DemoScript = {
         type: 'message',
         messageType: 'sms',
         to: '+1 (555) 123-4567',
+        body: '',
+        isLoading: true,
+        loadingMessage: 'Sending notification...',
+        loadingProgress: 0,
+      },
+    },
+    { type: 'updateCard', cardId: 'tenant-notification', updates: { loadingProgress: 50 } },
+    { type: 'delay', duration: 400 },
+    { type: 'updateCard', cardId: 'tenant-notification', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 300 },
+    {
+      type: 'updateCard',
+      cardId: 'tenant-notification',
+      updates: {
+        isLoading: false,
         body: 'Hi, We detected a possible pest issue in your unit (Unit 10). We\'re dispatching pest control today to inspect and resolve the concern. You do not need to be present. Thank you.',
         status: 'sent',
         timestamp: 'Just now',
       },
     },
-    { type: 'addEphemeralStatus', id: 'tenant-notified', type: 'success', title: 'Tenant Notified', message: 'The tenant has been notified.' },
+    { type: 'updateChecklistItem', cardId: 'pest-workflow-checklist', itemId: 'tenant-notify', completed: true, timestamp: 'Just now' },
     { type: 'delay', duration: 1500 },
+    
+    // Vendor request - loading then loaded
     {
       type: 'addMessageCard',
       card: {
@@ -65,11 +117,30 @@ export const workflow3PestResponse: DemoScript = {
         messageType: 'email',
         subject: 'Service Request: Pest concern in Unit 10',
         to: 'pestcontrol@example.com',
+        body: '',
+        isLoading: true,
+        loadingMessage: 'Sending email...',
+        loadingProgress: 0,
+      },
+    },
+    { type: 'updateCard', cardId: 'vendor-request', updates: { loadingProgress: 40 } },
+    { type: 'delay', duration: 500 },
+    { type: 'updateCard', cardId: 'vendor-request', updates: { loadingProgress: 80 } },
+    { type: 'delay', duration: 500 },
+    { type: 'updateCard', cardId: 'vendor-request', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 400 },
+    {
+      type: 'updateCard',
+      cardId: 'vendor-request',
+      updates: {
+        isLoading: false,
         body: 'Please reply with your earliest available time for dispatch today.',
         status: 'sent',
       },
     },
     { type: 'delay', duration: 2000 },
+    
+    // Vendor reply - loading then loaded
     {
       type: 'addMessageCard',
       card: {
@@ -79,18 +150,52 @@ export const workflow3PestResponse: DemoScript = {
         subject: 'Re: Service Request: Pest concern in Unit 10',
         to: 'blufms@blulok.com',
         from: 'pestcontrol@example.com',
+        body: '',
+        isLoading: true,
+        loadingMessage: 'Receiving reply...',
+        loadingProgress: 0,
+      },
+    },
+    { type: 'updateCard', cardId: 'vendor-reply', updates: { loadingProgress: 30 } },
+    { type: 'delay', duration: 600 },
+    { type: 'updateCard', cardId: 'vendor-reply', updates: { loadingProgress: 70 } },
+    { type: 'delay', duration: 600 },
+    { type: 'updateCard', cardId: 'vendor-reply', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 400 },
+    {
+      type: 'updateCard',
+      cardId: 'vendor-reply',
+      updates: {
+        isLoading: false,
         body: 'We can be there today at 3:30 PM.',
         status: 'sent',
         timestamp: '2 minutes ago',
       },
     },
     { type: 'delay', duration: 1000 },
+    
+    // Appointment booked - loading then loaded
     {
       type: 'addDetailCard',
       card: {
         id: 'appointment-booked',
         type: 'detail',
         title: 'Appointment Booked',
+        content: null,
+        isLoading: true,
+        loadingMessage: 'Creating access window...',
+        loadingProgress: 0,
+      },
+    },
+    { type: 'updateCard', cardId: 'appointment-booked', updates: { loadingProgress: 50 } },
+    { type: 'delay', duration: 500 },
+    { type: 'updateCard', cardId: 'appointment-booked', updates: { loadingProgress: 100 } },
+    { type: 'delay', duration: 400 },
+    {
+      type: 'updateCard',
+      cardId: 'appointment-booked',
+      updates: {
+        isLoading: false,
         content: (
           <div className="space-y-2 text-sm">
             <div className="text-lg font-semibold text-gray-900 dark:text-white">Today at 3:30 PM</div>
@@ -100,10 +205,26 @@ export const workflow3PestResponse: DemoScript = {
         ),
       },
     },
-    { type: 'addEphemeralStatus', id: 'access-window-created', type: 'success', title: 'Access Window Created', message: 'Timed access set for contractor from 3:00 to 4:30 PM.' },
+    { type: 'updateChecklistItem', cardId: 'pest-workflow-checklist', itemId: 'vendor-contact', completed: true, timestamp: 'Just now' },
+    { type: 'updateChecklistItem', cardId: 'pest-workflow-checklist', itemId: 'access-window', completed: true, timestamp: 'Just now' },
     { type: 'delay', duration: 2000 },
     { type: 'updateVoiceStatus', status: 'Contractor arrival confirmed. Device ID verified. Entry logged at 3:30 PM.' },
     { type: 'delay', duration: 1500 },
+    
+    // Pest Inspection card - with video
+    {
+      type: 'addStatusCard',
+      card: {
+        id: 'pest-inspection',
+        type: 'maintenance',
+        title: 'Pest Inspection',
+        primaryValue: 'In Progress',
+        secondaryValue: 'Unit 10 - Treatment in progress',
+        statusColor: 'blue',
+        videoUrl: '/demo-videos/security_incident_demo2.mp4',
+        hasSignificantDetails: true,
+      },
+    },
     {
       type: 'updateCard',
       cardId: 'workorder-237',
@@ -123,6 +244,19 @@ export const workflow3PestResponse: DemoScript = {
         },
       } as any,
     },
+    {
+      type: 'updateCard',
+      cardId: 'pest-inspection',
+      updates: {
+        primaryValue: 'Treatment Complete',
+        secondaryValue: 'Unit 10 - Inspection and treatment finished',
+        statusColor: 'green',
+        badge: {
+          text: 'Completed',
+          color: 'green',
+        },
+      },
+    },
     { type: 'delay', duration: 1000 },
     {
       type: 'updateCard',
@@ -131,8 +265,25 @@ export const workflow3PestResponse: DemoScript = {
         status: 'closed',
       } as any,
     },
-    { type: 'addEphemeralStatus', id: 'workorder-closed', type: 'success', title: 'Work Order Closed', message: 'Work order #237 has been closed and updated in reports.' },
+    { type: 'updateChecklistItem', cardId: 'pest-workflow-checklist', itemId: 'treatment', completed: true, timestamp: '3:47 PM' },
+    { type: 'delay', duration: 1000 },
+    { type: 'updateChecklistItem', cardId: 'pest-workflow-checklist', itemId: 'workorder-close', completed: true, timestamp: 'Just now' },
     { type: 'updateVoiceStatus', status: 'The Pest Response Workflow is complete. Work order closed and updated in reports.' },
+    { type: 'delay', duration: 800 },
+    { type: 'updateVoiceStatus', status: 'Generating comprehensive report...' },
+    { type: 'updateReportGenerationProgress', progress: 10 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 30 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 50 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 70 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 85 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 95 },
+    { type: 'delay', duration: 400 },
+    { type: 'updateReportGenerationProgress', progress: 100 },
   ],
 };
 

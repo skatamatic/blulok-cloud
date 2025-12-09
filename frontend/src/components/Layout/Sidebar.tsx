@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { useBluFMSDemo } from '@/contexts/BluFMSDemoContext';
 import { useBluFMSFacility } from '@/contexts/BluFMSFacilityContext';
+import { useBluDesign } from '@/contexts/BluDesignContext';
 import { UserRole } from '@/types/auth.types';
 import { ChangePasswordModal } from '@/components/UserManagement/ChangePasswordModal';
 import { CompactFacilityDropdown } from '@/components/Common/CompactFacilityDropdown';
@@ -17,7 +18,6 @@ import {
   Bars3Icon,
   ChevronLeftIcon,
   ChevronDownIcon,
-  ChevronUpIcon,
   SquaresPlusIcon,
   ComputerDesktopIcon,
   KeyIcon,
@@ -26,7 +26,12 @@ import {
   DevicePhoneMobileIcon,
   PresentationChartLineIcon,
   CloudIcon,
-  MapIcon
+  MapIcon,
+  CubeIcon,
+  WrenchScrewdriverIcon,
+  PhotoIcon,
+  PencilSquareIcon,
+  EyeIcon
 } from '@heroicons/react/24/outline';
 
 interface NavItem {
@@ -83,26 +88,40 @@ const bluFMSNavigation: NavItem[] = [
   },
 ];
 
+const bluDesignNavigation: NavItem[] = [
+  { name: 'View', href: '/bludesign/view', icon: EyeIcon },
+  { name: 'Build', href: '/bludesign/build', icon: WrenchScrewdriverIcon },
+  { name: 'Assets', href: '/bludesign/assets', icon: PhotoIcon },
+  { name: 'Configuration', href: '/bludesign/config', icon: Cog6ToothIcon },
+];
+
 export const Sidebar: React.FC = () => {
   const { authState, logout, hasRole, isAdmin, canManageUsers } = useAuth();
   const { isCollapsed, toggleSidebar } = useSidebar();
   const { isBluFMSDemoEnabled, isLoading: isBluFMSLoading } = useBluFMSDemo();
+  const { isBluDesignEnabled, isLoading: isBluDesignLoading } = useBluDesign();
   const navigate = useNavigate();
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
   const [bluLokExpanded, setBluLokExpanded] = useState(true);
   const [bluFMSExpanded, setBluFMSExpanded] = useState(false);
+  const [bluDesignExpanded, setBluDesignExpanded] = useState(false);
   
-  // Don't show BluFMS sections while loading (defaults to false/disabled)
+  // Don't show sections while loading (defaults to false/disabled)
   const showBluFMSDemo = !isBluFMSLoading && isBluFMSDemoEnabled;
+  const showBluDesign = !isBluDesignLoading && isBluDesignEnabled;
+  
+  // If either BluFMS or BluDesign is enabled, use expandable sections
+  const useExpandableSections = showBluFMSDemo || showBluDesign;
   
   // Get BluFMS facility context (returns safe defaults if provider not mounted)
   const bluFMSFacilityContext = useBluFMSFacility();
 
-  // Handle mutual exclusivity - when one expands, the other collapses
+  // Handle mutual exclusivity - when one expands, the others collapse
   const handleBluLokToggle = () => {
     if (!bluLokExpanded) {
       setBluLokExpanded(true);
       setBluFMSExpanded(false);
+      setBluDesignExpanded(false);
     } else {
       setBluLokExpanded(false);
     }
@@ -112,8 +131,19 @@ export const Sidebar: React.FC = () => {
     if (!bluFMSExpanded) {
       setBluFMSExpanded(true);
       setBluLokExpanded(false);
+      setBluDesignExpanded(false);
     } else {
       setBluFMSExpanded(false);
+    }
+  };
+
+  const handleBluDesignToggle = () => {
+    if (!bluDesignExpanded) {
+      setBluDesignExpanded(true);
+      setBluLokExpanded(false);
+      setBluFMSExpanded(false);
+    } else {
+      setBluDesignExpanded(false);
     }
   };
   const feInfo = {
@@ -208,10 +238,10 @@ export const Sidebar: React.FC = () => {
         )}
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 px-2 py-6 space-y-1 overflow-y-auto">
-        {showBluFMSDemo ? (
-          // Collapsible sections when BluFMS demo is enabled
+      {/* Navigation - scrollbar hidden but still scrollable */}
+      <nav className="flex-1 px-2 py-6 space-y-1 scrollbar-hide">
+        {useExpandableSections ? (
+          // Collapsible sections when BluFMS or BluDesign is enabled
           <>
             {/* BluLok Section */}
             <div className="space-y-1">
@@ -391,9 +421,82 @@ export const Sidebar: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* BluDesign Section - Only show if enabled */}
+            {showBluDesign && (
+              <>
+                {/* Separator */}
+                <div className={`my-2 border-t border-gray-200 dark:border-gray-700 transition-opacity duration-300 ${
+                  isCollapsed ? 'opacity-50' : 'opacity-100'
+                }`}></div>
+
+                {/* BluDesign Section */}
+                <div className="space-y-1">
+                  {/* Section Header - Always visible, adapts to collapsed state */}
+                  <button
+                    onClick={handleBluDesignToggle}
+                    className={`w-full flex items-center ${
+                      isCollapsed 
+                        ? 'justify-center px-2 py-2.5' 
+                        : 'justify-between px-2 py-2'
+                    } text-xs font-semibold text-gray-500 dark:text-gray-400 tracking-wider hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-all duration-200 ${
+                      isCollapsed ? 'border border-gray-200 dark:border-gray-700' : ''
+                    }`}
+                    title={isCollapsed ? 'BluDesign' : undefined}
+                  >
+                    {isCollapsed ? (
+                      <PencilSquareIcon className={`h-5 w-5 transition-colors duration-300 ease-out ${
+                        bluDesignExpanded ? 'text-primary-600 dark:text-primary-400' : 'text-gray-500 dark:text-gray-400'
+                      }`} />
+                    ) : (
+                      <>
+                        <span>BluDesign</span>
+                        <ChevronDownIcon 
+                          className={`h-4 w-4 transition-transform duration-300 ease-out ${
+                            bluDesignExpanded ? 'transform rotate-180' : ''
+                          }`}
+                        />
+                      </>
+                    )}
+                  </button>
+                  <div 
+                    className={`overflow-hidden transition-all duration-300 ease-out ${
+                      bluDesignExpanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      {bluDesignNavigation.filter(canAccessItem).map((item) => (
+                        <NavLink
+                          key={item.name}
+                          to={item.href!}
+                          className={({ isActive }) =>
+                            `group flex items-center ${isCollapsed ? 'justify-center px-2 py-3' : 'px-2 py-2'} text-sm font-medium rounded-md transition-all duration-200 ${
+                              isActive
+                                ? 'bg-primary-100 dark:bg-primary-900 text-primary-900 dark:text-primary-100'
+                                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
+                            }`
+                          }
+                          title={isCollapsed ? item.name : undefined}
+                        >
+                          {item.icon && (
+                            <item.icon
+                              className={`${isCollapsed ? '' : 'mr-3'} flex-shrink-0 h-5 w-5`}
+                              aria-hidden="true"
+                            />
+                          )}
+                          {!isCollapsed && (
+                            <span className="truncate">{item.name}</span>
+                          )}
+                        </NavLink>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </>
         ) : (
-          // Standard navigation when BluFMS demo is disabled
+          // Standard navigation when neither BluFMS nor BluDesign is enabled
           bluLokNavigation.filter(canAccessItem).map((item) => (
             <div key={item.name}>
               {item.isCategory && item.name === 'Diagnostics' && !isCollapsed && (

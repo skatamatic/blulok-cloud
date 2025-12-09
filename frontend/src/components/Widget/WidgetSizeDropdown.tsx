@@ -7,7 +7,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useDropdown } from '@/contexts/DropdownContext';
 
-export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide';
+export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide' | 'mega-tall';
 
 interface WidgetSizeDropdownProps {
   widgetId: string;
@@ -124,6 +124,7 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
     huge: 'Huge',
     'large-wide': 'Large (Wide)',
     'huge-wide': 'Huge (Wide)',
+    'mega-tall': 'Mega (Tall)',
   };
 
   const sizeDimensions: Record<WidgetSize, string> = {
@@ -135,6 +136,7 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
     huge: '6×4',
     'large-wide': '6×3',
     'huge-wide': '9×4',
+    'mega-tall': '9×6',
   };
 
   const sizeIcons: Record<WidgetSize, React.ReactNode> = {
@@ -185,6 +187,13 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
     'huge-wide': (
       <div className="grid grid-cols-9 gap-0.5 w-8 h-4">
         {Array.from({ length: 36 }, (_, i) => (
+          <div key={i} className="bg-current rounded-sm opacity-60" />
+        ))}
+      </div>
+    ),
+    'mega-tall': (
+      <div className="grid grid-cols-9 gap-0.5 w-8 h-6">
+        {Array.from({ length: 54 }, (_, i) => (
           <div key={i} className="bg-current rounded-sm opacity-60" />
         ))}
       </div>

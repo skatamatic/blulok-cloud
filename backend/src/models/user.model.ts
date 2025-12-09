@@ -98,6 +98,14 @@ export class UserModel extends BaseModel {
   }
 
   /**
+   * Find multiple users by their IDs
+   */
+  public static async findByIds(ids: string[]): Promise<User[]> {
+    if (ids.length === 0) return [];
+    return this.query().whereIn('id', ids) as Promise<User[]>;
+  }
+
+  /**
    * Find all active users in the system.
    * Used for user management interfaces and reporting.
    *

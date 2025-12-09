@@ -18,7 +18,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 dark:bg-gray-900">
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto relative">
           <div className="py-6">
             <div className="mx-auto" style={{ paddingLeft: '7%', paddingRight: '7%' }}>
               {children}

@@ -29,6 +29,7 @@ import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
 import { FacilitySchedulesTab } from '@/components/Schedules/FacilitySchedulesTab';
+import { UserSchedulesTab } from '@/components/Schedules/UserSchedulesTab';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
@@ -74,7 +75,7 @@ export default function FacilityDetailsPage() {
   const [facility, setFacility] = useState<Facility | null>(null);
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules'>('overview');
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
@@ -479,6 +480,7 @@ export default function FacilityDetailsPage() {
             ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
             { key: 'units', label: 'Units', icon: HomeIcon },
             { key: 'schedules', label: 'Schedules', icon: ClockIcon },
+            ...(!isTenant && canManage ? [{ key: 'user-schedules', label: 'User Schedules', icon: UserIcon }] : []),
             ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
             ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : [])
           ].map(({ key, label, icon: Icon }) => (
@@ -932,6 +934,13 @@ export default function FacilityDetailsPage() {
         <FacilitySchedulesTab
           facilityId={facility.id}
           userId={authState.user?.id}
+        />
+      )}
+
+      {/* User Schedules Tab */}
+      {activeTab === 'user-schedules' && facility && (
+        <UserSchedulesTab
+          facilityId={facility.id}
         />
       )}
 
