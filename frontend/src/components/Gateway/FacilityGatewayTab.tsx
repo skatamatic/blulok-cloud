@@ -870,7 +870,9 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
               onClick={async () => {
                 try {
                   const res = await apiService.getSecureTimeSyncPacket();
-                  addToast({ type: 'success', title: `Time Sync ts=${res.timeSyncPacket?.[0]?.ts}` });
+                  // Decode JWT to show timestamp (JWT format: header.payload.signature)
+                  const payload = res.timeSyncJwt ? JSON.parse(atob(res.timeSyncJwt.split('.')[1])) : null;
+                  addToast({ type: 'success', title: `Time Sync ts=${payload?.ts || 'unknown'}` });
                 } catch {
                   addToast({ type: 'error', title: 'Failed to get time sync packet' });
                 }
@@ -885,7 +887,9 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
                 if (!lockId) return;
                 try {
                   const res = await apiService.requestTimeSyncForLock(lockId);
-                  addToast({ type: 'success', title: `Time Sync (lock) ts=${res.timeSyncPacket?.[0]?.ts}` });
+                  // Decode JWT to show timestamp
+                  const payload = res.timeSyncJwt ? JSON.parse(atob(res.timeSyncJwt.split('.')[1])) : null;
+                  addToast({ type: 'success', title: `Time Sync (lock) ts=${payload?.ts || 'unknown'}` });
                 } catch {
                   addToast({ type: 'error', title: 'Failed to request time sync for lock' });
                 }
