@@ -1,12 +1,10 @@
 import { PasswordResetService } from '@/services/password-reset.service';
 import { DatabaseService } from '@/services/database.service';
-import { OTPService } from '@/services/otp.service';
 import { NotificationService } from '@/services/notifications/notification.service';
 import { UserModel } from '@/models/user.model';
 
 // Mock dependencies
 jest.mock('@/services/database.service');
-jest.mock('@/services/otp.service');
 jest.mock('@/services/notifications/notification.service');
 jest.mock('@/models/user.model');
 jest.mock('@/utils/phone.util', () => ({
@@ -16,7 +14,6 @@ jest.mock('@/utils/phone.util', () => ({
 describe('PasswordResetService', () => {
   let service: PasswordResetService;
   let mockDb: any;
-  let mockOtpService: jest.Mocked<OTPService>;
   let mockNotificationService: jest.Mocked<NotificationService>;
   let mockQueryBuilder: any;
 
@@ -27,6 +24,14 @@ describe('PasswordResetService', () => {
     is_active: true,
     first_name: 'Test',
     last_name: 'User',
+  };
+
+  const mockToken = {
+    id: 'token-123',
+    user_id: 'user-123',
+    token: 'test-reset-token-abc123',
+    expires_at: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes from now
+    used_at: null,
   };
 
   beforeEach(() => {
@@ -52,21 +57,15 @@ describe('PasswordResetService', () => {
       connection: mockDb,
     });
 
-    // Mock OTPService
-    mockOtpService = {
-      sendOtp: jest.fn().mockResolvedValue({ expiresAt: new Date() }),
-      verifyOtp: jest.fn().mockResolvedValue({ valid: true }),
-    } as any;
-
-    (OTPService.getInstance as jest.Mock).mockReturnValue(mockOtpService);
-
     // Mock NotificationService
     mockNotificationService = {
       getConfig: jest.fn().mockResolvedValue({
         enabledChannels: { sms: true, email: true },
         defaultProvider: { sms: 'console', email: 'console' },
         templates: {},
+        deeplinkBaseUrl: 'blulok://',
       }),
+      sendPasswordReset: jest.fn().mockResolvedValue(undefined),
     } as any;
 
     (NotificationService.getInstance as jest.Mock).mockReturnValue(mockNotificationService);
@@ -82,42 +81,46 @@ describe('PasswordResetService', () => {
   });
 
   describe('requestReset', () => {
-    it('should send OTP via SMS when user has phone and SMS is enabled', async () => {
+    it('should generate token and send SMS when user has phone', async () => {
       (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
-      mockQueryBuilder.first.mockResolvedValue(null); // No previous OTP
 
       const result = await service.requestReset({ email: 'test@example.com' });
 
+      expect(result.success).toBe(true);
       expect(result).toHaveProperty('expiresAt');
-      expect(result).toHaveProperty('userId', mockUser.id);
       expect(result).toHaveProperty('deliveryMethod', 'sms');
-      expect(mockOtpService.sendOtp).toHaveBeenCalledWith(
+      
+      // Should invalidate old tokens
+      expect(mockDb).toHaveBeenCalledWith('password_reset_tokens');
+      expect(mockQueryBuilder.update).toHaveBeenCalled();
+      
+      // Should insert new token
+      expect(mockQueryBuilder.insert).toHaveBeenCalled();
+      
+      // Should send notification
+      expect(mockNotificationService.sendPasswordReset).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: mockUser.id,
-          delivery: 'sms',
+          token: expect.any(String),
           toPhone: mockUser.phone_number,
-          kind: 'password_reset',
         })
       );
     });
 
-    it('should send OTP via email when SMS is disabled', async () => {
+    it('should send email when SMS is disabled but email is enabled', async () => {
       (UserModel.findByEmail as jest.Mock).mockResolvedValue({ ...mockUser, phone_number: null });
-      mockQueryBuilder.first.mockResolvedValue(null);
       mockNotificationService.getConfig.mockResolvedValue({
         enabledChannels: { sms: false, email: true },
         defaultProvider: { sms: 'console', email: 'console' },
         templates: {},
+        deeplinkBaseUrl: 'blulok://',
       });
 
       const result = await service.requestReset({ email: 'test@example.com' });
 
       expect(result.deliveryMethod).toBe('email');
-      expect(mockOtpService.sendOtp).toHaveBeenCalledWith(
+      expect(mockNotificationService.sendPasswordReset).toHaveBeenCalledWith(
         expect.objectContaining({
-          delivery: 'email',
           toEmail: mockUser.email,
-          kind: 'password_reset',
         })
       );
     });
@@ -141,68 +144,79 @@ describe('PasswordResetService', () => {
       await expect(service.requestReset({}))
         .rejects.toThrow('Email or phone is required');
     });
+  });
 
-    it('should enforce resend throttle', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
-      
-      // Mock recent OTP sent
-      mockQueryBuilder.first.mockResolvedValue({
-        last_sent_at: new Date(), // Just now
-      });
+  describe('verifyToken', () => {
+    it('should return valid for unexpired unused token', async () => {
+      mockQueryBuilder.first.mockResolvedValue(mockToken);
+      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
 
-      await expect(service.requestReset({ email: 'test@example.com' }))
-        .rejects.toThrow('Please wait before requesting another code');
+      const result = await service.verifyToken('test-reset-token-abc123');
+
+      expect(result.valid).toBe(true);
+      expect(result.userId).toBe(mockUser.id);
+      expect(result.email).toBe(mockUser.email);
+    });
+
+    it('should return invalid for non-existent token', async () => {
+      mockQueryBuilder.first.mockResolvedValue(null);
+
+      const result = await service.verifyToken('invalid-token');
+
+      expect(result.valid).toBe(false);
+    });
+
+    it('should return invalid for inactive user', async () => {
+      mockQueryBuilder.first.mockResolvedValue(mockToken);
+      (UserModel.findById as jest.Mock).mockResolvedValue({ ...mockUser, is_active: false });
+
+      const result = await service.verifyToken('test-reset-token-abc123');
+
+      expect(result.valid).toBe(false);
     });
   });
 
   describe('resetPassword', () => {
-    it('should reset password when OTP is valid', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
-      mockOtpService.verifyOtp.mockResolvedValue({ valid: true });
+    it('should reset password when token is valid', async () => {
+      mockQueryBuilder.first.mockResolvedValue(mockToken);
+      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
 
       const result = await service.resetPassword({
-        email: 'test@example.com',
-        otp: '123456',
+        token: 'test-reset-token-abc123',
         newPassword: 'NewPassword123!',
       });
 
       expect(result.success).toBe(true);
-      expect(mockOtpService.verifyOtp).toHaveBeenCalledWith({
-        userId: mockUser.id,
-        inviteId: null,
-        code: '123456',
-      });
-      expect(mockQueryBuilder.update).toHaveBeenCalled();
+      
+      // Should mark token as used and update user password
+      expect(mockQueryBuilder.update).toHaveBeenCalledTimes(2);
     });
 
-    it('should throw error when OTP is invalid', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
-      mockOtpService.verifyOtp.mockResolvedValue({ valid: false });
+    it('should throw error when token is invalid', async () => {
+      mockQueryBuilder.first.mockResolvedValue(null);
 
       await expect(service.resetPassword({
-        email: 'test@example.com',
-        otp: '000000',
+        token: 'invalid-token',
         newPassword: 'NewPassword123!',
-      })).rejects.toThrow('Invalid or expired verification code');
+      })).rejects.toThrow('Invalid or expired reset link');
     });
 
     it('should throw error when user not found', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(null);
+      mockQueryBuilder.first.mockResolvedValue(mockToken);
+      (UserModel.findById as jest.Mock).mockResolvedValue(null);
 
       await expect(service.resetPassword({
-        email: 'nonexistent@example.com',
-        otp: '123456',
+        token: 'test-reset-token-abc123',
         newPassword: 'NewPassword123!',
       })).rejects.toThrow('User not found');
     });
 
     it('should throw error when user is inactive', async () => {
-      const inactiveUser = { ...mockUser, is_active: false };
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(inactiveUser);
+      mockQueryBuilder.first.mockResolvedValue(mockToken);
+      (UserModel.findById as jest.Mock).mockResolvedValue({ ...mockUser, is_active: false });
 
       await expect(service.resetPassword({
-        email: 'test@example.com',
-        otp: '123456',
+        token: 'test-reset-token-abc123',
         newPassword: 'NewPassword123!',
       })).rejects.toThrow('Account is not active');
     });

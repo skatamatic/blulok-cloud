@@ -1807,8 +1807,8 @@ async function run() {
     if (!faRegRes.data?.success) throw new Error('Facility admin register-key failed');
     ok('Facility admin can register device key');
 
-    heading('Password Reset Flow Test (Full E2E)');
-    // Clear any prior notification events so we only capture fresh password reset OTP
+    heading('Password Reset Flow Test (Deeplink + Token E2E)');
+    // Clear any prior notification events so we only capture fresh password reset notification
     notificationEvents.length = 0;
 
     step('Requesting password reset for primary tenant');
@@ -1821,42 +1821,47 @@ async function run() {
     if (VERBOSE) console.log(`  • Delivery method: ${resetReqRes.data?.deliveryMethod || 'unknown'}`);
     ok('Password reset request submitted');
 
-    // Wait for password reset OTP via dev notifications WebSocket
-    step('Waiting for password reset OTP via notifications WebSocket');
-    const resetOtpEvent = await waitForNotification((e) =>
-      e.kind === 'otp' && e.meta?.otpKind === 'password_reset'
-    );
-    if (!resetOtpEvent) {
-      throw new Error('Did not receive password reset OTP notification');
+    // Wait for password reset deeplink via dev notifications WebSocket
+    step('Waiting for password reset deeplink via notifications WebSocket');
+    const resetEvent = await waitForNotification((e) => e.kind === 'password_reset');
+    if (!resetEvent) {
+      throw new Error('Did not receive password reset notification');
     }
-    const resetOtpMatch = String(resetOtpEvent.body).match(/(\d{6})/);
-    if (!resetOtpMatch) throw new Error('Failed to parse OTP code from password reset notification body');
-    const resetOtp = resetOtpMatch[1];
-    ok(`Received password reset OTP: ${resetOtp}`);
+    // Extract token from deeplink in notification meta or body
+    const resetToken = resetEvent.meta?.token;
+    if (!resetToken) throw new Error('Failed to extract token from password reset notification');
+    ok(`Received password reset token`);
 
-    step('Password reset with invalid OTP returns error');
+    step('Verifying reset token is valid');
+    const verifyRes = await axios.post(`${API_BASE}/auth/forgot-password/verify`, {
+      token: resetToken,
+    }).catch(err => err.response);
+    if (!verifyRes || verifyRes.status !== 200 || !verifyRes.data?.success) {
+      throw new Error(`Token verification failed: status=${verifyRes?.status}, data=${JSON.stringify(verifyRes?.data)}`);
+    }
+    ok('Reset token verified successfully');
+
+    step('Password reset with invalid token returns error');
     const resetBadRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
-      email: primaryEmail,
-      otp: '000000',
+      token: 'invalid-token-abc123',
       newPassword: 'NewTestPassword123!',
     }).catch(err => err.response);
     if (!resetBadRes || resetBadRes.status !== 400) {
-      throw new Error(`Password reset expected 400 for invalid OTP, got ${resetBadRes?.status || 'no response'}`);
+      throw new Error(`Password reset expected 400 for invalid token, got ${resetBadRes?.status || 'no response'}`);
     }
-    ok('Password reset endpoint rejects invalid OTP');
+    ok('Password reset endpoint rejects invalid token');
 
-    // Now use the real OTP to reset the password
+    // Now use the real token to reset the password
     const resetNewPassword = 'ResetTestPwd456!';
-    step('Resetting password with valid OTP');
+    step('Resetting password with valid token');
     const resetSuccessRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
-      email: primaryEmail,
-      otp: resetOtp,
+      token: resetToken,
       newPassword: resetNewPassword,
     }).catch(err => err.response);
     if (!resetSuccessRes || resetSuccessRes.status !== 200 || !resetSuccessRes.data?.success) {
-      throw new Error(`Password reset with valid OTP failed: status=${resetSuccessRes?.status}, data=${JSON.stringify(resetSuccessRes?.data)}`);
+      throw new Error(`Password reset with valid token failed: status=${resetSuccessRes?.status}, data=${JSON.stringify(resetSuccessRes?.data)}`);
     }
-    ok('Password reset successful with valid OTP');
+    ok('Password reset successful with valid token');
 
     // Verify user can log in with the new password
     step('Verifying login with new password');
@@ -1880,6 +1885,17 @@ async function run() {
       throw new Error('Old password should no longer work after reset');
     }
     ok('Old password correctly rejected after reset');
+
+    // Verify used token cannot be reused
+    step('Verifying used token cannot be reused');
+    const reuseRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
+      token: resetToken,
+      newPassword: 'AnotherPassword123!',
+    }).catch(err => err.response);
+    if (reuseRes && reuseRes.status === 200) {
+      throw new Error('Used token should not be reusable');
+    }
+    ok('Used token correctly rejected');
 
     // mark success; we'll print Result after cleanup
     success = true;

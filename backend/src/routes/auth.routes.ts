@@ -355,9 +355,10 @@ router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req
 }));
 
 // ----- Forgot Password / Password Reset Flow -----
-// Simplified 2-step flow (mirrors invite pattern):
-// 1. Request OTP via /forgot-password/request
-// 2. Verify OTP + set new password via /forgot-password/reset
+// Deeplink + token flow (mirrors invite pattern):
+// 1. Request reset link via /forgot-password/request
+// 2. User clicks deeplink, frontend verifies token via /forgot-password/verify
+// 3. User submits new password via /forgot-password/reset
 
 // Rate limiter for password reset requests
 const passwordResetRequestLimiterRaw = rateLimit({
@@ -386,7 +387,7 @@ const passwordResetResetLimiter: typeof passwordResetResetLimiterRaw = ((req: Re
   return passwordResetResetLimiterRaw(req, res, next);
 }) as any;
 
-// POST /auth/forgot-password/request - Request password reset OTP
+// POST /auth/forgot-password/request - Request password reset link
 router.post('/forgot-password/request', passwordResetRequestLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({
     email: Joi.string().email().optional(),
@@ -412,25 +413,50 @@ router.post('/forgot-password/request', passwordResetRequestLimiter, asyncHandle
   } catch (e: any) {
     // Don't reveal if user exists - always return success-like response for security
     if (e.message?.includes('If an account exists')) {
-      res.json({ success: true, message: 'If an account exists with this information, you will receive a verification code' });
+      res.json({ success: true, message: 'If an account exists with this information, you will receive a reset link' });
     } else {
       res.status(400).json({ success: false, message: e?.message || 'Unable to process request' });
     }
   }
 }));
 
-// POST /auth/forgot-password/reset - Verify OTP and set new password in one step
+// POST /auth/forgot-password/verify - Verify password reset token is valid
+router.post('/forgot-password/verify', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({
+    token: Joi.string().required(),
+  });
+
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { PasswordResetService } = await import('@/services/password-reset.service');
+  const svc = PasswordResetService.getInstance();
+  
+  const result = await svc.verifyToken(value.token);
+  if (!result.valid) {
+    res.status(400).json({ success: false, message: 'Invalid or expired reset link' });
+    return;
+  }
+  
+  res.json({ 
+    success: true, 
+    email: result.email, // Optionally show masked email for UX
+  });
+}));
+
+// POST /auth/forgot-password/reset - Reset password using token
 router.post('/forgot-password/reset', passwordResetResetLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({
-    email: Joi.string().email().optional(),
-    phone: Joi.string().optional(),
-    otp: Joi.string().pattern(/^\d{6}$/).required(),
+    token: Joi.string().required(),
     newPassword: Joi.string()
       .min(8)
       .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$'))
       .required()
       .messages({ 'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character' })
-  }).xor('email', 'phone');
+  });
 
   const { error, value } = schema.validate(req.body);
   if (error) {
@@ -443,9 +469,7 @@ router.post('/forgot-password/reset', passwordResetResetLimiter, asyncHandler(as
   
   try {
     await svc.resetPassword({ 
-      email: value.email, 
-      phone: value.phone,
-      otp: value.otp,
+      token: value.token,
       newPassword: value.newPassword 
     });
     res.json({ success: true, message: 'Password reset successfully' });

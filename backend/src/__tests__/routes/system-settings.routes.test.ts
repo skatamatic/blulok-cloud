@@ -74,9 +74,9 @@ describe('System Settings Routes', () => {
           otpSms: 'Your code is {{code}}',
           otpEmail: '<p>Your code is {{code}}</p>',
           otpEmailSubject: 'Your Verification Code',
-          passwordResetOtpSms: 'Your password reset code is {{code}}',
-          passwordResetOtpEmail: '<p>Your password reset code is {{code}}</p>',
-          passwordResetOtpEmailSubject: 'Reset Your BluLok Password',
+          passwordResetSms: 'Reset your password: {{deeplink}}',
+          passwordResetEmail: '<p>Reset your password: <a href="{{deeplink}}">{{deeplink}}</a></p>',
+          passwordResetEmailSubject: 'Reset Your BluLok Password',
         },
         deeplinkBaseUrl: 'https://app.blulok.com',
       };
@@ -98,7 +98,7 @@ describe('System Settings Routes', () => {
       const notificationConfig = {
         enabledChannels: { sms: true, email: false },
         templates: {
-          passwordResetOtpSms: 'Reset code: {{code}}',
+          passwordResetSms: 'Reset your password: {{deeplink}}',
         },
       };
 

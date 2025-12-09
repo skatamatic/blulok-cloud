@@ -1,7 +1,7 @@
 import { logger } from '@/utils/logger';
 
 export type NotificationDebugEvent = {
-  kind: 'invite' | 'otp';
+  kind: 'invite' | 'otp' | 'password_reset';
   delivery: 'sms' | 'email';
   toPhone?: string;
   toEmail?: string;

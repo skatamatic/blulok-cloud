@@ -5,10 +5,10 @@ export interface NotificationTemplatesConfig {
   otpSms?: string;
   otpEmail?: string;
   otpEmailSubject?: string;
-  // Password reset specific templates
-  passwordResetOtpSms?: string;
-  passwordResetOtpEmail?: string;
-  passwordResetOtpEmailSubject?: string;
+  // Password reset templates (deeplink-based, similar to invite)
+  passwordResetSms?: string;
+  passwordResetEmail?: string;
+  passwordResetEmailSubject?: string;
 }
 
 export interface TwilioConfig {

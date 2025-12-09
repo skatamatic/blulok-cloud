@@ -283,14 +283,15 @@ useAuth().canManageUsers()              # Check user management access
 | GET | `/api/v1/auth/verify-token` | Authenticated | Verify token validity |
 | POST | `/api/v1/auth/change-password` | Authenticated | Change password |
 
-### Password Reset Endpoints (Forgot Password with 2FA)
+### Password Reset Endpoints (Deeplink + Token Flow)
 
 | Method | Endpoint | Access | Description |
 |--------|----------|--------|-------------|
-| POST | `/api/v1/auth/forgot-password/request` | Public (rate-limited) | Request password reset - sends OTP via configured channel |
-| POST | `/api/v1/auth/forgot-password/reset` | Public (rate-limited) | Verify OTP and set new password |
+| POST | `/api/v1/auth/forgot-password/request` | Public (rate-limited) | Request password reset - sends deeplink with token via configured channel |
+| POST | `/api/v1/auth/forgot-password/verify` | Public | Verify password reset token is valid |
+| POST | `/api/v1/auth/forgot-password/reset` | Public (rate-limited) | Reset password using token |
 
-#### Password Reset Flow (Simplified 2-Step)
+#### Password Reset Flow (Deeplink + Token - mirrors invite flow)
 
 1. **Request Reset**: User submits email or phone number
    ```json
@@ -300,18 +301,32 @@ useAuth().canManageUsers()              # Check user management access
    { "phone": "+15551234567" }
    ```
    Response includes `expiresAt` and `deliveryMethod` (sms or email).
-   OTP is sent via the configured notification channel (SMS preferred if enabled and user has phone).
+   A deeplink containing a secure reset token is sent via SMS or email (e.g., `blulok://reset-password?token=abc123...`).
 
-2. **Reset Password**: User submits OTP + new password together
+2. **Verify Token** (optional, for UX): Frontend verifies token before showing password form
+   ```json
+   POST /api/v1/auth/forgot-password/verify
+   { "token": "abc123..." }
+   ```
+   Response includes `success: true` and optionally the user's email for display.
+
+3. **Reset Password**: User submits token + new password
    ```json
    POST /api/v1/auth/forgot-password/reset
    { 
-     "email": "user@example.com",
-     "otp": "123456",
+     "token": "abc123...",
      "newPassword": "NewPassword123!" 
    }
    ```
-   This mirrors the invite flow pattern - OTP verification and password setting happen in one step.
+   Token is single-use and expires after 30 minutes (configurable via `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES`).
+
+#### Database Table: `password_reset_tokens`
+- `id`: UUID primary key
+- `user_id`: Reference to user
+- `token`: Unique 64-character base64url token
+- `expires_at`: Token expiration timestamp
+- `used_at`: When token was used (prevents reuse)
+- `created_at`: Creation timestamp
 
 ### User Management Endpoints
 
@@ -390,12 +405,11 @@ npm run db:setup            # Full setup: init + migrate + seed
 ### Planned Security Improvements
 
 1. **Refresh Tokens**: Implement refresh token rotation
-2. **Multi-Factor Authentication**: SMS/TOTP support
+2. **Multi-Factor Authentication**: TOTP support (SMS OTP already implemented for invites)
 3. **Session Management**: Server-side session tracking
-4. **Password Reset**: Secure password reset flow
-5. **Account Lockout**: Temporary lockout after failed attempts
-6. **Audit Trail**: Comprehensive activity logging
-7. **Device Registration**: Trusted device management
+4. **Account Lockout**: Temporary lockout after failed attempts
+5. **Audit Trail**: Comprehensive activity logging
+6. **Device Registration**: Trusted device management
 
 ### Scalability Considerations
 

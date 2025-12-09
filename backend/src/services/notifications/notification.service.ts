@@ -1,5 +1,5 @@
 import { SystemSettingsModel } from '@/models/system-settings.model';
-import { NotificationsConfig, SendInviteParams, SendOtpParams } from '@/types/notification.types';
+import { NotificationsConfig, SendInviteParams, SendOtpParams, SendPasswordResetParams } from '@/types/notification.types';
 import { logger } from '@/utils/logger';
 import { NotificationDebugService } from './notification-debug.service';
 
@@ -163,17 +163,9 @@ export class NotificationService {
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
     
-    // Select templates based on OTP kind
-    const isPasswordReset = params.kind === 'password_reset';
-    const smsTemplate = isPasswordReset
-      ? (config.templates?.passwordResetOtpSms || 'Your BluLok password reset code is: {{code}}')
-      : (config.templates?.otpSms || 'Your verification code is: {{code}}');
-    const emailTemplate = isPasswordReset
-      ? (config.templates?.passwordResetOtpEmail || 'Your BluLok password reset code is: {{code}}')
-      : (config.templates?.otpEmail || 'Your verification code is: {{code}}');
-    const emailSubject = isPasswordReset
-      ? (config.templates?.passwordResetOtpEmailSubject || 'Reset Your BluLok Password')
-      : (config.templates?.otpEmailSubject || 'Your Verification Code');
+    const smsTemplate = config.templates?.otpSms || 'Your verification code is: {{code}}';
+    const emailTemplate = config.templates?.otpEmail || 'Your verification code is: {{code}}';
+    const emailSubject = config.templates?.otpEmailSubject || 'Your Verification Code';
 
     const debug = NotificationDebugService.getInstance();
     if (debug.isEnabled()) {
@@ -186,7 +178,7 @@ export class NotificationService {
           delivery: 'sms',
           toPhone: params.toPhone,
           body,
-          meta: { code: params.code, otpKind: params.kind || 'invite' },
+          meta: { code: params.code },
           createdAt,
         });
         return;
@@ -198,7 +190,7 @@ export class NotificationService {
           delivery: 'email',
           toEmail: params.toEmail,
           body: html,
-          meta: { code: params.code, otpKind: params.kind || 'invite' },
+          meta: { code: params.code },
           createdAt,
         });
         return;
@@ -211,7 +203,7 @@ export class NotificationService {
           delivery: 'sms',
           toPhone: params.toPhone,
           body,
-          meta: { code: params.code, otpKind: params.kind || 'invite' },
+          meta: { code: params.code },
           createdAt,
         });
         return;
@@ -223,7 +215,7 @@ export class NotificationService {
           delivery: 'email',
           toEmail: params.toEmail,
           body: html,
-          meta: { code: params.code, otpKind: params.kind || 'invite' },
+          meta: { code: params.code },
           createdAt,
         });
         return;
@@ -257,6 +249,103 @@ export class NotificationService {
       return;
     }
     throw new Error('sendOtp requires toPhone or toEmail');
+  }
+
+  /**
+   * Send password reset notification with deeplink (similar to invite flow)
+   */
+  public async sendPasswordReset(params: SendPasswordResetParams): Promise<void> {
+    const config = await this.loadConfig();
+    const smsEnabled = config.enabledChannels?.sms !== false;
+    const emailEnabled = config.enabledChannels?.email === true;
+
+    // Build deeplink with token
+    const baseUrl = config.deeplinkBaseUrl || 'blulok://';
+    const deeplink = `${baseUrl}${baseUrl.includes('?') ? '&' : baseUrl.endsWith('/') ? '' : '/'}reset-password?token=${encodeURIComponent(params.token)}`;
+
+    const smsTemplate = config.templates?.passwordResetSms || 'Reset your BluLok password: {{deeplink}}';
+    const emailTemplate = config.templates?.passwordResetEmail || '<p>Click to reset your password: <a href="{{deeplink}}">{{deeplink}}</a></p>';
+    const emailSubject = config.templates?.passwordResetEmailSubject || 'Reset Your BluLok Password';
+
+    const debug = NotificationDebugService.getInstance();
+    if (debug.isEnabled()) {
+      const createdAt = new Date();
+      if (smsEnabled && params.toPhone) {
+        const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+        debug.publish({
+          kind: 'password_reset',
+          delivery: 'sms',
+          toPhone: params.toPhone,
+          body,
+          meta: { token: params.token, deeplink },
+          createdAt,
+        });
+      }
+      if (emailEnabled && params.toEmail) {
+        const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+        debug.publish({
+          kind: 'password_reset',
+          delivery: 'email',
+          toEmail: params.toEmail,
+          body: html,
+          meta: { token: params.token, deeplink },
+          createdAt,
+        });
+      }
+      // If neither channel enabled but destination provided, use fallback
+      if (!smsEnabled && !emailEnabled) {
+        if (params.toPhone) {
+          const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+          debug.publish({
+            kind: 'password_reset',
+            delivery: 'sms',
+            toPhone: params.toPhone,
+            body,
+            meta: { token: params.token, deeplink },
+            createdAt,
+          });
+        } else if (params.toEmail) {
+          const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+          debug.publish({
+            kind: 'password_reset',
+            delivery: 'email',
+            toEmail: params.toEmail,
+            body: html,
+            meta: { token: params.token, deeplink },
+            createdAt,
+          });
+        }
+      }
+      return;
+    }
+
+    // Send via real providers
+    if (smsEnabled && params.toPhone) {
+      const provider = this.getSmsProvider(config);
+      const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+      await provider.sendSms(params.toPhone, body);
+    }
+
+    if (emailEnabled && params.toEmail) {
+      const provider = this.getEmailProvider(config);
+      const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+      await provider.sendEmail(params.toEmail, emailSubject, html, html);
+    }
+
+    // Fallback if no channel enabled
+    if (!smsEnabled && !emailEnabled) {
+      if (params.toPhone) {
+        const provider = this.getSmsProvider(config);
+        const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+        await provider.sendSms(params.toPhone, body);
+      } else if (params.toEmail) {
+        const provider = this.getEmailProvider(config);
+        const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
+        await provider.sendEmail(params.toEmail, emailSubject, html, html);
+      } else {
+        throw new Error('sendPasswordReset requires toPhone or toEmail');
+      }
+    }
   }
 
   /**

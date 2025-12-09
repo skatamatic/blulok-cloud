@@ -75,9 +75,9 @@ const notificationsSchema = Joi.object({
     otpSms: Joi.string().optional(),
     otpEmail: Joi.string().optional(),
     otpEmailSubject: Joi.string().optional(),
-    passwordResetOtpSms: Joi.string().optional(),
-    passwordResetOtpEmail: Joi.string().optional(),
-    passwordResetOtpEmailSubject: Joi.string().optional(),
+    passwordResetSms: Joi.string().optional(),
+    passwordResetEmail: Joi.string().optional(),
+    passwordResetEmailSubject: Joi.string().optional(),
   }).optional(),
   deeplinkBaseUrl: Joi.string().optional(),
 });
