@@ -35,14 +35,37 @@ export interface GatewayDeviceData {
 /**
  * Device Inventory Item for inventory sync endpoint.
  * Represents a device that should exist on the gateway.
+ * 
+ * Now supports all state fields as well, allowing inventory sync
+ * to also update device state in a single call.
  */
 export interface DeviceInventoryItem {
-  /** Lock identifier (UUID or serial) */
+  /** Lock identifier (UUID or serial) - required */
   lock_id: string;
   /** Lock number for display */
   lock_number?: number;
-  /** Installed firmware version */
+  /** Device state: 'CLOSED' = locked, 'OPENED' = unlocked */
+  state?: 'CLOSED' | 'OPENED' | 'ERROR' | 'UNKNOWN';
+  /** Legacy lock state field */
+  lock_state?: 'LOCKED' | 'UNLOCKED' | 'LOCKING' | 'UNLOCKING' | 'ERROR' | 'UNKNOWN';
+  /** Boolean lock status */
+  locked?: boolean;
+  /** Battery level in raw units (mV) */
+  battery_level?: number;
+  /** Battery unit (e.g., 'mV') */
+  battery_unit?: string;
+  /** Device online status */
+  online?: boolean;
+  /** Signal strength */
+  signal_strength?: number;
+  /** Temperature value */
+  temperature_value?: number;
+  /** Temperature unit (e.g., '°C') */
+  temperature_unit?: string;
+  /** Firmware version string */
   firmware_version?: string;
+  /** Last seen timestamp */
+  last_seen?: string | Date;
 }
 
 /**
@@ -445,7 +468,7 @@ export class DeviceSyncService {
 
       // PERFORMANCE FIX: Collect devices to add and remove, then bulk process
       const devicesToAdd: CreateBluLokDeviceData[] = [];
-      const devicesToUpdate: Array<{ id: string; firmware_version: string }> = [];
+      const devicesToUpdateState: Array<{ lockId: string; item: DeviceInventoryItem }> = [];
       
       for (const [lockId, inventoryItem] of incomingDeviceMap) {
         if (!existingDeviceMap.has(lockId)) {
@@ -465,14 +488,8 @@ export class DeviceSyncService {
 
           devicesToAdd.push(createData);
         } else {
-          // Device exists - check if firmware needs update
-          const existing = existingDeviceMap.get(lockId)!;
-          if (inventoryItem.firmware_version && existing.firmware_version !== inventoryItem.firmware_version) {
-            devicesToUpdate.push({
-              id: existing.id,
-              firmware_version: inventoryItem.firmware_version,
-            });
-          }
+          // Device exists - collect for state update if any state fields provided
+          devicesToUpdateState.push({ lockId, item: inventoryItem });
           result.unchanged++;
         }
       }
@@ -497,14 +514,15 @@ export class DeviceSyncService {
         }
       }
 
-      // Update firmware versions (still sequential as each is a different device)
-      for (const update of devicesToUpdate) {
-        try {
-          await this.deviceModel.updateBluLokDeviceState(update.id, {
-            firmware_version: update.firmware_version,
-          });
-        } catch (error: any) {
-          result.errors.push(`Failed to update firmware for ${update.id}: ${error.message}`);
+      // Update device state for existing devices (including firmware, battery, lock state, etc.)
+      for (const { lockId, item } of devicesToUpdateState) {
+        const stateUpdate = this.mapInventoryItemToStateUpdate(item);
+        if (Object.keys(stateUpdate).length > 0) {
+          try {
+            await this.deviceModel.updateBluLokDeviceState(lockId, stateUpdate);
+          } catch (error: any) {
+            result.errors.push(`Failed to update state for ${lockId}: ${error.message}`);
+          }
         }
       }
 
@@ -557,6 +575,141 @@ export class DeviceSyncService {
   }
 
   /**
+   * Map a state update to database format.
+   * Handles all field mappings including new gateway format fields.
+   */
+  private mapStateUpdateToDbFormat(update: DeviceStateUpdate): Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] {
+    const dbUpdates: Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] = {};
+
+    // Map 'state' field (CLOSED/OPENED) to lock_status
+    if (update.state) {
+      const stateMap: Record<string, 'locked' | 'unlocked' | 'error' | 'unknown'> = {
+        'CLOSED': 'locked',
+        'OPENED': 'unlocked',
+        'ERROR': 'error',
+        'UNKNOWN': 'unknown',
+      };
+      dbUpdates.lock_status = stateMap[update.state] || 'unknown';
+    }
+
+    // Map legacy lock_state to lock_status (if state not provided)
+    if (!dbUpdates.lock_status && update.lock_state) {
+      const lockStateMap: Record<string, 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'unknown'> = {
+        'LOCKED': 'locked',
+        'UNLOCKED': 'unlocked',
+        'LOCKING': 'locking',
+        'UNLOCKING': 'unlocking',
+        'ERROR': 'error',
+        'UNKNOWN': 'unknown',
+      };
+      dbUpdates.lock_status = lockStateMap[update.lock_state] || 'unknown';
+    }
+
+    // Map 'locked' boolean to lock_status (if neither state nor lock_state provided)
+    if (!dbUpdates.lock_status && update.locked !== undefined) {
+      dbUpdates.lock_status = update.locked ? 'locked' : 'unlocked';
+    }
+
+    // Map online to device_status
+    if (update.online !== undefined) {
+      dbUpdates.device_status = update.online ? 'online' : 'offline';
+    }
+
+    // Direct mappings
+    if (update.battery_level !== undefined) {
+      dbUpdates.battery_level = update.battery_level;
+    }
+    if (update.signal_strength !== undefined) {
+      dbUpdates.signal_strength = update.signal_strength;
+    }
+    // Handle both 'temperature' and 'temperature_value' fields
+    if (update.temperature !== undefined) {
+      dbUpdates.temperature = update.temperature;
+    } else if (update.temperature_value !== undefined) {
+      dbUpdates.temperature = update.temperature_value;
+    }
+    if (update.firmware_version !== undefined) {
+      dbUpdates.firmware_version = update.firmware_version;
+    }
+    if (update.error_code !== undefined) {
+      dbUpdates.error_code = update.error_code;
+    }
+    if (update.error_message !== undefined) {
+      dbUpdates.error_message = update.error_message;
+    }
+    if (update.last_seen !== undefined) {
+      dbUpdates.last_seen = typeof update.last_seen === 'string' 
+        ? new Date(update.last_seen) 
+        : update.last_seen;
+    }
+
+    return dbUpdates;
+  }
+
+  /**
+   * Map inventory item to state update format for database.
+   * Used when inventory sync includes state fields.
+   */
+  private mapInventoryItemToStateUpdate(item: DeviceInventoryItem): Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] {
+    const dbUpdates: Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] = {};
+
+    // Map 'state' field (CLOSED/OPENED) to lock_status
+    if (item.state) {
+      const stateMap: Record<string, 'locked' | 'unlocked' | 'error' | 'unknown'> = {
+        'CLOSED': 'locked',
+        'OPENED': 'unlocked',
+        'ERROR': 'error',
+        'UNKNOWN': 'unknown',
+      };
+      dbUpdates.lock_status = stateMap[item.state] || 'unknown';
+    }
+
+    // Map legacy lock_state to lock_status (if state not provided)
+    if (!dbUpdates.lock_status && item.lock_state) {
+      const lockStateMap: Record<string, 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'unknown'> = {
+        'LOCKED': 'locked',
+        'UNLOCKED': 'unlocked',
+        'LOCKING': 'locking',
+        'UNLOCKING': 'unlocking',
+        'ERROR': 'error',
+        'UNKNOWN': 'unknown',
+      };
+      dbUpdates.lock_status = lockStateMap[item.lock_state] || 'unknown';
+    }
+
+    // Map 'locked' boolean to lock_status (if neither state nor lock_state provided)
+    if (!dbUpdates.lock_status && item.locked !== undefined) {
+      dbUpdates.lock_status = item.locked ? 'locked' : 'unlocked';
+    }
+
+    // Map online to device_status
+    if (item.online !== undefined) {
+      dbUpdates.device_status = item.online ? 'online' : 'offline';
+    }
+
+    // Direct mappings
+    if (item.battery_level !== undefined) {
+      dbUpdates.battery_level = item.battery_level;
+    }
+    if (item.signal_strength !== undefined) {
+      dbUpdates.signal_strength = item.signal_strength;
+    }
+    if (item.temperature_value !== undefined) {
+      dbUpdates.temperature = item.temperature_value;
+    }
+    if (item.firmware_version !== undefined) {
+      dbUpdates.firmware_version = item.firmware_version;
+    }
+    if (item.last_seen !== undefined) {
+      dbUpdates.last_seen = typeof item.last_seen === 'string' 
+        ? new Date(item.last_seen) 
+        : item.last_seen;
+    }
+
+    return dbUpdates;
+  }
+
+  /**
    * Update device states with partial data.
    * Only updates fields that are provided in each update.
    * 
@@ -577,50 +730,7 @@ export class DeviceSyncService {
     for (const update of updates) {
       try {
         // Map incoming state update to database format
-        const dbUpdates: Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] = {};
-
-        // Map lock_state to lock_status
-        if (update.lock_state) {
-          const lockStateMap: Record<string, 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'unknown'> = {
-            'LOCKED': 'locked',
-            'UNLOCKED': 'unlocked',
-            'LOCKING': 'locking',
-            'UNLOCKING': 'unlocking',
-            'ERROR': 'error',
-            'UNKNOWN': 'unknown',
-          };
-          dbUpdates.lock_status = lockStateMap[update.lock_state] || 'unknown';
-        }
-
-        // Map online to device_status
-        if (update.online !== undefined) {
-          dbUpdates.device_status = update.online ? 'online' : 'offline';
-        }
-
-        // Direct mappings
-        if (update.battery_level !== undefined) {
-          dbUpdates.battery_level = update.battery_level;
-        }
-        if (update.signal_strength !== undefined) {
-          dbUpdates.signal_strength = update.signal_strength;
-        }
-        if (update.temperature !== undefined) {
-          dbUpdates.temperature = update.temperature;
-        }
-        if (update.firmware_version !== undefined) {
-          dbUpdates.firmware_version = update.firmware_version;
-        }
-        if (update.error_code !== undefined) {
-          dbUpdates.error_code = update.error_code;
-        }
-        if (update.error_message !== undefined) {
-          dbUpdates.error_message = update.error_message;
-        }
-        if (update.last_seen !== undefined) {
-          dbUpdates.last_seen = typeof update.last_seen === 'string' 
-            ? new Date(update.last_seen) 
-            : update.last_seen;
-        }
+        const dbUpdates = this.mapStateUpdateToDbFormat(update);
 
         // Skip if no actual updates
         if (Object.keys(dbUpdates).length === 0) {

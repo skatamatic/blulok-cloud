@@ -549,8 +549,36 @@ describe('DeviceSyncService', () => {
       ]);
 
       expect(result.unchanged).toBe(1);
-      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('device-1', {
+      // Now updates via lock_id (device_serial) rather than internal id
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
         firmware_version: '2.0.0',
+      });
+    });
+
+    it('should update state fields during inventory sync', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
+      ]);
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        {
+          lock_id: 'LOCK-1',
+          state: 'CLOSED',
+          battery_level: 3423,
+          online: true,
+          signal_strength: -55,
+          temperature_value: 24,
+        },
+      ]);
+
+      expect(result.unchanged).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'locked',
+        battery_level: 3423,
+        device_status: 'online',
+        signal_strength: -55,
+        temperature: 24,
       });
     });
 

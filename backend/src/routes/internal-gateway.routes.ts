@@ -162,13 +162,25 @@ router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandle
 
 // POST /api/v1/internal/gateway/devices/inventory
 // Sync device inventory - add new devices, remove missing ones
+// Now also supports updating state fields in the same call
 const inventorySyncSchema = Joi.object({
   facility_id: Joi.string().optional(),
   devices: Joi.array().items(
     Joi.object({
       lock_id: Joi.string().required(),
       lock_number: Joi.number().optional(),
+      // State fields (matching gateway payload format)
+      state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
+      lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
+      locked: Joi.boolean().optional(),
+      battery_level: Joi.number().optional(), // Raw mV, no longer 0-100
+      battery_unit: Joi.string().optional(),
+      online: Joi.boolean().optional(),
+      signal_strength: Joi.number().optional(),
+      temperature_value: Joi.number().optional(),
+      temperature_unit: Joi.string().optional(),
       firmware_version: Joi.string().optional(),
+      last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
     })
   ).required()
 });
@@ -211,18 +223,26 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
 
 // POST /api/v1/internal/gateway/devices/state
 // Update device state with partial data
+// Matches gateway payload format with all state fields
 const stateUpdateSchema = Joi.object({
   facility_id: Joi.string().optional(),
   updates: Joi.array().items(
     Joi.object({
       lock_id: Joi.string().required(),
+      lock_number: Joi.number().optional(),
+      // State fields (matching gateway payload format)
+      state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
       lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
-      battery_level: Joi.number().min(0).max(100).optional(),
+      locked: Joi.boolean().optional(),
+      battery_level: Joi.number().optional(), // Raw mV, no longer 0-100
+      battery_unit: Joi.string().optional(),
       online: Joi.boolean().optional(),
       signal_strength: Joi.number().optional(),
-      temperature: Joi.number().optional(),
+      temperature: Joi.number().optional(), // Legacy field
+      temperature_value: Joi.number().optional(),
+      temperature_unit: Joi.string().optional(),
       firmware_version: Joi.string().optional(),
-      last_seen: Joi.string().isoDate().optional(),
+      last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
       error_code: Joi.string().allow(null, '').optional(),
       error_message: Joi.string().allow(null, '').optional(),
       source: Joi.string().valid('GATEWAY', 'USER', 'CLOUD').optional(),

@@ -113,18 +113,50 @@ export interface BluLokDevice {
 /**
  * Partial device state update interface for gateway state updates.
  * All fields except lock_id are optional to support partial updates.
+ * 
+ * Matches the gateway payload format:
+ * - state: 'CLOSED' | 'OPENED' (gateway sends this, maps to lock_status)
+ * - lock_state: Legacy field, still supported
+ * - locked: Boolean lock status
+ * - battery_level: Raw value in mV (not percentage)
+ * - battery_unit: Unit for battery (e.g., 'mV')
+ * - temperature_value: Temperature reading
+ * - temperature_unit: Unit for temperature (e.g., '°C')
  */
 export interface DeviceStateUpdate {
+  /** Lock identifier (UUID or serial) - required */
   lock_id: string;
+  /** Lock number for display */
+  lock_number?: number;
+  /** Device state from gateway: 'CLOSED' = locked, 'OPENED' = unlocked */
+  state?: 'CLOSED' | 'OPENED' | 'ERROR' | 'UNKNOWN';
+  /** Legacy lock state field */
   lock_state?: 'LOCKED' | 'UNLOCKED' | 'LOCKING' | 'UNLOCKING' | 'ERROR' | 'UNKNOWN';
+  /** Boolean lock status */
+  locked?: boolean;
+  /** Battery level in raw units (mV) - no longer 0-100 */
   battery_level?: number;
+  /** Battery unit (e.g., 'mV') */
+  battery_unit?: string;
+  /** Device online status */
   online?: boolean;
+  /** Signal strength */
   signal_strength?: number;
+  /** Temperature value */
   temperature?: number;
+  /** Temperature value (alternative field name) */
+  temperature_value?: number;
+  /** Temperature unit (e.g., '°C') */
+  temperature_unit?: string;
+  /** Firmware version string */
   firmware_version?: string;
+  /** Last seen timestamp */
   last_seen?: string | Date;
+  /** Error code */
   error_code?: string | null;
+  /** Human-readable error message */
   error_message?: string | null;
+  /** Source of the update */
   source?: 'GATEWAY' | 'USER' | 'CLOUD';
 }
 

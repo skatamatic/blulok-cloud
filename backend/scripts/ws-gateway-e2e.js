@@ -1231,9 +1231,9 @@ async function run() {
     // ---- NEW ENDPOINTS: /devices/inventory and /devices/state ----
     heading('New Device Endpoints (Inventory + State)');
     
-    // Test devices/inventory - add devices
+    // Test devices/inventory - add devices with state fields (new combined format)
     // IMPORTANT: Include remainingSerial in ALL inventory syncs to keep the original device!
-    step('Testing POST /devices/inventory (add devices)');
+    step('Testing POST /devices/inventory (add devices with state fields)');
     const inventorySerial1 = `INV-E2E-${Date.now()}-1`;
     const inventorySerial2 = `INV-E2E-${Date.now()}-2`;
     const reqInventory1 = 'req-inventory-1';
@@ -1246,8 +1246,29 @@ async function run() {
         facility_id: facilityId,
         devices: [
           { lock_id: remainingSerial }, // Keep original device!
-          { lock_id: inventorySerial1, lock_number: 201, firmware_version: '1.0.0' },
-          { lock_id: inventorySerial2, lock_number: 202, firmware_version: '1.0.1' },
+          // New format with all state fields included in inventory
+          { 
+            lock_id: inventorySerial1, 
+            lock_number: 201, 
+            firmware_version: '3A0-002',
+            state: 'CLOSED',
+            battery_level: 3423,
+            battery_unit: 'mV',
+            signal_strength: 0,
+            temperature_value: 24,
+            temperature_unit: '°C',
+            locked: true,
+            online: false,
+            last_seen: new Date().toISOString(),
+          },
+          { 
+            lock_id: inventorySerial2, 
+            lock_number: 202, 
+            firmware_version: '3A0-001',
+            state: 'OPENED',
+            battery_level: 3200,
+            online: true,
+          },
         ],
       },
     }));
@@ -1259,10 +1280,10 @@ async function run() {
     if (invResult1?.added !== 2) {
       throw new Error(`Expected 2 devices added, got ${invResult1?.added}`);
     }
-    ok(`Inventory sync added ${invResult1.added} devices (kept original)`);
+    ok(`Inventory sync added ${invResult1.added} devices with state fields`);
 
-    // Test devices/state - partial state update
-    step('Testing POST /devices/state (partial updates)');
+    // Test devices/state - partial state update (new gateway format with mV battery and state field)
+    step('Testing POST /devices/state (partial updates with new format)');
     const reqState1 = 'req-state-1';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -1272,8 +1293,27 @@ async function run() {
       body: {
         facility_id: facilityId,
         updates: [
-          { lock_id: inventorySerial1, lock_state: 'LOCKED', battery_level: 85, online: true },
-          { lock_id: inventorySerial2, battery_level: 70, signal_strength: -65, temperature: 22.5 },
+          // New format matching gateway payload
+          { 
+            lock_id: inventorySerial1, 
+            lock_number: 16136,
+            state: 'CLOSED', // Maps to lock_status: 'locked'
+            battery_level: 3423, // Raw mV, not percentage
+            battery_unit: 'mV',
+            online: true,
+            signal_strength: -55,
+            temperature_value: 24,
+            temperature_unit: '°C',
+          },
+          { 
+            lock_id: inventorySerial2, 
+            state: 'OPENED', // Maps to lock_status: 'unlocked'
+            battery_level: 3200, 
+            signal_strength: -65, 
+            temperature_value: 22.5,
+            locked: false, // Boolean fallback
+            online: false,
+          },
         ],
       },
     }));
@@ -1285,7 +1325,7 @@ async function run() {
     if (stateResult1?.updated !== 2) {
       throw new Error(`Expected 2 devices updated, got ${stateResult1?.updated}`);
     }
-    ok(`State update applied to ${stateResult1.updated} devices`);
+    ok(`State update applied to ${stateResult1.updated} devices (new gateway format)`);
 
     // Test devices/inventory - remove devices (sync with subset - removes inventorySerial2)
     step('Testing POST /devices/inventory (remove devices via delta)');

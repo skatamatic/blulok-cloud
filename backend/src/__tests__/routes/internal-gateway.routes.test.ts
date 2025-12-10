@@ -276,17 +276,19 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.success).toBe(false);
     });
 
-    it('validates battery_level range', async () => {
+    it('accepts battery_level in mV (no longer 0-100 range)', async () => {
+      // Battery level is now in mV (e.g., 3423) not percentage
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
           facility_id: 'fac-1',
-          updates: [{ lock_id: 'lock-1', battery_level: 150 }], // Over 100
+          updates: [{ lock_id: 'lock-1', battery_level: 3423, battery_unit: 'mV' }],
         });
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
+      // Should be accepted (200) since we removed the 0-100 validation
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
     });
 
     it('accepts partial updates with only some fields', async () => {
