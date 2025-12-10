@@ -10,7 +10,7 @@ import { UserRole } from '@/types/auth.types';
  */
 export interface WebSocketMessage {
   /** Message type determining how the message should be processed */
-  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update' | 'command_queue_update' | 'logs_update' | 'units_update' | 'battery_status_update' | 'fms_sync_status_update' | 'fms_sync_progress_update' | 'dev_notifications_update';
+  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update' | 'command_queue_update' | 'logs_update' | 'units_update' | 'battery_status_update' | 'device_status_update' | 'fms_sync_status_update' | 'fms_sync_progress_update' | 'dev_notifications_update';
   /** Unique subscription identifier for targeted operations */
   subscriptionId?: string;
   /** Type of subscription being referenced */

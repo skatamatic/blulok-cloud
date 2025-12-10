@@ -47,6 +47,7 @@ import { SystemSettingsModel } from '@/models/system-settings.model';
 import { NotificationsConfig } from '@/types/notification.types';
 import { NotificationService } from '@/services/notifications/notification.service';
 import { UserModel, User } from '@/models/user.model';
+import { logger } from '@/utils/logger';
 
 const router = Router();
 
@@ -58,28 +59,31 @@ const updateSettingsSchema = Joi.object({
 
 const notificationsSchema = Joi.object({
   enabledChannels: Joi.object({
-    sms: Joi.boolean(),
-    email: Joi.boolean(),
-  }),
+    sms: Joi.boolean().allow(null).optional(),
+    email: Joi.boolean().allow(null).optional(),
+  }).unknown(true).optional().allow(null),
   defaultProvider: Joi.object({
-    sms: Joi.string().valid('twilio', 'console'),
-    email: Joi.string().valid('console'),
-  }),
+    sms: Joi.string().valid('twilio', 'console').allow(null).optional(),
+    email: Joi.string().valid('console').allow(null).optional(),
+  }).unknown(true).optional().allow(null),
   twilio: Joi.object({
-    accountSid: Joi.string().optional(),
-    authToken: Joi.string().optional(),
-    fromNumber: Joi.string().optional(),
-  }).optional(),
+    accountSid: Joi.string().allow(null, '').optional(),
+    authToken: Joi.string().allow(null, '').optional(),
+    fromNumber: Joi.string().allow(null, '').optional(),
+  }).unknown(true).optional().allow(null),
   templates: Joi.object({
-    inviteSms: Joi.string().optional(),
-    inviteEmail: Joi.string().optional(),
-    inviteEmailSubject: Joi.string().optional(),
-    otpSms: Joi.string().optional(),
-    otpEmail: Joi.string().optional(),
-    otpEmailSubject: Joi.string().optional(),
-  }).optional(),
-  deeplinkBaseUrl: Joi.string().optional(),
-});
+    inviteSms: Joi.string().allow(null, '').optional(),
+    inviteEmail: Joi.string().allow(null, '').optional(),
+    inviteEmailSubject: Joi.string().allow(null, '').optional(),
+    otpSms: Joi.string().allow(null, '').optional(),
+    otpEmail: Joi.string().allow(null, '').optional(),
+    otpEmailSubject: Joi.string().allow(null, '').optional(),
+    passwordResetSms: Joi.string().allow(null, '').optional(),
+    passwordResetEmail: Joi.string().allow(null, '').optional(),
+    passwordResetEmailSubject: Joi.string().allow(null, '').optional(),
+  }).unknown(true).optional().allow(null),
+  deeplinkBaseUrl: Joi.string().allow(null, '').optional(),
+}).unknown(true).min(1); // At least one field must be provided
 
 // GET /api/v1/system-settings
 router.get('/', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -186,9 +190,22 @@ router.put('/notifications', authenticateToken as any, asyncHandler(async (req: 
     return;
   }
 
-  const { error, value } = notificationsSchema.validate(req.body);
+  // Log the incoming payload for debugging
+  logger.debug('Notification settings update request:', JSON.stringify(req.body, null, 2));
+
+  const { error, value } = notificationsSchema.validate(req.body, { 
+    abortEarly: false,
+    allowUnknown: true, // Allow extra fields that aren't in the schema
+    stripUnknown: true, // Remove unknown fields from the validated result
+  });
   if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    const errorMessages = error.details.map(d => d.message).join('; ');
+    logger.error('Notification settings validation error:', errorMessages, error.details);
+    res.status(400).json({ 
+      success: false, 
+      message: errorMessages || 'Validation error',
+      details: error.details 
+    });
     return;
   }
 

@@ -10,7 +10,7 @@
 import { Router, Response } from 'express';
 import Joi from 'joi';
 import { asyncHandler } from '@/middleware/error.middleware';
-import { authenticateToken, requireDevAdmin, requireTenant } from '@/middleware/auth.middleware';
+import { authenticateToken, requireDevAdmin } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { UserDeviceModel, UserDeviceStatus, AppPlatform } from '@/models/user-device.model';
 import { DatabaseService } from '@/services/database.service';
@@ -29,16 +29,16 @@ const rotateSchema = Joi.object({
   public_key: Joi.string().base64({ paddingRequired: true }).required(),
 });
 
-// GET /api/v1/user-devices/me
-router.get('/me', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// GET /api/v1/user-devices/me - Get current user's registered devices (all authenticated users)
+router.get('/me', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user!.userId;
   const model = new UserDeviceModel();
   const devices = await model.listByUser(userId);
   res.json({ success: true, devices });
 }));
 
-// POST /api/v1/user-devices/register-key
-router.post('/register-key', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// POST /api/v1/user-devices/register-key - Register device public key (all authenticated users)
+router.post('/register-key', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = registerSchema.validate(req.body);
   if (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -79,8 +79,8 @@ router.post('/register-key', authenticateToken, requireTenant, asyncHandler(asyn
   res.json({ success: true, device });
 }));
 
-// DELETE /api/v1/user-devices/me/:id
-router.delete('/me/:id', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// DELETE /api/v1/user-devices/me/:id - Revoke a device (all authenticated users)
+router.delete('/me/:id', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user!.userId;
   const id = req.params.id;
   if (!id) {
@@ -98,8 +98,8 @@ router.delete('/me/:id', authenticateToken, requireTenant, asyncHandler(async (r
   res.json({ success: true });
 }));
 
-// POST /api/v1/user-devices/me/rotate-key
-router.post('/me/rotate-key', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// POST /api/v1/user-devices/me/rotate-key - Rotate device public key (all authenticated users)
+router.post('/me/rotate-key', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = rotateSchema.validate(req.body);
   if (error) {
     res.status(400).json({ success: false, message: error.message });

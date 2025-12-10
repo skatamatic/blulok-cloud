@@ -62,44 +62,31 @@ export class AccessRevocationListenerService {
           return;
         }
 
+        // Calculate expiration based on route pass TTL
+        const expiresAt = this.getExpirationDate();
+        const createdBy = event.metadata?.performedBy || 'system';
+        const source = event.metadata?.source === 'fms_sync' ? 'fms_sync' : 'unit_unassignment';
+
+        // Bulk create DB entries for all devices (single INSERT query instead of N queries)
+        await this.denylistModel.bulkCreate(deviceIds.map(deviceId => ({
+          device_id: deviceId,
+          user_id: event.tenantId,
+          expires_at: expiresAt,
+          source,
+          created_by: createdBy,
+        })));
+
         // Check if we should skip denylist command (user's last route pass is expired)
         const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(event.tenantId);
         if (shouldSkip) {
-          logger.info(`Skipping DENYLIST_ADD for user ${event.tenantId} - last route pass is expired`);
-          // Still create DB entries for audit trail even if we skip the command
-          const expiresAt = this.getExpirationDate();
-          const createdBy = event.metadata?.performedBy || 'system';
-          for (const deviceId of deviceIds) {
-            await this.denylistModel.create({
-              device_id: deviceId,
-              user_id: event.tenantId,
-              expires_at: expiresAt,
-              source: event.metadata?.source === 'fms_sync' ? 'fms_sync' : 'unit_unassignment',
-              created_by: createdBy,
-            });
-          }
+          logger.info(`Skipping DENYLIST_ADD for user ${event.tenantId} - last route pass is expired (DB entries created)`);
           return;
-        }
-
-        // Calculate expiration based on route pass TTL
-        const expiresAt = this.getExpirationDate();
-
-        // Create database entries for each device
-        const createdBy = event.metadata?.performedBy || 'system';
-        for (const deviceId of deviceIds) {
-          await this.denylistModel.create({
-            device_id: deviceId,
-            user_id: event.tenantId,
-            expires_at: expiresAt,
-            source: event.metadata?.source === 'fms_sync' ? 'fms_sync' : 'unit_unassignment',
-            created_by: createdBy,
-          });
         }
 
         // Send denylist command to devices
         const exp = Math.floor(expiresAt.getTime() / 1000);
-        const packet = await DenylistService.buildDenylistAdd([{ sub: event.tenantId, exp }], deviceIds);
-        GatewayEventsService.getInstance().unicastToFacility(event.facilityId, packet);
+        const jwt = await DenylistService.buildDenylistAdd([{ sub: event.tenantId, exp }], deviceIds);
+        GatewayEventsService.getInstance().unicastToFacility(event.facilityId, jwt);
 
         logger.info(`Pushed denylist update for user ${event.tenantId} to ${deviceIds.length} device(s) in facility ${event.facilityId}`, {
           deviceIds,
@@ -130,43 +117,40 @@ export class AccessRevocationListenerService {
           return;
         }
 
-        // Get facility for each device and group by facility
-        const facilityMap = new Map<string, string[]>();
-        for (const entry of entries) {
-          const device = await knex('blulok_devices')
-            .join('units', 'blulok_devices.unit_id', 'units.id')
-            .where('blulok_devices.id', entry.device_id)
-            .select('units.facility_id')
-            .first();
+        // Batch fetch facility for all devices at once (single query instead of N queries)
+        const entryDeviceIds = entries.map(e => e.device_id);
+        const deviceFacilityRows = await knex('blulok_devices')
+          .join('units', 'blulok_devices.unit_id', 'units.id')
+          .whereIn('blulok_devices.id', entryDeviceIds)
+          .select('blulok_devices.id as device_id', 'units.facility_id');
 
-          if (device) {
-            const facilityId = device.facility_id;
-            if (!facilityMap.has(facilityId)) {
-              facilityMap.set(facilityId, []);
-            }
-            facilityMap.get(facilityId)!.push(entry.device_id);
+        // Group devices by facility
+        const facilityMap = new Map<string, string[]>();
+        for (const row of deviceFacilityRows) {
+          const facilityId = row.facility_id;
+          if (!facilityMap.has(facilityId)) {
+            facilityMap.set(facilityId, []);
           }
+          facilityMap.get(facilityId)!.push(row.device_id);
         }
 
-        // Send remove commands and delete database entries
+        // Bulk remove from DB (single DELETE query instead of N queries)
+        await this.denylistModel.bulkRemove(entryDeviceIds, event.tenantId);
+
+        // Send remove commands per facility
         for (const [facilityId, targetDeviceIds] of facilityMap.entries()) {
           try {
             // Check each entry to see if we should skip sending the command
             const entriesForFacility = entries.filter(e => targetDeviceIds.includes(e.device_id));
             const entriesToProcess = entriesForFacility.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e));
-            
-            // Remove from DB regardless of whether we send commands (cleanup expired entries)
-            for (const deviceId of targetDeviceIds) {
-              await this.denylistModel.remove(deviceId, event.tenantId);
-            }
 
             // Only send command if there are non-expired entries
             if (entriesToProcess.length > 0) {
-              const packet = await DenylistService.buildDenylistRemove(
+              const jwt = await DenylistService.buildDenylistRemove(
                 [{ sub: event.tenantId, exp: 0 }], // exp not needed for remove
                 targetDeviceIds
               );
-              GatewayEventsService.getInstance().unicastToFacility(facilityId, packet);
+              GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
 
               logger.info(`Removed user ${event.tenantId} from denylist for ${targetDeviceIds.length} device(s) in facility ${facilityId}`, {
                 deviceIds: targetDeviceIds,
@@ -177,8 +161,7 @@ export class AccessRevocationListenerService {
               });
             }
           } catch (error) {
-            logger.error(`Failed to remove denylist for user ${event.tenantId} on devices ${targetDeviceIds.join(', ')}:`, error);
-            // Don't remove from DB if command failed
+            logger.error(`Failed to send denylist remove for user ${event.tenantId} on devices ${targetDeviceIds.join(', ')}:`, error);
           }
         }
       } catch (error) {

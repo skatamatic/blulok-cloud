@@ -424,6 +424,13 @@ export class WebSocketService {
     }
   }
 
+  public async broadcastDeviceStatusUpdate(deviceId: string, facilityId?: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getDeviceStatusManager();
+    if (manager) {
+      await manager.broadcastDeviceUpdate(deviceId, facilityId);
+    }
+  }
+
   public async broadcastGatewayStatusUpdate(facilityId?: string, gatewayId?: string): Promise<void> {
     const manager: any = this.subscriptionRegistry.getManager('gateway_status');
     if (manager && typeof manager.broadcastUpdate === 'function') {

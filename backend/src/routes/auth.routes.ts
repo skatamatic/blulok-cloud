@@ -353,3 +353,127 @@ router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req
     res.status(400).json({ success: false, message: e?.message || 'Unable to set password' });
   }
 }));
+
+// ----- Forgot Password / Password Reset Flow -----
+// Deeplink + token flow (mirrors invite pattern):
+// 1. Request reset link via /forgot-password/request
+// 2. User clicks deeplink, frontend verifies token via /forgot-password/verify
+// 3. User submits new password via /forgot-password/reset
+
+// Rate limiter for password reset requests
+const passwordResetRequestLimiterRaw = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many password reset requests. Please try again later.' }
+});
+
+const passwordResetResetLimiterRaw = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many reset attempts. Please try again later.' }
+});
+
+const passwordResetRequestLimiter: typeof passwordResetRequestLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return passwordResetRequestLimiterRaw(req, res, next);
+}) as any;
+
+const passwordResetResetLimiter: typeof passwordResetResetLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return passwordResetResetLimiterRaw(req, res, next);
+}) as any;
+
+// POST /auth/forgot-password/request - Request password reset link
+router.post('/forgot-password/request', passwordResetRequestLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({
+    email: Joi.string().email().optional(),
+    phone: Joi.string().optional(),
+  }).xor('email', 'phone');
+
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { PasswordResetService } = await import('@/services/password-reset.service');
+  const svc = PasswordResetService.getInstance();
+  
+  try {
+    const result = await svc.requestReset({ email: value.email, phone: value.phone });
+    res.json({ 
+      success: true, 
+      expiresAt: result.expiresAt,
+      deliveryMethod: result.deliveryMethod 
+    });
+  } catch (e: any) {
+    // Don't reveal if user exists - always return success-like response for security
+    if (e.message?.includes('If an account exists')) {
+      res.json({ success: true, message: 'If an account exists with this information, you will receive a reset link' });
+    } else {
+      res.status(400).json({ success: false, message: e?.message || 'Unable to process request' });
+    }
+  }
+}));
+
+// POST /auth/forgot-password/verify - Verify password reset token is valid
+router.post('/forgot-password/verify', asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({
+    token: Joi.string().required(),
+  });
+
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { PasswordResetService } = await import('@/services/password-reset.service');
+  const svc = PasswordResetService.getInstance();
+  
+  const result = await svc.verifyToken(value.token);
+  if (!result.valid) {
+    res.status(400).json({ success: false, message: 'Invalid or expired reset link' });
+    return;
+  }
+  
+  res.json({ 
+    success: true, 
+    email: result.email, // Optionally show masked email for UX
+  });
+}));
+
+// POST /auth/forgot-password/reset - Reset password using token
+router.post('/forgot-password/reset', passwordResetResetLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({
+    token: Joi.string().required(),
+    newPassword: Joi.string()
+      .min(8)
+      .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$'))
+      .required()
+      .messages({ 'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character' })
+  });
+
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { PasswordResetService } = await import('@/services/password-reset.service');
+  const svc = PasswordResetService.getInstance();
+  
+  try {
+    await svc.resetPassword({ 
+      token: value.token,
+      newPassword: value.newPassword 
+    });
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e?.message || 'Unable to reset password' });
+  }
+}));

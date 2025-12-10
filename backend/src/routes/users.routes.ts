@@ -703,8 +703,8 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
       // Send denylist commands only if user's last route pass is not expired
       if (!shouldSkip) {
       for (const [facilityId, deviceIds] of byFacility.entries()) {
-        const packet = await DenylistService.buildDenylistAdd([{ sub: id, exp }], deviceIds);
-        GatewayEventsService.getInstance().unicastToFacility(facilityId, packet);
+        const jwt = await DenylistService.buildDenylistAdd([{ sub: id, exp }], deviceIds);
+        GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
       }
       } else {
         logger.info(`Skipping DENYLIST_ADD for deactivated user ${id} - last route pass is expired`);
@@ -813,19 +813,17 @@ router.post('/:id/activate', requireUserManagement, asyncHandler(async (req: Aut
           facilityToDeviceIds.set(row.facility_id, list);
         }
 
+        // Bulk remove all DB entries (single query instead of N queries)
+        await denylistModel.bulkRemove(deviceIds, id);
+
         // Send remove commands per facility, honoring optimization
         for (const [facilityId, targetDeviceIds] of facilityToDeviceIds.entries()) {
           const entriesForFacility = entries.filter(e => targetDeviceIds.includes(e.device_id));
           const entriesToProcess = entriesForFacility.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e as any));
 
-          // Always clean DB entries
-          for (const deviceId of targetDeviceIds) {
-            await denylistModel.remove(deviceId, id);
-          }
-
           if (entriesToProcess.length > 0) {
-            const [payload] = await DenylistService.buildDenylistRemove([{ sub: id, exp: 0 }], targetDeviceIds);
-            GatewayEventsService.getInstance().unicastToFacility(facilityId, payload);
+            const jwt = await DenylistService.buildDenylistRemove([{ sub: id, exp: 0 }], targetDeviceIds);
+            GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
           } else {
             logger.info(`Skipped DENYLIST_REMOVE for user ${id} on ${targetDeviceIds.length} device(s) - entries already expired, removed from DB only`);
           }

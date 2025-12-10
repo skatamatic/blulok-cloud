@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { 
   BuildingOfficeIcon, 
@@ -115,6 +115,12 @@ export default function FacilityDetailsPage() {
   const isTenant = authState.user?.role === 'tenant';
   const canDelete = ['admin', 'dev_admin'].includes(authState.user?.role || '');
 
+  // Refs for debouncing WebSocket-triggered refreshes
+  const loadDevicesRef = useRef<() => void>(() => {});
+  const loadUnitsRef = useRef<() => void>(() => {});
+  const wsDeviceDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const wsUnitsDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     if (id) {
       loadFacilityData();
@@ -124,26 +130,83 @@ export default function FacilityDetailsPage() {
   // Subscribe to gateway status updates to update overview gateway status
   useEffect(() => {
     if (!ws) return;
-    const subscriptionId = ws.subscribe('gateway_status', (data: any) => {
-      const gateways = data?.gateways || [];
-      gateways.forEach((g: any) => {
-        // Update deviceHierarchy gateway status for overview tab
-        setDeviceHierarchy(prev => {
-          if (!prev?.gateway || prev.gateway.id !== g.id) return prev;
-          return {
-            ...prev,
-            gateway: {
-              ...prev.gateway,
-              status: g.status
-            }
-          };
+    const subscriptionId = ws.subscribe(
+      'gateway_status',
+      (data: any) => {
+        const gateways = data?.gateways || [];
+        gateways.forEach((g: any) => {
+          // Update deviceHierarchy gateway status for overview tab
+          setDeviceHierarchy(prev => {
+            if (!prev?.gateway || prev.gateway.id !== g.id) return prev;
+            return {
+              ...prev,
+              gateway: {
+                ...prev.gateway,
+                status: g.status
+              }
+            };
+          });
         });
-      });
-    });
+      },
+      undefined // no error handler needed
+    );
     return () => {
       if (subscriptionId) ws.unsubscribe(subscriptionId);
     };
   }, [ws]);
+
+  // Subscribe to device status updates when on devices tab
+  useEffect(() => {
+    if (activeTab !== 'devices' || !facility?.id) return;
+    
+    const subscriptionId = ws.subscribe(
+      'device_status',
+      () => {
+        // Debounce refresh to prevent excessive API calls
+        if (wsDeviceDebounceRef.current) {
+          clearTimeout(wsDeviceDebounceRef.current);
+        }
+        wsDeviceDebounceRef.current = setTimeout(() => {
+          loadDevicesRef.current();
+        }, 500);
+      },
+      undefined,
+      { facility_id: facility.id }
+    );
+    
+    return () => {
+      if (subscriptionId) ws.unsubscribe(subscriptionId);
+      if (wsDeviceDebounceRef.current) {
+        clearTimeout(wsDeviceDebounceRef.current);
+      }
+    };
+  }, [activeTab, facility?.id, ws]);
+
+  // Subscribe to units updates when on units tab
+  useEffect(() => {
+    if (activeTab !== 'units' || !facility?.id) return;
+    
+    const subscriptionId = ws.subscribe(
+      'units',
+      () => {
+        // Debounce refresh to prevent excessive API calls
+        if (wsUnitsDebounceRef.current) {
+          clearTimeout(wsUnitsDebounceRef.current);
+        }
+        wsUnitsDebounceRef.current = setTimeout(() => {
+          loadUnitsRef.current();
+        }, 500);
+      },
+      undefined
+    );
+    
+    return () => {
+      if (subscriptionId) ws.unsubscribe(subscriptionId);
+      if (wsUnitsDebounceRef.current) {
+        clearTimeout(wsUnitsDebounceRef.current);
+      }
+    };
+  }, [activeTab, facility?.id, ws]);
 
   const loadFacilityData = async () => {
     try {
@@ -211,6 +274,15 @@ export default function FacilityDetailsPage() {
       setUnitLoading(false);
     }
   }, [facility?.id, unitFilters, facilityUnitsPageNumber]);
+
+  // Keep refs updated for WebSocket callbacks
+  useEffect(() => {
+    loadDevicesRef.current = loadFacilityDevices;
+  }, [loadFacilityDevices]);
+
+  useEffect(() => {
+    loadUnitsRef.current = loadFacilityUnitsPageData;
+  }, [loadFacilityUnitsPageData]);
 
   useEffect(() => {
     if (activeTab !== 'devices') return;

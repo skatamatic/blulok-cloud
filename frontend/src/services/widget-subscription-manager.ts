@@ -9,7 +9,7 @@ export interface WidgetSubscription {
 export class WidgetSubscriptionManager {
   private activeSubscriptions = new Map<string, WidgetSubscription>();
   private messageHandlers = new Map<string, Set<(data: any) => void>>();
-  private isListening = new Set<string>(); // Keep track of which types we are listening to
+  private wsMessageUnsubscribers = new Map<string, () => void>(); // Store WebSocket message handler cleanup functions
 
   /**
    * Subscribe to a widget data type
@@ -39,14 +39,14 @@ export class WidgetSubscriptionManager {
     websocketService.subscribe(type);
     
     // Set up WebSocket message handler only once per type
-    if (!this.isListening.has(type)) {
-      websocketService.onMessage(type, (data: any) => {
+    if (!this.wsMessageUnsubscribers.has(type)) {
+      const unsubscribeHandler = websocketService.onMessage(type, (data: any) => {
         const handlers = this.messageHandlers.get(type);
         if (handlers) {
           handlers.forEach(h => h(data));
         }
       });
-      this.isListening.add(type);
+      this.wsMessageUnsubscribers.set(type, unsubscribeHandler);
     }
   }
 
@@ -74,6 +74,13 @@ export class WidgetSubscriptionManager {
     // Remove all handlers and subscription
     this.messageHandlers.delete(type);
     this.activeSubscriptions.delete(type);
+    
+    // Clean up WebSocket message handler
+    const wsUnsubscribe = this.wsMessageUnsubscribers.get(type);
+    if (wsUnsubscribe) {
+      wsUnsubscribe();
+      this.wsMessageUnsubscribers.delete(type);
+    }
     
     // Unsubscribe from WebSocket
     websocketService.unsubscribe(type);

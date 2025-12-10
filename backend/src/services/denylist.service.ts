@@ -32,52 +32,52 @@ export interface DenylistEntry {
  * 3. Gateway unicasts packet to specific target devices
  * 4. Locks update local denylists and reject affected Route Passes
  *
- * Packet Format:
+ * JWT Payload Format:
  * ```
  * {
+ *   iss: 'BluCloud:Root',
+ *   iat: 1234567890,
  *   cmd_type: 'DENYLIST_ADD',
  *   denylist_add: [{ sub: 'user123', exp: 1704067200 }],
- *   targets: { device_ids: ['lock1', 'lock2'] }
+ *   target: ['lock1', 'lock2']
  * }
  * ```
  */
 export class DenylistService {
   /**
-   * Build a signed denylist add command.
-   * Creates a cryptographically signed packet containing user revocation entries.
+   * Build a signed denylist add command as JWT.
+   * Creates a cryptographically signed JWT containing user revocation entries.
    *
    * @param entries - Array of users to revoke access for, with expiration timestamps
    * @param targetDeviceIds - Optional array of specific device IDs to target (partial revocation)
-   * @returns Promise resolving to tuple of [signed_payload, detached_signature]
+   * @returns Promise resolving to signed JWT string
    *
    * @throws Error if cryptographic signing fails
    */
-  public static async buildDenylistAdd(entries: DenylistEntry[], targetDeviceIds?: string[]): Promise<[Record<string, any>, string]> {
-    const payload: any = { cmd_type: 'DENYLIST_ADD', denylist_add: entries };
+  public static async buildDenylistAdd(entries: DenylistEntry[], targetDeviceIds?: string[]): Promise<string> {
+    const payload: Record<string, any> = { cmd_type: 'DENYLIST_ADD', denylist_add: entries };
     if (targetDeviceIds && targetDeviceIds.length > 0) {
-      payload.targets = { device_ids: targetDeviceIds };
+      payload.target = targetDeviceIds;
     }
-    const { payload: p, signature } = await Ed25519Service.signPacket(payload);
-    return [p, signature];
+    return Ed25519Service.signCommandJwt(payload);
   }
 
   /**
-   * Build a signed denylist remove command.
-   * Creates a cryptographically signed packet to remove users from device denylists.
+   * Build a signed denylist remove command as JWT.
+   * Creates a cryptographically signed JWT to remove users from device denylists.
    *
    * @param entries - Array of users to remove from denylist (only 'sub' field required)
    * @param targetDeviceIds - Optional array of specific device IDs to target
-   * @returns Promise resolving to tuple of [signed_payload, detached_signature]
+   * @returns Promise resolving to signed JWT string
    *
    * @throws Error if cryptographic signing fails
    */
-  public static async buildDenylistRemove(entries: DenylistEntry[], targetDeviceIds?: string[]): Promise<[Record<string, any>, string]> {
-    const payload: any = { cmd_type: 'DENYLIST_REMOVE', denylist_remove: entries };
+  public static async buildDenylistRemove(entries: DenylistEntry[], targetDeviceIds?: string[]): Promise<string> {
+    const payload: Record<string, any> = { cmd_type: 'DENYLIST_REMOVE', denylist_remove: entries };
     if (targetDeviceIds && targetDeviceIds.length > 0) {
-      payload.targets = { device_ids: targetDeviceIds };
+      payload.target = targetDeviceIds;
     }
-    const { payload: p, signature } = await Ed25519Service.signPacket(payload);
-    return [p, signature];
+    return Ed25519Service.signCommandJwt(payload);
   }
 }
 

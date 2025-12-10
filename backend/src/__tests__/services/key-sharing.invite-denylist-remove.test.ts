@@ -3,7 +3,8 @@ jest.mock('@/models/denylist-entry.model');
 jest.mock('@/services/gateway/gateway-events.service');
 jest.mock('@/services/denylist.service', () => ({
   DenylistService: {
-    buildDenylistRemove: jest.fn().mockResolvedValue([{ cmd_type: 'DENYLIST_REMOVE' }, 'sig']),
+    // Mock JWT string for denylist remove command (inline to avoid hoisting issues)
+    buildDenylistRemove: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9SRU1PVkUiLCJkZW55bGlzdF9yZW1vdmUiOltdfQ.mock-sig'),
   },
 }));
 jest.mock('@/services/denylist-optimization.service', () => ({

@@ -231,6 +231,132 @@ export class UnitsService {
   }
 
   /**
+   * Bulk assign a tenant to multiple units.
+   * PERFORMANCE: Validates all units in one query and performs bulk insert.
+   * 
+   * @param tenantId - Tenant to assign
+   * @param unitIds - Array of unit IDs to assign to
+   * @param options - Assignment options
+   * @returns Object with counts of successful and failed assignments
+   */
+  async bulkAssignTenant(
+    tenantId: string,
+    unitIds: string[],
+    options: {
+      accessType?: string;
+      isPrimary?: boolean;
+      performedBy: string;
+      source?: 'manual' | 'fms_sync' | 'api';
+      syncLogId?: string;
+      notes?: string;
+    }
+  ): Promise<{ assigned: number; skipped: number; errors: string[] }> {
+    const result = { assigned: 0, skipped: 0, errors: [] as string[] };
+    
+    if (unitIds.length === 0) return result;
+
+    try {
+      // PERFORMANCE FIX: Pre-fetch all units in one query instead of N queries
+      const allUnitsResult = await this.unitModel.getUnitsListForUser(
+        'system',
+        'admin' as any,
+        { limit: unitIds.length * 2, offset: 0 }
+      );
+      const unitsById = new Map((allUnitsResult.units || []).map((u: any) => [u.id, u]));
+
+      // PERFORMANCE FIX: Pre-fetch all existing assignments for this tenant
+      const existingAssignments = await this.unitAssignmentModel.findByTenantId(tenantId);
+      const existingUnitIds = new Set(existingAssignments.map(a => a.unit_id));
+
+      // Filter units: only assign to valid units that don't already have assignment
+      const assignmentsToCreate: Array<{
+        unit_id: string;
+        tenant_id: string;
+        access_type: string;
+        is_primary: boolean;
+        notes?: string;
+      }> = [];
+
+      for (const unitId of unitIds) {
+        // Skip if assignment already exists
+        if (existingUnitIds.has(unitId)) {
+          result.skipped++;
+          continue;
+        }
+
+        const unit = unitsById.get(unitId);
+        if (!unit) {
+          result.errors.push(`Unit ${unitId} not found`);
+          continue;
+        }
+
+        assignmentsToCreate.push({
+          unit_id: unitId,
+          tenant_id: tenantId,
+          access_type: options.accessType || 'full',
+          is_primary: options.isPrimary ?? true,
+          notes: options.notes,
+        });
+      }
+
+      // Bulk create assignments
+      if (assignmentsToCreate.length > 0) {
+        // Use Promise.allSettled for parallel creation with event emission
+        const createPromises = assignmentsToCreate.map(async (data) => {
+          try {
+            await this.unitAssignmentModel.create(data);
+            
+            // Emit event for each assignment
+            const unit = unitsById.get(data.unit_id);
+            if (unit) {
+              const eventMetadata: any = {
+                source: options.source || 'api',
+                performedBy: options.performedBy,
+              };
+              if (options.syncLogId) eventMetadata.syncLogId = options.syncLogId;
+
+              this.eventService.emitTenantAssigned({
+                unitId: data.unit_id,
+                facilityId: unit.facility_id,
+                tenantId,
+                accessType: data.access_type,
+                metadata: eventMetadata,
+              });
+            }
+            return { success: true, unitId: data.unit_id };
+          } catch (error: any) {
+            return { success: false, unitId: data.unit_id, error: error.message };
+          }
+        });
+
+        const results = await Promise.allSettled(createPromises);
+        for (const res of results) {
+          if (res.status === 'fulfilled') {
+            if (res.value.success) {
+              result.assigned++;
+            } else {
+              result.errors.push(`Failed to assign unit ${res.value.unitId}: ${res.value.error}`);
+            }
+          } else {
+            result.errors.push(`Assignment failed: ${res.reason}`);
+          }
+        }
+      }
+
+      logger.info(`Bulk assigned tenant ${tenantId} to ${result.assigned} units`, {
+        source: options.source || 'api',
+        skipped: result.skipped,
+        errors: result.errors.length,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Error in bulk assign tenant:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Unassign a tenant from a unit
    */
   async unassignTenant(

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { apiService } from '@/services/api.service';
 import { UserFilter } from '@/components/Common/UserFilter';
 import { EditUnitModal } from '@/components/Units/EditUnitModal';
@@ -40,11 +41,16 @@ interface UnitDetails {
     id: string;
     device_serial: string;
     firmware_version?: string;
-    lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance';
+    lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance';
     device_status: 'online' | 'offline' | 'low_battery' | 'error';
     battery_level?: number;
     last_activity?: string;
     last_seen?: string;
+    // Telemetry fields
+    signal_strength?: number;
+    temperature?: number;
+    error_code?: string | null;
+    error_message?: string | null;
   };
   primary_tenant?: {
     id: string;
@@ -105,6 +111,7 @@ export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const { subscribe, unsubscribe } = useWebSocket();
   const [unit, setUnit] = useState<UnitDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +145,50 @@ export default function UnitDetailsPage() {
       loadUnitDetails();
     }
   }, [unitId]);
+
+  // Subscribe to real-time device status updates for this unit
+  const handleDeviceStatusUpdate = useCallback((data: any) => {
+    if (!unit?.blulok_device?.id || !data.devices) return;
+    
+    // Find device update matching our unit's device
+    const deviceUpdate = data.devices.find((d: any) => d.id === unit.blulok_device?.id);
+    if (deviceUpdate) {
+      setUnit(prev => {
+        if (!prev?.blulok_device) return prev;
+        return {
+          ...prev,
+          blulok_device: {
+            ...prev.blulok_device,
+            lock_status: deviceUpdate.lock_status || prev.blulok_device.lock_status,
+            device_status: deviceUpdate.device_status || prev.blulok_device.device_status,
+            battery_level: deviceUpdate.battery_level ?? prev.blulok_device.battery_level,
+            signal_strength: deviceUpdate.signal_strength ?? prev.blulok_device.signal_strength,
+            temperature: deviceUpdate.temperature ?? prev.blulok_device.temperature,
+            error_code: deviceUpdate.error_code !== undefined ? deviceUpdate.error_code : prev.blulok_device.error_code,
+            error_message: deviceUpdate.error_message !== undefined ? deviceUpdate.error_message : prev.blulok_device.error_message,
+            last_seen: deviceUpdate.last_seen || prev.blulok_device.last_seen,
+          },
+        };
+      });
+    }
+  }, [unit?.blulok_device?.id]);
+
+  useEffect(() => {
+    if (!unit?.blulok_device?.id) return;
+
+    const subscriptionId = subscribe(
+      'device_status',
+      handleDeviceStatusUpdate,
+      (err) => console.error('Device status subscription error:', err),
+      { device_id: unit.blulok_device.id }
+    );
+
+    return () => {
+      if (subscriptionId) {
+        unsubscribe(subscriptionId);
+      }
+    };
+  }, [unit?.blulok_device?.id, subscribe, unsubscribe, handleDeviceStatusUpdate]);
 
   const loadUnitDetails = async () => {
     if (!unitId) return;
@@ -794,6 +845,41 @@ export default function UnitDetailsPage() {
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-gray-500 dark:text-gray-400">Firmware Version</span>
                           <span className="font-medium text-gray-900 dark:text-white">{unit.blulok_device.firmware_version}</span>
+                        </div>
+                      )}
+                      {unit.blulok_device.signal_strength !== null && unit.blulok_device.signal_strength !== undefined && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">Signal Strength</span>
+                          <span className={`font-medium ${
+                            unit.blulok_device.signal_strength >= -50 ? 'text-green-500' :
+                            unit.blulok_device.signal_strength >= -70 ? 'text-yellow-500' : 'text-red-500'
+                          }`}>
+                            {unit.blulok_device.signal_strength} dBm
+                            <span className="text-xs ml-1">
+                              ({unit.blulok_device.signal_strength >= -50 ? 'Excellent' :
+                                unit.blulok_device.signal_strength >= -70 ? 'Good' : 'Poor'})
+                            </span>
+                          </span>
+                        </div>
+                      )}
+                      {unit.blulok_device.temperature !== null && unit.blulok_device.temperature !== undefined && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">Temperature</span>
+                          <span className={`font-medium ${
+                            unit.blulok_device.temperature < 0 || unit.blulok_device.temperature > 45 ? 'text-red-500' :
+                            unit.blulok_device.temperature < 10 || unit.blulok_device.temperature > 35 ? 'text-yellow-500' : 'text-green-500'
+                          }`}>
+                            {unit.blulok_device.temperature.toFixed(1)}°C
+                          </span>
+                        </div>
+                      )}
+                      {(unit.blulok_device.error_code || unit.blulok_device.error_message) && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">Error</span>
+                          <span className="font-medium text-red-500">
+                            {unit.blulok_device.error_code && <span className="font-mono">{unit.blulok_device.error_code}: </span>}
+                            {unit.blulok_device.error_message || 'Unknown error'}
+                          </span>
                         </div>
                       )}
                       <div className="flex items-center justify-between text-sm">

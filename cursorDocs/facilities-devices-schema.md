@@ -142,12 +142,16 @@ CREATE TABLE units (
 CREATE TABLE blulok_devices (
   id UUID PRIMARY KEY,
   gateway_id UUID NOT NULL REFERENCES gateways(id),
-  unit_id UUID NOT NULL REFERENCES units(id),
+  unit_id UUID REFERENCES units(id), -- Nullable for devices not yet assigned
   device_serial VARCHAR(100) UNIQUE NOT NULL,
   firmware_version VARCHAR(50),
-  lock_status ENUM('locked', 'unlocked', 'error', 'maintenance') DEFAULT 'locked',
+  lock_status ENUM('locked', 'unlocked', 'locking', 'unlocking', 'error', 'maintenance', 'unknown') DEFAULT 'locked',
   device_status ENUM('online', 'offline', 'low_battery', 'error') DEFAULT 'offline',
   battery_level INTEGER, -- 0-100
+  signal_strength INTEGER, -- dBm (e.g., -65)
+  temperature DECIMAL(5,2), -- Device temperature reading
+  error_code VARCHAR(50), -- Error code for error states
+  error_message VARCHAR(255), -- Human-readable error description
   last_activity TIMESTAMP,
   last_seen TIMESTAMP,
   device_settings JSON,
@@ -159,10 +163,58 @@ CREATE TABLE blulok_devices (
 ```
 
 **Key Features**:
-- **1:1 Unit Relationship**: Each unit has exactly one BluLok device
-- **Dual Status**: Lock status (locked/unlocked) and device status (online/offline)
+- **1:1 Unit Relationship**: Each unit has exactly one BluLok device (nullable for unassigned devices)
+- **Dual Status**: Lock status (locked/unlocked/locking/unlocking) and device status (online/offline)
 - **Battery Monitoring**: Battery level tracking for maintenance
+- **Telemetry**: Signal strength, temperature, and error tracking
 - **Serial Tracking**: Unique device serial numbers for inventory
+
+### Gateway Device Sync API
+
+The gateway uses two endpoints for device management:
+
+**1. Inventory Sync** (`POST /api/v1/internal/gateway/devices/inventory`)
+- Syncs the full device inventory for a gateway
+- Devices in the array that don't exist are created
+- Devices not in the array are removed
+- Used for initial sync and device discovery
+
+```json
+{
+  "facility_id": "uuid",
+  "devices": [
+    { "lock_id": "serial-or-uuid", "lock_number": 101, "firmware_version": "1.0.0" }
+  ]
+}
+```
+
+**2. State Update** (`POST /api/v1/internal/gateway/devices/state`)
+- Partial updates for device telemetry and state
+- Only updates fields that are provided (partial updates supported)
+- Used for real-time status updates from devices
+
+```json
+{
+  "facility_id": "uuid",
+  "updates": [
+    {
+      "lock_id": "serial-or-uuid",
+      "lock_state": "LOCKED", // LOCKED, UNLOCKED, LOCKING, UNLOCKING, ERROR, UNKNOWN
+      "battery_level": 85,
+      "online": true,
+      "signal_strength": -65,
+      "temperature": 22.5,
+      "error_code": null,
+      "source": "GATEWAY"
+    }
+  ]
+}
+```
+
+**Legacy** (`POST /api/v1/internal/gateway/device-sync`) - DEPRECATED
+- Combined inventory and state sync
+- Returns `X-Deprecated` header
+- Use `/devices/inventory` + `/devices/state` instead
 
 ### 6. Unit Assignments
 

@@ -22,7 +22,7 @@
 
 import { Router, Response } from 'express';
 import Joi from 'joi';
-import { authenticateToken, requireDevAdmin } from '@/middleware/auth.middleware';
+import { authenticateToken, requireDevAdmin, requireAdmin } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
@@ -37,6 +37,8 @@ import { config } from '@/config/environment';
 import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
 import { generateKeyPair, exportJWK, KeyLike } from 'jose';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { DenylistService } from '@/services/denylist.service';
+import { logger } from '@/utils/logger';
 
 const router = Router();
 
@@ -57,6 +59,18 @@ const notificationsTestModeSchema = Joi.object({
 
 const gatewayPingSchema = Joi.object({
   facilityId: Joi.string().required(),
+});
+
+const gatewayCommandSchema = Joi.object({
+  facilityId: Joi.string().required(),
+  command: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE', 'LOCK', 'UNLOCK').required(),
+  targetDeviceIds: Joi.array().items(Joi.string()).min(1).required(),
+  userId: Joi.string().when('command', {
+    is: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE'),
+    then: Joi.required(),
+    otherwise: Joi.optional()
+  }),
+  expirationSeconds: Joi.number().integer().min(60).max(86400 * 365).optional(), // For denylist entries
 });
 
 // POST /api/v1/admin/ops-key-rotation/broadcast
@@ -359,6 +373,135 @@ router.post('/facilities', authenticateToken, requireDevAdmin, asyncHandler(asyn
   });
   res.status(201).json({ success: true, facility: { id, name, address, status } });
 }));
+
+/**
+ * POST /api/v1/admin/dev-tools/gateway-command
+ * DEV_ADMIN only - Send test gateway commands (DENYLIST_ADD/REMOVE, LOCK/UNLOCK)
+ * Intended for testing gateway communication and command delivery.
+ */
+router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Gateway dev commands are disabled in production' });
+    return;
+  }
+
+  const { error, value } = gatewayCommandSchema.validate(req.body || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  const { facilityId, command, targetDeviceIds, userId, expirationSeconds } = value;
+  const gateway = GatewayEventsService.getInstance();
+
+  try {
+    switch (command) {
+      case 'DENYLIST_ADD': {
+        // Default expiration: 1 year from now
+        const exp = expirationSeconds 
+          ? Math.floor(Date.now() / 1000) + expirationSeconds 
+          : Math.floor(Date.now() / 1000) + 86400 * 365;
+        const entries = [{ sub: userId, exp }];
+        const jwt = await DenylistService.buildDenylistAdd(entries, targetDeviceIds);
+        gateway.unicastToFacility(facilityId, jwt);
+        logger.info(`Dev gateway command: DENYLIST_ADD sent to facility ${facilityId}`, { userId, targetDeviceIds });
+        res.json({ success: true, command, jwt });
+        break;
+      }
+
+      case 'DENYLIST_REMOVE': {
+        const entries = [{ sub: userId, exp: 0 }]; // exp not used for remove
+        const jwt = await DenylistService.buildDenylistRemove(entries, targetDeviceIds);
+        gateway.unicastToFacility(facilityId, jwt);
+        logger.info(`Dev gateway command: DENYLIST_REMOVE sent to facility ${facilityId}`, { userId, targetDeviceIds });
+        res.json({ success: true, command, jwt });
+        break;
+      }
+
+      case 'LOCK': {
+        // Send lock command for each device as JWT
+        const jwts: string[] = [];
+        for (const deviceId of targetDeviceIds) {
+          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'LOCK', device_id: deviceId });
+          gateway.unicastToFacility(facilityId, jwt);
+          jwts.push(jwt);
+        }
+        logger.info(`Dev gateway command: LOCK sent to facility ${facilityId}`, { targetDeviceIds });
+        res.json({ success: true, command, targetDeviceIds, jwts });
+        break;
+      }
+
+      case 'UNLOCK': {
+        // Send unlock command for each device as JWT
+        const jwts: string[] = [];
+        for (const deviceId of targetDeviceIds) {
+          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'UNLOCK', device_id: deviceId });
+          gateway.unicastToFacility(facilityId, jwt);
+          jwts.push(jwt);
+        }
+        logger.info(`Dev gateway command: UNLOCK sent to facility ${facilityId}`, { targetDeviceIds });
+        res.json({ success: true, command, targetDeviceIds, jwts });
+        break;
+      }
+
+      default:
+        res.status(400).json({ success: false, message: `Unknown command: ${command}` });
+    }
+  } catch (err: any) {
+    logger.error(`Failed to send dev gateway command: ${err.message}`, err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to send gateway command' });
+  }
+}));
+
+/**
+ * POST /api/v1/admin/data-prune - Manually trigger data pruning (admin only)
+ * Prunes expired/consumed invites, OTPs, and password reset tokens
+ */
+router.post('/data-prune', authenticateToken, requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  try {
+    const { DataPruningService } = await import('@/services/data-pruning.service');
+    const pruningService = DataPruningService.getInstance();
+    const results = await pruningService.prune();
+
+    logger.info(`Manual data pruning triggered by ${user.userId}`, results);
+
+    res.json({
+      success: true,
+      message: 'Data pruning completed',
+      results,
+    });
+  } catch (error: any) {
+    logger.error('Error during manual data pruning:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to prune data',
+      error: error?.message || 'Unknown error',
+    });
+  }
+}));
+
+/**
+ * POST /api/v1/admin/route-pass-prune - Manually trigger route pass pruning (admin only)
+ * Prunes expired route pass issuance logs
+ */
+router.post('/route-pass-prune', authenticateToken, requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  try {
+    const { RoutePassPruningService } = await import('@/services/route-pass-pruning.service');
+    const pruningService = RoutePassPruningService.getInstance();
+    const results = await pruningService.prune();
+
+    logger.info(`Manual route pass pruning triggered by ${user.userId}, removed: ${JSON.stringify(results)}`);
+    res.json({ success: true, message: 'Route pass pruning initiated', results });
+  } catch (error: any) {
+    logger.error('Error during manual route pass pruning:', error);
+    res.status(500).json({ success: false, message: 'Failed to prune route passes', error: error?.message || 'Unknown error' });
+  }
+}));
+
 export { router as adminRouter };
 
 

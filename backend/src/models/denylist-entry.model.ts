@@ -273,5 +273,76 @@ export class DenylistEntryModel {
       throw error;
     }
   }
+
+  /**
+   * Bulk create denylist entries for multiple devices (single INSERT query)
+   * More efficient than calling create() in a loop - avoids N+1 writes.
+   */
+  async bulkCreate(entries: Array<{
+    device_id: string;
+    user_id: string;
+    expires_at?: Date | null;
+    source: DenylistSource;
+    created_by?: string | null;
+  }>): Promise<void> {
+    if (entries.length === 0) return;
+
+    try {
+      // Get unique device-user pairs to delete existing entries
+      const deviceUserPairs = entries.map(e => ({ device_id: e.device_id, user_id: e.user_id }));
+      
+      // Delete existing entries for these device-user pairs (one query)
+      // Build OR conditions for each pair
+      await this.db('device_denylist_entries')
+        .where((builder: any) => {
+          for (const pair of deviceUserPairs) {
+            builder.orWhere({ device_id: pair.device_id, user_id: pair.user_id });
+          }
+        })
+        .del();
+
+      // Prepare insert data
+      const now = this.db.fn.now();
+      const insertData = entries.map(data => ({
+        id: randomUUID(),
+        device_id: data.device_id,
+        user_id: data.user_id,
+        source: data.source,
+        created_by: data.created_by || null,
+        expires_at: data.expires_at !== undefined ? data.expires_at : null,
+        created_at: now,
+        updated_at: now,
+      }));
+
+      // Bulk insert (single query)
+      await this.db('device_denylist_entries').insert(insertData);
+
+      logger.debug(`Bulk created ${entries.length} denylist entries`);
+    } catch (error) {
+      logger.error('Error bulk creating denylist entries:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk remove denylist entries for multiple devices and a user (single DELETE query)
+   * More efficient than calling remove() in a loop - avoids N+1 writes.
+   */
+  async bulkRemove(deviceIds: string[], userId: string): Promise<number> {
+    if (deviceIds.length === 0) return 0;
+
+    try {
+      const deleted = await this.db('device_denylist_entries')
+        .whereIn('device_id', deviceIds)
+        .where({ user_id: userId })
+        .del();
+
+      logger.debug(`Bulk removed ${deleted} denylist entries for user ${userId}`);
+      return deleted;
+    } catch (error) {
+      logger.error('Error bulk removing denylist entries:', error);
+      throw error;
+    }
+  }
 }
 

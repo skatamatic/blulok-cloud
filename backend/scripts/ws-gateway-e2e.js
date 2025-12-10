@@ -784,7 +784,20 @@ async function assignDeviceToUnit(token, deviceId, unitId) {
 function normalizeCmd(msg) {
   let p = msg;
   try { p = typeof msg === 'string' ? JSON.parse(msg) : msg; } catch {}
-  // Transport may send either raw payload, [payload, signature], or a wrapper
+  
+  // Handle new JWT format: { type: 'COMMAND', jwt: 'eyJ...' }
+  if (p && p.type === 'COMMAND' && p.jwt) {
+    try {
+      const parts = p.jwt.split('.');
+      if (parts.length === 3) {
+        const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+        if (decoded?.cmd_type) return decoded;
+      }
+    } catch {}
+    return null;
+  }
+  
+  // Legacy: Transport may send either raw payload, [payload, signature], or a wrapper
   if (p && p.type === 'COMMAND') p = p.payload;
   if (Array.isArray(p) && p.length > 0 && p[0]?.cmd_type) return p[0];
   if (Array.isArray(p) && p.length > 0 && Array.isArray(p[0]) && p[0].length > 0 && p[0][0]?.cmd_type) return p[0][0];
@@ -1216,6 +1229,260 @@ async function run() {
       throw new Error(`Expected 400 for invalid device-sync payload, got ${badSyncResp.status}`);
     }
 
+    // ---- NEW ENDPOINTS: /devices/inventory and /devices/state ----
+    heading('New Device Endpoints (Inventory + State)');
+    
+    // Test devices/inventory - add devices with state fields (new combined format)
+    // IMPORTANT: Include remainingSerial in ALL inventory syncs to keep the original device!
+    step('Testing POST /devices/inventory (add devices with state fields)');
+    const inventorySerial1 = `INV-E2E-${Date.now()}-1`;
+    const inventorySerial2 = `INV-E2E-${Date.now()}-2`;
+    const reqInventory1 = 'req-inventory-1';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqInventory1,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          { lock_id: remainingSerial }, // Keep original device!
+          // New format with all state fields included in inventory
+          { 
+            lock_id: inventorySerial1, 
+            lock_number: 201, 
+            firmware_version: '3A0-002',
+            state: 'CLOSED',
+            battery_level: 3423,
+            battery_unit: 'mV',
+            signal_strength: 0,
+            temperature_value: 24,
+            temperature_unit: '°C',
+            locked: true,
+            online: false,
+            last_seen: new Date().toISOString(),
+          },
+          { 
+            lock_id: inventorySerial2, 
+            lock_number: 202, 
+            firmware_version: '3A0-001',
+            state: 'OPENED',
+            battery_level: 3200,
+            online: true,
+          },
+        ],
+      },
+    }));
+    const respInventory1 = await waitForProxyResponse(ws, reqInventory1);
+    if (respInventory1.status !== 200 || !respInventory1.body?.success) {
+      throw new Error(`Device inventory add failed: ${respInventory1.status}`);
+    }
+    const invResult1 = respInventory1.body?.data;
+    if (invResult1?.added !== 2) {
+      throw new Error(`Expected 2 devices added, got ${invResult1?.added}`);
+    }
+    ok(`Inventory sync added ${invResult1.added} devices with state fields`);
+
+    // Test devices/state - partial state update (new gateway format with mV battery and state field)
+    step('Testing POST /devices/state (partial updates with new format)');
+    const reqState1 = 'req-state-1';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqState1,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          // New format matching gateway payload
+          { 
+            lock_id: inventorySerial1, 
+            lock_number: 16136,
+            state: 'CLOSED', // Maps to lock_status: 'locked'
+            battery_level: 3423, // Raw mV, not percentage
+            battery_unit: 'mV',
+            online: true,
+            signal_strength: -55,
+            temperature_value: 24,
+            temperature_unit: '°C',
+          },
+          { 
+            lock_id: inventorySerial2, 
+            state: 'OPENED', // Maps to lock_status: 'unlocked'
+            battery_level: 3200, 
+            signal_strength: -65, 
+            temperature_value: 22.5,
+            locked: false, // Boolean fallback
+            online: false,
+          },
+        ],
+      },
+    }));
+    const respState1 = await waitForProxyResponse(ws, reqState1);
+    if (respState1.status !== 200 || !respState1.body?.success) {
+      throw new Error(`Device state update failed: ${respState1.status}`);
+    }
+    const stateResult1 = respState1.body?.data;
+    if (stateResult1?.updated !== 2) {
+      throw new Error(`Expected 2 devices updated, got ${stateResult1?.updated}`);
+    }
+    ok(`State update applied to ${stateResult1.updated} devices (new gateway format)`);
+
+    // Test devices/inventory - remove devices (sync with subset - removes inventorySerial2)
+    step('Testing POST /devices/inventory (remove devices via delta)');
+    const reqInventory2 = 'req-inventory-2';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqInventory2,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          { lock_id: remainingSerial }, // Keep original device!
+          { lock_id: inventorySerial1, lock_number: 201 }, // Keep this one too
+          // inventorySerial2 is removed
+        ],
+      },
+    }));
+    const respInventory2 = await waitForProxyResponse(ws, reqInventory2);
+    if (respInventory2.status !== 200 || !respInventory2.body?.success) {
+      throw new Error(`Device inventory remove failed: ${respInventory2.status}`);
+    }
+    const invResult2 = respInventory2.body?.data;
+    if (invResult2?.removed !== 1 || invResult2?.unchanged !== 2) {
+      throw new Error(`Expected 1 removed, 2 unchanged; got removed=${invResult2?.removed} unchanged=${invResult2?.unchanged}`);
+    }
+    ok(`Inventory sync: removed=${invResult2.removed}, unchanged=${invResult2.unchanged}`);
+
+    // Test devices/state - not_found tracking
+    step('Testing POST /devices/state (not_found tracking)');
+    const reqState2 = 'req-state-2';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqState2,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          { lock_id: 'NON-EXISTENT-LOCK', battery_level: 50 },
+        ],
+      },
+    }));
+    const respState2 = await waitForProxyResponse(ws, reqState2);
+    if (respState2.status !== 200 || !respState2.body?.success) {
+      throw new Error(`Device state update request failed: ${respState2.status}`);
+    }
+    const stateResult2 = respState2.body?.data;
+    if (stateResult2?.not_found?.length !== 1 || !stateResult2.not_found.includes('NON-EXISTENT-LOCK')) {
+      throw new Error(`Expected not_found to contain NON-EXISTENT-LOCK, got ${JSON.stringify(stateResult2?.not_found)}`);
+    }
+    ok(`State update correctly tracked not_found: ${stateResult2.not_found.join(', ')}`);
+
+    // Test device removal when assigned to unit
+    step('Testing device removal when assigned to unit');
+    // First, assign one of the inventory devices to a unit (will replace the original device)
+    let testDeviceId = null;
+    let originalDeviceWasReplaced = false;
+    try {
+      const resDevicesForUnit = await axios.get(`${API_BASE}/devices/unassigned`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { facility_id: facilityId, limit: 10 }
+      });
+      const unassignedDevices = resDevicesForUnit.data?.devices || [];
+      const testDevice = unassignedDevices.find((d) => 
+        d.device_serial === inventorySerial1 || d.device_serial === inventorySerial2
+      );
+      if (testDevice) {
+        testDeviceId = testDevice.id;
+        // Assign it to the unit (this will unassign the original deviceId since units can only have 1 device)
+        await assignDeviceToUnit(token, testDeviceId, unitId);
+        originalDeviceWasReplaced = true;
+        ok(`Assigned test device ${testDeviceId} to unit ${unitId} (replaced original device)`);
+      }
+    } catch (e) {
+      console.warn('Could not assign test device to unit:', e.message);
+    }
+
+    // Verify unit still has the device
+    if (testDeviceId) {
+      step('Verifying device is assigned to unit before removal');
+      const resUnitBefore = await axios.get(`${API_BASE}/units/${unitId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const unitBefore = resUnitBefore.data?.unit;
+      if (unitBefore?.blulok_device?.id !== testDeviceId) {
+        throw new Error(`Device ${testDeviceId} not found on unit ${unitId} before removal`);
+      }
+      ok(`Unit ${unitId} has device ${testDeviceId} before removal`);
+
+      // Remove the device via inventory sync
+      // At this point: remainingSerial and inventorySerial1 exist (inventorySerial2 was removed earlier)
+      // inventorySerial1 is assigned to the unit, we want to remove it
+      step('Removing device via inventory sync (device is assigned to unit)');
+      const reqInventoryRemoveWithUnit = 'req-inventory-remove-unit';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqInventoryRemoveWithUnit,
+        method: 'POST',
+        path: `/internal/gateway/devices/inventory`,
+        body: {
+          facility_id: facilityId,
+          devices: [
+            { lock_id: remainingSerial }, // Keep only the original device
+            // inventorySerial1 (which is assigned to unit) will be removed
+          ],
+        },
+      }));
+      const respInventoryRemoveWithUnit = await waitForProxyResponse(ws, reqInventoryRemoveWithUnit);
+      if (respInventoryRemoveWithUnit.status !== 200 || !respInventoryRemoveWithUnit.body?.success) {
+        throw new Error(`Device inventory remove (with unit) failed: ${respInventoryRemoveWithUnit.status}`);
+      }
+      const invResultRemove = respInventoryRemoveWithUnit.body?.data;
+      if (invResultRemove?.removed !== 1) {
+        throw new Error(`Expected 1 device removed, got ${invResultRemove?.removed}`);
+      }
+      ok(`Device removed via inventory sync (was assigned to unit)`);
+
+      // Verify unit still exists but no longer has the device
+      step('Verifying unit still exists after device removal');
+      const resUnitAfter = await axios.get(`${API_BASE}/units/${unitId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const unitAfter = resUnitAfter.data?.unit;
+      if (!unitAfter) {
+        throw new Error(`Unit ${unitId} was deleted when device was removed`);
+      }
+      if (unitAfter.blulok_device?.id === testDeviceId) {
+        throw new Error(`Unit ${unitId} still has device ${testDeviceId} after removal`);
+      }
+      ok(`Unit ${unitId} still exists and no longer has device ${testDeviceId}`);
+
+      // Re-assign the original device back to the unit since we replaced it during the test
+      if (originalDeviceWasReplaced) {
+        step('Re-assigning original device back to unit');
+        await assignDeviceToUnit(token, deviceId, unitId);
+        ok(`Re-assigned original device ${deviceId} back to unit ${unitId}`);
+      }
+    }
+
+    // Clean up remaining inventory test devices
+    step('Cleaning up remaining inventory test devices');
+    const reqInventoryCleanup = 'req-inventory-cleanup';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqInventoryCleanup,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [{ lock_id: remainingSerial }], // Keep only the original device
+      },
+    }));
+    await waitForProxyResponse(ws, reqInventoryCleanup);
+    ok('Inventory test devices cleaned up');
+
     // PROXY: Update device status to "online" then fetch device details
     const reqStatus = 'req-device-status';
     ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqStatus, method: 'PUT', path: `/devices/blulok/${deviceId}/status`, body: { status: 'online' } }));
@@ -1225,6 +1492,281 @@ async function run() {
     ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqGetDevice, method: 'GET', path: `/devices/blulok/${deviceId}` }));
     const respGetDevice = await waitForProxyResponse(ws, reqGetDevice);
     if (respGetDevice.status !== 200) throw new Error(`Proxy GET device failed: ${respGetDevice.status}`);
+
+    // Device Status WebSocket Subscription Test
+    heading('Device Status WebSocket Subscription');
+    let deviceStatusWs = null;
+    const deviceStatusEvents = [];
+    
+    step('Connecting to device_status subscription');
+    // Use token in URL query string like the notifications WS (not headers)
+    const deviceStatusWsUrl = `${UI_WS_URL}?token=${token}`;
+    deviceStatusWs = new WebSocket(deviceStatusWsUrl);
+    await new Promise((res, rej) => { deviceStatusWs.once('open', res); deviceStatusWs.once('error', rej); });
+    ok('Device status WebSocket connected');
+    
+    // Set up message handler
+    deviceStatusWs.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (VERBOSE) console.log('[WS-DEV-STATUS <-]', data.toString());
+        if (msg.type === 'device_status_update' && msg.data) {
+          deviceStatusEvents.push(msg);
+        }
+      } catch {}
+    });
+    
+    // Subscribe to device_status for our specific device
+    step('Subscribing to device_status for specific device');
+    deviceStatusWs.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'device_status',
+      data: { device_id: deviceId }
+    }));
+    
+    // Wait for initial data - poll with timeout
+    step('Waiting for initial device_status_update');
+    const wsStartTime = Date.now();
+    const wsTimeoutMs = 5000;
+    while (Date.now() - wsStartTime < wsTimeoutMs) {
+      if (deviceStatusEvents.some(e => e.data?.devices?.some(d => d.id === deviceId))) {
+        break;
+      }
+      await delay(200);
+    }
+    
+    // Check we received initial device status
+    const initialEvent = deviceStatusEvents.find(e => 
+      e.data?.devices?.some(d => d.id === deviceId)
+    );
+    if (!initialEvent) {
+      // Close WS before throwing
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) {
+        deviceStatusWs.close();
+      }
+      throw new Error('Did not receive initial device_status_update for subscribed device');
+    }
+    ok('Received initial device status data via WebSocket');
+    
+    // Verify telemetry fields are present
+    const initialDevice = initialEvent.data.devices.find(d => d.id === deviceId);
+    if (!initialDevice) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) {
+        deviceStatusWs.close();
+      }
+      throw new Error('Device not found in device_status_update');
+    }
+    
+    // Check that all expected fields are present (even if null/undefined for some)
+    const expectedFields = ['id', 'device_serial', 'lock_status', 'device_status', 'battery_level'];
+    const missingFields = expectedFields.filter(f => !(f in initialDevice));
+    if (missingFields.length > 0) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) {
+        deviceStatusWs.close();
+      }
+      throw new Error(`Missing expected fields in device status: ${missingFields.join(', ')}`);
+    }
+    ok(`Device status includes expected fields: ${expectedFields.join(', ')}`);
+    
+    // Optional telemetry fields (may be null)
+    const telemetryFields = ['signal_strength', 'temperature', 'error_code', 'error_message'];
+    const presentTelemetry = telemetryFields.filter(f => f in initialDevice);
+    info(`Telemetry fields present: ${presentTelemetry.join(', ') || 'none'}`);
+    
+    // Test: Update device state and verify we receive the update
+    step('Updating device state to trigger WebSocket event');
+    const preUpdateCount = deviceStatusEvents.length;
+    
+    // Use the internal gateway endpoint to update device state
+    const reqStateUpdate = 'req-state-update-ws';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqStateUpdate,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          { 
+            lock_id: remainingSerial, 
+            lock_state: 'UNLOCKED', 
+            battery_level: 92,
+            signal_strength: -48,
+            temperature: 24.5
+          },
+        ],
+      },
+    }));
+    const respStateUpdate = await waitForProxyResponse(ws, reqStateUpdate);
+    if (respStateUpdate.status !== 200) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) {
+        deviceStatusWs.close();
+      }
+      throw new Error(`Device state update for WS test failed: ${respStateUpdate.status}`);
+    }
+    ok('Device state updated successfully');
+    
+    // Wait for WebSocket event with polling
+    step('Waiting for device_status_update WebSocket event');
+    const updateStartTime = Date.now();
+    const updateTimeoutMs = 3000;
+    while (Date.now() - updateStartTime < updateTimeoutMs) {
+      if (deviceStatusEvents.length > preUpdateCount) {
+        break;
+      }
+      await delay(200);
+    }
+    
+    // Check if we received a new event after our update
+    if (deviceStatusEvents.length > preUpdateCount) {
+      const latestEvent = deviceStatusEvents[deviceStatusEvents.length - 1];
+      const updatedDevice = latestEvent.data?.devices?.find(d => d.id === deviceId);
+      if (updatedDevice) {
+        ok('Received device status update via WebSocket after state change');
+        // Verify the updated values
+        if (updatedDevice.battery_level === 92 && 
+            updatedDevice.signal_strength === -48 && 
+            updatedDevice.temperature === 24.5) {
+          ok('WebSocket event contains updated telemetry values');
+        } else {
+          info(`WebSocket event received with values: battery=${updatedDevice.battery_level}, signal=${updatedDevice.signal_strength}, temp=${updatedDevice.temperature}`);
+        }
+      } else {
+        info('Received device_status_update but device not in payload (may be filtered differently)');
+      }
+    } else {
+      info('No additional WebSocket events received (device may not match filter or event timing)');
+    }
+    
+    step('Unsubscribing from device_status');
+    deviceStatusWs.send(JSON.stringify({
+      type: 'unsubscription',
+      subscriptionType: 'device_status'
+    }));
+    
+    // Close the WebSocket
+    if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) {
+      deviceStatusWs.close();
+    }
+    ok('Device status subscription tests complete');
+
+    // Units WebSocket Subscription Test - verify it updates on device state changes
+    heading('Units WebSocket Subscription (Device State Updates)');
+    let unitsWs = null;
+    const unitsEvents = [];
+    
+    step('Connecting to units subscription');
+    const unitsWsUrl = `${UI_WS_URL}?token=${token}`;
+    unitsWs = new WebSocket(unitsWsUrl);
+    await new Promise((res, rej) => { unitsWs.once('open', res); unitsWs.once('error', rej); });
+    ok('Units WebSocket connected');
+    
+    // Set up message handler
+    unitsWs.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (VERBOSE) console.log('[WS-UNITS <-]', data.toString());
+        if (msg.type === 'units_update' && msg.data) {
+          unitsEvents.push(msg);
+        }
+      } catch {}
+    });
+    
+    // Subscribe to units
+    step('Subscribing to units');
+    unitsWs.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'units'
+    }));
+    
+    // Wait for initial data
+    step('Waiting for initial units_update');
+    const unitsWsStartTime = Date.now();
+    const unitsWsTimeoutMs = 5000;
+    while (Date.now() - unitsWsStartTime < unitsWsTimeoutMs) {
+      if (unitsEvents.length > 0) {
+        break;
+      }
+      await delay(200);
+    }
+    
+    if (unitsEvents.length === 0) {
+      if (unitsWs && unitsWs.readyState === WebSocket.OPEN) {
+        unitsWs.close();
+      }
+      throw new Error('Did not receive initial units_update');
+    }
+    ok('Received initial units data via WebSocket');
+    
+    // Verify the initial data structure
+    const initialUnitsEvent = unitsEvents[0];
+    const requiredUnitsFields = ['totalUnits', 'lockedCount', 'unlockedCount'];
+    const missingUnitsFields = requiredUnitsFields.filter(f => !(f in initialUnitsEvent.data));
+    if (missingUnitsFields.length > 0) {
+      info(`Units data structure: ${JSON.stringify(Object.keys(initialUnitsEvent.data))}`);
+    } else {
+      ok(`Units data includes expected fields: ${requiredUnitsFields.join(', ')}`);
+    }
+    
+    // Test: Update device state and verify units subscription receives update
+    step('Updating device lock state to trigger units WebSocket update');
+    const preUnitsUpdateCount = unitsEvents.length;
+    
+    // Toggle lock state
+    const reqToggleLock = 'req-toggle-lock-units';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqToggleLock,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          { 
+            lock_id: remainingSerial, 
+            lock_state: 'LOCKED'
+          },
+        ],
+      },
+    }));
+    const respToggleLock = await waitForProxyResponse(ws, reqToggleLock);
+    if (respToggleLock.status !== 200) {
+      info(`Lock toggle returned: ${respToggleLock.status}`);
+    } else {
+      ok('Device lock state updated successfully');
+    }
+    
+    // Wait for units WebSocket event with polling
+    step('Waiting for units_update WebSocket event after device state change');
+    const unitsUpdateStartTime = Date.now();
+    const unitsUpdateTimeoutMs = 3000;
+    while (Date.now() - unitsUpdateStartTime < unitsUpdateTimeoutMs) {
+      if (unitsEvents.length > preUnitsUpdateCount) {
+        break;
+      }
+      await delay(200);
+    }
+    
+    // Check if we received a new event after our update
+    if (unitsEvents.length > preUnitsUpdateCount) {
+      ok('Received units_update via WebSocket after device state change');
+      const latestUnitsEvent = unitsEvents[unitsEvents.length - 1];
+      info(`Updated units data: total=${latestUnitsEvent.data?.totalUnits}, locked=${latestUnitsEvent.data?.lockedCount}, unlocked=${latestUnitsEvent.data?.unlockedCount}`);
+    } else {
+      info('No additional units WebSocket events received (may be expected if no visible units changed)');
+    }
+    
+    step('Unsubscribing from units');
+    unitsWs.send(JSON.stringify({
+      type: 'unsubscription',
+      subscriptionType: 'units'
+    }));
+    
+    // Close the WebSocket
+    if (unitsWs && unitsWs.readyState === WebSocket.OPEN) {
+      unitsWs.close();
+    }
+    ok('Units subscription tests complete');
 
     // Skip legacy outbound gateway sync (not applicable for inbound model)
 
@@ -1263,6 +1805,8 @@ async function run() {
         e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
       );
       ok(`Received invite notification for ${inviteEvent.toPhone || inviteEvent.toEmail || 'unknown-recipient'}`);
+      console.log(C.cyan('\n  📧 Full Invite Notification Details:'));
+      console.log(C.gray(JSON.stringify(inviteEvent, null, 2)));
       const deeplinkMatch = String(inviteEvent.body).match(/token=([^&\s]+)/);
       if (!deeplinkMatch) throw new Error('Failed to parse invite token from SMS body');
       const inviteToken = decodeURIComponent(deeplinkMatch[1]);
@@ -1275,6 +1819,9 @@ async function run() {
       const otpEvent = await waitForNotification((e) =>
         e.kind === 'otp' && e.delivery === 'sms'
       );
+      ok(`Received OTP notification for ${otpEvent.toPhone || otpEvent.toEmail || 'unknown-recipient'}`);
+      console.log(C.cyan('\n  📧 Full OTP Notification Details:'));
+      console.log(C.gray(JSON.stringify(otpEvent, null, 2)));
       const otpMatch = String(otpEvent.body).match(/(\d{6})/);
       if (!otpMatch) throw new Error('Failed to parse OTP code from SMS body');
       const otp = otpMatch[1];
@@ -1350,7 +1897,9 @@ async function run() {
     const newInviteEvent = await waitForNotification((e) =>
       e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
     );
-    ok('Invite SMS received for new sharee');
+    ok(`Invite SMS received for new sharee ${newInviteEvent.toPhone || newInviteEvent.toEmail || 'unknown-recipient'}`);
+    console.log(C.cyan('\n  📧 Full New Invitee Invite Notification Details:'));
+    console.log(C.gray(JSON.stringify(newInviteEvent, null, 2)));
     const newDeeplinkMatch = String(newInviteEvent.body).match(/token=([^&\s]+)/);
     if (!newDeeplinkMatch) throw new Error('No invite token found in SMS for new sharee');
     const newInviteToken = decodeURIComponent(newDeeplinkMatch[1]);
@@ -1394,6 +1943,9 @@ async function run() {
     const newOtpEvent = await waitForNotification((e) =>
       e.kind === 'otp' && e.delivery === 'sms'
     );
+    ok(`Received OTP notification for new sharee ${newOtpEvent.toPhone || newOtpEvent.toEmail || 'unknown-recipient'}`);
+    console.log(C.cyan('\n  📧 Full New Invitee OTP Notification Details:'));
+    console.log(C.gray(JSON.stringify(newOtpEvent, null, 2)));
     const newOtpMatch = String(newOtpEvent.body).match(/(\d{6})/);
     const newOtp = newOtpMatch && newOtpMatch[1];
     if (!newOtp) throw new Error('No OTP code parsed for new sharee');
@@ -1618,8 +2170,77 @@ async function run() {
       if (err?.response?.status === 403) prevented = true;
       else throw err;
     }
-    if (!prevented) throw new Error('Tenant was able to fetch another user’s key-sharing records');
+    if (!prevented) throw new Error('Tenant was able to fetch another user key-sharing records');
     ok('Tenant prevented from viewing other user key-sharing records');
+
+    // Test that shared users can see units they have access to
+    heading('Shared User Unit Access Tests');
+    
+    step('Shared user can fetch unit details for shared unit');
+    const share1UnitDetails = await axios.get(`${API_BASE}/units/${unitId}`, {
+      headers: { Authorization: `Bearer ${share1Token}` }
+    });
+    if (!share1UnitDetails.data?.success || !share1UnitDetails.data?.unit) {
+      throw new Error(`Shared user could not fetch unit details: ${JSON.stringify(share1UnitDetails.data)}`);
+    }
+    if (share1UnitDetails.data.unit.id !== unitId) {
+      throw new Error('Shared user unit details returned wrong unit');
+    }
+    ok('Shared user can fetch details for shared unit');
+
+    step('Shared user can list units (should include shared unit)');
+    const share1Units = await axios.get(`${API_BASE}/units`, {
+      headers: { Authorization: `Bearer ${share1Token}` },
+      params: { facility_id: facilityId }
+    });
+    if (!share1Units.data?.success) {
+      throw new Error(`Shared user units list failed: ${JSON.stringify(share1Units.data)}`);
+    }
+    const share1UnitsList = share1Units.data.units || [];
+    const hasSharedUnit = share1UnitsList.some(u => u.id === unitId);
+    if (!hasSharedUnit) {
+      throw new Error(`Shared user units list does not include shared unit. Found: ${share1UnitsList.map(u => u.id).join(', ')}`);
+    }
+    ok('Shared user can see shared unit in units list');
+
+    step('Primary tenant can list their units');
+    const primaryUnits = await axios.get(`${API_BASE}/units`, {
+      headers: { Authorization: `Bearer ${primaryToken}` },
+      params: { facility_id: facilityId }
+    });
+    if (!primaryUnits.data?.success) {
+      throw new Error(`Primary tenant units list failed: ${JSON.stringify(primaryUnits.data)}`);
+    }
+    const primaryUnitsList = primaryUnits.data.units || [];
+    const hasPrimaryUnit = primaryUnitsList.some(u => u.id === unitId);
+    if (!hasPrimaryUnit) {
+      throw new Error(`Primary tenant units list does not include their unit. Found: ${primaryUnitsList.map(u => u.id).join(', ')}`);
+    }
+    ok('Primary tenant can see their assigned unit');
+
+    step('New sharee (invited user) can fetch shared unit details');
+    const newShareeUnitDetails = await axios.get(`${API_BASE}/units/${unitId}`, {
+      headers: { Authorization: `Bearer ${newShareeToken}` }
+    });
+    if (!newShareeUnitDetails.data?.success || !newShareeUnitDetails.data?.unit) {
+      throw new Error(`New sharee could not fetch unit details: ${JSON.stringify(newShareeUnitDetails.data)}`);
+    }
+    ok('New sharee (invited user) can fetch shared unit details');
+
+    step('New sharee (invited user) can list units');
+    const newShareeUnits = await axios.get(`${API_BASE}/units`, {
+      headers: { Authorization: `Bearer ${newShareeToken}` },
+      params: { facility_id: facilityId }
+    });
+    if (!newShareeUnits.data?.success) {
+      throw new Error(`New sharee units list failed: ${JSON.stringify(newShareeUnits.data)}`);
+    }
+    const newShareeUnitsList = newShareeUnits.data.units || [];
+    const newShareeHasUnit = newShareeUnitsList.some(u => u.id === unitId);
+    if (!newShareeHasUnit) {
+      throw new Error(`New sharee units list does not include shared unit. Found: ${newShareeUnitsList.map(u => u.id).join(', ')}`);
+    }
+    ok('New sharee (invited user) can see shared unit in units list');
 
     heading('Facility Admin Gateway Coverage');
     step('Switching primary gateway session to facility admin');
@@ -1676,6 +2297,163 @@ async function run() {
     await expectRemovePrimary;
     ok('Received DENYLIST_REMOVE for primary tenant activation');
 
+    heading('Gateway Command DevTools Test');
+    step('Testing dev gateway command: LOCK');
+    const lockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'LOCK',
+      targetDeviceIds: [deviceId],
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!lockRes.data?.success) throw new Error('LOCK command failed');
+    ok('LOCK gateway command sent successfully');
+
+    step('Testing dev gateway command: UNLOCK');
+    const unlockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'UNLOCK',
+      targetDeviceIds: [deviceId],
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!unlockRes.data?.success) throw new Error('UNLOCK command failed');
+    ok('UNLOCK gateway command sent successfully');
+
+    step('Testing dev gateway command: DENYLIST_ADD');
+    const denyAddRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'DENYLIST_ADD',
+      targetDeviceIds: [deviceId],
+      userId: share1Id,
+      expirationSeconds: 3600,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    // Response now returns jwt instead of payload after JWT refactoring
+    if (!denyAddRes.data?.success || !denyAddRes.data?.jwt) throw new Error('DENYLIST_ADD command failed');
+    ok('DENYLIST_ADD gateway command sent successfully');
+
+    step('Testing dev gateway command: DENYLIST_REMOVE');
+    const denyRemoveRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'DENYLIST_REMOVE',
+      targetDeviceIds: [deviceId],
+      userId: share1Id,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    // Response now returns jwt instead of payload after JWT refactoring
+    if (!denyRemoveRes.data?.success || !denyRemoveRes.data?.jwt) throw new Error('DENYLIST_REMOVE command failed');
+    ok('DENYLIST_REMOVE gateway command sent successfully');
+
+    heading('Register-Key All Roles Test');
+    step('Admin registering device key');
+    const adminPublicKey = Buffer.from('AdminDeviceKey123').toString('base64');
+    const adminRegRes = await axios.post(`${API_BASE}/user-devices/register-key`, {
+      app_device_id: 'e2e-admin-device-test',
+      platform: 'other',
+      device_name: 'E2E Admin Test Device',
+      public_key: adminPublicKey,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!adminRegRes.data?.success) throw new Error('Admin register-key failed');
+    ok('Admin can register device key');
+
+    step('Facility admin registering device key');
+    const faPublicKey = Buffer.from('FacilityAdminDeviceKey123').toString('base64');
+    const faRegRes = await axios.post(`${API_BASE}/user-devices/register-key`, {
+      app_device_id: 'e2e-fa-device-test',
+      platform: 'other',
+      device_name: 'E2E Facility Admin Test Device',
+      public_key: faPublicKey,
+    }, { headers: { Authorization: `Bearer ${facilityAdmin.token}` } });
+    if (!faRegRes.data?.success) throw new Error('Facility admin register-key failed');
+    ok('Facility admin can register device key');
+
+    heading('Password Reset Flow Test (Deeplink + Token E2E)');
+    // Clear any prior notification events so we only capture fresh password reset notification
+    notificationEvents.length = 0;
+
+    step('Requesting password reset for primary tenant');
+    const resetReqRes = await axios.post(`${API_BASE}/auth/forgot-password/request`, {
+      email: primaryEmail,
+    }).catch(err => err.response);
+    if (!resetReqRes || resetReqRes.status !== 200) {
+      throw new Error(`Password reset request failed: expected 200, got ${resetReqRes?.status || 'no response'} - ${JSON.stringify(resetReqRes?.data)}`);
+    }
+    if (VERBOSE) console.log(`  • Delivery method: ${resetReqRes.data?.deliveryMethod || 'unknown'}`);
+    ok('Password reset request submitted');
+
+    // Wait for password reset deeplink via dev notifications WebSocket
+    step('Waiting for password reset deeplink via notifications WebSocket');
+    const resetEvent = await waitForNotification((e) => e.kind === 'password_reset');
+    if (!resetEvent) {
+      throw new Error('Did not receive password reset notification');
+    }
+    ok(`Received password reset notification for ${resetEvent.toPhone || resetEvent.toEmail || 'unknown-recipient'}`);
+    console.log(C.cyan('\n  📧 Full Password Reset Notification Details:'));
+    console.log(C.gray(JSON.stringify(resetEvent, null, 2)));
+    // Extract token from deeplink in notification meta or body
+    const resetToken = resetEvent.meta?.token;
+    if (!resetToken) throw new Error('Failed to extract token from password reset notification');
+    ok(`Extracted password reset token from notification`);
+
+    step('Verifying reset token is valid');
+    const verifyRes = await axios.post(`${API_BASE}/auth/forgot-password/verify`, {
+      token: resetToken,
+    }).catch(err => err.response);
+    if (!verifyRes || verifyRes.status !== 200 || !verifyRes.data?.success) {
+      throw new Error(`Token verification failed: status=${verifyRes?.status}, data=${JSON.stringify(verifyRes?.data)}`);
+    }
+    ok('Reset token verified successfully');
+
+    step('Password reset with invalid token returns error');
+    const resetBadRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
+      token: 'invalid-token-abc123',
+      newPassword: 'NewTestPassword123!',
+    }).catch(err => err.response);
+    if (!resetBadRes || resetBadRes.status !== 400) {
+      throw new Error(`Password reset expected 400 for invalid token, got ${resetBadRes?.status || 'no response'}`);
+    }
+    ok('Password reset endpoint rejects invalid token');
+
+    // Now use the real token to reset the password
+    const resetNewPassword = 'ResetTestPwd456!';
+    step('Resetting password with valid token');
+    const resetSuccessRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
+      token: resetToken,
+      newPassword: resetNewPassword,
+    }).catch(err => err.response);
+    if (!resetSuccessRes || resetSuccessRes.status !== 200 || !resetSuccessRes.data?.success) {
+      throw new Error(`Password reset with valid token failed: status=${resetSuccessRes?.status}, data=${JSON.stringify(resetSuccessRes?.data)}`);
+    }
+    ok('Password reset successful with valid token');
+
+    // Verify user can log in with the new password
+    step('Verifying login with new password');
+    const newLoginRes = await axios.post(`${API_BASE}/auth/login`, {
+      email: primaryEmail,
+      password: resetNewPassword,
+    }).catch(err => err.response);
+    if (!newLoginRes || newLoginRes.status !== 200 || !newLoginRes.data?.token) {
+      throw new Error(`Login with new password failed: status=${newLoginRes?.status}, data=${JSON.stringify(newLoginRes?.data)}`);
+    }
+    primaryToken = newLoginRes.data.token;
+    ok('Login with new password verified');
+
+    // Also verify old password no longer works
+    step('Verifying old password no longer works');
+    const oldLoginRes = await axios.post(`${API_BASE}/auth/login`, {
+      email: primaryEmail,
+      password: 'TestUser123!', // original password
+    }).catch(err => err.response);
+    if (oldLoginRes && oldLoginRes.status === 200 && oldLoginRes.data?.token) {
+      throw new Error('Old password should no longer work after reset');
+    }
+    ok('Old password correctly rejected after reset');
+
+    // Verify used token cannot be reused
+    step('Verifying used token cannot be reused');
+    const reuseRes = await axios.post(`${API_BASE}/auth/forgot-password/reset`, {
+      token: resetToken,
+      newPassword: 'AnotherPassword123!',
+    }).catch(err => err.response);
+    if (reuseRes && reuseRes.status === 200) {
+      throw new Error('Used token should not be reusable');
+    }
+    ok('Used token correctly rejected');
     // Schedule Management Tests
     heading('Schedule Management');
     if (created.facilityId && created.primaryTenantId) {

@@ -378,5 +378,113 @@ describe('DenylistEntryModel', () => {
       expect(result).toEqual(mockEntries);
     });
   });
+
+  describe('bulkCreate', () => {
+    it('bulk creates multiple denylist entries in a single insert', async () => {
+      const delMock = jest.fn().mockResolvedValue(0);
+      const insertMock = jest.fn().mockResolvedValue([1, 2, 3]);
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          const builder: any = {
+            where: jest.fn().mockImplementation((cbOrVal: any) => {
+              if (typeof cbOrVal === 'function') {
+                cbOrVal(builder);
+              }
+              return builder;
+            }),
+            orWhere: jest.fn().mockReturnThis(),
+            del: delMock,
+            insert: insertMock,
+          };
+          return builder;
+        }
+        return {};
+      });
+
+      await model.bulkCreate([
+        { device_id: 'device-1', user_id: 'user-1', expires_at: new Date('2024-12-31'), source: 'unit_unassignment', created_by: 'admin-1' },
+        { device_id: 'device-2', user_id: 'user-1', expires_at: new Date('2024-12-31'), source: 'unit_unassignment', created_by: 'admin-1' },
+        { device_id: 'device-3', user_id: 'user-1', expires_at: new Date('2024-12-31'), source: 'unit_unassignment', created_by: 'admin-1' },
+      ]);
+
+      // Should delete existing entries in one query
+      expect(delMock).toHaveBeenCalledTimes(1);
+      // Should insert all entries in one query
+      expect(insertMock).toHaveBeenCalledTimes(1);
+      const insertCall = insertMock.mock.calls[0][0];
+      expect(insertCall).toHaveLength(3);
+      expect(insertCall[0].device_id).toBe('device-1');
+      expect(insertCall[1].device_id).toBe('device-2');
+      expect(insertCall[2].device_id).toBe('device-3');
+    });
+
+    it('does nothing when entries array is empty', async () => {
+      const delMock = jest.fn();
+      const insertMock = jest.fn();
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          return {
+            where: jest.fn().mockReturnThis(),
+            del: delMock,
+            insert: insertMock,
+          };
+        }
+        return {};
+      });
+
+      await model.bulkCreate([]);
+
+      expect(delMock).not.toHaveBeenCalled();
+      expect(insertMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('bulkRemove', () => {
+    it('bulk removes multiple denylist entries in a single delete', async () => {
+      const delMock = jest.fn().mockResolvedValue(3);
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          return {
+            whereIn: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                del: delMock,
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const result = await model.bulkRemove(['device-1', 'device-2', 'device-3'], 'user-1');
+
+      expect(result).toBe(3);
+      expect(delMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 0 when deviceIds array is empty', async () => {
+      const delMock = jest.fn();
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          return {
+            whereIn: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                del: delMock,
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const result = await model.bulkRemove([], 'user-1');
+
+      expect(result).toBe(0);
+      expect(delMock).not.toHaveBeenCalled();
+    });
+  });
 });
 

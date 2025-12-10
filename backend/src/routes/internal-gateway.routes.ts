@@ -16,8 +16,9 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
-import { DeviceSyncService, GatewayDeviceData } from '@/services/device-sync.service';
+import { DeviceSyncService, GatewayDeviceData, DeviceInventoryItem, DeviceStateUpdate } from '@/services/device-sync.service';
 import { GatewayModel } from '@/models/gateway.model';
+import { logger } from '@/utils/logger';
 
 const router = Router();
 
@@ -140,14 +141,145 @@ router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandle
   await DeviceSyncService.getInstance().syncGatewayDevices(gateway.id, devices);
   await DeviceSyncService.getInstance().updateDeviceStatuses(gateway.id, devices);
 
+  // Log deprecation warning
+  logger.warn(`[DEPRECATED] POST /device-sync called by facility ${facilityId} - use /devices/inventory and /devices/state instead`);
+
+  res.setHeader('X-Deprecated', 'Use /devices/inventory and /devices/state');
   res.json({
     success: true,
-    message: 'Device sync applied',
+    message: 'Device sync applied (deprecated - use /devices/inventory and /devices/state)',
     data: {
       gateway_id: gateway.id,
       facility_id: facilityId,
       received: devices.length
     }
+  });
+}));
+
+// ============================================================================
+// NEW ENDPOINTS: Split inventory and state management
+// ============================================================================
+
+// POST /api/v1/internal/gateway/devices/inventory
+// Sync device inventory - add new devices, remove missing ones
+// Now also supports updating state fields in the same call
+const inventorySyncSchema = Joi.object({
+  facility_id: Joi.string().optional(),
+  devices: Joi.array().items(
+    Joi.object({
+      lock_id: Joi.string().required(),
+      lock_number: Joi.number().optional(),
+      // State fields (matching gateway payload format)
+      state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
+      lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
+      locked: Joi.boolean().optional(),
+      battery_level: Joi.number().optional(), // Raw mV, no longer 0-100
+      battery_unit: Joi.string().optional(),
+      online: Joi.boolean().optional(),
+      signal_strength: Joi.number().optional(),
+      temperature_value: Joi.number().optional(),
+      temperature_unit: Joi.string().optional(),
+      firmware_version: Joi.string().optional(),
+      last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+    })
+  ).required()
+});
+
+router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { error, value } = inventorySyncSchema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  // Resolve facility and gateway
+  const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
+  const facilityId = value.facility_id || facilityIdHeader;
+  if (!facilityId) {
+    res.status(400).json({ success: false, message: 'Missing facility_id (body or X-Gateway-Facility-Id header)' });
+    return;
+  }
+
+  const gatewayModel = new GatewayModel();
+  const gateway = await gatewayModel.findByFacilityId(facilityId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
+    return;
+  }
+
+  // Perform inventory sync
+  const devices: DeviceInventoryItem[] = value.devices;
+  const result = await DeviceSyncService.getInstance().syncDeviceInventory(gateway.id, devices);
+
+  res.json({
+    success: true,
+    message: 'Inventory sync completed',
+    data: {
+      gateway_id: gateway.id,
+      ...result
+    }
+  });
+}));
+
+// POST /api/v1/internal/gateway/devices/state
+// Update device state with partial data
+// Matches gateway payload format with all state fields
+const stateUpdateSchema = Joi.object({
+  facility_id: Joi.string().optional(),
+  updates: Joi.array().items(
+    Joi.object({
+      lock_id: Joi.string().required(),
+      lock_number: Joi.number().optional(),
+      // State fields (matching gateway payload format)
+      state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
+      lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
+      locked: Joi.boolean().optional(),
+      battery_level: Joi.number().optional(), // Raw mV, no longer 0-100
+      battery_unit: Joi.string().optional(),
+      online: Joi.boolean().optional(),
+      signal_strength: Joi.number().optional(),
+      temperature: Joi.number().optional(), // Legacy field
+      temperature_value: Joi.number().optional(),
+      temperature_unit: Joi.string().optional(),
+      firmware_version: Joi.string().optional(),
+      last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+      error_code: Joi.string().allow(null, '').optional(),
+      error_message: Joi.string().allow(null, '').optional(),
+      source: Joi.string().valid('GATEWAY', 'USER', 'CLOUD').optional(),
+    })
+  ).required()
+});
+
+router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { error, value } = stateUpdateSchema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  // Resolve facility and gateway
+  const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
+  const facilityId = value.facility_id || facilityIdHeader;
+  if (!facilityId) {
+    res.status(400).json({ success: false, message: 'Missing facility_id (body or X-Gateway-Facility-Id header)' });
+    return;
+  }
+
+  const gatewayModel = new GatewayModel();
+  const gateway = await gatewayModel.findByFacilityId(facilityId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
+    return;
+  }
+
+  // Perform state update
+  const updates: DeviceStateUpdate[] = value.updates;
+  const result = await DeviceSyncService.getInstance().updateDeviceStates(gateway.id, updates);
+
+  res.json({
+    success: true,
+    message: 'State updates applied',
+    data: result
   });
 }));
 

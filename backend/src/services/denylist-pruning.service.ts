@@ -55,10 +55,15 @@ export class DenylistPruningService {
     // Run immediately, then schedule daily
     this.prune().catch(err => logger.error('Error in initial denylist prune:', err));
 
-    // Schedule daily
+    // Schedule daily with error handling to prevent crashes
     this.intervalId = setInterval(async () => {
-      logger.info('Starting scheduled denylist pruning');
-      await this.prune();
+      try {
+        logger.info('Starting scheduled denylist pruning');
+        await this.prune();
+      } catch (err) {
+        // Log error but don't let it crash the server
+        logger.error('Error in scheduled denylist prune (non-fatal, will retry tomorrow):', err);
+      }
     }, this.DAILY_MS);
 
     logger.info('Denylist pruning service started (daily interval)');

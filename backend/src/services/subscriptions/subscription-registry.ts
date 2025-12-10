@@ -11,6 +11,7 @@ import { GatewayStatusSubscriptionManager } from './gateway-status-subscription-
 import { CommandQueueSubscriptionManager } from './command-queue-subscription-manager';
 import { DevNotificationsSubscriptionManager } from './dev-notifications-subscription-manager';
 import { GatewayDebugSubscriptionManager } from './gateway-debug-subscription-manager';
+import { DeviceStatusSubscriptionManager } from './device-status-subscription-manager';
 
 /**
  * Subscription Registry
@@ -25,6 +26,7 @@ import { GatewayDebugSubscriptionManager } from './gateway-debug-subscription-ma
  * - logs: Real-time log streaming
  * - units: Unit status and occupancy updates
  * - battery_status: Device battery level monitoring
+ * - device_status: Real-time device telemetry and status updates
  * - fms_sync_status: FMS synchronization status
  * - fms_sync_progress: FMS sync operation progress
  * - gateway_status: Gateway connectivity and health
@@ -48,6 +50,7 @@ export class SubscriptionRegistry {
     this.registerManager(new LogsSubscriptionManager());
     this.registerManager(new UnitsSubscriptionManager());
     this.registerManager(new BatterySubscriptionManager());
+    this.registerManager(new DeviceStatusSubscriptionManager());
     this.registerManager(new FMSSyncSubscriptionManager());
     this.registerManager(new FMSSyncProgressSubscriptionManager());
     this.registerManager(new GatewayStatusSubscriptionManager());
@@ -141,5 +144,9 @@ export class SubscriptionRegistry {
 
   public getFMSSyncProgressManager(): FMSSyncProgressSubscriptionManager | undefined {
     return this.getManager('fms_sync_progress') as FMSSyncProgressSubscriptionManager;
+  }
+
+  public getDeviceStatusManager(): DeviceStatusSubscriptionManager | undefined {
+    return this.getManager('device_status') as DeviceStatusSubscriptionManager;
   }
 }

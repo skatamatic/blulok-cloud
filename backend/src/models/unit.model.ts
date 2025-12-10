@@ -220,7 +220,7 @@ export class UnitModel {
         // No additional filtering needed
       } else if (userRole === 'facility_admin') {
         // Facility Admin see unlocked units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
@@ -228,8 +228,24 @@ export class UnitModel {
           return [];
         }
       } else if (userRole === 'tenant' || userRole === 'maintenance') {
-        // Tenants and Maintenance see only unlocked units that are assigned to them
-        query = query.where('ua.tenant_id', userId);
+        // Tenants and Maintenance see only unlocked units that are assigned to them OR shared with them
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return empty result
         return [];
@@ -277,7 +293,7 @@ export class UnitModel {
         // No additional filtering needed
       } else if (userRole === 'facility_admin') {
         // Facility Admin see units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
@@ -285,10 +301,24 @@ export class UnitModel {
           return [];
         }
       } else if (userRole === 'tenant' || userRole === 'maintenance') {
-        // Tenants and Maintenance see only units that are assigned to them
-        query = query
-          .join('unit_assignments as ua', 'u.id', 'ua.unit_id')
-          .where('ua.tenant_id', userId);
+        // Tenants and Maintenance see units assigned to them OR shared with them via key_sharing
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return empty result
         return [];
@@ -320,7 +350,7 @@ export class UnitModel {
         // No additional filtering needed
       } else if (userRole === 'facility_admin') {
         // Facility Admin see unit assignments from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
@@ -363,6 +393,10 @@ export class UnitModel {
           'bd.battery_level',
           'bd.last_seen as last_activity',
           'bd.firmware_version',
+          'bd.signal_strength',
+          'bd.temperature',
+          'bd.error_code',
+          'bd.error_message',
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
@@ -382,7 +416,7 @@ export class UnitModel {
         // No additional filtering needed
       } else if (userRole === 'facility_admin') {
         // Facility Admin see units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
@@ -390,10 +424,25 @@ export class UnitModel {
           return { units: [], total: 0 };
         }
       } else if (userRole === 'tenant' || userRole === 'maintenance') {
-        // Tenants and Maintenance see only units that are assigned to them
-        query = query
-          .join('unit_assignments as ua_filter', 'u.id', 'ua_filter.unit_id')
-          .where('ua_filter.tenant_id', userId);
+        // Tenants and Maintenance see units assigned to them OR shared with them via key_sharing
+        // Use a subquery to get unit IDs from both unit_assignments and active key_sharing records
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return empty result
         return { units: [], total: 0 };
@@ -556,20 +605,6 @@ export class UnitModel {
   }
 
   /**
-   * Determine user scope based on role and facility associations
-   * @deprecated Use FacilityAccessService.getUserScope() instead
-   */
-  private async determineUserScope(userId: string, userRole: UserRole): Promise<{ type: 'all' | 'facility_limited'; facilityIds?: string[] }> {
-    try {
-      return await FacilityAccessService.getUserScope(userId, userRole);
-    } catch (error) {
-      logger.error(`Error determining user scope for user ${userId}:`, error);
-      // Fallback to facility_limited with empty array for safety
-      return { type: 'facility_limited', facilityIds: [] };
-    }
-  }
-
-  /**
    * Check if a user has access to a specific unit
    */
   async hasUserAccessToUnit(unitId: string, userId: string, userRole: UserRole): Promise<boolean> {
@@ -597,14 +632,30 @@ export class UnitModel {
         return false; // User doesn't have access to the facility
       }
 
-      // For tenants and maintenance, also check unit assignment
+      // For tenants and maintenance, also check unit assignment OR key_sharing
       if (userRole === 'tenant' || userRole === 'maintenance') {
+        // Check unit_assignments first
         const assignment = await knex('unit_assignments')
           .where('unit_id', unitId)
           .where('tenant_id', userId)
           .first();
 
-        return !!assignment; // User must be assigned to the unit
+        if (assignment) {
+          return true;
+        }
+
+        // Check key_sharing for shared access
+        const sharing = await knex('key_sharing')
+          .where('unit_id', unitId)
+          .where('shared_with_user_id', userId)
+          .where('is_active', true)
+          .where(function() {
+            this.whereNull('expires_at')
+              .orWhere('expires_at', '>', knex.fn.now());
+          })
+          .first();
+
+        return !!sharing;
       }
 
       return true; // Admin, dev_admin, and facility_admin with facility access
@@ -701,7 +752,7 @@ export class UnitModel {
         // No additional filtering needed
       } else if (userRole === 'facility_admin') {
         // Facility Admin see stats for units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           baseQuery = baseQuery.whereIn('u.facility_id', scope.facilityIds);
         } else {
@@ -811,6 +862,10 @@ export class UnitModel {
           'bd.battery_level',
           'bd.last_seen as last_activity',
           'bd.firmware_version',
+          'bd.signal_strength',
+          'bd.temperature',
+          'bd.error_code',
+          'bd.error_message',
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
@@ -831,7 +886,7 @@ export class UnitModel {
         // No additional filtering needed
       } else if (userRole === 'facility_admin') {
         // Facility Admin can see units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
@@ -840,10 +895,24 @@ export class UnitModel {
         }
       } else if (userRole === 'tenant' || userRole === 'maintenance') {
         // Tenants and Maintenance can see units they are associated with
-        // (either as primary tenant or have shared access)
-        query = query
-          .join('unit_assignments as ua_filter', 'u.id', 'ua_filter.unit_id')
-          .where('ua_filter.tenant_id', userId);
+        // (either as primary tenant/assigned OR have shared access via key_sharing)
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return null
         return null;

@@ -86,27 +86,31 @@ function GatewayStatusListener() {
   const lastStatusRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    const subscriptionId = ws.subscribe('gateway_status', (data: any) => {
-      try {
-        const gateways = data?.gateways || [];
-        gateways.forEach((g: any) => {
-          const prev = lastStatusRef.current[g.id];
-          lastStatusRef.current[g.id] = g.status;
-          if (prev && prev !== g.status) {
-            // Only show toasts for actual status changes (online, offline, error)
-            if (g.status === 'online' || g.status === 'offline' || g.status === 'error') {
-              const statusMessage = g.status === 'online' ? 'online' : g.status === 'offline' ? 'offline' : 'error';
-              addToast({
-                type: g.status === 'online' ? 'success' : 'error',
-                title: `Facility gateway is now ${statusMessage}`
-              });
+    const subscriptionId = ws.subscribe(
+      'gateway_status',
+      (data: any) => {
+        try {
+          const gateways = data?.gateways || [];
+          gateways.forEach((g: any) => {
+            const prev = lastStatusRef.current[g.id];
+            lastStatusRef.current[g.id] = g.status;
+            if (prev && prev !== g.status) {
+              // Only show toasts for actual status changes (online, offline, error)
+              if (g.status === 'online' || g.status === 'offline' || g.status === 'error') {
+                const statusMessage = g.status === 'online' ? 'online' : g.status === 'offline' ? 'offline' : 'error';
+                addToast({
+                  type: g.status === 'online' ? 'success' : 'error',
+                  title: `Facility gateway is now ${statusMessage}`
+                });
+              }
             }
-          }
-        });
-      } catch (e) {
-        console.error('Failed to process gateway status update', e);
-      }
-    });
+          });
+        } catch (e) {
+          console.error('Failed to process gateway status update', e);
+        }
+      },
+      undefined // no error handler needed
+    );
     return () => {
       if (subscriptionId) ws.unsubscribe(subscriptionId);
     };

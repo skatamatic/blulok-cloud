@@ -28,10 +28,16 @@ export class FirstTimeUserService {
   public async sendInvite(user: User): Promise<void> {
     const { token } = await this.invites.createInvite(user.id);
     const deeplinkBase = await this.settings.get('notifications.deeplink_base');
-    const base = deeplinkBase || 'blulok://invite';
+    let base = deeplinkBase || 'blulok://';
     const phone = user.phone_number || '';
-    const sep = base.includes('?') ? '&' : '?';
-    const deeplink = `${base}${sep}token=${encodeURIComponent(token)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`;
+    
+    // For HTTP/HTTPS URLs, ensure trailing slash; for custom schemes (blulok://), no slash needed
+    if (base.match(/^https?:\/\//) && !base.endsWith('/')) {
+      base = `${base}/`;
+    }
+    
+    // Build: blulok://invite?token=...&phone=... or https://app.blulok.com/invite?token=...&phone=...
+    const deeplink = `${base}invite?token=${encodeURIComponent(token)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`;
 
     await this.notifications.sendInvite({
       toPhone: user.phone_number || undefined,

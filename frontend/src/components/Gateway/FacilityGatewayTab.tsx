@@ -190,25 +190,29 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   useEffect(() => {
     if (!ws || !isDevAdmin) return;
 
-    const subscriptionId = ws.subscribe('gateway_debug', (event: any) => {
-      if (!event || (event.facilityId && event.facilityId !== facilityId)) {
-        return;
-      }
-      setGatewayDebugEvents(prev => {
-        const next = [...prev, event];
-        // Keep the most recent 200 events to avoid unbounded growth
-        return next.slice(-200);
-      });
-      if (typeof event.lastActivityAt === 'number') {
-        setLastGatewayActivityAt(event.lastActivityAt);
-      }
-      if (event.kind === 'ping_sent') {
-        setLastPingTs(event.ts || Date.now());
-      }
-      if (event.kind === 'pong_received') {
-        setLastPongTs(event.ts || Date.now());
-      }
-    });
+    const subscriptionId = ws.subscribe(
+      'gateway_debug',
+      (event: any) => {
+        if (!event || (event.facilityId && event.facilityId !== facilityId)) {
+          return;
+        }
+        setGatewayDebugEvents(prev => {
+          const next = [...prev, event];
+          // Keep the most recent 200 events to avoid unbounded growth
+          return next.slice(-200);
+        });
+        if (typeof event.lastActivityAt === 'number') {
+          setLastGatewayActivityAt(event.lastActivityAt);
+        }
+        if (event.kind === 'ping_sent') {
+          setLastPingTs(event.ts || Date.now());
+        }
+        if (event.kind === 'pong_received') {
+          setLastPongTs(event.ts || Date.now());
+        }
+      },
+      undefined // no error handler needed
+    );
 
     return () => {
       if (subscriptionId) {
@@ -269,17 +273,21 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   useEffect(() => {
     if (!ws) return;
 
-    const subscriptionId = ws.subscribe('gateway_status', (data: any) => {
-      try {
-        const gateways = data?.gateways || [];
-        gateways.forEach((g: any) => {
-          // Update local gateway state only (toasts are handled by app-wide listener)
-          setGateway(prevGw => (prevGw && prevGw.id === g.id ? { ...prevGw, status: g.status as any, last_seen: g.lastSeen as any } : prevGw));
-        });
-      } catch (e) {
-        console.error('Failed to process gateway status update', e);
-      }
-    });
+    const subscriptionId = ws.subscribe(
+      'gateway_status',
+      (data: any) => {
+        try {
+          const gateways = data?.gateways || [];
+          gateways.forEach((g: any) => {
+            // Update local gateway state only (toasts are handled by app-wide listener)
+            setGateway(prevGw => (prevGw && prevGw.id === g.id ? { ...prevGw, status: g.status as any, last_seen: g.lastSeen as any } : prevGw));
+          });
+        } catch (e) {
+          console.error('Failed to process gateway status update', e);
+        }
+      },
+      undefined // no error handler needed
+    );
 
     return () => {
       if (subscriptionId) ws.unsubscribe(subscriptionId);
@@ -870,7 +878,9 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
               onClick={async () => {
                 try {
                   const res = await apiService.getSecureTimeSyncPacket();
-                  addToast({ type: 'success', title: `Time Sync ts=${res.timeSyncPacket?.[0]?.ts}` });
+                  // Decode JWT to show timestamp (JWT format: header.payload.signature)
+                  const payload = res.timeSyncJwt ? JSON.parse(atob(res.timeSyncJwt.split('.')[1])) : null;
+                  addToast({ type: 'success', title: `Time Sync ts=${payload?.ts || 'unknown'}` });
                 } catch {
                   addToast({ type: 'error', title: 'Failed to get time sync packet' });
                 }
@@ -885,7 +895,9 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
                 if (!lockId) return;
                 try {
                   const res = await apiService.requestTimeSyncForLock(lockId);
-                  addToast({ type: 'success', title: `Time Sync (lock) ts=${res.timeSyncPacket?.[0]?.ts}` });
+                  // Decode JWT to show timestamp
+                  const payload = res.timeSyncJwt ? JSON.parse(atob(res.timeSyncJwt.split('.')[1])) : null;
+                  addToast({ type: 'success', title: `Time Sync (lock) ts=${payload?.ts || 'unknown'}` });
                 } catch {
                   addToast({ type: 'error', title: 'Failed to request time sync for lock' });
                 }
@@ -899,6 +911,117 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
             Locks reject older timestamps to prevent time rollback.
           </p>
         </div>
+
+        {/* Gateway Commands Test (DEV_ADMIN only) */}
+        {isDevAdmin && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center">
+              <WrenchScrewdriverIcon className="h-5 w-5 mr-2" />
+              Gateway Commands (Test)
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Send test commands to the connected gateway. These are for development and testing purposes only.
+            </p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Denylist Commands */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Denylist Commands</h4>
+                <button
+                  onClick={async () => {
+                    const userId = prompt('Enter user ID to add to denylist:');
+                    if (!userId) return;
+                    const deviceIds = prompt('Enter device IDs (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'DENYLIST_ADD',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                        userId,
+                      });
+                      addToast({ type: 'success', title: `DENYLIST_ADD sent: ${res.success}` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send DENYLIST_ADD' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700"
+                >
+                  DENYLIST_ADD
+                </button>
+                <button
+                  onClick={async () => {
+                    const userId = prompt('Enter user ID to remove from denylist:');
+                    if (!userId) return;
+                    const deviceIds = prompt('Enter device IDs (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'DENYLIST_REMOVE',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                        userId,
+                      });
+                      addToast({ type: 'success', title: `DENYLIST_REMOVE sent: ${res.success}` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send DENYLIST_REMOVE' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-green-600 text-white hover:bg-green-700"
+                >
+                  DENYLIST_REMOVE
+                </button>
+              </div>
+              
+              {/* Lock/Unlock Commands */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Lock/Unlock Commands</h4>
+                <button
+                  onClick={async () => {
+                    const deviceIds = prompt('Enter device IDs to LOCK (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'LOCK',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                      });
+                      addToast({ type: 'success', title: `LOCK sent to ${res.targetDeviceIds?.length || 0} device(s)` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send LOCK' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  LOCK
+                </button>
+                <button
+                  onClick={async () => {
+                    const deviceIds = prompt('Enter device IDs to UNLOCK (comma-separated):');
+                    if (!deviceIds) return;
+                    try {
+                      const res = await apiService.sendGatewayCommand({
+                        facilityId,
+                        command: 'UNLOCK',
+                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                      });
+                      addToast({ type: 'success', title: `UNLOCK sent to ${res.targetDeviceIds?.length || 0} device(s)` });
+                    } catch (err: any) {
+                      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to send UNLOCK' });
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 text-sm rounded-md bg-yellow-600 text-white hover:bg-yellow-700"
+                >
+                  UNLOCK
+                </button>
+              </div>
+            </div>
+            
+            <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+              Commands are signed and sent directly to the gateway WebSocket connection.
+            </p>
+          </div>
+        )}
 
         {/* Gateway Debug */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6">

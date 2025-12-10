@@ -42,10 +42,14 @@ describe('DeviceSyncService', () => {
     mockDeviceModel = {
       findBluLokDevices: jest.fn(),
       createBluLokDevice: jest.fn(),
+      bulkCreateBluLokDevices: jest.fn().mockResolvedValue(0),
+      bulkDeleteBluLokDevices: jest.fn().mockResolvedValue(0),
       updateDeviceStatus: jest.fn(),
       updateLockStatus: jest.fn(),
       updateBatteryLevel: jest.fn(),
       deleteBluLokDevice: jest.fn(),
+      updateBluLokDeviceState: jest.fn(),
+      findBluLokDeviceByIdOrSerial: jest.fn(),
     } as any;
 
     mockEventService = {
@@ -80,10 +84,7 @@ describe('DeviceSyncService', () => {
       ];
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
-      mockDeviceModel.createBluLokDevice.mockResolvedValue({
-        id: 'device-1',
-        device_serial: 'ABC123'
-      } as any);
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
 
       // Execute
       await deviceSyncService.syncGatewayDevices(gatewayId, gatewayDevices);
@@ -92,16 +93,17 @@ describe('DeviceSyncService', () => {
       expect(mockDeviceModel.findBluLokDevices).toHaveBeenCalledWith({
         gateway_id: gatewayId
       });
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenCalledWith({
+      // Now uses bulk create
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledWith([{
         gateway_id: gatewayId,
         device_serial: 'ABC123',
-        device_settings: { gatewayData: gatewayDevices[0] },
-        metadata: {
+        device_settings: JSON.stringify({ gatewayData: gatewayDevices[0] }),
+        metadata: JSON.stringify({
           autoCreated: true,
           createdFromGatewaySync: true,
           gatewayType: 'http'
-        }
-      });
+        })
+      }]);
     });
 
     it('should remove devices no longer on gateway', async () => {
@@ -116,12 +118,13 @@ describe('DeviceSyncService', () => {
       const gatewayDevices: GatewayDeviceData[] = []; // No devices on gateway
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
+      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
 
       // Execute
       await deviceSyncService.syncGatewayDevices(gatewayId, gatewayDevices);
 
-      // Verify
-      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledWith('device-1');
+      // Verify - now uses bulk delete
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-1']);
       expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledWith({
         deviceId: 'device-1',
         deviceType: 'blulok',
@@ -165,18 +168,16 @@ describe('DeviceSyncService', () => {
       ];
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
-      mockDeviceModel.createBluLokDevice.mockResolvedValue({
-        id: 'device-3',
-        device_serial: 'GHI789'
-      } as any);
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
+      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
 
       // Execute
       await deviceSyncService.syncGatewayDevices(gatewayId, gatewayDevices);
 
-      // Verify
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenCalledTimes(1);
-      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledTimes(1);
-      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledWith('device-2');
+      // Verify - now uses bulk operations
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledTimes(1);
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledTimes(1);
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-2']);
     });
 
     it('should handle devices with different identifier formats', async () => {
@@ -189,25 +190,20 @@ describe('DeviceSyncService', () => {
       ];
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
-      mockDeviceModel.createBluLokDevice
-        .mockResolvedValueOnce({ id: 'device-1', device_serial: 'lock-1' } as any)
-        .mockResolvedValueOnce({ id: 'device-2', device_serial: 'lock-2' } as any)
-        .mockResolvedValueOnce({ id: 'device-3', device_serial: 'ABC123' } as any);
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(3);
 
       // Execute
       await deviceSyncService.syncGatewayDevices(gatewayId, gatewayDevices);
 
-      // Verify all three devices were created
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenCalledTimes(3);
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        device_serial: 'lock-1'
-      }));
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        device_serial: 'lock-2'
-      }));
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenNthCalledWith(3, expect.objectContaining({
-        device_serial: 'ABC123'
-      }));
+      // Verify all three devices were created in bulk
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledTimes(1);
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ device_serial: 'lock-1' }),
+          expect.objectContaining({ device_serial: 'lock-2' }),
+          expect.objectContaining({ device_serial: 'ABC123' }),
+        ])
+      );
     });
 
     it('should skip devices without valid identifiers', async () => {
@@ -219,19 +215,16 @@ describe('DeviceSyncService', () => {
       ];
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
-      mockDeviceModel.createBluLokDevice.mockResolvedValue({
-        id: 'device-1',
-        device_serial: 'ABC123'
-      } as any);
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
 
       // Execute
       await deviceSyncService.syncGatewayDevices(gatewayId, gatewayDevices);
 
-      // Verify only the valid device was created
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenCalledTimes(1);
-      expect(mockDeviceModel.createBluLokDevice).toHaveBeenCalledWith(expect.objectContaining({
-        device_serial: 'ABC123'
-      }));
+      // Verify only the valid device was created (devices without identifiers are filtered out)
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledTimes(1);
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledWith([
+        expect.objectContaining({ device_serial: 'ABC123' })
+      ]);
     });
   });
 
@@ -424,12 +417,15 @@ describe('DeviceSyncService', () => {
       ];
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
+      // Bulk create fails, then fall back to individual create
+      mockDeviceModel.bulkCreateBluLokDevices.mockRejectedValue(new Error('Bulk insert error'));
       mockDeviceModel.createBluLokDevice.mockRejectedValue(new Error('Database error'));
 
       // Execute - should not throw
       await expect(deviceSyncService.syncGatewayDevices('gateway-123', gatewayDevices)).resolves.not.toThrow();
 
-      // Verify device was attempted to be created
+      // Verify bulk was attempted first, then fallback to individual
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalled();
       expect(mockDeviceModel.createBluLokDevice).toHaveBeenCalled();
     });
 
@@ -445,13 +441,15 @@ describe('DeviceSyncService', () => {
       const gatewayDevices: GatewayDeviceData[] = [];
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
+      // Bulk delete fails, then fall back to individual delete which also fails
+      mockDeviceModel.bulkDeleteBluLokDevices.mockRejectedValue(new Error('Bulk delete error'));
       mockDeviceModel.deleteBluLokDevice.mockRejectedValue(new Error('Database error'));
 
-      // Execute - should not throw
+      // Execute - should not throw (catches errors internally)
       await expect(deviceSyncService.syncGatewayDevices('gateway-123', gatewayDevices)).resolves.not.toThrow();
 
-      // Verify delete was attempted
-      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledWith('device-1');
+      // Verify bulk delete was attempted first
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-1']);
     });
 
     it('should handle errors when updating device status', async () => {
@@ -488,6 +486,276 @@ describe('DeviceSyncService', () => {
       const instance2 = DeviceSyncService.getInstance();
 
       expect(instance1).toBe(instance2);
+    });
+  });
+
+  // ============================================================================
+  // NEW METHODS TESTS
+  // ============================================================================
+
+  describe('syncDeviceInventory', () => {
+    const gatewayId = 'gateway-123';
+
+    it('should add new devices from inventory', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+      // Mock bulk create to return success count
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1', lock_number: 101, firmware_version: '1.0.0' },
+      ]);
+
+      expect(result.added).toBe(1);
+      expect(result.removed).toBe(0);
+      expect(result.unchanged).toBe(0);
+      expect(result.errors).toHaveLength(0);
+      // Now uses bulk create instead of individual create
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledWith([{
+        gateway_id: gatewayId,
+        device_serial: 'LOCK-1',
+        device_settings: { lockNumber: 101 },
+        metadata: { autoCreated: true, createdFromInventorySync: true },
+        firmware_version: '1.0.0',
+      }]);
+    });
+
+    it('should remove devices not in inventory', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
+        createDeviceWithContext({ id: 'device-2', device_serial: 'LOCK-2' }),
+      ]);
+      // Mock bulk delete to return count of deleted devices
+      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1' },
+      ]);
+
+      expect(result.added).toBe(0);
+      expect(result.removed).toBe(1);
+      expect(result.unchanged).toBe(1);
+      // Now uses bulk delete instead of individual delete
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-2']);
+    });
+
+    it('should update firmware_version for existing devices', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1', firmware_version: '1.0.0' }),
+      ]);
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1', firmware_version: '2.0.0' },
+      ]);
+
+      expect(result.unchanged).toBe(1);
+      // Now updates via lock_id (device_serial) rather than internal id
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        firmware_version: '2.0.0',
+      });
+    });
+
+    it('should update state fields during inventory sync', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
+      ]);
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        {
+          lock_id: 'LOCK-1',
+          state: 'CLOSED',
+          battery_level: 3423,
+          online: true,
+          signal_strength: -55,
+          temperature_value: 24,
+        },
+      ]);
+
+      expect(result.unchanged).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'locked',
+        battery_level: 3423,
+        device_status: 'online',
+        signal_strength: -55,
+        temperature: 24,
+      });
+    });
+
+    it('should handle empty inventory (removes all devices)', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
+      ]);
+      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, []);
+
+      expect(result.removed).toBe(1);
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalled();
+    });
+
+    it('should remove device that is assigned to a unit', async () => {
+      // Device assigned to a unit should be removable
+      const deviceWithUnit = createDeviceWithContext({
+        id: 'device-1',
+        device_serial: 'LOCK-1',
+        unit_id: 'unit-123',
+      });
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([deviceWithUnit]);
+      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, []);
+
+      expect(result.removed).toBe(1);
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-1']);
+      // Verify device removed event is emitted
+      expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        deviceType: 'blulok',
+        gatewayId: gatewayId,
+      });
+    });
+
+    it('should remove multiple devices including ones with unit assignments', async () => {
+      const devices = [
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1', unit_id: null }),
+        createDeviceWithContext({ id: 'device-2', device_serial: 'LOCK-2', unit_id: 'unit-123' }),
+        createDeviceWithContext({ id: 'device-3', device_serial: 'LOCK-3', unit_id: 'unit-456' }),
+      ];
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue(devices);
+      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(2);
+
+      // Keep only LOCK-1, remove others
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1' },
+      ]);
+
+      expect(result.removed).toBe(2);
+      expect(result.unchanged).toBe(1);
+      // Now uses bulk delete
+      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-2', 'device-3']);
+      // Both devices should emit removal events
+      expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('updateDeviceStates', () => {
+    const gatewayId = 'gateway-123';
+
+    it('should update lock_state to lock_status', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', lock_state: 'LOCKED' },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(result.not_found).toHaveLength(0);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'locked',
+      });
+    });
+
+    it('should update online to device_status', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', online: true },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        device_status: 'online',
+      });
+    });
+
+    it('should update multiple fields at once', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        {
+          lock_id: 'LOCK-1',
+          lock_state: 'UNLOCKED',
+          battery_level: 85,
+          online: true,
+          signal_strength: -65,
+          temperature: 22.5,
+        },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'unlocked',
+        device_status: 'online',
+        battery_level: 85,
+        signal_strength: -65,
+        temperature: 22.5,
+      });
+    });
+
+    it('should track not_found devices', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(false);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'UNKNOWN-LOCK', battery_level: 50 },
+      ]);
+
+      expect(result.updated).toBe(0);
+      expect(result.not_found).toContain('UNKNOWN-LOCK');
+    });
+
+    it('should handle batch updates', async () => {
+      mockDeviceModel.updateBluLokDeviceState
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', battery_level: 85 },
+        { lock_id: 'LOCK-2', battery_level: 70 },
+        { lock_id: 'UNKNOWN', battery_level: 50 },
+      ]);
+
+      expect(result.updated).toBe(2);
+      expect(result.not_found).toContain('UNKNOWN');
+    });
+
+    it('should handle error_code and error_message', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', lock_state: 'ERROR', error_code: 'E001', error_message: 'Motor stuck' },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'error',
+        error_code: 'E001',
+        error_message: 'Motor stuck',
+      });
+    });
+
+    it('should convert last_seen string to Date', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', last_seen: '2025-12-10T14:30:00.000Z' },
+      ]);
+
+      expect(result.updated).toBe(1);
+      const call = mockDeviceModel.updateBluLokDeviceState.mock.calls[0];
+      expect(call[1].last_seen).toBeInstanceOf(Date);
+    });
+
+    it('should skip updates with no actual fields', async () => {
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1' }, // No actual state fields
+      ]);
+
+      expect(result.updated).toBe(0);
+      expect(mockDeviceModel.updateBluLokDeviceState).not.toHaveBeenCalled();
     });
   });
 });
