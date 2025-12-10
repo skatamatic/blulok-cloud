@@ -79,6 +79,7 @@ describe('User Reactivation Restores Access', () => {
         { id: 'e2', device_id: 'device-B', user_id: 'user-1', expires_at: new Date(Date.now() + 3600_000) } as any,
       ]),
       remove: jest.fn().mockResolvedValue(true),
+      bulkRemove: jest.fn().mockResolvedValue(2),
     } as any;
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
 
@@ -100,7 +101,8 @@ describe('User Reactivation Restores Access', () => {
     expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
     // Now expects JWT string instead of object
     expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('facility-1', expect.stringContaining('.'));
-    expect(mockDenylistModel.remove).toHaveBeenCalledTimes(2);
+    // Now uses bulkRemove for efficiency (single call instead of 2)
+    expect(mockDenylistModel.bulkRemove).toHaveBeenCalledWith(['device-A', 'device-B'], 'user-1');
   });
 });
 

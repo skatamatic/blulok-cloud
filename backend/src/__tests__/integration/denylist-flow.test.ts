@@ -85,9 +85,11 @@ describe('Denylist Flow Integration', () => {
 
     mockDenylistModel = {
       create: jest.fn().mockResolvedValue({ id: 'entry-1' }),
+      bulkCreate: jest.fn().mockResolvedValue(undefined),
       findByUnitsAndUser: jest.fn().mockResolvedValue([]),
       findByDevice: jest.fn().mockResolvedValue([]),
       remove: jest.fn().mockResolvedValue(true),
+      bulkRemove: jest.fn().mockResolvedValue(1),
       pruneExpired: jest.fn().mockResolvedValue(0),
     } as any;
 
@@ -123,40 +125,24 @@ describe('Denylist Flow Integration', () => {
         metadata: { source: 'api', performedBy: 'admin-1' },
       });
 
-      expect(mockDenylistModel.create).toHaveBeenCalled();
+      // Now uses bulkCreate for efficiency
+      expect(mockDenylistModel.bulkCreate).toHaveBeenCalled();
       expect(DenylistService.buildDenylistAdd).toHaveBeenCalled();
       expect(mockGatewayEvents.unicastToFacility).toHaveBeenCalled();
 
-      // Set up for re-assignment - mock database queries properly
-      // The service makes two types of queries:
-      // 1. knex('blulok_devices').where({ unit_id }).select('id') - to get devices
-      // 2. knex('blulok_devices').join('units').where('blulok_devices.id', entry.device_id).select('units.facility_id').first() - to get facility
-
-      let blulokDevicesCallCount = 0;
-      const mockDevicesForUnit = {
-        where: jest.fn().mockReturnThis(),
-        select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
-      };
-
-      const mockDeviceFacilityQuery = {
-        join: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue({ facility_id: 'facility-1' }),
-      };
-
+      // Set up for re-assignment - mock database queries for batch facility lookup
       mockKnex.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
-          blulokDevicesCallCount++;
-          if (blulokDevicesCallCount === 1) {
-            // First call: get devices for unit in onTenantAssigned handler
-            return mockDevicesForUnit;
-          } else {
-            // Subsequent calls: get facility for each device in the loop
-            return mockDeviceFacilityQuery;
-          }
+          // Mock for both initial device query AND batch facility lookup
+          return {
+            where: jest.fn().mockReturnThis(),
+            select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
+            join: jest.fn().mockReturnValue({
+              whereIn: jest.fn().mockReturnThis(),
+              select: jest.fn().mockResolvedValue([{ device_id: 'device-1', facility_id: 'facility-1' }]),
+            }),
+          };
         }
-        // Return default query builder for other tables
         return {
           where: jest.fn().mockReturnThis(),
           whereIn: jest.fn().mockReturnThis(),
@@ -183,7 +169,7 @@ describe('Denylist Flow Integration', () => {
 
       // Clear call counts but keep implementations
       mockDenylistModel.findByUnitsAndUser.mockClear();
-      mockDenylistModel.remove.mockClear();
+      mockDenylistModel.bulkRemove.mockClear();
       mockGatewayEvents.unicastToFacility.mockClear();
 
       // Simulate re-assignment
@@ -201,7 +187,8 @@ describe('Denylist Flow Integration', () => {
       // Verify that the re-assignment triggered denylist removal
       expect(mockDenylistModel.findByUnitsAndUser).toHaveBeenCalledWith(['unit-1'], 'user-1');
       expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
-      expect(mockDenylistModel.remove).toHaveBeenCalled();
+      // Now uses bulkRemove for efficiency
+      expect(mockDenylistModel.bulkRemove).toHaveBeenCalled();
       expect(mockGatewayEvents.unicastToFacility).toHaveBeenCalled();
     });
   });

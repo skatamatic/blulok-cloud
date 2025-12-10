@@ -68,6 +68,7 @@ describe('Key Sharing Re-grant triggers denylist removal', () => {
         { id: 'e1', device_id: 'device-1', user_id: 'invitee-1', expires_at: new Date(Date.now() + 3600_000) } as any,
       ]),
       remove: jest.fn().mockResolvedValue(true),
+      bulkRemove: jest.fn().mockResolvedValue(1),
     } as any;
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
 
@@ -93,7 +94,8 @@ describe('Key Sharing Re-grant triggers denylist removal', () => {
     expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
     // Now expects JWT string instead of object
     expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('facility-1', expect.stringContaining('.'));
-    expect(mockDenylistModel.remove).toHaveBeenCalledWith('device-1', 'invitee-1');
+    // Now uses bulkRemove instead of remove for efficiency
+    expect(mockDenylistModel.bulkRemove).toHaveBeenCalledWith(['device-1'], 'invitee-1');
   });
 });
 

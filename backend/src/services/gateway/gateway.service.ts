@@ -51,21 +51,32 @@ export class GatewayService extends EventEmitter {
   }
 
   /**
-   * Initialize all configured gateways
+   * Initialize all configured gateways in parallel for faster startup.
+   * Uses Promise.allSettled to ensure all gateways are attempted even if some fail.
    */
   public async initializeAllGateways(): Promise<void> {
     try {
       const gateways = await this.gatewayModel.findAll();
 
-      for (const gatewayConfig of gateways) {
-        try {
-          await this.initializeGateway(gatewayConfig);
-        } catch (error) {
-          console.error(`Failed to initialize gateway ${gatewayConfig.id}:`, error);
-        }
-      }
+      // Parallelize gateway initialization (instead of sequential for/await)
+      // This dramatically reduces startup time when there are many gateways
+      const results = await Promise.allSettled(
+        gateways.map(gatewayConfig =>
+          this.initializeGateway(gatewayConfig).catch(error => {
+            console.error(`Failed to initialize gateway ${gatewayConfig.id}:`, error);
+            throw error; // Re-throw so allSettled captures it as rejected
+          })
+        )
+      );
 
-      console.log(`Initialized ${this.activeGateways.size} gateways`);
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+
+      if (failed > 0) {
+        console.warn(`Gateway initialization: ${succeeded}/${gateways.length} succeeded, ${failed} failed`);
+      } else {
+        console.log(`Initialized ${this.activeGateways.size} gateways`);
+      }
     } catch (error) {
       console.error('Failed to initialize gateways:', error);
       throw error;
