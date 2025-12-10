@@ -191,14 +191,68 @@ export class DeviceSyncService {
         }
       }
 
-      // Add new devices
-      for (const gatewayDevice of devicesToAdd) {
-        await this.addGatewayDevice(gatewayId, gatewayDevice);
+      // PERFORMANCE FIX: Bulk add new devices instead of sequential inserts
+      if (devicesToAdd.length > 0) {
+        const deviceDataToInsert = devicesToAdd
+          .map(gatewayDevice => {
+            const deviceId = gatewayDevice.serial || gatewayDevice.id || gatewayDevice.lockId;
+            if (!deviceId) return null;
+            
+            const createData: any = {
+              gateway_id: gatewayId,
+              device_serial: deviceId,
+              device_settings: JSON.stringify({ gatewayData: gatewayDevice }),
+              metadata: JSON.stringify({
+                autoCreated: true,
+                createdFromGatewaySync: true,
+                gatewayType: 'http'
+              })
+            };
+
+            if (gatewayDevice.firmwareVersion) {
+              createData.firmware_version = gatewayDevice.firmwareVersion;
+            }
+
+            return createData;
+          })
+          .filter(d => d !== null);
+
+        if (deviceDataToInsert.length > 0) {
+          try {
+            const count = await this.deviceModel.bulkCreateBluLokDevices(deviceDataToInsert);
+            console.log(`[DEVICE-SYNC] Bulk added ${count} devices from gateway ${gatewayId}`);
+          } catch (error) {
+            console.error(`Failed to bulk add devices for gateway ${gatewayId}:`, error);
+            // Fall back to individual inserts on bulk failure
+            for (const gatewayDevice of devicesToAdd) {
+              await this.addGatewayDevice(gatewayId, gatewayDevice);
+            }
+          }
+        }
       }
 
-      // Mark devices that no longer exist on gateway as offline
-      for (const device of devicesToRemove) {
-        await this.removeGatewayDevice(device);
+      // PERFORMANCE FIX: Bulk remove devices instead of sequential deletes
+      if (devicesToRemove.length > 0) {
+        const deviceIdsToRemove = devicesToRemove.map(d => d.id);
+        try {
+          const count = await this.deviceModel.bulkDeleteBluLokDevices(deviceIdsToRemove);
+          console.log(`[DEVICE-SYNC] Bulk removed ${count} devices from gateway ${gatewayId}`);
+          
+          // Emit device removed events
+          for (const device of devicesToRemove) {
+            this.eventService.emitDeviceRemoved({
+              deviceId: device.id,
+              deviceType: 'blulok',
+              gatewayId: device.gateway_id
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to bulk remove devices for gateway ${gatewayId}:`, error);
+          // Fall back to individual deletes on bulk failure
+          for (const device of devicesToRemove) {
+            await this.removeGatewayDevice(device);
+          }
+        }
       }
 
     } catch (error) {
@@ -389,54 +443,104 @@ export class DeviceSyncService {
         existingDevices.map((device) => [device.device_serial, device])
       );
 
-      // Find devices that exist on gateway but not in our database (need to add)
+      // PERFORMANCE FIX: Collect devices to add and remove, then bulk process
+      const devicesToAdd: CreateBluLokDeviceData[] = [];
+      const devicesToUpdate: Array<{ id: string; firmware_version: string }> = [];
+      
       for (const [lockId, inventoryItem] of incomingDeviceMap) {
         if (!existingDeviceMap.has(lockId)) {
-          try {
-            const createData: CreateBluLokDeviceData = {
-              gateway_id: gatewayId,
-              device_serial: lockId,
-              device_settings: { lockNumber: inventoryItem.lock_number },
-              metadata: {
-                autoCreated: true,
-                createdFromInventorySync: true,
-              },
-            };
+          const createData: CreateBluLokDeviceData = {
+            gateway_id: gatewayId,
+            device_serial: lockId,
+            device_settings: { lockNumber: inventoryItem.lock_number },
+            metadata: {
+              autoCreated: true,
+              createdFromInventorySync: true,
+            },
+          };
 
-            if (inventoryItem.firmware_version) {
-              createData.firmware_version = inventoryItem.firmware_version;
-            }
-
-            await this.deviceModel.createBluLokDevice(createData);
-            result.added++;
-            console.log(`[DEVICE-SYNC] Added new device ${lockId} from inventory sync`);
-          } catch (error: any) {
-            result.errors.push(`Failed to add device ${lockId}: ${error.message}`);
+          if (inventoryItem.firmware_version) {
+            createData.firmware_version = inventoryItem.firmware_version;
           }
+
+          devicesToAdd.push(createData);
         } else {
-          // Device exists - update firmware_version if provided
+          // Device exists - check if firmware needs update
           const existing = existingDeviceMap.get(lockId)!;
           if (inventoryItem.firmware_version && existing.firmware_version !== inventoryItem.firmware_version) {
-            try {
-              await this.deviceModel.updateBluLokDeviceState(existing.id, {
-                firmware_version: inventoryItem.firmware_version,
-              });
-            } catch (error: any) {
-              result.errors.push(`Failed to update firmware for ${lockId}: ${error.message}`);
-            }
+            devicesToUpdate.push({
+              id: existing.id,
+              firmware_version: inventoryItem.firmware_version,
+            });
           }
           result.unchanged++;
         }
       }
 
-      // Find devices that exist in our database but not in incoming list (need to remove)
+      // Bulk add new devices
+      if (devicesToAdd.length > 0) {
+        try {
+          const count = await this.deviceModel.bulkCreateBluLokDevices(devicesToAdd);
+          result.added = count;
+          console.log(`[DEVICE-SYNC] Bulk added ${count} devices from inventory sync`);
+        } catch (error: any) {
+          result.errors.push(`Bulk add failed: ${error.message}`);
+          // Fall back to individual inserts
+          for (const createData of devicesToAdd) {
+            try {
+              await this.deviceModel.createBluLokDevice(createData);
+              result.added++;
+            } catch (err: any) {
+              result.errors.push(`Failed to add device ${createData.device_serial}: ${err.message}`);
+            }
+          }
+        }
+      }
+
+      // Update firmware versions (still sequential as each is a different device)
+      for (const update of devicesToUpdate) {
+        try {
+          await this.deviceModel.updateBluLokDeviceState(update.id, {
+            firmware_version: update.firmware_version,
+          });
+        } catch (error: any) {
+          result.errors.push(`Failed to update firmware for ${update.id}: ${error.message}`);
+        }
+      }
+
+      // Find and bulk remove devices not in incoming list
+      const devicesToRemove: BluLokDevice[] = [];
       for (const [deviceSerial, device] of existingDeviceMap) {
         if (!incomingDeviceMap.has(deviceSerial)) {
-          try {
-            await this.removeGatewayDevice(device);
-            result.removed++;
-          } catch (error: any) {
-            result.errors.push(`Failed to remove device ${deviceSerial}: ${error.message}`);
+          devicesToRemove.push(device);
+        }
+      }
+
+      if (devicesToRemove.length > 0) {
+        try {
+          const deviceIds = devicesToRemove.map(d => d.id);
+          const count = await this.deviceModel.bulkDeleteBluLokDevices(deviceIds);
+          result.removed = count;
+          console.log(`[DEVICE-SYNC] Bulk removed ${count} devices from inventory sync`);
+          
+          // Emit device removed events
+          for (const device of devicesToRemove) {
+            this.eventService.emitDeviceRemoved({
+              deviceId: device.id,
+              deviceType: 'blulok',
+              gatewayId: device.gateway_id
+            });
+          }
+        } catch (error: any) {
+          result.errors.push(`Bulk remove failed: ${error.message}`);
+          // Fall back to individual deletes
+          for (const device of devicesToRemove) {
+            try {
+              await this.removeGatewayDevice(device);
+              result.removed++;
+            } catch (err: any) {
+              result.errors.push(`Failed to remove device ${device.device_serial}: ${err.message}`);
+            }
           }
         }
       }

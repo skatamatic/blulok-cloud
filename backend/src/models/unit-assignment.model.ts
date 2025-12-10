@@ -160,6 +160,47 @@ export class UnitAssignmentModel {
   }
 
   /**
+   * Get all assignments for multiple tenants in a single query.
+   * PERFORMANCE: Avoids N+1 queries when processing many tenants.
+   * 
+   * @param tenantIds - Array of tenant IDs to fetch assignments for
+   * @returns Array of all assignments for the specified tenants
+   */
+  async findByTenantIds(tenantIds: string[]): Promise<UnitAssignment[]> {
+    try {
+      if (tenantIds.length === 0) {
+        return [];
+      }
+      return await this.db('unit_assignments')
+        .whereIn('tenant_id', tenantIds)
+        .orderBy('created_at', 'desc');
+    } catch (error) {
+      logger.error('Error finding tenant assignments by IDs:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all assignments for units in a specific facility.
+   * PERFORMANCE: Fetches all assignments for a facility in one query.
+   * 
+   * @param facilityId - Facility ID to get assignments for
+   * @returns Array of assignments with unit_id included
+   */
+  async findByFacilityId(facilityId: string): Promise<UnitAssignment[]> {
+    try {
+      return await this.db('unit_assignments as ua')
+        .join('units as u', 'ua.unit_id', 'u.id')
+        .where('u.facility_id', facilityId)
+        .select('ua.*')
+        .orderBy('ua.created_at', 'desc');
+    } catch (error) {
+      logger.error('Error finding facility assignments:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get specific assignment
    */
   async findByUnitAndTenant(unitId: string, tenantId: string): Promise<UnitAssignment | null> {

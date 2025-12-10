@@ -98,6 +98,51 @@ export class UserModel extends BaseModel {
   }
 
   /**
+   * Find user by email OR phone number in a single query.
+   * More efficient than fetching all users and scanning in memory.
+   * 
+   * @param email - Optional email to search
+   * @param phoneE164 - Optional normalized phone number to search
+   * @returns User if found by either identifier, undefined otherwise
+   */
+  public static async findByEmailOrPhone(
+    email: string | null | undefined,
+    phoneE164: string | null | undefined
+  ): Promise<User | undefined> {
+    if (!email && !phoneE164) {
+      return undefined;
+    }
+
+    const query = this.query();
+    
+    if (email && phoneE164) {
+      // Search for either email OR phone
+      query.where(function(this: any) {
+        this.where('email', email.toLowerCase()).orWhere('phone_number', phoneE164);
+      });
+    } else if (email) {
+      query.where('email', email.toLowerCase());
+    } else if (phoneE164) {
+      query.where('phone_number', phoneE164);
+    }
+
+    return query.first() as Promise<User | undefined>;
+  }
+
+  /**
+   * Find users by role with minimal columns for efficient FMS comparison.
+   * Prevents memory bloat by only selecting identity-related columns.
+   * 
+   * @param role - User role to filter by
+   * @returns Array of users with only essential identity fields
+   */
+  public static async findByRoleMinimal(role: UserRole): Promise<Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier'>[]> {
+    return this.query()
+      .where('role', role)
+      .select('id', 'email', 'phone_number', 'first_name', 'last_name', 'login_identifier') as any;
+  }
+
+  /**
    * Find all active users in the system.
    * Used for user management interfaces and reporting.
    *

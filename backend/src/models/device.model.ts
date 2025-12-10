@@ -383,6 +383,33 @@ export class DeviceModel {
     return device as BluLokDevice;
   }
 
+  /**
+   * Bulk create BluLok devices in a single database operation.
+   * PERFORMANCE: Much more efficient than sequential inserts for gateway provisioning.
+   * 
+   * @param devices - Array of device data to insert
+   * @returns Number of devices successfully created
+   */
+  async bulkCreateBluLokDevices(devices: CreateBluLokDeviceData[]): Promise<number> {
+    if (devices.length === 0) return 0;
+    const knex = this.db.connection;
+    await knex('blulok_devices').insert(devices);
+    return devices.length;
+  }
+
+  /**
+   * Bulk delete BluLok devices by their IDs.
+   * PERFORMANCE: Much more efficient than sequential deletes.
+   * 
+   * @param deviceIds - Array of device IDs to delete
+   * @returns Number of devices deleted
+   */
+  async bulkDeleteBluLokDevices(deviceIds: string[]): Promise<number> {
+    if (deviceIds.length === 0) return 0;
+    const knex = this.db.connection;
+    return await knex('blulok_devices').whereIn('id', deviceIds).del();
+  }
+
   async updateDeviceStatus(deviceId: string, deviceType: 'access_control' | 'blulok', status: string): Promise<void> {
     const knex = this.db.connection;
     const table = deviceType === 'access_control' ? 'access_control_devices' : 'blulok_devices';

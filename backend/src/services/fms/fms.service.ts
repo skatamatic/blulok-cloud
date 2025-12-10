@@ -616,13 +616,40 @@ export class FMSService {
     const mappingsByExternalId = new Map(existingMappings.map(m => [m.external_id, m]));
 
     // SECURITY: Get all existing TENANT users ONLY (never admin/maintenance)
-    const existingUsers = await UserModel.findAll({ role: UserRole.TENANT });
+    // PERFORMANCE FIX: Only select columns needed for comparison to prevent memory bloat
+    const existingUsers = await UserModel.findByRoleMinimal(UserRole.TENANT);
     const usersByEmail = new Map(
       existingUsers
         .filter((u: any) => typeof u.email === 'string' && u.email.trim().length > 0)
         .map((u: any) => [u.email.toLowerCase(), u])
     );
     const usersById = new Map(existingUsers.map((u: any) => [u.id, u]));
+
+    // PERFORMANCE FIX: Pre-fetch all data needed for unit change detection to avoid N+1 queries
+    // 1. Fetch all unit assignments for this facility in one query
+    const allFacilityAssignments = await this.unitAssignmentModel.findByFacilityId(facilityId);
+    const assignmentsByTenantId = new Map<string, typeof allFacilityAssignments>();
+    for (const assignment of allFacilityAssignments) {
+      const tenantAssignments = assignmentsByTenantId.get(assignment.tenant_id) || [];
+      tenantAssignments.push(assignment);
+      assignmentsByTenantId.set(assignment.tenant_id, tenantAssignments);
+    }
+
+    // 2. Fetch all unit entity mappings for this facility
+    const unitMappings = await this.entityMappingModel.findByFacility(facilityId, 'unit');
+    const unitMappingsByExternalId = new Map(unitMappings.map(m => [m.external_id, m]));
+
+    // 3. Fetch all units for this facility
+    const allUnitsResult = await this.unitModel.getUnitsListForUser('system', UserRole.ADMIN, { facility_id: facilityId, limit: 10000, offset: 0 });
+    const allUnits = allUnitsResult.units || [];
+    const unitsById = new Map(allUnits.map((u: any) => [u.id, u]));
+
+    // Create context object to pass to detectTenantUnitChanges
+    const unitChangeContext = {
+      assignmentsByTenantId,
+      unitMappingsByExternalId,
+      unitsById,
+    };
 
     for (const fmsTenant of fmsTenants) {
       // Log every tenant we process
@@ -771,7 +798,8 @@ export class FMSService {
         }
 
         // Check for unit assignment changes
-        const unitChanges = await this.detectTenantUnitChanges(facilityId, user.id, fmsTenant, syncLogId);
+        // PERFORMANCE FIX: Pass pre-fetched context to avoid N+1 queries
+        const unitChanges = await this.detectTenantUnitChanges(facilityId, user.id, fmsTenant, syncLogId, unitChangeContext);
         changes.push(...unitChanges);
       }
     }
@@ -804,25 +832,30 @@ export class FMSService {
 
   /**
    * Detect unit assignment changes for a tenant
+   * 
+   * PERFORMANCE FIX: Accepts pre-fetched context to avoid N+1 queries when called in a loop
    */
   private async detectTenantUnitChanges(
     facilityId: string,
     tenantId: string,
     fmsTenant: FMSTenant,
-    syncLogId: string
+    syncLogId: string,
+    context: {
+      assignmentsByTenantId: Map<string, any[]>;
+      unitMappingsByExternalId: Map<string, any>;
+      unitsById: Map<string, any>;
+    }
   ): Promise<FMSChange[]> {
     const changes: FMSChange[] = [];
 
-    // Get current unit assignments
-    const currentAssignments = await this.unitAssignmentModel.findByTenantId(tenantId);
+    // PERFORMANCE FIX: Use pre-fetched assignments instead of querying per tenant
+    const currentAssignments = context.assignmentsByTenantId.get(tenantId) || [];
     const currentUnitIds = new Set(currentAssignments.map(a => a.unit_id));
 
-    // Get unit mappings to convert FMS unit IDs to our unit IDs
-    const fmsUnitMappings = await Promise.all(
-      fmsTenant.unitIds.map(extId => 
-        this.entityMappingModel.findByExternalId(facilityId, 'unit', extId)
-      )
-    );
+    // PERFORMANCE FIX: Use pre-fetched unit mappings instead of querying per unit
+    const fmsUnitMappings = fmsTenant.unitIds
+      .map(extId => context.unitMappingsByExternalId.get(extId))
+      .filter(m => m !== undefined);
 
     const fmsInternalUnitIds = new Set(
       fmsUnitMappings.filter(m => m !== null).map(m => m!.internal_id)
@@ -831,7 +864,8 @@ export class FMSService {
     // Detect units to add
     for (const mapping of fmsUnitMappings) {
       if (mapping && !currentUnitIds.has(mapping.internal_id)) {
-        const unit = await this.unitModel.findById(mapping.internal_id);
+        // PERFORMANCE FIX: Use pre-fetched units instead of querying per unit
+        const unit = context.unitsById.get(mapping.internal_id);
         
         // Validate unit exists and belongs to the correct facility
         if (!unit) {
@@ -877,7 +911,8 @@ export class FMSService {
     // Detect units to remove
     for (const assignment of currentAssignments) {
       if (!fmsInternalUnitIds.has(assignment.unit_id)) {
-        const unit = await this.unitModel.findById(assignment.unit_id);
+        // PERFORMANCE FIX: Use pre-fetched units instead of querying per unit
+        const unit = context.unitsById.get(assignment.unit_id);
         const change = await this.changeModel.create({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_UNIT_CHANGED,
@@ -1280,19 +1315,16 @@ export class FMSService {
     const phoneE164 = rawPhone ? toE164(rawPhone) : '';
     const preferredIdentifier = rawEmail ? rawEmail.toLowerCase() : (phoneE164 ? phoneE164.toLowerCase() : '');
 
-    // Check if user already exists by login identifier when available, fallback to email scan
+    // Check if user already exists by login identifier when available, fallback to targeted DB query
     let existingUser: User | undefined;
     if (preferredIdentifier) {
       existingUser = await UserModel.findByLoginIdentifier(preferredIdentifier);
     }
     if (!existingUser && (rawEmail || phoneE164)) {
-      const existingUsers = await UserModel.findAll({ role: UserRole.TENANT }) as unknown as User[];
-      const byEmail: User | undefined = rawEmail
-        ? existingUsers.find((u) => (u.email || '').toLowerCase() === rawEmail.toLowerCase())
-        : undefined;
-      const byPhone: User | undefined = phoneE164
-        ? existingUsers.find((u) => (u.phone_number || '').toLowerCase() === phoneE164.toLowerCase())
-        : undefined;
+      // PERFORMANCE FIX: Use targeted DB query instead of fetching entire user table
+      // This prevents the "Scan of Death" when processing many tenants
+      const byEmail = rawEmail ? await UserModel.findByEmail(rawEmail.toLowerCase()) : undefined;
+      const byPhone = phoneE164 ? await UserModel.findByPhone(phoneE164) : undefined;
 
       // Conflict: email points to one user and phone to a different user
       if (byEmail && byPhone && byEmail.id !== byPhone.id) {
@@ -1308,7 +1340,7 @@ export class FMSService {
         throw new Error('FMS tenant email/phone conflict with existing users');
       }
 
-      existingUser = (byEmail || byPhone) as any;
+      existingUser = byEmail || byPhone;
     }
 
     let user: User;
@@ -1416,39 +1448,47 @@ export class FMSService {
       });
     }
 
-    // Assign to units using UnitsService (which will emit events)
+    // PERFORMANCE FIX: Batch fetch all unit mappings and use bulk assignment
+    const unitMappings = await this.entityMappingModel.findByFacility(facilityId, 'unit');
+    const unitMappingsByExternalId = new Map(unitMappings.map(m => [m.external_id, m]));
+    
+    // Collect valid unit IDs for bulk assignment
+    const validUnitIds: string[] = [];
     for (const externalUnitId of tenantData.unitIds) {
-      const unitMapping = await this.entityMappingModel.findByExternalId(
-        facilityId,
-        'unit',
-        externalUnitId
+      const unitMapping = unitMappingsByExternalId.get(externalUnitId);
+      if (unitMapping) {
+        validUnitIds.push(unitMapping.internal_id);
+      }
+    }
+
+    if (validUnitIds.length > 0) {
+      // Use bulk assignment for efficiency
+      const assignResult = await this.unitsService.bulkAssignTenant(
+        user.id,
+        validUnitIds,
+        {
+          accessType: 'full',
+          isPrimary: true,
+          performedBy,
+          source: 'fms_sync',
+          syncLogId: change.sync_log_id,
+          notes: `FMS sync: ${tenantData.externalId}`,
+        }
       );
 
-      if (unitMapping) {
-        // SECURITY: Validate unit belongs to this facility
-        const unit = await this.unitModel.findById(unitMapping.internal_id);
-        if (!unit || unit.facility_id !== facilityId) {
-          logger.error(`Security violation: Unit ${unitMapping.internal_id} does not belong to facility ${facilityId}`);
-          continue; // Skip this assignment
-        }
-
-        // Use UnitsService to assign tenant (it will emit events)
-        await this.unitsService.assignTenant(
-          unitMapping.internal_id,
-          user.id,
-          {
-            accessType: 'full',
-            isPrimary: true,
-            performedBy,
-            source: 'fms_sync',
-            syncLogId: change.sync_log_id,
-            notes: `FMS sync: ${tenantData.externalId}`,
-          }
-        );
-
+      // Track access grants
+      for (const unitId of validUnitIds) {
         result.accessChanges.accessGranted.push({
           userId: user.id,
-          unitId: unitMapping.internal_id,
+          unitId,
+        });
+      }
+
+      if (assignResult.errors.length > 0) {
+        logger.warn(`[FMS] Some unit assignments failed for tenant ${user.id}:`, {
+          errors: assignResult.errors,
+          assigned: assignResult.assigned,
+          skipped: assignResult.skipped,
         });
       }
     }
