@@ -79,14 +79,47 @@ export class Ed25519Service {
 
   /**
    * Sign a Secure Time Sync JWT.
-   * - Uses the Ops key and EdDSA, like Route Pass, but does NOT set iat/exp.
-   * - Payload contains only cmd_type and ts so the meaning of the signed data is unambiguous.
+   * Uses consistent format with other command JWTs (iss, iat, cmd_type).
+   * 
+   * @param ts - Unix timestamp to synchronize
+   * @returns Promise resolving to signed JWT string
    */
   public static async signTimeSyncJwt(ts: number): Promise<string> {
     const privateKey = await this.getOpsPrivateKey();
-    const payload = { cmd_type: 'SECURE_TIME_SYNC', ts };
+    const now = Math.floor(Date.now() / 1000);
+    const payload = { iss: 'BluCloud:Root', cmd_type: 'SECURE_TIME_SYNC', ts };
     return await new SignJWT(payload as any)
       .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
+      .setIssuedAt(now)
+      .sign(privateKey);
+  }
+
+  /**
+   * Sign a command JWT for gateway delivery.
+   * Creates a standard JWT (compact JWS) with embedded signature.
+   * 
+   * @param payload - Command payload containing cmd_type and command-specific fields
+   * @returns Promise resolving to signed JWT string
+   * 
+   * Payload must include:
+   * - cmd_type: CAPS_CASE command type (e.g., 'DENYLIST_ADD', 'LOCK', 'UNLOCK')
+   * - Command-specific fields (e.g., denylist_add, target, device_id)
+   * 
+   * JWT will include:
+   * - iss: 'BluCloud:Root'
+   * - iat: current timestamp
+   * - All fields from payload
+   */
+  public static async signCommandJwt(payload: Record<string, any>): Promise<string> {
+    const privateKey = await this.getOpsPrivateKey();
+    const now = Math.floor(Date.now() / 1000);
+    const fullPayload = {
+      iss: 'BluCloud:Root',
+      ...payload,
+    };
+    return await new SignJWT(fullPayload as any)
+      .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
+      .setIssuedAt(now)
       .sign(privateKey);
   }
 

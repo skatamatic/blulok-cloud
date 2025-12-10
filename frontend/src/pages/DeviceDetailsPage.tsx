@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import {
   ArrowLeftIcon,
   LockClosedIcon,
@@ -13,6 +14,7 @@ import {
   UserIcon,
   ShieldExclamationIcon,
   ArrowTopRightOnSquareIcon,
+  SignalIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -26,7 +28,16 @@ interface DeviceDetails {
   lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   battery_level?: number;
+  /** Wireless signal strength in dBm (e.g., -70 dBm) */
+  signal_strength?: number;
+  /** Device temperature reading in Celsius */
+  temperature?: number;
+  /** Standardized error code for error states */
+  error_code?: string | null;
+  /** Human-readable error description */
+  error_message?: string | null;
   last_activity?: string;
+  last_seen?: string;
   firmware_version?: string;
   primary_tenant?: {
     id: string;
@@ -84,6 +95,7 @@ export default function DeviceDetailsPage() {
   const location = useLocation();
   const { addToast } = useToast();
   const { authState } = useAuth();
+  const ws = useWebSocket();
   const [device, setDevice] = useState<DeviceDetails | null>(null);
   const [denylistEntries, setDenylistEntries] = useState<DenylistEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,6 +120,50 @@ export default function DeviceDetailsPage() {
       }
     }
   }, [deviceId, activeTab]);
+
+  // Subscribe to device status updates for live telemetry
+  const handleDeviceStatusUpdate = useCallback((data: any) => {
+    if (!data?.devices || !deviceId) return;
+    
+    // Find the update for this specific device
+    const deviceUpdate = data.devices.find((d: any) => d.id === deviceId);
+    if (deviceUpdate) {
+      setDevice(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          lock_status: deviceUpdate.lock_status ?? prev.lock_status,
+          device_status: deviceUpdate.device_status ?? prev.device_status,
+          battery_level: deviceUpdate.battery_level ?? prev.battery_level,
+          signal_strength: deviceUpdate.signal_strength ?? prev.signal_strength,
+          temperature: deviceUpdate.temperature ?? prev.temperature,
+          error_code: deviceUpdate.error_code ?? prev.error_code,
+          error_message: deviceUpdate.error_message ?? prev.error_message,
+          firmware_version: deviceUpdate.firmware_version ?? prev.firmware_version,
+          last_activity: deviceUpdate.last_activity ?? prev.last_activity,
+          last_seen: deviceUpdate.last_seen ?? prev.last_seen,
+        };
+      });
+    }
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (!ws || !deviceId) return;
+
+    // Subscribe to device status updates filtered to this specific device
+    const subscriptionId = ws.subscribe(
+      'device_status',
+      handleDeviceStatusUpdate,
+      (err) => console.error('Device status subscription error:', err),
+      { device_id: deviceId }
+    );
+
+    return () => {
+      if (subscriptionId) {
+        ws.unsubscribe(subscriptionId);
+      }
+    };
+  }, [ws, deviceId, handleDeviceStatusUpdate]);
 
   const loadDeviceDetails = async () => {
     if (!deviceId) return;
@@ -431,7 +487,66 @@ export default function DeviceDetailsPage() {
                   </div>
                 </div>
               )}
+
+              {device.signal_strength !== undefined && device.signal_strength !== null && (
+                <div>
+                  <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Signal Strength</label>
+                  <div className="mt-1 flex items-center">
+                    <SignalIcon className={`h-5 w-5 mr-2 ${
+                      device.signal_strength >= -50 ? 'text-green-500' :
+                      device.signal_strength >= -70 ? 'text-yellow-500' : 'text-red-500'
+                    }`} />
+                    <span className="text-lg font-medium text-gray-900 dark:text-white">
+                      {device.signal_strength} dBm
+                    </span>
+                    <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">
+                      ({device.signal_strength >= -50 ? 'Excellent' :
+                        device.signal_strength >= -60 ? 'Good' :
+                        device.signal_strength >= -70 ? 'Fair' : 'Weak'})
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {device.temperature !== undefined && device.temperature !== null && (
+                <div>
+                  <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Temperature</label>
+                  <div className="mt-1 flex items-center">
+                    <span className={`text-lg font-medium ${
+                      device.temperature > 50 ? 'text-red-500' :
+                      device.temperature < 5 ? 'text-blue-500' : 'text-gray-900 dark:text-white'
+                    }`}>
+                      {device.temperature.toFixed(1)}°C
+                    </span>
+                    {device.temperature > 50 && (
+                      <span className="ml-2 text-sm text-red-500">⚠ High</span>
+                    )}
+                    {device.temperature < 5 && (
+                      <span className="ml-2 text-sm text-blue-500">❄ Low</span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Error Information */}
+            {device.error_code && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                <div className="flex items-start">
+                  <ExclamationTriangleIcon className="h-5 w-5 text-red-500 mr-3 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-red-800 dark:text-red-400">
+                      Error: {device.error_code}
+                    </h4>
+                    {device.error_message && (
+                      <p className="mt-1 text-sm text-red-700 dark:text-red-300">
+                        {device.error_message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Device Information */}
             <div className="border-t border-gray-200 dark:border-gray-700 pt-6">

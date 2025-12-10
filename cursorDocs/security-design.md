@@ -17,8 +17,14 @@ This document summarizes the new centralized trust model implemented in the back
 
 ### Data Artifacts
 - Route Pass (JWT, Ed25519): `iss`, `sub`, `aud[]`, `iat`, `exp`, `jti`, `device_pubkey`.
-- Denylist Update Command: `[ { cmd_type:'DENYLIST_ADD', denylist_add:[{ sub, exp }], targets: { device_ids: [...] } }, signature ]`.
-- Secure Time Sync Command: `[ { cmd_type:'SECURE_TIME_SYNC', ts }, signature ]`.
+- Gateway Commands (JWT, Ed25519): All cloud-to-gateway commands are standard JWTs with embedded signature.
+  - Common claims: `iss: 'BluCloud:Root'`, `iat`, `cmd_type` (CAPS_CASE)
+  - DENYLIST_ADD: `{ cmd_type:'DENYLIST_ADD', denylist_add:[{ sub, exp }], target: ['deviceId1', ...] }`
+  - DENYLIST_REMOVE: `{ cmd_type:'DENYLIST_REMOVE', denylist_remove:[{ sub, exp }], target: ['deviceId1', ...] }`
+  - LOCK: `{ cmd_type:'LOCK', device_id: 'deviceId' }`
+  - UNLOCK: `{ cmd_type:'UNLOCK', device_id: 'deviceId' }`
+  - SECURE_TIME_SYNC: `{ cmd_type:'SECURE_TIME_SYNC', ts }`
+- WebSocket command envelope: `{ type: 'COMMAND', jwt: 'eyJ...' }`
 
 #### Route Pass Audience Formats
 - Direct lock access: `lock:{lockId}`
@@ -32,6 +38,10 @@ This document summarizes the new centralized trust model implemented in the back
 - New API:
   - App: `POST /api/v1/passes/request` (rate-limited)
   - Gateway: `GET /api/v1/internal/gateway/time-sync`, `POST /api/v1/internal/gateway/request-time-sync`, `POST /api/v1/internal/gateway/fallback-pass`
+  - Gateway Device Sync (NEW):
+    - `POST /api/v1/internal/gateway/devices/inventory` - Sync device inventory (add/remove devices via delta)
+    - `POST /api/v1/internal/gateway/devices/state` - Partial device state updates (battery, lock state, signal, etc.)
+    - `POST /api/v1/internal/gateway/device-sync` (DEPRECATED) - Legacy combined endpoint, use `/devices/inventory` + `/devices/state`
   - Admin: `POST /api/v1/admin/ops-key-rotation/broadcast` (DEV_ADMIN only)
   - Dev Tools (DEV_ADMIN, non-production only): `POST /api/v1/admin/dev-tools/gateway-command` - sends DENYLIST_ADD, DENYLIST_REMOVE, LOCK, UNLOCK commands to gateway for testing
 - Websocket Gateway at `/ws/gateway` (facility-scoped) for:

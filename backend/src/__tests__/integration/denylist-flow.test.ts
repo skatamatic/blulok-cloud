@@ -93,15 +93,12 @@ describe('Denylist Flow Integration', () => {
 
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
 
-    jest.spyOn(DenylistService, 'buildDenylistAdd').mockResolvedValue([
-      { cmd_type: 'DENYLIST_ADD', denylist_add: [] },
-      'signature',
-    ]);
+    // Mock JWT strings for denylist commands
+    const mockDenylistAddJwt = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9BREQiLCJkZW55bGlzdF9hZGQiOltdfQ.mock-sig';
+    const mockDenylistRemoveJwt = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9SRU1PVkUiLCJkZW55bGlzdF9yZW1vdmUiOltdfQ.mock-sig';
 
-    jest.spyOn(DenylistService, 'buildDenylistRemove').mockResolvedValue([
-      { cmd_type: 'DENYLIST_REMOVE', denylist_remove: [] },
-      'signature',
-    ]);
+    jest.spyOn(DenylistService, 'buildDenylistAdd').mockResolvedValue(mockDenylistAddJwt);
+    jest.spyOn(DenylistService, 'buildDenylistRemove').mockResolvedValue(mockDenylistRemoveJwt);
   });
 
   afterEach(() => {

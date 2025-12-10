@@ -66,12 +66,29 @@ describe('WebsocketGatewayTransport', () => {
     ws.close();
   });
 
-  it('receives unicast commands for its facility', async () => {
+  it('receives unicast commands for its facility (JWT format)', async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
     await new Promise<void>((resolve) => ws.once('open', () => resolve()));
     ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
     await waitForMessage(ws); // AUTH_OK
 
+    // Mock JWT string (header.payload.signature format)
+    const mockJwt = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9BREQiLCJkZW55bGlzdF9hZGQiOlt7InN1YiI6InVzZXItMSIsImV4cCI6MTIzfV19.mock-sig';
+    GatewayEventsService.getInstance().unicastToFacility('facility-1', mockJwt);
+    const msg = await waitForMessage(ws);
+    // JWT strings are wrapped in a COMMAND envelope
+    expect(msg.type).toBe('COMMAND');
+    expect(msg.jwt).toBe(mockJwt);
+    ws.close();
+  });
+
+  it('receives unicast commands for its facility (legacy object format)', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+    await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+    ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+    await waitForMessage(ws); // AUTH_OK
+
+    // Legacy object format (still supported for backward compatibility)
     const payload = { cmd_type: 'DENYLIST_ADD', entries: [{ sub: 'user-1', exp: 123 }] };
     GatewayEventsService.getInstance().unicastToFacility('facility-1', payload);
     const msg = await waitForMessage(ws);

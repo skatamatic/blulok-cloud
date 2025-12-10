@@ -82,9 +82,23 @@ export class GatewayEventsService {
     try {
       // Log a concise summary to help debugging command delivery
       const summary = (() => {
+        // Handle JWT strings by parsing the payload
+        if (typeof payload === 'string' && payload.includes('.')) {
+          try {
+            const parts = payload.split('.');
+            if (parts.length === 3) {
+              const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+              const type = decoded?.cmd_type || 'JWT';
+              const targets = decoded?.target?.length ?? undefined;
+              return { type, targets, format: 'JWT' };
+            }
+          } catch { /* ignore parse errors */ }
+          return { type: 'JWT_STRING', format: 'JWT' };
+        }
+        // Handle legacy object/array payloads (for backward compatibility)
         const p = Array.isArray(payload) ? payload[0] : payload;
         const type = p?.cmd_type || p?.type || typeof p;
-        const targets = p?.targets?.device_ids?.length ?? undefined;
+        const targets = p?.target?.length ?? p?.targets?.device_ids?.length ?? undefined;
         return { type, targets };
       })();
       logger.info(`GatewayEventsService.unicastToFacility facility=${facilityId} summary=${JSON.stringify(summary)}`);

@@ -46,6 +46,8 @@ describe('DeviceSyncService', () => {
       updateLockStatus: jest.fn(),
       updateBatteryLevel: jest.fn(),
       deleteBluLokDevice: jest.fn(),
+      updateBluLokDeviceState: jest.fn(),
+      findBluLokDeviceByIdOrSerial: jest.fn(),
     } as any;
 
     mockEventService = {
@@ -488,6 +490,245 @@ describe('DeviceSyncService', () => {
       const instance2 = DeviceSyncService.getInstance();
 
       expect(instance1).toBe(instance2);
+    });
+  });
+
+  // ============================================================================
+  // NEW METHODS TESTS
+  // ============================================================================
+
+  describe('syncDeviceInventory', () => {
+    const gatewayId = 'gateway-123';
+
+    it('should add new devices from inventory', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+      mockDeviceModel.createBluLokDevice.mockResolvedValue({ id: 'device-1', device_serial: 'LOCK-1' } as any);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1', lock_number: 101, firmware_version: '1.0.0' },
+      ]);
+
+      expect(result.added).toBe(1);
+      expect(result.removed).toBe(0);
+      expect(result.unchanged).toBe(0);
+      expect(result.errors).toHaveLength(0);
+      expect(mockDeviceModel.createBluLokDevice).toHaveBeenCalledWith({
+        gateway_id: gatewayId,
+        device_serial: 'LOCK-1',
+        device_settings: { lockNumber: 101 },
+        metadata: { autoCreated: true, createdFromInventorySync: true },
+        firmware_version: '1.0.0',
+      });
+    });
+
+    it('should remove devices not in inventory', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
+        createDeviceWithContext({ id: 'device-2', device_serial: 'LOCK-2' }),
+      ]);
+      mockDeviceModel.deleteBluLokDevice.mockResolvedValue(undefined);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1' },
+      ]);
+
+      expect(result.added).toBe(0);
+      expect(result.removed).toBe(1);
+      expect(result.unchanged).toBe(1);
+      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledWith('device-2');
+    });
+
+    it('should update firmware_version for existing devices', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1', firmware_version: '1.0.0' }),
+      ]);
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1', firmware_version: '2.0.0' },
+      ]);
+
+      expect(result.unchanged).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('device-1', {
+        firmware_version: '2.0.0',
+      });
+    });
+
+    it('should handle empty inventory (removes all devices)', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
+      ]);
+      mockDeviceModel.deleteBluLokDevice.mockResolvedValue(undefined);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, []);
+
+      expect(result.removed).toBe(1);
+      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalled();
+    });
+
+    it('should remove device that is assigned to a unit', async () => {
+      // Device assigned to a unit should be removable
+      const deviceWithUnit = createDeviceWithContext({
+        id: 'device-1',
+        device_serial: 'LOCK-1',
+        unit_id: 'unit-123',
+      });
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([deviceWithUnit]);
+      mockDeviceModel.deleteBluLokDevice.mockResolvedValue(undefined);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, []);
+
+      expect(result.removed).toBe(1);
+      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledWith('device-1');
+      // Verify device removed event is emitted
+      expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        deviceType: 'blulok',
+        gatewayId: gatewayId,
+      });
+    });
+
+    it('should remove multiple devices including ones with unit assignments', async () => {
+      const devices = [
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1', unit_id: null }),
+        createDeviceWithContext({ id: 'device-2', device_serial: 'LOCK-2', unit_id: 'unit-123' }),
+        createDeviceWithContext({ id: 'device-3', device_serial: 'LOCK-3', unit_id: 'unit-456' }),
+      ];
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue(devices);
+      mockDeviceModel.deleteBluLokDevice.mockResolvedValue(undefined);
+
+      // Keep only LOCK-1, remove others
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1' },
+      ]);
+
+      expect(result.removed).toBe(2);
+      expect(result.unchanged).toBe(1);
+      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledTimes(2);
+      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledWith('device-2');
+      expect(mockDeviceModel.deleteBluLokDevice).toHaveBeenCalledWith('device-3');
+      // Both devices should emit removal events
+      expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('updateDeviceStates', () => {
+    const gatewayId = 'gateway-123';
+
+    it('should update lock_state to lock_status', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', lock_state: 'LOCKED' },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(result.not_found).toHaveLength(0);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'locked',
+      });
+    });
+
+    it('should update online to device_status', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', online: true },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        device_status: 'online',
+      });
+    });
+
+    it('should update multiple fields at once', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        {
+          lock_id: 'LOCK-1',
+          lock_state: 'UNLOCKED',
+          battery_level: 85,
+          online: true,
+          signal_strength: -65,
+          temperature: 22.5,
+        },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'unlocked',
+        device_status: 'online',
+        battery_level: 85,
+        signal_strength: -65,
+        temperature: 22.5,
+      });
+    });
+
+    it('should track not_found devices', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(false);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'UNKNOWN-LOCK', battery_level: 50 },
+      ]);
+
+      expect(result.updated).toBe(0);
+      expect(result.not_found).toContain('UNKNOWN-LOCK');
+    });
+
+    it('should handle batch updates', async () => {
+      mockDeviceModel.updateBluLokDeviceState
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', battery_level: 85 },
+        { lock_id: 'LOCK-2', battery_level: 70 },
+        { lock_id: 'UNKNOWN', battery_level: 50 },
+      ]);
+
+      expect(result.updated).toBe(2);
+      expect(result.not_found).toContain('UNKNOWN');
+    });
+
+    it('should handle error_code and error_message', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', lock_state: 'ERROR', error_code: 'E001', error_message: 'Motor stuck' },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-1', {
+        lock_status: 'error',
+        error_code: 'E001',
+        error_message: 'Motor stuck',
+      });
+    });
+
+    it('should convert last_seen string to Date', async () => {
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1', last_seen: '2025-12-10T14:30:00.000Z' },
+      ]);
+
+      expect(result.updated).toBe(1);
+      const call = mockDeviceModel.updateBluLokDeviceState.mock.calls[0];
+      expect(call[1].last_seen).toBeInstanceOf(Date);
+    });
+
+    it('should skip updates with no actual fields', async () => {
+      const result = await deviceSyncService.updateDeviceStates(gatewayId, [
+        { lock_id: 'LOCK-1' }, // No actual state fields
+      ]);
+
+      expect(result.updated).toBe(0);
+      expect(mockDeviceModel.updateBluLokDeviceState).not.toHaveBeenCalled();
     });
   });
 });

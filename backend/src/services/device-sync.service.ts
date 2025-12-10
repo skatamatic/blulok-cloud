@@ -1,4 +1,4 @@
-import { DeviceModel, BluLokDevice, CreateBluLokDeviceData } from '../models/device.model';
+import { DeviceModel, BluLokDevice, CreateBluLokDeviceData, DeviceStateUpdate } from '../models/device.model';
 import { DeviceEventService } from './device-event.service';
 
 /**
@@ -31,6 +31,41 @@ export interface GatewayDeviceData {
   /** Additional gateway-specific properties */
   [key: string]: any;
 }
+
+/**
+ * Device Inventory Item for inventory sync endpoint.
+ * Represents a device that should exist on the gateway.
+ */
+export interface DeviceInventoryItem {
+  /** Lock identifier (UUID or serial) */
+  lock_id: string;
+  /** Lock number for display */
+  lock_number?: number;
+  /** Installed firmware version */
+  firmware_version?: string;
+}
+
+/**
+ * Result of an inventory sync operation.
+ */
+export interface InventorySyncResult {
+  added: number;
+  removed: number;
+  unchanged: number;
+  errors: string[];
+}
+
+/**
+ * Result of a state update operation.
+ */
+export interface StateUpdateResult {
+  updated: number;
+  not_found: string[];
+  errors: string[];
+}
+
+// Re-export DeviceStateUpdate for convenience
+export { DeviceStateUpdate };
 
 /**
  * Utility function to map device status from API format to locked boolean.
@@ -213,7 +248,13 @@ export class DeviceSyncService {
    */
   private async removeGatewayDevice(device: BluLokDevice): Promise<void> {
     try {
-      console.log(`[DEVICE-SYNC] Device ${device.device_serial} no longer exists on gateway ${device.gateway_id}, removing from database`);
+      const logMessage = device.unit_id
+        ? `[DEVICE-SYNC] Device ${device.device_serial} (assigned to unit ${device.unit_id}) no longer exists on gateway ${device.gateway_id}, removing from database`
+        : `[DEVICE-SYNC] Device ${device.device_serial} no longer exists on gateway ${device.gateway_id}, removing from database`;
+      
+      console.log(logMessage);
+      
+      // Delete the device (foreign key constraint will handle unit_id relationship)
       await this.deviceModel.deleteBluLokDevice(device.id);
 
       // Emit device removed event
@@ -222,6 +263,11 @@ export class DeviceSyncService {
         deviceType: 'blulok',
         gatewayId: device.gateway_id
       });
+
+      // Log if device was assigned to a unit (for visibility)
+      if (device.unit_id) {
+        console.log(`[DEVICE-SYNC] Note: Unit ${device.unit_id} no longer has an associated device after removal`);
+      }
     } catch (error) {
       console.error(`Failed to remove device ${device.device_serial}:`, error);
     }
@@ -299,5 +345,202 @@ export class DeviceSyncService {
     if (statusChanged) {
       console.log(`[DEVICE-SYNC] Updated device ${device.device_serial}: status=${newDeviceStatus}, lock=${newLockStatus}, battery=${gatewayDevice.batteryLevel}%`);
     }
+  }
+
+  // ============================================================================
+  // NEW ENDPOINTS: Split inventory and state management
+  // ============================================================================
+
+  /**
+   * Sync device inventory for a gateway.
+   * This method handles adding new devices and removing devices not in the list.
+   * Does NOT update transient state (battery, lock state, etc.).
+   * 
+   * @param gatewayId - The gateway ID
+   * @param devices - Array of devices that should exist on the gateway
+   * @returns Promise resolving to sync result with counts
+   */
+  public async syncDeviceInventory(
+    gatewayId: string,
+    devices: DeviceInventoryItem[]
+  ): Promise<InventorySyncResult> {
+    const result: InventorySyncResult = {
+      added: 0,
+      removed: 0,
+      unchanged: 0,
+      errors: [],
+    };
+
+    try {
+      // Get all BluLok devices for this gateway from our database
+      const existingDevices = await this.deviceModel.findBluLokDevices({
+        gateway_id: gatewayId,
+      });
+
+      // Create maps for easier lookup using device serial/identifier
+      const incomingDeviceMap = new Map<string, DeviceInventoryItem>();
+      for (const device of devices) {
+        if (device.lock_id) {
+          incomingDeviceMap.set(device.lock_id, device);
+        }
+      }
+
+      const existingDeviceMap = new Map(
+        existingDevices.map((device) => [device.device_serial, device])
+      );
+
+      // Find devices that exist on gateway but not in our database (need to add)
+      for (const [lockId, inventoryItem] of incomingDeviceMap) {
+        if (!existingDeviceMap.has(lockId)) {
+          try {
+            const createData: CreateBluLokDeviceData = {
+              gateway_id: gatewayId,
+              device_serial: lockId,
+              device_settings: { lockNumber: inventoryItem.lock_number },
+              metadata: {
+                autoCreated: true,
+                createdFromInventorySync: true,
+              },
+            };
+
+            if (inventoryItem.firmware_version) {
+              createData.firmware_version = inventoryItem.firmware_version;
+            }
+
+            await this.deviceModel.createBluLokDevice(createData);
+            result.added++;
+            console.log(`[DEVICE-SYNC] Added new device ${lockId} from inventory sync`);
+          } catch (error: any) {
+            result.errors.push(`Failed to add device ${lockId}: ${error.message}`);
+          }
+        } else {
+          // Device exists - update firmware_version if provided
+          const existing = existingDeviceMap.get(lockId)!;
+          if (inventoryItem.firmware_version && existing.firmware_version !== inventoryItem.firmware_version) {
+            try {
+              await this.deviceModel.updateBluLokDeviceState(existing.id, {
+                firmware_version: inventoryItem.firmware_version,
+              });
+            } catch (error: any) {
+              result.errors.push(`Failed to update firmware for ${lockId}: ${error.message}`);
+            }
+          }
+          result.unchanged++;
+        }
+      }
+
+      // Find devices that exist in our database but not in incoming list (need to remove)
+      for (const [deviceSerial, device] of existingDeviceMap) {
+        if (!incomingDeviceMap.has(deviceSerial)) {
+          try {
+            await this.removeGatewayDevice(device);
+            result.removed++;
+          } catch (error: any) {
+            result.errors.push(`Failed to remove device ${deviceSerial}: ${error.message}`);
+          }
+        }
+      }
+
+      console.log(
+        `[DEVICE-SYNC] Inventory sync complete: added=${result.added}, removed=${result.removed}, unchanged=${result.unchanged}`
+      );
+    } catch (error: any) {
+      console.error(`Error in inventory sync for gateway ${gatewayId}:`, error);
+      result.errors.push(`Sync failed: ${error.message}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Update device states with partial data.
+   * Only updates fields that are provided in each update.
+   * 
+   * @param gatewayId - The gateway ID (for validation/logging)
+   * @param updates - Array of partial state updates
+   * @returns Promise resolving to update result with counts
+   */
+  public async updateDeviceStates(
+    gatewayId: string,
+    updates: DeviceStateUpdate[]
+  ): Promise<StateUpdateResult> {
+    const result: StateUpdateResult = {
+      updated: 0,
+      not_found: [],
+      errors: [],
+    };
+
+    for (const update of updates) {
+      try {
+        // Map incoming state update to database format
+        const dbUpdates: Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] = {};
+
+        // Map lock_state to lock_status
+        if (update.lock_state) {
+          const lockStateMap: Record<string, 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'unknown'> = {
+            'LOCKED': 'locked',
+            'UNLOCKED': 'unlocked',
+            'LOCKING': 'locking',
+            'UNLOCKING': 'unlocking',
+            'ERROR': 'error',
+            'UNKNOWN': 'unknown',
+          };
+          dbUpdates.lock_status = lockStateMap[update.lock_state] || 'unknown';
+        }
+
+        // Map online to device_status
+        if (update.online !== undefined) {
+          dbUpdates.device_status = update.online ? 'online' : 'offline';
+        }
+
+        // Direct mappings
+        if (update.battery_level !== undefined) {
+          dbUpdates.battery_level = update.battery_level;
+        }
+        if (update.signal_strength !== undefined) {
+          dbUpdates.signal_strength = update.signal_strength;
+        }
+        if (update.temperature !== undefined) {
+          dbUpdates.temperature = update.temperature;
+        }
+        if (update.firmware_version !== undefined) {
+          dbUpdates.firmware_version = update.firmware_version;
+        }
+        if (update.error_code !== undefined) {
+          dbUpdates.error_code = update.error_code;
+        }
+        if (update.error_message !== undefined) {
+          dbUpdates.error_message = update.error_message;
+        }
+        if (update.last_seen !== undefined) {
+          dbUpdates.last_seen = typeof update.last_seen === 'string' 
+            ? new Date(update.last_seen) 
+            : update.last_seen;
+        }
+
+        // Skip if no actual updates
+        if (Object.keys(dbUpdates).length === 0) {
+          continue;
+        }
+
+        // Apply update
+        const updated = await this.deviceModel.updateBluLokDeviceState(update.lock_id, dbUpdates);
+
+        if (updated) {
+          result.updated++;
+          console.log(`[DEVICE-SYNC] Updated state for device ${update.lock_id}`);
+        } else {
+          result.not_found.push(update.lock_id);
+        }
+      } catch (error: any) {
+        result.errors.push(`Failed to update ${update.lock_id}: ${error.message}`);
+      }
+    }
+
+    console.log(
+      `[DEVICE-SYNC] State update complete: updated=${result.updated}, not_found=${result.not_found.length}, errors=${result.errors.length}`
+    );
+
+    return result;
   }
 }

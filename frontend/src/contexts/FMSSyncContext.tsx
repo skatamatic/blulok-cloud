@@ -288,9 +288,9 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
         }
       };
 
-      const subId = subscribe('fms_sync_progress', handler, (err: string) => {
-        console.error('[FMSSyncContext] FMS progress subscription error:', err);
-      });
+      // Subscribe to FMS sync progress updates
+      // Note: Errors are handled via the message handler's data.error check
+      const subId = subscribe('fms_sync_progress', handler);
       progressSubIdRef.current = subId as any;
       console.log('[FMSSyncContext] Subscription established:', subId);
     }

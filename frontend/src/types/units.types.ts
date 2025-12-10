@@ -11,6 +11,15 @@ export interface Unit {
   created_at: string;
   updated_at: string;
   
+  // Device telemetry data (from joined blulok_devices table)
+  lock_status?: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+  device_status?: 'online' | 'offline' | 'error' | 'maintenance';
+  signal_strength?: number;
+  temperature?: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  firmware_version?: string;
+  
   // Joined data
   facility?: {
     id: string;

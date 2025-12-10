@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
@@ -99,15 +99,47 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   // Command queue subscription
   useEffect(() => {
     if (activeTab !== 'commands') return;
-    const subId = ws.subscribe('command_queue', (data: any) => {
-      setCommandQueue({ items: data.items || [], total: data.total || 0 });
-    });
+    const subId = ws.subscribe(
+      'command_queue',
+      (data: any) => {
+        setCommandQueue({ items: data.items || [], total: data.total || 0 });
+      },
+      undefined // no error handler needed
+    );
     // initial fetch
     apiService.getCommandQueue({ status: cmdFilters.status || undefined }).then(data => setCommandQueue({ items: data.items || [], total: data.total || 0 })).catch(() => {});
     return () => {
       if (subId) ws.unsubscribe(subId);
     };
   }, [activeTab, cmdFilters.status]);
+
+  // Ref to track the latest loadDevices function for WebSocket callback
+  const loadDevicesRef = useRef<() => void>(() => {});
+  const wsRefreshDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Device status subscription - refresh list on device state changes
+  useEffect(() => {
+    if (activeTab === 'commands') return; // Only skip when viewing commands tab
+    const subId = ws.subscribe(
+      'device_status',
+      () => {
+        // Debounce refresh to prevent excessive API calls
+        if (wsRefreshDebounceRef.current) {
+          clearTimeout(wsRefreshDebounceRef.current);
+        }
+        wsRefreshDebounceRef.current = setTimeout(() => {
+          loadDevicesRef.current();
+        }, 500);
+      },
+      undefined
+    );
+    return () => {
+      if (subId) ws.unsubscribe(subId);
+      if (wsRefreshDebounceRef.current) {
+        clearTimeout(wsRefreshDebounceRef.current);
+      }
+    };
+  }, [activeTab, ws]);
 
   const loadDevices = async () => {
     try {
@@ -154,6 +186,11 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       setLoading(false);
     }
   };
+
+  // Keep ref updated for WebSocket callback
+  useEffect(() => {
+    loadDevicesRef.current = loadDevices;
+  });
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));

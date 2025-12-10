@@ -62,9 +62,17 @@ export interface BluLokDevice {
   unit_id: string;
   device_serial: string;
   firmware_version?: string;
-  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   battery_level?: number;
+  /** Wireless signal strength in dBm (e.g., -70 dBm) */
+  signal_strength?: number;
+  /** Device temperature reading in Celsius */
+  temperature?: number;
+  /** Standardized error code for error states */
+  error_code?: string | null;
+  /** Human-readable error description */
+  error_message?: string | null;
   last_activity?: string;
   last_seen?: string;
   device_settings?: Record<string, any>;

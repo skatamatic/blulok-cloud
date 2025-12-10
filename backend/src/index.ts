@@ -90,6 +90,10 @@ async function bootstrap(): Promise<void> {
     const { DataPruningService } = await import('@/services/data-pruning.service');
     DataPruningService.getInstance().start();
 
+    // Initialize route pass pruning service (daily cleanup of expired route pass issuance logs)
+    const { RoutePassPruningService } = await import('@/services/route-pass-pruning.service');
+    RoutePassPruningService.getInstance().start();
+
     // Legacy command worker removed (key distribution queues deprecated)
 
     // Graceful shutdown
@@ -101,6 +105,8 @@ async function bootstrap(): Promise<void> {
       DenylistPruningService.getInstance().stop();
       const { DataPruningService } = require('@/services/data-pruning.service');
       DataPruningService.getInstance().stop();
+      const { RoutePassPruningService } = require('@/services/route-pass-pruning.service');
+      RoutePassPruningService.getInstance().stop();
       
       // Destroy logger interceptor
       loggerInterceptor.destroy();

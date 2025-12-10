@@ -112,11 +112,11 @@ describe('System Settings Routes', () => {
       expect(mockSettingsModel.set).toHaveBeenCalled();
     });
 
-    it('rejects invalid template field names', async () => {
+    it('accepts unknown template field names (stripped during validation)', async () => {
       const notificationConfig = {
         enabledChannels: { sms: true },
         templates: {
-          invalidTemplateField: 'This should fail',
+          invalidTemplateField: 'This should be allowed and stripped',
         },
       };
 
@@ -124,10 +124,11 @@ describe('System Settings Routes', () => {
         .put('/api/v1/system-settings/notifications')
         .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send(notificationConfig)
-        .expect(400);
+        .expect(200);
 
-      expectBadRequest(response);
-      expect(mockSettingsModel.set).not.toHaveBeenCalled();
+      expectSuccess(response);
+      // Unknown fields are stripped, so they won't be in the saved config
+      expect(mockSettingsModel.set).toHaveBeenCalled();
     });
 
     it('allows partial updates (e.g., just deeplinkBaseUrl)', async () => {

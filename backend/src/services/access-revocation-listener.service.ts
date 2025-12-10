@@ -98,8 +98,8 @@ export class AccessRevocationListenerService {
 
         // Send denylist command to devices
         const exp = Math.floor(expiresAt.getTime() / 1000);
-        const packet = await DenylistService.buildDenylistAdd([{ sub: event.tenantId, exp }], deviceIds);
-        GatewayEventsService.getInstance().unicastToFacility(event.facilityId, packet);
+        const jwt = await DenylistService.buildDenylistAdd([{ sub: event.tenantId, exp }], deviceIds);
+        GatewayEventsService.getInstance().unicastToFacility(event.facilityId, jwt);
 
         logger.info(`Pushed denylist update for user ${event.tenantId} to ${deviceIds.length} device(s) in facility ${event.facilityId}`, {
           deviceIds,
@@ -162,11 +162,11 @@ export class AccessRevocationListenerService {
 
             // Only send command if there are non-expired entries
             if (entriesToProcess.length > 0) {
-              const packet = await DenylistService.buildDenylistRemove(
+              const jwt = await DenylistService.buildDenylistRemove(
                 [{ sub: event.tenantId, exp: 0 }], // exp not needed for remove
                 targetDeviceIds
               );
-              GatewayEventsService.getInstance().unicastToFacility(facilityId, packet);
+              GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
 
               logger.info(`Removed user ${event.tenantId} from denylist for ${targetDeviceIds.length} device(s) in facility ${facilityId}`, {
                 deviceIds: targetDeviceIds,

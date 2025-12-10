@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { FacilityDropdown } from '@/components/Common/FacilityDropdown';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { 
   HomeIcon,
   FunnelIcon,
@@ -45,6 +46,7 @@ const statusIcons = {
 export default function UnitsPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const { subscribe, unsubscribe } = useWebSocket();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,10 @@ export default function UnitsPage() {
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
 
+  // Ref to track the latest loadUnits function for WebSocket callback
+  const loadUnitsRef = useRef<() => void>(() => {});
+  const wsRefreshDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     loadUnits();
   }, [filters, currentPage]);
@@ -78,6 +84,32 @@ export default function UnitsPage() {
     loadFacilities();
     loadUsers();
   }, []);
+
+  // Subscribe to units WebSocket for real-time updates on lock status, battery, etc.
+  useEffect(() => {
+    const subscriptionId = subscribe(
+      'units',
+      (_data: any) => {
+        // Debounce refresh to prevent excessive API calls
+        if (wsRefreshDebounceRef.current) {
+          clearTimeout(wsRefreshDebounceRef.current);
+        }
+        wsRefreshDebounceRef.current = setTimeout(() => {
+          loadUnitsRef.current();
+        }, 500);
+      },
+      undefined
+    );
+
+    return () => {
+      if (subscriptionId) {
+        unsubscribe(subscriptionId);
+      }
+      if (wsRefreshDebounceRef.current) {
+        clearTimeout(wsRefreshDebounceRef.current);
+      }
+    };
+  }, [subscribe, unsubscribe]);
 
   // Load and persist facility selection
   useEffect(() => {
@@ -212,6 +244,11 @@ export default function UnitsPage() {
       setLoading(false);
     }
   };
+
+  // Keep ref updated for WebSocket callback
+  useEffect(() => {
+    loadUnitsRef.current = loadUnits;
+  });
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));

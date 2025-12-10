@@ -92,6 +92,14 @@ export interface BluLokDevice {
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   /** Battery charge level (0-100) */
   battery_level?: number;
+  /** Wireless signal strength in dBm */
+  signal_strength?: number;
+  /** Device temperature reading */
+  temperature?: number;
+  /** Error code for error states */
+  error_code?: string | null;
+  /** Human-readable error description */
+  error_message?: string | null;
   /** Timestamp of last device command/activity */
   last_activity?: Date;
   /** Timestamp of last successful communication */
@@ -100,6 +108,24 @@ export interface BluLokDevice {
   metadata?: Record<string, any>;
   created_at: Date;
   updated_at: Date;
+}
+
+/**
+ * Partial device state update interface for gateway state updates.
+ * All fields except lock_id are optional to support partial updates.
+ */
+export interface DeviceStateUpdate {
+  lock_id: string;
+  lock_state?: 'LOCKED' | 'UNLOCKED' | 'LOCKING' | 'UNLOCKING' | 'ERROR' | 'UNKNOWN';
+  battery_level?: number;
+  online?: boolean;
+  signal_strength?: number;
+  temperature?: number;
+  firmware_version?: string;
+  last_seen?: string | Date;
+  error_code?: string | null;
+  error_message?: string | null;
+  source?: 'GATEWAY' | 'USER' | 'CLOUD';
 }
 
 export interface DeviceWithContext extends BluLokDevice {
@@ -307,6 +333,10 @@ export class DeviceModel {
         lock_status: row.lock_status,
         device_status: row.device_status,
         battery_level: row.battery_level,
+        signal_strength: row.signal_strength,
+        temperature: row.temperature,
+        error_code: row.error_code,
+        error_message: row.error_message,
         last_activity: row.last_activity,
         last_seen: row.last_seen,
         device_settings: this.safeParseJson(row.device_settings),
@@ -452,6 +482,160 @@ export class DeviceModel {
     if (oldBatteryLevel !== batteryLevel) {
       console.log(`Updated battery level for device ${deviceId}: ${oldBatteryLevel}% -> ${batteryLevel}%`);
     }
+  }
+
+  /**
+   * Update BluLok device state with partial data.
+   * Only updates fields that are provided, leaving others unchanged.
+   * 
+   * @param deviceId - The device ID (can be UUID or serial number)
+   * @param updates - Partial state updates to apply
+   * @returns Promise resolving to true if device was found and updated
+   */
+  async updateBluLokDeviceState(
+    deviceId: string,
+    updates: Partial<{
+      lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+      device_status: 'online' | 'offline' | 'low_battery' | 'error';
+      battery_level: number;
+      signal_strength: number;
+      temperature: number;
+      error_code: string | null;
+      error_message: string | null;
+      firmware_version: string;
+      last_seen: Date;
+    }>
+  ): Promise<boolean> {
+    const knex = this.db.connection;
+
+    // Build update object with only non-undefined fields
+    const updateData: Record<string, any> = {};
+    
+    if (updates.lock_status !== undefined) {
+      updateData.lock_status = updates.lock_status;
+      updateData.last_activity = new Date();
+    }
+    if (updates.device_status !== undefined) {
+      updateData.device_status = updates.device_status;
+    }
+    if (updates.battery_level !== undefined) {
+      updateData.battery_level = updates.battery_level;
+    }
+    if (updates.signal_strength !== undefined) {
+      updateData.signal_strength = updates.signal_strength;
+    }
+    if (updates.temperature !== undefined) {
+      updateData.temperature = updates.temperature;
+    }
+    if (updates.error_code !== undefined) {
+      updateData.error_code = updates.error_code;
+    }
+    if (updates.error_message !== undefined) {
+      updateData.error_message = updates.error_message;
+    }
+    if (updates.firmware_version !== undefined) {
+      updateData.firmware_version = updates.firmware_version;
+    }
+    if (updates.last_seen !== undefined) {
+      updateData.last_seen = updates.last_seen;
+    }
+
+    // Always update updated_at
+    updateData.updated_at = new Date();
+
+    // If no meaningful updates, skip
+    if (Object.keys(updateData).length <= 1) {
+      return false;
+    }
+
+    // Get current device state before update for event emission
+    let device = await knex('blulok_devices')
+      .where('id', deviceId)
+      .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id')
+      .first();
+
+    if (!device) {
+      // Try by device_serial
+      device = await knex('blulok_devices')
+        .where('device_serial', deviceId)
+        .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id')
+        .first();
+    }
+
+    if (!device) {
+      return false;
+    }
+
+    const oldLockStatus = device.lock_status;
+    const oldDeviceStatus = device.device_status;
+
+    // Apply update
+    await knex('blulok_devices')
+      .where('id', device.id)
+      .update(updateData);
+
+    // Track if any meaningful change was made
+    let statusChanged = false;
+
+    // Emit events for status changes to trigger WebSocket broadcasts
+    if (updates.lock_status && updates.lock_status !== oldLockStatus) {
+      this.eventService.emitLockStatusChanged({
+        deviceId: device.id,
+        oldStatus: oldLockStatus || 'unknown',
+        newStatus: updates.lock_status,
+        gatewayId: device.gateway_id,
+        unitId: device.unit_id
+      });
+      statusChanged = true;
+    }
+
+    if (updates.device_status && updates.device_status !== oldDeviceStatus) {
+      this.eventService.emitDeviceStatusChanged({
+        deviceId: device.id,
+        deviceType: 'blulok',
+        oldStatus: oldDeviceStatus || 'unknown',
+        newStatus: updates.device_status,
+        gatewayId: device.gateway_id
+      });
+      statusChanged = true;
+    }
+
+    // If no status change but telemetry fields were updated, emit telemetry event
+    // This ensures WebSocket broadcasts happen for battery, signal, temperature updates
+    if (!statusChanged && (
+      updates.battery_level !== undefined ||
+      updates.signal_strength !== undefined ||
+      updates.temperature !== undefined ||
+      updates.error_code !== undefined ||
+      updates.firmware_version !== undefined
+    )) {
+      this.eventService.emitDeviceTelemetryUpdated({
+        deviceId: device.id,
+        gatewayId: device.gateway_id,
+      });
+    }
+
+    return true;
+  }
+
+  /**
+   * Find a BluLok device by its ID or serial number.
+   * 
+   * @param lockId - The device ID (UUID) or serial number
+   * @returns Promise resolving to the device or null if not found
+   */
+  async findBluLokDeviceByIdOrSerial(lockId: string): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+
+    // Try by ID first
+    let device = await knex('blulok_devices').where('id', lockId).first();
+    
+    if (!device) {
+      // Try by device_serial
+      device = await knex('blulok_devices').where('device_serial', lockId).first();
+    }
+
+    return device || null;
   }
 
   async getFacilityDeviceHierarchy(facilityId: string): Promise<{

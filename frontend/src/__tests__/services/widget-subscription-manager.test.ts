@@ -17,7 +17,7 @@ describe('WidgetSubscriptionManager', () => {
     // Reset the subscription manager state
     (widgetSubscriptionManager as any).activeSubscriptions.clear();
     (widgetSubscriptionManager as any).messageHandlers.clear();
-    (widgetSubscriptionManager as any).isListening.clear();
+    (widgetSubscriptionManager as any).wsMessageUnsubscribers.clear();
   });
 
   describe('subscribe', () => {

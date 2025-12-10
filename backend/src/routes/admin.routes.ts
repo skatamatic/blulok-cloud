@@ -402,41 +402,45 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
           ? Math.floor(Date.now() / 1000) + expirationSeconds 
           : Math.floor(Date.now() / 1000) + 86400 * 365;
         const entries = [{ sub: userId, exp }];
-        const [payload, signature] = await DenylistService.buildDenylistAdd(entries, targetDeviceIds);
-        gateway.unicastToFacility(facilityId, [payload, signature]);
+        const jwt = await DenylistService.buildDenylistAdd(entries, targetDeviceIds);
+        gateway.unicastToFacility(facilityId, jwt);
         logger.info(`Dev gateway command: DENYLIST_ADD sent to facility ${facilityId}`, { userId, targetDeviceIds });
-        res.json({ success: true, command, payload, signature });
+        res.json({ success: true, command, jwt });
         break;
       }
 
       case 'DENYLIST_REMOVE': {
         const entries = [{ sub: userId, exp: 0 }]; // exp not used for remove
-        const [payload, signature] = await DenylistService.buildDenylistRemove(entries, targetDeviceIds);
-        gateway.unicastToFacility(facilityId, [payload, signature]);
+        const jwt = await DenylistService.buildDenylistRemove(entries, targetDeviceIds);
+        gateway.unicastToFacility(facilityId, jwt);
         logger.info(`Dev gateway command: DENYLIST_REMOVE sent to facility ${facilityId}`, { userId, targetDeviceIds });
-        res.json({ success: true, command, payload, signature });
+        res.json({ success: true, command, jwt });
         break;
       }
 
       case 'LOCK': {
-        // Send lock command for each device
+        // Send lock command for each device as JWT
+        const jwts: string[] = [];
         for (const deviceId of targetDeviceIds) {
-          const lockPayload = { type: 'DEVICE_COMMAND', deviceId, command: 'LOCK' };
-          gateway.unicastToFacility(facilityId, lockPayload);
+          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'LOCK', device_id: deviceId });
+          gateway.unicastToFacility(facilityId, jwt);
+          jwts.push(jwt);
         }
         logger.info(`Dev gateway command: LOCK sent to facility ${facilityId}`, { targetDeviceIds });
-        res.json({ success: true, command, targetDeviceIds });
+        res.json({ success: true, command, targetDeviceIds, jwts });
         break;
       }
 
       case 'UNLOCK': {
-        // Send unlock command for each device
+        // Send unlock command for each device as JWT
+        const jwts: string[] = [];
         for (const deviceId of targetDeviceIds) {
-          const unlockPayload = { type: 'DEVICE_COMMAND', deviceId, command: 'UNLOCK' };
-          gateway.unicastToFacility(facilityId, unlockPayload);
+          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'UNLOCK', device_id: deviceId });
+          gateway.unicastToFacility(facilityId, jwt);
+          jwts.push(jwt);
         }
         logger.info(`Dev gateway command: UNLOCK sent to facility ${facilityId}`, { targetDeviceIds });
-        res.json({ success: true, command, targetDeviceIds });
+        res.json({ success: true, command, targetDeviceIds, jwts });
         break;
       }
 
@@ -475,6 +479,26 @@ router.post('/data-prune', authenticateToken, requireAdmin, asyncHandler(async (
       message: 'Failed to prune data',
       error: error?.message || 'Unknown error',
     });
+  }
+}));
+
+/**
+ * POST /api/v1/admin/route-pass-prune - Manually trigger route pass pruning (admin only)
+ * Prunes expired route pass issuance logs
+ */
+router.post('/route-pass-prune', authenticateToken, requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  try {
+    const { RoutePassPruningService } = await import('@/services/route-pass-pruning.service');
+    const pruningService = RoutePassPruningService.getInstance();
+    const results = await pruningService.prune();
+
+    logger.info(`Manual route pass pruning triggered by ${user.userId}, removed: ${JSON.stringify(results)}`);
+    res.json({ success: true, message: 'Route pass pruning initiated', results });
+  } catch (error: any) {
+    logger.error('Error during manual route pass pruning:', error);
+    res.status(500).json({ success: false, message: 'Failed to prune route passes', error: error?.message || 'Unknown error' });
   }
 }));
 

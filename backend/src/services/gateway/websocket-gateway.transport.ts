@@ -88,9 +88,29 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       return;
     }
     if (client.ws.readyState === WebSocket.OPEN) {
-      client.ws.send(JSON.stringify(payload));
+      // Handle JWT string payloads by wrapping in COMMAND envelope
+      let message: string;
+      let msgType = 'unknown';
+      
+      if (typeof payload === 'string' && payload.includes('.')) {
+        // JWT string - wrap in envelope for gateway parsing
+        message = JSON.stringify({ type: 'COMMAND', jwt: payload });
+        // Try to extract cmd_type from JWT for logging
+        try {
+          const parts = payload.split('.');
+          if (parts.length === 3) {
+            const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+            msgType = decoded?.cmd_type || 'JWT_COMMAND';
+          }
+        } catch { msgType = 'JWT_COMMAND'; }
+      } else {
+        // Legacy object/array payloads - send directly
+        message = JSON.stringify(payload);
+        msgType = (payload && typeof payload === 'object' && (payload.type || payload.cmd_type)) || typeof payload;
+      }
+      
+      client.ws.send(message);
       try {
-        const msgType = (payload && typeof payload === 'object' && (payload.type || payload.cmd_type)) || typeof payload;
         GatewayDebugService.getInstance().publish({
           kind: 'message_outbound',
           facilityId,

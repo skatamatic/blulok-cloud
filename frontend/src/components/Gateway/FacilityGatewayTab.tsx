@@ -190,25 +190,29 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   useEffect(() => {
     if (!ws || !isDevAdmin) return;
 
-    const subscriptionId = ws.subscribe('gateway_debug', (event: any) => {
-      if (!event || (event.facilityId && event.facilityId !== facilityId)) {
-        return;
-      }
-      setGatewayDebugEvents(prev => {
-        const next = [...prev, event];
-        // Keep the most recent 200 events to avoid unbounded growth
-        return next.slice(-200);
-      });
-      if (typeof event.lastActivityAt === 'number') {
-        setLastGatewayActivityAt(event.lastActivityAt);
-      }
-      if (event.kind === 'ping_sent') {
-        setLastPingTs(event.ts || Date.now());
-      }
-      if (event.kind === 'pong_received') {
-        setLastPongTs(event.ts || Date.now());
-      }
-    });
+    const subscriptionId = ws.subscribe(
+      'gateway_debug',
+      (event: any) => {
+        if (!event || (event.facilityId && event.facilityId !== facilityId)) {
+          return;
+        }
+        setGatewayDebugEvents(prev => {
+          const next = [...prev, event];
+          // Keep the most recent 200 events to avoid unbounded growth
+          return next.slice(-200);
+        });
+        if (typeof event.lastActivityAt === 'number') {
+          setLastGatewayActivityAt(event.lastActivityAt);
+        }
+        if (event.kind === 'ping_sent') {
+          setLastPingTs(event.ts || Date.now());
+        }
+        if (event.kind === 'pong_received') {
+          setLastPongTs(event.ts || Date.now());
+        }
+      },
+      undefined // no error handler needed
+    );
 
     return () => {
       if (subscriptionId) {
@@ -269,17 +273,21 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   useEffect(() => {
     if (!ws) return;
 
-    const subscriptionId = ws.subscribe('gateway_status', (data: any) => {
-      try {
-        const gateways = data?.gateways || [];
-        gateways.forEach((g: any) => {
-          // Update local gateway state only (toasts are handled by app-wide listener)
-          setGateway(prevGw => (prevGw && prevGw.id === g.id ? { ...prevGw, status: g.status as any, last_seen: g.lastSeen as any } : prevGw));
-        });
-      } catch (e) {
-        console.error('Failed to process gateway status update', e);
-      }
-    });
+    const subscriptionId = ws.subscribe(
+      'gateway_status',
+      (data: any) => {
+        try {
+          const gateways = data?.gateways || [];
+          gateways.forEach((g: any) => {
+            // Update local gateway state only (toasts are handled by app-wide listener)
+            setGateway(prevGw => (prevGw && prevGw.id === g.id ? { ...prevGw, status: g.status as any, last_seen: g.lastSeen as any } : prevGw));
+          });
+        } catch (e) {
+          console.error('Failed to process gateway status update', e);
+        }
+      },
+      undefined // no error handler needed
+    );
 
     return () => {
       if (subscriptionId) ws.unsubscribe(subscriptionId);

@@ -11,8 +11,9 @@ jest.mock('@/models/denylist-entry.model');
 jest.mock('@/services/gateway/gateway-events.service');
 jest.mock('@/services/denylist.service', () => ({
   DenylistService: {
-    buildDenylistAdd: jest.fn().mockResolvedValue([{ cmd_type: 'DENYLIST_ADD' }, 'sig']),
-    buildDenylistRemove: jest.fn().mockResolvedValue([{ cmd_type: 'DENYLIST_REMOVE' }, 'sig']),
+    // Mock JWT strings for denylist commands (inline to avoid hoisting issues)
+    buildDenylistAdd: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9BREQiLCJkZW55bGlzdF9hZGQiOltdfQ.mock-sig'),
+    buildDenylistRemove: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9SRU1PVkUiLCJkZW55bGlzdF9yZW1vdmUiOltdfQ.mock-sig'),
   },
 }));
 jest.mock('@/services/denylist-optimization.service', () => ({
@@ -97,7 +98,8 @@ describe('User Reactivation Restores Access', () => {
     expect(res.body.success).toBe(true);
     expect(mockDenylistModel.findByUser).toHaveBeenCalledWith('user-1');
     expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
-    expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('facility-1', expect.objectContaining({ cmd_type: 'DENYLIST_REMOVE' }));
+    // Now expects JWT string instead of object
+    expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('facility-1', expect.stringContaining('.'));
     expect(mockDenylistModel.remove).toHaveBeenCalledTimes(2);
   });
 });

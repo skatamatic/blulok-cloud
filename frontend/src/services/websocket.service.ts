@@ -58,11 +58,25 @@ class WebSocketService implements IWebSocketService {
     // Debug toast
     websocketDebugService.showDebugToast('success', 'WebSocket Connected', 'Connection established successfully');
 
-    // Re-subscribe to all existing subscriptions (only if not already subscribed)
-    this.subscriptions.forEach((filters, subscriptionType) => {
-      if (!this.subscriptionIds.has(subscriptionType)) {
-        this.subscribe(subscriptionType, filters);
-      }
+    // Re-subscribe to all existing subscriptions on reconnect
+    // The keys in subscriptions are in format "type" or "type:filters_json"
+    // We need to parse them and re-send the subscription messages
+    const subscriptionsToResend: Array<{ type: string; filters?: any }> = [];
+    
+    this.subscriptions.forEach((filters, subscriptionKey) => {
+      // Extract the base type from the key
+      const colonIndex = subscriptionKey.indexOf(':');
+      const baseType = colonIndex >= 0 ? subscriptionKey.substring(0, colonIndex) : subscriptionKey;
+      subscriptionsToResend.push({ type: baseType, filters });
+    });
+
+    // Clear existing subscription state so we can re-create them
+    this.subscriptions.clear();
+    this.subscriptionIds.clear();
+
+    // Re-subscribe with original type and filters
+    subscriptionsToResend.forEach(({ type, filters }) => {
+      this.subscribe(type, filters);
     });
   }
 
@@ -110,6 +124,12 @@ class WebSocketService implements IWebSocketService {
           break;
         case 'fms_sync_progress_update':
           this.handleFMSSyncProgressUpdate(message);
+          break;
+        case 'device_status_update':
+          this.handleDeviceStatusUpdate(message);
+          break;
+        case 'units_update':
+          this.handleUnitsUpdate(message);
           break;
         default:
           break;
@@ -184,6 +204,20 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
+  private handleDeviceStatusUpdate(message: any): void {
+    const handlers = this.messageHandlers.get('device_status');
+    if (handlers) {
+      handlers.forEach(handler => handler(message));
+    }
+  }
+
+  private handleUnitsUpdate(message: any): void {
+    const handlers = this.messageHandlers.get('units');
+    if (handlers) {
+      handlers.forEach(handler => handler(message));
+    }
+  }
+
   private handleClose(event: CloseEvent): void {
     console.log('❌ WebSocket closed:', { code: event.code, reason: event.reason, wasClean: event.wasClean });
     this.isConnected = false;
@@ -252,12 +286,22 @@ class WebSocketService implements IWebSocketService {
   }
 
   public subscribe(subscriptionType: string, filters?: any): void {
-    // If not currently subscribed, send the subscription message.
-    if (!this.subscriptions.has(subscriptionType)) {
-      this.subscriptions.set(subscriptionType, filters);
-      const tempId = `${subscriptionType}-${Date.now()}`;
-      this.subscriptionIds.set(subscriptionType, tempId);
-      websocketDebugService.showDebugToast('info', 'WebSocket Subscription', `Subscribed to: ${subscriptionType}`);
+    // Create a unique key that includes filters for proper tracking
+    const subscriptionKey = filters 
+      ? `${subscriptionType}:${JSON.stringify(filters)}`
+      : subscriptionType;
+    
+    const displayName = filters 
+      ? `${subscriptionType} ${JSON.stringify(filters)}`
+      : subscriptionType;
+    
+    // If not currently subscribed to this type+filter combination, send the subscription message.
+    if (!this.subscriptions.has(subscriptionKey)) {
+      this.subscriptions.set(subscriptionKey, filters);
+      const tempId = `${subscriptionKey}-${Date.now()}`;
+      this.subscriptionIds.set(subscriptionKey, tempId);
+      
+      websocketDebugService.showDebugToast('info', 'WS Sub', `+ ${displayName}`);
       
       this.send({
         type: 'subscription',
@@ -265,18 +309,29 @@ class WebSocketService implements IWebSocketService {
         data: filters,
         timestamp: new Date().toISOString()
       });
+    } else {
+      // Already subscribed at service level
+      websocketDebugService.showDebugToast('warning', 'WS Sub (dup)', `Already: ${displayName}`);
     }
   }
 
-  public unsubscribe(subscriptionType: string): void {
-    const subscriptionId = this.subscriptionIds.get(subscriptionType);
+  public unsubscribe(subscriptionType: string, filters?: any): void {
+    // Create the same unique key used when subscribing
+    const subscriptionKey = filters 
+      ? `${subscriptionType}:${JSON.stringify(filters)}`
+      : subscriptionType;
+    
+    const subscriptionId = this.subscriptionIds.get(subscriptionKey);
     
     if (subscriptionId) {
-      this.subscriptions.delete(subscriptionType);
-      this.subscriptionIds.delete(subscriptionType);
+      this.subscriptions.delete(subscriptionKey);
+      this.subscriptionIds.delete(subscriptionKey);
       
+      const displayName = filters 
+        ? `${subscriptionType} ${JSON.stringify(filters)}`
+        : subscriptionType;
       // Debug toast
-      websocketDebugService.showDebugToast('info', 'WebSocket Unsubscription', `Unsubscribed from: ${subscriptionType}`);
+      websocketDebugService.showDebugToast('info', 'WS Unsub', `- ${displayName}`);
       
       this.send({
         type: 'unsubscription',

@@ -3,7 +3,8 @@ jest.mock('@/models/denylist-entry.model');
 jest.mock('@/services/gateway/gateway-events.service');
 jest.mock('@/services/denylist.service', () => ({
   DenylistService: {
-    buildDenylistRemove: jest.fn().mockResolvedValue([{ cmd_type: 'DENYLIST_REMOVE' }, 'sig']),
+    // Mock JWT string for denylist remove command (inline to avoid hoisting issues)
+    buildDenylistRemove: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9SRU1PVkUiLCJkZW55bGlzdF9yZW1vdmUiOltdfQ.mock-sig'),
   },
 }));
 jest.mock('@/services/denylist-optimization.service', () => ({
@@ -90,7 +91,8 @@ describe('Key Sharing Re-grant triggers denylist removal', () => {
     expect(res.body.success).toBe(true);
     expect(mockDenylistModel.findByUnitsAndUser).toHaveBeenCalledWith(['unit-1'], 'invitee-1');
     expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
-    expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('facility-1', expect.objectContaining({ cmd_type: 'DENYLIST_REMOVE' }));
+    // Now expects JWT string instead of object
+    expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('facility-1', expect.stringContaining('.'));
     expect(mockDenylistModel.remove).toHaveBeenCalledWith('device-1', 'invitee-1');
   });
 });

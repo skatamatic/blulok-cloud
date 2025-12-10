@@ -178,8 +178,8 @@ export class KeySharingService {
             // Send command only if any non-expired entries remained
             if (entriesToProcess.length > 0) {
               const deviceIds = entries.map(e => e.device_id);
-              const packet = await DenylistService.buildDenylistRemove([{ sub: invitee.id, exp: 0 }], deviceIds);
-              GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
+              const jwt = await DenylistService.buildDenylistRemove([{ sub: invitee.id, exp: 0 }], deviceIds);
+              GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, jwt);
             }
           }
         }
@@ -345,8 +345,8 @@ export class KeySharingService {
             const entriesForFacility = entries.filter(e => targetDeviceIds.includes(e.device_id));
             const entriesToProcess = entriesForFacility.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e as any));
             if (entriesToProcess.length > 0) {
-              const [payload] = await DenylistService.buildDenylistRemove([{ sub: existingSharing.shared_with_user_id, exp: 0 }], targetDeviceIds);
-              GatewayEventsService.getInstance().unicastToFacility(facilityId, payload);
+              const jwt = await DenylistService.buildDenylistRemove([{ sub: existingSharing.shared_with_user_id, exp: 0 }], targetDeviceIds);
+              GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
             }
           }
         }
@@ -405,9 +405,9 @@ export class KeySharingService {
 
         const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(existingSharing.shared_with_user_id);
         if (!shouldSkip) {
-          const packet = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], deviceIds);
+          const jwt = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], deviceIds);
           logger.info(`Sending DENYLIST_ADD for revoked share user=${existingSharing.shared_with_user_id} devices=${deviceIds.length} facility=${unit.facility_id}`);
-          GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, packet);
+          GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, jwt);
         } else {
           logger.info(`Skipping DENYLIST_ADD after share revocation user=${existingSharing.shared_with_user_id} (no active route pass)`);
         }
