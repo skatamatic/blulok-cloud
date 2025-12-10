@@ -4,7 +4,6 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import DeviceDetailsPage from '@/pages/DeviceDetailsPage';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
 
 jest.mock('@/services/api.service');
 const mockApiService = apiService as jest.Mocked<typeof apiService>;
