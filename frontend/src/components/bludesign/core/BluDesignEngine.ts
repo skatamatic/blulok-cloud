@@ -547,11 +547,15 @@ export class BluDesignEngine {
         if (event instanceof MouseEvent && event.ctrlKey) {
           return false;
         }
-        // For VIEW tool, don't block mousemove (allow camera to handle drags)
-        // VIEW tool only handles clicks, not drags
+        // For VIEW tool, don't block mousedown/mousemove (allow camera to handle drags for rotation)
+        // VIEW tool only handles clicks (not drags) - clicks are handled via onClick
         if (this.state.activeTool === EditorTool.VIEW) {
-          // Don't block - let camera handler process drags
-          // Selection will still get the click event
+          // Don't block mousedown or mousemove - let camera handler process drags for rotation
+          // Selection will still get the click event for single-click selection
+          if (eventType === 'mousedown' || eventType === 'mousemove') {
+            return false;
+          }
+          // Only block click events if we want to handle them (but we'll let them through for single-click selection)
           return false;
         }
         // Block lower priority handlers for left-click when selecting (SELECT and SELECT_BUILDING tools)
@@ -567,10 +571,16 @@ export class BluDesignEngine {
       onMouseDown: (e: MouseEvent) => {
         // Skip if Ctrl is held (camera rotation)
         if (e.ctrlKey) return;
+        // For VIEW tool, still track mousedown so we can detect clicks vs drags
+        // But we won't block camera - camera will handle the drag
         selectionHandlers.onMouseDown?.(e);
       },
       onMouseUp: selectionHandlers.onMouseUp,
-      onMouseMove: selectionHandlers.onMouseMove,
+      onMouseMove: (e: MouseEvent) => {
+        // For VIEW tool, still track mousemove so SelectionManager can detect if it's a click or drag
+        // But we won't block camera - camera will handle the drag rotation
+        selectionHandlers.onMouseMove?.(e);
+      },
       onClick: selectionHandlers.onClick,
       onDoubleClick: selectionHandlers.onDoubleClick,
       onKeyDown: (e: KeyboardEvent) => {
@@ -610,6 +620,10 @@ export class BluDesignEngine {
     // Apply initial theme immediately
     const initialTheme = themeManager.getActiveSkinTheme();
     this.applyThemeToScene(initialTheme);
+    
+    // Configure the initial tool (this sets up SelectionManager properly)
+    // This is critical for readonly mode to ensure VIEW tool is active and configured
+    this.setTool(this.state.activeTool);
   }
 
   private createInitialState(): EditorState {
@@ -1254,8 +1268,10 @@ export class BluDesignEngine {
   // ==========================================================================
 
   setTool(tool: EditorTool): void {
-    // In readonly mode, only allow VIEW tool (camera control + single-click smart selection)
-    if (this.readonly && tool !== EditorTool.VIEW) return;
+    // In readonly mode, force VIEW tool and prevent any changes
+    if (this.readonly) {
+      tool = EditorTool.VIEW;
+    }
     
     // In edit mode, don't allow VIEW tool (it's readonly-only)
     if (!this.readonly && tool === EditorTool.VIEW) {
@@ -1296,9 +1312,9 @@ export class BluDesignEngine {
     // In SELECT_BUILDING mode, allow building selection
     this.selectionManager.setIgnoreBuildings(tool !== EditorTool.SELECT_BUILDING);
     
-    // MOVE tool: rotation enabled by default for full camera control
-    // SELECT, SELECT_BUILDING, VIEW, PLACE: rotation disabled by default (requires Ctrl+drag)
-    if (isMoveTool) {
+    // MOVE and VIEW tools: rotation enabled by default for full camera control
+    // SELECT, SELECT_BUILDING, PLACE: rotation disabled by default (requires Ctrl+drag)
+    if (isMoveTool || isViewTool) {
       this.cameraController.setRotationEnabled(true);
     } else {
       this.cameraController.setRotationEnabled(false);

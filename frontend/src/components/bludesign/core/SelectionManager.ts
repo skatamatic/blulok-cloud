@@ -41,6 +41,9 @@ export class SelectionManager {
   // Flag to prevent click handler from running after drag selection
   private justFinishedDragSelection: boolean = false;
   
+  // Track if mouse moved significantly (for detecting drags vs clicks when drag selection is disabled)
+  private hasMovedSignificantly: boolean = false;
+  
   // Drag selection enabled flag - can be disabled for view-only mode
   private dragSelectionEnabled: boolean = true;
   
@@ -395,6 +398,7 @@ export class SelectionManager {
     const pos = this.getMousePosition(event);
     this.mouseDownPoint = pos;
     this.isMouseDown = true;
+    this.hasMovedSignificantly = false;
     
     // Don't start drag selection yet - wait for mouse move
   }
@@ -405,7 +409,7 @@ export class SelectionManager {
   private onMouseUp(event: MouseEvent): void {
     if (!this.isEnabled || event.button !== 0) return;
     
-    const wasDragging = this.isDragSelecting;
+    const wasDragging = this.isDragSelecting && this.dragSelectionEnabled;
     
     if (wasDragging && this.dragStartPoint && this.dragCurrentPoint) {
       // Perform box selection
@@ -421,10 +425,20 @@ export class SelectionManager {
       });
     }
     
+    // If mouse moved significantly and drag selection is disabled, it was a camera drag
+    // Don't process as a click - the click handler will check this
+    if (!this.dragSelectionEnabled && this.hasMovedSignificantly) {
+      this.justFinishedDragSelection = true;
+      requestAnimationFrame(() => {
+        this.justFinishedDragSelection = false;
+      });
+    }
+    
     // Reset drag state
     this.cancelDragSelection();
     this.isMouseDown = false;
     this.mouseDownPoint = null;
+    this.hasMovedSignificantly = false;
   }
 
   /**
@@ -632,12 +646,12 @@ export class SelectionManager {
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     
-    // Handle drag selection
-    if (this.isMouseDown && this.mouseDownPoint) {
+    // Handle drag selection (only if enabled)
+    if (this.isMouseDown && this.mouseDownPoint && this.dragSelectionEnabled) {
       const distance = this.getDistance(this.mouseDownPoint, pos);
       
-      // Start drag selection if we've moved past threshold (only if drag selection is enabled)
-      if (!this.isDragSelecting && distance > this.DRAG_THRESHOLD && this.dragSelectionEnabled) {
+      // Start drag selection if we've moved past threshold
+      if (!this.isDragSelecting && distance > this.DRAG_THRESHOLD) {
         this.isDragSelecting = true;
         this.dragStartPoint = { ...this.mouseDownPoint };
         this.dragCurrentPoint = pos;
@@ -650,6 +664,14 @@ export class SelectionManager {
       
       // Skip hover detection during drag
       if (this.isDragSelecting) return;
+    } else if (this.isMouseDown && this.mouseDownPoint && !this.dragSelectionEnabled) {
+      // If drag selection is disabled, track if mouse moved significantly
+      // This helps distinguish clicks (small movement) from drags (large movement)
+      const distance = this.getDistance(this.mouseDownPoint, pos);
+      if (distance > this.DRAG_THRESHOLD) {
+        this.hasMovedSignificantly = true;
+      }
+      // Don't start drag selection, but keep tracking for click detection
     }
     
     // Raycast for hover - find first intersection that passes floor filter
@@ -776,8 +798,13 @@ export class SelectionManager {
    */
   private onKeyDown(event: KeyboardEvent): void {
     // Don't allow multi-select in single-select only mode (VIEW tool)
-    if (event.key === 'Shift' && !this.singleSelectOnly) {
-      this.isMultiSelectMode = true;
+    if (event.key === 'Shift') {
+      if (this.singleSelectOnly) {
+        // Explicitly prevent multi-select mode
+        this.isMultiSelectMode = false;
+      } else {
+        this.isMultiSelectMode = true;
+      }
     }
     
     // Escape clears selection
