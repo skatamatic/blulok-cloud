@@ -5,7 +5,6 @@ import { apiService } from '@/services/api.service';
 import {
   ScheduleWithTimeWindows,
   CreateScheduleRequest,
-  UpdateScheduleRequest,
   UserScheduleResponse,
 } from '@/types/schedule.types';
 import { ScheduleVisualizer } from './ScheduleVisualizer';

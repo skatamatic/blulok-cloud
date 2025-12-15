@@ -13,7 +13,6 @@ import {
   SwatchIcon,
   PlusIcon,
   TrashIcon,
-  PhotoIcon,
   ArrowUpTrayIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -41,15 +40,30 @@ interface SkinEditorDialogProps {
 const CATEGORY_PARTS: Record<AssetCategory, string[]> = {
   [AssetCategory.STORAGE_UNIT]: ['body', 'door', 'handle', 'lock'],
   [AssetCategory.GATE]: ['frame', 'bars', 'motor'],
-  [AssetCategory.DOOR]: ['frame', 'panel', 'handle'],
-  [AssetCategory.FENCE]: ['frame', 'mesh'],
   [AssetCategory.ELEVATOR]: ['frame', 'doors', 'cabin'],
-  [AssetCategory.KIOSK]: ['cabinet', 'counter', 'awning'],
   [AssetCategory.ACCESS_CONTROL]: ['housing', 'screen', 'keypad'],
+  [AssetCategory.BUILDING]: ['wall', 'roof', 'foundation'],
+  [AssetCategory.WALL]: ['surface', 'frame'],
+  [AssetCategory.INTERIOR_WALL]: ['surface', 'frame'],
+  [AssetCategory.FLOOR]: ['surface', 'edge'],
+  [AssetCategory.CEILING]: ['surface'],
+  [AssetCategory.STAIRWELL]: ['steps', 'railing'],
+  [AssetCategory.DOOR]: ['frame', 'panel', 'handle'],
   [AssetCategory.WINDOW]: ['frame', 'glass', 'sill'],
+  [AssetCategory.PAVEMENT]: ['surface'],
+  [AssetCategory.GRASS]: ['surface'],
+  [AssetCategory.GRAVEL]: ['surface'],
+  [AssetCategory.FENCE]: ['frame', 'mesh'],
   [AssetCategory.DECORATION]: ['trunk', 'foliage', 'pot'],
+  [AssetCategory.MARKER]: ['marker'],
+  [AssetCategory.LABEL]: ['label'],
+  [AssetCategory.LANDSCAPING]: ['foliage', 'ground'],
+  [AssetCategory.SIGNAGE]: ['sign', 'post'],
+  [AssetCategory.KIOSK]: ['cabinet', 'counter', 'awning'],
+  [AssetCategory.BOLLARD]: ['post', 'base'],
   [AssetCategory.CAMERA]: ['housing', 'lens'],
   [AssetCategory.LIGHTING]: ['fixture', 'lens'],
+  [AssetCategory.UTILITY]: ['housing'],
 };
 
 const DEFAULT_MATERIAL: PartMaterial = {

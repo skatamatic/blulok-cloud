@@ -20,7 +20,7 @@ import { SyncFMSWidget } from '@/components/Widget/SyncFMSWidget';
 import { AccessHistoryWidget } from '@/components/Widget/AccessHistoryWidget';
 import { SharedKeysWidget } from '@/components/Widget/SharedKeysWidget';
 import { LockStatusWidget } from '@/components/Widget/LockStatusWidget';
-import { WidgetSize } from '@/components/Widget/WidgetSizeDropdown';
+import { WidgetSize } from '@/types/widget.types';
 import { WidgetInstance } from '@/types/widget-management.types';
 import { getWidgetType } from '@/config/widgetRegistry';
 import { useGeneralStatsData } from '@/hooks/useGeneralStatsData';

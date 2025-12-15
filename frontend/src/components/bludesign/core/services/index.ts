@@ -9,5 +9,6 @@ export { ObjectPlacementService, type PlacementContext, type PlacementResult } f
 export { ObjectManagementService, type ManagementContext } from './ObjectManagementService';
 export { FloorService, type FloorContext, type FloorOperationResult } from './FloorService';
 export { HistoryService, type HistoryAction, type ActionType } from './HistoryService';
-export { SerializationService, type SerializationContext, type SerializedBuilding, type SerializedObject } from './SerializationService';
+export { SerializationService, type SerializationContext } from './SerializationService';
+export type { SerializedBuilding, SerializedPlacedObject } from '../types';
 

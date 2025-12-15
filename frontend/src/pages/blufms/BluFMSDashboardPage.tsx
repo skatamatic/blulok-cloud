@@ -1,4 +1,3 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PresentationChartLineIcon, MapIcon } from '@heroicons/react/24/outline';
 

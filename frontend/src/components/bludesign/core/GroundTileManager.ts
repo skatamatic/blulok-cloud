@@ -29,7 +29,7 @@ interface TileBatch {
 }
 
 /** Default colors for ground tiles */
-const DEFAULT_COLORS = {
+const DEFAULT_COLORS: Record<AssetCategory.PAVEMENT | AssetCategory.GRASS | AssetCategory.GRAVEL, string> = {
   [AssetCategory.PAVEMENT]: '#505860',
   [AssetCategory.GRASS]: '#3d7a3d',
   [AssetCategory.GRAVEL]: '#a8957a',
@@ -89,8 +89,12 @@ export class GroundTileManager {
     let batch = this.batches.get(category);
     
     if (!batch && this.sharedGeometry) {
+      // Only handle ground tile categories
+      const color = (category === AssetCategory.PAVEMENT || category === AssetCategory.GRASS || category === AssetCategory.GRAVEL)
+        ? DEFAULT_COLORS[category]
+        : '#808080';
       const material = new THREE.MeshStandardMaterial({
-        color: DEFAULT_COLORS[category] || '#808080',
+        color,
         metalness: DEFAULT_MATERIALS[category]?.metalness ?? 0.1,
         roughness: DEFAULT_MATERIALS[category]?.roughness ?? 0.9,
       });
@@ -191,7 +195,7 @@ export class GroundTileManager {
    * Remove a ground tile instance
    */
   removeTile(objectId: string): boolean {
-    for (const [category, batch] of this.batches) {
+    for (const [, batch] of this.batches) {
       const instance = batch.instances.get(objectId);
       if (instance) {
         // Move instance to "infinity" (hidden)

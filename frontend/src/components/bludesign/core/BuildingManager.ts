@@ -15,7 +15,6 @@ import {
   BuildingFootprint,
   Floor,
   BuildingWall,
-  InteriorWall,
   WallOpening,
   GridPosition,
   FLOOR_HEIGHT,
@@ -24,7 +23,7 @@ import {
 } from './types';
 import { GridSystem } from './GridSystem';
 import { AssetFactory } from '../assets/AssetFactory';
-import { getBuildingSkinManager, BuildingSkinManager } from './BuildingSkinManager';
+import { getBuildingSkinManager } from './BuildingSkinManager';
 import { BuildingMaterials } from './types';
 
 export interface BuildingManagerCallbacks {
@@ -43,22 +42,22 @@ export interface BuildingCell {
 }
 
 /** Instance data for tracking batched meshes */
-interface FloorTileInstance {
-  id: string;
-  buildingId: string;
-  floorLevel: number;
-  gridX: number;
-  gridZ: number;
-  instanceIndex: number;
-}
+// interface FloorTileInstance {
+//   id: string;
+//   buildingId: string;
+//   floorLevel: number;
+//   gridX: number;
+//   gridZ: number;
+//   instanceIndex: number;
+// }
 
-interface WallInstance {
-  id: string;
-  buildingId: string;
-  floorLevel: number;
-  instanceIndex: number;
-  orientation: 'north-south' | 'east-west';
-}
+// interface WallInstance {
+//   id: string;
+//   buildingId: string;
+//   floorLevel: number;
+//   instanceIndex: number;
+//   orientation: 'north-south' | 'east-west';
+// }
 
 /** Batch of instanced meshes */
 interface InstanceBatch {
@@ -71,7 +70,6 @@ interface InstanceBatch {
 export class BuildingManager {
   private scene: THREE.Scene;
   private gridSystem: GridSystem;
-  private assetFactory: typeof AssetFactory;
   private callbacks: BuildingManagerCallbacks;
   
   private buildings: Map<string, Building> = new Map();
@@ -117,12 +115,11 @@ export class BuildingManager {
   constructor(
     scene: THREE.Scene,
     gridSystem: GridSystem,
-    assetFactory: typeof AssetFactory,
+    _assetFactory: typeof AssetFactory,
     callbacks: BuildingManagerCallbacks
   ) {
     this.scene = scene;
     this.gridSystem = gridSystem;
-    this.assetFactory = assetFactory;
     this.callbacks = callbacks;
     
     // Initialize shared geometries and materials
@@ -842,7 +839,7 @@ export class BuildingManager {
     console.log(`[BuildingManager] Got ${perimeterSegments.length} perimeter segments`);
 
     // Create walls for each perimeter segment
-    perimeterSegments.forEach((segment, i) => {
+    perimeterSegments.forEach((segment) => {
       const wall: BuildingWall = {
         id: `wall-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         buildingId: building.id,
@@ -942,104 +939,6 @@ export class BuildingManager {
     return segments;
   }
   
-  /**
-   * Get perimeter for a single footprint
-   */
-  private getFootprintPerimeter(footprint: BuildingFootprint): Array<{ start: GridPosition; end: GridPosition }> {
-    const { minX, maxX, minZ, maxZ } = footprint;
-    return [
-      // North wall
-      { start: { x: minX, z: maxZ + 1, y: 0 }, end: { x: maxX + 1, z: maxZ + 1, y: 0 } },
-      // East wall
-      { start: { x: maxX + 1, z: maxZ + 1, y: 0 }, end: { x: maxX + 1, z: minZ, y: 0 } },
-      // South wall
-      { start: { x: maxX + 1, z: minZ, y: 0 }, end: { x: minX, z: minZ, y: 0 } },
-      // West wall
-      { start: { x: minX, z: minZ, y: 0 }, end: { x: minX, z: maxZ + 1, y: 0 } },
-    ];
-  }
-  
-  /**
-   * Get bounding box of all footprints
-   */
-  private getUnionBounds(footprints: BuildingFootprint[]): BuildingFootprint {
-    return {
-      minX: Math.min(...footprints.map(fp => fp.minX)),
-      maxX: Math.max(...footprints.map(fp => fp.maxX)),
-      minZ: Math.min(...footprints.map(fp => fp.minZ)),
-      maxZ: Math.max(...footprints.map(fp => fp.maxZ)),
-    };
-  }
-  
-  /**
-   * Merge consecutive collinear wall segments to reduce segment count
-   */
-  private mergeCollinearSegments(segments: Array<{ start: GridPosition; end: GridPosition }>): Array<{ start: GridPosition; end: GridPosition }> {
-    if (segments.length === 0) return [];
-    
-    const merged: Array<{ start: GridPosition; end: GridPosition }> = [];
-    
-    // Group by direction (horizontal or vertical)
-    const horizontal = segments.filter(s => s.start.z === s.end.z);
-    const vertical = segments.filter(s => s.start.x === s.end.x);
-    
-    // Merge horizontal segments
-    const mergedH = this.mergeSegmentGroup(horizontal, 'horizontal');
-    // Merge vertical segments  
-    const mergedV = this.mergeSegmentGroup(vertical, 'vertical');
-    
-    return [...mergedH, ...mergedV];
-  }
-  
-  /**
-   * Merge segments in one direction
-   */
-  private mergeSegmentGroup(
-    segments: Array<{ start: GridPosition; end: GridPosition }>,
-    direction: 'horizontal' | 'vertical'
-  ): Array<{ start: GridPosition; end: GridPosition }> {
-    if (segments.length === 0) return [];
-    
-    // Sort segments
-    const sorted = [...segments].sort((a, b) => {
-      if (direction === 'horizontal') {
-        if (a.start.z !== b.start.z) return a.start.z - b.start.z;
-        return a.start.x - b.start.x;
-      } else {
-        if (a.start.x !== b.start.x) return a.start.x - b.start.x;
-        return a.start.z - b.start.z;
-      }
-    });
-    
-    const merged: Array<{ start: GridPosition; end: GridPosition }> = [];
-    let current = sorted[0];
-    
-    for (let i = 1; i < sorted.length; i++) {
-      const next = sorted[i];
-      
-      // Check if segments are adjacent and collinear
-      const canMerge = direction === 'horizontal'
-        ? current.end.z === next.start.z && current.end.x === next.start.x && current.start.z === next.start.z
-        : current.end.x === next.start.x && current.end.z === next.start.z && current.start.x === next.start.x;
-      
-      if (canMerge) {
-        // Extend current segment
-        current = {
-          start: current.start,
-          end: next.end,
-        };
-      } else {
-        // Push current and start new
-        merged.push(current);
-        current = next;
-      }
-    }
-    
-    // Push last segment
-    merged.push(current);
-    
-    return merged;
-  }
 
   /**
    * Create a wall mesh
@@ -1879,7 +1778,7 @@ export class BuildingManager {
     // Shift wall levels and positions
     building.walls.forEach(wall => {
       if (wall.floorLevel >= fromLevel) {
-        const oldLevel = wall.floorLevel;
+        // const oldLevel = wall.floorLevel;
         wall.floorLevel += shiftAmount;
 
         // Update wall mesh position
@@ -1953,6 +1852,33 @@ export class BuildingManager {
     }
 
     return true;
+  }
+
+  /**
+   * Remove an opening from a wall
+   * Restores the wall segment that was hidden
+   */
+  removeWallOpening(wallId: string, openingId: string): void {
+    for (const building of this.buildings.values()) {
+      const wall = building.walls.find(w => w.id === wallId);
+      if (wall) {
+        // Remove the opening
+        const index = wall.openings.findIndex(o => o.id === openingId);
+        if (index >= 0) {
+          const opening = wall.openings[index];
+          wall.openings.splice(index, 1);
+          
+          // Restore wall visibility if it was a window
+          if (opening.type === 'window') {
+            // Find and restore hidden wall segments
+            const wallMesh = this.wallMeshes.get(wallId);
+            if (wallMesh) {
+              wallMesh.visible = true;
+            }
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -2046,260 +1972,8 @@ export class BuildingManager {
     }
   }
 
-  /**
-   * Update a wall mesh to accommodate an opening (door/window)
-   * This hides the original wall section and creates segments around the opening
-   */
-  private updateWallWithOpening(wall: BuildingWall, opening: WallOpening): void {
-    const gridSize = this.gridSystem.getGridSize();
-    const height = FLOOR_HEIGHT * gridSize;
-    const thickness = 0.2;
-    
-    // Get wall info
-    const startWorld = this.gridSystem.gridToWorld(wall.startPos);
-    const endWorld = this.gridSystem.gridToWorld(wall.endPos);
-    const wallLength = Math.sqrt(
-      Math.pow(endWorld.x - startWorld.x, 2) +
-      Math.pow(endWorld.z - startWorld.z, 2)
-    );
-    const angle = Math.atan2(endWorld.z - startWorld.z, endWorld.x - startWorld.x);
-    const centerX = (startWorld.x + endWorld.x) / 2;
-    const centerZ = (startWorld.z + endWorld.z) / 2;
-    const baseY = wall.floorLevel * FLOOR_HEIGHT * gridSize;
-    
-    // Calculate opening dimensions
-    const openingWidth = opening.width * gridSize;
-    const openingHeight = opening.type === 'door' ? height * 0.9 : height * 0.6;
-    const openingY = opening.type === 'door' ? openingHeight / 2 : height * 0.5; // Doors at bottom, windows centered
-    const openingPos = opening.position * wallLength; // Position along wall
-    
-    // Hide the original wall instance
-    if (this.useInstancing) {
-      const deltaX = Math.abs(endWorld.x - startWorld.x);
-      const deltaZ = Math.abs(endWorld.z - startWorld.z);
-      const orientation = (deltaX > deltaZ) ? 'east-west' : 'north-south';
-      const batchKey = `${wall.floorLevel}-${orientation}`;
-      const batch = this.wallBatches.get(batchKey);
-      
-      if (batch) {
-        const instanceData = batch.instances.get(wall.id);
-        if (instanceData) {
-          // Scale down to zero to hide this instance
-          this.tempPosition.set(centerX, baseY + height / 2, centerZ);
-          this.tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
-          this.tempScale.set(0.001, 0.001, 0.001); // Effectively invisible
-          this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
-          batch.mesh.setMatrixAt(instanceData.instanceIndex, this.tempMatrix);
-          batch.mesh.instanceMatrix.needsUpdate = true;
-        }
-      }
-    } else {
-      // For non-instanced, just hide the mesh
-      const wallMesh = this.wallMeshes.get(wall.id);
-      if (wallMesh) {
-        wallMesh.visible = false;
-      }
-    }
-    
-    // Create wall segments around the opening
-    const wallMaterial = new THREE.MeshStandardMaterial({
-      color: 0xe8e4dc,
-      roughness: 0.7,
-      metalness: 0.0,
-    });
-    
-    const segmentsGroup = new THREE.Group();
-    segmentsGroup.userData.wallSegments = true;
-    segmentsGroup.userData.wallId = wall.id;
-    segmentsGroup.userData.openingId = opening.id;
-    
-    // Left segment (from wall start to opening)
-    const leftWidth = openingPos - openingWidth / 2;
-    if (leftWidth > 0.1) {
-      const leftGeom = new THREE.BoxGeometry(leftWidth, height, thickness);
-      const leftMesh = new THREE.Mesh(leftGeom, wallMaterial.clone());
-      leftMesh.position.set(-wallLength / 2 + leftWidth / 2, height / 2, 0);
-      leftMesh.castShadow = true;
-      leftMesh.receiveShadow = true;
-      segmentsGroup.add(leftMesh);
-    }
-    
-    // Right segment (from opening to wall end)
-    const rightWidth = wallLength - openingPos - openingWidth / 2;
-    if (rightWidth > 0.1) {
-      const rightGeom = new THREE.BoxGeometry(rightWidth, height, thickness);
-      const rightMesh = new THREE.Mesh(rightGeom, wallMaterial.clone());
-      rightMesh.position.set(wallLength / 2 - rightWidth / 2, height / 2, 0);
-      rightMesh.castShadow = true;
-      rightMesh.receiveShadow = true;
-      segmentsGroup.add(rightMesh);
-    }
-    
-    // Top segment (above opening) - for windows, not needed for full-height doors
-    if (opening.type === 'window') {
-      const topHeight = height - openingY - openingHeight / 2;
-      if (topHeight > 0.1) {
-        const topGeom = new THREE.BoxGeometry(openingWidth, topHeight, thickness);
-        const topMesh = new THREE.Mesh(topGeom, wallMaterial.clone());
-        topMesh.position.set(
-          -wallLength / 2 + openingPos,
-          openingY + openingHeight / 2 + topHeight / 2,
-          0
-        );
-        topMesh.castShadow = true;
-        topMesh.receiveShadow = true;
-        segmentsGroup.add(topMesh);
-      }
-      
-      // Bottom segment (below window)
-      const bottomHeight = openingY - openingHeight / 2;
-      if (bottomHeight > 0.1) {
-        const bottomGeom = new THREE.BoxGeometry(openingWidth, bottomHeight, thickness);
-        const bottomMesh = new THREE.Mesh(bottomGeom, wallMaterial.clone());
-        bottomMesh.position.set(
-          -wallLength / 2 + openingPos,
-          bottomHeight / 2,
-          0
-        );
-        bottomMesh.castShadow = true;
-        bottomMesh.receiveShadow = true;
-        segmentsGroup.add(bottomMesh);
-      }
-    }
-    
-    // Position and rotate the group to match the wall
-    segmentsGroup.position.set(centerX, baseY, centerZ);
-    segmentsGroup.rotation.y = angle;
-    
-    this.scene.add(segmentsGroup);
-    
-    // Store reference for cleanup
-    if (!wall.meshId) wall.meshId = '';
-    (wall as any).segmentsMeshId = segmentsGroup.uuid;
-  }
 
-  /**
-   * Remove an opening from a wall and restore the wall segment
-   */
-  removeWallOpening(wallId: string, openingId: string): void {
-    for (const building of this.buildings.values()) {
-      const wall = building.walls.find(w => w.id === wallId);
-      if (wall) {
-        const openingIndex = wall.openings.findIndex(o => o.id === openingId);
-        if (openingIndex >= 0) {
-          wall.openings.splice(openingIndex, 1);
-          
-          // Restore the wall segment by re-creating its instance at normal scale
-          if (this.useInstancing) {
-            const deltaX = Math.abs(wall.endPos.x - wall.startPos.x);
-            const deltaZ = Math.abs(wall.endPos.z - wall.startPos.z);
-            const orientation = (deltaX > deltaZ) ? 'east-west' : 'north-south';
-            const batchKey = `${wall.floorLevel}-${orientation}`;
-            const batch = this.wallBatches.get(batchKey);
-            
-            if (batch) {
-              const instanceData = batch.instances.get(wall.id);
-              if (instanceData) {
-                // Restore to full scale
-                const gridSize = this.gridSystem.getGridSize();
-                const startWorld = this.gridSystem.gridToWorld(wall.startPos);
-                const endWorld = this.gridSystem.gridToWorld(wall.endPos);
-                const length = Math.sqrt(
-                  Math.pow(endWorld.x - startWorld.x, 2) +
-                  Math.pow(endWorld.z - startWorld.z, 2)
-                );
-                const height = FLOOR_HEIGHT * gridSize;
-                const thickness = 0.2;
-                const centerX = (startWorld.x + endWorld.x) / 2;
-                const centerZ = (startWorld.z + endWorld.z) / 2;
-                const baseY = wall.floorLevel * FLOOR_HEIGHT * gridSize;
-                const angle = Math.atan2(endWorld.z - startWorld.z, endWorld.x - startWorld.x);
-                
-                this.tempPosition.set(centerX, baseY + height / 2, centerZ);
-                this.tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
-                this.tempScale.set(length, height, thickness);
-                this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
-                batch.mesh.setMatrixAt(instanceData.instanceIndex, this.tempMatrix);
-                batch.mesh.instanceMatrix.needsUpdate = true;
-              }
-            }
-          } else {
-            // For non-instanced, restore visibility
-            const wallMesh = this.wallMeshes.get(wall.id);
-            if (wallMesh) {
-              wallMesh.visible = true;
-            }
-          }
-        }
-        break;
-      }
-    }
-  }
-
-  /**
-   * Restore a wall to its original state (no openings)
-   */
-  private restoreWall(wall: BuildingWall): void {
-    const gridSize = this.gridSystem.getGridSize();
-    const height = FLOOR_HEIGHT * gridSize;
-    const thickness = 0.2;
-    
-    const startWorld = this.gridSystem.gridToWorld(wall.startPos);
-    const endWorld = this.gridSystem.gridToWorld(wall.endPos);
-    const wallLength = Math.sqrt(
-      Math.pow(endWorld.x - startWorld.x, 2) +
-      Math.pow(endWorld.z - startWorld.z, 2)
-    );
-    const angle = Math.atan2(endWorld.z - startWorld.z, endWorld.x - startWorld.x);
-    const centerX = (startWorld.x + endWorld.x) / 2;
-    const centerZ = (startWorld.z + endWorld.z) / 2;
-    const baseY = wall.floorLevel * FLOOR_HEIGHT * gridSize;
-    
-    if (this.useInstancing) {
-      const deltaX = Math.abs(endWorld.x - startWorld.x);
-      const deltaZ = Math.abs(endWorld.z - startWorld.z);
-      const orientation = (deltaX > deltaZ) ? 'east-west' : 'north-south';
-      const batchKey = `${wall.floorLevel}-${orientation}`;
-      const batch = this.wallBatches.get(batchKey);
-      
-      if (batch) {
-        const instanceData = batch.instances.get(wall.id);
-        if (instanceData) {
-          // Restore original scale
-          this.tempPosition.set(centerX, baseY + height / 2, centerZ);
-          this.tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
-          this.tempScale.set(wallLength, height, thickness);
-          this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
-          batch.mesh.setMatrixAt(instanceData.instanceIndex, this.tempMatrix);
-          batch.mesh.instanceMatrix.needsUpdate = true;
-        }
-      }
-    } else {
-      const wallMesh = this.wallMeshes.get(wall.id);
-      if (wallMesh) {
-        wallMesh.visible = true;
-      }
-    }
-  }
-
-  /**
-   * Rebuild wall segments when openings change
-   */
-  private rebuildWallWithOpenings(wall: BuildingWall): void {
-    // Remove all existing segments for this wall
-    const toRemove: THREE.Object3D[] = [];
-    this.scene.traverse((child) => {
-      if (child.userData.wallSegments && child.userData.wallId === wall.id) {
-        toRemove.push(child);
-      }
-    });
-    toRemove.forEach(obj => this.scene.remove(obj));
-    
-    // Create segments for all openings
-    wall.openings.forEach(opening => {
-      this.updateWallWithOpening(wall, opening);
-    });
-  }
+  
 
   /**
    * Get all buildings
@@ -2752,7 +2426,7 @@ export class BuildingManager {
   /**
    * Check if a position has a stairwell that connects floors
    */
-  hasStairwellAt(position: GridPosition): boolean {
+  hasStairwellAt(_position: GridPosition): boolean {
     // This would be expanded to check actual placed stairwell objects
     // For now, return false - actual implementation would check scene
     return false;

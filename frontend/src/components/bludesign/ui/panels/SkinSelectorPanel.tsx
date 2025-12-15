@@ -5,7 +5,7 @@
  * Shows available skins for the currently selected asset during placement.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useCallback } from 'react';
 import {
   SwatchIcon,
   PlusIcon,

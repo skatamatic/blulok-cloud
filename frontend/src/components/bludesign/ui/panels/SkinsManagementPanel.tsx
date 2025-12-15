@@ -106,7 +106,7 @@ const SkinPreviewThumbnail: React.FC<SkinPreviewThumbnailProps> = ({ skin, size 
         }
         
         const assetRegistry = AssetRegistry.getInstance();
-        const assetMetadata = assetRegistry.getAssetById(demoAssetId);
+        const assetMetadata = assetRegistry.getAsset(demoAssetId);
         
         if (!assetMetadata) {
           // Fallback: try to find any asset of this category

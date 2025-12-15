@@ -15,7 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { BuildingSkinType, Building } from '../../core/types';
-import { getBuildingSkinManager, BuildingSkinDefinition } from '../../core/BuildingSkinManager';
+import { getBuildingSkinManager } from '../../core/BuildingSkinManager';
 
 interface BuildingSkinPanelProps {
   /** Currently selected building (null when no building selected) */
@@ -253,7 +253,7 @@ const SkinPreview: React.FC<{
   skinId: string; 
   colors: { primary: string; secondary: string };
   isTransparent?: boolean;
-}> = ({ skinId, colors, isTransparent }) => {
+}> = ({ colors, isTransparent }) => {
   return (
     <svg viewBox="0 0 48 48" className="w-full h-full">
       {/* Background */}

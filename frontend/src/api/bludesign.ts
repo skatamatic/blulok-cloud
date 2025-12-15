@@ -386,7 +386,7 @@ export async function getFacilityLinks(): Promise<FacilityLink[]> {
     return bluLokFacilities.map(blulok => {
       // Look for a BluDesign facility linked to this BluLok facility
       // The link is stored in the BluDesign facility's dataSource.facilityId
-      const linkedBluDesign = bluDesignFacilities.find(bd => {
+      const linkedBluDesign = bluDesignFacilities.find(() => {
         // We need to fetch the full facility data to check the dataSource
         // For now, we'll return null and let the UI handle loading the full data
         return false;

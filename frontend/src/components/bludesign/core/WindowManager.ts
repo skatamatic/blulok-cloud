@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { GridSystem } from './GridSystem';
-import { AssetMetadata, PlacedObject, BuildingWall } from './types';
+import { PlacedObject, BuildingWall } from './types';
 
 /** Instance tracking for a single window */
 interface WindowInstance {
@@ -57,12 +57,6 @@ export class WindowManager {
   
   // Wall data cache for drag calculations
   private wallCache: Map<string, WallLine> = new Map();
-  
-  // Temp objects for calculations
-  private tempMatrix = new THREE.Matrix4();
-  private tempVector = new THREE.Vector3();
-  private tempQuaternion = new THREE.Quaternion();
-  private tempScale = new THREE.Vector3(1, 1, 1);
   
   constructor(scene: THREE.Scene, gridSystem: GridSystem) {
     this.scene = scene;
@@ -126,7 +120,6 @@ export class WindowManager {
   cacheWallData(wall: BuildingWall): void {
     if (this.wallCache.has(wall.id)) return;
     
-    const gridSize = this.gridSystem.getGridSize();
     const startWorld = this.gridSystem.gridToWorld({ 
       x: wall.startPos.x, 
       z: wall.startPos.z, 
@@ -141,13 +134,17 @@ export class WindowManager {
     const direction = new THREE.Vector3().subVectors(endWorld, startWorld).normalize();
     const length = startWorld.distanceTo(endWorld);
     
+    // Calculate orientation from wall direction
+    const isHorizontal = Math.abs(startWorld.z - endWorld.z) < 0.01;
+    const orientation = isHorizontal ? 'east-west' : 'north-south';
+    
     this.wallCache.set(wall.id, {
       id: wall.id,
       startWorld: startWorld,
       endWorld: endWorld,
       direction: direction,
       length: length,
-      orientation: wall.orientation,
+      orientation: orientation,
       floorLevel: wall.floorLevel,
     });
   }
@@ -217,7 +214,7 @@ export class WindowManager {
    */
   moveWindowAlongWall(
     windowId: string, 
-    newWallPosition: number,
+    _newWallPosition: number,
     newWorldPosition: THREE.Vector3
   ): void {
     const mesh = this.windowMeshes.get(windowId);

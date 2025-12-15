@@ -370,7 +370,7 @@ export const FloorsPanel: React.FC<FloorsPanelProps> = ({
 
       {/* Floor Stack */}
       <div className="space-y-1">
-        {sortedFloors.map((floor, index) => {
+        {sortedFloors.map((floor) => {
           const isSelected = !isFullBuildingView && floor === currentFloor;
           const isTop = floor === maxFloor;
           const isBottom = floor === minFloor;

@@ -45,8 +45,8 @@ export const ScheduleEditor = React.forwardRef<ScheduleEditorRef, ScheduleEditor
     });
 
     // Sort by start time
-    Object.keys(grouped).forEach(day => {
-      grouped[day as DayOfWeek].sort((a, b) => a.start_time.localeCompare(b.start_time));
+    (Object.keys(grouped) as unknown as DayOfWeek[]).forEach(day => {
+      grouped[day].sort((a, b) => a.start_time.localeCompare(b.start_time));
     });
 
     return grouped;
@@ -76,7 +76,7 @@ export const ScheduleEditor = React.forwardRef<ScheduleEditorRef, ScheduleEditor
   }, []);
 
   // Validate time windows for a specific day
-  const validateDay = useCallback((day: DayOfWeek, windows: TimeWindow[]): string[] => {
+  const validateDay = useCallback((_day: DayOfWeek, windows: TimeWindow[]): string[] => {
     const errors: string[] = [];
     
     // Check each window against all others
@@ -100,10 +100,10 @@ export const ScheduleEditor = React.forwardRef<ScheduleEditorRef, ScheduleEditor
   const validateAll = useCallback((windowsByDay: Record<DayOfWeek, TimeWindow[]>) => {
     const errors: Record<string, string[]> = {};
     
-    (Object.keys(DAY_NAMES_SHORT) as DayOfWeek[]).forEach(day => {
+    ([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).forEach(day => {
       const dayErrors = validateDay(day, windowsByDay[day]);
       if (dayErrors.length > 0) {
-        errors[day] = dayErrors;
+        errors[String(day)] = dayErrors;
       }
     });
     
@@ -190,7 +190,7 @@ export const ScheduleEditor = React.forwardRef<ScheduleEditorRef, ScheduleEditor
     if (sourceWindows.length === 0) return;
 
     const updated = { ...windowsByDay };
-    (Object.keys(DAY_NAMES_SHORT) as DayOfWeek[]).forEach(day => {
+    ([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).forEach(day => {
       if (day !== sourceDay) {
         updated[day] = sourceWindows.map(w => ({ ...w, day_of_week: day }));
       }
@@ -220,7 +220,7 @@ export const ScheduleEditor = React.forwardRef<ScheduleEditorRef, ScheduleEditor
     const updated: Record<DayOfWeek, TimeWindow[]> = {
       0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [],
     };
-    (Object.keys(DAY_NAMES_SHORT) as DayOfWeek[]).forEach(day => {
+    ([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).forEach(day => {
       updated[day] = [{ day_of_week: day, start_time: '00:00:00', end_time: '23:59:59' }];
     });
     updateWindows(updated);
@@ -258,7 +258,7 @@ export const ScheduleEditor = React.forwardRef<ScheduleEditorRef, ScheduleEditor
       </div>
 
       <div className="grid grid-cols-7 gap-2">
-        {(Object.keys(DAY_NAMES_SHORT) as DayOfWeek[]).map(day => {
+        {([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).map(day => {
           const windows = windowsByDay[day];
 
           return (

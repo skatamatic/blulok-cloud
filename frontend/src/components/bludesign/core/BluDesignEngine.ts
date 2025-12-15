@@ -423,8 +423,15 @@ export class BluDesignEngine {
           this.cameraController.setControlsEnabled(true);
           // Re-enable selection (if in select mode)
           const isSelectionTool = this.state.activeTool === EditorTool.SELECT || 
-                                   this.state.activeTool === EditorTool.SELECT_BUILDING;
+                                   this.state.activeTool === EditorTool.SELECT_BUILDING ||
+                                   this.state.activeTool === EditorTool.MOVE;
           this.selectionManager.setEnabled(isSelectionTool);
+          // Update drag selection enabled state
+          if (this.state.activeTool === EditorTool.MOVE) {
+            this.selectionManager.setDragSelectionEnabled(false);
+          } else {
+            this.selectionManager.setDragSelectionEnabled(true);
+          }
           // Re-show gizmo at new position
           this.updateGizmoPosition();
         },
@@ -537,7 +544,7 @@ export class BluDesignEngine {
     this.inputCoordinator.registerHandler({
       id: 'selection',
       priority: InputPriority.SELECTION,
-      enabled: this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING,
+      enabled: this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.MOVE,
       handle: (event: Event, eventType: InputEventType): boolean => {
         // When Ctrl is held, let camera handle rotation - don't block
         if (event instanceof MouseEvent && event.ctrlKey) {
@@ -551,7 +558,7 @@ export class BluDesignEngine {
         }
         return false;
       },
-      wantsInput: () => this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING,
+      wantsInput: () => this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.MOVE,
       // Route events to SelectionManager
       onMouseDown: (e: MouseEvent) => {
         // Skip if Ctrl is held (camera rotation)
@@ -604,7 +611,7 @@ export class BluDesignEngine {
   private createInitialState(): EditorState {
     return {
       mode: this.readonly ? EditorMode.VIEW : EditorMode.EDIT,
-      activeTool: EditorTool.SELECT,
+      activeTool: this.readonly ? EditorTool.MOVE : EditorTool.SELECT,
       camera: {
         mode: CameraMode.FREE,
         isometricAngle: IsometricAngle.SOUTH_WEST,
@@ -1243,7 +1250,13 @@ export class BluDesignEngine {
   // ==========================================================================
 
   setTool(tool: EditorTool): void {
-    if (this.readonly && tool !== EditorTool.SELECT) return;
+    // In readonly mode, only allow MOVE tool (which behaves like SELECT but without drag selection)
+    if (this.readonly && tool !== EditorTool.MOVE) return;
+    
+    // In edit mode, don't allow MOVE tool (use SELECT instead)
+    if (!this.readonly && tool === EditorTool.MOVE) {
+      tool = EditorTool.SELECT;
+    }
     
     // Cancel placement if switching away from PLACE tool
     if (this.state.activeTool === EditorTool.PLACE && tool !== EditorTool.PLACE) {
@@ -1253,9 +1266,16 @@ export class BluDesignEngine {
     
     this.state.activeTool = tool;
     
-    // Enable SelectionManager for both SELECT and SELECT_BUILDING tools
-    const isSelectionTool = tool === EditorTool.SELECT || tool === EditorTool.SELECT_BUILDING;
+    // Enable SelectionManager for SELECT, SELECT_BUILDING, and MOVE tools
+    const isSelectionTool = tool === EditorTool.SELECT || tool === EditorTool.SELECT_BUILDING || tool === EditorTool.MOVE;
     this.selectionManager.setEnabled(isSelectionTool);
+    
+    // Disable drag selection for MOVE tool (view-only mode)
+    if (tool === EditorTool.MOVE) {
+      this.selectionManager.setDragSelectionEnabled(false);
+    } else {
+      this.selectionManager.setDragSelectionEnabled(true);
+    }
     
     // In normal SELECT mode, ignore buildings (can't select them)
     // In SELECT_BUILDING mode, allow building selection

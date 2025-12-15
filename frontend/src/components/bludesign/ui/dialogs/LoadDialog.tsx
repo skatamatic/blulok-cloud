@@ -13,7 +13,6 @@ import {
   FolderOpenIcon,
   ClockIcon,
   CalendarIcon,
-  BuildingOffice2Icon,
   CubeIcon,
   ArrowsUpDownIcon,
 } from '@heroicons/react/24/outline';

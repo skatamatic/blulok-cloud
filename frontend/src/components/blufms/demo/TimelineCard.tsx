@@ -10,7 +10,7 @@ interface TimelineCardProps {
 export const TimelineCard: React.FC<TimelineCardProps> = ({
   markers,
   currentStep,
-  onMarkerClick,
+  onMarkerClick: _onMarkerClick,
 }) => {
   if (markers.length === 0) return null;
 
@@ -20,10 +20,9 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
         Event Timeline
       </h3>
       <div className="space-y-1.5">
-        {markers.map((marker, index) => {
+        {markers.map((marker) => {
           const isActive = marker.step === currentStep;
           const isPast = marker.step < currentStep;
-          const isClickable = onMarkerClick !== undefined;
 
           return (
             <div

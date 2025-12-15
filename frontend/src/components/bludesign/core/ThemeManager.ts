@@ -575,7 +575,7 @@ export class ThemeManager {
           categorySkins: apiTheme.categorySkins as Partial<Record<AssetCategory, string>>,
           buildingSkin: (apiTheme.buildingSkin as BuildingSkinType) || BuildingSkinType.DEFAULT,
           buildingSkinId: apiTheme.buildingSkinId,
-          environment: apiTheme.environment as Theme['environment'] || {
+          environment: (apiTheme.environment as unknown as Theme['environment']) || {
             grass: { color: '#3d7a3d', metalness: 0.0, roughness: 0.95 },
             pavement: { color: '#505860', metalness: 0.02, roughness: 0.85 },
             gravel: { color: '#a8957a', metalness: 0.05, roughness: 0.95 },
@@ -609,7 +609,11 @@ export class ThemeManager {
           categorySkins: theme.categorySkins as Record<string, string | null>,
           buildingSkin: theme.buildingSkin,
           buildingSkinId: theme.buildingSkinId,
-          environment: theme.environment,
+          environment: {
+            grass: theme.environment.grass as unknown as Record<string, unknown>,
+            pavement: theme.environment.pavement as unknown as Record<string, unknown>,
+            gravel: theme.environment.gravel as unknown as Record<string, unknown>,
+          },
         });
         
         // Update local theme with backend ID
@@ -639,7 +643,11 @@ export class ThemeManager {
           categorySkins: result.categorySkins as Record<string, string | null>,
           buildingSkin: result.buildingSkin,
           buildingSkinId: result.buildingSkinId,
-          environment: result.environment,
+          environment: {
+            grass: result.environment.grass as unknown as Record<string, unknown>,
+            pavement: result.environment.pavement as unknown as Record<string, unknown>,
+            gravel: result.environment.gravel as unknown as Record<string, unknown>,
+          },
         });
       } catch (error) {
         console.warn('Failed to sync theme update to backend:', error);

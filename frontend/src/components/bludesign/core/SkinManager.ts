@@ -217,7 +217,7 @@ export class SkinManager {
     let foundSkin: AssetSkin | null = null;
     let isGlobal = false;
 
-    for (const [category, skins] of this.globalSkins) {
+    for (const [, skins] of this.globalSkins) {
       const index = skins.findIndex(s => s.id === skinId);
       if (index !== -1) {
         foundSkin = skins[index];
@@ -233,7 +233,7 @@ export class SkinManager {
     }
 
     if (!foundSkin) {
-      for (const [category, skins] of this.facilitySkins) {
+      for (const [, skins] of this.facilitySkins) {
         const index = skins.findIndex(s => s.id === skinId);
         if (index !== -1) {
           foundSkin = skins[index];
@@ -398,6 +398,8 @@ export class SkinManager {
       [AssetCategory.CAMERA]: 'Cameras',
       [AssetCategory.LIGHTING]: 'Lighting',
       [AssetCategory.UTILITY]: 'Utilities',
+      [AssetCategory.MARKER]: 'Markers',
+      [AssetCategory.LABEL]: 'Labels',
     };
     return labels[category] || category;
   }

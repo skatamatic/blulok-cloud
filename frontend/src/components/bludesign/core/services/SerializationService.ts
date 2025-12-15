@@ -13,11 +13,17 @@
 import { 
   FacilityData, 
   PlacedObject, 
-  GridPosition,
   DataSourceConfig,
+  SerializedBuilding,
+  SerializedPlacedObject,
+  Building,
+  CameraState,
+  CameraMode,
+  GridSize,
 } from '../types';
-import { Building, BuildingManager } from '../BuildingManager';
-import { Theme, ThemeManager } from '../ThemeManager';
+import * as THREE from 'three';
+import { BuildingManager } from '../BuildingManager';
+import { ThemeManager } from '../ThemeManager';
 
 export interface SerializationContext {
   buildingManager: BuildingManager;
@@ -27,33 +33,7 @@ export interface SerializationContext {
   isFloorMode: boolean;
 }
 
-export interface SerializedBuilding {
-  id: string;
-  footprint: GridPosition[];
-  floors: number[];
-  skin?: string;
-}
-
-export interface SerializedObject {
-  id: string;
-  assetId: string;
-  position: GridPosition;
-  rotation: number;
-  floor: number;
-  wallAttachment?: {
-    buildingId: string;
-    wallId: string;
-    position: number;
-  };
-  name?: string;
-  skinId?: string;
-  binding?: {
-    entityType: string;
-    entityId?: string;
-    currentState: string;
-  };
-  disableVerticalShaft?: boolean;
-}
+// Use SerializedBuilding and SerializedPlacedObject from types.ts
 
 export class SerializationService {
   private context: SerializationContext;
@@ -76,26 +56,37 @@ export class SerializationService {
     name: string = 'Untitled Facility',
     dataSource?: DataSourceConfig
   ): FacilityData {
-    const { buildingManager, themeManager, placedObjects, activeFloor, isFloorMode } = this.context;
+    const { buildingManager, themeManager, placedObjects, activeFloor } = this.context;
     
     // Export buildings
     const buildings = buildingManager.getAllBuildings().map(building => this.serializeBuilding(building));
     
     // Export placed objects
-    const objects = Array.from(placedObjects.values()).map(obj => this.serializeObject(obj));
+    const placedObjectsArray = Array.from(placedObjects.values()).map(obj => this.serializeObject(obj));
     
     // Export theme state
     const activeThemeId = themeManager.getActiveTheme().id;
     
+    // Get current camera state (simplified - should be from context)
+    const camera: CameraState = {
+      mode: CameraMode.FREE,
+      isometricAngle: 45,
+      position: new THREE.Vector3(0, 0, 0),
+      target: new THREE.Vector3(0, 0, 0),
+      zoom: 1,
+    };
+    
     const data: FacilityData = {
       name,
+      version: '1.0.0',
+      camera,
       buildings,
-      objects,
+      placedObjects: placedObjectsArray,
+      activeFloor,
+      activeSkins: {}, // Should be populated from context
       activeThemeId,
-      viewState: {
-        activeFloor,
-        isFloorMode,
-      },
+      gridSize: GridSize.TINY,
+      showGrid: true,
     };
     
     if (dataSource) {
@@ -111,27 +102,30 @@ export class SerializationService {
   private serializeBuilding(building: Building): SerializedBuilding {
     return {
       id: building.id,
-      footprint: [...building.footprint],
-      floors: building.floors.map(f => f.level),
-      skin: building.skin,
+      name: building.name,
+      footprints: [...building.footprints],
+      floors: building.floors.map(f => ({ level: f.level, height: f.height })),
     };
   }
   
   /**
    * Serialize a placed object to export format
    */
-  private serializeObject(obj: PlacedObject): SerializedObject {
-    const serialized: SerializedObject = {
+  private serializeObject(obj: PlacedObject): SerializedPlacedObject {
+    const serialized: SerializedPlacedObject = {
       id: obj.id,
       assetId: obj.assetId,
       position: { ...obj.position },
-      rotation: obj.rotation,
+      orientation: obj.orientation,
       floor: obj.floor,
     };
     
+    if (obj.buildingId) {
+      serialized.buildingId = obj.buildingId;
+    }
+    
     if (obj.wallAttachment) {
       serialized.wallAttachment = {
-        buildingId: obj.wallAttachment.buildingId,
         wallId: obj.wallAttachment.wallId,
         position: obj.wallAttachment.position,
       };
@@ -141,20 +135,11 @@ export class SerializationService {
       serialized.name = obj.name;
     }
     
-    if (obj.skinId) {
-      serialized.skinId = obj.skinId;
-    }
-    
     if (obj.binding) {
       serialized.binding = {
         entityType: obj.binding.entityType,
         entityId: obj.binding.entityId,
-        currentState: obj.binding.currentState,
       };
-    }
-    
-    if (obj.disableVerticalShaft) {
-      serialized.disableVerticalShaft = true;
     }
     
     return serialized;
@@ -166,16 +151,16 @@ export class SerializationService {
    */
   parseImportData(data: FacilityData): {
     buildings: SerializedBuilding[];
-    objects: SerializedObject[];
+    objects: SerializedPlacedObject[];
     activeThemeId?: string;
     viewState?: { activeFloor: number; isFloorMode: boolean };
     dataSource?: DataSourceConfig;
   } {
     return {
       buildings: data.buildings || [],
-      objects: data.objects || [],
+      objects: data.placedObjects || [],
       activeThemeId: data.activeThemeId,
-      viewState: data.viewState,
+      viewState: { activeFloor: data.activeFloor, isFloorMode: false },
       dataSource: data.dataSource,
     };
   }
@@ -198,9 +183,9 @@ export class SerializationService {
       errors.push('Invalid buildings format: expected an array');
     }
     
-    // Validate objects array
-    if (facilityData.objects && !Array.isArray(facilityData.objects)) {
-      errors.push('Invalid objects format: expected an array');
+    // Validate placedObjects array
+    if (facilityData.placedObjects && !Array.isArray(facilityData.placedObjects)) {
+      errors.push('Invalid placedObjects format: expected an array');
     }
     
     // Validate each building
@@ -209,15 +194,15 @@ export class SerializationService {
         if (!building.id) {
           errors.push(`Building ${index}: missing id`);
         }
-        if (!building.footprint || !Array.isArray(building.footprint)) {
-          errors.push(`Building ${index}: invalid footprint`);
+        if (!building.footprints || !Array.isArray(building.footprints)) {
+          errors.push(`Building ${index}: invalid footprints`);
         }
       });
     }
     
     // Validate each object
-    if (Array.isArray(facilityData.objects)) {
-      facilityData.objects.forEach((obj, index) => {
+    if (Array.isArray(facilityData.placedObjects)) {
+      facilityData.placedObjects.forEach((obj, index) => {
         if (!obj.id) {
           errors.push(`Object ${index}: missing id`);
         }

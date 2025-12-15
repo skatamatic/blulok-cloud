@@ -6,7 +6,6 @@
  */
 
 import * as THREE from 'three';
-import { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { getLoadingManager, LoadResult, ProgressCallback } from './LoadingManager';
 import {
   BluDesignAsset,
@@ -14,8 +13,6 @@ import {
   AssetMaterials,
   BrandingOverride,
   MaterialSlot,
-  PrimitiveSpec,
-  PrimitiveType,
 } from '../core/types';
 import { AssetFactory } from '../assets/AssetFactory';
 

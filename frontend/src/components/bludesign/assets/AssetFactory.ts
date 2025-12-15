@@ -773,7 +773,7 @@ export class AssetFactory {
         { x: paneWidth / 2 + frameWidth * 0.3, y: -paneHeight / 2 - frameWidth * 0.3 },
       ];
       
-      offsets.forEach((offset, i) => {
+      offsets.forEach((offset) => {
         const glass = new THREE.Mesh(glassGeometry, glassMaterial);
         glass.position.set(offset.x, windowY + offset.y, 0);
         glass.userData.partName = 'glass';
@@ -796,8 +796,7 @@ export class AssetFactory {
    * Create a decoration mesh (trees, shrubs, planters, etc.)
    */
   private static createDecoration(asset: AssetMetadata): THREE.Object3D {
-    const group = new THREE.Group();
-    const decorationType = asset.metadata?.decorationType as string;
+    const decorationType = (asset.metadata as { decorationType?: string })?.decorationType;
     
     switch (decorationType) {
       case 'tree_oak':
@@ -860,7 +859,7 @@ export class AssetFactory {
       { x: -0.2 * scale, y: height * 0.7, z: 0.3 * scale, r: 0.5 * scale },
     ];
     
-    foliagePositions.forEach((pos, i) => {
+    foliagePositions.forEach((pos) => {
       const foliageGeometry = new THREE.IcosahedronGeometry(pos.r, 1);
       // Slightly deform for natural look
       const positions = foliageGeometry.attributes.position;
@@ -931,7 +930,7 @@ export class AssetFactory {
       { y: height * 0.88, r: 0.2 * scale, h: height * 0.15 },
     ];
     
-    layers.forEach((layer, i) => {
+    layers.forEach((layer) => {
       const coneGeometry = new THREE.ConeGeometry(layer.r, layer.h, 8);
       const cone = new THREE.Mesh(coneGeometry, pineMaterial);
       cone.position.y = layer.y;
@@ -1071,7 +1070,7 @@ export class AssetFactory {
    */
   private static createPlanter(asset: AssetMetadata): THREE.Object3D {
     const group = new THREE.Group();
-    const { width, height, depth } = asset.dimensions;
+    const { width, height } = asset.dimensions;
     
     // Planter material - terracotta
     const planterMaterial = new THREE.MeshStandardMaterial({

@@ -15,7 +15,6 @@ import {
   AssetCategory, 
   PlacedObject, 
   DeviceState,
-  PartMaterial,
 } from '../types';
 import { SceneManager } from '../SceneManager';
 import { BuildingManager } from '../BuildingManager';
@@ -68,14 +67,14 @@ export class ObjectManagementService {
       groundTileManager.removeTile(objectId);
     } else {
       // Find the mesh in the scene
-      const mesh = sceneManager.findObjectById(objectId);
+      const mesh = sceneManager.getObject(objectId);
       if (mesh) {
         // If this is a window, remove wall opening
         if (placedObj.assetMetadata?.category === AssetCategory.WINDOW && placedObj.wallAttachment) {
           buildingManager.removeWallOpening(placedObj.wallAttachment.wallId, objectId);
         }
         
-        sceneManager.removeObject(mesh);
+        sceneManager.removeObject(objectId);
       }
     }
     
@@ -101,7 +100,7 @@ export class ObjectManagementService {
     placedObj.skinId = skinId || undefined;
     
     // Find the mesh and apply the skin
-    const mesh = sceneManager.findObjectById(objectId);
+    const mesh = sceneManager.getObject(objectId);
     if (mesh instanceof THREE.Group) {
       if (skinId) {
         const skin = getSkinRegistry().getSkin(skinId);
@@ -184,7 +183,7 @@ export class ObjectManagementService {
     placedObj.position.z = newPosition.z;
     
     // Update mesh position
-    const mesh = sceneManager.findObjectById(objectId);
+    const mesh = sceneManager.getObject(objectId);
     if (mesh) {
       const gridSize = 1; // Should be from context
       mesh.position.x = newPosition.x * gridSize;
@@ -210,7 +209,7 @@ export class ObjectManagementService {
     placedObj.rotation = rotation;
     
     // Update mesh rotation
-    const mesh = sceneManager.findObjectById(objectId);
+    const mesh = sceneManager.getObject(objectId);
     if (mesh) {
       mesh.rotation.y = rotation;
     }
@@ -234,7 +233,7 @@ export class ObjectManagementService {
     placedObj.binding.currentState = state;
     
     // Find the mesh and update its visual state
-    const mesh = sceneManager.findObjectById(objectId);
+    const mesh = sceneManager.getObject(objectId);
     if (mesh instanceof THREE.Group) {
       AssetFactory.updateAssetState(mesh, state);
     }

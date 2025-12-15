@@ -3,7 +3,7 @@
  * This file should be kept in sync with backend/src/types/widget.types.ts
  */
 
-export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide';
+export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide' | 'mega-tall';
 
 export type WidgetCategory = 'analytics' | 'status' | 'activity' | 'system';
 

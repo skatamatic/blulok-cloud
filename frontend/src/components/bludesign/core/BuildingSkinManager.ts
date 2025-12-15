@@ -132,14 +132,12 @@ const BUILTIN_SKINS: BuildingSkinDefinition[] = [
 
 export class BuildingSkinManager {
   private skins: Map<string, BuildingSkinDefinition> = new Map();
-  private textureLoader: THREE.TextureLoader;
   private loadedTextures: Map<string, THREE.Texture> = new Map();
   
   // Custom skins from localStorage or facility
   private customSkins: BuildingSkinDefinition[] = [];
   
   constructor() {
-    this.textureLoader = new THREE.TextureLoader();
     
     // Register built-in skins
     BUILTIN_SKINS.forEach(skin => {

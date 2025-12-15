@@ -4,8 +4,8 @@
  * Tests for the centralized skin registry that manages built-in and custom skins.
  */
 
-import { SkinRegistryClass, CategorySkin, getSkinRegistry } from '../../../components/bludesign/core/SkinRegistry';
-import { AssetCategory, PartMaterial } from '../../../components/bludesign/core/types';
+import { SkinRegistryClass } from '../../../components/bludesign/core/SkinRegistry';
+import { AssetCategory } from '../../../components/bludesign/core/types';
 
 describe('SkinRegistry', () => {
   let registry: SkinRegistryClass;

@@ -101,6 +101,15 @@ export enum AssetCategory {
   // Utility
   MARKER = 'marker',
   LABEL = 'label',
+  
+  // Additional categories
+  LANDSCAPING = 'landscaping',
+  SIGNAGE = 'signage',
+  KIOSK = 'kiosk',
+  BOLLARD = 'bollard',
+  CAMERA = 'camera',
+  LIGHTING = 'lighting',
+  UTILITY = 'utility',
 }
 
 /** Building skin types */
@@ -278,6 +287,10 @@ export interface AssetMetadata {
   spansAllFloors?: boolean;
   /** If true and spansAllFloors is true, exclude from top floor (e.g., stairs don't go up from top floor) */
   excludeTopFloor?: boolean;
+  
+  // Additional metadata (for decorations, custom assets, etc.)
+  metadata?: Record<string, unknown>;
+  modelPath?: string; // Path to model file (for custom assets)
 }
 
 /** Data field type */
@@ -420,6 +433,7 @@ export interface PlacedObject {
   assetMetadata: AssetMetadata; // Full metadata for recreating the asset
   position: GridPosition;
   orientation: Orientation;
+  rotation?: number; // Rotation in radians (Y-axis)
   canStack: boolean; // true for walls - can overlap with other assets
   
   /** Display name for the object (user-editable) */

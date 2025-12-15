@@ -102,9 +102,10 @@ export class LoadingManager {
         (progress) => {
           this.updateItemProgress(url, progress.loaded, progress.total);
         },
-        (error) => {
-          this.itemError(url, error.message);
-          resolve({ success: false, error: error.message });
+        (error: unknown) => {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.itemError(url, errorMessage);
+          resolve({ success: false, error: errorMessage });
         }
       );
     });
@@ -126,9 +127,10 @@ export class LoadingManager {
         (progress) => {
           this.updateItemProgress(url, progress.loaded, progress.total);
         },
-        (error) => {
-          this.itemError(url, error.message);
-          resolve({ success: false, error: error.message });
+        (error: unknown) => {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.itemError(url, errorMessage);
+          resolve({ success: false, error: errorMessage });
         }
       );
     });
@@ -154,8 +156,9 @@ export class LoadingManager {
           resolve({ success: true, data: texture });
         },
         undefined,
-        (error) => {
-          resolve({ success: false, error: error.message });
+        (error: unknown) => {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          resolve({ success: false, error: errorMessage });
         }
       );
     });

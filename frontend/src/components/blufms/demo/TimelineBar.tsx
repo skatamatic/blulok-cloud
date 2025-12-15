@@ -22,7 +22,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
     <div className="absolute bottom-0 left-0 right-0 h-24 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 shadow-lg z-30">
       <div className="h-full px-4 py-3 overflow-x-auto">
         <div className="flex items-center h-full gap-4 min-w-max">
-          {markers.map((marker, index) => {
+          {markers.map((marker) => {
             const isActive = marker.step === currentStep;
             const isPast = marker.step < currentStep;
             const isClickable = onMarkerClick !== undefined;

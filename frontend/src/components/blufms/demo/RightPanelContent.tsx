@@ -6,8 +6,7 @@ import { MessagePreviewCard } from './MessagePreviewCard';
 import { TimelineCard } from './TimelineCard';
 import { ChecklistCard } from './ChecklistCard';
 import { EphemeralStatusCard } from './EphemeralStatusCard';
-import { CardLoadingPlaceholder } from './CardLoadingPlaceholder';
-import { CardData, ChecklistCardData } from '@/scripts/blufms/demoActionTypes';
+import { CardData } from '@/scripts/blufms/demoActionTypes';
 
 interface RightPanelContentProps {
   cards: CardData[];
@@ -27,7 +26,7 @@ export const RightPanelContent: React.FC<RightPanelContentProps> = ({
   currentWorkflow,
   isWorkflowComplete = false,
   reportGenerationProgress = null,
-  onShowCardDetails,
+  onShowCardDetails: _onShowCardDetails,
   onViewWorkflowReport,
   onTimelineMarkerClick,
   onDismissEphemeral,

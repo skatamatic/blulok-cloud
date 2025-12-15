@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { FacilitySchedulesTab } from '@/components/Schedules/FacilitySchedulesTab';
 import { apiService } from '@/services/api.service';

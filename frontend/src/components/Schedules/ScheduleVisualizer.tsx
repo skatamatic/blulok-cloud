@@ -1,4 +1,3 @@
-import React from 'react';
 import { ScheduleWithTimeWindows, TimeWindow, DAY_NAMES_SHORT, DayOfWeek } from '@/types/schedule.types';
 
 interface ScheduleVisualizerProps {
@@ -23,8 +22,8 @@ export const ScheduleVisualizer: React.FC<ScheduleVisualizerProps> = ({ schedule
   });
 
   // Sort time windows by start time for each day
-  Object.keys(windowsByDay).forEach(day => {
-    windowsByDay[day as DayOfWeek].sort((a, b) => {
+  ([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).forEach(day => {
+    windowsByDay[day].sort((a, b) => {
       return a.start_time.localeCompare(b.start_time);
     });
   });
@@ -51,7 +50,7 @@ export const ScheduleVisualizer: React.FC<ScheduleVisualizerProps> = ({ schedule
   return (
     <div className={`schedule-visualizer ${className}`}>
       <div className="grid grid-cols-7 gap-2">
-        {(Object.keys(DAY_NAMES_SHORT) as DayOfWeek[]).map(day => {
+        {([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).map(day => {
           const windows = windowsByDay[day];
           const hasWindows = windows.length > 0;
 

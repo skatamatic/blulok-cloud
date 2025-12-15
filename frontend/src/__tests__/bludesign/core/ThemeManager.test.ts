@@ -4,8 +4,8 @@
  * Tests for the theme management system that handles global scene themes.
  */
 
-import { ThemeManager, Theme, getThemeManager } from '../../../components/bludesign/core/ThemeManager';
-import { AssetCategory, BuildingSkinType } from '../../../components/bludesign/core/types';
+import { ThemeManager } from '../../../components/bludesign/core/ThemeManager';
+import { AssetCategory } from '../../../components/bludesign/core/types';
 
 describe('ThemeManager', () => {
   let manager: ThemeManager;

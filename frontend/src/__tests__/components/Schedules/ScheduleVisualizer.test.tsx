@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { ScheduleVisualizer } from '@/components/Schedules/ScheduleVisualizer';
 import { ScheduleWithTimeWindows } from '@/types/schedule.types';

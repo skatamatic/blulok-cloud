@@ -5,8 +5,21 @@
  * These tests verify that state changes propagate correctly to visual representations.
  */
 
-import { AssetCategory, DeviceState, PlacedObject, AssetMetadata } from '../../../../components/bludesign/core/types';
+import { AssetCategory, DeviceState, PlacedObject, AssetMetadata, Orientation } from '../../../../components/bludesign/core/types';
 import { ObjectManagementService, ManagementContext } from '../../../../components/bludesign/core/services/ObjectManagementService';
+
+// Helper function for creating mock assets
+const createMockAsset = (): AssetMetadata => ({
+  id: 'test-unit',
+  name: 'Test Unit',
+  category: AssetCategory.STORAGE_UNIT,
+  gridUnits: { x: 1, z: 1 },
+  modelPath: '/models/test.glb',
+  dimensions: { width: 1, height: 2, depth: 1 },
+  isSmart: true,
+  canRotate: true,
+  canStack: false,
+});
 
 // Mock THREE.js
 jest.mock('three', () => ({
@@ -44,23 +57,18 @@ describe('ObjectManagementService - Simulation', () => {
   let mockContext: ManagementContext;
   let mockPlacedObjects: Map<string, PlacedObject>;
   
-  const createMockAsset = (): AssetMetadata => ({
-    id: 'test-unit',
-    name: 'Test Unit',
-    category: AssetCategory.STORAGE_UNIT,
-    gridUnits: { x: 1, z: 1 },
-    modelPath: '/models/test.glb',
-    dimensions: { width: 1, height: 2, depth: 1 },
-    isSmart: true,
-  });
-  
   const createMockPlacedObject = (id: string, isSmart: boolean = true): PlacedObject => ({
     id,
     assetId: 'test-unit',
     assetMetadata: createMockAsset(),
-    position: { x: 0, z: 0 },
+    position: { x: 0, z: 0, y: 0 },
+    orientation: Orientation.NORTH,
     rotation: 0,
+    canStack: false,
     floor: 0,
+    properties: {},
+    createdAt: new Date(),
+    updatedAt: new Date(),
     binding: isSmart ? {
       entityType: 'unit',
       currentState: DeviceState.LOCKED,
@@ -198,9 +206,15 @@ describe('Data Binding Edge Cases', () => {
     const placedObj: PlacedObject = {
       id: 'no-mesh-obj',
       assetId: 'test',
-      position: { x: 0, z: 0 },
+      assetMetadata: createMockAsset(),
+      position: { x: 0, z: 0, y: 0 },
+      orientation: Orientation.NORTH,
       rotation: 0,
+      canStack: false,
       floor: 0,
+      properties: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
       binding: {
         entityType: 'unit',
         currentState: DeviceState.LOCKED,
@@ -221,9 +235,15 @@ describe('Data Binding Edge Cases', () => {
     const placedObj: PlacedObject = {
       id: 'partial-binding',
       assetId: 'test',
-      position: { x: 0, z: 0 },
+      assetMetadata: createMockAsset(),
+      position: { x: 0, z: 0, y: 0 },
+      orientation: Orientation.NORTH,
       rotation: 0,
+      canStack: false,
       floor: 0,
+      properties: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
       binding: {
         entityType: 'unit',
         // No entityId set

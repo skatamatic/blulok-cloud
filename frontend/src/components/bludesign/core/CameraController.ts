@@ -344,14 +344,6 @@ export class CameraController {
     return 1 - (1 - t) * (1 - t);
   }
 
-  /**
-   * Cubic easing function (kept for other uses)
-   */
-  private easeInOutCubic(t: number): number {
-    return t < 0.5
-      ? 4 * t * t * t
-      : 1 - Math.pow(-2 * t + 2, 3) / 2;
-  }
 
   /**
    * Zoom camera

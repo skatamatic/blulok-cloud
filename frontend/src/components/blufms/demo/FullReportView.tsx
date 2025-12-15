@@ -1,6 +1,6 @@
 import React from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
 
 interface FullReportViewProps {
   isOpen: boolean;
@@ -112,10 +112,9 @@ export const FullReportView: React.FC<FullReportViewProps> = ({
                       contentStyle={{
                         backgroundColor: 'rgba(255, 255, 255, 0.95)',
                         border: '1px solid #e5e7eb',
-                        borderRadius: '0.5rem',
-                      }}
-                      className="dark:bg-gray-800 dark:border-gray-700"
-                    />
+                      borderRadius: '0.5rem',
+                    }}
+                  />
                     <Legend />
                     <Area yAxisId="left" type="monotone" dataKey="occupancy" name="Occupancy %" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} />
                     <Area yAxisId="right" type="monotone" dataKey="revenue" name="Revenue ($)" stroke="#10b981" fill="#10b981" fillOpacity={0.3} />
@@ -139,10 +138,9 @@ export const FullReportView: React.FC<FullReportViewProps> = ({
                         contentStyle={{
                           backgroundColor: 'rgba(255, 255, 255, 0.95)',
                           border: '1px solid #e5e7eb',
-                          borderRadius: '0.5rem',
-                        }}
-                        className="dark:bg-gray-800 dark:border-gray-700"
-                      />
+                      borderRadius: '0.5rem',
+                    }}
+                  />
                       <Legend />
                       <Bar dataKey="moveIns" name="Move-ins" fill="#3b82f6" />
                       <Bar dataKey="moveOuts" name="Move-outs" fill="#ef4444" />
@@ -165,10 +163,9 @@ export const FullReportView: React.FC<FullReportViewProps> = ({
                         contentStyle={{
                           backgroundColor: 'rgba(255, 255, 255, 0.95)',
                           border: '1px solid #e5e7eb',
-                          borderRadius: '0.5rem',
-                        }}
-                        className="dark:bg-gray-800 dark:border-gray-700"
-                      />
+                      borderRadius: '0.5rem',
+                    }}
+                  />
                       <Legend />
                       <Bar dataKey="total" name="Total Units" fill="#3b82f6" />
                       <Bar dataKey="vacant" name="Vacant" fill="#f59e0b" />
@@ -212,10 +209,9 @@ export const FullReportView: React.FC<FullReportViewProps> = ({
                       contentStyle={{
                         backgroundColor: 'rgba(255, 255, 255, 0.95)',
                         border: '1px solid #e5e7eb',
-                        borderRadius: '0.5rem',
-                      }}
-                      className="dark:bg-gray-800 dark:border-gray-700"
-                    />
+                      borderRadius: '0.5rem',
+                    }}
+                  />
                     <Legend />
                     <Bar dataKey="events" name="Total Events" fill="#3b82f6" />
                     <Bar dataKey="critical" name="Critical" fill="#ef4444" />
@@ -258,10 +254,9 @@ export const FullReportView: React.FC<FullReportViewProps> = ({
                       contentStyle={{
                         backgroundColor: 'rgba(255, 255, 255, 0.95)',
                         border: '1px solid #e5e7eb',
-                        borderRadius: '0.5rem',
-                      }}
-                      className="dark:bg-gray-800 dark:border-gray-700"
-                    />
+                      borderRadius: '0.5rem',
+                    }}
+                  />
                     <Legend />
                     <Bar dataKey="open" name="Open" fill="#3b82f6" />
                     <Bar dataKey="completed" name="Completed" fill="#10b981" />
@@ -306,10 +301,9 @@ export const FullReportView: React.FC<FullReportViewProps> = ({
                       contentStyle={{
                         backgroundColor: 'rgba(255, 255, 255, 0.95)',
                         border: '1px solid #e5e7eb',
-                        borderRadius: '0.5rem',
-                      }}
-                      className="dark:bg-gray-800 dark:border-gray-700"
-                    />
+                      borderRadius: '0.5rem',
+                    }}
+                  />
                     <Legend />
                     <Area yAxisId="left" type="monotone" dataKey="collected" name="Collection %" stroke="#10b981" fill="#10b981" fillOpacity={0.3} />
                     <Area yAxisId="right" type="monotone" dataKey="amount" name="Amount ($)" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} />

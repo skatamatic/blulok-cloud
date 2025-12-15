@@ -35,7 +35,6 @@ export class PlacementManager {
   private camera: THREE.Camera;
   private container: HTMLElement;
   private gridSystem: GridSystem;
-  private assetFactory: AssetFactory;
   private buildingManager: BuildingManager | null = null;
   
   // State
@@ -113,7 +112,7 @@ export class PlacementManager {
     camera: THREE.Camera,
     container: HTMLElement,
     gridSystem: GridSystem,
-    assetFactory: AssetFactory,
+    _assetFactory: AssetFactory,
     onPlacementChange: (gridPos: GridPosition | null, isValid: boolean) => void,
     onAssetPlaced: (object: PlacedObject) => void,
     onDeleteRequest?: (objectId: string) => void,
@@ -124,7 +123,6 @@ export class PlacementManager {
     this.camera = camera;
     this.container = container;
     this.gridSystem = gridSystem;
-    this.assetFactory = assetFactory;
     this.onPlacementChange = onPlacementChange;
     this.onAssetPlaced = onAssetPlaced;
     this.onDeleteRequest = onDeleteRequest;
@@ -1003,7 +1001,7 @@ export class PlacementManager {
   /**
    * Create a bounding outline for rectangle preview
    */
-  private createRectangleOutline(minX: number, maxX: number, minZ: number, maxZ: number, gridSize: number): void {
+  private createRectangleOutline(minX: number, maxX: number, minZ: number, maxZ: number, _gridSize: number): void {
     const startWorld = this.gridSystem.gridToWorld({ x: minX, z: minZ, y: 0 });
     const endWorld = this.gridSystem.gridToWorld({ x: maxX + 1, z: maxZ + 1, y: 0 });
     
@@ -1021,7 +1019,8 @@ export class PlacementManager {
       new THREE.Vector3(-width / 2, 0, -depth / 2),
     ];
     
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    // Geometry created for potential future use
+    void new THREE.BufferGeometry().setFromPoints(points);
     const material = new THREE.LineBasicMaterial({ 
       color: 0x00ff00, 
       linewidth: 2,
@@ -1098,7 +1097,7 @@ export class PlacementManager {
    * Create a simple filled plane for large area previews
    * Used when there are too many tiles for individual previews
    */
-  private createSimpleFillPreview(minX: number, maxX: number, minZ: number, maxZ: number, gridSize: number): void {
+  private createSimpleFillPreview(minX: number, maxX: number, minZ: number, maxZ: number, _gridSize: number): void {
     const startWorld = this.gridSystem.gridToWorld({ x: minX, z: minZ, y: 0 });
     const endWorld = this.gridSystem.gridToWorld({ x: maxX + 1, z: maxZ + 1, y: 0 });
     
@@ -1150,26 +1149,6 @@ export class PlacementManager {
     }
   }
 
-  /**
-   * Get positions for rectangle fill (ground assets)
-   */
-  private getRectanglePositions(start: GridPosition, end: GridPosition): GridPosition[] {
-    const positions: GridPosition[] = [];
-    
-    const minX = Math.min(start.x, end.x);
-    const maxX = Math.max(start.x, end.x);
-    const minZ = Math.min(start.z, end.z);
-    const maxZ = Math.max(start.z, end.z);
-    
-    // Always use 1x1 tiles for rectangle fill
-    for (let x = minX; x <= maxX; x++) {
-      for (let z = minZ; z <= maxZ; z++) {
-        positions.push({ x, z, y: 0 });
-      }
-    }
-    
-    return positions;
-  }
 
   /**
    * Get positions along a path (walls/fences/interior walls) using Bresenham's line algorithm

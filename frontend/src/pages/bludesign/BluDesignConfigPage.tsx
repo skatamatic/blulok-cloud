@@ -57,16 +57,16 @@ interface StorageConfig {
   gcsBucket?: string;
 }
 
-interface FacilityLinkItem {
-  /** BluLok facility ID */
-  blulokFacilityId: string;
-  /** BluLok facility name */
-  blulokFacilityName: string;
-  /** Linked BluDesign facility ID (null if not linked) */
-  bluDesignFacilityId: string | null;
-  /** Linked BluDesign facility name (null if not linked) */
-  bluDesignFacilityName: string | null;
-}
+// interface FacilityLinkItem {
+//   /** BluLok facility ID */
+//   blulokFacilityId: string;
+//   /** BluLok facility name */
+//   blulokFacilityName: string;
+//   /** Linked BluDesign facility ID (null if not linked) */
+//   bluDesignFacilityId: string | null;
+//   /** Linked BluDesign facility name (null if not linked) */
+//   bluDesignFacilityName: string | null;
+// }
 
 interface BluDesignFacilityInfo {
   id: string;
@@ -719,7 +719,7 @@ const BluDesignConfigPage: React.FC = () => {
                                   <option 
                                     key={bd.id} 
                                     value={bd.id}
-                                    disabled={bd.linkedBlulokId && bd.linkedBlulokId !== bl.id}
+                                    disabled={!!(bd.linkedBlulokId && bd.linkedBlulokId !== bl.id)}
                                   >
                                     {bd.name}{bd.linkedBlulokId && bd.linkedBlulokId !== bl.id ? ' (linked to another)' : ''}
                                   </option>

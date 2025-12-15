@@ -27,7 +27,7 @@ export interface UseAssetLoaderReturn {
   unloadAsset: (assetId: string) => void;
   unloadAll: () => void;
   getAsset: (assetId: string) => LoadedAsset | undefined;
-  cloneAsset: (assetId: string) => THREE.Object3D | null;
+  cloneAsset: (assetId: string) => import('three').Object3D | null;
 }
 
 export function useAssetLoader(options: UseAssetLoaderOptions): UseAssetLoaderReturn {
@@ -166,7 +166,7 @@ export function useAssetLoader(options: UseAssetLoaderOptions): UseAssetLoaderRe
   }, []);
   
   // Clone an asset
-  const cloneAsset = useCallback((assetId: string): THREE.Object3D | null => {
+  const cloneAsset = useCallback((assetId: string): import('three').Object3D | null => {
     return assetLoaderRef.current.cloneAsset(assetId);
   }, []);
   

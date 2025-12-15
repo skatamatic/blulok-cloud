@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useCallback } from 'react';
-import { EditorTool, CameraMode } from '../core/types';
+import { EditorTool } from '../core/types';
 
 interface KeyboardShortcutsOptions {
   enabled?: boolean;

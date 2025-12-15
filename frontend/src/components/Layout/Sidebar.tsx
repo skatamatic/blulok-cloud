@@ -27,7 +27,6 @@ import {
   PresentationChartLineIcon,
   CloudIcon,
   MapIcon,
-  CubeIcon,
   WrenchScrewdriverIcon,
   PhotoIcon,
   PencilSquareIcon,

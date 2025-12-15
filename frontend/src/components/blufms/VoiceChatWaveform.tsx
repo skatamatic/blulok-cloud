@@ -10,7 +10,7 @@ export const VoiceChatWaveform: React.FC<VoiceChatWaveformProps> = ({ className 
   const [error, setError] = useState<string | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const dataArrayRef = useRef<Uint8Array | null>(null);
+  const dataArrayRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -52,7 +52,6 @@ export const VoiceChatWaveform: React.FC<VoiceChatWaveformProps> = ({ className 
         const highCutoffBin = Math.floor(highCutoffFrequency / frequencyPerBin);
         
         // Extract levels for symmetric visualization
-        const levels: number[] = [];
         const usableBins = Math.max(highCutoffBin - lowCutoffBin, 1);
         const step = Math.max(Math.floor(usableBins / barCountPerSide), 1);
 

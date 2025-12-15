@@ -9,8 +9,7 @@
  * This service is part of the SOLID refactoring of BluDesignEngine.
  */
 
-import { PlacedObject, GridPosition } from '../types';
-import { Building } from '../BuildingManager';
+import { PlacedObject, GridPosition, Building } from '../types';
 
 export type ActionType = 
   | 'place-object'

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import { motion, AnimatePresence } from 'framer-motion';
 import { DetailCardData } from '@/scripts/blufms/demoActionTypes';
 import { CardLoadingPlaceholder } from './CardLoadingPlaceholder';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';

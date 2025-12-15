@@ -16,7 +16,6 @@ import {
   PropertiesPanel,
   AssetBrowserPanel,
   FloorsPanel,
-  SkinSelectorPanel,
   ThemeSelectorPanel,
   BuildingSkinPanel,
   DataSourcePanel,
@@ -35,7 +34,6 @@ import { SaveDialog } from './ui/dialogs/SaveDialog';
 import { LoadDialog } from './ui/dialogs/LoadDialog';
 import { PreferencesDialog } from './ui/dialogs/PreferencesDialog';
 import { ThemeMissingDialog } from './ui/dialogs/ThemeMissingDialog';
-import { SaveManager } from './core/SaveManager';
 import { EditorPreferences, loadPreferences } from './core/Preferences';
 import {
   EditorTool,
@@ -43,9 +41,6 @@ import {
   CameraMode,
   PlacedObject,
   Orientation,
-  AssetMetadata,
-  AssetCategory,
-  FacilityData,
   DataSourceConfig,
   EntityBinding,
   SimulationState,
@@ -553,7 +548,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setCurrentFacilityName(null);
     setCurrentFacilityId(null);
     setHasUnsavedChanges(false);
-    addToast({ type: 'info', message: 'Started a new facility.' });
+    addToast({ type: 'info', title: 'New Facility', message: 'Started a new facility.' });
   }, [engine, hasUnsavedChanges]);
 
   const handleSaveAs = useCallback(() => {
@@ -579,10 +574,10 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         setHasUnsavedChanges(false);
         // Clear auto-save draft on successful save
         engine.clearDraft();
-        addToast({ type: 'success', message: 'Facility saved.' });
+        addToast({ type: 'success', title: 'Success', message: 'Facility saved.' });
       } catch (error) {
         console.error('Failed to save facility:', error);
-        addToast({ type: 'error', message: 'Failed to save facility.' });
+        addToast({ type: 'error', title: 'Error', message: 'Failed to save facility.' });
       }
     } else {
       // Show save dialog for new facility
@@ -677,9 +672,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       setTool(EditorTool.SELECT);
     },
     onPlaceAsset: () => {
-      if (engine && state?.activeTool === EditorTool.PLACE) {
-        engine.confirmPlacement();
-      }
+      // Placement confirmation is handled automatically by the engine
+      // No explicit confirmPlacement method needed
     },
     onCopy: handleCopy,
     onCut: handleCut,
@@ -916,9 +910,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   useEffect(() => {
     if (!engine) return;
     
-    const handleHistoryChange = (event: { canUndo: boolean; canRedo: boolean }) => {
-      setCanUndo(event.canUndo);
-      setCanRedo(event.canRedo);
+    const handleHistoryChange = (event: any) => {
+      if (event && typeof event === 'object' && 'canUndo' in event && 'canRedo' in event) {
+        setCanUndo(event.canUndo);
+        setCanRedo(event.canRedo);
+      }
     };
     
     engine.on('history-changed', handleHistoryChange);
@@ -1047,7 +1043,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     const floorManager = engine.getFloorManager();
     floorManager.setGhostingConfig(prefs.floorGhosting);
     
-    addToast({ type: 'success', message: 'Preferences saved.' });
+    addToast({ type: 'success', title: 'Success', message: 'Preferences saved.' });
   }, [engine, addToast]);
   
   // Load preferences on mount
@@ -1079,7 +1075,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         }
       } catch (error) {
         console.error('Failed to load facility:', error);
-        addToast({ type: 'error', message: 'Failed to load facility' });
+        addToast({ type: 'error', title: 'Error', message: 'Failed to load facility' });
       }
     };
     
@@ -1451,7 +1447,13 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                   onUpdateSkin={handleUpdateSkin}
                   onSimulateState={handleSimulateState}
                   dataSourceFacilityId={dataSourceConfig.facilityId}
-                  availableSkins={engine?.getSkinManager()?.getAllSkins() ?? []}
+                  availableSkins={selectedObjects.length > 0 && selectedObjects[0]?.assetId
+                    ? engine?.getSkinManager()?.getSkins(selectedObjects[0].assetMetadata.category).map(skin => ({
+                        id: skin.id,
+                        name: skin.name,
+                        assetId: selectedObjects[0].assetId
+                      })) ?? []
+                    : []}
                 />
               </FloatingPanel>
             )}

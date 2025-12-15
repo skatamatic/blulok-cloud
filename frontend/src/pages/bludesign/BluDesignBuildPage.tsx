@@ -1,11 +1,11 @@
-import React, { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { EditorCanvas } from '@/components/bludesign';
 
 export default function BluDesignBuildPage() {
-  const [isReady, setIsReady] = useState(false);
+  // const [isReady, setIsReady] = useState(false);
 
   const handleReady = useCallback(() => {
-    setIsReady(true);
+    // setIsReady(true);
     console.log('BluDesign Editor ready');
   }, []);
 

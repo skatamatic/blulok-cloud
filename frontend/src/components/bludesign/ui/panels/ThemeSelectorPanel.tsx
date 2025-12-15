@@ -13,7 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Theme, getThemeManager } from '../../core/ThemeManager';
-import { getSkinRegistry, SkinRegistryClass } from '../../core/SkinRegistry';
+import { getSkinRegistry } from '../../core/SkinRegistry';
 
 interface ThemeSelectorPanelProps {
   activeThemeId: string;

@@ -9,7 +9,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { FacilityViewer3D } from '../bludesign/viewer';
-import { BuildingOffice2Icon, ChevronDownIcon } from '@heroicons/react/24/outline';
+import { BuildingOffice2Icon } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import * as bludesignApi from '@/api/bludesign';
 
@@ -42,8 +42,6 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
   const [size, setSize] = useState<WidgetSize>(initialSize);
-  const [isReady, setIsReady] = useState(false);
-  const [hasError, setHasError] = useState(false);
   
   // Facility selection state
   const [bluDesignFacilities, setBluDesignFacilities] = useState<Array<{ id: string; name: string }>>([]);
@@ -77,12 +75,11 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   }, [initialBluDesignFacilityId]);
 
   const handleReady = useCallback(() => {
-    setIsReady(true);
+    // Viewer is ready
   }, []);
 
   const handleError = useCallback((error: Error) => {
     console.error('Facility viewer error:', error);
-    setHasError(true);
   }, []);
 
   // Custom menu items for enhanced dropdown

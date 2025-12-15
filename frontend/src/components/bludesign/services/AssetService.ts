@@ -202,12 +202,12 @@ class AssetCache {
 
 const cache = new AssetCache();
 
-// API response types
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  message?: string;
-}
+// API response types (unused but kept for future use)
+// interface ApiResponse<T> {
+//   success: boolean;
+//   data?: T;
+//   message?: string;
+// }
 
 export class AssetService {
   private static readonly BASE_URL = '/bludesign/assets';

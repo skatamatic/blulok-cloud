@@ -49,7 +49,6 @@ export const ChartCard: React.FC<ChartCardProps> = ({
                   border: '1px solid #e5e7eb',
                   borderRadius: '0.5rem',
                 }}
-                className="dark:bg-gray-800 dark:border-gray-700"
               />
               <Legend />
               {lines?.map((line) => (
@@ -84,7 +83,6 @@ export const ChartCard: React.FC<ChartCardProps> = ({
                   border: '1px solid #e5e7eb',
                   borderRadius: '0.5rem',
                 }}
-                className="dark:bg-gray-800 dark:border-gray-700"
               />
               <Legend />
               {bars?.map((bar) => (

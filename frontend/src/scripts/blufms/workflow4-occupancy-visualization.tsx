@@ -1,4 +1,3 @@
-import React from 'react';
 import { DemoScript } from './demoActionTypes';
 
 export const workflow4OccupancyVisualization: DemoScript = {

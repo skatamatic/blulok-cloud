@@ -212,7 +212,7 @@ export const ProgressCard: React.FC<ProgressCardProps> = ({
           {message && (
             <p className="text-xs text-gray-400 truncate">{message}</p>
           )}
-          {total > 0 && !compact && (
+          {total !== undefined && total > 0 && !compact && (
             <p className="text-xs text-gray-500">
               {current} / {total} items
             </p>
@@ -247,7 +247,7 @@ interface StepProgressProps {
 
 export const StepProgress: React.FC<StepProgressProps> = ({
   steps,
-  currentStep,
+  currentStep: _currentStep,
   vertical = false,
 }) => {
   const getStepColor = (status: Step['status']) => {

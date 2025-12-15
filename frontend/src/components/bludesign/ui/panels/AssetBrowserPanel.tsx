@@ -83,7 +83,7 @@ export const AssetBrowserPanel: React.FC<AssetBrowserPanelProps> = ({
   }, [assets]);
 
   // Filter assets
-  const filteredAssets = assets.filter((asset) => {
+  const filteredAssets = assets.filter((asset: AssetMetadata) => {
     const matchesSearch = asset.name.toLowerCase().includes(searchQuery.toLowerCase());
     
     let matchesFilter = true;
@@ -123,7 +123,7 @@ export const AssetBrowserPanel: React.FC<AssetBrowserPanelProps> = ({
   const shouldGroup = selectedFilter !== 'smart' && selectedFilter !== 'non-smart';
   
   const groupedAssets = shouldGroup 
-    ? filteredAssets.reduce((groups, asset) => {
+    ? filteredAssets.reduce((groups, asset: AssetMetadata) => {
         const displayGroup = getDisplayGroup(asset.category);
         if (!groups[displayGroup]) {
           groups[displayGroup] = [];
@@ -155,6 +155,13 @@ export const AssetBrowserPanel: React.FC<AssetBrowserPanelProps> = ({
     [AssetCategory.DECORATION]: SparklesIcon,
     [AssetCategory.MARKER]: CubeIcon,
     [AssetCategory.LABEL]: CubeIcon,
+    [AssetCategory.LANDSCAPING]: SparklesIcon,
+    [AssetCategory.SIGNAGE]: CubeIcon,
+    [AssetCategory.KIOSK]: CubeIcon,
+    [AssetCategory.BOLLARD]: CubeIcon,
+    [AssetCategory.CAMERA]: CubeIcon,
+    [AssetCategory.LIGHTING]: CubeIcon,
+    [AssetCategory.UTILITY]: CubeIcon,
   };
 
   const displayGroupLabels: Record<DisplayGroup, string> = {
@@ -179,6 +186,13 @@ export const AssetBrowserPanel: React.FC<AssetBrowserPanelProps> = ({
     [AssetCategory.DECORATION]: 'Decorations',
     [AssetCategory.MARKER]: 'Markers',
     [AssetCategory.LABEL]: 'Labels',
+    [AssetCategory.LANDSCAPING]: 'Landscaping',
+    [AssetCategory.SIGNAGE]: 'Signage',
+    [AssetCategory.KIOSK]: 'Kiosks',
+    [AssetCategory.BOLLARD]: 'Bollards',
+    [AssetCategory.CAMERA]: 'Cameras',
+    [AssetCategory.LIGHTING]: 'Lighting',
+    [AssetCategory.UTILITY]: 'Utilities',
   };
   
   // Define the order for display groups
@@ -295,9 +309,12 @@ export const AssetBrowserPanel: React.FC<AssetBrowserPanelProps> = ({
         {shouldGroup ? (
           /* Sort groups by display order when grouping */
           displayGroupOrder
-            .filter(group => groupedAssets[group] && groupedAssets[group].length > 0)
+            .filter((group): group is DisplayGroup => {
+              const assets = (groupedAssets as Record<DisplayGroup, AssetMetadata[]>)[group];
+              return assets !== undefined && assets.length > 0;
+            })
             .map((group) => {
-              const groupAssets = groupedAssets[group];
+              const groupAssets = (groupedAssets as Record<DisplayGroup, AssetMetadata[]>)[group];
               if (!groupAssets || groupAssets.length === 0) return null;
               
               return (
@@ -313,7 +330,7 @@ export const AssetBrowserPanel: React.FC<AssetBrowserPanelProps> = ({
                       gap: `${ASSET_GRID_GAP}px`,
                     }}
                   >
-                    {groupAssets.map((asset) => (
+                    {groupAssets.map((asset: AssetMetadata) => (
                       <AssetCard
                         key={asset.id}
                         asset={asset}
@@ -336,7 +353,7 @@ export const AssetBrowserPanel: React.FC<AssetBrowserPanelProps> = ({
               gap: `${ASSET_GRID_GAP}px`,
             }}
           >
-            {filteredAssets.map((asset) => (
+            {filteredAssets.map((asset: AssetMetadata) => (
               <AssetCard
                 key={asset.id}
                 asset={asset}

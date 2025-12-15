@@ -5,7 +5,7 @@
  * Falls back to placeholder assets if backend is unavailable.
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import * as bludesignApi from '@/api/bludesign';
 import { AssetMetadata, AssetCategory } from '../core/types';
 
@@ -207,9 +207,22 @@ export function useAssets(options: UseAssetsOptions = {}): UseAssetsResult {
     setError(null);
     
     try {
-      const definitions = await bludesignApi.getAssetDefinitions();
+      const definitions = await bludesignApi.listAssetDefinitions();
       if (definitions && definitions.length > 0) {
-        const converted = definitions.map(bludesignApi.definitionToMetadata);
+        // Convert AssetDefinition to AssetMetadata
+        const converted = definitions.map(def => ({
+          id: def.id,
+          name: def.name,
+          category: def.category as AssetCategory,
+          description: def.description,
+          dimensions: def.dimensions,
+          gridUnits: def.gridUnits,
+          isSmart: def.isSmart,
+          canRotate: def.canRotate,
+          canStack: def.canStack,
+          modelPath: def.modelUrl,
+          thumbnail: def.thumbnailUrl,
+        }));
         setAssets(converted);
       } else {
         // Use placeholders if no backend assets

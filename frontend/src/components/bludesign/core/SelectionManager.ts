@@ -41,6 +41,9 @@ export class SelectionManager {
   // Flag to prevent click handler from running after drag selection
   private justFinishedDragSelection: boolean = false;
   
+  // Drag selection enabled flag - can be disabled for view-only mode
+  private dragSelectionEnabled: boolean = true;
+  
   // Drag threshold - must move at least this many pixels to start drag selection
   private readonly DRAG_THRESHOLD = 5;
   
@@ -126,6 +129,17 @@ export class SelectionManager {
     this.isEnabled = enabled;
     if (!enabled) {
       this.clearHover();
+      this.cancelDragSelection();
+    }
+  }
+
+  /**
+   * Enable/disable drag selection (box selection)
+   * When disabled, only single-click selection is allowed
+   */
+  setDragSelectionEnabled(enabled: boolean): void {
+    this.dragSelectionEnabled = enabled;
+    if (!enabled) {
       this.cancelDragSelection();
     }
   }
@@ -591,8 +605,8 @@ export class SelectionManager {
     if (this.isMouseDown && this.mouseDownPoint) {
       const distance = this.getDistance(this.mouseDownPoint, pos);
       
-      // Start drag selection if we've moved past threshold
-      if (!this.isDragSelecting && distance > this.DRAG_THRESHOLD) {
+      // Start drag selection if we've moved past threshold (only if drag selection is enabled)
+      if (!this.isDragSelecting && distance > this.DRAG_THRESHOLD && this.dragSelectionEnabled) {
         this.isDragSelecting = true;
         this.dragStartPoint = { ...this.mouseDownPoint };
         this.dragCurrentPoint = pos;

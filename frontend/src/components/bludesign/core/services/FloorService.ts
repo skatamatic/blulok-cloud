@@ -10,13 +10,11 @@
  * This service is part of the SOLID refactoring of BluDesignEngine.
  */
 
-import * as THREE from 'three';
 import { 
-  AssetCategory, 
-  AssetMetadata, 
   PlacedObject,
+  Building,
 } from '../types';
-import { Building, BuildingManager } from '../BuildingManager';
+import { BuildingManager } from '../BuildingManager';
 import { FloorManager } from '../FloorManager';
 import { ObjectPlacementService } from './ObjectPlacementService';
 
@@ -60,7 +58,7 @@ export class FloorService {
    * Add a new floor above the current highest floor
    */
   addFloorAbove(copyFromFloor?: number): FloorOperationResult {
-    const { buildingManager, activeBuilding, placedObjects } = this.context;
+    const { buildingManager, activeBuilding } = this.context;
     
     if (!activeBuilding) {
       return { success: false, error: 'No building selected' };
@@ -93,7 +91,7 @@ export class FloorService {
    * Add a new floor below the current lowest floor (basement)
    */
   addFloorBelow(copyFromFloor?: number): FloorOperationResult {
-    const { buildingManager, activeBuilding, placedObjects } = this.context;
+    const { buildingManager, activeBuilding } = this.context;
     
     if (!activeBuilding) {
       return { success: false, error: 'No building selected' };
@@ -274,8 +272,9 @@ export class FloorService {
       }
       
       // Check if it's inside this building
-      return building.footprint.some(cell => 
-        cell.x === obj.position.x && cell.z === obj.position.z
+      return building.footprints.some((fp) => 
+        obj.position.x >= fp.minX && obj.position.x <= fp.maxX &&
+        obj.position.z >= fp.minZ && obj.position.z <= fp.maxZ
       );
     });
   }

@@ -75,7 +75,7 @@ export const BluFMSFacilityProvider: React.FC<BluFMSFacilityProviderProps> = ({ 
         } else if (userFacilities.length === 1) {
           // If only one facility, auto-select it
           setSelectedFacilityId(userFacilities[0].id);
-        } else if (selectedFacilityId && !userFacilities.find(f => f.id === selectedFacilityId)) {
+        } else if (selectedFacilityId && !userFacilities.find((f: { id: string }) => f.id === selectedFacilityId)) {
           // If selected facility is no longer available, select first
           setSelectedFacilityId(userFacilities.length > 0 ? userFacilities[0].id : null);
         }

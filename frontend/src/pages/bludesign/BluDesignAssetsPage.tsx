@@ -4,7 +4,7 @@
  * Catalog and skinning/texture system for branding and editing 3D assets.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   PhotoIcon,
@@ -13,7 +13,6 @@ import {
   CubeIcon,
   Squares2X2Icon,
   ListBulletIcon,
-  FunnelIcon,
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -22,7 +21,6 @@ import { ThemeManagementPanel } from '@/components/bludesign/ui/panels/ThemeMana
 import { SkinsManagementPanel } from '@/components/bludesign/ui/panels/SkinsManagementPanel';
 import { AssetService, AssetDefinition } from '@/components/bludesign/services/AssetService';
 import { AssetRegistry } from '@/components/bludesign/assets/AssetRegistry';
-import { AssetFactory } from '@/components/bludesign/assets/AssetFactory';
 import { ThumbnailGenerator } from '@/components/bludesign/utils/ThumbnailGenerator';
 import { AssetMetadata, AssetCategory } from '@/components/bludesign/core/types';
 import { SkinManager } from '@/components/bludesign/core/SkinManager';
@@ -66,7 +64,7 @@ export default function BluDesignAssetsPage() {
   
   const [activeTab, setActiveTab] = useState<TabMode>(getInitialTab());
   const [assets, setAssets] = useState<AssetMetadata[]>([]);
-  const [customAssets, setCustomAssets] = useState<AssetDefinition[]>([]);
+  const [, setCustomAssets] = useState<AssetDefinition[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<AssetDefinition | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');

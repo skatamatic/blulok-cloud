@@ -27,7 +27,6 @@ import {
   EntityBinding,
   SimulationState,
   BindableEntityType,
-  PropertySection,
 } from '../../core/types';
 import { useTheme } from '@/contexts/ThemeContext';
 import { AssetRegistry } from '../../assets/AssetRegistry';
@@ -64,7 +63,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onUpdateSkin,
   onSimulateState,
   dataSourceFacilityId,
-  availableSkins = [],
+  availableSkins: _availableSkins = [],
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';

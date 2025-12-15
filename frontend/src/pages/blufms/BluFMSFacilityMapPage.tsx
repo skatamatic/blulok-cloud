@@ -6,7 +6,6 @@ import {
   FireIcon,
   BoltIcon,
   CpuChipIcon,
-  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { useBluFMSFacility } from '@/contexts/BluFMSFacilityContext';
 import { VoiceChatWaveform } from '@/components/blufms/VoiceChatWaveform';
@@ -111,9 +110,9 @@ export default function BluFMSFacilityMapPage() {
           if (card.id === cardId) {
             // Handle timeline card updates specially
             if (card.type === 'timeline' && 'currentStep' in updates) {
-              return { ...card, currentStep: (updates as any).currentStep };
+              return { ...card, currentStep: (updates as any).currentStep } as CardData;
             }
-            return { ...card, ...updates };
+            return { ...card, ...updates } as CardData;
           }
           return card;
         }));
@@ -152,10 +151,10 @@ export default function BluFMSFacilityMapPage() {
       onEphemeralStatusAdded: (id: string, type: 'success' | 'info' | 'warning' | 'error', title: string, message?: string) => {
         setEphemeralCards(prev => [...prev, { id, type, title, message }]);
       },
-      onTimelineShown: (visible: boolean) => {
+      onTimelineShown: (_visible: boolean) => {
         // Timeline is now handled via timeline cards
       },
-      onTimelineUpdated: (markers: TimelineMarker[]) => {
+      onTimelineUpdated: (_markers: TimelineMarker[]) => {
         // Timeline is now handled via timeline cards
       },
       onTimelineStepSet: (step: number) => {

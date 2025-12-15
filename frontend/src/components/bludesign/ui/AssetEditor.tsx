@@ -5,21 +5,17 @@
  * Used on the BluDesign Assets page.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
 import { useTheme } from '../../../contexts/ThemeContext';
 import { 
   AssetDefinition, 
-  MaterialPreset, 
-  CreateMaterialPresetInput,
-  AssetService,
   MaterialConfig 
 } from '../services/AssetService';
 import { ThumbnailGenerator } from '../utils/ThumbnailGenerator';
 import { AssetFactory } from '../assets/AssetFactory';
-import { AssetMetadata, AssetCategory, PartMaterial } from '../core/types';
-import { SkinManager } from '../core/SkinManager';
+import { AssetMetadata, AssetCategory } from '../core/types';
 
 interface AssetEditorProps {
   asset: AssetDefinition;
@@ -27,124 +23,17 @@ interface AssetEditorProps {
   onClose?: () => void;
 }
 
-interface ColorInputProps {
-  value: string;
-  onChange: (value: string) => void;
-  label: string;
-  isDark: boolean;
-}
-
-const ColorInput: React.FC<ColorInputProps> = ({ value, onChange, label, isDark }) => (
-  <div className="flex items-center gap-2">
-    <label className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{label}</label>
-    <div className="flex items-center gap-1">
-      <input
-        type="color"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-8 h-8 rounded border-0 cursor-pointer"
-      />
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`
-          w-20 px-2 py-1 text-xs rounded border
-          ${isDark ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'}
-        `}
-      />
-    </div>
-  </div>
-);
-
-interface SliderInputProps {
-  value: number;
-  onChange: (value: number) => void;
-  label: string;
-  min?: number;
-  max?: number;
-  step?: number;
-  isDark: boolean;
-}
-
-const SliderInput: React.FC<SliderInputProps> = ({ 
-  value, 
-  onChange, 
-  label, 
-  min = 0, 
-  max = 1, 
-  step = 0.05,
-  isDark 
-}) => (
-  <div className="flex items-center gap-2">
-    <label className={`text-sm w-24 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{label}</label>
-    <input
-      type="range"
-      min={min}
-      max={max}
-      step={step}
-      value={value}
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="flex-1"
-    />
-    <span className={`text-xs w-12 text-right ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-      {value.toFixed(2)}
-    </span>
-  </div>
-);
-
 export const AssetEditor: React.FC<AssetEditorProps> = ({
   asset,
-  onUpdate,
+  onUpdate: _onUpdate,
   onClose,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
   
-  const [materialPresets, setMaterialPresets] = useState<MaterialPreset[]>([]);
-  const [selectedPreset, setSelectedPreset] = useState<MaterialPreset | null>(null);
-  const [editingMaterial, setEditingMaterial] = useState<MaterialConfig | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'info' | 'model'>('info');
   const [partMaterials, setPartMaterials] = useState<Record<string, MaterialConfig>>({});
-  const [availableParts, setAvailableParts] = useState<string[]>([]);
-  const [selectedPart, setSelectedPart] = useState<string | null>(null);
-  const [skinManager] = useState(() => new SkinManager());
-  const [savingGlobal, setSavingGlobal] = useState(false);
-  const [savingFacility, setSavingFacility] = useState(false);
-  const [assetSkins, setAssetSkins] = useState<{ id: string; name: string; isGlobal: boolean; partMaterials: Record<string, PartMaterial> }[]>([]);
-  
-  // Load saved skins for this asset's category (skins apply to all assets of same type)
-  useEffect(() => {
-    const category = asset.category as AssetCategory;
-    const skins = skinManager.getSkins(category);
-    setAssetSkins(skins.map(s => ({
-      id: s.id,
-      name: s.name,
-      isGlobal: s.isGlobal,
-      partMaterials: s.partMaterials,
-    })));
-  }, [asset.category, skinManager]);
-  
-  // Load material presets
-  useEffect(() => {
-    const loadPresets = async () => {
-      try {
-        setIsLoading(true);
-        const presets = await AssetService.getMaterialPresets(asset.id);
-        setMaterialPresets(presets);
-      } catch (err) {
-        console.error('Failed to load material presets:', err);
-        // Silently fail - presets might not exist for built-in assets
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    loadPresets();
-  }, [asset.id]);
   
   // Extract available parts from asset
   useEffect(() => {
@@ -163,8 +52,6 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
         };
         
         const mesh = AssetFactory.createAssetMesh(assetMetadata);
-        const parts = mesh.userData.partNames as string[] || [];
-        setAvailableParts(parts);
         
         // Extract default materials for each part
         const materials: Record<string, MaterialConfig> = {};
@@ -267,78 +154,8 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
     };
     
     generatePreview();
-  }, [asset, editingMaterial, partMaterials]);
+  }, [asset, partMaterials]);
   
-  const handlePresetSelect = useCallback((preset: MaterialPreset) => {
-    setSelectedPreset(preset);
-    setEditingMaterial({ ...preset.materialConfig });
-  }, []);
-  
-  const handleCreatePreset = useCallback(async () => {
-    const newPreset: CreateMaterialPresetInput = {
-      presetName: 'New Preset',
-      partName: 'body',
-      materialConfig: {
-        color: '#808080',
-        metalness: 0.5,
-        roughness: 0.5,
-      },
-    };
-    
-    try {
-      setIsLoading(true);
-      const created = await AssetService.createMaterialPreset(asset.id, newPreset);
-      setMaterialPresets(prev => [...prev, created]);
-      setSelectedPreset(created);
-      setEditingMaterial(created.materialConfig);
-    } catch (err) {
-      setError('Failed to create preset');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [asset.id]);
-  
-  const handleSavePreset = useCallback(async () => {
-    if (!selectedPreset || !editingMaterial) return;
-    
-    try {
-      setIsLoading(true);
-      const updated = await AssetService.updateMaterialPreset(
-        asset.id,
-        selectedPreset.id,
-        { materialConfig: editingMaterial }
-      );
-      
-      setMaterialPresets(prev => 
-        prev.map(p => p.id === updated.id ? updated : p)
-      );
-      setSelectedPreset(updated);
-    } catch (err) {
-      setError('Failed to save preset');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [asset.id, selectedPreset, editingMaterial]);
-  
-  const handleDeletePreset = useCallback(async (presetId: string) => {
-    try {
-      setIsLoading(true);
-      await AssetService.deleteMaterialPreset(asset.id, presetId);
-      setMaterialPresets(prev => prev.filter(p => p.id !== presetId));
-      if (selectedPreset?.id === presetId) {
-        setSelectedPreset(null);
-        setEditingMaterial(null);
-      }
-    } catch (err) {
-      setError('Failed to delete preset');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [asset.id, selectedPreset]);
-  
-  const handleMaterialChange = useCallback((key: keyof MaterialConfig, value: unknown) => {
-    setEditingMaterial(prev => prev ? { ...prev, [key]: value } : null);
-  }, []);
 
   return (
     <motion.div
@@ -417,12 +234,6 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
 
       {/* Content */}
       <div className="p-4 min-h-[400px]">
-        {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm">
-            {error}
-          </div>
-        )}
-
         <AnimatePresence mode="wait">
           {activeTab === 'info' && (
             <motion.div

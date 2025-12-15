@@ -13,6 +13,7 @@ export const WIDGET_SIZE_TO_GRID: Record<WidgetSize, { w: number; h: number }> =
   'huge': { w: 6, h: 4 },
   'large-wide': { w: 6, h: 3 },
   'huge-wide': { w: 9, h: 4 },
+  'mega-tall': { w: 3, h: 6 },
 };
 
 /**

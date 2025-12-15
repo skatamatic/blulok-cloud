@@ -654,7 +654,7 @@ class SkinRegistryClass {
           name: apiSkin.name,
           description: apiSkin.description,
           category: apiSkin.category as AssetCategory,
-          partMaterials: apiSkin.partMaterials as Record<string, PartMaterial>,
+          partMaterials: apiSkin.partMaterials as unknown as Record<string, PartMaterial>,
           thumbnail: apiSkin.thumbnail,
           isBuiltin: false,
           createdAt: apiSkin.createdAt,
@@ -683,7 +683,7 @@ class SkinRegistryClass {
           name: skin.name,
           description: skin.description,
           category: skin.category,
-          partMaterials: skin.partMaterials as Record<string, Record<string, unknown>>,
+          partMaterials: skin.partMaterials as unknown as Record<string, Record<string, unknown>>,
           thumbnail: skin.thumbnail,
         });
         
@@ -719,7 +719,7 @@ class SkinRegistryClass {
         await bludesignApi.updateSkinApi(result.id, {
           name: result.name,
           description: result.description,
-          partMaterials: result.partMaterials as Record<string, Record<string, unknown>>,
+          partMaterials: result.partMaterials as unknown as Record<string, Record<string, unknown>>,
           thumbnail: result.thumbnail,
         });
       } catch (error) {

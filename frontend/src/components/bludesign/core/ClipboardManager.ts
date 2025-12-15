@@ -4,7 +4,7 @@
  * Manages copy/cut/paste operations for placed objects in the editor.
  */
 
-import { PlacedObject, GridPosition, Orientation, AssetMetadata, Building, BuildingFootprint } from './types';
+import { PlacedObject, GridPosition, Building, BuildingFootprint, AssetMetadata } from './types';
 
 export interface ClipboardBuilding {
   footprints: BuildingFootprint[];
@@ -152,7 +152,7 @@ export class ClipboardManager {
       orientation: obj.orientation,
       properties: obj.properties ? { ...obj.properties } : {},
       canStack: obj.canStack,
-      assetMetadata: obj.assetMetadata ? { ...obj.assetMetadata } : undefined,
+      assetMetadata: obj.assetMetadata ? { ...obj.assetMetadata } : ({} as AssetMetadata),
       floor: obj.floor,
       buildingId: obj.buildingId,
       // Preserve skin override
@@ -160,6 +160,8 @@ export class ClipboardManager {
       // Preserve name (but note: pasted objects will get new names on placement)
       name: obj.name,
       // Don't copy binding - each object should have its own unique binding
+      createdAt: obj.createdAt,
+      updatedAt: obj.updatedAt,
     };
   }
   

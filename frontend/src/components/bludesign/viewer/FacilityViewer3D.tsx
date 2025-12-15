@@ -18,6 +18,7 @@ import {
   PlacedObject,
   DeviceState,
   Building,
+  CameraMode,
 } from '../core/types';
 
 interface FacilityViewer3DProps {
@@ -220,7 +221,9 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         engine.simulateObjectState?.(obj.id, {
           isSimulating: true,
           simulatedState: stateUpdate.state,
-          simulatedLockStatus: stateUpdate.lockStatus,
+          simulatedLockStatus: (stateUpdate.lockStatus === 'locked' || stateUpdate.lockStatus === 'unlocked') 
+            ? stateUpdate.lockStatus 
+            : 'locked',
         });
       }
     });
@@ -292,10 +295,10 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     
     if (currentMode === 'isometric') {
       // Switch to free mode
-      engine.setCameraMode('free');
+      engine.setCameraMode(CameraMode.FREE);
     } else {
       // Switch to isometric mode and frame content
-      engine.setCameraMode('isometric');
+      engine.setCameraMode(CameraMode.ISOMETRIC);
       const sceneBounds = engine.calculateSceneBounds();
       if (sceneBounds) {
         cameraController.frameAllContent(sceneBounds, true);
