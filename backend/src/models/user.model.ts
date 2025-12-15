@@ -140,8 +140,8 @@ export class UserModel extends BaseModel {
     return this.query()
       .where('role', role)
       .select('id', 'email', 'phone_number', 'first_name', 'last_name', 'login_identifier') as any;
-   * Find multiple users by their IDs
-   */
+  }
+ 
   public static async findByIds(ids: string[]): Promise<User[]> {
     if (ids.length === 0) return [];
     return this.query().whereIn('id', ids) as Promise<User[]>;
