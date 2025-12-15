@@ -423,15 +423,12 @@ export class BluDesignEngine {
           this.cameraController.setControlsEnabled(true);
           // Re-enable selection (if in select mode)
           const isSelectionTool = this.state.activeTool === EditorTool.SELECT || 
-                                   this.state.activeTool === EditorTool.SELECT_BUILDING ||
-                                   this.state.activeTool === EditorTool.MOVE;
-          this.selectionManager.setEnabled(isSelectionTool);
+                                   this.state.activeTool === EditorTool.SELECT_BUILDING;
+          const isViewTool = this.state.activeTool === EditorTool.VIEW;
+          this.selectionManager.setEnabled(isSelectionTool || isViewTool);
           // Update drag selection enabled state
-          if (this.state.activeTool === EditorTool.MOVE) {
-            this.selectionManager.setDragSelectionEnabled(false);
-          } else {
-            this.selectionManager.setDragSelectionEnabled(true);
-          }
+          // VIEW tool: no drag selection (clicks only)
+          this.selectionManager.setDragSelectionEnabled(isSelectionTool);
           // Re-show gizmo at new position
           this.updateGizmoPosition();
         },
@@ -544,13 +541,20 @@ export class BluDesignEngine {
     this.inputCoordinator.registerHandler({
       id: 'selection',
       priority: InputPriority.SELECTION,
-      enabled: this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.MOVE,
+      enabled: this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.VIEW,
       handle: (event: Event, eventType: InputEventType): boolean => {
         // When Ctrl is held, let camera handle rotation - don't block
         if (event instanceof MouseEvent && event.ctrlKey) {
           return false;
         }
-        // Block lower priority handlers for left-click when selecting
+        // For VIEW tool, don't block mousemove (allow camera to handle drags)
+        // VIEW tool only handles clicks, not drags
+        if (this.state.activeTool === EditorTool.VIEW) {
+          // Don't block - let camera handler process drags
+          // Selection will still get the click event
+          return false;
+        }
+        // Block lower priority handlers for left-click when selecting (SELECT and SELECT_BUILDING tools)
         if (this.selectionManager.getEnabled() && event instanceof MouseEvent && event.button === 0) {
           if (eventType === 'mousedown' || eventType === 'mousemove') {
             return true;
@@ -558,7 +562,7 @@ export class BluDesignEngine {
         }
         return false;
       },
-      wantsInput: () => this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.MOVE,
+      wantsInput: () => this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.VIEW,
       // Route events to SelectionManager
       onMouseDown: (e: MouseEvent) => {
         // Skip if Ctrl is held (camera rotation)
@@ -611,7 +615,7 @@ export class BluDesignEngine {
   private createInitialState(): EditorState {
     return {
       mode: this.readonly ? EditorMode.VIEW : EditorMode.EDIT,
-      activeTool: this.readonly ? EditorTool.MOVE : EditorTool.SELECT,
+      activeTool: this.readonly ? EditorTool.VIEW : EditorTool.SELECT,
       camera: {
         mode: CameraMode.FREE,
         isometricAngle: IsometricAngle.SOUTH_WEST,
@@ -1250,11 +1254,11 @@ export class BluDesignEngine {
   // ==========================================================================
 
   setTool(tool: EditorTool): void {
-    // In readonly mode, only allow MOVE tool (which behaves like SELECT but without drag selection)
-    if (this.readonly && tool !== EditorTool.MOVE) return;
+    // In readonly mode, only allow VIEW tool (camera control + single-click smart selection)
+    if (this.readonly && tool !== EditorTool.VIEW) return;
     
-    // In edit mode, don't allow MOVE tool (use SELECT instead)
-    if (!this.readonly && tool === EditorTool.MOVE) {
+    // In edit mode, don't allow VIEW tool (it's readonly-only)
+    if (!this.readonly && tool === EditorTool.VIEW) {
       tool = EditorTool.SELECT;
     }
     
@@ -1266,32 +1270,43 @@ export class BluDesignEngine {
     
     this.state.activeTool = tool;
     
-    // Enable SelectionManager for SELECT, SELECT_BUILDING, and MOVE tools
-    const isSelectionTool = tool === EditorTool.SELECT || tool === EditorTool.SELECT_BUILDING || tool === EditorTool.MOVE;
-    this.selectionManager.setEnabled(isSelectionTool);
+    // Determine tool behavior
+    const isSelectionTool = tool === EditorTool.SELECT || tool === EditorTool.SELECT_BUILDING;
+    const isViewTool = tool === EditorTool.VIEW;
+    const isMoveTool = tool === EditorTool.MOVE;
     
-    // Disable drag selection for MOVE tool (view-only mode)
-    if (tool === EditorTool.MOVE) {
-      this.selectionManager.setDragSelectionEnabled(false);
+    // Enable SelectionManager for selection tools and VIEW tool (VIEW allows single-click selection)
+    this.selectionManager.setEnabled(isSelectionTool || isViewTool);
+    
+    // Drag selection: enabled only for SELECT and SELECT_BUILDING tools
+    // VIEW tool allows single-click selection but not drag selection
+    // MOVE tool has no selection at all
+    this.selectionManager.setDragSelectionEnabled(isSelectionTool);
+    
+    // VIEW tool: only smart objects, single click only (no multi-select)
+    if (isViewTool) {
+      this.selectionManager.setSmartOnlySelection(true);
+      this.selectionManager.setSingleSelectOnly(true);
     } else {
-      this.selectionManager.setDragSelectionEnabled(true);
+      this.selectionManager.setSmartOnlySelection(false);
+      this.selectionManager.setSingleSelectOnly(false);
     }
     
     // In normal SELECT mode, ignore buildings (can't select them)
     // In SELECT_BUILDING mode, allow building selection
     this.selectionManager.setIgnoreBuildings(tool !== EditorTool.SELECT_BUILDING);
     
-    // In SELECT, SELECT_BUILDING and PLACE modes, rotation is disabled by default (requires Ctrl+drag)
-    if (isSelectionTool || tool === EditorTool.PLACE) {
-      this.cameraController.setRotationEnabled(false);
-    } else {
-      // Re-enable rotation for other tools
+    // MOVE tool: rotation enabled by default for full camera control
+    // SELECT, SELECT_BUILDING, VIEW, PLACE: rotation disabled by default (requires Ctrl+drag)
+    if (isMoveTool) {
       this.cameraController.setRotationEnabled(true);
+    } else {
+      this.cameraController.setRotationEnabled(false);
     }
     
     // Update InputCoordinator handler states
     this.inputCoordinator.setHandlerEnabled('placement', tool === EditorTool.PLACE);
-    this.inputCoordinator.setHandlerEnabled('selection', isSelectionTool);
+    this.inputCoordinator.setHandlerEnabled('selection', isSelectionTool || isViewTool);
     
     this.emit('tool-changed', tool);
   }

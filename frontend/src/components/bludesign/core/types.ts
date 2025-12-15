@@ -635,6 +635,7 @@ export enum EditorTool {
   SELECT_BUILDING = 'select_building',  // Building selection mode - for selecting/modifying buildings
   PLACE = 'place',
   MOVE = 'move',
+  VIEW = 'view',  // View-only mode tool - camera control + single-click smart object selection
 }
 
 /** Editor mode */

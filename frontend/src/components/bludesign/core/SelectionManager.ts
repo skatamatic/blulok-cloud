@@ -57,6 +57,12 @@ export class SelectionManager {
   // Building selection mode - when false, buildings (walls, floor tiles) are ignored
   private ignoreBuildings: boolean = true;
   
+  // Smart-only selection mode (for VIEW tool - only smart objects can be selected)
+  private smartOnlySelection: boolean = false;
+  
+  // Single-select only mode (for VIEW tool - no multi-select via Shift+click)
+  private singleSelectOnly: boolean = false;
+  
   // Callbacks
   private onSelectionChange: (state: SelectionState) => void;
   private onDragSelectionChange?: (state: DragSelectionState) => void;
@@ -534,10 +540,15 @@ export class SelectionManager {
       }
     }
     
+    const isSmart = obj.userData.isSmart === true;
+    
+    // Smart-only selection mode (for VIEW tool) - only smart objects can be selected
+    if (this.smartOnlySelection && !isSmart) {
+      return false;
+    }
+    
     // Smart/Visual filter
     if (this.selectionFilter === 'all') return true;
-    
-    const isSmart = obj.userData.isSmart === true;
     
     if (this.selectionFilter === 'smart') return isSmart;
     if (this.selectionFilter === 'visual') return !isSmart;
@@ -573,6 +584,26 @@ export class SelectionManager {
    */
   getIgnoreBuildings(): boolean {
     return this.ignoreBuildings;
+  }
+
+  /**
+   * Set smart-only selection mode (for VIEW tool)
+   * When enabled, only smart objects can be selected
+   */
+  setSmartOnlySelection(enabled: boolean): void {
+    this.smartOnlySelection = enabled;
+  }
+
+  /**
+   * Set single-select only mode (for VIEW tool)
+   * When enabled, Shift+click multi-select is disabled
+   */
+  setSingleSelectOnly(enabled: boolean): void {
+    this.singleSelectOnly = enabled;
+    // Clear multi-select mode when enabling single-select
+    if (enabled) {
+      this.isMultiSelectMode = false;
+    }
   }
 
   /**
@@ -682,13 +713,14 @@ export class SelectionManager {
     }
     
     if (selectedId) {
-      if (this.isMultiSelectMode) {
+      // Multi-select only if enabled AND not in single-select-only mode
+      if (this.isMultiSelectMode && !this.singleSelectOnly) {
         this.toggleSelect(selectedId);
       } else {
         this.select(selectedId, false);
       }
-    } else if (!this.isMultiSelectMode) {
-      // Click on empty space clears selection (unless in multi-select mode)
+    } else if (!this.isMultiSelectMode || this.singleSelectOnly) {
+      // Click on empty space clears selection (unless in multi-select mode, or always clear in single-select-only mode)
       this.clearSelection();
     }
   }
@@ -743,7 +775,8 @@ export class SelectionManager {
    * Handle key down
    */
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Shift') {
+    // Don't allow multi-select in single-select only mode (VIEW tool)
+    if (event.key === 'Shift' && !this.singleSelectOnly) {
       this.isMultiSelectMode = true;
     }
     

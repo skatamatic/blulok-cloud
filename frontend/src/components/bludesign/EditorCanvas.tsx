@@ -1298,10 +1298,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           <SelectionOverlay
             isActive={true}
             selectionBox={
-              // Show selection box for all selection-capable tools
+              // Show selection box for tools that support drag selection
               (safeState.activeTool === EditorTool.SELECT || 
-               safeState.activeTool === EditorTool.SELECT_BUILDING ||
-               safeState.activeTool === EditorTool.MOVE)
+               safeState.activeTool === EditorTool.SELECT_BUILDING)
                 ? selectionBox 
                 : null
             }
