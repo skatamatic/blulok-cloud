@@ -1793,47 +1793,50 @@ async function run() {
     ok(`Users resolved primary=${primaryId} share1=${share1Id} share2=${share2Id}`);
 
     // First-time invite + OTP + set-password flows using notification WS
-    heading('First-time Login (Invite + OTP)');
+    // NOTE: The new flow sends OTP code in the invite notification itself (single message)
+    heading('First-time Login (Invite with embedded OTP)');
     async function completeFirstTimeLogin(userId, email, newPassword = 'TestUser123!') {
       // Trigger a real invite via FirstTimeUserService
       step(`Sending invite for user ${userId}`);
       // Clear any previous DEV_NOTIFICATION events so we only see fresh invites/OTPs
       notificationEvents.length = 0;
       await axios.post(`${API_BASE}/users/${userId}/resend-invite`, {}, { headers: { Authorization: `Bearer ${token}` } });
-      // Wait for invite SMS to capture deeplink/token
+      // Wait for invite SMS to capture deeplink/token AND OTP code (single notification now)
       const inviteEvent = await waitForNotification((e) =>
         e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
       );
       ok(`Received invite notification for ${inviteEvent.toPhone || inviteEvent.toEmail || 'unknown-recipient'}`);
       console.log(C.cyan('\n  📧 Full Invite Notification Details:'));
       console.log(C.gray(JSON.stringify(inviteEvent, null, 2)));
+      
+      // Parse invite token from deeplink
       const deeplinkMatch = String(inviteEvent.body).match(/token=([^&\s]+)/);
       if (!deeplinkMatch) throw new Error('Failed to parse invite token from SMS body');
       const inviteToken = decodeURIComponent(deeplinkMatch[1]);
-      // Request OTP via invite endpoint (this will generate OTP SMS)
-      step('Requesting OTP via invite/request-otp');
-      await axios.post(`${API_BASE}/auth/invite/request-otp`, {
-        token: inviteToken,
-        phone: inviteEvent.toPhone,
+      
+      // Parse OTP code from the same invite notification (now included in single message)
+      // First check if meta has code, otherwise parse from body
+      let otp = inviteEvent.meta?.code;
+      if (!otp) {
+        const otpMatch = String(inviteEvent.body).match(/(\d{6})/);
+        if (!otpMatch) throw new Error('Failed to parse OTP code from invite SMS body');
+        otp = otpMatch[1];
+      }
+      ok(`Extracted OTP ${otp} from invite notification`);
+      
+      // Accept the invite to check profile status (does not consume invite)
+      step('Checking profile via invite/accept');
+      const acceptRes = await axios.post(`${API_BASE}/auth/invite/accept`, { token: inviteToken });
+      if (!acceptRes.data?.success) throw new Error('Accept invite failed');
+      ok(`Invite accepted. needs_profile=${acceptRes.data.needs_profile}`);
+      
+      // Set password using token + OTP
+      step('Setting password via invite/set-password');
+      const setPwd = await axios.post(`${API_BASE}/auth/invite/set-password`, { 
+        token: inviteToken, 
+        otp, 
+        newPassword 
       });
-      const otpEvent = await waitForNotification((e) =>
-        e.kind === 'otp' && e.delivery === 'sms'
-      );
-      ok(`Received OTP notification for ${otpEvent.toPhone || otpEvent.toEmail || 'unknown-recipient'}`);
-      console.log(C.cyan('\n  📧 Full OTP Notification Details:'));
-      console.log(C.gray(JSON.stringify(otpEvent, null, 2)));
-      const otpMatch = String(otpEvent.body).match(/(\d{6})/);
-      if (!otpMatch) throw new Error('Failed to parse OTP code from SMS body');
-      const otp = otpMatch[1];
-      ok(`Entering OTP ${otp}`);
-      // Verify OTP
-      step('Verifying OTP');
-      const verify = await axios.post(`${API_BASE}/auth/invite/verify-otp`, { token: inviteToken, otp });
-      if (!verify.data?.success) throw new Error('OTP verify failed');
-      ok('OTP verified');
-      // Set password to finalize account
-      step('Accepting invite and setting password');
-      const setPwd = await axios.post(`${API_BASE}/auth/invite/set-password`, { token: inviteToken, otp, newPassword });
       if (!setPwd.data?.success) throw new Error('Set password failed');
       ok('First-time login completed');
       return tenantLogin(email, newPassword);
@@ -1888,8 +1891,9 @@ async function run() {
     ok(`Invited user resolved as ${newInviteeId}`);
 
     // Dev-admin helper: send invite for this new user and capture token via notifications WS
+    // NOTE: Now the invite contains both the deeplink and OTP code in a single message
     step(`Sending invite for new sharee ${newInviteeId}`);
-    // Clear any prior notification events so we only capture fresh invite/OTP for this user
+    // Clear any prior notification events so we only capture fresh invite for this user
     notificationEvents.length = 0;
     await axios.post(`${API_BASE}/users/${newInviteeId}/resend-invite`, {}, {
       headers: { Authorization: `Bearer ${token}` }
@@ -1900,71 +1904,64 @@ async function run() {
     ok(`Invite SMS received for new sharee ${newInviteEvent.toPhone || newInviteEvent.toEmail || 'unknown-recipient'}`);
     console.log(C.cyan('\n  📧 Full New Invitee Invite Notification Details:'));
     console.log(C.gray(JSON.stringify(newInviteEvent, null, 2)));
+    
     const newDeeplinkMatch = String(newInviteEvent.body).match(/token=([^&\s]+)/);
     if (!newDeeplinkMatch) throw new Error('No invite token found in SMS for new sharee');
     const newInviteToken = decodeURIComponent(newDeeplinkMatch[1]);
+    
+    // Parse OTP from the invite notification (embedded in same message now)
+    let newOtp = newInviteEvent.meta?.code;
+    if (!newOtp) {
+      const newOtpMatch = String(newInviteEvent.body).match(/(\d{6})/);
+      if (!newOtpMatch) throw new Error('No OTP code found in invite SMS for new sharee');
+      newOtp = newOtpMatch[1];
+    }
+    ok(`Extracted OTP ${newOtp} from invite notification for new sharee`);
 
-    // First attempt: request OTP WITHOUT profile details → should be rejected
-    step('Requesting OTP without profile details (expected to fail)');
+    // Accept the invite - this checks profile status (does not consume invite)
+    step('Checking profile for new sharee via invite/accept');
+    const newAcceptRes = await axios.post(`${API_BASE}/auth/invite/accept`, { token: newInviteToken });
+    if (!newAcceptRes.data?.success) throw new Error('Accept invite failed for new sharee');
+    const needsProfile = newAcceptRes.data.needs_profile;
+    ok(`Invite accepted for new sharee. needs_profile=${needsProfile}`);
+    
+    // For a new invitee (phone-only), needs_profile should be true
+    if (!needsProfile) {
+      console.log(C.yellow('  ⚠️ Warning: Expected needs_profile=true for phone-only invitee, but got false'));
+    }
+
+    // First attempt: set password WITHOUT profile details → should be rejected
+    step('Attempting set-password without profile details (expected to fail)');
     let deniedWithoutProfile = false;
     try {
-      await axios.post(`${API_BASE}/auth/invite/request-otp`, {
+      await axios.post(`${API_BASE}/auth/invite/set-password`, {
         token: newInviteToken,
-        phone: newInvitePhone,
+        otp: newOtp,
+        newPassword: 'NewInvitee123!',
       });
     } catch (err) {
       const status = err?.response?.status;
       const msg = String(err?.response?.data?.message || '');
-      if (status === 400 && msg.includes('First name and last name are required')) {
+      if (status === 400 && (msg.includes('First name is required') || msg.includes('Last name is required'))) {
         deniedWithoutProfile = true;
       } else {
-        throw new Error(`Unexpected error from invite/request-otp without profile: status=${status} message=${msg}`);
+        throw new Error(`Unexpected error from set-password without profile: status=${status} message=${msg}`);
       }
     }
     if (!deniedWithoutProfile) {
-      throw new Error('Expected invite/request-otp to be rejected without profile details for new invitee');
+      throw new Error('Expected set-password to be rejected without profile details for new invitee');
     }
-    ok('OTP request correctly rejected without first/last name');
+    ok('Set-password correctly rejected without first/last name');
 
-    // Second attempt: complete profile, then drive the rest of the flow via dev-only OTP
-    step('Completing profile for new sharee via admin API');
-    await axios.put(`${API_BASE}/users/${newInviteeId}`, {
-      firstName: 'New',
-      lastName: 'Invitee',
-    }, { headers: { Authorization: `Bearer ${token}` } });
-    ok('Profile updated for new sharee');
-
-    // Now drive OTP via normal invite/request-otp + notifications WS
-    step('Requesting OTP for new sharee');
-    await axios.post(`${API_BASE}/auth/invite/request-otp`, {
-      token: newInviteToken,
-      phone: newInvitePhone,
-    });
-    const newOtpEvent = await waitForNotification((e) =>
-      e.kind === 'otp' && e.delivery === 'sms'
-    );
-    ok(`Received OTP notification for new sharee ${newOtpEvent.toPhone || newOtpEvent.toEmail || 'unknown-recipient'}`);
-    console.log(C.cyan('\n  📧 Full New Invitee OTP Notification Details:'));
-    console.log(C.gray(JSON.stringify(newOtpEvent, null, 2)));
-    const newOtpMatch = String(newOtpEvent.body).match(/(\d{6})/);
-    const newOtp = newOtpMatch && newOtpMatch[1];
-    if (!newOtp) throw new Error('No OTP code parsed for new sharee');
-    ok(`Entering OTP ${newOtp}`);
-
-    step('Verifying OTP for new sharee');
-    const newVerify = await axios.post(`${API_BASE}/auth/invite/verify-otp`, {
-      token: newInviteToken,
-      otp: newOtp,
-    });
-    if (!newVerify.data?.success) throw new Error('OTP verify failed for new sharee');
-    ok('OTP verified for new sharee');
-
-    step('Accepting invite and setting password for new sharee');
+    // Second attempt: set password WITH profile details included
+    step('Setting password for new sharee with profile details');
     const newPassword = 'NewInvitee123!';
     const newSetPwd = await axios.post(`${API_BASE}/auth/invite/set-password`, {
       token: newInviteToken,
       otp: newOtp,
       newPassword,
+      firstName: 'New',
+      lastName: 'Invitee',
     });
     if (!newSetPwd.data?.success) throw new Error('Set password failed for new sharee');
     ok('First-time login completed for new sharee');

@@ -660,7 +660,7 @@ describe('Auth Routes', () => {
 
   describe('Invite/OTP First-time Login Flow', () => {
     let appForInvite: any;
-    const requestOtpMock = jest.fn();
+    const acceptInviteMock = jest.fn();
     const verifyOtpMock = jest.fn();
     const setPasswordMock = jest.fn();
 
@@ -669,7 +669,7 @@ describe('Auth Routes', () => {
         jest.doMock('@/services/first-time-user.service', () => ({
           FirstTimeUserService: {
             getInstance: () => ({
-              requestOtp: requestOtpMock,
+              acceptInvite: acceptInviteMock,
               verifyOtp: verifyOtpMock,
               setPassword: setPasswordMock,
             }),
@@ -684,60 +684,51 @@ describe('Auth Routes', () => {
       jest.clearAllMocks();
     });
 
-    it('POST /api/v1/auth/invite/request-otp validates body', async () => {
+    it('POST /api/v1/auth/invite/accept validates body', async () => {
       const res = await require('supertest')(appForInvite)
-        .post('/api/v1/auth/invite/request-otp')
+        .post('/api/v1/auth/invite/accept')
         .send({})
         .expect(400);
       expect(res.body.success).toBe(false);
-      expect(requestOtpMock).not.toHaveBeenCalled();
+      expect(acceptInviteMock).not.toHaveBeenCalled();
     });
 
-    it('POST /api/v1/auth/invite/request-otp succeeds', async () => {
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-      requestOtpMock.mockResolvedValueOnce({ expiresAt });
+    it('POST /api/v1/auth/invite/accept succeeds with complete profile', async () => {
+      acceptInviteMock.mockResolvedValueOnce({
+        needs_profile: false,
+        profile: { first_name: 'John', last_name: 'Doe', email: 'john@example.com' },
+        missing_fields: [],
+      });
       const res = await require('supertest')(appForInvite)
-        .post('/api/v1/auth/invite/request-otp')
-        .send({ token: 'invite-token', phone: '+15550001234' })
+        .post('/api/v1/auth/invite/accept')
+        .send({ token: 'invite-token' })
         .expect(200);
       expect(res.body.success).toBe(true);
-      expect(requestOtpMock).toHaveBeenCalled();
+      expect(res.body.needs_profile).toBe(false);
+      expect(res.body.profile.first_name).toBe('John');
+      expect(acceptInviteMock).toHaveBeenCalledWith({ token: 'invite-token' });
     });
 
-    it('POST /api/v1/auth/invite/request-otp is rate limited (5 per minute)', async () => {
-      // Create a fresh app instance so limiter state is clean
-      let isolatedApp: any;
-      jest.isolateModules(() => {
-        jest.doMock('@/services/first-time-user.service', () => ({
-          FirstTimeUserService: {
-            getInstance: () => ({
-              requestOtp: requestOtpMock,
-              verifyOtp: verifyOtpMock,
-              setPassword: setPasswordMock,
-            }),
-          },
-        }));
-        const { createApp: createAppIsolated } = require('@/app');
-        isolatedApp = createAppIsolated();
+    it('POST /api/v1/auth/invite/accept returns needs_profile true when profile incomplete', async () => {
+      acceptInviteMock.mockResolvedValueOnce({
+        needs_profile: true,
+        profile: { first_name: null, last_name: null, email: null },
+        missing_fields: ['first_name', 'last_name'],
       });
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-      requestOtpMock.mockResolvedValue({ expiresAt });
-      for (let i = 0; i < 5; i++) {
-        await require('supertest')(isolatedApp)
-          .post('/api/v1/auth/invite/request-otp')
-          .send({ token: 'invite-token', phone: '+15550001234' })
-          .expect(200);
-      }
-      await require('supertest')(isolatedApp)
-        .post('/api/v1/auth/invite/request-otp')
-        .send({ token: 'invite-token', phone: '+15550001234' })
-        .expect(429);
+      const res = await require('supertest')(appForInvite)
+        .post('/api/v1/auth/invite/accept')
+        .send({ token: 'invite-token' })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.needs_profile).toBe(true);
+      expect(res.body.missing_fields).toContain('first_name');
+      expect(res.body.missing_fields).toContain('last_name');
     });
 
     it('POST /api/v1/auth/invite/verify-otp validates body', async () => {
       const res = await require('supertest')(appForInvite)
         .post('/api/v1/auth/invite/verify-otp')
-        .send({ token: 'tok', otp: 'abc' })
+        .send({ otp: 'abc' })
         .expect(400);
       expect(res.body.success).toBe(false);
       expect(verifyOtpMock).not.toHaveBeenCalled();
@@ -750,10 +741,10 @@ describe('Auth Routes', () => {
         .send({ token: 'tok', otp: '123456' })
         .expect(200);
       expect(res.body.success).toBe(true);
-      expect(verifyOtpMock).toHaveBeenCalled();
+      expect(verifyOtpMock).toHaveBeenCalledWith({ token: 'tok', otp: '123456' });
     });
 
-    it('POST /api/v1/auth/invite/set-password validates body', async () => {
+    it('POST /api/v1/auth/invite/set-password validates body - weak password', async () => {
       const res = await require('supertest')(appForInvite)
         .post('/api/v1/auth/invite/set-password')
         .send({ token: 'tok', otp: '123456', newPassword: 'weak' })
@@ -769,7 +760,61 @@ describe('Auth Routes', () => {
         .send({ token: 'tok', otp: '123456', newPassword: 'Strong!Pass1' })
         .expect(200);
       expect(res.body.success).toBe(true);
-      expect(setPasswordMock).toHaveBeenCalled();
+      expect(setPasswordMock).toHaveBeenCalledWith({
+        token: 'tok',
+        otp: '123456',
+        newPassword: 'Strong!Pass1',
+        firstName: undefined,
+        lastName: undefined,
+        email: undefined,
+      });
+    });
+
+    it('POST /api/v1/auth/invite/set-password with profile fields', async () => {
+      setPasswordMock.mockResolvedValueOnce(undefined);
+      const res = await require('supertest')(appForInvite)
+        .post('/api/v1/auth/invite/set-password')
+        .send({
+          token: 'tok',
+          otp: '123456',
+          newPassword: 'Strong!Pass1',
+          firstName: 'Jane',
+          lastName: 'Doe',
+          email: 'jane@example.com',
+        })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+      expect(setPasswordMock).toHaveBeenCalledWith({
+        token: 'tok',
+        otp: '123456',
+        newPassword: 'Strong!Pass1',
+        firstName: 'Jane',
+        lastName: 'Doe',
+        email: 'jane@example.com',
+      });
+    });
+
+    it('POST /api/v1/auth/invite/set-password rejects when missing token', async () => {
+      // Create isolated app to avoid rate limiting from previous tests
+      let isolatedApp: any;
+      jest.isolateModules(() => {
+        jest.doMock('@/services/first-time-user.service', () => ({
+          FirstTimeUserService: {
+            getInstance: () => ({
+              acceptInvite: acceptInviteMock,
+              verifyOtp: verifyOtpMock,
+              setPassword: setPasswordMock,
+            }),
+          },
+        }));
+        const { createApp: createAppIsolated } = require('@/app');
+        isolatedApp = createAppIsolated();
+      });
+      const res = await require('supertest')(isolatedApp)
+        .post('/api/v1/auth/invite/set-password')
+        .send({ otp: '123456', newPassword: 'Strong!Pass1' })
+        .expect(400);
+      expect(res.body.success).toBe(false);
     });
   });
 });

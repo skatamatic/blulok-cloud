@@ -112,32 +112,51 @@ export class NotificationService {
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
 
-    const smsTemplate = config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}}';
-    const emailTemplate = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
+    // Default templates now support both {{deeplink}} and {{code}}
+    const smsTemplate = config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}';
+    const emailTemplate = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}. Your verification code: {{code}}';
+
+    // Helper to apply template replacements
+    const applyTemplate = (template: string) => {
+      let result = template.replace(/\{\{deeplink\}\}/g, params.deeplink);
+      if (params.code) {
+        result = result.replace(/\{\{code\}\}/g, params.code);
+      } else {
+        // Remove {{code}} placeholder if no code provided
+        result = result.replace(/\{\{code\}\}/g, '');
+      }
+      return result.trim();
+    };
+
+    // Build meta for debug events
+    const meta: Record<string, string> = { deeplink: params.deeplink };
+    if (params.code) {
+      meta.code = params.code;
+    }
 
     const debug = NotificationDebugService.getInstance();
     // When debug test mode is enabled, publish events instead of calling real providers
     if (debug.isEnabled()) {
       const createdAt = new Date();
       if (smsEnabled && params.toPhone) {
-        const body = smsTemplate.replace('{{deeplink}}', params.deeplink);
+        const body = applyTemplate(smsTemplate);
         debug.publish({
           kind: 'invite',
           delivery: 'sms',
           toPhone: params.toPhone,
           body,
-          meta: { deeplink: params.deeplink },
+          meta,
           createdAt,
         });
       }
       if (emailEnabled && params.toEmail) {
-        const html = emailTemplate.replace('{{deeplink}}', params.deeplink);
+        const html = applyTemplate(emailTemplate);
         debug.publish({
           kind: 'invite',
           delivery: 'email',
           toEmail: params.toEmail,
           body: html,
-          meta: { deeplink: params.deeplink },
+          meta,
           createdAt,
         });
       }
@@ -146,14 +165,14 @@ export class NotificationService {
 
     if (smsEnabled && params.toPhone) {
       const provider = this.getSmsProvider(config);
-      const body = smsTemplate.replace('{{deeplink}}', params.deeplink);
+      const body = applyTemplate(smsTemplate);
       await provider.sendSms(params.toPhone, body);
     }
 
     if (emailEnabled && params.toEmail) {
       const provider = this.getEmailProvider(config);
-      const subject = 'Your BluLok Invitation';
-      const html = emailTemplate.replace('{{deeplink}}', params.deeplink);
+      const subject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
+      const html = applyTemplate(emailTemplate);
       await provider.sendEmail(params.toEmail, subject, html, html);
     }
   }

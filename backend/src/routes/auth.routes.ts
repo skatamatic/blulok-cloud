@@ -277,15 +277,13 @@ export { router as authRouter };
 
 // ----- First-time Invite Flow Endpoints -----
 
-// POST /auth/invite/request-otp { token, phone? | email?, firstName?, lastName? }
-router.post('/invite/request-otp', inviteRequestLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
+// POST /auth/invite/accept { token }
+// Validates the invite and returns profile info + needs_profile flag
+// Does NOT consume the invite - that happens in set-password
+router.post('/invite/accept', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({
     token: Joi.string().required(),
-    phone: Joi.string().optional(),
-    email: Joi.string().email().optional(),
-    firstName: Joi.string().trim().min(1).max(100).optional(),
-    lastName: Joi.string().trim().min(1).max(100).optional(),
-  }).xor('phone', 'email');
+  });
   const { error, value } = schema.validate(req.body);
   if (error) {
     res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
@@ -295,22 +293,24 @@ router.post('/invite/request-otp', inviteRequestLimiter, asyncHandler(async (req
   const { FirstTimeUserService } = await import('@/services/first-time-user.service');
   const svc = FirstTimeUserService.getInstance();
   try {
-    const result = await svc.requestOtp({
-      token: value.token,
-      phone: value.phone,
-      email: value.email,
-      firstName: value.firstName,
-      lastName: value.lastName,
+    const result = await svc.acceptInvite({ token: value.token });
+    res.json({
+      success: true,
+      needs_profile: result.needs_profile,
+      profile: result.profile,
+      missing_fields: result.missing_fields,
     });
-    res.json({ success: true, expiresAt: result.expiresAt });
   } catch (e: any) {
-    res.status(400).json({ success: false, message: e?.message || 'Unable to send OTP' });
+    res.status(400).json({ success: false, message: e?.message || 'Invalid invite token' });
   }
 }));
 
 // POST /auth/invite/verify-otp { token, otp }
 router.post('/invite/verify-otp', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const schema = Joi.object({ token: Joi.string().required(), otp: Joi.string().pattern(/^\d{6}$/).required() });
+  const schema = Joi.object({
+    token: Joi.string().required(),
+    otp: Joi.string().pattern(/^\d{6}$/).required()
+  });
   const { error, value } = schema.validate(req.body);
   if (error) {
     res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
@@ -327,7 +327,7 @@ router.post('/invite/verify-otp', inviteVerifyLimiter, asyncHandler(async (req: 
   }
 }));
 
-// POST /auth/invite/set-password { token, otp, newPassword }
+// POST /auth/invite/set-password { token, otp, newPassword, firstName?, lastName?, email? }
 router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({
     token: Joi.string().required(),
@@ -336,7 +336,11 @@ router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req
       .min(8)
       .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$'))
       .required()
-      .messages({ 'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character' })
+      .messages({ 'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character' }),
+    // Profile fields - required if user profile is incomplete
+    firstName: Joi.string().trim().min(1).max(100).optional(),
+    lastName: Joi.string().trim().min(1).max(100).optional(),
+    email: Joi.string().email().optional(),
   });
   const { error, value } = schema.validate(req.body);
   if (error) {
@@ -347,7 +351,14 @@ router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req
   const { FirstTimeUserService } = await import('@/services/first-time-user.service');
   const svc = FirstTimeUserService.getInstance();
   try {
-    await svc.setPassword({ token: value.token, otp: value.otp, newPassword: value.newPassword });
+    await svc.setPassword({
+      token: value.token,
+      otp: value.otp,
+      newPassword: value.newPassword,
+      firstName: value.firstName,
+      lastName: value.lastName,
+      email: value.email,
+    });
     res.json({ success: true });
   } catch (e: any) {
     res.status(400).json({ success: false, message: e?.message || 'Unable to set password' });

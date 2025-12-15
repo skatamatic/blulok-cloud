@@ -24,9 +24,11 @@ export class FirstTimeUserService {
 
   /**
    * Create and send an invitation to a newly created user.
+   * Generates both the invite token AND the OTP in one step, sending a single
+   * notification containing both the deeplink and verification code.
    */
   public async sendInvite(user: User): Promise<void> {
-    const { token } = await this.invites.createInvite(user.id);
+    const { token, inviteId } = await this.invites.createInvite(user.id);
     const deeplinkBase = await this.settings.get('notifications.deeplink_base');
     let base = deeplinkBase || 'blulok://';
     const phone = user.phone_number || '';
@@ -39,12 +41,24 @@ export class FirstTimeUserService {
     // Build: blulok://invite?token=...&phone=... or https://app.blulok.com/invite?token=...&phone=...
     const deeplink = `${base}invite?token=${encodeURIComponent(token)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`;
 
+    // Determine delivery method
+    const delivery = user.phone_number ? 'sms' : 'email';
+
+    // Create OTP record for this invite (does not send a separate notification)
+    const { code } = await this.otps.createOtpRecord({
+      userId: user.id,
+      inviteId,
+      delivery: delivery as 'sms' | 'email',
+    });
+
+    // Send single invite notification with both deeplink and OTP code
     await this.notifications.sendInvite({
       toPhone: user.phone_number || undefined,
       toEmail: user.email || undefined,
       deeplink,
+      code,
     });
-    logger.info(`Invite sent to user ${user.id} via ${user.phone_number ? 'sms' : 'email'}`);
+    logger.info(`Invite with OTP sent to user ${user.id} via ${delivery}`);
   }
 
   /**
@@ -141,27 +155,108 @@ export class FirstTimeUserService {
     return result.valid;
   }
 
-  /** Set the user's password and consume invite (after otp verified) */
-  public async setPassword(params: { token: string; otp: string; newPassword: string; }): Promise<void> {
+  /**
+   * Accept an invite by token. This validates the invite and returns profile info.
+   * Does NOT consume the invite - that happens in setPassword.
+   * - needs_profile: whether the user needs to provide first/last name
+   * - profile: known profile fields (first_name, last_name, email)
+   * - missing_fields: list of fields that need to be provided
+   */
+  public async acceptInvite(params: { token: string }): Promise<{
+    needs_profile: boolean;
+    profile: { first_name: string | null; last_name: string | null; email: string | null };
+    missing_fields: string[];
+  }> {
     const invite = await this.invites.findActiveInviteByToken(params.token);
     if (!invite) throw new Error('Invalid or expired invite token');
+    
+    const user = await UserModel.findById(invite.user_id) as User | undefined;
+    if (!user) throw new Error('User not found for invite');
+
+    // Determine which profile fields are missing
+    const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;
+    const hasLastName = typeof user.last_name === 'string' && user.last_name.trim().length > 0;
+    
+    const missing_fields: string[] = [];
+    if (!hasFirstName) missing_fields.push('first_name');
+    if (!hasLastName) missing_fields.push('last_name');
+
+    logger.info(`Invite accepted for user ${user.id}, needs_profile=${missing_fields.length > 0}`);
+
+    return {
+      needs_profile: missing_fields.length > 0,
+      profile: {
+        first_name: user.first_name || null,
+        last_name: user.last_name || null,
+        email: user.email || null,
+      },
+      missing_fields,
+    };
+  }
+
+  /**
+   * Set the user's password, verify OTP, and consume invite.
+   * If profile fields are missing and required, they must be provided or the call fails.
+   */
+  public async setPassword(params: {
+    token: string;
+    otp: string;
+    newPassword: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+  }): Promise<void> {
+    const invite = await this.invites.findActiveInviteByToken(params.token);
+    if (!invite) throw new Error('Invalid or expired invite token');
+    
     const valid = await this.verifyOtp({ token: params.token, otp: params.otp });
     if (!valid) throw new Error('Invalid OTP');
 
-    const passwordHash = await bcrypt.hash(params.newPassword, 12);
-    // Load user to decide whether to activate on successful first-time setup
     const user = await UserModel.findById(invite.user_id) as User | undefined;
-    if (!user) {
-      throw new Error('User not found for invite');
-    }
+    if (!user) throw new Error('User not found for invite');
 
-    const updates: Partial<User> = {
-      password_hash: passwordHash,
+    // Check if profile fields are missing and require them
+    const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;
+    const hasLastName = typeof user.last_name === 'string' && user.last_name.trim().length > 0;
+
+    const updates: Partial<User> & { email?: string } = {
       requires_password_reset: false,
     };
 
-    // If the account is currently inactive, treat successful invite completion
-    // (valid OTP + password set) as the point where the account becomes active.
+    // If first name is missing, require it
+    if (!hasFirstName) {
+      const firstName = (params.firstName || '').trim();
+      if (!firstName) {
+        throw new Error('First name is required to complete your account setup');
+      }
+      updates.first_name = firstName;
+    }
+
+    // If last name is missing, require it
+    if (!hasLastName) {
+      const lastName = (params.lastName || '').trim();
+      if (!lastName) {
+        throw new Error('Last name is required to complete your account setup');
+      }
+      updates.last_name = lastName;
+    }
+
+    // Optional: update email if user doesn't have one and caller provides it
+    if (!user.email && params.email) {
+      const emailLower = params.email.trim().toLowerCase();
+      if (emailLower) {
+        const existing = await UserModel.findByEmail(emailLower);
+        if (existing && existing.id !== user.id) {
+          throw new Error('Email is already in use');
+        }
+        updates.email = emailLower;
+      }
+    }
+
+    // Set password
+    updates.password_hash = await bcrypt.hash(params.newPassword, 12);
+
+    // Activate account if inactive
     if (!user.is_active) {
       updates.is_active = true;
     }

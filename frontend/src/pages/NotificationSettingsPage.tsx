@@ -20,7 +20,7 @@ export default function NotificationSettingsPage() {
     enabledChannels: { sms: true, email: false },
     defaultProvider: { sms: 'console', email: 'console' },
     templates: {
-      inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
+      inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}',
       otpSms: 'Your verification code is: {{code}}',
     },
     deeplinkBaseUrl: 'blulok://invite',
@@ -293,10 +293,10 @@ export default function NotificationSettingsPage() {
                 onChange={(e) => updateConfig('templates.inviteSms', e.target.value)}
                 rows={2}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                placeholder="Welcome to BluLok. Tap to get started: {{deeplink}}"
+                placeholder="Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Use {'{{deeplink}}'} placeholder for the invitation link
+                Use {'{{deeplink}}'} for the invitation link and {'{{code}}'} for the 6-digit verification code
               </p>
             </div>
           )}
@@ -343,10 +343,10 @@ export default function NotificationSettingsPage() {
                 onChange={(e) => updateConfig('templates.inviteEmail', e.target.value)}
                 rows={3}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                placeholder="Welcome to BluLok. Click the link below to get started: {{deeplink}}"
+                placeholder="Welcome to BluLok. Click the link below to get started: {{deeplink}} Your verification code: {{code}}"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Use {'{{deeplink}}'} placeholder for the invitation link
+                Use {'{{deeplink}}'} for the invitation link and {'{{code}}'} for the 6-digit verification code
               </p>
             </div>
           )}

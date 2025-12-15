@@ -16,6 +16,7 @@ const mockNotifications = {
 const mockOtps = {
   sendOtp: jest.fn(),
   verifyOtp: jest.fn(),
+  createOtpRecord: jest.fn(),
 };
 
 // Mock the services
@@ -100,16 +101,26 @@ describe('FirstTimeUserService', () => {
       inviteId: 'invite-123',
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
     });
+    mockOtps.createOtpRecord.mockResolvedValue({
+      code: '654321',
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    });
 
     await svc.sendInvite(user);
 
     expect(mockInvites.createInvite).toHaveBeenCalledWith(user.id);
+    expect(mockOtps.createOtpRecord).toHaveBeenCalledWith({
+      userId: user.id,
+      inviteId: 'invite-123',
+      delivery: 'sms',
+    });
     expect(mockNotifications.sendInvite).toHaveBeenCalledTimes(1);
     const args = mockNotifications.sendInvite.mock.calls[0][0];
     expect(args.deeplink).toContain('token=invite-token-123');
     expect(args.deeplink).toContain('phone=%2B1%20(555)%20000-1234');
     expect(args.toPhone).toBe(user.phone_number);
     expect(args.toEmail).toBe(user.email);
+    expect(args.code).toBe('654321');
   });
 
   test('requestOtp with phone validates ownership and calls OTP service', async () => {
@@ -276,16 +287,164 @@ describe('FirstTimeUserService', () => {
   });
 
   test('setPassword consumes invite and clears requires_password_reset', async () => {
-    const user = { id: 'user-666' };
+    const user = { id: 'user-666', first_name: 'Test', last_name: 'User', is_active: false };
     const invite = { id: 'invite-666', user_id: user.id };
 
     mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
     mockOtps.verifyOtp.mockResolvedValue({ valid: true });
     const { UserModel } = require('@/models/user.model');
     UserModel.findById.mockResolvedValue(user);
+    UserModel.updateById.mockResolvedValue(undefined);
 
     await svc.setPassword({ token: 'token-123', otp: '123456', newPassword: 'NewStrong!23' });
 
     expect(mockInvites.consumeInvite).toHaveBeenCalledWith(invite.id);
+  });
+
+  test('acceptInvite returns profile info with needs_profile false when profile complete (does not consume invite)', async () => {
+    const user = {
+      id: 'user-accept-1',
+      first_name: 'John',
+      last_name: 'Doe',
+      email: 'john@example.com',
+    };
+    const invite = { id: 'invite-accept-1', user_id: user.id };
+
+    mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue(user);
+
+    const result = await svc.acceptInvite({ token: 'token-accept-1' });
+
+    // Accept should NOT consume the invite - that happens in setPassword
+    expect(mockInvites.consumeInvite).not.toHaveBeenCalled();
+    expect(result.needs_profile).toBe(false);
+    expect(result.profile.first_name).toBe('John');
+    expect(result.profile.last_name).toBe('Doe');
+    expect(result.profile.email).toBe('john@example.com');
+    expect(result.missing_fields).toEqual([]);
+  });
+
+  test('acceptInvite returns needs_profile true when profile fields missing', async () => {
+    const user = {
+      id: 'user-accept-2',
+      first_name: '',
+      last_name: null,
+      email: null,
+    };
+    const invite = { id: 'invite-accept-2', user_id: user.id };
+
+    mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue(user);
+
+    const result = await svc.acceptInvite({ token: 'token-accept-2' });
+
+    expect(result.needs_profile).toBe(true);
+    expect(result.missing_fields).toContain('first_name');
+    expect(result.missing_fields).toContain('last_name');
+  });
+
+  test('setPassword requires profile fields when missing', async () => {
+    const user = {
+      id: 'user-set-1',
+      first_name: '',
+      last_name: '',
+      email: null,
+      is_active: false,
+    };
+    const invite = { id: 'invite-set-1', user_id: user.id };
+
+    mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
+    mockOtps.verifyOtp.mockResolvedValue({ valid: true });
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue(user);
+
+    // Without firstName/lastName - should fail
+    await expect(svc.setPassword({
+      token: 'token-set-1',
+      otp: '123456',
+      newPassword: 'NewStrong!23',
+    })).rejects.toThrow(/First name is required/);
+
+    // With firstName only - should still fail
+    await expect(svc.setPassword({
+      token: 'token-set-1',
+      otp: '123456',
+      newPassword: 'NewStrong!23',
+      firstName: 'Jane',
+    })).rejects.toThrow(/Last name is required/);
+  });
+
+  test('setPassword succeeds when profile is complete', async () => {
+    const user = {
+      id: 'user-set-2',
+      first_name: 'John',
+      last_name: 'Doe',
+      email: 'john@test.com',
+      is_active: false,
+    };
+    const invite = { id: 'invite-set-2', user_id: user.id };
+
+    mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
+    mockOtps.verifyOtp.mockResolvedValue({ valid: true });
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue(user);
+    UserModel.updateById.mockResolvedValue(undefined);
+
+    // Should succeed without providing profile fields since they exist
+    await svc.setPassword({
+      token: 'token-set-2',
+      otp: '123456',
+      newPassword: 'NewStrong!23',
+    });
+
+    expect(mockInvites.consumeInvite).toHaveBeenCalledWith(invite.id);
+    expect(UserModel.updateById).toHaveBeenCalledWith(
+      user.id,
+      expect.objectContaining({
+        requires_password_reset: false,
+        is_active: true,
+      })
+    );
+  });
+
+  test('setPassword with profile fields updates user profile', async () => {
+    const user = {
+      id: 'user-set-3',
+      first_name: '',
+      last_name: '',
+      email: null,
+      is_active: false,
+    };
+    const invite = { id: 'invite-set-3', user_id: user.id };
+
+    mockInvites.findActiveInviteByToken.mockResolvedValue(invite);
+    mockOtps.verifyOtp.mockResolvedValue({ valid: true });
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue(user);
+    UserModel.findByEmail.mockResolvedValue(null);
+    UserModel.updateById.mockResolvedValue(undefined);
+
+    await svc.setPassword({
+      token: 'token-set-3',
+      otp: '123456',
+      newPassword: 'NewStrong!23',
+      firstName: 'Jane',
+      lastName: 'Smith',
+      email: 'jane@example.com',
+    });
+
+    expect(mockInvites.consumeInvite).toHaveBeenCalledWith(invite.id);
+    expect(UserModel.updateById).toHaveBeenCalledWith(
+      user.id,
+      expect.objectContaining({
+        first_name: 'Jane',
+        last_name: 'Smith',
+        email: 'jane@example.com',
+        requires_password_reset: false,
+        is_active: true,
+      })
+    );
   });
 });

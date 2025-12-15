@@ -37,6 +37,7 @@ export interface SendInviteParams {
   toPhone?: string;
   toEmail?: string;
   deeplink: string;
+  code?: string; // OTP code to include in the invite notification
   templateId?: string; // reserved for future use
 }
 

@@ -98,6 +98,35 @@ export class OTPService {
     return { valid: false };
   }
 
+  /**
+   * Generate and persist an OTP record without sending a notification.
+   * Returns the plaintext code so the caller can include it in their own notification.
+   * Used for the single invite+OTP notification flow.
+   */
+  public async createOtpRecord(params: {
+    userId: string;
+    inviteId?: string | null;
+    delivery: OtpDeliveryMethod;
+  }): Promise<{ code: string; expiresAt: Date }> {
+    const code = OTPService.generateCode();
+    const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + OTP_TTL_MINUTES * 60 * 1000);
+
+    await this.db('user_otps').insert({
+      user_id: params.userId,
+      invite_id: params.inviteId || null,
+      code_hash: codeHash,
+      expires_at: expiresAt,
+      attempts: 0,
+      delivery_method: params.delivery,
+      last_sent_at: now,
+    });
+
+    logger.info(`OTP record created for user ${params.userId}${params.inviteId ? ` invite ${params.inviteId}` : ''}`);
+    return { code, expiresAt };
+  }
+
   private static generateCode(): string {
     const n = crypto.randomInt(0, 1000000);
     return n.toString().padStart(6, '0');
