@@ -4,8 +4,19 @@ import { DatabaseService } from '@/services/database.service';
 import { createMockTestData } from '@/__tests__/utils/mock-test-helpers';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { RoutePassIssuanceModel } from '@/models/route-pass-issuance.model';
+import { UserFacilityScheduleModel } from '@/models/user-facility-schedule.model';
 
 jest.mock('@/models/route-pass-issuance.model');
+jest.mock('@/models/user-facility-schedule.model', () => ({
+  UserFacilityScheduleModel: {
+    getUserScheduleForFacilityWithDetails: jest.fn().mockResolvedValue(null),
+  },
+}));
+jest.mock('@/models/user-facility-association.model', () => ({
+  UserFacilityAssociationModel: {
+    getUserFacilityIds: jest.fn().mockResolvedValue([]),
+  },
+}));
 
 // Mock DatabaseService before any imports that might use it
 const createMockDbConnection = (userDevices: any, lockRows: any[]) => {
@@ -155,22 +166,55 @@ describe('Passes Routes', () => {
         if (table === 'blulok_devices as bd') {
           const builder: any = {};
           builder._joinTarget = '';
+          builder._queries = [];
+          builder._lockId = null;
           builder.join = jest.fn().mockImplementation((target: string) => {
             builder._joinTarget = target;
             return builder;
           });
-          builder.where = jest.fn().mockReturnThis();
+          builder.where = jest.fn().mockImplementation((...args: any[]) => {
+            builder._queries.push({ type: 'where', args });
+            // Track lock ID for facility lookup
+            if (args[0] === 'bd.id') {
+              builder._lockId = args[1];
+            }
+            return builder;
+          });
           builder.whereIn = jest.fn().mockReturnThis();
           builder.whereNull = jest.fn().mockReturnThis();
           builder.orWhere = jest.fn().mockReturnThis();
-          builder.select = jest.fn().mockImplementation(() => {
+          builder.select = jest.fn().mockImplementation((...args: any[]) => {
+            // Return chainable builder, not a promise
+            // The actual query will use .first() or await the builder
+            builder._selectArgs = args;
+            return builder;
+          });
+          builder.first = jest.fn().mockImplementation(() => {
+            // Handle query for facility_id from lock (used in shared key schedule lookup)
+            // This happens when: db('blulok_devices as bd').join('units as u', ...).where('bd.id', lockId).select('u.facility_id').first()
+            if (builder._joinTarget.includes('units as u') && builder._lockId) {
+              return Promise.resolve({ facility_id: 'facility-123' });
+            }
+            // Handle regular lock queries
             if (builder._joinTarget.includes('unit_assignments')) {
-              return Promise.resolve([{ id: 'lock-assigned' }]);
+              return Promise.resolve({ id: 'lock-assigned' });
             }
             if (builder._joinTarget.includes('key_sharing')) {
-              return Promise.resolve([{ device_id: 'lock-shared', owner_user_id: 'owner-123' }]);
+              return Promise.resolve({ device_id: 'lock-shared', owner_user_id: 'owner-123' });
             }
-            return Promise.resolve([]);
+            return Promise.resolve(null);
+          });
+          
+          // Make the builder thenable (so it can be awaited directly)
+          builder.then = jest.fn().mockImplementation((resolve: any) => {
+            // When awaited directly (without .first()), return array results
+            if (builder._joinTarget.includes('unit_assignments')) {
+              return Promise.resolve([{ id: 'lock-assigned' }]).then(resolve);
+            }
+            if (builder._joinTarget.includes('key_sharing')) {
+              return Promise.resolve([{ device_id: 'lock-shared', owner_user_id: 'owner-123' }]).then(resolve);
+            }
+            return Promise.resolve([]).then(resolve);
           });
           builder.fn = { now: () => new Date() };
           return builder;
@@ -189,12 +233,25 @@ describe('Passes Routes', () => {
       });
 
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: mockKnex });
+      
+      // Mock UserFacilityAssociationModel.getUserFacilityIds to return empty array (no facility access needed for TENANT)
+      const { UserFacilityAssociationModel } = require('@/models/user-facility-association.model');
+      (UserFacilityAssociationModel.getUserFacilityIds as jest.Mock).mockResolvedValue([]);
+      
+      // Mock UserFacilityScheduleModel.getUserScheduleForFacilityWithDetails to return null (no schedule)
+      const { UserFacilityScheduleModel } = require('@/models/user-facility-schedule.model');
+      (UserFacilityScheduleModel.getUserScheduleForFacilityWithDetails as jest.Mock).mockResolvedValue(null);
 
       const res = await request(app)
         .post('/api/v1/passes/request')
-        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .expect(200);
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`);
 
+      if (res.status !== 200) {
+        console.error('Error response:', res.status, JSON.stringify(res.body, null, 2));
+        console.error('Error stack:', res.body.error);
+      }
+      
+      expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
       expect(payload.aud).toEqual(expect.arrayContaining(['lock:lock-assigned', 'shared_key:owner-123:lock-shared']));

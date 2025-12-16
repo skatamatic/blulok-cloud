@@ -52,9 +52,9 @@ describe('SkinRegistry', () => {
       expect(skin?.id).toBe('skin-unit-default');
     });
     
-    it('should return undefined for non-existent skin', () => {
+    it('should return null for non-existent skin', () => {
       const skin = registry.getSkin('non-existent-skin');
-      expect(skin).toBeUndefined();
+      expect(skin).toBeNull();
     });
   });
   
@@ -161,7 +161,7 @@ describe('SkinRegistry', () => {
       expect(result).toBe(true);
       
       const deleted = registry.getSkin(created.id);
-      expect(deleted).toBeUndefined();
+      expect(deleted).toBeNull();
     });
     
     it('should not delete a built-in skin', () => {

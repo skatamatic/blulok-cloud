@@ -22,21 +22,33 @@ const createMockAsset = (): AssetMetadata => ({
 });
 
 // Mock THREE.js
-jest.mock('three', () => ({
-  Group: jest.fn().mockImplementation(() => ({
-    traverse: jest.fn(),
-    position: { x: 0, y: 0, z: 0 },
-    rotation: { y: 0 },
-    userData: {},
-  })),
-  Mesh: jest.fn(),
-  MeshStandardMaterial: jest.fn().mockImplementation(() => ({
-    color: { set: jest.fn(), setHex: jest.fn() },
-    metalness: 0,
-    roughness: 0,
-    needsUpdate: false,
-  })),
-}));
+jest.mock('three', () => {
+  const MockGroup = jest.fn().mockImplementation(function() {
+    const instance = {
+      traverse: jest.fn(),
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { y: 0 },
+      userData: {},
+    };
+    // Set prototype to make instanceof work
+    Object.setPrototypeOf(instance, MockGroup.prototype);
+    return instance;
+  });
+  // Make MockGroup instances pass instanceof check
+  MockGroup.prototype = Object.create(Object.prototype);
+  MockGroup.prototype.constructor = MockGroup;
+  
+  return {
+    Group: MockGroup,
+    Mesh: jest.fn(),
+    MeshStandardMaterial: jest.fn().mockImplementation(() => ({
+      color: { set: jest.fn(), setHex: jest.fn() },
+      metalness: 0,
+      roughness: 0,
+      needsUpdate: false,
+    })),
+  };
+});
 
 // Mock AssetFactory
 jest.mock('../../../../components/bludesign/assets/AssetFactory', () => ({
@@ -78,12 +90,15 @@ describe('ObjectManagementService - Simulation', () => {
   beforeEach(() => {
     mockPlacedObjects = new Map();
     
+    // Create a mock THREE.Group instance
+    const THREE = require('three');
+    const mockMesh = new THREE.Group();
+    
     mockContext = {
       scene: {} as any,
       sceneManager: {
-        findObjectById: jest.fn().mockReturnValue({
-          traverse: jest.fn(),
-        }),
+        getObject: jest.fn().mockReturnValue(mockMesh),
+        getObjectData: jest.fn(),
         removeObject: jest.fn(),
       } as any,
       buildingManager: {
@@ -128,12 +143,34 @@ describe('ObjectManagementService - Simulation', () => {
       const placedObj = createMockPlacedObject('smart-obj-2');
       mockPlacedObjects.set('smart-obj-2', placedObj);
       
+      // Ensure getObject returns a THREE.Group instance
+      // Use the same THREE instance that ObjectManagementService will use
+      const THREE = require('three');
+      const mockMesh = new THREE.Group();
+      
+      (mockContext.sceneManager.getObject as jest.Mock).mockReturnValue(mockMesh);
+      
+      // Reset the mock to clear any previous calls
+      (AssetFactory.updateAssetState as jest.Mock).mockClear();
+      
       service.simulateObjectState('smart-obj-2', DeviceState.ERROR);
       
+      // Verify getObject was called
+      expect(mockContext.sceneManager.getObject).toHaveBeenCalledWith('smart-obj-2');
+      
+      // Verify AssetFactory was called with the mesh and state
+      // Note: The instanceof check in ObjectManagementService should pass because
+      // both use the same mocked THREE.Group constructor
       expect(AssetFactory.updateAssetState).toHaveBeenCalled();
+      expect(AssetFactory.updateAssetState).toHaveBeenCalledWith(mockMesh, DeviceState.ERROR);
     });
     
     it('should handle all device states', () => {
+      // Ensure getObject returns a THREE.Group instance
+      const THREE = require('three');
+      const mockMesh = new THREE.Group();
+      (mockContext.sceneManager.getObject as jest.Mock).mockReturnValue(mockMesh);
+      
       const states = [
         DeviceState.LOCKED,
         DeviceState.UNLOCKED,
@@ -186,16 +223,24 @@ describe('ObjectManagementService - Simulation', () => {
 describe('Data Binding Edge Cases', () => {
   let service: ObjectManagementService;
   let mockPlacedObjects: Map<string, PlacedObject>;
+  let mockSceneManager: any;
   
   beforeEach(() => {
     mockPlacedObjects = new Map();
     
+    // Create a mock THREE.Group instance
+    const THREE = require('three');
+    const mockMesh = new THREE.Group();
+    
+    mockSceneManager = {
+      getObject: jest.fn().mockReturnValue(mockMesh),
+      findObjectById: jest.fn().mockReturnValue(null), // Mesh not found
+      removeObject: jest.fn(),
+    };
+    
     service = new ObjectManagementService({
       scene: {} as any,
-      sceneManager: {
-        findObjectById: jest.fn().mockReturnValue(null), // Mesh not found
-        removeObject: jest.fn(),
-      } as any,
+      sceneManager: mockSceneManager as any,
       buildingManager: {} as any,
       groundTileManager: {} as any,
       placedObjects: mockPlacedObjects,
@@ -221,6 +266,9 @@ describe('Data Binding Edge Cases', () => {
       },
     };
     mockPlacedObjects.set('no-mesh-obj', placedObj);
+    
+    // Mock getObject to return undefined (no mesh found)
+    mockSceneManager.getObject.mockReturnValue(undefined);
     
     // Should not throw even if mesh is not found
     expect(() => {
@@ -251,6 +299,11 @@ describe('Data Binding Edge Cases', () => {
       },
     };
     mockPlacedObjects.set('partial-binding', placedObj);
+    
+    // Ensure getObject returns a THREE.Group instance
+    const THREE = require('three');
+    const mockMesh = new THREE.Group();
+    mockSceneManager.getObject.mockReturnValue(mockMesh);
     
     const result = service.simulateObjectState('partial-binding', DeviceState.LOCKED);
     expect(result).toBe(true);

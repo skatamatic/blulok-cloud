@@ -41,6 +41,7 @@ jest.mock('@/middleware/auth.middleware', () => ({
   },
   requireAdminOrFacilityAdmin: (req: any, res: any, next: any) => next(),
   requireUserManagementOrSelf: (req: any, res: any, next: any) => next(),
+  requireFacilityAccess: () => (req: any, res: any, next: any) => next(),
   requireRoles: () => (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {

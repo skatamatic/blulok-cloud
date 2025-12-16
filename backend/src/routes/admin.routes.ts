@@ -38,6 +38,7 @@ import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
 import { generateKeyPair, exportJWK, KeyLike } from 'jose';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { DenylistService } from '@/services/denylist.service';
+import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
 import { logger } from '@/utils/logger';
 
 const router = Router();
@@ -61,6 +62,7 @@ const gatewayPingSchema = Joi.object({
   facilityId: Joi.string().required(),
 });
 
+// Minimal validation for dev tool - just ensure required fields are present
 const gatewayCommandSchema = Joi.object({
   facilityId: Joi.string().required(),
   command: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE', 'LOCK', 'UNLOCK').required(),
@@ -393,6 +395,29 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
 
   const { facilityId, command, targetDeviceIds, userId, expirationSeconds } = value;
   const gateway = GatewayEventsService.getInstance();
+  const debugService = GatewayDebugService.getInstance();
+
+  // Log the raw input values for debugging
+  const debugInfo = {
+    command,
+    facilityId,
+    userId: userId ? `${userId.substring(0, 20)}... (length: ${userId.length})` : undefined,
+    targetDeviceIds: targetDeviceIds?.map((id: string) => `${id.substring(0, 20)}... (length: ${id.length})`),
+    rawUserId: userId,
+    rawTargetDeviceIds: targetDeviceIds,
+  };
+  logger.info(`[DEBUG] Gateway command received:`, debugInfo);
+  
+  // Publish to gateway debug stream for live view
+  debugService.publish({
+    kind: 'command_sent',
+    facilityId,
+    userId: req.user?.userId,
+    type: command,
+    direction: 'outgoing',
+    ts: Date.now(),
+    meta: debugInfo,
+  });
 
   try {
     switch (command) {
@@ -401,20 +426,134 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
         const exp = expirationSeconds 
           ? Math.floor(Date.now() / 1000) + expirationSeconds 
           : Math.floor(Date.now() / 1000) + 86400 * 365;
+        // Log values before creating entries
+        logger.info(`[DEBUG] DENYLIST_ADD - Before creating entries:`, {
+          userId,
+          userIdType: typeof userId,
+          userIdLength: userId?.length,
+          targetDeviceIds,
+          targetDeviceIdsTypes: targetDeviceIds?.map((id: any) => typeof id),
+          targetDeviceIdsLengths: targetDeviceIds?.map((id: string | any[]) => id?.length),
+        });
+
         const entries = [{ sub: userId, exp }];
+        
+        // Log entries before passing to buildDenylistAdd
+        logger.info(`[DEBUG] DENYLIST_ADD - Entries to pass:`, {
+          entries,
+          targetDeviceIds,
+        });
+        
         const jwt = await DenylistService.buildDenylistAdd(entries, targetDeviceIds);
+        
+        // Decode and log the created JWT payload to see what actually got encoded
+        let payload: any = null;
+        try {
+          const parts = jwt.split('.');
+          if (parts.length === 3) {
+            const payloadB64 = parts[1];
+            payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+            logger.info(`[DEBUG] DENYLIST_ADD - Decoded JWT payload:`, {
+              cmd_type: payload.cmd_type,
+              denylist_add: payload.denylist_add,
+              target: payload.target,
+              denylist_add_sub: payload.denylist_add?.[0]?.sub,
+              denylist_add_sub_type: typeof payload.denylist_add?.[0]?.sub,
+              denylist_add_sub_length: payload.denylist_add?.[0]?.sub?.length,
+              target_types: payload.target?.map((t: string) => typeof t),
+              target_lengths: payload.target?.map((t: string) => t?.length),
+            });
+          }
+        } catch (e) {
+          logger.error(`[DEBUG] Failed to decode JWT payload:`, e);
+        }
+        
         gateway.unicastToFacility(facilityId, jwt);
         logger.info(`Dev gateway command: DENYLIST_ADD sent to facility ${facilityId}`, { userId, targetDeviceIds });
-        res.json({ success: true, command, jwt });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'DENYLIST_ADD',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            userId,
+            targetDeviceIds,
+            payload,
+            jwtLength: jwt.length,
+          },
+        });
+        
+        res.json({ success: true, command, jwt, payload });
         break;
       }
 
       case 'DENYLIST_REMOVE': {
+        // Log values before creating entries
+        logger.info(`[DEBUG] DENYLIST_REMOVE - Before creating entries:`, {
+          userId,
+          userIdType: typeof userId,
+          userIdLength: userId?.length,
+          targetDeviceIds,
+          targetDeviceIdsTypes: targetDeviceIds?.map((id: any) => typeof id),
+          targetDeviceIdsLengths: targetDeviceIds?.map((id: string | any[]) => id?.length),
+        });
+
         const entries = [{ sub: userId, exp: 0 }]; // exp not used for remove
+        
+        // Log entries before passing to buildDenylistRemove
+        logger.info(`[DEBUG] DENYLIST_REMOVE - Entries to pass:`, {
+          entries,
+          targetDeviceIds,
+        });
+        
         const jwt = await DenylistService.buildDenylistRemove(entries, targetDeviceIds);
+        
+        // Decode and log the created JWT payload to see what actually got encoded
+        let payload: any = null;
+        try {
+          const parts = jwt.split('.');
+          if (parts.length === 3) {
+            const payloadB64 = parts[1];
+            payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+            logger.info(`[DEBUG] DENYLIST_REMOVE - Decoded JWT payload:`, {
+              cmd_type: payload.cmd_type,
+              denylist_remove: payload.denylist_remove,
+              target: payload.target,
+              denylist_remove_sub: payload.denylist_remove?.[0]?.sub,
+              denylist_remove_sub_type: typeof payload.denylist_remove?.[0]?.sub,
+              denylist_remove_sub_length: payload.denylist_remove?.[0]?.sub?.length,
+              target_types: payload.target?.map((t: string) => typeof t),
+              target_lengths: payload.target?.map((t: string) => t?.length),
+            });
+          }
+        } catch (e) {
+          logger.error(`[DEBUG] Failed to decode JWT payload:`, e);
+        }
+        
         gateway.unicastToFacility(facilityId, jwt);
         logger.info(`Dev gateway command: DENYLIST_REMOVE sent to facility ${facilityId}`, { userId, targetDeviceIds });
-        res.json({ success: true, command, jwt });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'DENYLIST_REMOVE',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            userId,
+            targetDeviceIds,
+            payload,
+            jwtLength: jwt.length,
+          },
+        });
+        
+        res.json({ success: true, command, jwt, payload });
         break;
       }
 
@@ -427,7 +566,23 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
           jwts.push(jwt);
         }
         logger.info(`Dev gateway command: LOCK sent to facility ${facilityId}`, { targetDeviceIds });
-        res.json({ success: true, command, targetDeviceIds, jwts });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'LOCK',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            targetDeviceIds,
+            deviceCount: targetDeviceIds.length,
+          },
+        });
+        
+        // Don't return jwts in response to avoid confusion - developers might copy them as device IDs
+        res.json({ success: true, command, targetDeviceIds, message: `LOCK command sent to ${targetDeviceIds.length} device(s)` });
         break;
       }
 
@@ -440,7 +595,23 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
           jwts.push(jwt);
         }
         logger.info(`Dev gateway command: UNLOCK sent to facility ${facilityId}`, { targetDeviceIds });
-        res.json({ success: true, command, targetDeviceIds, jwts });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'UNLOCK',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            targetDeviceIds,
+            deviceCount: targetDeviceIds.length,
+          },
+        });
+        
+        // Don't return jwts in response to avoid confusion - developers might copy them as device IDs
+        res.json({ success: true, command, targetDeviceIds, message: `UNLOCK command sent to ${targetDeviceIds.length} device(s)` });
         break;
       }
 

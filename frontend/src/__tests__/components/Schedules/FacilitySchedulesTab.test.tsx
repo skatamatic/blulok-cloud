@@ -37,7 +37,7 @@ describe('FacilitySchedulesTab', () => {
     render(<FacilitySchedulesTab facilityId={mockFacilityId} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Schedules')).toBeInTheDocument();
+      expect(screen.getByText('Custom Schedules')).toBeInTheDocument();
     });
   });
 
@@ -55,6 +55,12 @@ describe('FacilitySchedulesTab', () => {
       schedule: {
         id: 'test-schedule',
         name: 'My Schedule',
+        facility_id: mockFacilityId,
+        schedule_type: 'custom',
+        is_active: true,
+        created_by: null,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T00:00:00Z',
         time_windows: [],
       },
     });
@@ -62,7 +68,8 @@ describe('FacilitySchedulesTab', () => {
     render(<FacilitySchedulesTab facilityId={mockFacilityId} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Your Schedule')).toBeInTheDocument();
+      // The component renders a ScheduleVisualizer for read-only view, which shows day labels
+      expect(screen.getByText('Mon')).toBeInTheDocument();
     });
   });
 });

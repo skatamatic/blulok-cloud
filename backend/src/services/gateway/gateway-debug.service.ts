@@ -7,7 +7,8 @@ export type GatewayDebugEventKind =
   | 'message_outbound'
   | 'ping_sent'
   | 'pong_received'
-  | 'heartbeat_timeout';
+  | 'heartbeat_timeout'
+  | 'command_sent';
 
 export interface GatewayDebugEvent {
   kind: GatewayDebugEventKind;

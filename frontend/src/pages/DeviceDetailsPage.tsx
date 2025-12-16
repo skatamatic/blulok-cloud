@@ -136,7 +136,14 @@ export default function DeviceDetailsPage() {
           device_status: deviceUpdate.device_status ?? prev.device_status,
           battery_level: deviceUpdate.battery_level ?? prev.battery_level,
           signal_strength: deviceUpdate.signal_strength ?? prev.signal_strength,
-          temperature: deviceUpdate.temperature ?? prev.temperature,
+          temperature: deviceUpdate.temperature !== undefined && deviceUpdate.temperature !== null 
+            ? (() => {
+                const temp = typeof deviceUpdate.temperature === 'number' 
+                  ? deviceUpdate.temperature 
+                  : Number(deviceUpdate.temperature);
+                return isNaN(temp) ? prev.temperature : temp;
+              })()
+            : prev.temperature,
           error_code: deviceUpdate.error_code ?? prev.error_code,
           error_message: deviceUpdate.error_message ?? prev.error_message,
           firmware_version: deviceUpdate.firmware_version ?? prev.firmware_version,
@@ -178,7 +185,19 @@ export default function DeviceDetailsPage() {
         setError('Device not found');
         return;
       }
-      setDevice(response.device);
+      // Normalize temperature to ensure it's a number
+      const device = {
+        ...response.device,
+        temperature: response.device.temperature !== undefined && response.device.temperature !== null
+          ? (() => {
+              const temp = typeof response.device.temperature === 'number' 
+                ? response.device.temperature 
+                : Number(response.device.temperature);
+              return isNaN(temp) ? undefined : temp;
+            })()
+          : undefined,
+      };
+      setDevice(device);
     } catch (error: any) {
       console.error('Failed to load device details:', error);
       setError(error?.response?.data?.message || 'Failed to load device details');
@@ -508,25 +527,29 @@ export default function DeviceDetailsPage() {
                 </div>
               )}
 
-              {device.temperature !== undefined && device.temperature !== null && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Temperature</label>
-                  <div className="mt-1 flex items-center">
-                    <span className={`text-lg font-medium ${
-                      device.temperature > 50 ? 'text-red-500' :
-                      device.temperature < 5 ? 'text-blue-500' : 'text-gray-900 dark:text-white'
-                    }`}>
-                      {device.temperature.toFixed(1)}°C
-                    </span>
-                    {device.temperature > 50 && (
-                      <span className="ml-2 text-sm text-red-500">⚠ High</span>
-                    )}
-                    {device.temperature < 5 && (
-                      <span className="ml-2 text-sm text-blue-500">❄ Low</span>
-                    )}
+              {device.temperature !== undefined && device.temperature !== null && (() => {
+                const tempNum = typeof device.temperature === 'number' ? device.temperature : Number(device.temperature);
+                if (isNaN(tempNum)) return null;
+                return (
+                  <div>
+                    <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Temperature</label>
+                    <div className="mt-1 flex items-center">
+                      <span className={`text-lg font-medium ${
+                        tempNum > 50 ? 'text-red-500' :
+                        tempNum < 5 ? 'text-blue-500' : 'text-gray-900 dark:text-white'
+                      }`}>
+                        {tempNum.toFixed(1)}°C
+                      </span>
+                      {tempNum > 50 && (
+                        <span className="ml-2 text-sm text-red-500">⚠ High</span>
+                      )}
+                      {tempNum < 5 && (
+                        <span className="ml-2 text-sm text-blue-500">❄ Low</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Error Information */}

@@ -26,8 +26,9 @@ describe('ScheduleVisualizer', () => {
 
   it('should display time windows', () => {
     render(<ScheduleVisualizer schedule={mockSchedule} />);
-    // Check that time windows are rendered
-    expect(screen.getByText(/9:00 AM/i)).toBeInTheDocument();
+    // Check that time windows are rendered (multiple days have the same time window)
+    const timeWindows = screen.getAllByText(/9:00 AM/i);
+    expect(timeWindows.length).toBeGreaterThan(0);
   });
 
   it('should show "No access" for days without time windows', () => {

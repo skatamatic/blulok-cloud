@@ -39,7 +39,9 @@ router.post('/request', authenticateToken, passRequestLimiter, asyncHandler(asyn
       res.status(e.status).json({ success: false, message: e.message });
       return;
     }
-    res.status(500).json({ success: false, message: 'Failed to issue route pass' });
+    // Log the actual error for debugging
+    console.error('Route pass error:', e);
+    res.status(500).json({ success: false, message: 'Failed to issue route pass', error: process.env.NODE_ENV === 'test' ? e.message : undefined });
   }
 }));
 

@@ -7,7 +7,14 @@ export default {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@frontend/(.*)$': '<rootDir>/src/$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
+    '^html2pdf\\.js$': '<rootDir>/src/test/mocks/html2pdf.js',
+    '^three/examples/jsm/renderers/CSS2DRenderer\\.js$': '<rootDir>/src/test/mocks/three-examples.js',
+    '^three/examples/jsm/controls/OrbitControls\\.js$': '<rootDir>/src/test/mocks/three-orbit-controls.js',
+    '^three/examples/jsm/loaders/(.*)$': '<rootDir>/src/test/mocks/three-loaders.js',
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(html2pdf\\.js|jspdf|@babel/runtime|three)/)',
+  ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       useESM: true,

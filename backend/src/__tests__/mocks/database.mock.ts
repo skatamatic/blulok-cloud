@@ -66,7 +66,7 @@ const createMockQueryBuilder = () => {
     clone: jest.fn(() => createMockQueryBuilder()),
     raw: jest.fn().mockResolvedValue([{ '1': 1 }]),
     fn: {
-      now: jest.fn().mockReturnValue('NOW()'),
+      now: jest.fn().mockReturnValue(new Date()),
     },
   };
   return builder;
@@ -156,9 +156,9 @@ const createMockKnex = (): Knex => {
       };
     }),
     
-    // Knex function methods
+    // Knex function methods - return Date object for model compatibility
     fn: {
-      now: jest.fn().mockReturnValue('NOW()'),
+      now: jest.fn().mockReturnValue(new Date()),
     },
   });
   

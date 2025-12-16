@@ -70,10 +70,10 @@ describe('ThemeManager', () => {
       const listener = jest.fn();
       manager.onThemeChange(listener);
       
-      manager.setActiveTheme('theme-glass-modern');
+      manager.setActiveTheme('theme-industrial');
       
       expect(listener).toHaveBeenCalled();
-      expect(listener.mock.calls[0][0].id).toBe('theme-glass-modern');
+      expect(listener.mock.calls[0][0].id).toBe('theme-industrial');
     });
     
     it('should fall back to default if theme not found', () => {
