@@ -11,6 +11,10 @@
 import * as THREE from 'three';
 import { GridSystem } from './GridSystem';
 import { AssetCategory, GridPosition, PartMaterial } from './types';
+import {
+  GeometryOptimizer,
+  OptimizationResult,
+} from './utils/GeometryOptimizer';
 
 /** Instance data for tracking */
 interface TileInstance {
@@ -61,6 +65,19 @@ export class GroundTileManager {
   private readonly TILE_HEIGHT = 0.05;
   private readonly INITIAL_CAPACITY = 500;
   
+  // Optimizer state
+  private optimizerEnabled: boolean = true;
+  private isReadonly: boolean = false;
+  private frustumCullingEnabled: boolean = true;
+  private useInstancing: boolean = true;
+  // Store optimizations per category (for future batch optimization)
+  private categoryOptimizations: Map<AssetCategory, OptimizationResult> = new Map();
+  
+  // Auto-optimization debounce
+  private optimizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingCategories: Set<AssetCategory> = new Set();
+  private readonly OPTIMIZE_DEBOUNCE_MS = 500;
+  
   constructor(scene: THREE.Scene, gridSystem: GridSystem) {
     this.scene = scene;
     this.gridSystem = gridSystem;
@@ -106,7 +123,7 @@ export class GroundTileManager {
       );
       mesh.name = `ground-tiles-${category}`;
       mesh.count = 0;
-      mesh.frustumCulled = false;
+      mesh.frustumCulled = this.frustumCullingEnabled;
       mesh.receiveShadow = true;
       mesh.userData.isGroundTileBatch = true;
       mesh.userData.category = category;
@@ -172,6 +189,11 @@ export class GroundTileManager {
       position,
       category,
     });
+    
+    // Schedule auto-optimization for this category (if enabled)
+    if (this.optimizerEnabled) {
+      this.scheduleAutoOptimization(category);
+    }
     
     // Create invisible marker for selection/raycasting
     const marker = new THREE.Mesh(
@@ -361,11 +383,278 @@ export class GroundTileManager {
    * Dispose all resources
    */
   dispose(): void {
+    // Clear optimization timer
+    if (this.optimizeTimer) {
+      clearTimeout(this.optimizeTimer);
+      this.optimizeTimer = null;
+    }
+    this.pendingCategories.clear();
+    
     this.clear();
     if (this.sharedGeometry) {
       this.sharedGeometry.dispose();
       this.sharedGeometry = null;
     }
+  }
+  
+  /**
+   * Set instancing enabled state
+   */
+  setInstancingEnabled(enabled: boolean): void {
+    if (this.useInstancing === enabled) return;
+    this.useInstancing = enabled;
+    // Note: Ground tiles are added incrementally, so we can't easily rebuild
+    // This flag will affect future tiles
+  }
+  
+  /**
+   * Set optimizer enabled state
+   */
+  setOptimizerEnabled(enabled: boolean): void {
+    if (this.optimizerEnabled === enabled) return;
+    this.optimizerEnabled = enabled;
+    // Invalidate optimizations
+    this.categoryOptimizations.clear();
+    // Note: Full batch optimization would require rebuilding all tiles
+    // For now, this flag affects future batch operations
+  }
+  
+  /**
+   * Set readonly mode (affects optimization aggressiveness)
+   */
+  setReadonlyMode(readonly: boolean): void {
+    if (this.isReadonly === readonly) return;
+    this.isReadonly = readonly;
+    // Invalidate optimizations to rebuild with new strategy
+    this.categoryOptimizations.clear();
+  }
+  
+  /**
+   * Set frustum culling enabled state
+   */
+  setFrustumCullingEnabled(enabled: boolean): void {
+    if (this.frustumCullingEnabled === enabled) return;
+    this.frustumCullingEnabled = enabled;
+    
+    // Update existing meshes
+    this.batches.forEach((batch) => {
+      batch.mesh.frustumCulled = enabled;
+    });
+  }
+  
+  /**
+   * Optimize all tiles for a category (batch optimization)
+   * This can be called after placing many tiles to optimize them
+   */
+  optimizeCategory(category: AssetCategory): void {
+    if (!this.optimizerEnabled) {
+      console.log(`[GroundTileManager] optimizeCategory(${category}): Optimizer disabled, skipping`);
+      return;
+    }
+    
+    const batch = this.batches.get(category);
+    if (!batch) {
+      console.log(`[GroundTileManager] optimizeCategory(${category}): No batch found`);
+      return;
+    }
+    
+    if (batch.instances.size === 0) {
+      console.log(`[GroundTileManager] optimizeCategory(${category}): No instances to optimize`);
+      return;
+    }
+    
+    const beforeCount = batch.instances.size;
+    console.log(`[GroundTileManager] optimizeCategory(${category}): Starting optimization - ${beforeCount} individual tiles`);
+    
+    // Collect all cell positions and their original object IDs
+    const cells: Array<{x: number, z: number}> = [];
+    const cellToObjectId = new Map<string, string>(); // "x,z" -> objectId
+    
+    batch.instances.forEach((instance, objectId) => {
+      const cellKey = `${instance.position.x},${instance.position.z}`;
+      cells.push({ x: instance.position.x, z: instance.position.z });
+      cellToObjectId.set(cellKey, objectId);
+    });
+    
+    if (cells.length === 0) {
+      console.log(`[GroundTileManager] optimizeCategory(${category}): No cells collected`);
+      return;
+    }
+    
+    console.log(`[GroundTileManager] optimizeCategory(${category}): Collected ${cells.length} cells, optimizing...`);
+    
+    // Optimize
+    const result = GeometryOptimizer.optimize(cells, {
+      readonly: this.isReadonly,
+      maxRectangleSize: this.isReadonly ? undefined : 50,
+    });
+    
+    console.log(`[GroundTileManager] optimizeCategory(${category}): Optimization result - ${result.rectangles.length} rectangles from ${cells.length} cells (ratio: ${result.optimizationRatio.toFixed(3)})`);
+    
+    // Validate
+    if (!GeometryOptimizer.validateResult(cells, result)) {
+      console.error('[GroundTileManager] Optimization validation failed');
+      return;
+    }
+    
+    // Store optimization with object ID mapping
+    this.categoryOptimizations.set(category, result);
+    
+    // Rebuild batch with optimized rectangles, preserving original object IDs
+    this.rebuildBatchWithOptimization(category, result, cellToObjectId);
+    
+    const afterCount = batch.mesh.count;
+    console.log(`[GroundTileManager] optimizeCategory(${category}): Optimization complete - ${beforeCount} tiles -> ${afterCount} rectangles (${((1 - afterCount/beforeCount) * 100).toFixed(1)}% reduction)`);
+  }
+  
+  /**
+   * Rebuild a batch using optimized rectangles
+   * Preserves original object IDs for selection/removal
+   */
+  private rebuildBatchWithOptimization(
+    category: AssetCategory,
+    optimization: OptimizationResult,
+    cellToObjectId: Map<string, string>
+  ): void {
+    const batch = this.batches.get(category);
+    if (!batch) {
+      console.error(`[GroundTileManager] rebuildBatchWithOptimization(${category}): Batch not found`);
+      return;
+    }
+    
+    const gridSize = this.gridSystem.getGridSize();
+    const beforeInstanceCount = batch.mesh.count;
+    const beforeTileCount = batch.instances.size;
+    
+    console.log(`[GroundTileManager] rebuildBatchWithOptimization(${category}): Rebuilding - ${beforeTileCount} tiles, ${beforeInstanceCount} instances`);
+    
+    // Store original instances before clearing (for lookup)
+    const originalInstances = new Map(batch.instances);
+    
+    // Clear existing instances
+    batch.instances.clear();
+    batch.mesh.count = 0;
+    batch.freeIndices = [];
+    
+    // Create instances for each rectangle
+    optimization.rectangles.forEach((rect) => {
+      const instanceIndex = this.allocateInstanceIndex(batch);
+      
+      // Calculate rectangle dimensions and center
+      const width = (rect.maxX - rect.minX + 1) * gridSize;
+      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
+      const centerX = (rect.minX + rect.maxX + 1) * gridSize / 2;
+      const centerZ = (rect.minZ + rect.maxZ + 1) * gridSize / 2;
+      
+      // Use scale in instance matrix
+      this.tempPosition.set(centerX, 0, centerZ);
+      this.tempScale.set(width / gridSize, 1, depth / gridSize);
+      this.tempQuaternion.identity();
+      this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
+      batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
+      
+      // For each cell in this rectangle, preserve the original object ID
+      // Use the first cell's object ID as the primary ID for this rectangle
+      let primaryObjectId: string | null = null;
+      for (const cellKey of rect.cells) {
+        const objectId = cellToObjectId.get(cellKey);
+        if (objectId) {
+          if (!primaryObjectId) {
+            primaryObjectId = objectId;
+          }
+          // Map all original object IDs to this instance index
+          // This allows removeTile to work correctly
+          batch.instances.set(objectId, {
+            instanceIndex,
+            position: { x: rect.minX, z: rect.minZ, y: 0 },
+            category,
+          });
+        }
+      }
+    });
+    
+    batch.mesh.instanceMatrix.needsUpdate = true;
+    batch.mesh.frustumCulled = this.frustumCullingEnabled;
+    
+    const afterInstanceCount = batch.mesh.count;
+    const afterTileCount = batch.instances.size;
+    console.log(`[GroundTileManager] rebuildBatchWithOptimization(${category}): Rebuild complete - ${afterTileCount} object IDs mapped to ${afterInstanceCount} instances (was ${beforeInstanceCount})`);
+  }
+  
+  /**
+   * Schedule auto-optimization with debounce
+   * Called automatically when tiles are added
+   */
+  private scheduleAutoOptimization(category: AssetCategory): void {
+    if (!this.optimizerEnabled) {
+      console.log(`[GroundTileManager] scheduleAutoOptimization(${category}): Optimizer disabled, not scheduling`);
+      return;
+    }
+    
+    console.log(`[GroundTileManager] scheduleAutoOptimization(${category}): Scheduling optimization`);
+    this.pendingCategories.add(category);
+    
+    // Clear existing timer
+    if (this.optimizeTimer) {
+      clearTimeout(this.optimizeTimer);
+    }
+    
+    // Schedule optimization after debounce period
+    this.optimizeTimer = setTimeout(() => {
+      console.log(`[GroundTileManager] Auto-optimization timer fired for categories:`, Array.from(this.pendingCategories));
+      this.pendingCategories.forEach(cat => {
+        this.optimizeCategory(cat);
+      });
+      this.pendingCategories.clear();
+      this.optimizeTimer = null;
+    }, this.OPTIMIZE_DEBOUNCE_MS);
+  }
+  
+  /**
+   * Force immediate optimization of all categories
+   * Useful after loading saved data
+   */
+  optimizeAllCategories(): void {
+    console.log(`[GroundTileManager] optimizeAllCategories(): Starting optimization of all categories`);
+    
+    // Clear any pending debounced optimization
+    if (this.optimizeTimer) {
+      clearTimeout(this.optimizeTimer);
+      this.optimizeTimer = null;
+    }
+    this.pendingCategories.clear();
+    
+    // Optimize all categories that have tiles
+    const categories = Array.from(this.batches.keys());
+    console.log(`[GroundTileManager] optimizeAllCategories(): Found ${categories.length} categories with tiles`);
+    
+    this.batches.forEach((batch, category) => {
+      if (batch.instances.size > 0) {
+        console.log(`[GroundTileManager] optimizeAllCategories(): Optimizing category ${category} (${batch.instances.size} tiles)`);
+        this.optimizeCategory(category);
+      } else {
+        console.log(`[GroundTileManager] optimizeAllCategories(): Skipping category ${category} (no tiles)`);
+      }
+    });
+    
+    console.log(`[GroundTileManager] optimizeAllCategories(): Complete`);
+  }
+  
+  /**
+   * Allocate instance index (helper for optimization)
+   */
+  private allocateInstanceIndex(batch: TileBatch): number {
+    let index: number;
+    if (batch.freeIndices.length > 0) {
+      index = batch.freeIndices.pop()!;
+    } else {
+      index = batch.mesh.count;
+      batch.mesh.count++;
+      if (batch.mesh.count >= batch.maxCount) {
+        this.growBatch(batch);
+      }
+    }
+    return index;
   }
 }
 

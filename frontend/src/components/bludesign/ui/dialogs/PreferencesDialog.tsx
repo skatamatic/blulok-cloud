@@ -13,6 +13,7 @@ import {
   Square3Stack3DIcon,
   ArrowPathIcon,
   CheckIcon,
+  CpuChipIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import {
@@ -39,7 +40,7 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
   
   const [prefs, setPrefs] = useState<EditorPreferences>(loadPreferences);
   const [hasChanges, setHasChanges] = useState(false);
-  const [activeTab, setActiveTab] = useState<'ghosting' | 'grid' | 'performance'>('ghosting');
+  const [activeTab, setActiveTab] = useState<'ghosting' | 'grid' | 'performance' | 'rendering'>('ghosting');
   
   // Load prefs when dialog opens
   useEffect(() => {
@@ -52,7 +53,7 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
   const handleChange = useCallback(<K extends keyof EditorPreferences>(
     category: K,
     key: keyof EditorPreferences[K],
-    value: number | boolean
+    value: number | boolean | 1024 | 2048 | 4096 | 0 | 2 | 4 | 8
   ) => {
     setPrefs(prev => ({
       ...prev,
@@ -121,6 +122,7 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
           {[
             { id: 'ghosting', label: 'Floor Ghosting', icon: Square3Stack3DIcon },
             { id: 'grid', label: 'Grid', icon: EyeIcon },
+            { id: 'rendering', label: 'Rendering', icon: CpuChipIcon },
           ].map(tab => (
             <button
               key={tab.id}
@@ -237,6 +239,166 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
                 isDark={isDark}
                 formatValue={(v) => `${v} units`}
               />
+            </div>
+          )}
+          
+          {activeTab === 'rendering' && (
+            <div className="space-y-6">
+              <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                Configure rendering performance settings. These affect frame rate and visual quality.
+              </div>
+              
+              {/* Instancing */}
+              <ToggleSetting
+                label="Instancing"
+                description="Use instanced rendering for floors, walls, and ground tiles (recommended)"
+                value={prefs.rendering.instancingEnabled}
+                onChange={(v) => handleChange('rendering', 'instancingEnabled', v)}
+                isDark={isDark}
+              />
+              
+              {/* Optimizer */}
+              <ToggleSetting
+                label="Geometry Optimizer"
+                description="Merge adjacent tiles into larger rectangles to reduce draw calls"
+                value={prefs.rendering.optimizerEnabled}
+                onChange={(v) => handleChange('rendering', 'optimizerEnabled', v)}
+                isDark={isDark}
+              />
+              
+              {/* Frustum Culling */}
+              <ToggleSetting
+                label="Frustum Culling"
+                description="Only render objects visible in the camera view (recommended)"
+                value={prefs.rendering.frustumCullingEnabled}
+                onChange={(v) => handleChange('rendering', 'frustumCullingEnabled', v)}
+                isDark={isDark}
+              />
+              
+              {/* Occlusion Culling */}
+              <ToggleSetting
+                label="Occlusion Culling"
+                description="Hide objects behind other objects (experimental, may impact performance)"
+                value={prefs.rendering.occlusionCullingEnabled}
+                onChange={(v) => handleChange('rendering', 'occlusionCullingEnabled', v)}
+                isDark={isDark}
+              />
+              
+              {/* Shadows */}
+              <div className="space-y-4">
+                <ToggleSetting
+                  label="Shadows"
+                  description="Enable shadow rendering"
+                  value={prefs.rendering.shadowsEnabled}
+                  onChange={(v) => handleChange('rendering', 'shadowsEnabled', v)}
+                  isDark={isDark}
+                />
+                
+                {prefs.rendering.shadowsEnabled && (
+                  <>
+                    <SliderSetting
+                      label="Shadow Distance"
+                      description="Maximum distance for shadow rendering (0 = unlimited)"
+                      value={prefs.rendering.shadowDistance}
+                      defaultValue={defaults.rendering.shadowDistance}
+                      min={0}
+                      max={500}
+                      step={50}
+                      onChange={(v) => handleChange('rendering', 'shadowDistance', v)}
+                      isDark={isDark}
+                      formatValue={(v) => v === 0 ? 'Unlimited' : `${v} units`}
+                    />
+                    
+                    <div>
+                      <label className={`block text-sm font-medium mb-2 ${
+                        isDark ? 'text-gray-300' : 'text-gray-700'
+                      }`}>
+                        Shadow Map Size
+                      </label>
+                      <select
+                        value={prefs.rendering.shadowMapSize}
+                        onChange={(e) => handleChange('rendering', 'shadowMapSize', Number(e.target.value) as 1024 | 2048 | 4096)}
+                        className={`
+                          w-full px-3 py-2 rounded-lg border text-sm
+                          ${isDark
+                            ? 'bg-gray-700 border-gray-600 text-white'
+                            : 'bg-white border-gray-300 text-gray-900'
+                          }
+                        `}
+                      >
+                        <option value={1024}>1024 (Fast)</option>
+                        <option value={2048}>2048 (Balanced)</option>
+                        <option value={4096}>4096 (High Quality)</option>
+                      </select>
+                      <p className={`mt-1 text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                        Higher values = better quality but slower performance
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+              
+              {/* Antialiasing */}
+              <div className="space-y-4">
+                <ToggleSetting
+                  label="Antialiasing"
+                  description="Smooth jagged edges (improves visual quality)"
+                  value={prefs.rendering.antialiasingEnabled}
+                  onChange={(v) => handleChange('rendering', 'antialiasingEnabled', v)}
+                  isDark={isDark}
+                />
+                
+                {prefs.rendering.antialiasingEnabled && (
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${
+                      isDark ? 'text-gray-300' : 'text-gray-700'
+                    }`}>
+                      Antialiasing Level
+                    </label>
+                    <select
+                      value={prefs.rendering.antialiasingLevel}
+                      onChange={(e) => handleChange('rendering', 'antialiasingLevel', Number(e.target.value) as 0 | 2 | 4 | 8)}
+                      className={`
+                        w-full px-3 py-2 rounded-lg border text-sm
+                        ${isDark
+                          ? 'bg-gray-700 border-gray-600 text-white'
+                          : 'bg-white border-gray-300 text-gray-900'
+                        }
+                      `}
+                    >
+                      <option value={2}>2x MSAA</option>
+                      <option value={4}>4x MSAA</option>
+                      <option value={8}>8x MSAA</option>
+                    </select>
+                    <p className={`mt-1 text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                      Higher values = smoother edges but slower performance
+                    </p>
+                  </div>
+                )}
+              </div>
+              
+              {/* Performance Monitoring */}
+              <div className="space-y-3 pt-2 border-t border-gray-700">
+                <div className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Performance Monitoring
+                </div>
+                
+                <ToggleSetting
+                  label="Show FPS Counter"
+                  description="Display frames per second in the top-right corner"
+                  value={prefs.rendering.showFPS}
+                  onChange={(v) => handleChange('rendering', 'showFPS', v)}
+                  isDark={isDark}
+                />
+                
+                <ToggleSetting
+                  label="Show GPU Memory"
+                  description="Display GPU information in the top-right corner"
+                  value={prefs.rendering.showGPUMemory}
+                  onChange={(v) => handleChange('rendering', 'showGPUMemory', v)}
+                  isDark={isDark}
+                />
+              </div>
             </div>
           )}
         </div>

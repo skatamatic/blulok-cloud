@@ -34,6 +34,8 @@ import { SaveDialog } from './ui/dialogs/SaveDialog';
 import { LoadDialog } from './ui/dialogs/LoadDialog';
 import { PreferencesDialog } from './ui/dialogs/PreferencesDialog';
 import { ThemeMissingDialog } from './ui/dialogs/ThemeMissingDialog';
+import { PerformanceMonitor } from './ui/PerformanceMonitor';
+import { RenderingSettingsManager } from './core/RenderingSettingsManager';
 import { EditorPreferences, loadPreferences } from './core/Preferences';
 import {
   EditorTool,
@@ -1037,6 +1039,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   
   // Handle preferences changes
   const handlePreferencesChange = useCallback((prefs: EditorPreferences) => {
+    // Update rendering settings manager
+    const settingsManager = RenderingSettingsManager.getInstance();
+    if (prefs.rendering) {
+      settingsManager.updateSettings(prefs.rendering);
+    }
     if (!engine) return;
     
     // Apply ghosting config to floor manager
@@ -1878,6 +1885,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         onClose={() => setPreferencesOpen(false)}
         onPreferencesChange={handlePreferencesChange}
       />
+
+      {/* Performance Monitor */}
+      <PerformanceMonitor />
 
       {/* Theme Missing Dialog */}
       <ThemeMissingDialog

@@ -25,6 +25,10 @@ import { GridSystem } from './GridSystem';
 import { AssetFactory } from '../assets/AssetFactory';
 import { getBuildingSkinManager } from './BuildingSkinManager';
 import { BuildingMaterials } from './types';
+import {
+  GeometryOptimizer,
+  OptimizationResult,
+} from './utils/GeometryOptimizer';
 
 export interface BuildingManagerCallbacks {
   onBuildingCreated: (building: Building) => void;
@@ -107,6 +111,13 @@ export class BuildingManager {
   
   // Enable/disable instanced rendering
   private useInstancing: boolean = true;
+  
+  // Geometry optimizer state
+  private optimizerEnabled: boolean = true;
+  private isReadonly: boolean = false;
+  private floorOptimizations: Map<number, OptimizationResult> = new Map();
+  private roofOptimizations: Map<string, OptimizationResult> = new Map();
+  private frustumCullingEnabled: boolean = true;
   
   // Glass mullion meshes (vertical dividers for glass theme)
   private glassMullions: Set<THREE.Object3D> = new Set();
@@ -434,6 +445,9 @@ export class BuildingManager {
     
     // Remove roof mesh
     this.removeRoof(buildingId);
+    
+    // Invalidate optimizations for this building
+    this.invalidateOptimizations(buildingId);
     
     // Remove from buildings map
     this.buildings.delete(buildingId);
@@ -1097,8 +1111,6 @@ export class BuildingManager {
       this.removeFloorTileInstance(tileId, floorLevel);
     });
     floor.groundTileIds = [];
-
-    const gridSize = this.gridSystem.getGridSize();
     
     // Collect all UNIQUE cells from all footprints (prevent duplicates from merged buildings)
     const uniqueCells = new Set<string>();
@@ -1121,97 +1133,22 @@ export class BuildingManager {
       this.onRemoveGroundTiles(cellList);
     }
 
-    // Generate concrete floor tiles for each unique cell
-    for (const { x, z } of cellList) {
-          const worldPos = this.gridSystem.gridToWorld({ x, z, y: 0 });
-          const tileId = `floor-tile-${building.id}-${floorLevel}-${x}-${z}`;
-          
-          if (this.useInstancing && this.sharedFloorGeometry && this.sharedFloorMaterial) {
-            // Use instanced rendering
-            const batch = this.getOrCreateFloorTileBatch(floorLevel);
-            const instanceIndex = this.allocateInstance(batch);
-            
-            // Set instance transform
-            this.tempPosition.set(
-              worldPos.x + gridSize / 2,
-              floorLevel * FLOOR_HEIGHT * gridSize + 0.05,
-              worldPos.z + gridSize / 2
-            );
-            this.tempQuaternion.identity();
-            this.tempScale.set(1, 1, 1);
-            this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
-            batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
-            batch.mesh.instanceMatrix.needsUpdate = true;
-            
-            // Track instance
-            batch.instances.set(tileId, { instanceIndex });
-            
-            // Create invisible marker for raycasting/selection
-            const marker = new THREE.Object3D();
-            marker.position.set(
-              worldPos.x + gridSize / 2,
-              floorLevel * FLOOR_HEIGHT * gridSize + 0.05,
-              worldPos.z + gridSize / 2
-            );
-            marker.userData.isFloorTile = true;
-            marker.userData.buildingId = building.id;
-            marker.userData.floor = floorLevel;
-            marker.userData.id = tileId;
-            marker.userData.selectable = true;
-            marker.userData.gridX = x;
-            marker.userData.gridZ = z;
-            marker.userData.gridPosition = { x, z };
-            marker.userData.isInstanceMarker = true;
-            marker.userData.instanceIndex = instanceIndex;
-            marker.userData.batchKey = `floor-${floorLevel}`;
-            
-            // Add a small invisible plane for raycasting
-            const hitboxGeometry = new THREE.PlaneGeometry(gridSize, gridSize);
-            hitboxGeometry.rotateX(-Math.PI / 2);
-            const hitboxMaterial = new THREE.MeshBasicMaterial({ visible: false });
-            const hitbox = new THREE.Mesh(hitboxGeometry, hitboxMaterial);
-            marker.add(hitbox);
-            
-            this.scene.add(marker);
-            floor.groundTileIds.push(tileId);
-            this.floorTileMeshes.set(tileId, marker);
-            
-            this.callbacks.onFloorTileCreated(tileId, marker);
-          } else {
-            // Fallback to individual meshes (original behavior)
-            const geometry = new THREE.PlaneGeometry(gridSize, gridSize);
-            geometry.rotateX(-Math.PI / 2);
-            
-            const material = new THREE.MeshStandardMaterial({
-              color: 0x909090,
-              roughness: 0.85,
-              metalness: 0.05,
-              side: THREE.DoubleSide,
-            });
-
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(
-              worldPos.x + gridSize / 2,
-              floorLevel * FLOOR_HEIGHT * gridSize + 0.05,
-              worldPos.z + gridSize / 2
-            );
-            mesh.userData.isFloorTile = true;
-            mesh.userData.buildingId = building.id;
-            mesh.userData.floor = floorLevel;
-            mesh.userData.id = tileId;
-            mesh.userData.selectable = true;
-            mesh.userData.gridX = x;
-            mesh.userData.gridZ = z;
-            mesh.userData.gridPosition = { x, z };
-            mesh.receiveShadow = true;
-
-            this.scene.add(mesh);
-            floor.groundTileIds.push(tileId);
-            this.floorTileMeshes.set(tileId, mesh);
-
-            this.callbacks.onFloorTileCreated(tileId, mesh);
-          }
-        }
+    // Get or rebuild optimization
+    let optimization: OptimizationResult | undefined = this.floorOptimizations.get(floorLevel);
+    if (!optimization && this.optimizerEnabled) {
+      optimization = this.rebuildFloorOptimization(building, floorLevel) || undefined;
+    }
+    
+    // Use optimized rectangles if available and instancing is enabled
+    if (optimization && this.useInstancing && this.sharedFloorGeometry && this.sharedFloorMaterial) {
+      this.createOptimizedFloorTiles(building, floorLevel, optimization);
+    } else {
+      // Fallback to per-cell rendering (existing logic)
+      this.createPerCellFloorTiles(building, floorLevel, cellList);
+    }
+    
+    // ALWAYS create individual markers for selection (regardless of optimization)
+    this.createFloorTileMarkers(building, floorLevel, cellList);
   }
 
   /**
@@ -1240,7 +1177,6 @@ export class BuildingManager {
     const roofRenderOrder = (maxFloorLevel + 1) * 10;
     
     const roofTileIds: string[] = [];
-    let tileCount = 0;
     
     // Collect all UNIQUE cells from all footprints (prevent duplicates from merged buildings)
     const uniqueCells = new Set<string>();
@@ -1258,86 +1194,22 @@ export class BuildingManager {
       }
     });
     
-    // Generate roof tiles for each unique cell
-    for (const { x, z } of cellList) {
-          const worldPos = this.gridSystem.gridToWorld({ x, z, y: 0 });
-          const tileId = `roof-tile-${building.id}-${x}-${z}`;
-          
-          if (this.useInstancing && this.sharedRoofGeometry && this.sharedRoofMaterial) {
-            // Use instanced rendering
-            const batch = this.getOrCreateRoofTileBatch();
-            // Set render order and floor level for the batched roof mesh
-            batch.mesh.renderOrder = roofRenderOrder;
-            batch.mesh.userData.floorLevel = maxFloorLevel + 1;
-            const instanceIndex = this.allocateInstance(batch);
-            
-            // Set instance transform
-            this.tempPosition.set(
-              worldPos.x + gridSize / 2,
-              roofY,
-              worldPos.z + gridSize / 2
-            );
-            this.tempQuaternion.identity();
-            this.tempScale.set(1, 1, 1);
-            this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
-            batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
-            batch.mesh.instanceMatrix.needsUpdate = true;
-            
-            // Track instance
-            batch.instances.set(tileId, { instanceIndex });
-            
-            // Create invisible marker for identification
-            const marker = new THREE.Object3D();
-            marker.position.set(worldPos.x + gridSize / 2, roofY, worldPos.z + gridSize / 2);
-            marker.userData.isRoof = true;
-            marker.userData.isRoofTile = true;
-            marker.userData.buildingId = building.id;
-            marker.userData.floor = maxFloorLevel + 1;
-            marker.userData.id = tileId;
-            marker.userData.selectable = false;
-            marker.userData.gridX = x;
-            marker.userData.gridZ = z;
-            marker.userData.isInstanceMarker = true;
-            marker.userData.instanceIndex = instanceIndex;
-            
-            this.scene.add(marker);
-            this.roofTileMeshes.set(tileId, marker);
-            roofTileIds.push(tileId);
-            tileCount++;
-          } else {
-            // Fallback to individual meshes
-            const geometry = new THREE.PlaneGeometry(gridSize, gridSize);
-            geometry.rotateX(-Math.PI / 2);
-            
-            const material = new THREE.MeshStandardMaterial({
-              color: 0x666666,
-              roughness: 0.7,
-              metalness: 0.2,
-              side: THREE.DoubleSide,
-              transparent: true,
-            });
-            
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(worldPos.x + gridSize / 2, roofY, worldPos.z + gridSize / 2);
-            mesh.userData.isRoof = true;
-            mesh.userData.isRoofTile = true;
-            mesh.userData.buildingId = building.id;
-            mesh.userData.floor = maxFloorLevel + 1;
-            mesh.renderOrder = roofRenderOrder;
-            mesh.userData.id = tileId;
-            mesh.userData.selectable = false;
-            mesh.receiveShadow = true;
-            mesh.castShadow = true;
-            
-            // Initially hide (only visible in Full View mode)
-            mesh.visible = false;
-            
-            this.scene.add(mesh);
-            this.roofTileMeshes.set(tileId, mesh);
-            roofTileIds.push(tileId);
-            tileCount++;
-          }
-        }
+    // Get or rebuild optimization
+    let optimization: OptimizationResult | undefined = this.roofOptimizations.get(building.id);
+    if (!optimization && this.optimizerEnabled) {
+      optimization = this.rebuildRoofOptimization(building) || undefined;
+    }
+    
+    // Use optimized rectangles if available and instancing is enabled
+    if (optimization && this.useInstancing && this.sharedRoofGeometry && this.sharedRoofMaterial) {
+      this.createOptimizedRoofTiles(building, maxFloorLevel, roofY, roofRenderOrder, optimization, roofTileIds);
+    } else {
+      // Fallback to per-cell rendering
+      this.createPerCellRoofTiles(building, maxFloorLevel, roofY, roofRenderOrder, cellList, roofTileIds);
+    }
+    
+    // ALWAYS create individual markers for identification (regardless of optimization)
+    this.createRoofTileMarkers(building, maxFloorLevel, roofY, cellList, roofTileIds);
     
     // Store roof tile IDs for this building
     this.roofTileIds.set(building.id, roofTileIds);
@@ -1346,6 +1218,7 @@ export class BuildingManager {
     // Initially hide roof tiles (only visible in Full View mode)
     this.setRoofVisible(building.id, false, 1.0);
     
+    const tileCount = roofTileIds.length;
     console.log(`[BuildingManager] generateRoof complete: ${tileCount} tiles, roofY=${roofY}`);
   }
   
@@ -1362,7 +1235,7 @@ export class BuildingManager {
       );
       mesh.name = 'roof-tiles';
       mesh.count = 0;
-      mesh.frustumCulled = false;
+      mesh.frustumCulled = this.frustumCullingEnabled;
       mesh.receiveShadow = true;
       mesh.castShadow = true;
       mesh.userData.isBatchedRoofTiles = true;
@@ -1511,7 +1384,7 @@ export class BuildingManager {
       );
       mesh.name = `floor-tiles-${floorLevel}`;
       mesh.count = 0;
-      mesh.frustumCulled = false;
+      mesh.frustumCulled = this.frustumCullingEnabled;
       mesh.receiveShadow = true;
       mesh.userData.isBatchedFloorTiles = true;
       mesh.userData.floorLevel = floorLevel;
@@ -2309,6 +2182,488 @@ export class BuildingManager {
         batch.mesh.renderOrder = renderOrder;
       }
     }
+  }
+  
+  /**
+   * Set instancing enabled state
+   * If changed, rebuild all buildings
+   */
+  setInstancingEnabled(enabled: boolean): void {
+    if (this.useInstancing === enabled) return;
+    this.useInstancing = enabled;
+    // Rebuild all buildings (expensive but necessary)
+    this.rebuildAllBuildings();
+  }
+  
+  /**
+   * Set optimizer enabled state
+   * If changed, invalidate and rebuild all optimizations
+   */
+  setOptimizerEnabled(enabled: boolean): void {
+    if (this.optimizerEnabled === enabled) return;
+    this.optimizerEnabled = enabled;
+    this.invalidateAllOptimizations();
+    // Rebuild all buildings to apply new optimization state
+    this.rebuildAllBuildings();
+  }
+  
+  /**
+   * Set readonly mode (affects optimization aggressiveness)
+   */
+  setReadonlyMode(readonly: boolean): void {
+    if (this.isReadonly === readonly) return;
+    this.isReadonly = readonly;
+    // Rebuild with new optimization strategy
+    this.invalidateAllOptimizations();
+    this.rebuildAllBuildings();
+  }
+  
+  /**
+   * Set frustum culling enabled state
+   */
+  setFrustumCullingEnabled(enabled: boolean): void {
+    if (this.frustumCullingEnabled === enabled) return;
+    this.frustumCullingEnabled = enabled;
+    
+    // Update existing meshes
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.InstancedMesh && 
+          (object.userData.isBatchedWalls ||
+           object.userData.isBatchedRoofTiles ||
+           object.userData.isBatchedFloorTiles)) {
+        object.frustumCulled = enabled;
+      }
+    });
+  }
+  
+  /**
+   * Invalidate all optimizations
+   */
+  private invalidateAllOptimizations(): void {
+    this.floorOptimizations.clear();
+    this.roofOptimizations.clear();
+  }
+  
+  /**
+   * Invalidate optimizations for a specific building or floor
+   */
+  private invalidateOptimizations(buildingId?: string, floorLevel?: number): void {
+    if (buildingId && floorLevel !== undefined) {
+      // Invalidate specific floor/roof
+      this.floorOptimizations.delete(floorLevel);
+      this.roofOptimizations.delete(buildingId);
+    } else if (buildingId) {
+      // Invalidate all floors for a building (roof only)
+      this.roofOptimizations.delete(buildingId);
+    } else {
+      // Invalidate all
+      this.invalidateAllOptimizations();
+    }
+  }
+  
+  /**
+   * Rebuild all buildings with current settings
+   */
+  private rebuildAllBuildings(): void {
+    const buildings = Array.from(this.buildings.values());
+    buildings.forEach(building => {
+      building.floors.forEach(floor => {
+        this.regenerateWallsForBuilding(building, floor.level);
+        this.generateFloorTiles(building, floor.level);
+      });
+      this.generateRoof(building);
+    });
+  }
+  
+  /**
+   * Rebuild floor optimization for a building
+   */
+  private rebuildFloorOptimization(building: Building, floorLevel: number): OptimizationResult | null {
+    if (!this.optimizerEnabled) return null;
+    
+    // Collect cells
+    const cells: Array<{x: number, z: number}> = [];
+    const uniqueCells = new Set<string>();
+    
+    building.footprints.forEach(footprint => {
+      for (let x = footprint.minX; x <= footprint.maxX; x++) {
+        for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
+          const cellKey = `${x},${z}`;
+          if (!uniqueCells.has(cellKey)) {
+            uniqueCells.add(cellKey);
+            cells.push({x, z});
+          }
+        }
+      }
+    });
+    
+    // Optimize
+    const result = GeometryOptimizer.optimize(cells, {
+      readonly: this.isReadonly,
+      maxRectangleSize: this.isReadonly ? undefined : 50, // Limit in edit mode
+    });
+    
+    // Validate result
+    if (!GeometryOptimizer.validateResult(cells, result)) {
+      console.error('[BuildingManager] Optimization validation failed, using per-cell rendering');
+      return null;
+    }
+    
+    this.floorOptimizations.set(floorLevel, result);
+    return result;
+  }
+  
+  /**
+   * Rebuild roof optimization for a building
+   */
+  private rebuildRoofOptimization(building: Building): OptimizationResult | null {
+    if (!this.optimizerEnabled) return null;
+    
+    // Collect cells
+    const cells: Array<{x: number, z: number}> = [];
+    const uniqueCells = new Set<string>();
+    
+    building.footprints.forEach(footprint => {
+      for (let x = footprint.minX; x <= footprint.maxX; x++) {
+        for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
+          const cellKey = `${x},${z}`;
+          if (!uniqueCells.has(cellKey)) {
+            uniqueCells.add(cellKey);
+            cells.push({x, z});
+          }
+        }
+      }
+    });
+    
+    // Optimize
+    const result = GeometryOptimizer.optimize(cells, {
+      readonly: this.isReadonly,
+      maxRectangleSize: this.isReadonly ? undefined : 50,
+    });
+    
+    // Validate result
+    if (!GeometryOptimizer.validateResult(cells, result)) {
+      console.error('[BuildingManager] Roof optimization validation failed, using per-cell rendering');
+      return null;
+    }
+    
+    this.roofOptimizations.set(building.id, result);
+    return result;
+  }
+  
+  /**
+   * Create floor tiles from optimized rectangles
+   */
+  private createOptimizedFloorTiles(
+    _building: Building,
+    floorLevel: number,
+    optimization: OptimizationResult
+  ): void {
+    const batch = this.getOrCreateFloorTileBatch(floorLevel);
+    const gridSize = this.gridSystem.getGridSize();
+    const floorY = floorLevel * FLOOR_HEIGHT * gridSize + 0.05;
+    
+    // Clear existing instances in batch
+    batch.instances.clear();
+    batch.mesh.count = 0;
+    batch.freeIndices = [];
+    
+    optimization.rectangles.forEach((rect) => {
+      const instanceIndex = this.allocateInstance(batch);
+      
+      // Calculate rectangle dimensions and center
+      const width = (rect.maxX - rect.minX + 1) * gridSize;
+      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
+      const centerX = (rect.minX + rect.maxX + 1) * gridSize / 2;
+      const centerZ = (rect.minZ + rect.maxZ + 1) * gridSize / 2;
+      
+      // Use scale in instance matrix (more memory efficient)
+      this.tempPosition.set(centerX, floorY, centerZ);
+      this.tempScale.set(width / gridSize, 1, depth / gridSize);
+      this.tempQuaternion.identity();
+      this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
+      batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
+      
+      // Track which cells this rectangle covers (for tile ID mapping)
+      rect.instanceIndex = instanceIndex;
+    });
+    
+    batch.mesh.instanceMatrix.needsUpdate = true;
+    batch.mesh.frustumCulled = this.frustumCullingEnabled;
+  }
+  
+  /**
+   * Create individual markers for selection/interaction
+   * CRITICAL: Always called, regardless of optimization
+   */
+  private createFloorTileMarkers(
+    building: Building,
+    floorLevel: number,
+    cells: Array<{x: number, z: number}>
+  ): void {
+    const gridSize = this.gridSystem.getGridSize();
+    const floorY = floorLevel * FLOOR_HEIGHT * gridSize + 0.05;
+    const floor = building.floors.find(f => f.level === floorLevel);
+    if (!floor) return;
+    
+    cells.forEach(({x, z}) => {
+      const tileId = `floor-tile-${building.id}-${floorLevel}-${x}-${z}`;
+      const worldPos = this.gridSystem.gridToWorld({ x, z, y: 0 });
+      
+      // Create invisible marker (same as existing code)
+      const marker = new THREE.Object3D();
+      marker.position.set(
+        worldPos.x + gridSize / 2,
+        floorY,
+        worldPos.z + gridSize / 2
+      );
+      marker.userData.id = tileId;
+      marker.userData.isFloorTile = true;
+      marker.userData.buildingId = building.id;
+      marker.userData.floor = floorLevel;
+      marker.userData.selectable = true;
+      marker.userData.gridX = x;
+      marker.userData.gridZ = z;
+      marker.userData.gridPosition = { x, z };
+      marker.userData.isInstanceMarker = true;
+      marker.userData.batchKey = `floor-${floorLevel}`;
+      
+      // Add hitbox for raycasting
+      const hitboxGeometry = new THREE.PlaneGeometry(gridSize, gridSize);
+      hitboxGeometry.rotateX(-Math.PI / 2);
+      const hitboxMaterial = new THREE.MeshBasicMaterial({ visible: false });
+      const hitbox = new THREE.Mesh(hitboxGeometry, hitboxMaterial);
+      marker.add(hitbox);
+      
+      this.scene.add(marker);
+      floor.groundTileIds.push(tileId);
+      this.floorTileMeshes.set(tileId, marker);
+      
+      this.callbacks.onFloorTileCreated(tileId, marker);
+    });
+  }
+  
+  /**
+   * Create per-cell floor tiles (fallback when optimizer disabled or fails)
+   */
+  private createPerCellFloorTiles(
+    building: Building,
+    floorLevel: number,
+    cellList: Array<{x: number, z: number}>
+  ): void {
+    const gridSize = this.gridSystem.getGridSize();
+    const floor = building.floors.find(f => f.level === floorLevel);
+    if (!floor) return;
+    
+    for (const { x, z } of cellList) {
+      const worldPos = this.gridSystem.gridToWorld({ x, z, y: 0 });
+      const tileId = `floor-tile-${building.id}-${floorLevel}-${x}-${z}`;
+      
+      if (this.useInstancing && this.sharedFloorGeometry && this.sharedFloorMaterial) {
+        // Use instanced rendering
+        const batch = this.getOrCreateFloorTileBatch(floorLevel);
+        const instanceIndex = this.allocateInstance(batch);
+        
+        // Set instance transform
+        this.tempPosition.set(
+          worldPos.x + gridSize / 2,
+          floorLevel * FLOOR_HEIGHT * gridSize + 0.05,
+          worldPos.z + gridSize / 2
+        );
+        this.tempQuaternion.identity();
+        this.tempScale.set(1, 1, 1);
+        this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
+        batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
+        batch.mesh.instanceMatrix.needsUpdate = true;
+        
+        // Track instance
+        batch.instances.set(tileId, { instanceIndex });
+      } else {
+        // Fallback to individual meshes
+        const geometry = new THREE.PlaneGeometry(gridSize, gridSize);
+        geometry.rotateX(-Math.PI / 2);
+        
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x909090,
+          roughness: 0.85,
+          metalness: 0.05,
+          side: THREE.DoubleSide,
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(
+          worldPos.x + gridSize / 2,
+          floorLevel * FLOOR_HEIGHT * gridSize + 0.05,
+          worldPos.z + gridSize / 2
+        );
+        mesh.userData.isFloorTile = true;
+        mesh.userData.buildingId = building.id;
+        mesh.userData.floor = floorLevel;
+        mesh.userData.id = tileId;
+        mesh.userData.selectable = true;
+        mesh.userData.gridX = x;
+        mesh.userData.gridZ = z;
+        mesh.userData.gridPosition = { x, z };
+        mesh.receiveShadow = true;
+
+        this.scene.add(mesh);
+        floor.groundTileIds.push(tileId);
+        this.floorTileMeshes.set(tileId, mesh);
+
+        this.callbacks.onFloorTileCreated(tileId, mesh);
+      }
+    }
+  }
+  
+  /**
+   * Create roof tiles from optimized rectangles
+   */
+  private createOptimizedRoofTiles(
+    _building: Building,
+    maxFloorLevel: number,
+    roofY: number,
+    roofRenderOrder: number,
+    optimization: OptimizationResult,
+    _roofTileIds: string[]
+  ): void {
+    const batch = this.getOrCreateRoofTileBatch();
+    const gridSize = this.gridSystem.getGridSize();
+    
+    // Set render order and floor level for the batched roof mesh
+    batch.mesh.renderOrder = roofRenderOrder;
+    batch.mesh.userData.floorLevel = maxFloorLevel + 1;
+    
+    // Clear existing instances in batch
+    batch.instances.clear();
+    batch.mesh.count = 0;
+    batch.freeIndices = [];
+    
+    optimization.rectangles.forEach((rect) => {
+      const instanceIndex = this.allocateInstance(batch);
+      
+      // Calculate rectangle dimensions and center
+      const width = (rect.maxX - rect.minX + 1) * gridSize;
+      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
+      const centerX = (rect.minX + rect.maxX + 1) * gridSize / 2;
+      const centerZ = (rect.minZ + rect.maxZ + 1) * gridSize / 2;
+      
+      // Use scale in instance matrix
+      this.tempPosition.set(centerX, roofY, centerZ);
+      this.tempScale.set(width / gridSize, 1, depth / gridSize);
+      this.tempQuaternion.identity();
+      this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
+      batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
+      
+      // Track which cells this rectangle covers
+      rect.instanceIndex = instanceIndex;
+    });
+    
+    batch.mesh.instanceMatrix.needsUpdate = true;
+    batch.mesh.frustumCulled = this.frustumCullingEnabled;
+  }
+  
+  /**
+   * Create per-cell roof tiles (fallback when optimizer disabled or fails)
+   */
+  private createPerCellRoofTiles(
+    building: Building,
+    maxFloorLevel: number,
+    roofY: number,
+    roofRenderOrder: number,
+    cellList: Array<{x: number, z: number}>,
+    roofTileIds: string[]
+  ): void {
+    const gridSize = this.gridSystem.getGridSize();
+    
+    for (const { x, z } of cellList) {
+      const worldPos = this.gridSystem.gridToWorld({ x, z, y: 0 });
+      const tileId = `roof-tile-${building.id}-${x}-${z}`;
+      
+      if (this.useInstancing && this.sharedRoofGeometry && this.sharedRoofMaterial) {
+        const batch = this.getOrCreateRoofTileBatch();
+        batch.mesh.renderOrder = roofRenderOrder;
+        batch.mesh.userData.floorLevel = maxFloorLevel + 1;
+        const instanceIndex = this.allocateInstance(batch);
+        
+        this.tempPosition.set(
+          worldPos.x + gridSize / 2,
+          roofY,
+          worldPos.z + gridSize / 2
+        );
+        this.tempQuaternion.identity();
+        this.tempScale.set(1, 1, 1);
+        this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
+        batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
+        batch.mesh.instanceMatrix.needsUpdate = true;
+        
+        batch.instances.set(tileId, { instanceIndex });
+      } else {
+        // Fallback to individual meshes
+        const geometry = new THREE.PlaneGeometry(gridSize, gridSize);
+        geometry.rotateX(-Math.PI / 2);
+        
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x666666,
+          roughness: 0.7,
+          metalness: 0.2,
+          side: THREE.DoubleSide,
+          transparent: true,
+        });
+        
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(worldPos.x + gridSize / 2, roofY, worldPos.z + gridSize / 2);
+        mesh.userData.isRoof = true;
+        mesh.userData.isRoofTile = true;
+        mesh.userData.buildingId = building.id;
+        mesh.userData.floor = maxFloorLevel + 1;
+        mesh.renderOrder = roofRenderOrder;
+        mesh.userData.id = tileId;
+        mesh.userData.selectable = false;
+        mesh.receiveShadow = true;
+        mesh.castShadow = true;
+        mesh.visible = false;
+        
+        this.scene.add(mesh);
+        this.roofTileMeshes.set(tileId, mesh);
+      }
+      
+      roofTileIds.push(tileId);
+    }
+  }
+  
+  /**
+   * Create individual markers for roof tiles
+   * CRITICAL: Always called, regardless of optimization
+   */
+  private createRoofTileMarkers(
+    building: Building,
+    maxFloorLevel: number,
+    roofY: number,
+    cellList: Array<{x: number, z: number}>,
+    _roofTileIds: string[]
+  ): void {
+    const gridSize = this.gridSystem.getGridSize();
+    
+    cellList.forEach(({x, z}) => {
+      const tileId = `roof-tile-${building.id}-${x}-${z}`;
+      const worldPos = this.gridSystem.gridToWorld({ x, z, y: 0 });
+      
+      // Create invisible marker
+      const marker = new THREE.Object3D();
+      marker.position.set(worldPos.x + gridSize / 2, roofY, worldPos.z + gridSize / 2);
+      marker.userData.isRoof = true;
+      marker.userData.isRoofTile = true;
+      marker.userData.buildingId = building.id;
+      marker.userData.floor = maxFloorLevel + 1;
+      marker.userData.id = tileId;
+      marker.userData.selectable = false;
+      marker.userData.gridX = x;
+      marker.userData.gridZ = z;
+      marker.userData.isInstanceMarker = true;
+      
+      this.scene.add(marker);
+      this.roofTileMeshes.set(tileId, marker);
+    });
   }
   
   /**

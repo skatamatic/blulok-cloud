@@ -14,6 +14,7 @@ import { ViewerLoadingOverlay } from './ViewerLoadingOverlay';
 import { ViewerFloorsPanel } from './ViewerFloorsPanel';
 import { ViewerPropertiesPanel } from './ViewerPropertiesPanel';
 import { ViewerSmartObjectsPanel } from './ViewerSmartObjectsPanel';
+import { PerformanceMonitor } from '../ui/PerformanceMonitor';
 import {
   PlacedObject,
   DeviceState,
@@ -379,6 +380,9 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
           </div>
         </div>
       )}
+
+      {/* Performance Monitor */}
+      <PerformanceMonitor />
 
       {/* UI Overlays - only show when loaded */}
       {isDataLoaded && !loadError && (

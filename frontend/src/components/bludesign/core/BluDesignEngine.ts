@@ -70,6 +70,8 @@ import { getThemeManager, Theme } from './ThemeManager';
 import { getSkinRegistry, CategorySkin } from './SkinRegistry';
 import { WindowManager } from './WindowManager';
 import { GroundTileManager } from './GroundTileManager';
+import { RenderingSettingsManager } from './RenderingSettingsManager';
+import { EditorPreferences } from './Preferences';
 
 export interface BluDesignEngineOptions {
   container: HTMLElement;
@@ -127,6 +129,10 @@ export class BluDesignEngine {
   
   // Theme subscription cleanup
   private themeUnsubscribe: (() => void) | null = null;
+  
+  // Rendering settings
+  private renderingSettings: RenderingSettingsManager;
+  private settingsUnsubscribe: (() => void) | null = null;
   
   // External data source config (set from EditorCanvas for facility linking)
   private dataSourceConfig: DataSourceConfig | null = null;
@@ -394,6 +400,17 @@ export class BluDesignEngine {
     
     // Initialize ground tile manager for instanced ground tile rendering
     this.groundTileManager = new GroundTileManager(this.scene, this.gridSystem);
+    
+    // Initialize rendering settings manager
+    this.renderingSettings = RenderingSettingsManager.getInstance();
+    
+    // Apply initial rendering settings
+    this.applyRenderingSettings();
+    
+    // Subscribe to settings changes
+    this.settingsUnsubscribe = this.renderingSettings.onSettingsChange(() => {
+      this.applyRenderingSettings();
+    });
     
     // Initialize input coordinator for centralized event handling
     this.inputCoordinator = new InputCoordinator(this.container);
@@ -1617,6 +1634,8 @@ export class BluDesignEngine {
         this.groundTileManager.removeTile(replacedGroundId);
         this.sceneManager.removeObject(replacedGroundId);
       }
+      
+      // Optimization is handled automatically by GroundTileManager
       return;
     }
     
@@ -1740,6 +1759,9 @@ export class BluDesignEngine {
     const asset = this.currentPlacementAsset;
     const gridSize = this.gridSystem.getGridSize();
     
+    // Track ground tile categories placed in this batch
+    const groundTileCategoriesPlaced = new Set<AssetCategory>();
+    
     // Place all objects
     for (const placedObject of objects) {
       // Ground tiles: use instanced manager for performance
@@ -1768,6 +1790,7 @@ export class BluDesignEngine {
         }
 
         // Ground tiles use shared material; no per-object theme application needed
+        // Optimization is handled automatically by GroundTileManager
         continue;
       }
 
@@ -1828,6 +1851,9 @@ export class BluDesignEngine {
         this.sceneManager.removeObject(replacedGroundId);
       }
     }
+    
+    // Note: Ground tile optimization is handled automatically by GroundTileManager
+    // after tiles are added (with debouncing)
     
     // Record ALL objects as a single undo action
     this.actionHistory.pushBatchPlace(objects);
@@ -2709,6 +2735,10 @@ export class BluDesignEngine {
     if (data.gridSize) {
       this.state.snap.gridSize = data.gridSize;
     }
+    
+    // Optimize all ground tile categories after loading
+    // This ensures tiles loaded from saved data are optimized
+    this.groundTileManager.optimizeAllCategories();
     if (data.showGrid !== undefined) {
       this.state.ui.showGrid = data.showGrid;
       this.gridSystem.setVisible(data.showGrid);
@@ -5158,6 +5188,110 @@ export class BluDesignEngine {
   }
 
   // ==========================================================================
+  // Rendering Settings
+  // ==========================================================================
+
+  /**
+   * Apply all rendering settings
+   * Called on init and when settings change
+   */
+  private applyRenderingSettings(): void {
+    const settings = this.renderingSettings.getSettings();
+    
+    // Apply in order of dependency
+    this.applyAntialiasingSettings(settings);
+    this.applyShadowSettings(settings);
+    this.applyInstancingSettings(settings);
+    this.applyOptimizerSettings(settings);
+    this.applyFrustumCullingSettings(settings);
+  }
+  
+  private applyAntialiasingSettings(settings: EditorPreferences['rendering']): void {
+    if (settings.antialiasingEnabled) {
+      this.renderer.setPixelRatio(
+        Math.min(window.devicePixelRatio, settings.antialiasingLevel || 2)
+      );
+    } else {
+      this.renderer.setPixelRatio(1);
+    }
+  }
+  
+  private applyShadowSettings(settings: EditorPreferences['rendering']): void {
+    // Renderer
+    this.renderer.shadowMap.enabled = settings.shadowsEnabled;
+    
+    // Directional light
+    const dirLight = this.sceneManager.getDirectionalLight();
+    if (dirLight) {
+      dirLight.castShadow = settings.shadowsEnabled;
+      if (settings.shadowsEnabled) {
+        dirLight.shadow.mapSize.width = settings.shadowMapSize;
+        dirLight.shadow.mapSize.height = settings.shadowMapSize;
+        dirLight.shadow.camera.far = settings.shadowDistance || 500;
+        dirLight.shadow.needsUpdate = true;
+      }
+    }
+    
+    // Update all meshes (one-time traversal)
+    this.updateMeshShadows(settings.shadowsEnabled);
+  }
+  
+  private updateMeshShadows(enabled: boolean): void {
+    // Traverse scene once, update all meshes
+    // Skip markers, ghosts, selectors
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        if (object.userData.selectable !== false && 
+            !object.userData.isGhost &&
+            !object.userData.isSelector &&
+            !object.userData.isInstanceMarker) {
+          object.castShadow = enabled;
+          object.receiveShadow = enabled;
+        }
+      } else if (object instanceof THREE.InstancedMesh) {
+        object.castShadow = enabled;
+        object.receiveShadow = enabled;
+      }
+    });
+  }
+  
+  private applyInstancingSettings(settings: EditorPreferences['rendering']): void {
+    this.buildingManager?.setInstancingEnabled(settings.instancingEnabled);
+    this.groundTileManager?.setInstancingEnabled(settings.instancingEnabled);
+  }
+  
+  private applyOptimizerSettings(settings: EditorPreferences['rendering']): void {
+    console.log(`[BluDesignEngine] applyOptimizerSettings: optimizerEnabled=${settings.optimizerEnabled}, readonly=${this.readonly}`);
+    this.buildingManager?.setOptimizerEnabled(settings.optimizerEnabled);
+    this.groundTileManager?.setOptimizerEnabled(settings.optimizerEnabled);
+    // Always sync readonly mode (may change if engine mode changes)
+    this.buildingManager?.setReadonlyMode(this.readonly);
+    this.groundTileManager?.setReadonlyMode(this.readonly);
+  }
+  
+  private applyFrustumCullingSettings(settings: EditorPreferences['rendering']): void {
+    this.updateFrustumCulling(settings.frustumCullingEnabled);
+  }
+  
+  private updateFrustumCulling(enabled: boolean): void {
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.InstancedMesh) {
+        // Only update batched meshes (not individual objects)
+        if (object.userData.isBatchedWalls ||
+            object.userData.isBatchedRoofTiles ||
+            object.userData.isGroundTileBatch ||
+            object.userData.isBatchedFloorTiles) {
+          object.frustumCulled = enabled;
+        }
+      }
+    });
+    
+    // Store flag for future meshes
+    this.buildingManager?.setFrustumCullingEnabled(enabled);
+    this.groundTileManager?.setFrustumCullingEnabled(enabled);
+  }
+
+  // ==========================================================================
   // Cleanup
   // ==========================================================================
 
@@ -5168,6 +5302,12 @@ export class BluDesignEngine {
     if (this.themeUnsubscribe) {
       this.themeUnsubscribe();
       this.themeUnsubscribe = null;
+    }
+    
+    // Unsubscribe from rendering settings changes
+    if (this.settingsUnsubscribe) {
+      this.settingsUnsubscribe();
+      this.settingsUnsubscribe = null;
     }
     
     // Clear auto-save timer

@@ -24,6 +24,21 @@ export interface EditorPreferences {
     maxUndoSteps: number;
     autoSaveInterval: number; // seconds, 0 = disabled
   };
+  
+  // Rendering performance settings
+  rendering: {
+    instancingEnabled: boolean;
+    frustumCullingEnabled: boolean;
+    occlusionCullingEnabled: boolean; // Future: off by default
+    optimizerEnabled: boolean;
+    shadowsEnabled: boolean;
+    shadowDistance: number; // 0 = unlimited
+    shadowMapSize: 1024 | 2048 | 4096;
+    antialiasingEnabled: boolean;
+    antialiasingLevel: 0 | 2 | 4 | 8;
+    showFPS: boolean;
+    showGPUMemory: boolean;
+  };
 }
 
 const STORAGE_KEY = 'bludesign-preferences';
@@ -42,6 +57,19 @@ const DEFAULT_PREFERENCES: EditorPreferences = {
   performance: {
     maxUndoSteps: 100,
     autoSaveInterval: 30,
+  },
+  rendering: {
+    instancingEnabled: true,
+    frustumCullingEnabled: true,
+    occlusionCullingEnabled: false, // More expensive, off by default
+    optimizerEnabled: true,
+    shadowsEnabled: true,
+    shadowDistance: 0, // Unlimited
+    shadowMapSize: 2048,
+    antialiasingEnabled: true,
+    antialiasingLevel: 2,
+    showFPS: false,
+    showGPUMemory: false,
   },
 };
 
@@ -68,6 +96,10 @@ export function loadPreferences(): EditorPreferences {
         performance: {
           ...DEFAULT_PREFERENCES.performance,
           ...parsed.performance,
+        },
+        rendering: {
+          ...DEFAULT_PREFERENCES.rendering,
+          ...parsed.rendering,
         },
       };
     }

@@ -207,7 +207,14 @@ export class SceneManager {
       this.lights.directional.intensity = intensity;
     }
   }
-
+  
+  /**
+   * Get directional light (for shadow settings)
+   */
+  getDirectionalLight(): THREE.DirectionalLight | null {
+    return this.lights.directional;
+  }
+  
   /**
    * Set scene background color
    */
