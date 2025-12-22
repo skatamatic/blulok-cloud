@@ -412,11 +412,22 @@ export class GroundTileManager {
    */
   setOptimizerEnabled(enabled: boolean): void {
     if (this.optimizerEnabled === enabled) return;
+    
     this.optimizerEnabled = enabled;
-    // Invalidate optimizations
-    this.categoryOptimizations.clear();
-    // Note: Full batch optimization would require rebuilding all tiles
-    // For now, this flag affects future batch operations
+    
+    if (enabled) {
+      // If enabling, optimize all categories immediately
+      this.optimizeAllCategories();
+    } else {
+      // If disabling, invalidate optimizations (but keep current rendering)
+      this.categoryOptimizations.clear();
+      // Clear any pending optimization
+      if (this.optimizeTimer) {
+        clearTimeout(this.optimizeTimer);
+        this.optimizeTimer = null;
+      }
+      this.pendingCategories.clear();
+    }
   }
   
   /**
@@ -447,24 +458,10 @@ export class GroundTileManager {
    * This can be called after placing many tiles to optimize them
    */
   optimizeCategory(category: AssetCategory): void {
-    if (!this.optimizerEnabled) {
-      console.log(`[GroundTileManager] optimizeCategory(${category}): Optimizer disabled, skipping`);
-      return;
-    }
+    if (!this.optimizerEnabled) return;
     
     const batch = this.batches.get(category);
-    if (!batch) {
-      console.log(`[GroundTileManager] optimizeCategory(${category}): No batch found`);
-      return;
-    }
-    
-    if (batch.instances.size === 0) {
-      console.log(`[GroundTileManager] optimizeCategory(${category}): No instances to optimize`);
-      return;
-    }
-    
-    const beforeCount = batch.instances.size;
-    console.log(`[GroundTileManager] optimizeCategory(${category}): Starting optimization - ${beforeCount} individual tiles`);
+    if (!batch || batch.instances.size === 0) return;
     
     // Collect all cell positions and their original object IDs
     const cells: Array<{x: number, z: number}> = [];
@@ -476,20 +473,13 @@ export class GroundTileManager {
       cellToObjectId.set(cellKey, objectId);
     });
     
-    if (cells.length === 0) {
-      console.log(`[GroundTileManager] optimizeCategory(${category}): No cells collected`);
-      return;
-    }
-    
-    console.log(`[GroundTileManager] optimizeCategory(${category}): Collected ${cells.length} cells, optimizing...`);
+    if (cells.length === 0) return;
     
     // Optimize
     const result = GeometryOptimizer.optimize(cells, {
       readonly: this.isReadonly,
       maxRectangleSize: this.isReadonly ? undefined : 50,
     });
-    
-    console.log(`[GroundTileManager] optimizeCategory(${category}): Optimization result - ${result.rectangles.length} rectangles from ${cells.length} cells (ratio: ${result.optimizationRatio.toFixed(3)})`);
     
     // Validate
     if (!GeometryOptimizer.validateResult(cells, result)) {
@@ -502,9 +492,6 @@ export class GroundTileManager {
     
     // Rebuild batch with optimized rectangles, preserving original object IDs
     this.rebuildBatchWithOptimization(category, result, cellToObjectId);
-    
-    const afterCount = batch.mesh.count;
-    console.log(`[GroundTileManager] optimizeCategory(${category}): Optimization complete - ${beforeCount} tiles -> ${afterCount} rectangles (${((1 - afterCount/beforeCount) * 100).toFixed(1)}% reduction)`);
   }
   
   /**
@@ -517,16 +504,9 @@ export class GroundTileManager {
     cellToObjectId: Map<string, string>
   ): void {
     const batch = this.batches.get(category);
-    if (!batch) {
-      console.error(`[GroundTileManager] rebuildBatchWithOptimization(${category}): Batch not found`);
-      return;
-    }
+    if (!batch) return;
     
     const gridSize = this.gridSystem.getGridSize();
-    const beforeInstanceCount = batch.mesh.count;
-    const beforeTileCount = batch.instances.size;
-    
-    console.log(`[GroundTileManager] rebuildBatchWithOptimization(${category}): Rebuilding - ${beforeTileCount} tiles, ${beforeInstanceCount} instances`);
     
     // Store original instances before clearing (for lookup)
     const originalInstances = new Map(batch.instances);
@@ -575,10 +555,6 @@ export class GroundTileManager {
     
     batch.mesh.instanceMatrix.needsUpdate = true;
     batch.mesh.frustumCulled = this.frustumCullingEnabled;
-    
-    const afterInstanceCount = batch.mesh.count;
-    const afterTileCount = batch.instances.size;
-    console.log(`[GroundTileManager] rebuildBatchWithOptimization(${category}): Rebuild complete - ${afterTileCount} object IDs mapped to ${afterInstanceCount} instances (was ${beforeInstanceCount})`);
   }
   
   /**
@@ -586,12 +562,8 @@ export class GroundTileManager {
    * Called automatically when tiles are added
    */
   private scheduleAutoOptimization(category: AssetCategory): void {
-    if (!this.optimizerEnabled) {
-      console.log(`[GroundTileManager] scheduleAutoOptimization(${category}): Optimizer disabled, not scheduling`);
-      return;
-    }
+    if (!this.optimizerEnabled) return;
     
-    console.log(`[GroundTileManager] scheduleAutoOptimization(${category}): Scheduling optimization`);
     this.pendingCategories.add(category);
     
     // Clear existing timer
@@ -601,7 +573,6 @@ export class GroundTileManager {
     
     // Schedule optimization after debounce period
     this.optimizeTimer = setTimeout(() => {
-      console.log(`[GroundTileManager] Auto-optimization timer fired for categories:`, Array.from(this.pendingCategories));
       this.pendingCategories.forEach(cat => {
         this.optimizeCategory(cat);
       });
@@ -615,8 +586,6 @@ export class GroundTileManager {
    * Useful after loading saved data
    */
   optimizeAllCategories(): void {
-    console.log(`[GroundTileManager] optimizeAllCategories(): Starting optimization of all categories`);
-    
     // Clear any pending debounced optimization
     if (this.optimizeTimer) {
       clearTimeout(this.optimizeTimer);
@@ -625,19 +594,11 @@ export class GroundTileManager {
     this.pendingCategories.clear();
     
     // Optimize all categories that have tiles
-    const categories = Array.from(this.batches.keys());
-    console.log(`[GroundTileManager] optimizeAllCategories(): Found ${categories.length} categories with tiles`);
-    
     this.batches.forEach((batch, category) => {
       if (batch.instances.size > 0) {
-        console.log(`[GroundTileManager] optimizeAllCategories(): Optimizing category ${category} (${batch.instances.size} tiles)`);
         this.optimizeCategory(category);
-      } else {
-        console.log(`[GroundTileManager] optimizeAllCategories(): Skipping category ${category} (no tiles)`);
       }
     });
-    
-    console.log(`[GroundTileManager] optimizeAllCategories(): Complete`);
   }
   
   /**

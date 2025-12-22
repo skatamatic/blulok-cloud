@@ -84,7 +84,12 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     if (primary_tenant_id) filters.primary_tenant_id = primary_tenant_id as string;
     if (shared_with_user_id) filters.shared_with_user_id = shared_with_user_id as string;
     if (access_level) filters.access_level = access_level as string;
-    if (is_active !== undefined) filters.is_active = is_active === 'true';
+    // By default only return active sharings; allow explicit override via query
+    if (is_active === undefined) {
+      filters.is_active = true;
+    } else {
+      filters.is_active = is_active === 'true';
+    }
     if (expires_before) filters.expires_before = new Date(expires_before as string);
 
     // Apply role-based filtering
@@ -262,7 +267,7 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
     
-    // Check if unit exists
+    // Check if unit exists (simple database check - no access validation needed here)
     const { UnitModel } = await import('../models/unit.model');
     const unitModel = new UnitModel();
     const unit = await unitModel.findById(unitId);
@@ -271,11 +276,14 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
     
-    const hasAccess = await keySharingModel.checkUserHasAccess(user.userId, unitId);
-    
-    if (!hasAccess && !AuthService.canManageUsers(user.role)) {
-      res.status(403).json({ error: 'Access denied to this unit' });
-      return;
+    // For admins, skip access check - they can view key sharing for any unit
+    // For non-admins, verify they have key sharing access to this unit
+    if (!AuthService.canManageUsers(user.role)) {
+      const hasAccess = await keySharingModel.checkUserHasAccess(user.userId, unitId);
+      if (!hasAccess) {
+        res.status(403).json({ success: false, message: 'Access denied to this unit' });
+        return;
+      }
     }
     
     const {
@@ -354,9 +362,28 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
       recent_activity: recentActivity,
       total_activity: totalActivity
     });
-  } catch (error) {
-    console.error('Error fetching unit key sharing records:', error);
-    res.status(500).json({ error: 'Failed to fetch unit key sharing records' });
+  } catch (error: any) {
+    logger.error('Error fetching unit key sharing records:', error);
+    // Preserve 403/404 status codes if they were set
+    if (error?.statusCode) {
+      res.status(error.statusCode).json({ 
+        success: false, 
+        message: error.message || 'Failed to fetch unit key sharing records' 
+      });
+      return;
+    }
+    // Check if it's an access denied error
+    if (error?.message?.includes('Access denied')) {
+      res.status(403).json({ 
+        success: false, 
+        message: 'Access denied to this unit' 
+      });
+      return;
+    }
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch unit key sharing records' 
+    });
   }
 });
 

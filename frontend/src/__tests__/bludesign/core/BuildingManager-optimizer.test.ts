@@ -37,6 +37,9 @@ describe('BuildingManager Optimizer Integration', () => {
   it('should use optimizer when enabled', () => {
     manager.setOptimizerEnabled(true);
     
+    // Set readonly mode so maxRectangleSize limit is not applied (allows single large rectangle)
+    manager['isReadonly'] = true;
+    
     const building: Building = {
       id: 'test-building',
       name: 'Test Building',
@@ -162,3 +165,4 @@ describe('BuildingManager Optimizer Integration', () => {
     expect(optimization!.rectangles.length).toBe(1); // Should merge into single rectangle
   });
 });
+

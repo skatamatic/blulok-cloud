@@ -215,10 +215,10 @@ export class UnitModel {
 
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all unlocked units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see unlocked units from facilities they manage
         const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
@@ -227,7 +227,7 @@ export class UnitModel {
           // No facility associations, return empty result
           return [];
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance see only unlocked units that are assigned to them OR shared with them
         const accessibleUnitIds = knex
           .select('unit_id')
@@ -288,10 +288,10 @@ export class UnitModel {
         .join('facilities as f', 'u.facility_id', 'f.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see units from facilities they manage
         const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
@@ -300,7 +300,7 @@ export class UnitModel {
           // No facility associations, return empty result
           return [];
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance see units assigned to them OR shared with them via key_sharing
         const accessibleUnitIds = knex
           .select('unit_id')
@@ -345,10 +345,10 @@ export class UnitModel {
         .join('units as u', 'ua.unit_id', 'u.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all unit assignments from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see unit assignments from facilities they manage
         const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
@@ -357,7 +357,7 @@ export class UnitModel {
           // No facility associations, return empty result
           return [];
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance see only their own assignments
         query = query.where('ua.tenant_id', userId);
       } else {
@@ -411,10 +411,10 @@ export class UnitModel {
         .leftJoin('users', 'ua.tenant_id', 'users.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see units from facilities they manage
         const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
@@ -423,7 +423,7 @@ export class UnitModel {
           // No facility associations, return empty result
           return { units: [], total: 0 };
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance see units assigned to them OR shared with them via key_sharing
         // Use a subquery to get unit IDs from both unit_assignments and active key_sharing records
         const accessibleUnitIds = knex
@@ -633,7 +633,7 @@ export class UnitModel {
       }
 
       // For tenants and maintenance, also check unit assignment OR key_sharing
-      if (userRole === 'tenant' || userRole === 'maintenance') {
+      if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Check unit_assignments first
         const assignment = await knex('unit_assignments')
           .where('unit_id', unitId)
@@ -747,10 +747,10 @@ export class UnitModel {
         .join('facilities as f', 'u.facility_id', 'f.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see stats for all units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see stats for units from facilities they manage
         const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
@@ -767,7 +767,7 @@ export class UnitModel {
             locked: 0
           };
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance see stats for units that are assigned to them
         baseQuery = baseQuery
           .join('unit_assignments as ua', 'u.id', 'ua.unit_id')
@@ -881,10 +881,10 @@ export class UnitModel {
         .where('u.id', unitId);
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin can see all units
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin can see units from facilities they manage
         const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
@@ -893,7 +893,7 @@ export class UnitModel {
           // No facility associations, return null
           return null;
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance can see units they are associated with
         // (either as primary tenant/assigned OR have shared access via key_sharing)
         const accessibleUnitIds = knex

@@ -31,3 +31,4 @@ module.exports.GLTFLoader = createLoaderMock();
 module.exports.DRACOLoader = createLoaderMock();
 module.exports.FBXLoader = createLoaderMock();
 
+

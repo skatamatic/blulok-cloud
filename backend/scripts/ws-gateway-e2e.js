@@ -2171,6 +2171,7 @@ async function run() {
     ok('Tenant prevented from viewing other user key-sharing records');
 
     // Test that shared users can see units they have access to
+    // NOTE: This must come BEFORE the revocation tests, so share1Token still has an active share
     heading('Shared User Unit Access Tests');
     
     step('Shared user can fetch unit details for shared unit');
@@ -2215,6 +2216,117 @@ async function run() {
     }
     ok('Primary tenant can see their assigned unit');
 
+    // Test default active-only filtering behavior
+    heading('Key Sharing Active-Only Filtering');
+    step('Using share1 for filtering test');
+    // Use share1 that was created earlier - it should be active
+    const filterTestShare = share1;
+    ok(`Using share1 for test: ${filterTestShare}`);
+    
+    // Helper function to check if a share is active (handles both boolean and numeric values)
+    const isActive = (s) => s.is_active === true || s.is_active === 1;
+    
+    step('Verifying test share appears in default (active-only) listing');
+    const defaultListing = await axios.get(`${API_BASE}/key-sharing`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { unit_id: unitId }
+    });
+    const defaultSharings = defaultListing.data?.sharings || [];
+    const foundInDefault = defaultSharings.some((s) => s.id === filterTestShare && isActive(s));
+    if (!foundInDefault) {
+      // Debug: show what we got
+      const shareDetails = defaultSharings.find((s) => s.id === filterTestShare);
+      const allShareIds = defaultSharings.map((s) => ({ id: s.id, is_active: s.is_active, shared_with: s.shared_with_user_id }));
+      throw new Error(`Active share not found in default listing. Looking for: ${filterTestShare}. Found shares: ${JSON.stringify(allShareIds)}. Share details: ${JSON.stringify(shareDetails || 'not found')}`);
+    }
+    ok('Active share appears in default listing');
+    
+    step('Verifying test share appears in unit endpoint default listing');
+    const defaultUnitListing = await axios.get(`${API_BASE}/key-sharing/unit/${unitId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const defaultUnitSharings = defaultUnitListing.data?.sharings || [];
+    const foundInDefaultUnit = defaultUnitSharings.some((s) => s.id === filterTestShare && isActive(s));
+    if (!foundInDefaultUnit) {
+      throw new Error('Active share not found in unit endpoint default listing');
+    }
+    ok('Active share appears in unit endpoint default listing');
+    
+    step('Revoking test share');
+    await revokeShare(token, filterTestShare);
+    // Remove from created.shares since we're revoking it for testing
+    created.shares = created.shares.filter((id) => id !== filterTestShare);
+    ok('Test share revoked');
+    
+    step('Verifying revoked share is excluded from default listing');
+    const afterRevokeListing = await axios.get(`${API_BASE}/key-sharing`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { unit_id: unitId }
+    });
+    const afterRevokeSharings = afterRevokeListing.data?.sharings || [];
+    const foundAfterRevoke = afterRevokeSharings.some((s) => s.id === filterTestShare);
+    if (foundAfterRevoke) {
+      throw new Error('Revoked share still appears in default listing');
+    }
+    ok('Revoked share excluded from default listing');
+    
+    step('Verifying revoked share is excluded from unit endpoint default listing');
+    const afterRevokeUnitListing = await axios.get(`${API_BASE}/key-sharing/unit/${unitId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const afterRevokeUnitSharings = afterRevokeUnitListing.data?.sharings || [];
+    const foundAfterRevokeUnit = afterRevokeUnitSharings.some((s) => s.id === filterTestShare);
+    if (foundAfterRevokeUnit) {
+      throw new Error('Revoked share still appears in unit endpoint default listing');
+    }
+    ok('Revoked share excluded from unit endpoint default listing');
+    
+    step('Verifying revoked share appears when explicitly requesting inactive');
+    const inactiveListing = await axios.get(`${API_BASE}/key-sharing`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { unit_id: unitId, is_active: 'false' }
+    });
+    const inactiveSharings = inactiveListing.data?.sharings || [];
+    const foundInInactive = inactiveSharings.some((s) => s.id === filterTestShare && !isActive(s));
+    if (!foundInInactive) {
+      throw new Error('Revoked share not found when explicitly requesting inactive');
+    }
+    ok('Revoked share appears when explicitly requesting inactive');
+    
+    step('Verifying revoked share appears in unit endpoint when explicitly requesting inactive');
+    let inactiveUnitListing;
+    try {
+      inactiveUnitListing = await axios.get(`${API_BASE}/key-sharing/unit/${unitId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { is_active: 'false' }
+      });
+    } catch (err) {
+      throw new Error(`Failed to fetch inactive shares from unit endpoint: ${err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Unknown error'}. Status: ${err?.response?.status}`);
+    }
+    if (!inactiveUnitListing.data?.success) {
+      throw new Error(`Unit endpoint returned unsuccessful response: ${JSON.stringify(inactiveUnitListing.data)}`);
+    }
+    const inactiveUnitSharings = inactiveUnitListing.data?.sharings || [];
+    const foundInInactiveUnit = inactiveUnitSharings.some((s) => s.id === filterTestShare && !isActive(s));
+    if (!foundInInactiveUnit) {
+      throw new Error(`Revoked share not found in unit endpoint when explicitly requesting inactive. Looking for: ${filterTestShare}. Found shares: ${JSON.stringify(inactiveUnitSharings.map(s => ({ id: s.id, is_active: s.is_active })))}`);
+    }
+    ok('Revoked share appears in unit endpoint when explicitly requesting inactive');
+    
+    step('Verifying explicit is_active=true returns only active shares');
+    const activeOnlyListing = await axios.get(`${API_BASE}/key-sharing`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { unit_id: unitId, is_active: 'true' }
+    });
+    const activeOnlySharings = activeOnlyListing.data?.sharings || [];
+    const allActive = activeOnlySharings.every((s) => isActive(s));
+    const foundRevokedInActive = activeOnlySharings.some((s) => s.id === filterTestShare);
+    if (!allActive || foundRevokedInActive) {
+      throw new Error('Explicit is_active=true returned inactive shares');
+    }
+    ok('Explicit is_active=true returns only active shares');
+
+    // Test new sharee access (this user gets a new share created later, so they should have access)
     step('New sharee (invited user) can fetch shared unit details');
     const newShareeUnitDetails = await axios.get(`${API_BASE}/units/${unitId}`, {
       headers: { Authorization: `Bearer ${newShareeToken}` }

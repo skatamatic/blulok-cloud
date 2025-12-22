@@ -75,8 +75,27 @@ export class GeometryOptimizer {
     }
     
     // Fast path: Check if cells form a single rectangle
+    // But only use fast path if it doesn't exceed maxRectangleSize (or if no limit is set)
     const singleRect = this.isSingleRectangle(cells);
     if (singleRect) {
+      // If single rectangle exceeds max size, we need to split it
+      if (options.maxRectangleSize && singleRect.area > options.maxRectangleSize) {
+        const splitRects = this.splitRectangle(singleRect, options.maxRectangleSize);
+        const cellToRectangle = new Map<string, OptimizedRectangle>();
+        splitRects.forEach(rect => {
+          rect.cells.forEach(cellKey => {
+            cellToRectangle.set(cellKey, rect);
+          });
+        });
+        return {
+          rectangles: splitRects,
+          cellToRectangle,
+          totalCells: cells.length,
+          optimizationRatio: splitRects.length / cells.length,
+        };
+      }
+      
+      // Single rectangle is within size limit, use it
       const cellToRectangle = new Map<string, OptimizedRectangle>();
       singleRect.cells.forEach(cellKey => {
         cellToRectangle.set(cellKey, singleRect);
@@ -231,6 +250,10 @@ export class GeometryOptimizer {
       const maxZ = Math.max(...remainingCells.map(c => c.z));
       
       // Try all possible rectangles
+      // First pass: find best rectangle without size constraints (for splitting later)
+      let bestRectUnconstrained: OptimizedRectangle | null = null;
+      let bestAreaUnconstrained = 0;
+      
       for (let startX = minX; startX <= seedX; startX++) {
         for (let startZ = minZ; startZ <= seedZ; startZ++) {
           // Try all possible end positions
@@ -241,16 +264,31 @@ export class GeometryOptimizer {
               const height = endZ - startZ + 1;
               const area = width * height;
               
-              if (options.maxRectangleSize && area > options.maxRectangleSize) {
-                continue; // Too large
-              }
-              
-              if (options.minRectangleSize && area < options.minRectangleSize) {
-                continue; // Too small (skip merging)
-              }
-              
               // Check if rectangle is filled
               if (isRectangleFilled(startX, endX, startZ, endZ)) {
+                // Track best rectangle regardless of size (for potential splitting)
+                if (area > bestAreaUnconstrained) {
+                  bestAreaUnconstrained = area;
+                  const rectCells = getRectangleCells(startX, endX, startZ, endZ);
+                  bestRectUnconstrained = {
+                    minX: startX,
+                    maxX: endX,
+                    minZ: startZ,
+                    maxZ: endZ,
+                    cells: rectCells,
+                    area,
+                  };
+                }
+                
+                // Only consider for bestRect if it meets size constraints
+                if (options.maxRectangleSize && area > options.maxRectangleSize) {
+                  continue; // Too large, but we'll split it if it's the best
+                }
+                
+                if (options.minRectangleSize && area < options.minRectangleSize) {
+                  continue; // Too small (skip merging)
+                }
+                
                 if (area > bestArea) {
                   bestArea = area;
                   const rectCells = getRectangleCells(startX, endX, startZ, endZ);
@@ -269,6 +307,11 @@ export class GeometryOptimizer {
         }
       }
       
+      // If no constrained rectangle found but we have an unconstrained one, use it (will be split)
+      if (!bestRect && bestRectUnconstrained) {
+        bestRect = bestRectUnconstrained;
+      }
+      
       // If no rectangle found, create single-cell rectangle
       if (!bestRect) {
         const rectCells = new Set([seedKey]);
@@ -280,6 +323,18 @@ export class GeometryOptimizer {
           cells: rectCells,
           area: 1,
         };
+      }
+      
+      // If rectangle exceeds max size, split it into smaller rectangles
+      if (options.maxRectangleSize && bestRect.area > options.maxRectangleSize) {
+        const splitRects = this.splitRectangle(bestRect, options.maxRectangleSize);
+        splitRects.forEach(rect => {
+          rect.cells.forEach(cellKey => {
+            cellSet.delete(cellKey);
+          });
+          rectangles.push(rect);
+        });
+        continue; // Skip adding bestRect, we've already added the splits
       }
       
       // Remove covered cells
@@ -384,4 +439,69 @@ export class GeometryOptimizer {
     
     return true;
   }
+  
+  /**
+   * Split a rectangle that exceeds maxRectangleSize into smaller rectangles
+   * Uses a simple grid-based splitting approach
+   */
+  private static splitRectangle(
+    rect: OptimizedRectangle,
+    maxSize: number
+  ): OptimizedRectangle[] {
+    const width = rect.maxX - rect.minX + 1;
+    const height = rect.maxZ - rect.minZ + 1;
+    const area = width * height;
+    
+    if (area <= maxSize) {
+      return [rect]; // No need to split
+    }
+    
+    const splitRects: OptimizedRectangle[] = [];
+    
+    // Calculate optimal grid dimensions to split into
+    // Try to make rectangles as square as possible while respecting maxSize
+    const cols = Math.ceil(Math.sqrt((width * height) / maxSize) * (width / height));
+    const rows = Math.ceil((width * height) / (maxSize * cols));
+    
+    const cellWidth = Math.ceil(width / cols);
+    const cellHeight = Math.ceil(height / rows);
+    
+    // Split into grid
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const startX = rect.minX + col * cellWidth;
+        const endX = Math.min(rect.minX + (col + 1) * cellWidth - 1, rect.maxX);
+        const startZ = rect.minZ + row * cellHeight;
+        const endZ = Math.min(rect.minZ + (row + 1) * cellHeight - 1, rect.maxZ);
+        
+        // Only create rectangle if it has valid bounds
+        if (startX <= endX && startZ <= endZ) {
+          const rectCells = new Set<string>();
+          for (let x = startX; x <= endX; x++) {
+            for (let z = startZ; z <= endZ; z++) {
+              const cellKey = `${x},${z}`;
+              if (rect.cells.has(cellKey)) {
+                rectCells.add(cellKey);
+              }
+            }
+          }
+          
+          if (rectCells.size > 0) {
+            const splitArea = (endX - startX + 1) * (endZ - startZ + 1);
+            splitRects.push({
+              minX: startX,
+              maxX: endX,
+              minZ: startZ,
+              maxZ: endZ,
+              cells: rectCells,
+              area: splitArea,
+            });
+          }
+        }
+      }
+    }
+    
+    return splitRects.length > 0 ? splitRects : [rect]; // Fallback to original if split failed
+  }
 }
+

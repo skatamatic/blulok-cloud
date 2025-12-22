@@ -1133,9 +1133,10 @@ export class BuildingManager {
       this.onRemoveGroundTiles(cellList);
     }
 
-    // Get or rebuild optimization
-    let optimization: OptimizationResult | undefined = this.floorOptimizations.get(floorLevel);
-    if (!optimization && this.optimizerEnabled) {
+    // Always rebuild optimization when building changes (invalidate cache)
+    // This ensures optimizations are up-to-date when footprints change
+    let optimization: OptimizationResult | undefined = undefined;
+    if (this.optimizerEnabled) {
       optimization = this.rebuildFloorOptimization(building, floorLevel) || undefined;
     }
     

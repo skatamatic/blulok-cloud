@@ -1759,9 +1759,6 @@ export class BluDesignEngine {
     const asset = this.currentPlacementAsset;
     const gridSize = this.gridSystem.getGridSize();
     
-    // Track ground tile categories placed in this batch
-    const groundTileCategoriesPlaced = new Set<AssetCategory>();
-    
     // Place all objects
     for (const placedObject of objects) {
       // Ground tiles: use instanced manager for performance
@@ -2295,29 +2292,18 @@ export class BluDesignEngine {
     
     const category = objectData?.assetMetadata?.category || object.userData.category;
     if (!category) {
-      console.debug('[applyActiveThemeSkin] No category found on object:', object.userData);
       return;
     }
     
-    console.log(`[applyActiveThemeSkin] Object category: "${category}", theme: "${theme.name}"`, {
-      themeCategorySkins: theme.categorySkins,
-    });
-    
     // Try to get skin from theme first
     const skinId = theme.categorySkins[category as AssetCategory];
-    console.log(`[applyActiveThemeSkin] Looking for skin: "${skinId}" for category "${category}"`);
     
     if (skinId) {
       const skin = skinRegistry.getSkin(skinId);
       if (skin) {
-        console.log(`[applyActiveThemeSkin] Found skin "${skin.name}", applying...`);
         this.applySkinToObject(group, skin);
         return;
-      } else {
-        console.warn(`[applyActiveThemeSkin] Skin "${skinId}" not found in registry!`);
       }
-    } else {
-      console.debug(`[applyActiveThemeSkin] No skin assigned for category "${category}" in theme`);
     }
     
     // Try default skin for this category
@@ -2327,8 +2313,6 @@ export class BluDesignEngine {
     const defaultSkin = skinRegistry.getSkin(defaultSkinId);
     if (defaultSkin) {
       this.applySkinToObject(group, defaultSkin);
-    } else {
-      console.debug(`[applyActiveThemeSkin] No default skin found for category "${category}" (tried: ${defaultSkinId})`);
     }
   }
   
@@ -5261,7 +5245,6 @@ export class BluDesignEngine {
   }
   
   private applyOptimizerSettings(settings: EditorPreferences['rendering']): void {
-    console.log(`[BluDesignEngine] applyOptimizerSettings: optimizerEnabled=${settings.optimizerEnabled}, readonly=${this.readonly}`);
     this.buildingManager?.setOptimizerEnabled(settings.optimizerEnabled);
     this.groundTileManager?.setOptimizerEnabled(settings.optimizerEnabled);
     // Always sync readonly mode (may change if engine mode changes)

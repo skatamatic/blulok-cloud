@@ -79,6 +79,37 @@ const createMockKnex = (): Knex => {
   const mockKnex = jest.fn((tableName: string) => {
     const builder = createMockQueryBuilder();
     
+    // Handle unit_assignments table
+    if (tableName === 'unit_assignments') {
+      builder.where = jest.fn((conditions: any) => {
+        builder.first = jest.fn().mockResolvedValue(null); // Default to no primary tenant
+        return builder;
+      });
+      return builder;
+    }
+    
+    // Handle units table
+    if (tableName === 'units') {
+      builder.where = jest.fn((column: string | any, value?: any) => {
+        if (column === 'id' && value) {
+          builder.first = jest.fn().mockResolvedValue({
+            id: value,
+            facility_id: 'facility-1'
+          });
+        } else if (typeof column === 'object' && column !== null) {
+          // Handle where({ id: value }) syntax
+          builder.first = jest.fn().mockResolvedValue({
+            id: (column as any).id,
+            facility_id: 'facility-1'
+          });
+        } else {
+          builder.first = jest.fn().mockResolvedValue(null);
+        }
+        return builder;
+      });
+      return builder;
+    }
+    
     // Special handling for blulok_devices table queries
     if (tableName === 'blulok_devices') {
       builder.where = jest.fn((_column: string, value: any) => {

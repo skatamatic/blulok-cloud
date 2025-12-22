@@ -54,6 +54,8 @@ describe('RenderingSettingsManager', () => {
   
   it('should provide convenience getters', () => {
     const manager = RenderingSettingsManager.getInstance();
+    // Reload from preferences to ensure defaults are applied after reset
+    manager.reloadFromPreferences();
     
     expect(manager.isInstancingEnabled()).toBe(true);
     expect(manager.isFrustumCullingEnabled()).toBe(true);
@@ -77,3 +79,4 @@ describe('RenderingSettingsManager', () => {
     expect(manager.isInstancingEnabled()).toBe(false);
   });
 });
+

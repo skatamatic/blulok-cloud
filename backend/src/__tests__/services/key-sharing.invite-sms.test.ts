@@ -74,6 +74,30 @@ describe('KeySharingService.inviteByPhone SMS behavior', () => {
       phone_number: '+15551230001',
       requires_password_reset: true,
     });
+    
+    // Stub DB lookups for unit → facility mapping and unit_assignments
+    const unitsWhere = jest.fn().mockReturnThis();
+    const unitsFirst = jest.fn().mockResolvedValue({ facility_id: 'facility-1' });
+    const unitAssignmentsWhere = jest.fn().mockReturnThis();
+    const unitAssignmentsFirst = jest.fn().mockResolvedValue(null);
+    (svc as any).db = jest.fn((table: string) => {
+      if (table === 'units') {
+        return {
+          where: unitsWhere,
+          first: unitsFirst,
+        };
+      }
+      if (table === 'unit_assignments') {
+        return {
+          where: unitAssignmentsWhere,
+          first: unitAssignmentsFirst,
+        };
+      }
+      return {
+        where: jest.fn().mockReturnThis(),
+        first: jest.fn().mockResolvedValue(null),
+      };
+    });
 
     const res = await svc.inviteByPhone({
       unitId: 'unit-1',
