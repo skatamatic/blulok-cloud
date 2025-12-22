@@ -7,7 +7,6 @@
 
 import {
   GeometryOptimizer,
-  OptimizedRectangle,
   OptimizationResult,
 } from '@/components/bludesign/core/utils/GeometryOptimizer';
 

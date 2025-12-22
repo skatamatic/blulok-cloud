@@ -7,7 +7,7 @@
 import { BuildingManager } from '@/components/bludesign/core/BuildingManager';
 import { GridSystem } from '@/components/bludesign/core/GridSystem';
 import { AssetFactory } from '@/components/bludesign/assets/AssetFactory';
-import { Building, BuildingFootprint, Floor, FLOOR_HEIGHT } from '@/components/bludesign/core/types';
+import { Building, FLOOR_HEIGHT } from '@/components/bludesign/core/types';
 import * as THREE from 'three';
 
 // Mock scene

@@ -508,9 +508,6 @@ export class GroundTileManager {
     
     const gridSize = this.gridSystem.getGridSize();
     
-    // Store original instances before clearing (for lookup)
-    const originalInstances = new Map(batch.instances);
-    
     // Clear existing instances
     batch.instances.clear();
     batch.mesh.count = 0;

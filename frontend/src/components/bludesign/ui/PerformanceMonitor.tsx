@@ -59,7 +59,6 @@ export const PerformanceMonitor: React.FC = () => {
             // @ts-ignore - experimental API
             const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
             if (debugInfo) {
-              const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
               const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
               // Memory info not directly available, but we can show renderer info
               if (renderer) {
@@ -67,7 +66,6 @@ export const PerformanceMonitor: React.FC = () => {
               }
             } else {
               // Fallback: try to get basic info
-              const vendor = gl.getParameter(gl.VENDOR);
               const renderer = gl.getParameter(gl.RENDERER);
               if (renderer) {
                 setGpuInfo(renderer.length > 40 ? renderer.substring(0, 40) + '...' : renderer);
