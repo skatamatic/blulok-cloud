@@ -47,7 +47,7 @@ export default function UnitsPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
   const { subscribe, unsubscribe } = useWebSocket();
-  const { selectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
+  const { selectedFacilityId } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);

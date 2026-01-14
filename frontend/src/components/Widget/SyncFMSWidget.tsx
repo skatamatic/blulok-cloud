@@ -70,7 +70,6 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 
   // Get user's facilities
   const isAdminUser = authState.user?.role === 'admin' || authState.user?.role === 'dev_admin';
-  const facilityNamesFromAuth = authState.user?.facilityNames || [];
   
   // Fetch all facilities for admin users
   useEffect(() => {

@@ -51,7 +51,7 @@ import {
 } from './core/types';
 import { AssetRegistry } from './assets/AssetRegistry';
 import { AssetService } from './services/AssetService';
-import { AssetCategory, AssetMetadata } from './assets/types';
+import { AssetCategory, AssetMetadata } from './core/types';
 import * as bludesignApi from '@/api/bludesign';
 import {
   CursorArrowRaysIcon,

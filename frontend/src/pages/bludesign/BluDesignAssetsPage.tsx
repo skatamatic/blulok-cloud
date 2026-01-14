@@ -65,7 +65,7 @@ export default function BluDesignAssetsPage() {
   
   const [activeTab, setActiveTab] = useState<TabMode>(getInitialTab());
   const [assets, setAssets] = useState<AssetMetadata[]>([]);
-  const [customAssets, setCustomAssets] = useState<AssetDefinition[]>([]);
+  const [, setCustomAssets] = useState<AssetDefinition[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<AssetDefinition | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');

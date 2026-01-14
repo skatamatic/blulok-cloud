@@ -7,6 +7,8 @@
 
 import * as THREE from 'three';
 import { SelectionState } from './types';
+import { GridSystem } from './GridSystem';
+import { GroundTileManager } from './GroundTileManager';
 
 // Selection filter type
 export type SelectionFilter = 'all' | 'smart' | 'visual';

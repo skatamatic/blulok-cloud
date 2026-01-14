@@ -227,7 +227,7 @@ export class BuildingManager implements OptimizationClient {
     return contexts;
   }
   
-  async onOptimizationComplete(contextId: string, result: OptimizationResult): Promise<void> {
+  async onOptimizationComplete(contextId: string, _result: OptimizationResult): Promise<void> {
     // This callback is called when optimization completes asynchronously
     // Used for manual optimization requests (e.g., when settings change)
     
@@ -1371,7 +1371,7 @@ export class BuildingManager implements OptimizationClient {
    * Generate floor tiles for a building at a specific floor level (legacy method, now redirects to rebuildFloorLevel)
    * @deprecated Use rebuildFloorLevel instead - batches are shared across buildings
    */
-  private async generateFloorTiles(building: Building, floorLevel: number): Promise<void> {
+  private async generateFloorTiles(_building: Building, floorLevel: number): Promise<void> {
     // Just rebuild the entire floor level since batches are shared
     await this.rebuildFloorLevel(floorLevel);
   }
@@ -1381,7 +1381,7 @@ export class BuildingManager implements OptimizationClient {
    */
   private async rebuildAllRoofs(): Promise<void> {
     // Clear all existing roof markers
-    this.roofTileIds.forEach((tileIds, buildingId) => {
+    this.roofTileIds.forEach((tileIds, _buildingId) => {
       tileIds.forEach(tileId => {
         const marker = this.roofTileMeshes.get(tileId);
         if (marker) {
@@ -1426,7 +1426,7 @@ export class BuildingManager implements OptimizationClient {
    * 
    * NOTE: This now calls rebuildAllRoofs() since roofs share a batch
    */
-  async generateRoof(building: Building): Promise<void> {
+  async generateRoof(_building: Building): Promise<void> {
     // Since roof batch is shared, we need to rebuild all roofs
     await this.rebuildAllRoofs();
   }
@@ -2795,13 +2795,13 @@ export class BuildingManager implements OptimizationClient {
    * NOTE: This is called multiple times from rebuildAllRoofs, accumulating instances into the shared batch
    */
   private createOptimizedRoofTiles(
-    building: Building,
+    _building: Building,
     maxFloorLevel: number,
     roofY: number,
     roofRenderOrder: number,
     optimization: OptimizationResult,
     _roofTileIds: string[],
-    cellList: Array<{x: number, z: number}>
+    _cellList: Array<{x: number, z: number}>
   ): void {
     const batch = this.getOrCreateRoofTileBatch();
     const gridSize = this.gridSystem.getGridSize();

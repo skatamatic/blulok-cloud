@@ -30,7 +30,6 @@ import {
   LinkIcon,
   MapPinIcon,
   CpuChipIcon,
-  BuildingOfficeIcon,
   HomeIcon,
 } from '@heroicons/react/24/outline';
 
@@ -185,7 +184,6 @@ export default function AccessHistoryPage() {
     limit: 50,
   });
 
-  const isAdmin = ['admin', 'dev_admin'].includes(authState.user?.role || '');
   const isFacilityAdmin = authState.user?.role === 'facility_admin';
   const isTenant = authState.user?.role === 'tenant';
 

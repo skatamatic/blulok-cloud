@@ -46,8 +46,6 @@ interface NotificationsWidgetProps {
  */
 const transformAccessLogToNotification = (log: AccessLog): Notification | null => {
   // Only create notifications for significant events
-  const isSecurityEvent = !log.success || log.action === 'access_denied' || log.action === 'invalid_credential';
-  const isSystemEvent = log.action === 'system_error' || log.action === 'timeout';
   const isScheduleViolation = log.action === 'schedule_violation';
   
   // Skip successful routine operations - they are not notification-worthy
@@ -167,8 +165,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       if (response.success && response.logs) {
         const transformedNotifications = response.logs
           .map(transformAccessLogToNotification)
-          .filter((n): n is Notification => n !== null)
-          .map(n => ({
+          .filter((n: Notification | null): n is Notification => n !== null)
+          .map((n: Notification) => ({
             ...n,
             isRead: readNotificationIds.has(n.id),
           }));

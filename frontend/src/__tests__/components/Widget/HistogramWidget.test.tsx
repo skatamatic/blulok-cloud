@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { HistogramWidget } from '@/components/Widget/HistogramWidget';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';

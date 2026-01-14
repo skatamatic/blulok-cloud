@@ -382,7 +382,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
       )}
 
       {/* Performance Monitor */}
-      <PerformanceMonitor />
+      <PerformanceMonitor engine={engine} />
 
       {/* UI Overlays - only show when loaded */}
       {isDataLoaded && !loadError && (

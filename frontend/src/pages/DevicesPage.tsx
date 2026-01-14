@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
@@ -64,7 +64,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const navigate = useNavigate();
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const { selectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
+  const { selectedFacilityId } = useGlobalFacility();
   const [devices, setDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]);
   const [allDevices, setAllDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);

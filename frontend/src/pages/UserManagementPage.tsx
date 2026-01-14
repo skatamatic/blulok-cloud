@@ -11,7 +11,6 @@ import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityC
 import {
   PlusIcon,
   FunnelIcon,
-  BuildingOfficeIcon,
 } from '@heroicons/react/24/outline';
 
 interface User {

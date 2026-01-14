@@ -250,6 +250,9 @@ export class GroundTileManager implements OptimizationClient {
     const worldPos = this.gridSystem.gridToWorld(position);
     // Use shared marker geometry and material (reuse to reduce material count)
     const markerGeometry = this.sharedGeometry; // Reuse shared geometry
+    if (!markerGeometry) {
+      throw new Error('Shared geometry not initialized');
+    }
     const marker = new THREE.Mesh(
       markerGeometry,
       this.sharedMarkerMaterial! // Use shared invisible material

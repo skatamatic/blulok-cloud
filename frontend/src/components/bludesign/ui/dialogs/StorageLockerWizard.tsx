@@ -31,7 +31,7 @@ import {
 import { LockerSpec } from '../../assets/AssetFactory';
 import { LockerPreview3D } from './LockerPreview3D';
 import { LockerModelUpload } from './LockerModelUpload';
-import { AssetService, CreateAssetDefinitionInput } from '../../services/AssetService';
+import { CreateAssetDefinitionInput } from '../../services/AssetService';
 
 type WizardMode = 'wizard' | 'upload';
 type UnitSystem = 'metric' | 'imperial';

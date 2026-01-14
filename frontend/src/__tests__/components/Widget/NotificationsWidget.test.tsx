@@ -580,7 +580,7 @@ describe('NotificationsWidget', () => {
           device_id: 'device-7',
           device_type: 'blulok',
           action: 'manual_override',
-          method: 'manual_override',
+          method: 'admin_override',
           success: true,
           occurred_at: new Date().toISOString(),
           created_at: new Date().toISOString(),

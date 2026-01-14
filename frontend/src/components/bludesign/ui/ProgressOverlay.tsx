@@ -111,8 +111,6 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
   const isComplete = percentage >= 100;
 
   // Theme-aware colors - using company theme colors (147FD4 blue, 050505 dark)
-  const primaryBlue = '#147FD4';
-  const darkBg = '#050505';
   
   const overlayBg = isDark
     ? `linear-gradient(to bottom, rgba(5, 5, 5, 0.85) 0%, rgba(17, 24, 39, 0.90) 100%)`

@@ -9,7 +9,7 @@
  * - Live preview of uploaded model
  */
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
@@ -18,7 +18,6 @@ import {
   DocumentIcon,
   CubeIcon,
   XMarkIcon,
-  CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -57,7 +56,7 @@ export const LockerModelUpload: React.FC<LockerModelUploadProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modelPreview, setModelPreview] = useState<string | null>(null);
+  const [, setModelPreview] = useState<string | null>(null);
   
   // Parse model to extract parts
   const parseModel = useCallback(async (file: File) => {

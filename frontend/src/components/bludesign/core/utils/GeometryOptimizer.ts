@@ -209,6 +209,7 @@ export class GeometryOptimizer {
     options: OptimizationOptions
   ): OptimizedRectangle[] {
     const cellSet = new Set(cells.map(c => `${c.x},${c.z}`));
+    const initialCellCount = cellSet.size;
     const rectangles: OptimizedRectangle[] = [];
     
     // Helper: Check if a rectangle is fully filled
@@ -345,7 +346,7 @@ export class GeometryOptimizer {
       });
       
       // #region agent log
-      const iterationStartTime = performance.now();
+      // const iterationStartTime = performance.now();
       // #endregion
       
       // Find the largest rectangle starting from any remaining cell

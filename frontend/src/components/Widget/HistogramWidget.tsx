@@ -73,16 +73,17 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     // Only initialize once - don't re-run if already initialized
     if (facilitiesInitializedRef.current) return;
     
-    if (authState.user?.facilities && authState.user.facilities.length > 0) {
-      const facilities = authState.user.facilities.map(f => ({
-        id: f.id,
-        name: f.name
+    if (authState.user?.facilityIds && authState.user.facilityIds.length > 0) {
+      const facilityNames = authState.user.facilityNames || [];
+      const facilities = authState.user.facilityIds.map((id: string, index: number) => ({
+        id,
+        name: facilityNames[index] || id
       }));
-      const newSelected = facilities.slice(0, 3).map(f => f.id);
+      const newSelected = facilities.slice(0, 3).map((f: { id: string; name: string }) => f.id);
       // Only set if different to avoid unnecessary re-renders
       setUserFacilities(prev => {
-        const prevIds = prev.map(f => f.id).sort().join(',');
-        const newIds = facilities.map(f => f.id).sort().join(',');
+        const prevIds = prev.map((f: { id: string; name: string }) => f.id).sort().join(',');
+        const newIds = facilities.map((f: { id: string; name: string }) => f.id).sort().join(',');
         return prevIds === newIds ? prev : facilities;
       });
       setSelectedFacilities(prev => {
@@ -144,7 +145,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
         ).values()
       );
       if (uniqueFacilities.length > 0) {
-        const newSelected = uniqueFacilities.slice(0, 3).map(f => f.id);
+        const newSelected = uniqueFacilities.slice(0, 3).map((f: { id: string; name: string }) => f.id);
         // Only set if different to avoid loops
         setUserFacilities(uniqueFacilities);
         setSelectedFacilities(prev => {

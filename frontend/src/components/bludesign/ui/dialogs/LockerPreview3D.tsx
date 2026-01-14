@@ -9,7 +9,7 @@
  * - Uses default skin from ThemeManager
  */
 
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -180,8 +180,7 @@ export const LockerPreview3D: React.FC<LockerPreview3DProps> = ({
     // Create grid helper showing the footprint
     const gridSizeX = gridUnits.x * GRID_UNIT_METERS;
     const gridSizeZ = gridUnits.z * GRID_UNIT_METERS;
-    const maxSize = Math.max(gridSizeX, gridSizeZ);
-    const divisions = Math.max(gridUnits.x, gridUnits.z);
+    // Grid size calculated from units
     
     // Use a group to create a custom grid
     const gridGroup = new THREE.Group();
