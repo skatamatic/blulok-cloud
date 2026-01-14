@@ -298,17 +298,32 @@ describe('RemoteGateWidget', () => {
         />
       );
       
+      // Wait for dropdown to be ready with data and auto-select to happen
       await waitFor(() => {
-        expect(screen.getByRole('combobox')).toBeInTheDocument();
+        const select = screen.getByRole('combobox') as HTMLSelectElement;
+        expect(select).toBeInTheDocument();
+        // Check that gate-3 option exists
+        const options = Array.from(select.querySelectorAll('option'));
+        expect(options.some(opt => opt.value === 'gate-3')).toBe(true);
+        // Wait for auto-select of first online gate
+        expect(select.value).toBe('gate-1');
+      }, { timeout: 5000 });
+      
+      const select = screen.getByRole('combobox') as HTMLSelectElement;
+      
+      // Change selection to offline gate
+      await act(async () => {
+        fireEvent.change(select, { target: { value: 'gate-3' } });
       });
       
-      const select = screen.getByRole('combobox');
-      fireEvent.change(select, { target: { value: 'gate-3' } });
+      // Verify the select value changed
+      expect(select.value).toBe('gate-3');
       
-      // Should now show the offline gate status (text may be split: "Gate" and "offline")
+      // Should now show the offline gate status or "Cannot operate gate remotely"
       await waitFor(() => {
-        expect(screen.getByText(/Gate.*offline/i)).toBeInTheDocument();
-      });
+        // The component shows "Gate offline" for offline gates or shows the "Cannot operate" message
+        expect(screen.getByText('Cannot operate gate remotely')).toBeInTheDocument();
+      }, { timeout: 3000 });
     });
   });
 

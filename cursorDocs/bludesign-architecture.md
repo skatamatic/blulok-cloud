@@ -241,6 +241,117 @@ Central asset catalog:
 - State evaluation from data
 - Custom asset registration
 
+### Storage Locker Wizard (`/components/bludesign/ui/dialogs/`)
+
+A wizard system for creating custom storage locker assets with procedural geometry or model upload.
+
+#### Grid Standard
+**1 grid tile = 2 feet = 0.6096 meters**
+
+All asset dimensions and grid calculations are based on this standard. The constants are defined in `types.ts`:
+- `GRID_UNIT_FEET = 2`
+- `GRID_UNIT_METERS = 0.6096`
+
+Helper functions for unit conversion:
+- `feetToMeters(ft)`, `metersToFeet(m)`
+- `feetToGridUnits(ft)`, `metersToGridUnits(m)`
+
+#### `StorageLockerWizard.tsx`
+Main wizard dialog with two modes:
+
+**Geometry Wizard Mode** (procedural locker creation):
+- Step 1: Dimensions - Set name, unit system (ft/m), width/height/depth
+- Step 2: Door Configuration - Select side, size, and position
+- Step 3: Review - Confirm settings and create asset
+
+**Model Upload Mode** (GLB/FBX import):
+- Drag-and-drop file upload
+- Automatic mesh/group detection
+- Part assignment (body, door, frame, other)
+- Smart asset functionality binding
+
+**Wizard State Structure:**
+```typescript
+interface LockerWizardState {
+  mode: 'wizard' | 'upload';
+  name: string;
+  unitSystem: 'metric' | 'imperial';
+  width: number;   // meters
+  height: number;  // meters
+  depth: number;   // meters
+  doorSide: 'front' | 'back' | 'left' | 'right';
+  doorWidth: number;
+  doorHeight: number;
+  doorPositionX: number;  // offset from center
+  doorPositionY: number;  // offset from bottom
+  doorCentered: boolean;
+  gridUnits: { x: number; z: number };  // computed
+}
+```
+
+**Dimension Constraints:**
+- Min locker size: 1ft × 2ft × 1ft
+- Max locker size: 20ft × 12ft × 30ft
+- Door cannot exceed the side dimensions
+- Door position auto-constrains when dimensions change
+
+#### `LockerPreview3D.tsx`
+Interactive 3D preview component:
+- Real-time geometry updates as sliders change
+- OrbitControls for rotation and zoom
+- Grid overlay showing footprint
+- Uses default skin from ThemeManager
+- Door highlighted with accent color
+
+#### `LockerModelUpload.tsx`
+GLB/FBX model upload with parts picker:
+- Drag-and-drop file upload
+- Model parsing to extract named meshes/groups
+- Auto-assignment based on part names
+- Part type selection (body, door, frame, other)
+- Validation for required parts
+
+#### `AssetFactory.createCustomStorageUnit()`
+Procedural locker mesh generation:
+```typescript
+static createCustomStorageUnit(
+  dimensions: AssetDimensions,
+  lockerSpec: LockerSpec,
+  state: DeviceState = DeviceState.LOCKED
+): THREE.Object3D
+```
+- Creates box body with state-dependent material
+- Positions door on specified side
+- Supports all four door sides with proper rotation
+- userData.partNames = ['body', 'door'] for skinning
+
+#### Backend Support
+
+**Database** (`039_bludesign_locker_spec.ts`):
+- Adds `locker_spec` JSON column to `bludesign_asset_definitions`
+
+**LockerSpec Schema:**
+```typescript
+interface LockerSpec {
+  doorSide: 'front' | 'back' | 'left' | 'right';
+  doorWidth: number;   // meters
+  doorHeight: number;  // meters
+  doorPositionX: number;  // horizontal offset
+  doorPositionY: number;  // vertical offset
+}
+```
+
+**API Validation** (`assets.routes.ts`):
+```javascript
+lockerSpec: Joi.object({
+  doorSide: Joi.string().valid('front', 'back', 'left', 'right'),
+  doorWidth: Joi.number().positive(),
+  doorHeight: Joi.number().positive(),
+  doorPositionX: Joi.number(),
+  doorPositionY: Joi.number().min(0),
+})
+```
+
 ### Hooks Module (`/components/bludesign/hooks/`)
 
 #### `useBluDesignEngine.ts`
