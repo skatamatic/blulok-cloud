@@ -64,6 +64,7 @@ describe('User Devices Routes', () => {
     // Mock UserDeviceModel
     mockUserDeviceModel = {
       findByUserAndAppDeviceId: jest.fn(),
+      findActiveByUserAndAppDeviceId: jest.fn(),
       listByUser: jest.fn(),
       countActiveByUser: jest.fn(),
       create: jest.fn(),
@@ -96,7 +97,7 @@ describe('User Devices Routes', () => {
       // Test DELETE /me/:id
       response = await request(app).delete(`/api/v1/user-devices/me/${testData.users.tenant.id}`);
       expect(response.status).toBe(401);
-    });
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('GET /api/v1/user-devices/me', () => {

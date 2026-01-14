@@ -11,10 +11,12 @@
 import * as THREE from 'three';
 import { GridSystem } from './GridSystem';
 import { AssetCategory, GridPosition, PartMaterial } from './types';
+import { OptimizationResult } from './utils/GeometryOptimizer';
+import { OptimizationManager } from './OptimizationManager';
 import {
-  GeometryOptimizer,
-  OptimizationResult,
-} from './utils/GeometryOptimizer';
+  OptimizationClient,
+  OptimizationContext,
+} from './utils/OptimizationClient';
 
 /** Instance data for tracking */
 interface TileInstance {
@@ -45,15 +47,21 @@ const DEFAULT_MATERIALS: Record<string, { metalness: number; roughness: number }
   [AssetCategory.GRAVEL]: { metalness: 0.05, roughness: 0.95 },
 };
 
-export class GroundTileManager {
+export class GroundTileManager implements OptimizationClient {
   private scene: THREE.Scene;
   private gridSystem: GridSystem;
   
-  // Batches by category
+  // LOGICAL LAYOUT: Source of truth for what tiles exist (objectId -> position, category)
+  private logicalTiles: Map<string, {position: GridPosition, category: AssetCategory}> = new Map();
+  
+  // RENDERED LAYOUT: Instanced mesh batches for rendering (separate from logical data)
   private batches: Map<AssetCategory, TileBatch> = new Map();
   
   // Shared geometry (all ground tiles are the same shape)
   private sharedGeometry: THREE.BoxGeometry | null = null;
+  
+  // Shared invisible material for markers (all markers use the same material)
+  private sharedMarkerMaterial: THREE.MeshBasicMaterial | null = null;
   
   // Temp objects for matrix calculations
   private tempMatrix = new THREE.Matrix4();
@@ -65,23 +73,99 @@ export class GroundTileManager {
   private readonly TILE_HEIGHT = 0.05;
   private readonly INITIAL_CAPACITY = 500;
   
-  // Optimizer state
-  private optimizerEnabled: boolean = true;
-  private isReadonly: boolean = false;
+  // Rendering state
   private frustumCullingEnabled: boolean = true;
   private useInstancing: boolean = true;
-  // Store optimizations per category (for future batch optimization)
-  private categoryOptimizations: Map<AssetCategory, OptimizationResult> = new Map();
   
-  // Auto-optimization debounce
-  private optimizeTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingCategories: Set<AssetCategory> = new Set();
-  private readonly OPTIMIZE_DEBOUNCE_MS = 500;
+  // Centralized optimization manager
+  private optimizationManager: OptimizationManager;
   
   constructor(scene: THREE.Scene, gridSystem: GridSystem) {
     this.scene = scene;
     this.gridSystem = gridSystem;
+    this.optimizationManager = OptimizationManager.getInstance();
     this.initializeSharedGeometry();
+    
+    // Register as optimization client
+    this.optimizationManager.registerClient(this);
+  }
+  
+  /**
+   * OptimizationClient implementation
+   */
+  getOptimizationId(): string {
+    return 'ground-tile-manager';
+  }
+  
+  getOptimizationContexts(): OptimizationContext[] {
+    const contexts: OptimizationContext[] = [];
+    
+    // Read from LOGICAL LAYOUT (source of truth), not from rendered batches
+    // Group tiles by category
+    const tilesByCategory = new Map<AssetCategory, Array<{x: number, z: number}>>();
+    
+    this.logicalTiles.forEach((tile) => {
+      if (!tilesByCategory.has(tile.category)) {
+        tilesByCategory.set(tile.category, []);
+      }
+      tilesByCategory.get(tile.category)!.push({ x: tile.position.x, z: tile.position.z });
+    });
+    
+    // Create a context for each category that has tiles
+    tilesByCategory.forEach((cells, category) => {
+      contexts.push({
+        id: `ground-tile-${category}`,
+        cells,
+        options: {
+          maxRectangleSize: this.optimizationManager.isReadonlyMode() ? undefined : 50,
+        },
+        metadata: { category },
+      });
+    });
+    
+    return contexts;
+  }
+  
+  onOptimizationComplete(contextId: string, result: OptimizationResult): void {
+    // Extract category from context ID (format: "ground-tile-{category}")
+    const categoryStr = contextId.replace('ground-tile-', '');
+    const category = categoryStr as AssetCategory;
+    
+    if (!this.isGroundTileCategory(category)) {
+      console.warn(`[GroundTileManager] Unknown category in optimization result: ${category}`);
+      return;
+    }
+    
+    // Build cellToObjectId mapping from LOGICAL LAYOUT (source of truth)
+    // This ensures we map all cells correctly, including any tiles added since optimization was requested
+    const cellToObjectId = new Map<string, string>();
+    this.logicalTiles.forEach((tile, objectId) => {
+      if (tile.category === category) {
+        const cellKey = `${tile.position.x},${tile.position.z}`;
+        cellToObjectId.set(cellKey, objectId);
+      }
+    });
+    
+    // Rebuild rendered batch completely from optimized result
+    // All tiles in logicalTiles are covered by the optimization result (validation ensures this)
+    this.rebuildBatchFromOptimization(category, result, cellToObjectId);
+  }
+  
+  onOptimizationInvalidated(contextId?: string): void {
+    // When optimization is disabled, rebuild all batches without optimization (1 tile = 1 instance)
+    if (!this.optimizationManager.isEnabled()) {
+      if (contextId) {
+        // Specific category invalidated - rebuild just that category
+        const categoryStr = contextId.replace('ground-tile-', '');
+        const category = categoryStr as AssetCategory;
+        if (this.isGroundTileCategory(category)) {
+          this.rebuildBatchWithoutOptimization(category);
+        }
+      } else {
+        // All categories invalidated - rebuild all categories
+        this.rebuildAllBatchesWithoutOptimization();
+      }
+    }
   }
   
   /**
@@ -97,6 +181,9 @@ export class GroundTileManager {
     );
     // Offset Y so bottom is at 0
     this.sharedGeometry.translate(0, this.TILE_HEIGHT / 2, 0);
+    
+    // Create shared invisible material for markers (all markers share this)
+    this.sharedMarkerMaterial = new THREE.MeshBasicMaterial({ visible: false });
   }
   
   /**
@@ -145,7 +232,46 @@ export class GroundTileManager {
   }
   
   /**
+   * Add a ground tile instance (internal, without optimization request)
+   * Updates logical layout and returns marker object
+   * Used by addTilesBatch for efficient batch operations
+   */
+  private addTileInternal(
+    objectId: string,
+    category: AssetCategory,
+    position: GridPosition
+  ): THREE.Object3D {
+    // 1. Update LOGICAL LAYOUT (source of truth)
+    this.logicalTiles.set(objectId, { position, category });
+    
+    // 2. Create invisible marker for selection/raycasting
+    // Note: instanceIndex will be set correctly after optimization completes
+    const gridSize = this.gridSystem.getGridSize();
+    const worldPos = this.gridSystem.gridToWorld(position);
+    // Use shared marker geometry and material (reuse to reduce material count)
+    const markerGeometry = this.sharedGeometry; // Reuse shared geometry
+    const marker = new THREE.Mesh(
+      markerGeometry,
+      this.sharedMarkerMaterial! // Use shared invisible material
+    );
+    marker.position.set(
+      worldPos.x + gridSize / 2,
+      0,
+      worldPos.z + gridSize / 2
+    );
+    marker.userData.id = objectId;
+    marker.userData.isGroundTile = true;
+    marker.userData.category = category;
+    marker.userData.gridPosition = position;
+    marker.userData.selectable = true;
+    marker.userData.instanceBatch = category;
+    
+    return marker;
+  }
+  
+  /**
    * Add a ground tile instance
+   * Updates logical layout and triggers optimization/re-render
    * Returns a marker object for selection/interaction
    */
   addTile(
@@ -153,86 +279,89 @@ export class GroundTileManager {
     category: AssetCategory,
     position: GridPosition
   ): THREE.Object3D {
-    const batch = this.getOrCreateBatch(category);
-    const gridSize = this.gridSystem.getGridSize();
+    const marker = this.addTileInternal(objectId, category, position);
     
-    // Allocate instance index (reuse freed slots when possible)
-    let instanceIndex: number;
-    if (batch.freeIndices.length > 0) {
-      instanceIndex = batch.freeIndices.pop()!;
+    // If optimization is disabled, rebuild immediately without optimization
+    if (!this.optimizationManager.isEnabled()) {
+      this.rebuildBatchWithoutOptimization(category);
     } else {
-      instanceIndex = batch.mesh.count;
-      batch.mesh.count++;
+      // Request optimization (will trigger full re-render via onOptimizationComplete)
+      this.optimizationManager.requestOptimization(`ground-tile-${category}`);
     }
     
-    // Grow if needed
-    if (batch.mesh.count > batch.maxCount) {
-      this.growBatch(batch);
-    }
-    
-    // Calculate world position
-    const worldPos = this.gridSystem.gridToWorld(position);
-    this.tempPosition.set(
-      worldPos.x + gridSize / 2, // Center in grid cell
-      0, // Ground level
-      worldPos.z + gridSize / 2
-    );
-    
-    // Set instance matrix
-    this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
-    batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
-    batch.mesh.instanceMatrix.needsUpdate = true;
-    
-    // Track instance
-    batch.instances.set(objectId, {
-      instanceIndex,
-      position,
-      category,
-    });
-    
-    // Schedule auto-optimization for this category (if enabled)
-    if (this.optimizerEnabled) {
-      this.scheduleAutoOptimization(category);
-    }
-    
-    // Create invisible marker for selection/raycasting
-    const marker = new THREE.Mesh(
-      new THREE.BoxGeometry(gridSize * 0.98, this.TILE_HEIGHT, gridSize * 0.98),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
-    marker.position.copy(this.tempPosition);
-    marker.userData.id = objectId;
-    marker.userData.isGroundTile = true;
-    marker.userData.category = category;
-    marker.userData.gridPosition = position;
-    marker.userData.selectable = true;
-    marker.userData.instanceBatch = category;
-    marker.userData.instanceIndex = instanceIndex;
-    
-    // Don't add marker to scene - just return it for tracking
     return marker;
   }
   
   /**
+   * Add multiple tiles in a batch
+   * Only requests optimization once per unique category (much more efficient)
+   * Returns array of markers in the same order as the input
+   */
+  addTilesBatch(
+    tiles: Array<{ objectId: string; category: AssetCategory; position: GridPosition }>
+  ): THREE.Object3D[] {
+    if (tiles.length === 0) return [];
+    
+    const markers: THREE.Object3D[] = [];
+    const categoriesToOptimize = new Set<AssetCategory>();
+    
+    // Add all tiles to logical layout (fast - no optimization requests)
+    for (const tile of tiles) {
+      markers.push(this.addTileInternal(tile.objectId, tile.category, tile.position));
+      categoriesToOptimize.add(tile.category);
+    }
+    
+    // If optimization is disabled, rebuild immediately without optimization
+    if (!this.optimizationManager.isEnabled()) {
+      categoriesToOptimize.forEach(category => {
+        this.rebuildBatchWithoutOptimization(category);
+      });
+    } else {
+      // Request optimization once per unique category (much more efficient!)
+      categoriesToOptimize.forEach(category => {
+        this.optimizationManager.requestOptimization(`ground-tile-${category}`);
+      });
+    }
+    
+    return markers;
+  }
+  
+  /**
    * Remove a ground tile instance
+   * Updates logical layout and triggers optimization/re-render
    */
   removeTile(objectId: string): boolean {
-    for (const [, batch] of this.batches) {
-      const instance = batch.instances.get(objectId);
-      if (instance) {
-        // Move instance to "infinity" (hidden)
-        this.tempMatrix.makeTranslation(99999, 99999, 99999);
-        batch.mesh.setMatrixAt(instance.instanceIndex, this.tempMatrix);
+    const tile = this.logicalTiles.get(objectId);
+    if (!tile) return false;
+    
+    const category = tile.category;
+    
+    // 1. Remove from LOGICAL LAYOUT (source of truth)
+    this.logicalTiles.delete(objectId);
+    
+    // 2. Check if this was the last tile in this category
+    const hasRemainingTiles = Array.from(this.logicalTiles.values()).some(t => t.category === category);
+    
+    if (!hasRemainingTiles) {
+      // No tiles left in this category - clear the rendered batch immediately
+      const batch = this.batches.get(category);
+      if (batch) {
+        batch.mesh.count = 0;
+        batch.instances.clear();
+        batch.freeIndices = [];
         batch.mesh.instanceMatrix.needsUpdate = true;
-        
-        // Add to free list
-        batch.freeIndices.push(instance.instanceIndex);
-        batch.instances.delete(objectId);
-        
-        return true;
+      }
+    } else {
+      // If optimization is disabled, rebuild immediately without optimization
+      if (!this.optimizationManager.isEnabled()) {
+        this.rebuildBatchWithoutOptimization(category);
+      } else {
+        // Request optimization (will trigger full re-render via onOptimizationComplete)
+        this.optimizationManager.requestOptimization(`ground-tile-${category}`);
       }
     }
-    return false;
+    
+    return true;
   }
   
   /**
@@ -245,7 +374,8 @@ export class GroundTileManager {
   }
   
   /**
-   * Get tile instance data
+   * Get tile instance data from rendered batch
+   * Returns undefined if tile doesn't exist or hasn't been rendered yet
    */
   getTileInstance(objectId: string): TileInstance | undefined {
     for (const batch of this.batches.values()) {
@@ -253,6 +383,20 @@ export class GroundTileManager {
       if (instance) return instance;
     }
     return undefined;
+  }
+  
+  /**
+   * Check if a tile exists in logical layout
+   */
+  hasTile(objectId: string): boolean {
+    return this.logicalTiles.has(objectId);
+  }
+  
+  /**
+   * Get logical tile data
+   */
+  getLogicalTile(objectId: string): {position: GridPosition, category: AssetCategory} | undefined {
+    return this.logicalTiles.get(objectId);
   }
   
   /**
@@ -348,47 +492,68 @@ export class GroundTileManager {
   }
   
   /**
-   * Get all tile IDs for a category
+   * Get all tile IDs for a category (from logical layout)
    */
   getTileIds(category: AssetCategory): string[] {
-    const batch = this.batches.get(category);
-    if (!batch) return [];
-    return Array.from(batch.instances.keys());
+    const ids: string[] = [];
+    this.logicalTiles.forEach((tile, objectId) => {
+      if (tile.category === category) {
+        ids.push(objectId);
+      }
+    });
+    return ids;
   }
   
   /**
-   * Get total tile count
+   * Get tile IDs in a grid area (optimized for box selection)
+   */
+  getTileIdsInArea(minX: number, maxX: number, minZ: number, maxZ: number): string[] {
+    const ids: string[] = [];
+    this.logicalTiles.forEach((tile, objectId) => {
+      const { x, z } = tile.position;
+      if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
+        ids.push(objectId);
+      }
+    });
+    return ids;
+  }
+  
+  
+  /**
+   * Get total tile count (from logical layout)
    */
   getTotalCount(): number {
-    let total = 0;
-    for (const batch of this.batches.values()) {
-      total += batch.instances.size;
-    }
-    return total;
+    return this.logicalTiles.size;
   }
   
   /**
-   * Clear all tiles
+   * Clear all tiles (both logical and rendered)
    */
   clear(): void {
+    // Clear logical layout
+    this.logicalTiles.clear();
+    
+    // Clear rendered batches
     for (const batch of this.batches.values()) {
       this.scene.remove(batch.mesh);
       batch.mesh.dispose();
       batch.material.dispose();
     }
     this.batches.clear();
+    
+    // Dispose shared marker material (will be recreated on next use if needed)
+    if (this.sharedMarkerMaterial) {
+      this.sharedMarkerMaterial.dispose();
+      this.sharedMarkerMaterial = null;
+    }
   }
   
   /**
    * Dispose all resources
    */
   dispose(): void {
-    // Clear optimization timer
-    if (this.optimizeTimer) {
-      clearTimeout(this.optimizeTimer);
-      this.optimizeTimer = null;
-    }
-    this.pendingCategories.clear();
+    // Unregister from optimization manager
+    this.optimizationManager.unregisterClient(this.getOptimizationId());
     
     this.clear();
     if (this.sharedGeometry) {
@@ -409,35 +574,18 @@ export class GroundTileManager {
   
   /**
    * Set optimizer enabled state
+   * Delegates to centralized OptimizationManager
    */
   setOptimizerEnabled(enabled: boolean): void {
-    if (this.optimizerEnabled === enabled) return;
-    
-    this.optimizerEnabled = enabled;
-    
-    if (enabled) {
-      // If enabling, optimize all categories immediately
-      this.optimizeAllCategories();
-    } else {
-      // If disabling, invalidate optimizations (but keep current rendering)
-      this.categoryOptimizations.clear();
-      // Clear any pending optimization
-      if (this.optimizeTimer) {
-        clearTimeout(this.optimizeTimer);
-        this.optimizeTimer = null;
-      }
-      this.pendingCategories.clear();
-    }
+    this.optimizationManager.setEnabled(enabled);
   }
   
   /**
    * Set readonly mode (affects optimization aggressiveness)
+   * Delegates to centralized OptimizationManager
    */
   setReadonlyMode(readonly: boolean): void {
-    if (this.isReadonly === readonly) return;
-    this.isReadonly = readonly;
-    // Invalidate optimizations to rebuild with new strategy
-    this.categoryOptimizations.clear();
+    this.optimizationManager.setReadonlyMode(readonly);
   }
   
   /**
@@ -456,146 +604,178 @@ export class GroundTileManager {
   /**
    * Optimize all tiles for a category (batch optimization)
    * This can be called after placing many tiles to optimize them
+   * Delegates to centralized OptimizationManager
    */
   optimizeCategory(category: AssetCategory): void {
-    if (!this.optimizerEnabled) return;
-    
-    const batch = this.batches.get(category);
-    if (!batch || batch.instances.size === 0) return;
-    
-    // Collect all cell positions and their original object IDs
-    const cells: Array<{x: number, z: number}> = [];
-    const cellToObjectId = new Map<string, string>(); // "x,z" -> objectId
-    
-    batch.instances.forEach((instance, objectId) => {
-      const cellKey = `${instance.position.x},${instance.position.z}`;
-      cells.push({ x: instance.position.x, z: instance.position.z });
-      cellToObjectId.set(cellKey, objectId);
-    });
-    
-    if (cells.length === 0) return;
-    
-    // Optimize
-    const result = GeometryOptimizer.optimize(cells, {
-      readonly: this.isReadonly,
-      maxRectangleSize: this.isReadonly ? undefined : 50,
-    });
-    
-    // Validate
-    if (!GeometryOptimizer.validateResult(cells, result)) {
-      console.error('[GroundTileManager] Optimization validation failed');
-      return;
-    }
-    
-    // Store optimization with object ID mapping
-    this.categoryOptimizations.set(category, result);
-    
-    // Rebuild batch with optimized rectangles, preserving original object IDs
-    this.rebuildBatchWithOptimization(category, result, cellToObjectId);
+    this.optimizationManager.requestOptimization(`ground-tile-${category}`);
   }
   
   /**
-   * Rebuild a batch using optimized rectangles
-   * Preserves original object IDs for selection/removal
+   * Rebuild rendered batch completely from optimized result
+   * This is called after optimization completes - does a complete rebuild
+   * All tiles in logicalTiles are covered by the optimization result
    */
-  private rebuildBatchWithOptimization(
+  private rebuildBatchFromOptimization(
     category: AssetCategory,
     optimization: OptimizationResult,
     cellToObjectId: Map<string, string>
   ): void {
-    const batch = this.batches.get(category);
-    if (!batch) return;
-    
+    const batch = this.getOrCreateBatch(category);
     const gridSize = this.gridSystem.getGridSize();
     
-    // Clear existing instances
+    // Clear existing rendered state completely
     batch.instances.clear();
     batch.mesh.count = 0;
     batch.freeIndices = [];
     
-    // Create instances for each rectangle
+    // Rebuild from optimization result
+    // Since we cleared freeIndices, allocateInstanceIndex will allocate sequential indices
+    // and increment batch.mesh.count for each rectangle
     optimization.rectangles.forEach((rect) => {
       const instanceIndex = this.allocateInstanceIndex(batch);
       
-      // Calculate rectangle dimensions and center
-      const width = (rect.maxX - rect.minX + 1) * gridSize;
-      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
+      // Calculate rectangle center in world coordinates
       const centerX = (rect.minX + rect.maxX + 1) * gridSize / 2;
       const centerZ = (rect.minZ + rect.maxZ + 1) * gridSize / 2;
       
-      // Use scale in instance matrix
+      // Calculate rectangle dimensions in world space
+      const width = (rect.maxX - rect.minX + 1) * gridSize;
+      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
+      
+      // Set position (center in grid cell)
       this.tempPosition.set(centerX, 0, centerZ);
-      this.tempScale.set(width / gridSize, 1, depth / gridSize);
+      
+      // Use scale in instance matrix
+      // Base geometry is gridSize * 0.98 (for visual gaps), so we need to scale to desired size
+      this.tempScale.set(width / (gridSize * 0.98), 1, depth / (gridSize * 0.98));
       this.tempQuaternion.identity();
       this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
       batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
       
-      // For each cell in this rectangle, preserve the original object ID
-      // Use the first cell's object ID as the primary ID for this rectangle
-      let primaryObjectId: string | null = null;
+      // Map all cells in this rectangle to their object IDs
+      // This allows removeTile() to work correctly
       for (const cellKey of rect.cells) {
         const objectId = cellToObjectId.get(cellKey);
         if (objectId) {
-          if (!primaryObjectId) {
-            primaryObjectId = objectId;
-          }
-          // Map all original object IDs to this instance index
-          // This allows removeTile to work correctly
+          // Parse cellKey to get actual cell coordinates (format: "x,z")
+          const [cellX, cellZ] = cellKey.split(',').map(Number);
+          
+          // Store mapping: objectId -> instanceIndex and position
+          // Note: position is stored for reference, but instanceIndex is what matters for rendering
           batch.instances.set(objectId, {
             instanceIndex,
-            position: { x: rect.minX, z: rect.minZ, y: 0 },
+            position: { x: cellX, z: cellZ, y: 0 },
             category,
           });
         }
       }
     });
     
-    batch.mesh.instanceMatrix.needsUpdate = true;
-    batch.mesh.frustumCulled = this.frustumCullingEnabled;
-  }
-  
-  /**
-   * Schedule auto-optimization with debounce
-   * Called automatically when tiles are added
-   */
-  private scheduleAutoOptimization(category: AssetCategory): void {
-    if (!this.optimizerEnabled) return;
-    
-    this.pendingCategories.add(category);
-    
-    // Clear existing timer
-    if (this.optimizeTimer) {
-      clearTimeout(this.optimizeTimer);
+    // CRITICAL: batch.mesh.count should already be set correctly by allocateInstanceIndex
+    // (it increments count for each rectangle), but verify it equals the number of rectangles
+    // This is a safeguard - allocateInstanceIndex should have set it correctly
+    const expectedCount = optimization.rectangles.length;
+    if (batch.mesh.count !== expectedCount) {
+      console.warn(`[GroundTileManager] Count mismatch: expected ${expectedCount}, got ${batch.mesh.count}. Fixing...`);
+      batch.mesh.count = expectedCount;
     }
     
-    // Schedule optimization after debounce period
-    this.optimizeTimer = setTimeout(() => {
-      this.pendingCategories.forEach(cat => {
-        this.optimizeCategory(cat);
-      });
-      this.pendingCategories.clear();
-      this.optimizeTimer = null;
-    }, this.OPTIMIZE_DEBOUNCE_MS);
+    batch.mesh.instanceMatrix.needsUpdate = true;
+    batch.mesh.frustumCulled = this.frustumCullingEnabled;
+    
+    // Debug: Log optimization result (should show much fewer instances than tiles)
+    const tileCount = this.logicalTiles.size;
+    const rectangleCount = optimization.rectangles.length;
+    if (tileCount > 100) {
+      console.log(`[GroundTileManager] Optimization: ${tileCount} tiles → ${rectangleCount} rectangles (${Math.round((rectangleCount / tileCount) * 100)}% reduction)`);
+    }
   }
   
   /**
    * Force immediate optimization of all categories
    * Useful after loading saved data
+   * Delegates to centralized OptimizationManager
    */
   optimizeAllCategories(): void {
-    // Clear any pending debounced optimization
-    if (this.optimizeTimer) {
-      clearTimeout(this.optimizeTimer);
-      this.optimizeTimer = null;
-    }
-    this.pendingCategories.clear();
+    this.optimizationManager.optimizeClient(this, true);
+  }
+  
+  /**
+   * Rebuild all batches without optimization (1 tile = 1 instance)
+   * Used when optimization is disabled
+   */
+  private rebuildAllBatchesWithoutOptimization(): void {
+    // Group tiles by category
+    const tilesByCategory = new Map<AssetCategory, Array<{objectId: string, position: GridPosition}>>();
+    this.logicalTiles.forEach((tile, objectId) => {
+      if (!tilesByCategory.has(tile.category)) {
+        tilesByCategory.set(tile.category, []);
+      }
+      tilesByCategory.get(tile.category)!.push({ objectId, position: tile.position });
+    });
     
-    // Optimize all categories that have tiles
-    this.batches.forEach((batch, category) => {
-      if (batch.instances.size > 0) {
-        this.optimizeCategory(category);
+    // Rebuild each category
+    tilesByCategory.forEach((_tiles, category) => {
+      this.rebuildBatchWithoutOptimization(category);
+    });
+  }
+  
+  /**
+   * Rebuild a batch without optimization (1 tile = 1 instance)
+   * Each tile gets its own instance in the InstancedMesh
+   */
+  private rebuildBatchWithoutOptimization(category: AssetCategory): void {
+    const batch = this.getOrCreateBatch(category);
+    const gridSize = this.gridSystem.getGridSize();
+    
+    // Clear existing rendered state completely
+    batch.instances.clear();
+    batch.mesh.count = 0;
+    batch.freeIndices = [];
+    
+    // Get all tiles for this category from logical layout
+    const tilesForCategory: Array<{objectId: string, position: GridPosition}> = [];
+    this.logicalTiles.forEach((tile, objectId) => {
+      if (tile.category === category) {
+        tilesForCategory.push({ objectId, position: tile.position });
       }
     });
+    
+    // Create one instance per tile (no optimization)
+    tilesForCategory.forEach(({ objectId, position }) => {
+      const instanceIndex = this.allocateInstanceIndex(batch);
+      
+      // Convert grid position to world position (center of cell)
+      // Use same approach as addTileInternal - gridToWorld returns corner, add gridSize/2 to center
+      const worldPos = this.gridSystem.gridToWorld(position);
+      const centerX = worldPos.x + gridSize / 2;
+      const centerZ = worldPos.z + gridSize / 2;
+      
+      // Set position (center in grid cell)
+      this.tempPosition.set(centerX, 0, centerZ);
+      
+      // No scaling - each instance is exactly one grid cell
+      this.tempScale.set(1, 1, 1);
+      this.tempQuaternion.identity();
+      this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
+      batch.mesh.setMatrixAt(instanceIndex, this.tempMatrix);
+      
+      // Store mapping: objectId -> instanceIndex and position
+      batch.instances.set(objectId, {
+        instanceIndex,
+        position: { x: position.x, z: position.z, y: 0 },
+        category,
+      });
+    });
+    
+    // Ensure count is correct
+    const expectedCount = tilesForCategory.length;
+    if (batch.mesh.count !== expectedCount) {
+      batch.mesh.count = expectedCount;
+    }
+    
+    batch.mesh.instanceMatrix.needsUpdate = true;
+    batch.mesh.frustumCulled = this.frustumCullingEnabled;
   }
   
   /**

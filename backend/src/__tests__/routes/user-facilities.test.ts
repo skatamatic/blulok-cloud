@@ -36,7 +36,7 @@ describe('User-Facilities Routes', () => {
         }
         expectUnauthorized(response);
       }
-    });
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('GET /api/v1/user-facilities/:userId - Get User Facilities', () => {

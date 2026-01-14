@@ -531,9 +531,11 @@ describe('StoredgeProvider', () => {
         ok: false,
         status: 401,
         statusText: 'Unauthorized',
+        text: jest.fn().mockResolvedValue('Unauthorized'),
+        json: jest.fn().mockResolvedValue({}),
       });
 
-      await expect(provider.fetchUnits()).rejects.toThrow('HTTP 401');
+      await expect(provider.fetchUnits()).rejects.toThrow('HTTP 401: Unauthorized');
     });
 
     it('should handle network errors', async () => {

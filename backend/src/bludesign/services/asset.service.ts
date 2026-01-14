@@ -47,6 +47,22 @@ export interface BindingContract {
   stateValues?: string[];
 }
 
+/**
+ * Locker specification for procedurally generated storage units
+ */
+export interface LockerSpec {
+  /** Which side the door is on */
+  doorSide: 'front' | 'back' | 'left' | 'right';
+  /** Width of the door in meters */
+  doorWidth: number;
+  /** Height of the door in meters */
+  doorHeight: number;
+  /** Horizontal offset from center in meters (0 = centered) */
+  doorPositionX: number;
+  /** Vertical offset from bottom in meters */
+  doorPositionY: number;
+}
+
 export interface AssetDefinition {
   id: string;
   name: string;
@@ -62,6 +78,8 @@ export interface AssetDefinition {
   canStack: boolean;
   bindingContract?: BindingContract;
   defaultMaterials?: Record<string, MaterialConfig>;
+  /** Locker-specific configuration for procedural storage units */
+  lockerSpec?: LockerSpec;
   isBuiltin: boolean;
   thumbnail?: string;
   createdBy?: string;
@@ -113,6 +131,8 @@ export interface CreateAssetDefinitionInput {
   canStack?: boolean;
   bindingContract?: BindingContract;
   defaultMaterials?: Record<string, MaterialConfig>;
+  /** Locker-specific configuration for procedural storage units */
+  lockerSpec?: LockerSpec;
   thumbnail?: string;
   createdBy?: string;
 }
@@ -129,6 +149,8 @@ export interface UpdateAssetDefinitionInput {
   canStack?: boolean;
   bindingContract?: BindingContract;
   defaultMaterials?: Record<string, MaterialConfig>;
+  /** Locker-specific configuration for procedural storage units */
+  lockerSpec?: LockerSpec;
   thumbnail?: string;
 }
 
@@ -224,6 +246,7 @@ export class AssetService {
         can_stack: input.canStack ?? false,
         binding_contract: input.bindingContract ? JSON.stringify(input.bindingContract) : null,
         default_materials: input.defaultMaterials ? JSON.stringify(input.defaultMaterials) : null,
+        locker_spec: input.lockerSpec ? JSON.stringify(input.lockerSpec) : null,
         is_builtin: false,
         thumbnail: input.thumbnail,
         created_by: input.createdBy,
@@ -254,6 +277,7 @@ export class AssetService {
       if (input.canStack !== undefined) updates.can_stack = input.canStack;
       if (input.bindingContract !== undefined) updates.binding_contract = JSON.stringify(input.bindingContract);
       if (input.defaultMaterials !== undefined) updates.default_materials = JSON.stringify(input.defaultMaterials);
+      if (input.lockerSpec !== undefined) updates.locker_spec = JSON.stringify(input.lockerSpec);
       if (input.thumbnail !== undefined) updates.thumbnail = input.thumbnail;
 
       await db('bludesign_asset_definitions').where('id', id).update(updates);
@@ -440,6 +464,13 @@ export class AssetService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static mapAssetDefinitionRow(row: any): AssetDefinition {
+    // Helper to safely parse JSON that might already be an object
+    const safeParseJSON = (value: any) => {
+      if (value === null || value === undefined) return undefined;
+      if (typeof value === 'object') return value;
+      return JSON.parse(value);
+    };
+
     return {
       id: row.id,
       name: row.name,
@@ -447,14 +478,15 @@ export class AssetService {
       category: row.category,
       modelType: row.model_type,
       customModelId: row.custom_model_id,
-      primitiveSpec: row.primitive_spec ? JSON.parse(row.primitive_spec) : undefined,
-      dimensions: JSON.parse(row.dimensions),
-      gridUnits: JSON.parse(row.grid_units),
+      primitiveSpec: safeParseJSON(row.primitive_spec),
+      dimensions: safeParseJSON(row.dimensions),
+      gridUnits: safeParseJSON(row.grid_units),
       isSmart: row.is_smart,
       canRotate: row.can_rotate,
       canStack: row.can_stack,
-      bindingContract: row.binding_contract ? JSON.parse(row.binding_contract) : undefined,
-      defaultMaterials: row.default_materials ? JSON.parse(row.default_materials) : undefined,
+      bindingContract: safeParseJSON(row.binding_contract),
+      defaultMaterials: safeParseJSON(row.default_materials),
+      lockerSpec: safeParseJSON(row.locker_spec),
       isBuiltin: row.is_builtin,
       thumbnail: row.thumbnail,
       createdBy: row.created_by,
@@ -465,12 +497,19 @@ export class AssetService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static mapMaterialPresetRow(row: any): MaterialPreset {
+    // Helper to safely parse JSON that might already be an object
+    const safeParseJSON = (value: any) => {
+      if (value === null || value === undefined) return undefined;
+      if (typeof value === 'object') return value;
+      return JSON.parse(value);
+    };
+
     return {
       id: row.id,
       assetId: row.asset_id,
       presetName: row.preset_name,
       partName: row.part_name,
-      materialConfig: JSON.parse(row.material_config),
+      materialConfig: safeParseJSON(row.material_config),
       textureId: row.texture_id,
       stateBinding: row.state_binding,
       sortOrder: row.sort_order,
@@ -481,6 +520,13 @@ export class AssetService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static mapCustomModelRow(row: any): CustomModel {
+    // Helper to safely parse JSON that might already be an object
+    const safeParseJSON = (value: any) => {
+      if (value === null || value === undefined) return undefined;
+      if (typeof value === 'object') return value;
+      return JSON.parse(value);
+    };
+
     return {
       id: row.id,
       projectId: row.project_id,
@@ -491,9 +537,9 @@ export class AssetService {
       fileSize: row.file_size,
       storagePath: row.storage_path,
       format: row.format,
-      modelMetadata: row.model_metadata ? JSON.parse(row.model_metadata) : undefined,
+      modelMetadata: safeParseJSON(row.model_metadata),
       thumbnail: row.thumbnail,
-      tags: row.tags ? JSON.parse(row.tags) : undefined,
+      tags: safeParseJSON(row.tags),
       uploadedBy: row.uploaded_by,
       uploadedAt: new Date(row.uploaded_at),
     };

@@ -128,14 +128,15 @@ router.post('/login', loginLimiter, asyncHandler(async (req: Request, res: Respo
 
   const statusCode = result.success ? 200 : 401;
   if (result.success) {
-    // Compute isDeviceRegistered: check if the provided appDeviceId exists
+    // Compute isDeviceRegistered: check if the provided appDeviceId exists and is not revoked
     let isDeviceRegistered = false;
     try {
       const appDeviceId = (req.headers['x-app-device-id'] as string | undefined)?.trim();
       if (appDeviceId) {
         const { UserDeviceModel } = await import('@/models/user-device.model');
         const udm = new UserDeviceModel();
-        const device = await udm.findByUserAndAppDeviceId(result.user!.id, appDeviceId);
+        // Use findActiveByUserAndAppDeviceId to exclude revoked devices
+        const device = await udm.findActiveByUserAndAppDeviceId(result.user!.id, appDeviceId);
         isDeviceRegistered = !!device;
       }
     } catch (_e) {}

@@ -635,6 +635,21 @@ class ApiService {
     return response.data;
   }
 
+  async getActivityStats(options?: {
+    period?: 'day' | 'week' | 'month' | 'year';
+    facility_ids?: string[];
+  }) {
+    const params: Record<string, unknown> = {};
+    if (options?.period) {
+      params.period = options.period;
+    }
+    if (options?.facility_ids && options.facility_ids.length > 0) {
+      params.facility_ids = options.facility_ids;
+    }
+    const response = await this.api.get('/access-history/stats/activity', { params });
+    return response.data;
+  }
+
   // Key Sharing endpoints
   async getKeySharing(filters?: {
     unit_id?: string;

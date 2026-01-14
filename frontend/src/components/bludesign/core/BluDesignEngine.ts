@@ -72,6 +72,7 @@ import { WindowManager } from './WindowManager';
 import { GroundTileManager } from './GroundTileManager';
 import { RenderingSettingsManager } from './RenderingSettingsManager';
 import { EditorPreferences } from './Preferences';
+import { OptimizationManager } from './OptimizationManager';
 
 export interface BluDesignEngineOptions {
   container: HTMLElement;
@@ -126,6 +127,7 @@ export class BluDesignEngine {
   // Auto-save state
   private autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private lastAutoSaveTime: number = 0;
+  
   
   // Theme subscription cleanup
   private themeUnsubscribe: (() => void) | null = null;
@@ -401,15 +403,43 @@ export class BluDesignEngine {
     // Initialize ground tile manager for instanced ground tile rendering
     this.groundTileManager = new GroundTileManager(this.scene, this.gridSystem);
     
+    // Set optimization references for ground tile selection performance
+    this.selectionManager.setOptimizationReferences(this.gridSystem, this.groundTileManager);
+    
+    // Set up optimization progress callback
+    // Optimization progress is mapped from 30-100% (batch placement uses 0-30%)
+    const optimizationManager = OptimizationManager.getInstance();
+    optimizationManager.setProgressCallback((progress) => {
+      // OptimizationManager now reports progress based on completed contexts
+      // Progress is already mapped to 30-100% range
+      this.emit('progress-updated', {
+        percentage: progress.percentage,
+        message: progress.message,
+        operation: 'processing', // Unified operation name
+      });
+      
+      // Emit completion when we reach 100% (only once, when all optimizations complete)
+      if (progress.percentage >= 100) {
+        // Small delay to ensure 100% is visible before hiding
+        setTimeout(() => {
+          this.emit('progress-complete', { operation: 'processing' });
+        }, 300);
+      }
+    });
+    
     // Initialize rendering settings manager
     this.renderingSettings = RenderingSettingsManager.getInstance();
     
     // Apply initial rendering settings
-    this.applyRenderingSettings();
+    this.applyRenderingSettings().catch(error => {
+      console.error('[BluDesignEngine] Error applying initial rendering settings:', error);
+    });
     
     // Subscribe to settings changes
     this.settingsUnsubscribe = this.renderingSettings.onSettingsChange(() => {
-      this.applyRenderingSettings();
+      this.applyRenderingSettings().catch(error => {
+        console.error('[BluDesignEngine] Error applying rendering settings:', error);
+      });
     });
     
     // Initialize input coordinator for centralized event handling
@@ -1747,7 +1777,7 @@ export class BluDesignEngine {
    * Handle batch asset placement (e.g., ground tiles)
    * All objects are placed as a single undo action
    */
-  private handleBatchAssetPlaced(objects: PlacedObject[]): void {
+  private async handleBatchAssetPlaced(objects: PlacedObject[]): Promise<void> {
     if (objects.length === 0) return;
     
     // Use the current placement asset metadata
@@ -1759,25 +1789,88 @@ export class BluDesignEngine {
     const asset = this.currentPlacementAsset;
     const gridSize = this.gridSystem.getGridSize();
     
-    // Place all objects
+    // Only show progress overlay for operations that will actually take time
+    // We check both batch size and whether optimization will run
+    const LARGE_BATCH_THRESHOLD = 100; // Only show for batches of 100+ items
+    const OPTIMIZATION_CELL_THRESHOLD = 500; // Optimization shows progress for 500+ cells
+    
+    // Separate ground tiles from other objects for batch processing
+    const groundTiles: PlacedObject[] = [];
+    const otherObjects: PlacedObject[] = [];
+    
     for (const placedObject of objects) {
-      // Ground tiles: use instanced manager for performance
-      if (this.groundTileManager.isGroundTileCategory(asset.category)) {
-        const marker = this.groundTileManager.addTile(
-          placedObject.id,
-          asset.category,
-          placedObject.position
-        );
-        this.scene.add(marker);
+      if (this.groundTileManager.isGroundTileCategory(placedObject.assetMetadata.category)) {
+        groundTiles.push(placedObject);
+      } else {
+        otherObjects.push(placedObject);
+      }
+    }
+    
+    // Check if ground tiles will trigger optimization progress
+    let willOptimizeWithProgress = false;
+    const optimizationManager = OptimizationManager.getInstance();
+    if (optimizationManager.isEnabled() && groundTiles.length > 0) {
+      // Check if adding these tiles will result in >= 500 cells total for any category
+      const tilesByCategory = new Map<AssetCategory, number>();
+      groundTiles.forEach(tile => {
+        const count = tilesByCategory.get(tile.assetMetadata.category) || 0;
+        tilesByCategory.set(tile.assetMetadata.category, count + 1);
+      });
+      
+      // For each category, check if total (existing + new) will be >= threshold
+      tilesByCategory.forEach((newCount, category) => {
+        const existingIds = this.groundTileManager.getTileIds(category);
+        const totalCells = existingIds.length + newCount;
+        if (totalCells >= OPTIMIZATION_CELL_THRESHOLD) {
+          willOptimizeWithProgress = true;
+        }
+      });
+    }
+    
+    // Show progress only if batch is large enough OR optimization will show progress
+    const shouldShowProgress = objects.length >= LARGE_BATCH_THRESHOLD || willOptimizeWithProgress;
+    
+    if (shouldShowProgress) {
+      // Show overlay immediately - this is the start of the operation
+      this.emit('progress-updated', {
+        percentage: 0,
+        message: `Placing ${objects.length} items...`,
+        operation: 'processing',
+      });
+    }
+    
+    const totalItems = groundTiles.length + otherObjects.length;
+    let processedItems = 0;
+    
+    // Process ground tiles in a batch (much more efficient - only one optimization request per category)
+    if (groundTiles.length > 0) {
+      const tileData = groundTiles.map(obj => ({
+        objectId: obj.id,
+        category: obj.assetMetadata.category,
+        position: obj.position
+      }));
+      
+      const markers = this.groundTileManager.addTilesBatch(tileData);
+      
+      // Optimize: Batch scene.add() operations by collecting all markers first
+      const markersToAdd: THREE.Object3D[] = [];
+      const BATCH_SIZE = 50; // Process 50 tiles, then yield
+      
+      for (let i = 0; i < groundTiles.length; i++) {
+        const placedObject = groundTiles[i];
+        const marker = markers[i];
+        
+        // Collect markers for batch addition
+        markersToAdd.push(marker);
         this.sceneManager.addObject(placedObject.id, marker, placedObject);
 
-        const size = { x: asset.gridUnits.x, z: asset.gridUnits.z };
+        const size = { x: placedObject.assetMetadata.gridUnits.x, z: placedObject.assetMetadata.gridUnits.z };
         const replacedGroundId = this.gridSystem.markOccupied(
           placedObject.id, 
           placedObject.position, 
           size, 
-          asset.canStack,
-          asset.category,
+          placedObject.assetMetadata.canStack,
+          placedObject.assetMetadata.category,
           placedObject.floor ?? 0
         );
 
@@ -1785,11 +1878,33 @@ export class BluDesignEngine {
           this.groundTileManager.removeTile(replacedGroundId);
           this.sceneManager.removeObject(replacedGroundId);
         }
-
-        // Ground tiles use shared material; no per-object theme application needed
-        // Optimization is handled automatically by GroundTileManager
-        continue;
+        
+        processedItems++;
+        
+        // Report progress and yield every BATCH_SIZE items
+        if (shouldShowProgress && (i % BATCH_SIZE === BATCH_SIZE - 1 || i === groundTiles.length - 1)) {
+          const progress = Math.round((processedItems / totalItems) * 30);
+          this.emit('progress-updated', {
+            percentage: progress,
+            message: `Placing ${processedItems} of ${totalItems} items...`,
+            operation: 'processing',
+          });
+          
+          // Yield control to allow React to render progress updates
+          if (i < groundTiles.length - 1) {
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, 0);
+            });
+          }
+        }
       }
+      
+      // Batch add all markers to scene at once (more efficient than individual adds)
+      markersToAdd.forEach(marker => this.scene.add(marker));
+    }
+    
+    // Process other objects normally
+    for (const placedObject of otherObjects) {
 
       // Non-ground: create mesh using asset
       const mesh = AssetFactory.createAssetMesh(asset);
@@ -1847,10 +1962,54 @@ export class BluDesignEngine {
       if (replacedGroundId) {
         this.sceneManager.removeObject(replacedGroundId);
       }
+      
+      processedItems++;
+      if (shouldShowProgress && processedItems % 10 === 0) {
+        // Batch placement takes 0-30% of progress (optimization will be 30-100%)
+        const progress = Math.round((processedItems / totalItems) * 30);
+        this.emit('progress-updated', {
+          percentage: progress,
+          message: `Placing ${processedItems} of ${totalItems} items...`,
+          operation: 'processing',
+        });
+      }
+    }
+    
+    // Complete batch placement phase (30% progress)
+    if (shouldShowProgress) {
+      // Check if optimization will actually show progress
+      // If optimization doesn't show progress (below 500 cells threshold or disabled),
+      // we should complete immediately since no progress updates will come
+      const optimizationManager = OptimizationManager.getInstance();
+      const willShowProgress = optimizationManager.willShowOptimizationProgress();
+      
+      if (willShowProgress) {
+        // Optimization will show progress - it will continue from 30-100%
+        // (OptimizationManager will emit progress updates via callback)
+        this.emit('progress-updated', {
+          percentage: 30,
+          message: 'Optimizing geometry...',
+          operation: 'processing',
+        });
+      } else {
+        // No optimization progress will be shown - complete immediately
+        // (Optimization may still run in the background, but won't show progress)
+        this.emit('progress-updated', {
+          percentage: 100,
+          message: 'Complete',
+          operation: 'processing',
+        });
+        setTimeout(() => {
+          this.emit('progress-complete', { operation: 'processing' });
+        }, 200);
+      }
     }
     
     // Note: Ground tile optimization is handled automatically by GroundTileManager
     // after tiles are added (with debouncing)
+    // The optimization will continue progress from 30-100%
+    // If optimization shows progress, it will complete normally
+    // If not, the timeout above will complete it
     
     // Record ALL objects as a single undo action
     this.actionHistory.pushBatchPlace(objects);
@@ -1883,14 +2042,35 @@ export class BluDesignEngine {
   /**
    * Handle building placement
    */
-  private handleBuildingPlaced(footprint: { minX: number; maxX: number; minZ: number; maxZ: number }): void {
+  private async handleBuildingPlaced(footprint: { minX: number; maxX: number; minZ: number; maxZ: number }): Promise<void> {
+    // Calculate building size (cells)
+    const cellCount = (footprint.maxX - footprint.minX + 1) * (footprint.maxZ - footprint.minZ + 1);
+    const BUILDING_CELL_THRESHOLD = 500; // Show progress for buildings with 500+ cells
+    
+    // Check if optimization will show progress
+    const optimizationManager = OptimizationManager.getInstance();
+    const willShowOptimizationProgress = optimizationManager.isEnabled() && 
+                                         optimizationManager.willShowOptimizationProgress();
+    
+    // Show progress if building is large enough OR optimization will show progress
+    const shouldShowProgress = cellCount >= BUILDING_CELL_THRESHOLD || willShowOptimizationProgress;
+    
+    if (shouldShowProgress) {
+      // Show overlay immediately
+      this.emit('progress-updated', {
+        percentage: 0,
+        message: 'Creating building...',
+        operation: 'processing',
+      });
+    }
+    
     // Check for overlapping buildings
     const overlapping = this.buildingManager.findOverlappingBuildings(footprint);
     
     let building;
     if (overlapping.length > 0) {
       // Merge with existing buildings
-      building = this.buildingManager.createBuilding(footprint);
+      building = await this.buildingManager.createBuilding(footprint);
       this.buildingManager.mergeBuildings([...overlapping, building.id]);
       // Note: Building ID may change after merge, get the updated building
       const buildings = this.buildingManager.getAllBuildings();
@@ -1899,7 +2079,29 @@ export class BluDesignEngine {
       }
     } else {
       // Create new building
-      building = this.buildingManager.createBuilding(footprint);
+      building = await this.buildingManager.createBuilding(footprint);
+    }
+    
+    // Building creation phase complete (0-30% of progress)
+    if (shouldShowProgress) {
+      this.emit('progress-updated', {
+        percentage: 30,
+        message: 'Optimizing geometry...',
+        operation: 'processing',
+      });
+      
+      // If optimization won't show progress, complete immediately
+      if (!willShowOptimizationProgress) {
+        this.emit('progress-updated', {
+          percentage: 100,
+          message: 'Complete',
+          operation: 'processing',
+        });
+        setTimeout(() => {
+          this.emit('progress-complete', { operation: 'processing' });
+        }, 200);
+      }
+      // Otherwise, OptimizationManager will continue progress from 30-100%
     }
     
     // Record in history
@@ -2722,7 +2924,9 @@ export class BluDesignEngine {
     
     // Optimize all ground tile categories after loading
     // This ensures tiles loaded from saved data are optimized
-    this.groundTileManager.optimizeAllCategories();
+    // Use centralized OptimizationManager
+    const optimizationManager = OptimizationManager.getInstance();
+    optimizationManager.optimizeAll(true);
     if (data.showGrid !== undefined) {
       this.state.ui.showGrid = data.showGrid;
       this.gridSystem.setVisible(data.showGrid);
@@ -5179,14 +5383,14 @@ export class BluDesignEngine {
    * Apply all rendering settings
    * Called on init and when settings change
    */
-  private applyRenderingSettings(): void {
+  private async applyRenderingSettings(): Promise<void> {
     const settings = this.renderingSettings.getSettings();
     
     // Apply in order of dependency
     this.applyAntialiasingSettings(settings);
     this.applyShadowSettings(settings);
     this.applyInstancingSettings(settings);
-    this.applyOptimizerSettings(settings);
+    await this.applyOptimizerSettings(settings);
     this.applyFrustumCullingSettings(settings);
   }
   
@@ -5244,12 +5448,16 @@ export class BluDesignEngine {
     this.groundTileManager?.setInstancingEnabled(settings.instancingEnabled);
   }
   
-  private applyOptimizerSettings(settings: EditorPreferences['rendering']): void {
-    this.buildingManager?.setOptimizerEnabled(settings.optimizerEnabled);
-    this.groundTileManager?.setOptimizerEnabled(settings.optimizerEnabled);
-    // Always sync readonly mode (may change if engine mode changes)
-    this.buildingManager?.setReadonlyMode(this.readonly);
-    this.groundTileManager?.setReadonlyMode(this.readonly);
+  private async applyOptimizerSettings(settings: EditorPreferences['rendering']): Promise<void> {
+    // Use centralized OptimizationManager
+    const optimizationManager = OptimizationManager.getInstance();
+    await optimizationManager.setEnabled(settings.optimizerEnabled);
+    optimizationManager.setReadonlyMode(this.readonly);
+    
+    // setEnabled will handle the rebuild:
+    // - When disabled: calls onOptimizationInvalidated() which rebuilds without optimization
+    // - When enabled: calls optimizeAll() which triggers re-optimization
+    // No need to manually trigger rebuilds here - setEnabled handles it
   }
   
   private applyFrustumCullingSettings(settings: EditorPreferences['rendering']): void {

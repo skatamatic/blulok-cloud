@@ -508,6 +508,13 @@ const assetDefinitionSchema = Joi.object({
       opacity: Joi.number().min(0).max(1).optional(),
     })
   ).optional(),
+  lockerSpec: Joi.object({
+    doorSide: Joi.string().valid('front', 'back', 'left', 'right').required(),
+    doorWidth: Joi.number().positive().required(),
+    doorHeight: Joi.number().positive().required(),
+    doorPositionX: Joi.number().required(), // Can be negative
+    doorPositionY: Joi.number().min(0).required(),
+  }).optional(),
   thumbnail: Joi.string().optional(),
 });
 

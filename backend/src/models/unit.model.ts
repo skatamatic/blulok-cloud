@@ -975,7 +975,11 @@ export class UnitModel {
           device_status: result.device_status,
           battery_level: result.battery_level,
           last_activity: result.last_activity,
-          firmware_version: result.firmware_version
+          firmware_version: result.firmware_version,
+          signal_strength: result.signal_strength != null ? Number(result.signal_strength) : null,
+          temperature: result.temperature != null ? Number(result.temperature) : null,
+          error_code: result.error_code ?? null,
+          error_message: result.error_message ?? null
         } : null,
         primary_tenant: result.primary_tenant_id ? {
           id: result.primary_tenant_id,

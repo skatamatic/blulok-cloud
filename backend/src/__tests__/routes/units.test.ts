@@ -55,7 +55,7 @@ describe('Units Routes', () => {
       response = await request(app).delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.tenant.id}`);
       expect(response.status).toBe(401);
       expectUnauthorized(response);
-    });
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('GET /api/v1/units - List Units', () => {

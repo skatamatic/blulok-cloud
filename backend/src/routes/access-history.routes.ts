@@ -379,6 +379,107 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
   }
 });
 
+// GET /api/v1/access-history/stats/activity - Get aggregated activity stats for histogram
+router.get('/stats/activity', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user!;
+    const {
+      period = 'month',
+      facility_ids
+    } = req.query;
+
+    // Validate period
+    const validPeriods = ['day', 'week', 'month', 'year'];
+    if (!validPeriods.includes(period as string)) {
+      res.status(400).json({ success: false, message: 'Invalid period. Must be one of: day, week, month, year' });
+      return;
+    }
+
+    // Parse facility_ids if provided
+    let requestedFacilityIds: string[] = [];
+    if (facility_ids) {
+      if (Array.isArray(facility_ids)) {
+        requestedFacilityIds = facility_ids as string[];
+      } else {
+        requestedFacilityIds = [facility_ids as string];
+      }
+    }
+
+    // Apply role-based filtering
+    let allowedFacilityIds: string[] = [];
+    
+    if (user.role === UserRole.TENANT) {
+      // Tenants can only see stats for their units - return empty for now
+      res.json({ success: true, data: [], period });
+      return;
+    } else if (AuthService.isFacilityAdmin(user.role)) {
+      // Facility admins can only see stats for their assigned facilities
+      if (!user.facilityIds || user.facilityIds.length === 0) {
+        res.json({ success: true, data: [], period });
+        return;
+      }
+      // Filter requested facilities to only those the user has access to
+      if (requestedFacilityIds.length > 0) {
+        allowedFacilityIds = requestedFacilityIds.filter(id => user.facilityIds?.includes(id));
+      } else {
+        allowedFacilityIds = user.facilityIds;
+      }
+    } else if (user.role === UserRole.MAINTENANCE) {
+      res.json({ success: true, data: [], period });
+      return;
+    } else {
+      // ADMIN/DEV_ADMIN can see all or filter by requested facilities
+      allowedFacilityIds = requestedFacilityIds;
+    }
+
+    // Calculate date range based on period
+    const now = new Date();
+    let startDate: Date;
+    let groupBy: 'hour' | 'day' | 'week';
+
+    switch (period) {
+      case 'day':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        groupBy = 'hour';
+        break;
+      case 'week':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        groupBy = 'day';
+        break;
+      case 'month':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        groupBy = 'day';
+        break;
+      case 'year':
+        startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        groupBy = 'week';
+        break;
+      default:
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        groupBy = 'day';
+    }
+
+    // Query aggregated data from access_logs
+    const result = await accessLogModel.getActivityStats({
+      startDate,
+      endDate: now,
+      facilityIds: allowedFacilityIds.length > 0 ? allowedFacilityIds : undefined,
+      groupBy
+    });
+
+    res.json({
+      success: true,
+      data: result,
+      period,
+      startDate: startDate.toISOString(),
+      endDate: now.toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching activity stats:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch activity stats' });
+  }
+});
+
 // Helper function to generate CSV
 function generateCSV(logs: any[]): string {
   if (logs.length === 0) {

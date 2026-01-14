@@ -3,11 +3,10 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { useBluFMSDemo } from '@/contexts/BluFMSDemoContext';
-import { useBluFMSFacility } from '@/contexts/BluFMSFacilityContext';
 import { useBluDesign } from '@/contexts/BluDesignContext';
 import { UserRole } from '@/types/auth.types';
 import { ChangePasswordModal } from '@/components/UserManagement/ChangePasswordModal';
-import { CompactFacilityDropdown } from '@/components/Common/CompactFacilityDropdown';
+import { TopLevelFacilitySelector } from './TopLevelFacilitySelector';
 import {
   HomeIcon,
   UsersIcon,
@@ -18,8 +17,6 @@ import {
   Bars3Icon,
   ChevronLeftIcon,
   ChevronDownIcon,
-  SquaresPlusIcon,
-  ComputerDesktopIcon,
   KeyIcon,
   ClockIcon,
   CodeBracketIcon,
@@ -46,8 +43,7 @@ interface NavItem {
 
 const bluLokNavigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
-  { name: 'Facilities', href: '/facilities', icon: BuildingStorefrontIcon },
-  { name: 'Storage Units', href: '/units', icon: SquaresPlusIcon },
+  { name: 'Facility', href: '/facilities', icon: BuildingStorefrontIcon },
   { name: 'Access History', href: '/access-history', icon: ClockIcon },
   { 
     name: 'User Management', 
@@ -55,24 +51,13 @@ const bluLokNavigation: NavItem[] = [
     icon: UsersIcon,
     requireUserManagement: true
   },
-  {
-    name: 'System Settings',
-    href: '/settings',
-    icon: Cog6ToothIcon,
-    requireAdmin: true
-  },
-  {
-    name: 'Notification Settings',
-    href: '/notification-settings',
-    icon: DevicePhoneMobileIcon,
-    requireAdmin: true
-  },
   { 
-    name: 'Diagnostics', 
+    name: 'System', 
     isCategory: true,
-    roles: [UserRole.ADMIN, UserRole.FACILITY_ADMIN, UserRole.DEV_ADMIN],
+    requireAdmin: true,
     children: [
-      { name: 'Device Diagnostics', href: '/devices', icon: ComputerDesktopIcon }
+      { name: 'System Settings', href: '/settings', icon: Cog6ToothIcon },
+      { name: 'Notification Settings', href: '/notification-settings', icon: DevicePhoneMobileIcon }
     ]
   },
 ];
@@ -112,8 +97,6 @@ export const Sidebar: React.FC = () => {
   // If either BluFMS or BluDesign is enabled, use expandable sections
   const useExpandableSections = showBluFMSDemo || showBluDesign;
   
-  // Get BluFMS facility context (returns safe defaults if provider not mounted)
-  const bluFMSFacilityContext = useBluFMSFacility();
 
   // Handle mutual exclusivity - when one expands, the others collapse
   const handleBluLokToggle = () => {
@@ -237,8 +220,15 @@ export const Sidebar: React.FC = () => {
         )}
       </div>
 
+      {/* Facility Selector */}
+      <div className={`flex-shrink-0 px-2 py-2 ${
+        isCollapsed ? 'flex justify-center' : ''
+      }`}>
+        <TopLevelFacilitySelector />
+      </div>
+
       {/* Navigation - scrollbar hidden but still scrollable */}
-      <nav className="flex-1 px-2 py-6 space-y-1 scrollbar-hide">
+      <nav className="flex-1 px-2 py-2 space-y-1 scrollbar-hide">
         {useExpandableSections ? (
           // Collapsible sections when BluFMS or BluDesign is enabled
           <>
@@ -380,19 +370,6 @@ export const Sidebar: React.FC = () => {
                 }`}
               >
                 <div className="space-y-1">
-                  {/* Facility Selector - Only show if multiple facilities and sidebar expanded */}
-                  {!isCollapsed && showBluFMSDemo && bluFMSFacilityContext.hasMultipleFacilities && !bluFMSFacilityContext.isLoading && (
-                    <div className="px-2 py-1.5">
-                      <CompactFacilityDropdown
-                        facilities={bluFMSFacilityContext.facilities}
-                        selectedFacilityId={bluFMSFacilityContext.selectedFacilityId || ''}
-                        onSelect={(id) => bluFMSFacilityContext.setSelectedFacilityId(id)}
-                        placeholder="Select facility"
-                        className="w-full"
-                      />
-                    </div>
-                  )}
-                  
                   {bluFMSNavigation.filter(canAccessItem).map((item) => (
                     <NavLink
                       key={item.name}
@@ -498,10 +475,6 @@ export const Sidebar: React.FC = () => {
           // Standard navigation when neither BluFMS nor BluDesign is enabled
           bluLokNavigation.filter(canAccessItem).map((item) => (
             <div key={item.name}>
-              {item.isCategory && item.name === 'Diagnostics' && !isCollapsed && (
-                <div className="my-4 border-t border-gray-200 dark:border-gray-700"></div>
-              )}
-              
               {item.isCategory ? (
                 <div className="space-y-1">
                   {!isCollapsed && (

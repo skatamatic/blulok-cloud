@@ -11,12 +11,25 @@ import * as THREE from 'three';
 // Grid & Positioning
 // ============================================================================
 
-/** Grid cell size presets based on storage unit sizes */
+/**
+ * Grid unit constant: 1 grid tile = 2 feet = 0.6096 meters
+ * All asset dimensions and grid calculations are based on this standard.
+ */
+export const GRID_UNIT_FEET = 2;
+export const GRID_UNIT_METERS = 0.6096; // 2 feet in meters
+
+/** Unit conversion helpers */
+export const feetToMeters = (ft: number): number => ft * 0.3048;
+export const metersToFeet = (m: number): number => m / 0.3048;
+export const feetToGridUnits = (ft: number): number => Math.ceil(ft / GRID_UNIT_FEET);
+export const metersToGridUnits = (m: number): number => Math.ceil(m / GRID_UNIT_METERS);
+
+/** Grid cell size presets (multipliers of base grid unit = 2ft) */
 export enum GridSize {
-  TINY = 1,      // 1 unit = ~3ft (tiny locker)
-  SMALL = 2,     // 2 units = ~6ft (small unit)
-  MEDIUM = 4,    // 4 units = ~12ft (medium unit)
-  LARGE = 8,     // 8 units = ~24ft (large unit)
+  TINY = 1,      // 1 grid unit = 2ft (0.6096m) - small lockers
+  SMALL = 2,     // 2 grid units = 4ft (1.2192m) - small units
+  MEDIUM = 4,    // 4 grid units = 8ft (2.4384m) - medium units
+  LARGE = 8,     // 8 grid units = 16ft (4.8768m) - large units
 }
 
 /** Fixed orientations (90-degree increments) */
@@ -735,7 +748,9 @@ export type EngineEventType =
   | 'placement-started'
   | 'placement-blocked'
   | 'history-changed'
-  | 'autosave-complete';
+  | 'autosave-complete'
+  | 'progress-updated'
+  | 'progress-complete';
 
 /** Engine event */
 export interface EngineEvent<T = unknown> {

@@ -1,15 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
-import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit } from '@/types/units.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 
 interface LockStatusWidgetProps {
   currentSize: WidgetSize;
   onSizeChange: (size: WidgetSize) => void;
   onRemove?: () => void;
+}
+
+interface DeviceStatusUpdate {
+  device_id?: string;
+  unit_id?: string;
+  lock_status?: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error';
+  device_status?: 'online' | 'offline' | 'low_battery' | 'error';
+  battery_level?: number;
+  last_seen?: string;
 }
 
 export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
@@ -18,31 +28,81 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   onRemove,
 }) => {
   const { authState } = useAuth();
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const availableSizes: WidgetSize[] = ['small', 'medium', 'large', 'medium-tall'];
 
+  const fetchUnits = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Get units based on user role
+      const response = await apiService.getMyUnits();
+      setUnits(response.units || []);
+    } catch (err) {
+      console.error('Error fetching units:', err);
+      setError('Failed to load units');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const fetchUnits = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        // Get units based on user role
-        const response = await apiService.getMyUnits();
-        setUnits(response.units || []);
-      } catch (err) {
-        console.error('Error fetching units:', err);
-        setError('Failed to load units');
-      } finally {
-        setLoading(false);
-      }
+    fetchUnits();
+  }, [fetchUnits, authState.user]);
+
+  // Subscribe to real-time device status updates
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const handleDeviceStatusUpdate = (data: { update?: DeviceStatusUpdate; updates?: DeviceStatusUpdate[] }) => {
+      const updates = data.updates || (data.update ? [data.update] : []);
+      
+      if (updates.length === 0) return;
+
+      setUnits(prev => {
+        const updated = [...prev];
+        for (const update of updates) {
+          // Find unit by unit_id from the update
+          const unitId = update.unit_id;
+          if (!unitId) continue;
+
+          const index = updated.findIndex(u => u.id === unitId);
+          if (index !== -1) {
+            const unit = updated[index];
+            updated[index] = {
+              ...unit,
+              // Update lock status if provided
+              status: update.lock_status === 'locked' ? 'locked' : 
+                      update.lock_status === 'unlocked' ? 'unlocked' : 
+                      unit.status,
+              // Update online status if provided
+              is_online: update.device_status === 'online' || update.device_status === 'low_battery' 
+                ? true 
+                : update.device_status === 'offline' || update.device_status === 'error'
+                ? false 
+                : unit.is_online,
+              // Update battery level if provided
+              battery_level: update.battery_level ?? unit.battery_level,
+              // Update last seen if provided
+              last_seen: update.last_seen ?? unit.last_seen,
+            };
+          }
+        }
+        return updated;
+      });
     };
 
-    fetchUnits();
-  }, [authState.user]);
+    const subscriptionId = subscribe('device_status', handleDeviceStatusUpdate);
+
+    return () => {
+      unsubscribe(subscriptionId);
+    };
+  }, [subscribe, unsubscribe, isConnected]);
 
   const getMaxItems = (size: WidgetSize): number => {
     switch (size) {
@@ -113,6 +173,10 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
     }
   };
 
+  const handleRefresh = async () => {
+    await fetchUnits();
+  };
+
   const maxItems = getMaxItems(currentSize);
   const displayUnits = units.slice(0, maxItems);
   const unlockedCount = units.filter(unit => unit.status === 'unlocked').length;
@@ -146,11 +210,17 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
         availableSizes={availableSizes}
         onRemove={onRemove}
       >
-        <div className="flex items-center justify-center h-full">
+        <div className="flex flex-col items-center justify-center h-full">
           <div className="text-red-500 text-center">
             <ExclamationTriangleIcon className="h-8 w-8 mx-auto mb-2" />
             <div className="text-sm">{error}</div>
           </div>
+          <button
+            onClick={handleRefresh}
+            className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+          >
+            Try again
+          </button>
         </div>
       </Widget>
     );
@@ -164,6 +234,23 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
       onSizeChange={onSizeChange}
       availableSizes={availableSizes}
       onRemove={onRemove}
+      enhancedMenu={
+        <div className="space-y-1">
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+          {isConnected && (
+            <div className="px-3 py-1 text-xs text-green-600 dark:text-green-400">
+              ● Live updates active
+            </div>
+          )}
+        </div>
+      }
     >
       <div className="space-y-2 h-full flex flex-col">
         {units.length === 0 ? (

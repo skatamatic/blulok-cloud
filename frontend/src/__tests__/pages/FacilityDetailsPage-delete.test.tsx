@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import FacilityDetailsPage from '@/pages/FacilityDetailsPage';
@@ -33,6 +33,20 @@ jest.mock('@/contexts/AuthContext', () => ({
 jest.mock('@/contexts/ToastContext', () => ({
   ...jest.requireActual('@/contexts/ToastContext'),
   useToast: () => ({ addToast: jest.fn() }),
+}));
+
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  GlobalFacilityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useGlobalFacility: () => ({
+    facilities: [],
+    selectedFacilityId: null,
+    selectedFacility: null,
+    setSelectedFacilityId: jest.fn(),
+    isLoading: false,
+    hasMultipleFacilities: false,
+    isAllFacilitiesSelected: false,
+    refresh: jest.fn(),
+  }),
 }));
 
 const mockApi = apiService as jest.Mocked<typeof apiService>;
@@ -122,18 +136,22 @@ describe('FacilityDetailsPage - Devices and Units tabs', () => {
       total: 1,
     } as any);
 
-    renderWithProviders(<FacilityDetailsPage />);
+    // Render with the Devices tab active via URL
+    renderWithProviders(<FacilityDetailsPage />, '/facilities/fac-1?tab=devices');
 
     await waitFor(() => expect(screen.getByText('Test Facility')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByText('Devices'));
-
+    // Wait for API call and data to load
     await waitFor(() => {
       expect(mockApi.getDevices).toHaveBeenCalledWith(expect.objectContaining({
         facility_id: 'fac-1',
         limit: 30,
         offset: 0,
       }));
+    });
+
+    // Wait for search input
+    await waitFor(() => {
       expect(screen.getByPlaceholderText('Search devices...')).toBeInTheDocument();
     });
 
@@ -151,20 +169,25 @@ describe('FacilityDetailsPage - Devices and Units tabs', () => {
 
     mockApi.getUnits
       .mockResolvedValueOnce({ units: [], total: 0 } as any) // initial facility load
-      .mockResolvedValue({ units: pagedUnits, total: 4 } as any);
+      .mockResolvedValueOnce({ units: pagedUnits, total: 4 } as any); // units tab load
 
-    renderWithProviders(<FacilityDetailsPage />);
+    // Render with the Units tab active via URL
+    renderWithProviders(<FacilityDetailsPage />, '/facilities/fac-1?tab=units');
 
     await waitFor(() => expect(screen.getByText('Test Facility')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByText('Units'));
-
+    // Wait for the Units tab API call - it should be the second call to getUnits
     await waitFor(() => {
-      expect(mockApi.getUnits).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mockApi.getUnits).toHaveBeenCalledTimes(2);
+      expect(mockApi.getUnits).toHaveBeenLastCalledWith(expect.objectContaining({
         facility_id: 'fac-1',
         limit: 20,
         offset: 0,
       }));
+    });
+
+    // Wait for the search input to appear
+    await waitFor(() => {
       expect(screen.getByPlaceholderText('Search units...')).toBeInTheDocument();
     });
 

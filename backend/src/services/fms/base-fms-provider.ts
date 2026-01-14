@@ -203,7 +203,24 @@ export abstract class BaseFMSProvider {
       const response = await fetch(url, options);
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Try to get the error response body for better debugging
+        let errorDetails = '';
+        try {
+          const errorBody = await response.json();
+          errorDetails = JSON.stringify(errorBody, null, 2);
+        } catch {
+          errorDetails = await response.text();
+        }
+        
+        const errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        this.logger.error(`FMS API request failed for ${this.getProviderName()}: ${errorMessage}`, {
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          errorDetails,
+        });
+        
+        throw new Error(`${errorMessage}\nDetails: ${errorDetails}`);
       }
 
       return await response.json();

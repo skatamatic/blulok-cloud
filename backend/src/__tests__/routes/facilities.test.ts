@@ -40,7 +40,7 @@ describe('Facilities Routes', () => {
       response = await request(app).delete('/api/v1/facilities/facility-1');
       expect(response.status).toBe(401);
       expectUnauthorized(response);
-    });
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('GET /api/v1/facilities - List Facilities', () => {

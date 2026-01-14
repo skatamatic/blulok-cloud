@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import { bluDesignProjectsRouter } from './projects.routes';
 import { bluDesignAssetsRouter } from './assets.routes';
+import { bluDesignAssetDefinitionsRouter } from './asset-definitions.routes';
 import userFacilitiesRouter from './facilities.routes'; // User-based save/load system
 import { bluDesignThemesRouter } from './themes.routes';
 import { bluDesignSkinsRouter } from './skins.routes';
@@ -20,12 +21,14 @@ router.use('/facilities', userFacilitiesRouter);
 router.use('/themes', bluDesignThemesRouter);
 router.use('/skins', bluDesignSkinsRouter);
 
+// Global asset definitions, material presets, and custom models
+router.use('/assets', bluDesignAssetDefinitionsRouter);
+
 // Mount project routes
 router.use('/projects', bluDesignProjectsRouter);
 
-// Nested routes under projects
+// Project-specific asset routes
 router.use('/projects/:projectId/assets', bluDesignAssetsRouter);
-// Note: Project-level facilities route will be added later
 
 export { router as bluDesignRouter };
 

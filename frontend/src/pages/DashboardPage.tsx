@@ -7,7 +7,6 @@ import { apiService } from '@/services/api.service';
 import { StatsWidget } from '@/components/Widget/StatsWidget';
 import { ActivityWidget } from '@/components/Widget/ActivityWidget';
 import { StatusWidget } from '@/components/Widget/StatusWidget';
-import { TestScrollWidget } from '@/components/Widget/TestScrollWidget';
 import { HistogramWidget } from '@/components/Widget/HistogramWidget';
 import { AddWidgetModal } from '@/components/Widget/AddWidgetModal';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
@@ -884,12 +883,6 @@ export default function DashboardPage() {
             items={systemStatus}
           />
         );
-      case 'test-scroll':
-        return (
-          <TestScrollWidget
-            {...commonProps}
-          />
-        );
       case 'performance-stats':
         return (
           <StatsWidget
@@ -904,10 +897,6 @@ export default function DashboardPage() {
         return (
           <HistogramWidget
             {...commonProps}
-            userFacilities={authState.user?.facilityNames?.map((name, index) => ({
-              id: String(index + 1),
-              name
-            })) || []}
           />
         );
 

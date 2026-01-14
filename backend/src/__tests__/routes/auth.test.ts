@@ -127,6 +127,52 @@ describe('Auth Routes', () => {
 
       expectUnauthorized(response);
     });
+
+    describe('isDeviceRegistered field', () => {
+      it('should return isDeviceRegistered: false when no X-App-Device-Id header provided', async () => {
+        const response = await request(app)
+          .post('/api/v1/auth/login')
+          .send({
+            identifier: 'tenant@test.com',
+            password: 'password123',
+          })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body).toHaveProperty('isDeviceRegistered', false);
+      });
+
+      it('should return isDeviceRegistered: false for unregistered device', async () => {
+        const response = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-App-Device-Id', 'unregistered-device-id')
+          .send({
+            identifier: 'tenant@test.com',
+            password: 'password123',
+          })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body).toHaveProperty('isDeviceRegistered', false);
+      });
+
+      it('should return isDeviceRegistered: false for revoked device', async () => {
+        // This test verifies that revoked devices are not considered registered
+        // The mock returns undefined for findActiveByUserAndAppDeviceId when device is revoked
+        const response = await request(app)
+          .post('/api/v1/auth/login')
+          .set('X-App-Device-Id', 'revoked-device-id')
+          .send({
+            identifier: 'tenant@test.com',
+            password: 'password123',
+          })
+          .expect(200);
+
+        expectSuccess(response);
+        // Revoked devices should not be considered registered
+        expect(response.body).toHaveProperty('isDeviceRegistered', false);
+      });
+    });
   });
 
   describe('POST /api/v1/auth/change-password - Change Password', () => {

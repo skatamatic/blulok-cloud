@@ -25,10 +25,12 @@ import { GridSystem } from './GridSystem';
 import { AssetFactory } from '../assets/AssetFactory';
 import { getBuildingSkinManager } from './BuildingSkinManager';
 import { BuildingMaterials } from './types';
+import { OptimizationResult } from './utils/GeometryOptimizer';
+import { OptimizationManager } from './OptimizationManager';
 import {
-  GeometryOptimizer,
-  OptimizationResult,
-} from './utils/GeometryOptimizer';
+  OptimizationClient,
+  OptimizationContext,
+} from './utils/OptimizationClient';
 
 export interface BuildingManagerCallbacks {
   onBuildingCreated: (building: Building) => void;
@@ -71,7 +73,7 @@ interface InstanceBatch {
   maxCount: number;
 }
 
-export class BuildingManager {
+export class BuildingManager implements OptimizationClient {
   private scene: THREE.Scene;
   private gridSystem: GridSystem;
   private callbacks: BuildingManagerCallbacks;
@@ -112,11 +114,9 @@ export class BuildingManager {
   // Enable/disable instanced rendering
   private useInstancing: boolean = true;
   
-  // Geometry optimizer state
-  private optimizerEnabled: boolean = true;
-  private isReadonly: boolean = false;
-  private floorOptimizations: Map<number, OptimizationResult> = new Map();
-  private roofOptimizations: Map<string, OptimizationResult> = new Map();
+  // Centralized optimization manager
+  private optimizationManager: OptimizationManager;
+  
   private frustumCullingEnabled: boolean = true;
   
   // Glass mullion meshes (vertical dividers for glass theme)
@@ -132,9 +132,144 @@ export class BuildingManager {
     this.scene = scene;
     this.gridSystem = gridSystem;
     this.callbacks = callbacks;
+    this.optimizationManager = OptimizationManager.getInstance();
     
     // Initialize shared geometries and materials
     this.initializeSharedResources();
+    
+    // Register as optimization client
+    this.optimizationManager.registerClient(this);
+  }
+  
+  /**
+   * OptimizationClient implementation
+   */
+  getOptimizationId(): string {
+    return 'building-manager';
+  }
+  
+  getOptimizationContexts(): OptimizationContext[] {
+    const contexts: OptimizationContext[] = [];
+    
+    // Create contexts for each floor level that has buildings
+    const floorLevels = new Set<number>();
+    this.buildings.forEach(building => {
+      building.floors.forEach(floor => {
+        floorLevels.add(floor.level);
+      });
+    });
+    
+    floorLevels.forEach(floorLevel => {
+      // Collect all cells from all buildings at this floor level
+      const cells: Array<{x: number, z: number}> = [];
+      const uniqueCells = new Set<string>();
+      
+      this.buildings.forEach(building => {
+        // Only include buildings that have this floor level
+        if (!building.floors.some(f => f.level === floorLevel)) return;
+        
+        building.footprints.forEach(footprint => {
+          for (let x = footprint.minX; x <= footprint.maxX; x++) {
+            for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
+              const cellKey = `${x},${z}`;
+              if (!uniqueCells.has(cellKey)) {
+                uniqueCells.add(cellKey);
+                cells.push({ x, z });
+              }
+            }
+          }
+        });
+      });
+      
+      if (cells.length > 0) {
+        contexts.push({
+          id: `building-floor-${floorLevel}`,
+          cells,
+          options: {
+            maxRectangleSize: this.optimizationManager.isReadonlyMode() ? undefined : 50,
+          },
+          metadata: { floorLevel, type: 'floor' },
+        });
+      }
+    });
+    
+    // Create contexts for each building's roof
+    this.buildings.forEach(building => {
+      if (building.footprints.length === 0) return;
+      
+      const cells: Array<{x: number, z: number}> = [];
+      const uniqueCells = new Set<string>();
+      
+      building.footprints.forEach(footprint => {
+        for (let x = footprint.minX; x <= footprint.maxX; x++) {
+          for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
+            const cellKey = `${x},${z}`;
+            if (!uniqueCells.has(cellKey)) {
+              uniqueCells.add(cellKey);
+              cells.push({ x, z });
+            }
+          }
+        }
+      });
+      
+      if (cells.length > 0) {
+        contexts.push({
+          id: `building-roof-${building.id}`,
+          cells,
+          options: {
+            maxRectangleSize: this.optimizationManager.isReadonlyMode() ? undefined : 50,
+          },
+          metadata: { buildingId: building.id, type: 'roof' },
+        });
+      }
+    });
+    
+    return contexts;
+  }
+  
+  async onOptimizationComplete(contextId: string, result: OptimizationResult): Promise<void> {
+    // This callback is called when optimization completes asynchronously
+    // Used for manual optimization requests (e.g., when settings change)
+    
+    // Handle floor optimization - rebuild entire floor level (all buildings)
+    if (contextId.startsWith('building-floor-')) {
+      const floorLevel = parseInt(contextId.replace('building-floor-', ''), 10);
+      await this.rebuildFloorLevel(floorLevel);
+    }
+    // Handle roof optimization - rebuild all roofs since batch is shared
+    else if (contextId.startsWith('building-roof-')) {
+      await this.rebuildAllRoofs();
+    }
+  }
+  
+  async onOptimizationInvalidated(contextId?: string): Promise<void> {
+    // When optimization is disabled, rebuild all floors and roofs without optimization
+    if (!this.optimizationManager.isEnabled()) {
+      if (contextId) {
+        // Specific context invalidated - rebuild just that
+        if (contextId.startsWith('building-floor-')) {
+          const floorLevel = parseInt(contextId.replace('building-floor-', ''), 10);
+          // Rebuild all floors at this level
+          await this.rebuildFloorLevel(floorLevel);
+        } else if (contextId.startsWith('building-roof-')) {
+          await this.rebuildAllRoofs();
+        }
+      } else {
+        // All contexts invalidated - rebuild all floors and roofs
+        const floorLevels = new Set<number>();
+        this.buildings.forEach(building => {
+          building.floors.forEach(floor => {
+            floorLevels.add(floor.level);
+          });
+        });
+        const promises: Promise<void>[] = [];
+        floorLevels.forEach(floorLevel => {
+          promises.push(this.rebuildFloorLevel(floorLevel));
+        });
+        promises.push(this.rebuildAllRoofs());
+        await Promise.all(promises);
+      }
+    }
   }
   
   /**
@@ -186,7 +321,7 @@ export class BuildingManager {
   /**
    * Create a new building from a footprint
    */
-  createBuilding(footprint: BuildingFootprint, name?: string): Building {
+  async createBuilding(footprint: BuildingFootprint, name?: string): Promise<Building> {
     const building: Building = {
       id: `building-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name: name || `Building ${this.buildings.size + 1}`,
@@ -211,8 +346,8 @@ export class BuildingManager {
 
     // Generate walls, floor, and roof for the building
     this.regenerateWallsForBuilding(building);
-    this.generateFloorTiles(building, 0);
-    this.generateRoof(building);
+    await this.generateFloorTiles(building, 0);
+    await this.generateRoof(building);
 
     this.callbacks.onBuildingCreated(building);
 
@@ -256,7 +391,11 @@ export class BuildingManager {
     // Generate walls, floor tiles for ALL floors, and roof
     building.floors.forEach(floor => {
       this.regenerateWallsForBuilding(building, floor.level);
-      this.generateFloorTiles(building, floor.level);
+    });
+    // Rebuild all floor levels (since batches are shared across buildings)
+    const floorLevels = new Set(building.floors.map(f => f.level));
+    floorLevels.forEach(floorLevel => {
+      this.rebuildFloorLevel(floorLevel);
     });
     this.generateRoof(building);
 
@@ -436,21 +575,65 @@ export class BuildingManager {
       }
     });
     
-    // Remove all floor tiles and free instances
+    // Remove roof mesh (before removing from buildings map)
+    this.removeRoof(buildingId);
+    
+    // Clean up floor tile markers for this building BEFORE removing from buildings map
+    // (so we can iterate over building.floors to find all the tile IDs)
+    // Since markers are shared (rectangle markers), we collect unique markers first
+    const markersToRemove = new Set<THREE.Object3D>();
     building.floors.forEach(floor => {
       floor.groundTileIds.forEach(tileId => {
-        this.removeFloorTileInstance(tileId, floor.level);
+        const marker = this.floorTileMeshes.get(tileId);
+        if (marker) {
+          markersToRemove.add(marker);
+          this.floorTileMeshes.delete(tileId); // Remove from map regardless
+        }
       });
     });
     
-    // Remove roof mesh
-    this.removeRoof(buildingId);
+    // Remove unique markers from scene and dispose
+    markersToRemove.forEach(marker => {
+      this.scene.remove(marker);
+      // Clean up geometry and material if it's a mesh
+      if (marker instanceof THREE.Mesh) {
+        marker.geometry.dispose();
+        if (Array.isArray(marker.material)) {
+          marker.material.forEach(m => m.dispose());
+        } else if (marker.material) {
+          marker.material.dispose();
+        }
+      }
+    });
     
     // Invalidate optimizations for this building
-    this.invalidateOptimizations(buildingId);
+    // Invalidate roof
+    this.optimizationManager.invalidate(`building-roof-${buildingId}`);
     
-    // Remove from buildings map
+    // Get floor levels before removing from buildings map
+    const affectedFloorLevels = new Set(building.floors.map(f => f.level));
+    
+    // Remove from buildings map FIRST (so rebuildFloorLevel doesn't include this building)
     this.buildings.delete(buildingId);
+    
+    // Clear the floor batch for affected levels (since we're rebuilding them)
+    affectedFloorLevels.forEach(floorLevel => {
+      const batch = this.floorTileBatches.get(floorLevel);
+      if (batch) {
+        batch.instances.clear();
+        batch.mesh.count = 0;
+        batch.freeIndices = [];
+      }
+    });
+    
+    // Rebuild all affected floor levels (removes this building's floor tiles from batches)
+    affectedFloorLevels.forEach(floorLevel => {
+      this.optimizationManager.invalidate(`building-floor-${floorLevel}`);
+      this.rebuildFloorLevel(floorLevel);
+    });
+    
+    // Rebuild all roofs (since roof batch is shared)
+    this.rebuildAllRoofs();
     
     // Notify
     this.callbacks.onBuildingDeleted(buildingId);
@@ -1098,74 +1281,161 @@ export class BuildingManager {
   }
 
   /**
-   * Generate floor tiles for a building at a specific floor level
-   * Also notifies to remove any existing ground tiles (grass, pavement, etc.) in the building area
-   * Deduplicates overlapping cells from merged buildings to prevent duplicate tiles
+   * Rebuild floor tiles for an entire floor level (all buildings at that level)
+   * This is necessary because batches are shared across all buildings at the same floor level
    */
-  private generateFloorTiles(building: Building, floorLevel: number): void {
-    const floor = building.floors.find(f => f.level === floorLevel);
-    if (!floor) return;
-
-    // Clear existing floor tiles
-    floor.groundTileIds.forEach(tileId => {
-      this.removeFloorTileInstance(tileId, floorLevel);
+  private async rebuildFloorLevel(floorLevel: number): Promise<void> {
+    // Clear all existing markers and tile IDs for this floor level
+    this.buildings.forEach(building => {
+      const floor = building.floors.find(f => f.level === floorLevel);
+      if (floor) {
+        floor.groundTileIds.forEach(tileId => {
+          const marker = this.floorTileMeshes.get(tileId);
+          if (marker) {
+            this.scene.remove(marker);
+            // Clean up geometry and material if it's a mesh
+            if (marker instanceof THREE.Mesh) {
+              marker.geometry.dispose();
+              if (Array.isArray(marker.material)) {
+                marker.material.forEach(m => m.dispose());
+              } else if (marker.material) {
+                marker.material.dispose();
+              }
+            }
+            this.floorTileMeshes.delete(tileId);
+          }
+        });
+        floor.groundTileIds = [];
+      }
     });
-    floor.groundTileIds = [];
     
-    // Collect all UNIQUE cells from all footprints (prevent duplicates from merged buildings)
+    // Collect all cells from all buildings at this floor level
     const uniqueCells = new Set<string>();
-    const cellList: Array<{x: number, z: number}> = [];
+    const allCells: Array<{x: number, z: number}> = [];
+    const buildingsAtLevel: Building[] = [];
     
-      building.footprints.forEach(footprint => {
-        for (let x = footprint.minX; x <= footprint.maxX; x++) {
-          for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
-          const cellKey = `${x},${z}`;
-          if (!uniqueCells.has(cellKey)) {
-            uniqueCells.add(cellKey);
-            cellList.push({ x, z });
+    this.buildings.forEach(building => {
+      if (building.floors.some(f => f.level === floorLevel)) {
+        buildingsAtLevel.push(building);
+        building.footprints.forEach(footprint => {
+          for (let x = footprint.minX; x <= footprint.maxX; x++) {
+            for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
+              const cellKey = `${x},${z}`;
+              if (!uniqueCells.has(cellKey)) {
+                uniqueCells.add(cellKey);
+                allCells.push({ x, z });
+              }
+            }
           }
-          }
-        }
-      });
+        });
+      }
+    });
     
     // Notify to remove ground tiles (only on ground floor)
-    if (floorLevel === 0 && this.onRemoveGroundTiles && cellList.length > 0) {
-      this.onRemoveGroundTiles(cellList);
+    if (floorLevel === 0 && this.onRemoveGroundTiles && allCells.length > 0) {
+      this.onRemoveGroundTiles(allCells);
     }
 
-    // Always rebuild optimization when building changes (invalidate cache)
-    // This ensures optimizations are up-to-date when footprints change
+    // Get optimization result from centralized manager
+    const contextId = `building-floor-${floorLevel}`;
     let optimization: OptimizationResult | undefined = undefined;
-    if (this.optimizerEnabled) {
-      optimization = this.rebuildFloorOptimization(building, floorLevel) || undefined;
+    
+    if (this.optimizationManager.isEnabled()) {
+      // Invalidate cache to ensure fresh optimization
+      this.optimizationManager.invalidate(contextId);
+      
+      // Build context for this floor level (includes all buildings at this level)
+      const context = this.buildFloorOptimizationContext(floorLevel);
+      if (context) {
+        optimization = await this.optimizationManager.optimizeContext(context, true) || undefined;
+      }
     }
     
     // Use optimized rectangles if available and instancing is enabled
     if (optimization && this.useInstancing && this.sharedFloorGeometry && this.sharedFloorMaterial) {
-      this.createOptimizedFloorTiles(building, floorLevel, optimization);
+      this.createOptimizedFloorTilesForLevel(floorLevel, optimization, allCells);
     } else {
-      // Fallback to per-cell rendering (existing logic)
-      this.createPerCellFloorTiles(building, floorLevel, cellList);
+      // Fallback to per-cell rendering
+      buildingsAtLevel.forEach(building => {
+        const cellList = allCells.filter(({x, z}) => {
+          return building.footprints.some(fp => 
+            x >= fp.minX && x <= fp.maxX && z >= fp.minZ && z <= fp.maxZ
+          );
+        });
+        this.createPerCellFloorTiles(building, floorLevel, cellList);
+      });
     }
-    
-    // ALWAYS create individual markers for selection (regardless of optimization)
-    this.createFloorTileMarkers(building, floorLevel, cellList);
+  }
+  
+  /**
+   * Generate floor tiles for a building at a specific floor level (legacy method, now redirects to rebuildFloorLevel)
+   * @deprecated Use rebuildFloorLevel instead - batches are shared across buildings
+   */
+  private async generateFloorTiles(building: Building, floorLevel: number): Promise<void> {
+    // Just rebuild the entire floor level since batches are shared
+    await this.rebuildFloorLevel(floorLevel);
   }
 
+  /**
+   * Rebuild all roofs (since roof batch is shared across all buildings)
+   */
+  private async rebuildAllRoofs(): Promise<void> {
+    // Clear all existing roof markers
+    this.roofTileIds.forEach((tileIds, buildingId) => {
+      tileIds.forEach(tileId => {
+        const marker = this.roofTileMeshes.get(tileId);
+        if (marker) {
+          this.scene.remove(marker);
+          if (marker instanceof THREE.Mesh) {
+            marker.geometry.dispose();
+            if (Array.isArray(marker.material)) {
+              marker.material.forEach(m => m.dispose());
+            } else if (marker.material) {
+              marker.material.dispose();
+            }
+          }
+          this.roofTileMeshes.delete(tileId);
+        }
+      });
+    });
+    this.roofTileIds.clear();
+    
+    // Clear roof batch
+    if (this.roofTileBatch) {
+      this.roofTileBatch.instances.clear();
+      this.roofTileBatch.mesh.count = 0;
+      this.roofTileBatch.freeIndices = [];
+    }
+    
+    // Rebuild roofs for all buildings
+    const promises: Promise<void>[] = [];
+    this.buildings.forEach(building => {
+      promises.push(this.generateSingleBuildingRoof(building));
+    });
+    await Promise.all(promises);
+    
+    // Finalize the batch (update instance matrix once after all buildings processed)
+    this.finalizeRoofBatch();
+  }
+  
   /**
    * Generate or update the roof mesh for a building using instanced 1x1 tiles
    * Roof sits on top of the highest floor and is only visible in Full View mode
    * Tiles match exact footprint cells (not bounding box)
    * Deduplicates overlapping cells from merged buildings
+   * 
+   * NOTE: This now calls rebuildAllRoofs() since roofs share a batch
    */
-  generateRoof(building: Building): void {
-    console.log(`[BuildingManager] generateRoof called for building ${building.id}, footprints: ${building.footprints.length}`);
-    
-    // Remove existing roof tiles if any
-    this.removeRoof(building.id);
-    
+  async generateRoof(building: Building): Promise<void> {
+    // Since roof batch is shared, we need to rebuild all roofs
+    await this.rebuildAllRoofs();
+  }
+  
+  /**
+   * Generate roof for a single building (called by rebuildAllRoofs)
+   */
+  private async generateSingleBuildingRoof(building: Building): Promise<void> {
     if (building.floors.length === 0 || building.footprints.length === 0) {
-      console.log(`[BuildingManager] generateRoof: No floors or footprints, skipping`);
       return;
     }
     
@@ -1195,15 +1465,24 @@ export class BuildingManager {
       }
     });
     
-    // Get or rebuild optimization
-    let optimization: OptimizationResult | undefined = this.roofOptimizations.get(building.id);
-    if (!optimization && this.optimizerEnabled) {
-      optimization = this.rebuildRoofOptimization(building) || undefined;
+    // Get optimization result from centralized manager
+    const contextId = `building-roof-${building.id}`;
+    let optimization: OptimizationResult | undefined = undefined;
+    
+    if (this.optimizationManager.isEnabled()) {
+      // Invalidate cache to ensure fresh optimization
+      this.optimizationManager.invalidate(contextId);
+      
+      // Build context for this building's roof
+      const context = this.buildRoofOptimizationContext(building);
+      if (context) {
+        optimization = await this.optimizationManager.optimizeContext(context, true) || undefined;
+      }
     }
     
     // Use optimized rectangles if available and instancing is enabled
     if (optimization && this.useInstancing && this.sharedRoofGeometry && this.sharedRoofMaterial) {
-      this.createOptimizedRoofTiles(building, maxFloorLevel, roofY, roofRenderOrder, optimization, roofTileIds);
+      this.createOptimizedRoofTiles(building, maxFloorLevel, roofY, roofRenderOrder, optimization, roofTileIds, cellList);
     } else {
       // Fallback to per-cell rendering
       this.createPerCellRoofTiles(building, maxFloorLevel, roofY, roofRenderOrder, cellList, roofTileIds);
@@ -1218,9 +1497,6 @@ export class BuildingManager {
     
     // Initially hide roof tiles (only visible in Full View mode)
     this.setRoofVisible(building.id, false, 1.0);
-    
-    const tileCount = roofTileIds.length;
-    console.log(`[BuildingManager] generateRoof complete: ${tileCount} tiles, roofY=${roofY}`);
   }
   
   /**
@@ -2198,24 +2474,21 @@ export class BuildingManager {
   
   /**
    * Set optimizer enabled state
-   * If changed, invalidate and rebuild all optimizations
+   * Delegates to centralized OptimizationManager
    */
   setOptimizerEnabled(enabled: boolean): void {
-    if (this.optimizerEnabled === enabled) return;
-    this.optimizerEnabled = enabled;
-    this.invalidateAllOptimizations();
+    this.optimizationManager.setEnabled(enabled);
     // Rebuild all buildings to apply new optimization state
     this.rebuildAllBuildings();
   }
   
   /**
    * Set readonly mode (affects optimization aggressiveness)
+   * Delegates to centralized OptimizationManager
    */
   setReadonlyMode(readonly: boolean): void {
-    if (this.isReadonly === readonly) return;
-    this.isReadonly = readonly;
-    // Rebuild with new optimization strategy
-    this.invalidateAllOptimizations();
+    this.optimizationManager.setReadonlyMode(readonly);
+    // Rebuild all buildings with new optimization strategy
     this.rebuildAllBuildings();
   }
   
@@ -2238,28 +2511,73 @@ export class BuildingManager {
   }
   
   /**
-   * Invalidate all optimizations
+   * Build optimization context for a specific floor level (efficient, only builds for requested level)
    */
-  private invalidateAllOptimizations(): void {
-    this.floorOptimizations.clear();
-    this.roofOptimizations.clear();
+  private buildFloorOptimizationContext(floorLevel: number): OptimizationContext | null {
+    // Collect all cells from all buildings at this floor level
+    const cells: Array<{x: number, z: number}> = [];
+    const uniqueCells = new Set<string>();
+    
+    this.buildings.forEach(building => {
+      // Only include buildings that have this floor level
+      if (!building.floors.some(f => f.level === floorLevel)) return;
+      
+      building.footprints.forEach(footprint => {
+        for (let x = footprint.minX; x <= footprint.maxX; x++) {
+          for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
+            const cellKey = `${x},${z}`;
+            if (!uniqueCells.has(cellKey)) {
+              uniqueCells.add(cellKey);
+              cells.push({ x, z });
+            }
+          }
+        }
+      });
+    });
+    
+    if (cells.length === 0) return null;
+    
+    return {
+      id: `building-floor-${floorLevel}`,
+      cells,
+      options: {
+        maxRectangleSize: this.optimizationManager.isReadonlyMode() ? undefined : 50,
+      },
+      metadata: { floorLevel, type: 'floor' },
+    };
   }
   
   /**
-   * Invalidate optimizations for a specific building or floor
+   * Build optimization context for a specific building's roof (efficient, only builds for requested building)
    */
-  private invalidateOptimizations(buildingId?: string, floorLevel?: number): void {
-    if (buildingId && floorLevel !== undefined) {
-      // Invalidate specific floor/roof
-      this.floorOptimizations.delete(floorLevel);
-      this.roofOptimizations.delete(buildingId);
-    } else if (buildingId) {
-      // Invalidate all floors for a building (roof only)
-      this.roofOptimizations.delete(buildingId);
-    } else {
-      // Invalidate all
-      this.invalidateAllOptimizations();
-    }
+  private buildRoofOptimizationContext(building: Building): OptimizationContext | null {
+    if (building.footprints.length === 0) return null;
+    
+    const cells: Array<{x: number, z: number}> = [];
+    const uniqueCells = new Set<string>();
+    
+    building.footprints.forEach(footprint => {
+      for (let x = footprint.minX; x <= footprint.maxX; x++) {
+        for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
+          const cellKey = `${x},${z}`;
+          if (!uniqueCells.has(cellKey)) {
+            uniqueCells.add(cellKey);
+            cells.push({ x, z });
+          }
+        }
+      }
+    });
+    
+    if (cells.length === 0) return null;
+    
+    return {
+      id: `building-roof-${building.id}`,
+      cells,
+      options: {
+        maxRectangleSize: this.optimizationManager.isReadonlyMode() ? undefined : 50,
+      },
+      metadata: { buildingId: building.id, type: 'roof' },
+    };
   }
   
   /**
@@ -2270,101 +2588,34 @@ export class BuildingManager {
     buildings.forEach(building => {
       building.floors.forEach(floor => {
         this.regenerateWallsForBuilding(building, floor.level);
-        this.generateFloorTiles(building, floor.level);
       });
       this.generateRoof(building);
     });
+    // Rebuild all floor levels (since batches are shared across buildings)
+    const floorLevels = new Set<number>();
+    buildings.forEach(building => {
+      building.floors.forEach(floor => {
+        floorLevels.add(floor.level);
+      });
+    });
+    floorLevels.forEach(floorLevel => {
+      this.rebuildFloorLevel(floorLevel);
+    });
   }
   
   /**
-   * Rebuild floor optimization for a building
+   * Create floor tiles from optimized rectangles for an entire floor level (all buildings)
    */
-  private rebuildFloorOptimization(building: Building, floorLevel: number): OptimizationResult | null {
-    if (!this.optimizerEnabled) return null;
-    
-    // Collect cells
-    const cells: Array<{x: number, z: number}> = [];
-    const uniqueCells = new Set<string>();
-    
-    building.footprints.forEach(footprint => {
-      for (let x = footprint.minX; x <= footprint.maxX; x++) {
-        for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
-          const cellKey = `${x},${z}`;
-          if (!uniqueCells.has(cellKey)) {
-            uniqueCells.add(cellKey);
-            cells.push({x, z});
-          }
-        }
-      }
-    });
-    
-    // Optimize
-    const result = GeometryOptimizer.optimize(cells, {
-      readonly: this.isReadonly,
-      maxRectangleSize: this.isReadonly ? undefined : 50, // Limit in edit mode
-    });
-    
-    // Validate result
-    if (!GeometryOptimizer.validateResult(cells, result)) {
-      console.error('[BuildingManager] Optimization validation failed, using per-cell rendering');
-      return null;
-    }
-    
-    this.floorOptimizations.set(floorLevel, result);
-    return result;
-  }
-  
-  /**
-   * Rebuild roof optimization for a building
-   */
-  private rebuildRoofOptimization(building: Building): OptimizationResult | null {
-    if (!this.optimizerEnabled) return null;
-    
-    // Collect cells
-    const cells: Array<{x: number, z: number}> = [];
-    const uniqueCells = new Set<string>();
-    
-    building.footprints.forEach(footprint => {
-      for (let x = footprint.minX; x <= footprint.maxX; x++) {
-        for (let z = footprint.minZ; z <= footprint.maxZ; z++) {
-          const cellKey = `${x},${z}`;
-          if (!uniqueCells.has(cellKey)) {
-            uniqueCells.add(cellKey);
-            cells.push({x, z});
-          }
-        }
-      }
-    });
-    
-    // Optimize
-    const result = GeometryOptimizer.optimize(cells, {
-      readonly: this.isReadonly,
-      maxRectangleSize: this.isReadonly ? undefined : 50,
-    });
-    
-    // Validate result
-    if (!GeometryOptimizer.validateResult(cells, result)) {
-      console.error('[BuildingManager] Roof optimization validation failed, using per-cell rendering');
-      return null;
-    }
-    
-    this.roofOptimizations.set(building.id, result);
-    return result;
-  }
-  
-  /**
-   * Create floor tiles from optimized rectangles
-   */
-  private createOptimizedFloorTiles(
-    _building: Building,
+  private createOptimizedFloorTilesForLevel(
     floorLevel: number,
-    optimization: OptimizationResult
+    optimization: OptimizationResult,
+    cellList: Array<{x: number, z: number}>
   ): void {
     const batch = this.getOrCreateFloorTileBatch(floorLevel);
     const gridSize = this.gridSystem.getGridSize();
     const floorY = floorLevel * FLOOR_HEIGHT * gridSize + 0.05;
     
-    // Clear existing instances in batch
+    // Clear existing instances in batch (this is safe now since we're rebuilding the entire level)
     batch.instances.clear();
     batch.mesh.count = 0;
     batch.freeIndices = [];
@@ -2372,14 +2623,26 @@ export class BuildingManager {
     optimization.rectangles.forEach((rect) => {
       const instanceIndex = this.allocateInstance(batch);
       
-      // Calculate rectangle dimensions and center
-      const width = (rect.maxX - rect.minX + 1) * gridSize;
-      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
+      // Calculate rectangle center in world coordinates
+      // gridToWorld returns the corner (min corner), so for a cell at (x, z):
+      // worldPos = (x * gridSize, 0, z * gridSize)  [corner]
+      // center = worldPos + (gridSize/2, 0, gridSize/2)  [center of cell]
+      // For a rectangle from minX to maxX:
+      // - Left edge corner: minX * gridSize
+      // - Right edge corner: (maxX + 1) * gridSize
+      // - Center: (minX * gridSize + (maxX + 1) * gridSize) / 2 = (minX + maxX + 1) * gridSize / 2
       const centerX = (rect.minX + rect.maxX + 1) * gridSize / 2;
       const centerZ = (rect.minZ + rect.maxZ + 1) * gridSize / 2;
       
-      // Use scale in instance matrix (more memory efficient)
+      // Calculate rectangle dimensions in world space
+      const width = (rect.maxX - rect.minX + 1) * gridSize;
+      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
+      
+      // Set position (center of rectangle)
       this.tempPosition.set(centerX, floorY, centerZ);
+      
+      // Use scale in instance matrix
+      // Base geometry is gridSize x gridSize (no 0.98 factor for floors)
       this.tempScale.set(width / gridSize, 1, depth / gridSize);
       this.tempQuaternion.identity();
       this.tempMatrix.compose(this.tempPosition, this.tempQuaternion, this.tempScale);
@@ -2389,58 +2652,69 @@ export class BuildingManager {
       rect.instanceIndex = instanceIndex;
     });
     
+    // CRITICAL: batch.mesh.count should already be set correctly by allocateInstance
+    // (it increments count for each rectangle), but verify it equals the number of rectangles
+    const expectedCount = optimization.rectangles.length;
+    if (batch.mesh.count !== expectedCount) {
+      console.warn(`[BuildingManager] Floor count mismatch: expected ${expectedCount}, got ${batch.mesh.count}. Fixing...`);
+      batch.mesh.count = expectedCount;
+    }
+    
     batch.mesh.instanceMatrix.needsUpdate = true;
     batch.mesh.frustumCulled = this.frustumCullingEnabled;
-  }
-  
-  /**
-   * Create individual markers for selection/interaction
-   * CRITICAL: Always called, regardless of optimization
-   */
-  private createFloorTileMarkers(
-    building: Building,
-    floorLevel: number,
-    cells: Array<{x: number, z: number}>
-  ): void {
-    const gridSize = this.gridSystem.getGridSize();
-    const floorY = floorLevel * FLOOR_HEIGHT * gridSize + 0.05;
-    const floor = building.floors.find(f => f.level === floorLevel);
-    if (!floor) return;
     
-    cells.forEach(({x, z}) => {
-      const tileId = `floor-tile-${building.id}-${floorLevel}-${x}-${z}`;
-      const worldPos = this.gridSystem.gridToWorld({ x, z, y: 0 });
+    // Debug: Log optimization result
+    const tileCount = cellList.length;
+    const rectangleCount = optimization.rectangles.length;
+    if (tileCount > 50) {
+      console.log(`[BuildingManager] Floor ${floorLevel} optimization: ${tileCount} tiles → ${rectangleCount} rectangles (${Math.round((rectangleCount / tileCount) * 100)}% reduction)`);
+    }
+    
+    // Create ONE marker per rectangle for selection (instead of one per cell - huge performance improvement!)
+    // The instanced mesh itself can be raycasted, but we need markers for selection queries
+    optimization.rectangles.forEach((rect, rectIndex) => {
+      const gridSize = this.gridSystem.getGridSize();
+      const centerX = (rect.minX + rect.maxX + 1) * gridSize / 2;
+      const centerZ = (rect.minZ + rect.maxZ + 1) * gridSize / 2;
+      const width = (rect.maxX - rect.minX + 1) * gridSize;
+      const depth = (rect.maxZ - rect.minZ + 1) * gridSize;
       
-      // Create invisible marker (same as existing code)
+      // Create a single marker for this rectangle (represents all cells in the rectangle)
+      const markerId = `floor-rect-${floorLevel}-${rectIndex}`;
       const marker = new THREE.Object3D();
-      marker.position.set(
-        worldPos.x + gridSize / 2,
-        floorY,
-        worldPos.z + gridSize / 2
-      );
-      marker.userData.id = tileId;
+      marker.position.set(centerX, floorY, centerZ);
+      marker.userData.id = markerId;
       marker.userData.isFloorTile = true;
-      marker.userData.buildingId = building.id;
       marker.userData.floor = floorLevel;
       marker.userData.selectable = true;
-      marker.userData.gridX = x;
-      marker.userData.gridZ = z;
-      marker.userData.gridPosition = { x, z };
-      marker.userData.isInstanceMarker = true;
+      marker.userData.isOptimizedRectangle = true;
+      marker.userData.rectangle = { minX: rect.minX, maxX: rect.maxX, minZ: rect.minZ, maxZ: rect.maxZ };
       marker.userData.batchKey = `floor-${floorLevel}`;
       
-      // Add hitbox for raycasting
-      const hitboxGeometry = new THREE.PlaneGeometry(gridSize, gridSize);
+      // Add hitbox covering the entire rectangle
+      const hitboxGeometry = new THREE.PlaneGeometry(width, depth);
       hitboxGeometry.rotateX(-Math.PI / 2);
       const hitboxMaterial = new THREE.MeshBasicMaterial({ visible: false });
       const hitbox = new THREE.Mesh(hitboxGeometry, hitboxMaterial);
       marker.add(hitbox);
       
       this.scene.add(marker);
-      floor.groundTileIds.push(tileId);
-      this.floorTileMeshes.set(tileId, marker);
       
-      this.callbacks.onFloorTileCreated(tileId, marker);
+      // Store rectangle marker - map all cells in this rectangle to this marker ID
+      for (let x = rect.minX; x <= rect.maxX; x++) {
+        for (let z = rect.minZ; z <= rect.maxZ; z++) {
+          // Find which building this cell belongs to and add to its floor.groundTileIds
+          this.buildings.forEach(building => {
+            const floor = building.floors.find(f => f.level === floorLevel);
+            if (floor && building.footprints.some(fp => x >= fp.minX && x <= fp.maxX && z >= fp.minZ && z <= fp.maxZ)) {
+              const tileId = `floor-tile-${building.id}-${floorLevel}-${x}-${z}`;
+              floor.groundTileIds.push(tileId);
+              // Map to the rectangle marker (not individual markers)
+              this.floorTileMeshes.set(tileId, marker);
+            }
+          });
+        }
+      }
     });
   }
   
@@ -2517,27 +2791,30 @@ export class BuildingManager {
   }
   
   /**
-   * Create roof tiles from optimized rectangles
+   * Create roof tiles from optimized rectangles for a single building
+   * NOTE: This is called multiple times from rebuildAllRoofs, accumulating instances into the shared batch
    */
   private createOptimizedRoofTiles(
-    _building: Building,
+    building: Building,
     maxFloorLevel: number,
     roofY: number,
     roofRenderOrder: number,
     optimization: OptimizationResult,
-    _roofTileIds: string[]
+    _roofTileIds: string[],
+    cellList: Array<{x: number, z: number}>
   ): void {
     const batch = this.getOrCreateRoofTileBatch();
     const gridSize = this.gridSystem.getGridSize();
     
-    // Set render order and floor level for the batched roof mesh
-    batch.mesh.renderOrder = roofRenderOrder;
-    batch.mesh.userData.floorLevel = maxFloorLevel + 1;
+    // Set render order and floor level for the batched roof mesh (use max render order for visibility)
+    // Since multiple buildings can have different render orders, we'll use the maximum
+    if (roofRenderOrder > (batch.mesh.renderOrder || 0)) {
+      batch.mesh.renderOrder = roofRenderOrder;
+      batch.mesh.userData.floorLevel = maxFloorLevel + 1;
+    }
     
-    // Clear existing instances in batch
-    batch.instances.clear();
-    batch.mesh.count = 0;
-    batch.freeIndices = [];
+    // DON'T clear the batch here - it's shared across all buildings
+    // Instances are accumulated as we rebuild each building's roof
     
     optimization.rectangles.forEach((rect) => {
       const instanceIndex = this.allocateInstance(batch);
@@ -2559,8 +2836,18 @@ export class BuildingManager {
       rect.instanceIndex = instanceIndex;
     });
     
-    batch.mesh.instanceMatrix.needsUpdate = true;
-    batch.mesh.frustumCulled = this.frustumCullingEnabled;
+    // Note: batch.mesh.count is accumulated across all buildings as rebuildAllRoofs calls this multiple times
+    // We update instanceMatrix after all buildings are processed (in rebuildAllRoofs)
+  }
+  
+  /**
+   * Finalize roof batch after all buildings have been processed (called at end of rebuildAllRoofs)
+   */
+  private finalizeRoofBatch(): void {
+    if (!this.roofTileBatch) return;
+    
+    this.roofTileBatch.mesh.instanceMatrix.needsUpdate = true;
+    this.roofTileBatch.mesh.frustumCulled = this.frustumCullingEnabled;
   }
   
   /**
@@ -2699,6 +2986,8 @@ export class BuildingManager {
    * Dispose all resources including shared geometries and materials
    */
   dispose(): void {
+    // Unregister from optimization manager
+    this.optimizationManager.unregisterClient(this.getOptimizationId());
     this.clear();
     
     // Dispose shared resources

@@ -1,23 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   BoltIcon,
   PlayIcon,
   StopIcon,
   ClockIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
+import { apiService } from '@/services/api.service';
+import { useWebSocket } from '@/contexts/WebSocketContext';
+import { AccessControlDevice } from '@/types/facility.types';
 
 interface GateDevice {
   id: string;
   name: string;
   facility: string;
-  status: 'online' | 'offline' | 'error';
+  facilityId: string;
+  status: 'online' | 'offline' | 'error' | 'maintenance';
   isOpen: boolean;
   lastActivity: Date;
   holdUntil?: Date;
+  deviceType: 'gate' | 'elevator' | 'door';
 }
 
 interface RemoteGateWidgetProps {
@@ -30,34 +36,20 @@ interface RemoteGateWidgetProps {
   facilityFilter?: string;
 }
 
-// Mock gate devices
-const generateMockGates = (): GateDevice[] => {
-  return [
-    {
-      id: 'gate-1',
-      name: 'Main Entrance',
-      facility: 'Downtown Storage',
-      status: 'online',
-      isOpen: false,
-      lastActivity: new Date(Date.now() - 15 * 60 * 1000) // 15 minutes ago
-    },
-    {
-      id: 'gate-2', 
-      name: 'Loading Dock',
-      facility: 'Downtown Storage',
-      status: 'online',
-      isOpen: false,
-      lastActivity: new Date(Date.now() - 2 * 60 * 60 * 1000) // 2 hours ago
-    },
-    {
-      id: 'gate-3',
-      name: 'Vehicle Gate',
-      facility: 'Warehouse District',
-      status: 'offline',
-      isOpen: false,
-      lastActivity: new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
-    }
-  ];
+/**
+ * Transform an AccessControlDevice from the API into a GateDevice for display
+ */
+const transformToGateDevice = (device: AccessControlDevice & { facility_name?: string }): GateDevice => {
+  return {
+    id: device.id,
+    name: device.name,
+    facility: device.facility_name || 'Unknown Facility',
+    facilityId: device.gateway_id, // Note: gateway_id is used here, could be linked to facility
+    status: device.status,
+    isOpen: !device.is_locked, // is_locked=false means gate is open
+    lastActivity: device.last_activity ? new Date(device.last_activity) : new Date(),
+    deviceType: device.device_type,
+  };
 };
 
 export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
@@ -72,15 +64,81 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   const [size, setSize] = useState<WidgetSize>(initialSize);
   const [gates, setGates] = useState<GateDevice[]>([]);
   const [selectedGate, setSelectedGate] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
   const [isOperating, setIsOperating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [holdDuration, setHoldDuration] = useState<number>(5); // minutes
+
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
+
+  const loadGates = useCallback(async () => {
+    setError(null);
+    
+    try {
+      const response = await apiService.getDevices({
+        device_type: 'access_control',
+        facility_id: facilityFilter,
+      });
+
+      if (response.devices) {
+        // Filter for gate/door/elevator types and transform
+        const accessControlDevices = response.devices.filter(
+          (d: AccessControlDevice) => ['gate', 'elevator', 'door'].includes(d.device_type)
+        );
+        const transformedGates = accessControlDevices.map(transformToGateDevice);
+        setGates(transformedGates);
+      } else {
+        setGates([]);
+      }
+    } catch (err) {
+      console.error('Failed to load access control devices:', err);
+      setError('Failed to load gates');
+      setGates([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [facilityFilter]);
 
   useEffect(() => {
     loadGates();
     // Update gate status every 30 seconds
     const interval = setInterval(loadGates, 30000);
     return () => clearInterval(interval);
-  }, [facilityFilter]);
+  }, [loadGates]);
+
+  // Subscribe to real-time device status updates
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const handleDeviceStatusUpdate = (data: { device?: AccessControlDevice; devices?: AccessControlDevice[] }) => {
+      const updatedDevices = data.devices || (data.device ? [data.device] : []);
+      
+      // Update gates with new status info
+      setGates(prev => {
+        const updated = [...prev];
+        for (const device of updatedDevices) {
+          if (['gate', 'elevator', 'door'].includes(device.device_type)) {
+            const index = updated.findIndex(g => g.id === device.id);
+            if (index !== -1) {
+              updated[index] = {
+                ...updated[index],
+                status: device.status,
+                isOpen: !device.is_locked,
+                lastActivity: device.last_activity ? new Date(device.last_activity) : updated[index].lastActivity,
+              };
+            }
+          }
+        }
+        return updated;
+      });
+    };
+
+    const subscriptionId = subscribe('device_status', handleDeviceStatusUpdate);
+
+    return () => {
+      unsubscribe(subscriptionId);
+    };
+  }, [subscribe, unsubscribe, isConnected]);
 
   useEffect(() => {
     // Auto-select first online gate
@@ -92,34 +150,41 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     }
   }, [gates, selectedGate]);
 
-  const loadGates = async () => {
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 200));
-    const mockGates = generateMockGates();
-    setGates(mockGates);
-  };
-
   const handleGateOperation = async (operation: 'open' | 'close' | 'hold') => {
     const gate = gates.find(g => g.id === selectedGate);
     if (!gate || gate.status !== 'online') return;
 
     setIsOperating(true);
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    setGates(prev => prev.map(g => 
-      g.id === selectedGate 
-        ? { 
-            ...g, 
-            isOpen: operation === 'open' || operation === 'hold',
-            lastActivity: new Date(),
-            holdUntil: operation === 'hold' ? new Date(Date.now() + holdDuration * 60 * 1000) : undefined
-          }
-        : g
-    ));
-    
-    setIsOperating(false);
+    try {
+      // TODO: When backend supports gate operations, call the API here
+      // For now, simulate the operation with optimistic update
+      // await apiService.operateAccessControlDevice(selectedGate, { operation, holdDuration });
+      
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setGates(prev => prev.map(g => 
+        g.id === selectedGate 
+          ? { 
+              ...g, 
+              isOpen: operation === 'open' || operation === 'hold',
+              lastActivity: new Date(),
+              holdUntil: operation === 'hold' ? new Date(Date.now() + holdDuration * 60 * 1000) : undefined
+            }
+          : g
+      ));
+    } catch (err) {
+      console.error('Gate operation failed:', err);
+      setError('Failed to operate gate');
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsLoading(true);
+    await loadGates();
   };
 
   const selectedGateData = gates.find(g => g.id === selectedGate);
@@ -131,6 +196,10 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         return <CheckCircleIcon className="h-4 w-4 text-green-500" />;
       case 'offline':
         return <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />;
+      case 'error':
+        return <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />;
+      case 'maintenance':
+        return <ExclamationTriangleIcon className="h-4 w-4 text-yellow-500" />;
       default:
         return <ExclamationTriangleIcon className="h-4 w-4 text-yellow-500" />;
     }
@@ -157,6 +226,15 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
       onRemove={onRemove}
       enhancedMenu={
         <div className="space-y-1">
+          <button
+            onClick={handleRefresh}
+            disabled={isLoading}
+            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           <div className="px-3 py-2">
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
               Hold Duration (minutes)
@@ -173,7 +251,26 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
       }
     >
-      {size === 'medium' ? (
+      {/* Loading State */}
+      {isLoading && gates.length === 0 ? (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <ArrowPathIcon className="h-8 w-8 text-gray-400 mx-auto mb-2 animate-spin" />
+            <p className="text-sm text-gray-500 dark:text-gray-400">Loading gates...</p>
+          </div>
+        </div>
+      ) : error && gates.length === 0 ? (
+        <div className="h-full flex flex-col items-center justify-center text-center">
+          <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
+          <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+          <button
+            onClick={handleRefresh}
+            className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+          >
+            Try again
+          </button>
+        </div>
+      ) : size === 'medium' ? (
         /* Compact gate control for medium widgets */
         <div className="h-full flex flex-col justify-center">
           {selectedGateData && selectedGateData.status === 'online' ? (
@@ -181,7 +278,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
               <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
                 {selectedGateData.name}
               </div>
-              <div className={`text-xs px-2 py-1 rounded-full ${
+              <div className={`text-xs px-2 py-1 rounded-full inline-block ${
                 selectedGateData.isOpen 
                   ? 'bg-green-600 text-white dark:bg-green-600'
                   : 'bg-gray-600 text-white dark:bg-gray-600'
@@ -204,7 +301,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
             <div className="text-center">
               <BoltIcon className="h-6 w-6 text-gray-400 mx-auto mb-1" />
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                {onlineGates.length === 0 ? 'No gates online' : 'Select gate'}
+                {gates.length === 0 ? 'No gates found' : onlineGates.length === 0 ? 'No gates online' : 'Select gate'}
               </p>
             </div>
           )}
@@ -222,7 +319,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
             <option value="">Choose a gate</option>
             {gates.map((gate) => (
               <option key={gate.id} value={gate.id}>
-                {gate.name} - {gate.facility}
+                {gate.name} - {gate.facility} ({gate.deviceType})
               </option>
             ))}
           </select>
@@ -296,7 +393,9 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
             ) : (
               <div className="text-center py-4">
                 <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mx-auto mb-2" />
-                <p className="text-sm text-red-600 dark:text-red-400">Gate offline</p>
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  Gate {selectedGateData.status}
+                </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Cannot operate gate remotely
                 </p>
@@ -306,7 +405,12 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
             <div className="text-center py-4">
               <BoltIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
               <p className="text-sm text-gray-500 dark:text-gray-400">Select a gate to control</p>
-              {onlineGates.length === 0 && (
+              {gates.length === 0 && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                  No access control devices found
+                </p>
+              )}
+              {onlineGates.length === 0 && gates.length > 0 && (
                 <p className="text-xs text-red-500 dark:text-red-400 mt-1">
                   No gates online
                 </p>
@@ -316,7 +420,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
 
         {/* Quick Stats for larger widgets */}
-        {(size === 'large' || size === 'huge' || size.includes('wide')) && (
+        {(size === 'large' || size === 'huge' || size.includes('wide')) && gates.length > 0 && (
           <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
             <div className="grid grid-cols-3 gap-2 text-center">
               <div>

@@ -6,7 +6,6 @@ import {
   CpuChipIcon,
   BuildingStorefrontIcon,
   UsersIcon,
-  DocumentTextIcon,
   ChartPieIcon,
   BellIcon,
   BoltIcon,
@@ -85,10 +84,6 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
   'performance-stats': {
     ...SHARED_WIDGET_REGISTRY['performance-stats'],
     icon: ChartBarIcon
-  },
-  'test-scroll': {
-    ...SHARED_WIDGET_REGISTRY['test-scroll'],
-    icon: DocumentTextIcon
   },
   'histogram': {
     ...SHARED_WIDGET_REGISTRY['histogram'],

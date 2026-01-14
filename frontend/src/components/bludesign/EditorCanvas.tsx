@@ -26,6 +26,7 @@ import {
 import { BuildingSkinType } from './core/types';
 import { getThemeManager } from './core/ThemeManager';
 import { LoadingOverlay } from './ui/LoadingOverlay';
+import { ProgressOverlay, ProgressState } from './ui/ProgressOverlay';
 import { FloatingPanel, PanelState } from './ui/FloatingPanel';
 import { MenuBar } from './ui/MenuBar';
 import { HotkeyOverlay } from './ui/HotkeyOverlay';
@@ -49,6 +50,8 @@ import {
   Building,
 } from './core/types';
 import { AssetRegistry } from './assets/AssetRegistry';
+import { AssetService } from './services/AssetService';
+import { AssetCategory, AssetMetadata } from './assets/types';
 import * as bludesignApi from '@/api/bludesign';
 import {
   CursorArrowRaysIcon,
@@ -306,6 +309,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [aboutOpen, setAboutOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [activeThemeId, setActiveThemeId] = useState<string>('theme-default');
+  const [availableAssets, setAvailableAssets] = useState(AssetRegistry.getInstance().getAllAssets());
   
   // Selection overlay state (for drag box only - 3D highlights are in the engine)
   const [selectionBox, setSelectionBox] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
@@ -326,6 +330,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [showThemeMissingDialog, setShowThemeMissingDialog] = useState(false);
   const [missingThemeId, setMissingThemeId] = useState<string | null>(null);
+  
+  // Progress overlay state for time-consuming operations
+  const [progressState, setProgressState] = useState<ProgressState | null>(null);
   
   // Loading state tracking for better UI feedback
   // Progress never goes backwards - we use a "high water mark" pattern
@@ -953,6 +960,31 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }
   }, [engine, isReady]);
   
+  // Listen for progress events from engine (batch placement, optimization)
+  useEffect(() => {
+    if (!engine) return;
+    
+    const handleProgressUpdate = (event: { data: { percentage: number; message: string; operation: string } }) => {
+      setProgressState({
+        percentage: event.data.percentage,
+        message: event.data.message,
+        isVisible: true,
+      });
+    };
+    
+    const handleProgressComplete = () => {
+      setProgressState(prev => prev ? { ...prev, isVisible: false } : null);
+    };
+    
+    engine.on('progress-updated', handleProgressUpdate);
+    engine.on('progress-complete', handleProgressComplete);
+    
+    return () => {
+      engine.off('progress-updated', handleProgressUpdate);
+      engine.off('progress-complete', handleProgressComplete);
+    };
+  }, [engine]);
+  
   // Check for auto-saved draft on startup
   useEffect(() => {
     if (!engine || !isReady || draftChecked) return;
@@ -977,6 +1009,36 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     
     return () => clearTimeout(timer);
   }, [engine, isReady, draftChecked]);
+  
+  // Load custom assets from backend and merge with built-in assets
+  useEffect(() => {
+    const loadCustomAssets = async () => {
+      try {
+        const definitions = await AssetService.getAssetDefinitions({ isBuiltin: false });
+        
+        // Convert custom definitions to AssetMetadata format
+        const customAssetMetadata: AssetMetadata[] = definitions.map(def => ({
+          id: def.id,
+          name: def.name,
+          category: def.category as AssetCategory,
+          description: def.description,
+          dimensions: def.dimensions,
+          gridUnits: def.gridUnits,
+          isSmart: def.isSmart,
+          canRotate: def.canRotate,
+          canStack: def.canStack,
+        }));
+        
+        // Merge with built-in assets
+        const builtInAssets = AssetRegistry.getInstance().getAllAssets();
+        setAvailableAssets([...builtInAssets, ...customAssetMetadata]);
+      } catch (error) {
+        console.error('Failed to load custom assets:', error);
+      }
+    };
+    
+    loadCustomAssets();
+  }, []);
   
   // Handle draft recovery
   const handleRecoverDraft = useCallback(async () => {
@@ -1281,6 +1343,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           />
         </div>
 
+        {/* Progress Overlay - show during time-consuming operations (batch placement, optimization) */}
+        {progressState && (
+          <ProgressOverlay progress={progressState} />
+        )}
+        
         {/* Loading Overlay - show during engine init OR during initial data loading (including draft check) */}
         <LoadingOverlay 
           isVisible={isLoading || (isReady && !initialLoadComplete)} 
@@ -1382,7 +1449,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                   );
                   return (
                     <AssetBrowserPanel
-                      assets={AssetRegistry.getInstance().getAllAssets()}
+                      assets={availableAssets}
                       activeAssetId={safeState.activeAssetId}
                       onSelectAsset={handleSelectAsset}
                       columns={columns}
@@ -1887,7 +1954,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       />
 
       {/* Performance Monitor */}
-      <PerformanceMonitor />
+      <PerformanceMonitor engine={engine} />
 
       {/* Theme Missing Dialog */}
       <ThemeMissingDialog

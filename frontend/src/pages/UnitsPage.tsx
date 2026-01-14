@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
-import { FacilityDropdown } from '@/components/Common/FacilityDropdown';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { 
   HomeIcon,
   FunnelIcon,
@@ -47,6 +47,7 @@ export default function UnitsPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
   const { subscribe, unsubscribe } = useWebSocket();
+  const { selectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);
@@ -54,14 +55,12 @@ export default function UnitsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [facilities, setFacilities] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [filters, setFilters] = useState<UnitFilters>({
     search: '',
     status: '',
     unit_type: '',
-    facility_id: '',
     tenant_id: '',
     sortBy: 'unit_number',
     sortOrder: 'asc',
@@ -78,10 +77,9 @@ export default function UnitsPage() {
 
   useEffect(() => {
     loadUnits();
-  }, [filters, currentPage]);
+  }, [filters, currentPage, selectedFacilityId]);
 
   useEffect(() => {
-    loadFacilities();
     loadUsers();
   }, []);
 
@@ -111,49 +109,6 @@ export default function UnitsPage() {
     };
   }, [subscribe, unsubscribe]);
 
-  // Load and persist facility selection
-  useEffect(() => {
-    if (!isTenant) {
-      // Load from localStorage on mount
-      const savedFacilityId = localStorage.getItem('selectedFacilityId');
-      if (savedFacilityId && !filters.facility_id) {
-        setFilters(prev => ({ ...prev, facility_id: savedFacilityId }));
-      }
-    }
-  }, [isTenant]);
-
-  // Auto-select facility if none selected and facilities are available
-  useEffect(() => {
-    if (!isTenant && facilities.length > 0 && !filters.facility_id) {
-      // Try to use saved facility if it exists in the list
-      const savedFacilityId = localStorage.getItem('selectedFacilityId');
-      const facilityToSelect = savedFacilityId && facilities.find(f => f.id === savedFacilityId)
-        ? savedFacilityId
-        : facilities[0].id;
-      
-      setFilters(prev => ({ ...prev, facility_id: facilityToSelect }));
-      localStorage.setItem('selectedFacilityId', facilityToSelect);
-    }
-  }, [facilities, isTenant]);
-
-  // Persist facility selection to localStorage when it changes
-  useEffect(() => {
-    if (!isTenant && filters.facility_id) {
-      localStorage.setItem('selectedFacilityId', filters.facility_id);
-    }
-  }, [filters.facility_id, isTenant]);
-
-  const loadFacilities = async () => {
-    try {
-      // Fetch all facilities without pagination for dropdown
-      const response = await apiService.getFacilities({ limit: 1000 });
-      // Handle both response formats (with or without success property)
-      const facilitiesData = response.success ? response.facilities : (response.facilities || []);
-      setFacilities(facilitiesData);
-    } catch (error) {
-      console.error('Error fetching facilities:', error);
-    }
-  };
 
   const loadUsers = async () => {
     try {
@@ -174,8 +129,8 @@ export default function UnitsPage() {
   };
 
   const loadUnits = async () => {
-    // For non-tenants, require facility selection
-    if (!isTenant && !filters.facility_id) {
+    // For non-tenants, require facility selection (unless "All Facilities" is selected)
+    if (!isTenant && !selectedFacilityId) {
       setLoading(false);
       setUnits([]);
       setAllUnits([]);
@@ -190,7 +145,9 @@ export default function UnitsPage() {
         // Map user_id to tenant_id for backend compatibility
         tenant_id: filters.tenant_id,
         user_id: undefined, // Remove user_id as backend expects tenant_id
-        offset: (currentPage - 1) * (filters.limit || 20)
+        offset: (currentPage - 1) * (filters.limit || 20),
+        // Add facility_id from global context if not "All Facilities"
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
       };
       
       // Only include search if it has a value (remove empty strings)
@@ -219,7 +176,9 @@ export default function UnitsPage() {
             user_id: undefined,
             // Remove pagination parameters to get all data
             offset: undefined,
-            limit: undefined
+            limit: undefined,
+            // Add facility_id from global context if not "All Facilities"
+            ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
           };
           
           // Only include search if it has a value
@@ -568,25 +527,6 @@ export default function UnitsPage() {
         </div>
       </div>
 
-      {/* Facility Selection - Prominent */}
-      {!isTenant && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Facility
-          </label>
-          <FacilityDropdown
-            facilities={facilities}
-            selectedFacilityId={filters.facility_id || ''}
-            onSelect={(facilityId) => {
-              setFilters(prev => ({ ...prev, facility_id: facilityId }));
-              setCurrentPage(1);
-            }}
-            placeholder="Select a facility"
-            required={true}
-          />
-        </div>
-      )}
-
       {/* Filters */}
       <ExpandableFilters
         searchValue={filters.search || ''}
@@ -595,21 +535,16 @@ export default function UnitsPage() {
         isExpanded={filtersExpanded}
         onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
         onClearFilters={() => {
-          const firstFacilityId = facilities.length > 0 ? facilities[0].id : '';
           setFilters({
             search: '',
             status: '',
             unit_type: '',
-            facility_id: firstFacilityId,
             tenant_id: '',
             sortBy: 'unit_number',
             sortOrder: 'asc',
             limit: 20,
             offset: 0
           });
-          if (firstFacilityId) {
-            localStorage.setItem('selectedFacilityId', firstFacilityId);
-          }
         }}
         sections={[
           {

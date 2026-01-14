@@ -1,4 +1,5 @@
 import { DatabaseService } from '@/services/database.service';
+import { randomUUID } from 'crypto';
 
 /**
  * App Platform Types
@@ -92,6 +93,21 @@ export class UserDeviceModel {
   }
 
   /**
+   * Find an active (non-revoked) device registration by user and app device ID.
+   * Used for login checks and device verification where revoked devices should not count.
+   *
+   * @param userId - Owner of the device
+   * @param appDeviceId - Device identifier from the mobile app
+   * @returns Active device registration if found, undefined otherwise
+   */
+  async findActiveByUserAndAppDeviceId(userId: string, appDeviceId: string): Promise<UserDevice | undefined> {
+    return this.db('user_devices')
+      .where({ user_id: userId, app_device_id: appDeviceId })
+      .whereIn('status', ['pending_key', 'active'])
+      .first();
+  }
+
+  /**
    * List all device registrations for a user.
    * Used for device management interfaces and user preferences.
    *
@@ -127,14 +143,16 @@ export class UserDeviceModel {
    * @returns Created device registration object
    */
   async create(data: Omit<UserDevice, 'id' | 'created_at' | 'updated_at'>): Promise<UserDevice> {
-    const insertResult = await this.db('user_devices').insert({
+    // Generate UUID in application to ensure we can retrieve the created record
+    const id = randomUUID();
+    await this.db('user_devices').insert({
+      id,
       ...data,
       created_at: this.db.fn.now(),
       updated_at: this.db.fn.now(),
     });
 
-    const insertedId = this.extractInsertedId(insertResult);
-    const created = await this.db('user_devices').where({ id: insertedId }).first();
+    const created = await this.db('user_devices').where({ id }).first();
     return created as UserDevice;
   }
 
@@ -197,19 +215,6 @@ export class UserDeviceModel {
       .update({ status: 'revoked', updated_at: this.db.fn.now() });
   }
 
-  private extractInsertedId(result: any): string | number {
-    if (Array.isArray(result)) {
-      const first = result[0];
-      if (first && typeof first === 'object' && 'id' in first) {
-        return first.id as string | number;
-      }
-      return first;
-    }
-    if (result && typeof result === 'object' && 'id' in result) {
-      return result.id as string | number;
-    }
-    return result;
-  }
 }
 
 

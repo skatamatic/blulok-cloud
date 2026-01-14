@@ -394,4 +394,58 @@ export class AccessLogModel {
   async getSharedKeyAccessHistory(primaryTenantId: string, filters: Omit<AccessLogFilters, 'primary_tenant_id'> = {}): Promise<{ logs: AccessLogWithDetails[]; total: number }> {
     return this.findAll({ ...filters, primary_tenant_id: primaryTenantId });
   }
+
+  /**
+   * Get aggregated activity statistics for histogram visualization
+   */
+  async getActivityStats(options: {
+    startDate: Date;
+    endDate: Date;
+    facilityIds?: string[];
+    groupBy: 'hour' | 'day' | 'week';
+  }): Promise<Array<{ date: string; facility_id: string; facility_name: string; activity_count: number }>> {
+    const knex = this.db.connection;
+    
+    // Build date truncation based on groupBy
+    let dateTrunc: string;
+    switch (options.groupBy) {
+      case 'hour':
+        dateTrunc = "DATE_FORMAT(occurred_at, '%Y-%m-%d %H:00:00')";
+        break;
+      case 'day':
+        dateTrunc = "DATE(occurred_at)";
+        break;
+      case 'week':
+        dateTrunc = "DATE(DATE_SUB(occurred_at, INTERVAL WEEKDAY(occurred_at) DAY))";
+        break;
+      default:
+        dateTrunc = "DATE(occurred_at)";
+    }
+
+    let query = knex('access_logs')
+      .select(
+        knex.raw(`${dateTrunc} as date`),
+        'access_logs.facility_id',
+        'facilities.name as facility_name',
+        knex.raw('COUNT(*) as activity_count')
+      )
+      .leftJoin('facilities', 'access_logs.facility_id', 'facilities.id')
+      .whereBetween('occurred_at', [options.startDate, options.endDate])
+      .whereNotNull('access_logs.facility_id')
+      .groupByRaw(`${dateTrunc}, access_logs.facility_id, facilities.name`)
+      .orderByRaw(`${dateTrunc} ASC, facilities.name ASC`);
+
+    if (options.facilityIds && options.facilityIds.length > 0) {
+      query = query.whereIn('access_logs.facility_id', options.facilityIds);
+    }
+
+    const results = await query;
+    
+    return results.map((row: any) => ({
+      date: typeof row.date === 'string' ? row.date : row.date?.toISOString?.()?.split('T')[0] || String(row.date),
+      facility_id: row.facility_id,
+      facility_name: row.facility_name || 'Unknown Facility',
+      activity_count: parseInt(row.activity_count, 10) || 0
+    }));
+  }
 }

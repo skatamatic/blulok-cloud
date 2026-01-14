@@ -7,6 +7,7 @@ import { useHighlight } from '@/hooks/useHighlight';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { SortableHeader } from '@/components/UserManagement/SortableHeader';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import {
   PlusIcon,
   FunnelIcon,
@@ -43,34 +44,14 @@ export default function UserManagementPage() {
   // Filter states
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
-  const [facilityFilter, setFacilityFilter] = useState('');
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-
-  // Facilities state
-  const [facilities, setFacilities] = useState<Array<{ id: string; name: string }>>([]);
+  const { selectedFacilityId } = useGlobalFacility();
   const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   useEffect(() => {
     fetchUsers(currentPage);
-    fetchFacilities();
   }, []);
-
-  const fetchFacilities = async () => {
-    try {
-      // setFacilitiesLoading(true);
-      const response = await apiService.getFacilities();
-      if (response.success) {
-        setFacilities(response.facilities || []);
-      } else {
-        console.error('Failed to fetch facilities:', response.message);
-      }
-    } catch (error) {
-      console.error('Error fetching facilities:', error);
-    } finally {
-      // setFacilitiesLoading(false);
-    }
-  };
 
   const fetchUsers = useCallback(async (page: number, isInitialLoad = false) => {
     try {
@@ -86,7 +67,7 @@ export default function UserManagementPage() {
       const response = await apiService.getUsers({
         search: search || undefined,
         role: roleFilter || undefined,
-        facility: facilityFilter || undefined,
+        facility: selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : undefined,
         sortBy,
         sortOrder,
         limit,
@@ -109,7 +90,7 @@ export default function UserManagementPage() {
         setSearchLoading(false);
       }
     }
-  }, [search, roleFilter, facilityFilter, sortBy, sortOrder]);
+  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder]);
 
   // Initial load
   useEffect(() => {
@@ -124,7 +105,7 @@ export default function UserManagementPage() {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [search, roleFilter, facilityFilter, sortBy, sortOrder]);
+  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder]);
 
 
   // Handle highlighting when page loads
@@ -224,7 +205,6 @@ export default function UserManagementPage() {
         onClearFilters={() => {
           setSearch('');
           setRoleFilter('');
-          setFacilityFilter('');
         }}
         sections={[
           {
@@ -242,20 +222,6 @@ export default function UserManagementPage() {
             ],
             selected: roleFilter,
             onSelect: setRoleFilter
-          },
-          {
-            title: 'Facility',
-            icon: <BuildingOfficeIcon className="h-5 w-5" />,
-            type: 'select',
-            options: [
-              { key: '', label: 'All Facilities' },
-              ...facilities.map(facility => ({
-                key: facility.id,
-                label: facility.name
-              }))
-            ],
-            selected: facilityFilter,
-            onSelect: setFacilityFilter
           }
         ]}
       />

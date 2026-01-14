@@ -47,8 +47,7 @@ export const WIDGET_TYPES = {
   'sync-fms': 'sync-fms',
   'performance-stats': 'performance-stats',
   
-  // Demo/Test widgets
-  'test-scroll': 'test-scroll',
+  // Analytics widgets
   'histogram': 'histogram',
   
   // Visualization widgets
@@ -219,16 +218,6 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     defaultSize: 'huge',
     availableSizes: ['medium', 'large', 'huge'],
     allowMultiple: false,
-    category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'test-scroll': {
-    type: 'test-scroll',
-    name: 'Scrollable Content',
-    description: 'Demo scrollable widget',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'medium-tall', 'large', 'huge', 'large-wide', 'huge-wide'],
-    allowMultiple: true,
     category: 'system',
     requiredPermissions: ['admin', 'facility_admin']
   },

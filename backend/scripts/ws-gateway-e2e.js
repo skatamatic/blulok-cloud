@@ -2471,6 +2471,71 @@ async function run() {
     if (!faRegRes.data?.success) throw new Error('Facility admin register-key failed');
     ok('Facility admin can register device key');
 
+    heading('Device Registration and Revocation E2E Test');
+    // Test that login returns correct isDeviceRegistered status and handles revocation properly
+    const e2eDeviceId = 'e2e-device-revoke-test-' + Date.now();
+    const e2ePublicKey = Buffer.from('E2EDeviceTestKey123').toString('base64');
+
+    step('Registering test device for primary tenant');
+    const regDeviceRes = await axios.post(`${API_BASE}/user-devices/register-key`, {
+      app_device_id: e2eDeviceId,
+      platform: 'other',
+      device_name: 'E2E Revoke Test Device',
+      public_key: e2ePublicKey,
+    }, { headers: { Authorization: `Bearer ${primaryToken}` } });
+    if (!regDeviceRes.data?.success) throw new Error(`Device registration failed: ${JSON.stringify(regDeviceRes.data)}`);
+    if (!regDeviceRes.data.device?.id) throw new Error(`Device registration response missing device.id: ${JSON.stringify(regDeviceRes.data)}`);
+    const registeredDeviceId = regDeviceRes.data.device.id;
+    if (VERBOSE) console.log(`  • Device response: ${JSON.stringify(regDeviceRes.data.device)}`);
+    ok(`Device registered with ID: ${registeredDeviceId}`);
+
+    // Use the default password set during first-time login flow
+    const primaryTenantPassword = 'TestUser123!';
+
+    step('Verifying login returns isDeviceRegistered: true for registered device');
+    const loginWithDeviceRes = await axios.post(`${API_BASE}/auth/login`, {
+      identifier: primaryEmail,
+      password: primaryTenantPassword,
+    }, { headers: { 'X-App-Device-Id': e2eDeviceId } });
+    if (!loginWithDeviceRes.data?.success) throw new Error('Login failed');
+    if (loginWithDeviceRes.data.isDeviceRegistered !== true) {
+      throw new Error(`Expected isDeviceRegistered: true, got ${loginWithDeviceRes.data.isDeviceRegistered}`);
+    }
+    ok('Login returns isDeviceRegistered: true for registered device');
+
+    step('Revoking the test device');
+    if (VERBOSE) console.log(`  • Attempting to revoke device ID: ${registeredDeviceId}`);
+    const revokeDeviceRes = await axios.delete(`${API_BASE}/user-devices/me/${registeredDeviceId}`, {
+      headers: { Authorization: `Bearer ${primaryToken}` }
+    }).catch(err => err.response);
+    if (!revokeDeviceRes?.data?.success) {
+      throw new Error(`Device revocation failed: ${JSON.stringify(revokeDeviceRes?.data)} (status: ${revokeDeviceRes?.status})`);
+    }
+    ok('Device revoked successfully');
+
+    step('Verifying login returns isDeviceRegistered: false for revoked device');
+    const loginAfterRevokeRes = await axios.post(`${API_BASE}/auth/login`, {
+      identifier: primaryEmail,
+      password: primaryTenantPassword,
+    }, { headers: { 'X-App-Device-Id': e2eDeviceId } });
+    if (!loginAfterRevokeRes.data?.success) throw new Error('Login failed after revoke');
+    if (loginAfterRevokeRes.data.isDeviceRegistered !== false) {
+      throw new Error(`Expected isDeviceRegistered: false after revoke, got ${loginAfterRevokeRes.data.isDeviceRegistered}`);
+    }
+    ok('Login returns isDeviceRegistered: false for revoked device');
+
+    step('Verifying login returns isDeviceRegistered: false for unknown device');
+    const unknownDeviceId = 'unknown-device-' + Date.now();
+    const loginUnknownDeviceRes = await axios.post(`${API_BASE}/auth/login`, {
+      identifier: primaryEmail,
+      password: primaryTenantPassword,
+    }, { headers: { 'X-App-Device-Id': unknownDeviceId } });
+    if (!loginUnknownDeviceRes.data?.success) throw new Error('Login failed for unknown device');
+    if (loginUnknownDeviceRes.data.isDeviceRegistered !== false) {
+      throw new Error(`Expected isDeviceRegistered: false for unknown device, got ${loginUnknownDeviceRes.data.isDeviceRegistered}`);
+    }
+    ok('Login returns isDeviceRegistered: false for unknown device');
+
     heading('Password Reset Flow Test (Deeplink + Token E2E)');
     // Clear any prior notification events so we only capture fresh password reset notification
     notificationEvents.length = 0;

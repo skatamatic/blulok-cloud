@@ -41,6 +41,22 @@ export interface BindingContract {
   stateValues?: string[];
 }
 
+/**
+ * Locker specification for procedurally generated storage units
+ */
+export interface LockerSpec {
+  /** Which side the door is on */
+  doorSide: 'front' | 'back' | 'left' | 'right';
+  /** Width of the door in meters */
+  doorWidth: number;
+  /** Height of the door in meters */
+  doorHeight: number;
+  /** Horizontal offset from center in meters (0 = centered) */
+  doorPositionX: number;
+  /** Vertical offset from bottom in meters */
+  doorPositionY: number;
+}
+
 export interface AssetDefinition {
   id: string;
   name: string;
@@ -56,6 +72,8 @@ export interface AssetDefinition {
   canStack: boolean;
   bindingContract?: BindingContract;
   defaultMaterials?: Record<string, MaterialConfig>;
+  /** Locker-specific configuration for procedural storage units */
+  lockerSpec?: LockerSpec;
   isBuiltin: boolean;
   thumbnail?: string;
   createdBy?: string;
@@ -107,6 +125,8 @@ export interface CreateAssetDefinitionInput {
   canStack?: boolean;
   bindingContract?: BindingContract;
   defaultMaterials?: Record<string, MaterialConfig>;
+  /** Locker-specific configuration for procedural storage units */
+  lockerSpec?: LockerSpec;
   thumbnail?: string;
 }
 
@@ -122,6 +142,8 @@ export interface UpdateAssetDefinitionInput {
   canStack?: boolean;
   bindingContract?: BindingContract;
   defaultMaterials?: Record<string, MaterialConfig>;
+  /** Locker-specific configuration for procedural storage units */
+  lockerSpec?: LockerSpec;
   thumbnail?: string;
 }
 

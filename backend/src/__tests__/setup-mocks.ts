@@ -486,6 +486,37 @@ jest.mock('../models/access-log.model', () => ({
     getUserAccessHistory: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
     getFacilityAccessHistory: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
     getUnitAccessHistory: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
+    getActivityStats: jest.fn().mockImplementation((options: any) => {
+      // Generate mock activity stats based on groupBy parameter
+      const result: Array<{ timestamp: string; count: number }> = [];
+      const { startDate, endDate, groupBy } = options;
+      
+      let current = new Date(startDate);
+      while (current <= new Date(endDate)) {
+        let timestamp: string;
+        switch (groupBy) {
+          case 'hour':
+            timestamp = current.toISOString().slice(0, 13) + ':00:00';
+            current.setHours(current.getHours() + 1);
+            break;
+          case 'day':
+            timestamp = current.toISOString().slice(0, 10);
+            current.setDate(current.getDate() + 1);
+            break;
+          case 'week':
+            timestamp = current.toISOString().slice(0, 10);
+            current.setDate(current.getDate() + 7);
+            break;
+          default:
+            timestamp = current.toISOString().slice(0, 10);
+            current.setDate(current.getDate() + 1);
+        }
+        // Add mock count (random between 0 and 20)
+        result.push({ timestamp, count: Math.floor(Math.random() * 20) });
+      }
+      
+      return Promise.resolve(result);
+    }),
   }),
 }));
 

@@ -25,6 +25,10 @@ export class SelectionManager {
   private raycaster: THREE.Raycaster;
   private mouse: THREE.Vector2;
   
+  // Optional references for optimized ground tile selection
+  private gridSystem: GridSystem | null = null;
+  private groundTileManager: GroundTileManager | null = null;
+  
   // State
   private selectedIds: Set<string> = new Set();
   private hoveredId: string | null = null;
@@ -329,12 +333,25 @@ export class SelectionManager {
   }
 
   /**
-   * Get all selectable objects in the scene
+   * Set references for optimized ground tile selection
+   */
+  setOptimizationReferences(gridSystem: GridSystem, groundTileManager: GroundTileManager): void {
+    this.gridSystem = gridSystem;
+    this.groundTileManager = groundTileManager;
+  }
+  
+  /**
+   * Get all selectable objects in the scene (excluding ground tile markers for performance)
    */
   private getSelectableObjects(): THREE.Object3D[] {
     const selectables: THREE.Object3D[] = [];
     
     this.scene.traverse((object) => {
+      // Skip ground tile markers - they're handled separately via grid-based queries
+      if (object.userData.isGroundTile) {
+        return;
+      }
+      
       if (object.userData.selectable === true) {
         selectables.push(object);
       }
@@ -459,6 +476,7 @@ export class SelectionManager {
   /**
    * Select objects within a 2D screen box
    * Selects any object whose 2D bounding box INTERSECTS with the selection box
+   * Optimized for ground tiles using grid-based queries
    */
   private selectObjectsInBox(start: { x: number; y: number }, end: { x: number; y: number }): void {
     const rect = this.container.getBoundingClientRect();
@@ -469,9 +487,52 @@ export class SelectionManager {
     const selMinY = Math.min(start.y, end.y);
     const selMaxY = Math.max(start.y, end.y);
     
-    // Get all selectable objects that pass the filter
-    const selectables = this.getSelectableObjects();
     const idsToSelect: string[] = [];
+    
+    // Optimize ground tile selection using grid-based queries (much faster than iterating all markers)
+    if (this.gridSystem && this.groundTileManager) {
+      // Convert screen corners to world coordinates, then to grid coordinates
+      const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const corners = [
+        { screenX: selMinX, screenY: selMinY },
+        { screenX: selMaxX, screenY: selMinY },
+        { screenX: selMinX, screenY: selMaxY },
+        { screenX: selMaxX, screenY: selMaxY },
+      ];
+      
+      const worldPositions: THREE.Vector3[] = [];
+      for (const corner of corners) {
+        const mouse = new THREE.Vector2(
+          (corner.screenX / rect.width) * 2 - 1,
+          -(corner.screenY / rect.height) * 2 + 1
+        );
+        
+        this.raycaster.setFromCamera(mouse, this.camera);
+        const intersect = new THREE.Vector3();
+        this.raycaster.ray.intersectPlane(groundPlane, intersect);
+        if (intersect) {
+          worldPositions.push(intersect);
+        }
+      }
+      
+      if (worldPositions.length > 0) {
+        // Convert world positions to grid coordinates
+        const gridPositions = worldPositions.map(wp => this.gridSystem!.worldToGrid(wp));
+        
+        // Find grid bounds
+        let minGridX = Math.min(...gridPositions.map(p => p.x));
+        let maxGridX = Math.max(...gridPositions.map(p => p.x));
+        let minGridZ = Math.min(...gridPositions.map(p => p.z));
+        let maxGridZ = Math.max(...gridPositions.map(p => p.z));
+        
+        // Query ground tiles in this grid area (much faster than iterating all markers)
+        const groundTileIds = this.groundTileManager.getTileIdsInArea(minGridX, maxGridX, minGridZ, maxGridZ);
+        idsToSelect.push(...groundTileIds);
+      }
+    }
+    
+    // Get all other selectable objects (excluding ground tile markers for performance)
+    const selectables = this.getSelectableObjects();
     
     selectables.forEach((obj) => {
       const id = obj.userData.id;

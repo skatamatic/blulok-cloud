@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   ClockIcon,
   UserIcon,
@@ -8,11 +8,14 @@ import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   ArrowPathIcon,
-  EyeIcon
+  EyeIcon,
+  XCircleIcon
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
+import { apiService } from '@/services/api.service';
+import { AccessLog } from '@/types/access-history.types';
 
 interface ActivityLogEntry {
   id: string;
@@ -36,52 +39,93 @@ interface ActivityMonitorWidgetProps {
   maxEntries?: number;
 }
 
-// Mock data generator for realistic activity
-const generateMockActivities = (count: number): ActivityLogEntry[] => {
-  const activities: ActivityLogEntry[] = [];
-  const now = new Date();
-  
-  const templates = [
-    { type: 'access', message: 'Unit {unit} accessed by {user}', severity: 'info' },
-    { type: 'lock', message: 'Unit {unit} locked remotely', severity: 'success' },
-    { type: 'unlock', message: 'Unit {unit} unlocked by {user}', severity: 'info' },
-    { type: 'alert', message: 'Low battery detected on Unit {unit}', severity: 'warning' },
-    { type: 'alert', message: 'Unit {unit} left unlocked for 30+ minutes', severity: 'error' },
-    { type: 'system', message: 'Gateway {facility} came online', severity: 'success' },
-    { type: 'system', message: 'Backup completed successfully', severity: 'success' },
-    { type: 'user', message: 'New user {user} registered', severity: 'info' },
-    { type: 'system', message: 'Scheduled maintenance completed', severity: 'info' },
-    { type: 'alert', message: 'Failed access attempt on Unit {unit}', severity: 'error' },
-  ];
-
-  const users = ['John Smith', 'Sarah Johnson', 'Mike Wilson', 'Lisa Chen', 'David Brown'];
-  const units = ['A-101', 'B-205', 'C-312', 'A-150', 'B-088', 'C-401'];
-  const facilities = ['Downtown Storage', 'Warehouse District', 'Airport Location'];
-
-  for (let i = 0; i < count; i++) {
-    const template = templates[Math.floor(Math.random() * templates.length)];
-    const user = users[Math.floor(Math.random() * users.length)];
-    const unit = units[Math.floor(Math.random() * units.length)];
-    const facility = facilities[Math.floor(Math.random() * facilities.length)];
-    
-    const message = template.message
-      .replace('{user}', user)
-      .replace('{unit}', unit)
-      .replace('{facility}', facility);
-
-    activities.push({
-      id: `activity-${i}`,
-      timestamp: new Date(now.getTime() - (i * 15 * 60 * 1000) - Math.random() * 10 * 60 * 1000),
-      type: template.type as any,
-      message,
-      user: template.message.includes('{user}') ? user : undefined,
-      unit: template.message.includes('{unit}') ? unit : undefined,
-      facility: template.message.includes('{facility}') ? facility : undefined,
-      severity: template.severity as any
-    });
+/**
+ * Transform an AccessLog from the API into an ActivityLogEntry for display
+ */
+const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
+  // Determine the activity type based on action
+  let type: ActivityLogEntry['type'] = 'access';
+  if (log.action === 'lock') {
+    type = 'lock';
+  } else if (log.action === 'unlock') {
+    type = 'unlock';
+  } else if (log.action === 'access_denied' || log.action === 'system_error' || log.action === 'invalid_credential') {
+    type = 'alert';
+  } else if (log.action === 'schedule_violation' || log.action === 'timeout') {
+    type = 'system';
   }
 
-  return activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  // Determine severity based on success and action
+  let severity: ActivityLogEntry['severity'] = 'info';
+  if (!log.success) {
+    severity = 'error';
+  } else if (log.action === 'lock' || log.action === 'access_granted') {
+    severity = 'success';
+  } else if (log.action === 'schedule_violation') {
+    severity = 'warning';
+  }
+
+  // Build a descriptive message
+  let message = '';
+  const userName = log.user_name || log.primary_tenant_name || 'Unknown user';
+  const unitNumber = log.unit_number || log.device_name || 'Unknown unit';
+
+  switch (log.action) {
+    case 'unlock':
+      message = `Unit ${unitNumber} unlocked by ${userName}`;
+      break;
+    case 'lock':
+      message = `Unit ${unitNumber} locked by ${userName}`;
+      break;
+    case 'access_granted':
+      message = `Access granted to ${unitNumber} for ${userName}`;
+      break;
+    case 'access_denied':
+      message = `Access denied to ${unitNumber} for ${userName}`;
+      if (log.denial_reason) {
+        message += ` (${log.denial_reason.replace(/_/g, ' ')})`;
+      }
+      break;
+    case 'door_open':
+    case 'gate_open':
+      message = `${log.device_name || 'Access point'} opened`;
+      break;
+    case 'door_close':
+    case 'gate_close':
+      message = `${log.device_name || 'Access point'} closed`;
+      break;
+    case 'system_error':
+      message = `System error on ${unitNumber}`;
+      if (log.reason) {
+        message += `: ${log.reason}`;
+      }
+      break;
+    case 'timeout':
+      message = `Timeout on ${unitNumber}`;
+      break;
+    case 'invalid_credential':
+      message = `Invalid credential attempt on ${unitNumber}`;
+      break;
+    case 'schedule_violation':
+      message = `Schedule violation on ${unitNumber} by ${userName}`;
+      break;
+    case 'manual_override':
+      message = `Manual override on ${unitNumber} by ${userName}`;
+      break;
+    default:
+      message = `${log.action.replace(/_/g, ' ')} on ${unitNumber}`;
+  }
+
+  return {
+    id: log.id,
+    timestamp: new Date(log.occurred_at),
+    type,
+    message,
+    user: log.user_name || log.primary_tenant_name,
+    unit: log.unit_number,
+    facility: log.facility_name,
+    severity
+  };
 };
 
 export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
@@ -96,30 +140,50 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
 }) => {
   const [size, setSize] = useState<WidgetSize>(initialSize);
   const [activities, setActivities] = useState<ActivityLogEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'alerts' | 'access'>('all');
+
+  const loadActivities = useCallback(async (showRefreshState = false) => {
+    if (showRefreshState) {
+      setIsRefreshing(true);
+    }
+    setError(null);
+    
+    try {
+      const response = await apiService.getAccessHistory({
+        facility_id: facilityFilter,
+        limit: maxEntries,
+        offset: 0
+      });
+
+      if (response.success && response.logs) {
+        const transformedActivities = response.logs.map(transformAccessLogToActivity);
+        setActivities(transformedActivities);
+      } else {
+        setActivities([]);
+      }
+    } catch (err) {
+      console.error('Failed to load access history:', err);
+      setError('Failed to load activity data');
+      setActivities([]);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [facilityFilter, maxEntries]);
 
   useEffect(() => {
     loadActivities();
-    // Simulate real-time updates
+    
+    // Refresh every 60 seconds for near-real-time updates
     const interval = setInterval(() => {
-      if (Math.random() > 0.7) { // 30% chance every 30 seconds
-        loadActivities();
-      }
-    }, 30000);
+      loadActivities();
+    }, 60000);
 
     return () => clearInterval(interval);
-  }, [facilityFilter, maxEntries]);
-
-  const loadActivities = async () => {
-    setIsRefreshing(true);
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    const mockActivities = generateMockActivities(maxEntries);
-    setActivities(mockActivities);
-    setIsRefreshing(false);
-  };
+  }, [loadActivities]);
 
   const getMaxDisplayItems = (size: WidgetSize): number => {
     switch (size) {
@@ -146,7 +210,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
         return <UserIcon className="h-4 w-4" />;
       case 'alert':
         return severity === 'error' ? 
-          <ExclamationTriangleIcon className="h-4 w-4" /> : 
+          <XCircleIcon className="h-4 w-4" /> : 
           <ExclamationTriangleIcon className="h-4 w-4" />;
       case 'system':
         return <CheckCircleIcon className="h-4 w-4" />;
@@ -188,7 +252,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   };
 
   const handleRefresh = async () => {
-    await loadActivities();
+    await loadActivities(true);
   };
 
   return (
@@ -255,7 +319,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
             ].map(({ key, label, count }) => (
               <button
                 key={key}
-                onClick={() => setFilter(key as any)}
+                onClick={() => setFilter(key as typeof filter)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                   filter === key
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
@@ -270,7 +334,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
 
         {/* Activity List */}
         <div className="flex-1 space-y-2 overflow-y-auto">
-          {isRefreshing ? (
+          {isLoading ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => (
                 <div key={i} className="animate-pulse flex items-center space-x-3 p-2">
@@ -281,6 +345,17 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
                   </div>
                 </div>
               ))}
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center h-full text-center py-8">
+              <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
+              <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+              <button
+                onClick={handleRefresh}
+                className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+              >
+                Try again
+              </button>
             </div>
           ) : displayedActivities.length > 0 ? (
             displayedActivities.map((activity, index) => (
@@ -350,4 +425,3 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
     </Widget>
   );
 };
-

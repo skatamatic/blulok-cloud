@@ -29,7 +29,24 @@ import {
   AssetMetadata,
   AssetCategory,
   DeviceState,
+  AssetDimensions,
 } from '../core/types';
+
+/**
+ * Locker specification for procedurally generated storage units
+ */
+export interface LockerSpec {
+  /** Which side the door is on */
+  doorSide: 'front' | 'back' | 'left' | 'right';
+  /** Width of the door in meters */
+  doorWidth: number;
+  /** Height of the door in meters */
+  doorHeight: number;
+  /** Horizontal offset from center in meters (0 = centered) */
+  doorPositionX: number;
+  /** Vertical offset from bottom in meters */
+  doorPositionY: number;
+}
 
 // Material presets
 const MATERIALS = {
@@ -168,6 +185,90 @@ export class AssetFactory {
       default:
         return this.createGenericBox(asset);
     }
+  }
+
+  /**
+   * Create a custom storage unit with configurable door placement
+   * Used by the Storage Locker Wizard for creating custom locker assets.
+   * 
+   * @param dimensions - The overall dimensions of the locker (width, height, depth) in meters
+   * @param lockerSpec - Door configuration (side, size, position)
+   * @param state - Optional device state for smart assets
+   * @returns A Three.js Group containing the locker mesh
+   */
+  static createCustomStorageUnit(
+    dimensions: AssetDimensions,
+    lockerSpec: LockerSpec,
+    state: DeviceState = DeviceState.LOCKED
+  ): THREE.Object3D {
+    const group = new THREE.Group();
+    const { width, height, depth } = dimensions;
+    const { doorSide, doorWidth, doorHeight, doorPositionX, doorPositionY } = lockerSpec;
+    
+    // Main body - simple box
+    const bodyGeometry = new THREE.BoxGeometry(width, height, depth);
+    const bodyMaterial = this.getMaterialForState(state);
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    body.position.y = height / 2;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    body.userData.stateDependent = true;
+    body.userData.partName = 'body';
+    group.add(body);
+    
+    // Door configuration based on which side it's on
+    const doorThickness = 0.05;
+    const doorGeometry = new THREE.BoxGeometry(
+      doorSide === 'left' || doorSide === 'right' ? doorThickness : doorWidth,
+      doorHeight,
+      doorSide === 'front' || doorSide === 'back' ? doorThickness : doorWidth
+    );
+    
+    const door = new THREE.Mesh(doorGeometry, MATERIALS.storageUnit.door.clone());
+    door.castShadow = true;
+    door.userData.partName = 'door';
+    
+    // Calculate door position based on which side
+    const doorY = doorPositionY + doorHeight / 2;
+    
+    switch (doorSide) {
+      case 'front':
+        door.position.set(
+          doorPositionX,
+          doorY,
+          depth / 2 + doorThickness / 2
+        );
+        break;
+      case 'back':
+        door.position.set(
+          doorPositionX,
+          doorY,
+          -depth / 2 - doorThickness / 2
+        );
+        break;
+      case 'left':
+        door.position.set(
+          -width / 2 - doorThickness / 2,
+          doorY,
+          doorPositionX
+        );
+        break;
+      case 'right':
+        door.position.set(
+          width / 2 + doorThickness / 2,
+          doorY,
+          doorPositionX
+        );
+        break;
+    }
+    
+    group.add(door);
+    
+    // Track all part names on the group
+    group.userData.partNames = ['body', 'door'];
+    group.userData.lockerSpec = lockerSpec;
+    
+    return group;
   }
 
   /**

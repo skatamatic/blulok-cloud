@@ -7,7 +7,7 @@ import {
   BoltIcon,
   CpuChipIcon,
 } from '@heroicons/react/24/outline';
-import { useBluFMSFacility } from '@/contexts/BluFMSFacilityContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { VoiceChatWaveform } from '@/components/blufms/VoiceChatWaveform';
 import { useToast } from '@/contexts/ToastContext';
 import { DemoPlayer } from '@/components/blufms/demo/DemoPlayer';
@@ -36,7 +36,7 @@ const mapLayers: LayerTab[] = [
 ];
 
 export default function BluFMSFacilityMapPage() {
-  const { selectedFacility } = useBluFMSFacility();
+  const { selectedFacility } = useGlobalFacility();
   const { addToast } = useToast();
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';

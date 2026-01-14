@@ -128,9 +128,7 @@ export const WIDGET_TYPES = {
   /** System performance metrics and monitoring */
   'performance-stats': 'performance-stats',
 
-  // Development & Testing Widgets
-  /** Demo widget for scrollable content testing */
-  'test-scroll': 'test-scroll',
+  // Analytics Widgets
   /** Activity histogram visualization over time */
   'histogram': 'histogram',
 } as const;
@@ -308,16 +306,6 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     defaultSize: 'huge',
     availableSizes: ['medium', 'large', 'huge'],
     allowMultiple: false,
-    category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'test-scroll': {
-    type: 'test-scroll',
-    name: 'Scrollable Content',
-    description: 'Demo scrollable widget',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'medium-tall', 'large', 'huge', 'large-wide', 'huge-wide'],
-    allowMultiple: true,
     category: 'system',
     requiredPermissions: ['admin', 'facility_admin']
   },

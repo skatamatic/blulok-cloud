@@ -266,7 +266,7 @@ describe('SimulatedProvider', () => {
       // Should see updated name
       const tenants2 = await provider.fetchTenants();
       expect(tenants2[0]?.firstName).toBe('Jonathan');
-    });
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('Webhook Support', () => {

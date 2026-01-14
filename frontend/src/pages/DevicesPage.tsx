@@ -25,6 +25,7 @@ import {
 import { apiService } from '@/services/api.service';
 import { AccessControlDevice, BluLokDevice, DeviceFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
 
@@ -61,9 +62,9 @@ interface DevicesPageProps {
 export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = {}) {
   const ws = useWebSocket();
   const navigate = useNavigate();
-  const location = useLocation();
   const { authState } = useAuth();
   const { addToast } = useToast();
+  const { selectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
   const [devices, setDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]);
   const [allDevices, setAllDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);
@@ -78,7 +79,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     status: '',
     sortBy: 'name',
     sortOrder: 'asc',
-    facility_id: location.state?.facilityFilter || '',
     limit: 30,
     offset: 0
   });
@@ -94,7 +94,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
 
   useEffect(() => {
     loadDevices();
-  }, [filters, currentPage]);
+  }, [filters, currentPage, selectedFacilityId]);
 
   // Command queue subscription
   useEffect(() => {
@@ -158,6 +158,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       const queryFilters = normalize({
         ...filters,
         offset: (currentPage - 1) * (filters.limit || 30),
+        // Add facility_id from global context if not "All Facilities"
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
       });
       const response = await apiService.getDevices(queryFilters);
       setDevices(response.devices || []);
@@ -170,7 +172,9 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           ...filters,
           // Remove pagination parameters to get all data
           offset: undefined,
-          limit: undefined
+          limit: undefined,
+          // Add facility_id from global context if not "All Facilities"
+          ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
         });
         
         const fullResponse = await apiService.getDevices(fullDatasetFilters);
@@ -328,7 +332,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
             search: '',
             device_type: 'all' as const,
             status: '',
-            facility_id: '',
             sortBy: 'name',
             sortOrder: 'asc',
             limit: 30,

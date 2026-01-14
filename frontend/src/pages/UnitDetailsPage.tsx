@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { apiService } from '@/services/api.service';
@@ -110,6 +110,7 @@ const deviceStatusIcons = {
 export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { authState } = useAuth();
   const { subscribe, unsubscribe } = useWebSocket();
   const [unit, setUnit] = useState<UnitDetails | null>(null);
@@ -248,7 +249,17 @@ export default function UnitDetailsPage() {
   };
 
   const handleBack = () => {
-    navigate('/units');
+    // Check if we have return path from location state
+    const returnPath = (location.state as any)?.returnPath;
+    if (returnPath) {
+      navigate(returnPath);
+    } else if (unit?.facility_id) {
+      // Fallback to facility details page with units tab
+      navigate(`/facilities/${unit.facility_id}?tab=units`);
+    } else {
+      // Final fallback to dashboard
+      navigate('/dashboard');
+    }
   };
 
   const handleToggleLock = async () => {
@@ -866,10 +877,10 @@ export default function UnitDetailsPage() {
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-gray-500 dark:text-gray-400">Temperature</span>
                           <span className={`font-medium ${
-                            unit.blulok_device.temperature < 0 || unit.blulok_device.temperature > 45 ? 'text-red-500' :
-                            unit.blulok_device.temperature < 10 || unit.blulok_device.temperature > 35 ? 'text-yellow-500' : 'text-green-500'
+                            Number(unit.blulok_device.temperature) < 0 || Number(unit.blulok_device.temperature) > 45 ? 'text-red-500' :
+                            Number(unit.blulok_device.temperature) < 10 || Number(unit.blulok_device.temperature) > 35 ? 'text-yellow-500' : 'text-green-500'
                           }`}>
-                            {unit.blulok_device.temperature.toFixed(1)}°C
+                            {Number(unit.blulok_device.temperature).toFixed(1)}°C
                           </span>
                         </div>
                       )}
@@ -908,7 +919,7 @@ export default function UnitDetailsPage() {
                       <div className="flex items-center justify-between space-x-2">
                         <div className="flex space-x-3">
                           <Link
-                            to={`/devices?highlight=${unit.blulok_device.id}`}
+                            to={`/devices/${unit.blulok_device.id}`}
                             className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
                           >
                             <CpuChipIcon className="h-4 w-4 mr-1" />

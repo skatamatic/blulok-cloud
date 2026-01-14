@@ -12,8 +12,8 @@ import {
 
 describe('GeometryOptimizer', () => {
   describe('Edge Cases', () => {
-    it('should handle empty input', () => {
-      const result = GeometryOptimizer.optimize([]);
+    it('should handle empty input', async () => {
+      const result = await GeometryOptimizer.optimize([]);
       
       expect(result.rectangles).toEqual([]);
       expect(result.totalCells).toBe(0);
@@ -23,9 +23,9 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult([], result)).toBe(true);
     });
     
-    it('should handle single cell', () => {
+    it('should handle single cell', async () => {
       const cells = [{ x: 5, z: 5 }];
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       expect(result.rectangles).toHaveLength(1);
       expect(result.rectangles[0]).toEqual({
@@ -42,9 +42,9 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should handle two adjacent cells horizontally', () => {
+    it('should handle two adjacent cells horizontally', async () => {
       const cells = [{ x: 0, z: 0 }, { x: 1, z: 0 }];
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       expect(result.rectangles).toHaveLength(1);
       expect(result.rectangles[0].minX).toBe(0);
@@ -56,9 +56,9 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should handle two adjacent cells vertically', () => {
+    it('should handle two adjacent cells vertically', async () => {
       const cells = [{ x: 0, z: 0 }, { x: 0, z: 1 }];
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       expect(result.rectangles).toHaveLength(1);
       expect(result.rectangles[0].minX).toBe(0);
@@ -70,9 +70,9 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should handle two non-adjacent cells', () => {
+    it('should handle two non-adjacent cells', async () => {
       const cells = [{ x: 0, z: 0 }, { x: 5, z: 5 }];
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       expect(result.rectangles).toHaveLength(2);
       expect(result.rectangles[0].area).toBe(1);
@@ -83,12 +83,12 @@ describe('GeometryOptimizer', () => {
   });
   
   describe('Perfect Rectangles', () => {
-    it('should optimize 2x2 rectangle to single rectangle', () => {
+    it('should optimize 2x2 rectangle to single rectangle', async () => {
       const cells = [
         { x: 0, z: 0 }, { x: 1, z: 0 },
         { x: 0, z: 1 }, { x: 1, z: 1 },
       ];
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       expect(result.rectangles).toHaveLength(1);
       expect(result.rectangles[0].area).toBe(4);
@@ -97,7 +97,7 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should optimize 10x10 rectangle to single rectangle', () => {
+    it('should optimize 10x10 rectangle to single rectangle', async () => {
       const cells: Array<{x: number, z: number}> = [];
       for (let x = 0; x < 10; x++) {
         for (let z = 0; z < 10; z++) {
@@ -105,7 +105,7 @@ describe('GeometryOptimizer', () => {
         }
       }
       
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       expect(result.rectangles).toHaveLength(1);
       expect(result.rectangles[0].area).toBe(100);
@@ -114,7 +114,7 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should optimize 50x50 rectangle to single rectangle', () => {
+    it('should optimize 50x50 rectangle to single rectangle', async () => {
       const cells: Array<{x: number, z: number}> = [];
       for (let x = 0; x < 50; x++) {
         for (let z = 0; z < 50; z++) {
@@ -123,7 +123,7 @@ describe('GeometryOptimizer', () => {
       }
       
       const startTime = performance.now();
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       const endTime = performance.now();
       
       expect(result.rectangles).toHaveLength(1);
@@ -135,7 +135,7 @@ describe('GeometryOptimizer', () => {
   });
   
   describe('L-Shaped Buildings', () => {
-    it('should optimize L-shape to 2 rectangles', () => {
+    it('should optimize L-shape to 2 rectangles', async () => {
       // L-shape: 3x3 square with one corner removed
       const cells = [
         { x: 0, z: 0 }, { x: 1, z: 0 }, { x: 2, z: 0 },
@@ -144,7 +144,7 @@ describe('GeometryOptimizer', () => {
         // Missing { x: 2, z: 2 } to create L-shape
       ];
       
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       // Should be 2 rectangles (one 2x3, one 1x1, or similar)
       expect(result.rectangles.length).toBeLessThanOrEqual(3);
@@ -153,7 +153,7 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should optimize large L-shape efficiently', () => {
+    it('should optimize large L-shape efficiently', async () => {
       // Large L: 10x10 with 5x5 corner removed
       const cells: Array<{x: number, z: number}> = [];
       for (let x = 0; x < 10; x++) {
@@ -164,7 +164,7 @@ describe('GeometryOptimizer', () => {
         }
       }
       
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       // Should be optimized to a few rectangles
       expect(result.rectangles.length).toBeLessThan(10);
@@ -175,7 +175,7 @@ describe('GeometryOptimizer', () => {
   });
   
   describe('Buildings with Holes', () => {
-    it('should optimize building with single hole', () => {
+    it('should optimize building with single hole', async () => {
       // 5x5 square with center cell removed
       const cells: Array<{x: number, z: number}> = [];
       for (let x = 0; x < 5; x++) {
@@ -185,7 +185,7 @@ describe('GeometryOptimizer', () => {
         }
       }
       
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       // Should be optimized to a few rectangles around the hole
       expect(result.rectangles.length).toBeLessThan(10);
@@ -193,7 +193,7 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should optimize building with multiple holes', () => {
+    it('should optimize building with multiple holes', async () => {
       // 10x10 square with scattered holes
       const cells: Array<{x: number, z: number}> = [];
       for (let x = 0; x < 10; x++) {
@@ -204,7 +204,7 @@ describe('GeometryOptimizer', () => {
         }
       }
       
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       // Should still be optimized
       expect(result.rectangles.length).toBeLessThan(20);
@@ -214,13 +214,13 @@ describe('GeometryOptimizer', () => {
   });
   
   describe('Non-Contiguous Cells', () => {
-    it('should handle completely separate cell groups', () => {
+    it('should handle completely separate cell groups', async () => {
       const cells = [
         { x: 0, z: 0 }, { x: 1, z: 0 },
         { x: 10, z: 10 }, { x: 11, z: 10 },
       ];
       
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       
       // Should create 2 rectangles (one for each group)
       expect(result.rectangles.length).toBe(2);
@@ -232,7 +232,7 @@ describe('GeometryOptimizer', () => {
   });
   
   describe('Options', () => {
-    it('should respect maxRectangleSize option', () => {
+    it('should respect maxRectangleSize option', async () => {
       const cells: Array<{x: number, z: number}> = [];
       for (let x = 0; x < 20; x++) {
         for (let z = 0; z < 20; z++) {
@@ -240,7 +240,7 @@ describe('GeometryOptimizer', () => {
         }
       }
       
-      const result = GeometryOptimizer.optimize(cells, {
+      const result = await GeometryOptimizer.optimize(cells, {
         maxRectangleSize: 50, // Limit to 50 cells per rectangle
       });
       
@@ -255,13 +255,13 @@ describe('GeometryOptimizer', () => {
       expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);
     });
     
-    it('should respect minRectangleSize option', () => {
+    it('should respect minRectangleSize option', async () => {
       const cells = [
         { x: 0, z: 0 }, { x: 1, z: 0 },
         { x: 5, z: 5 }, // Single isolated cell
       ];
       
-      const result = GeometryOptimizer.optimize(cells, {
+      const result = await GeometryOptimizer.optimize(cells, {
         minRectangleSize: 2, // Don't merge single cells
       });
       
@@ -273,7 +273,7 @@ describe('GeometryOptimizer', () => {
   });
   
   describe('Performance', () => {
-    it('should optimize 100x100 building quickly', () => {
+    it('should optimize 100x100 building quickly', async () => {
       const cells: Array<{x: number, z: number}> = [];
       for (let x = 0; x < 100; x++) {
         for (let z = 0; z < 100; z++) {
@@ -282,7 +282,7 @@ describe('GeometryOptimizer', () => {
       }
       
       const startTime = performance.now();
-      const result = GeometryOptimizer.optimize(cells);
+      const result = await GeometryOptimizer.optimize(cells);
       const endTime = performance.now();
       
       expect(result.rectangles).toHaveLength(1);
@@ -362,7 +362,7 @@ describe('GeometryOptimizer', () => {
   });
   
   describe('Property-Based Tests', () => {
-    it('should always produce valid results for random cell sets', () => {
+    it('should always produce valid results for random cell sets', async () => {
       // Generate 10 random test cases
       for (let test = 0; test < 10; test++) {
         const cells: Array<{x: number, z: number}> = [];
@@ -383,7 +383,7 @@ describe('GeometryOptimizer', () => {
           cells.push({ x, z });
         }
         
-        const result = GeometryOptimizer.optimize(cells);
+        const result = await GeometryOptimizer.optimize(cells);
         
         // Should always be valid
         expect(GeometryOptimizer.validateResult(cells, result)).toBe(true);

@@ -31,6 +31,7 @@ export interface OptimizationOptions {
   readonly?: boolean; // More aggressive in readonly mode
   maxRectangleSize?: number; // Limit for texture tiling (optional)
   minRectangleSize?: number; // Don't merge if too small (optional)
+  onProgress?: (progress: { current: number; total: number; percentage: number }) => void; // Progress callback
 }
 
 export class GeometryOptimizer {
@@ -41,10 +42,11 @@ export class GeometryOptimizer {
    * @param options - Optimization options
    * @returns Optimization result with rectangles and validation data
    */
-  static optimize(
+  static async optimize(
     cells: Array<{x: number, z: number}>,
     options: OptimizationOptions = {}
-  ): OptimizationResult {
+  ): Promise<OptimizationResult> {
+    
     // Handle edge cases
     if (cells.length === 0) {
       return {
@@ -109,7 +111,7 @@ export class GeometryOptimizer {
     }
     
     // Greedy algorithm: Find largest rectangles
-    const rectangles = this.findLargestRectangles(cells, options);
+    const rectangles = await this.findLargestRectangles(cells, options);
     
     // Build cell-to-rectangle mapping
     const cellToRectangle = new Map<string, OptimizedRectangle>();
@@ -121,7 +123,6 @@ export class GeometryOptimizer {
     
     const totalCells = cells.length;
     const optimizationRatio = rectangles.length / totalCells;
-    
     return {
       rectangles,
       cellToRectangle,
@@ -176,18 +177,34 @@ export class GeometryOptimizer {
   }
   
   /**
-   * Greedy algorithm: Find largest rectangles
+   * Efficient greedy algorithm: Find largest rectangles using incremental growing
    * 
-   * Algorithm:
+   * Algorithm (O(n * k^2) where k is average rectangle size, much better than O(n^4)):
    * 1. Create cell set for O(1) lookup
    * 2. While cells remain:
-   *    a. Pick any remaining cell as seed
-   *    b. Try all possible rectangles starting from that cell
-   *    c. Select largest valid rectangle
+   *    a. For each remaining cell as seed, find largest rectangle starting from it
+   *    b. Use incremental growing: start with 1x1, expand in best direction iteratively
+   *    c. Select the largest rectangle found across all seeds
    *    d. Remove covered cells
    *    e. Repeat
    */
-  private static findLargestRectangles(
+  private static async findLargestRectangles(
+    cells: Array<{x: number, z: number}>,
+    options: OptimizationOptions
+  ): Promise<OptimizedRectangle[]> {
+    // Use async version for progress reporting, sync version otherwise
+    if (options.onProgress) {
+      return this.findLargestRectanglesAsync(cells, options);
+    }
+    // For sync version, yield once to allow other tasks to run
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    return this.findLargestRectanglesSync(cells, options);
+  }
+  
+  /**
+   * Synchronous version of findLargestRectangles
+   */
+  private static findLargestRectanglesSync(
     cells: Array<{x: number, z: number}>,
     options: OptimizationOptions
   ): OptimizedRectangle[] {
@@ -227,99 +244,155 @@ export class GeometryOptimizer {
       return rectCells;
     };
     
-    // Greedy: Keep finding largest rectangles
-    while (cellSet.size > 0) {
-      // Get any remaining cell as seed
-      const seedKey = Array.from(cellSet)[0];
-      const [seedX, seedZ] = seedKey.split(',').map(Number);
+    /**
+     * Find the largest rectangle starting from a seed using a simple greedy approach
+     * Algorithm: Find max width, then max height for that width
+     * This is O(k) where k is rectangle size, much faster than incremental growing
+     */
+    const findLargestRectangleFromSeed = (
+      seedX: number,
+      seedZ: number
+    ): OptimizedRectangle | null => {
+      // Find maximum width we can extend horizontally from seed
+      let minX = seedX;
+      let maxX = seedX;
       
-      // Find largest rectangle starting from this seed
-      let bestRect: OptimizedRectangle | null = null;
-      let bestArea = 0;
+      // Extend right
+      while (cellSet.has(`${maxX + 1},${seedZ}`)) {
+        maxX++;
+      }
+      // Extend left
+      while (cellSet.has(`${minX - 1},${seedZ}`)) {
+        minX--;
+      }
       
-      // Try all possible rectangles that include this seed
-      // We'll try all possible top-left corners that could contain this seed
-      const remainingCells = Array.from(cellSet).map(key => {
-        const [x, z] = key.split(',').map(Number);
-        return { x, z };
-      });
+      // Now find maximum height for this width
+      let minZ = seedZ;
+      let maxZ = seedZ;
+      let canExpandUp = true;
+      let canExpandDown = true;
       
-      const minX = Math.min(...remainingCells.map(c => c.x));
-      const maxX = Math.max(...remainingCells.map(c => c.x));
-      const minZ = Math.min(...remainingCells.map(c => c.z));
-      const maxZ = Math.max(...remainingCells.map(c => c.z));
-      
-      // Try all possible rectangles
-      // First pass: find best rectangle without size constraints (for splitting later)
-      let bestRectUnconstrained: OptimizedRectangle | null = null;
-      let bestAreaUnconstrained = 0;
-      
-      for (let startX = minX; startX <= seedX; startX++) {
-        for (let startZ = minZ; startZ <= seedZ; startZ++) {
-          // Try all possible end positions
-          for (let endX = seedX; endX <= maxX; endX++) {
-            for (let endZ = seedZ; endZ <= maxZ; endZ++) {
-              // Check size constraints
-              const width = endX - startX + 1;
-              const height = endZ - startZ + 1;
-              const area = width * height;
-              
-              // Check if rectangle is filled
-              if (isRectangleFilled(startX, endX, startZ, endZ)) {
-                // Track best rectangle regardless of size (for potential splitting)
-                if (area > bestAreaUnconstrained) {
-                  bestAreaUnconstrained = area;
-                  const rectCells = getRectangleCells(startX, endX, startZ, endZ);
-                  bestRectUnconstrained = {
-                    minX: startX,
-                    maxX: endX,
-                    minZ: startZ,
-                    maxZ: endZ,
-                    cells: rectCells,
-                    area,
-                  };
-                }
-                
-                // Only consider for bestRect if it meets size constraints
-                if (options.maxRectangleSize && area > options.maxRectangleSize) {
-                  continue; // Too large, but we'll split it if it's the best
-                }
-                
-                if (options.minRectangleSize && area < options.minRectangleSize) {
-                  continue; // Too small (skip merging)
-                }
-                
-                if (area > bestArea) {
-                  bestArea = area;
-                  const rectCells = getRectangleCells(startX, endX, startZ, endZ);
-                  bestRect = {
-                    minX: startX,
-                    maxX: endX,
-                    minZ: startZ,
-                    maxZ: endZ,
-                    cells: rectCells,
-                    area,
-                  };
-                }
-              }
+      // Try to expand vertically as far as possible
+      while (canExpandUp || canExpandDown) {
+        // Try expanding up (negative Z)
+        if (canExpandUp) {
+          let allCellsPresent = true;
+          for (let x = minX; x <= maxX; x++) {
+            if (!cellSet.has(`${x},${minZ - 1}`)) {
+              allCellsPresent = false;
+              break;
             }
+          }
+          if (allCellsPresent) {
+            minZ--;
+          } else {
+            canExpandUp = false;
+          }
+        }
+        
+        // Try expanding down (positive Z)
+        if (canExpandDown) {
+          let allCellsPresent = true;
+          for (let x = minX; x <= maxX; x++) {
+            if (!cellSet.has(`${x},${maxZ + 1}`)) {
+              allCellsPresent = false;
+              break;
+            }
+          }
+          if (allCellsPresent) {
+            maxZ++;
+          } else {
+            canExpandDown = false;
           }
         }
       }
       
-      // If no constrained rectangle found but we have an unconstrained one, use it (will be split)
-      if (!bestRect && bestRectUnconstrained) {
-        bestRect = bestRectUnconstrained;
+      const area = (maxX - minX + 1) * (maxZ - minZ + 1);
+      
+      // Check size constraints
+      if (options.minRectangleSize && area < options.minRectangleSize) {
+        return null; // Too small, skip
+      }
+      if (options.maxRectangleSize && area > options.maxRectangleSize) {
+        // Rectangle is too large - we'll let it be split later
       }
       
-      // If no rectangle found, create single-cell rectangle
+      // Verify the rectangle is actually filled (safety check)
+      if (!isRectangleFilled(minX, maxX, minZ, maxZ)) {
+        // If not filled, return null - shouldn't happen with this algorithm but safety check
+        return null;
+      }
+      
+      const rectCells = getRectangleCells(minX, maxX, minZ, maxZ);
+      
+      return {
+        minX,
+        maxX,
+        minZ,
+        maxZ,
+        cells: rectCells,
+        area,
+      };
+    };
+    
+    // Greedy: Keep finding largest rectangles
+    let rectangleIterations = 0;
+    while (cellSet.size > 0) {
+      rectangleIterations++;
+      const remainingCells = Array.from(cellSet).map(key => {
+        const [x, z] = key.split(',').map(Number);
+        return { x, z, key };
+      });
+      
+      // #region agent log
+      const iterationStartTime = performance.now();
+      // #endregion
+      
+      // Find the largest rectangle starting from any remaining cell
+      // OPTIMIZATION: Use aggressive seed limiting for performance
+      // Try only a small number of seeds - this trades some optimality for speed
+      // For very large datasets, we sample seeds to cover the space better
+      const MAX_SEEDS_TO_TRY = Math.min(remainingCells.length, 20); // Try at most 20 seeds
+      let seedsToTry: Array<{x: number, z: number, key: string}>;
+      if (remainingCells.length <= MAX_SEEDS_TO_TRY) {
+        seedsToTry = remainingCells;
+      } else {
+        // Sample seeds evenly across the space for better coverage
+        const step = Math.floor(remainingCells.length / MAX_SEEDS_TO_TRY);
+        seedsToTry = [];
+        for (let i = 0; i < MAX_SEEDS_TO_TRY; i++) {
+          seedsToTry.push(remainingCells[i * step]);
+        }
+      }
+      
+      let bestRect: OptimizedRectangle | null = null;
+      let bestArea = 0;
+      let seedsTried = 0;
+      
+      // Try a limited subset of cells as seeds
+      for (const seed of seedsToTry) {
+        seedsTried++;
+        const rect = findLargestRectangleFromSeed(seed.x, seed.z);
+        if (rect && rect.area > bestArea) {
+          bestArea = rect.area;
+          bestRect = rect;
+        }
+        
+        // Early exit: if we found a rectangle that meets max size, use it immediately
+        if (options.maxRectangleSize && bestArea >= options.maxRectangleSize) {
+          break;
+        }
+      }
+      
+      // If no rectangle found, create single-cell rectangle from first remaining cell
       if (!bestRect) {
-        const rectCells = new Set([seedKey]);
+        const seed = remainingCells[0];
+        const rectCells = new Set([seed.key]);
         bestRect = {
-          minX: seedX,
-          maxX: seedX,
-          minZ: seedZ,
-          maxZ: seedZ,
+          minX: seed.x,
+          maxX: seed.x,
+          minZ: seed.z,
+          maxZ: seed.z,
           cells: rectCells,
           area: 1,
         };
@@ -343,6 +416,249 @@ export class GeometryOptimizer {
       });
       
       rectangles.push(bestRect);
+      
+      // Report progress after each rectangle is found (before next iteration)
+      if (options.onProgress) {
+        const processedCells = initialCellCount - cellSet.size;
+        options.onProgress({
+          current: processedCells,
+          total: initialCellCount,
+          percentage: Math.round((processedCells / initialCellCount) * 100),
+        });
+      }
+    }
+    
+    return rectangles;
+  }
+  
+  /**
+   * Async version that processes rectangles in batches with yielding between batches
+   * Allows UI updates to render progress
+   */
+  private static async findLargestRectanglesAsync(
+    cells: Array<{x: number, z: number}>,
+    options: OptimizationOptions
+  ): Promise<OptimizedRectangle[]> {
+    const cellSet = new Set(cells.map(c => `${c.x},${c.z}`));
+    const rectangles: OptimizedRectangle[] = [];
+    
+    // Track initial cell count for progress reporting
+    const initialCellCount = cellSet.size;
+    
+    // Helper functions (same as sync version)
+    const isRectangleFilled = (
+      minX: number,
+      maxX: number,
+      minZ: number,
+      maxZ: number
+    ): boolean => {
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          if (!cellSet.has(`${x},${z}`)) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    
+    const getRectangleCells = (
+      minX: number,
+      maxX: number,
+      minZ: number,
+      maxZ: number
+    ): Set<string> => {
+      const rectCells = new Set<string>();
+      for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          rectCells.add(`${x},${z}`);
+        }
+      }
+      return rectCells;
+    };
+    
+    const findLargestRectangleFromSeed = (
+      seedX: number,
+      seedZ: number
+    ): OptimizedRectangle | null => {
+      // Find maximum width we can extend horizontally from seed
+      let minX = seedX;
+      let maxX = seedX;
+      
+      // Extend right
+      while (cellSet.has(`${maxX + 1},${seedZ}`)) {
+        maxX++;
+      }
+      // Extend left
+      while (cellSet.has(`${minX - 1},${seedZ}`)) {
+        minX--;
+      }
+      
+      // Now find maximum height for this width
+      let minZ = seedZ;
+      let maxZ = seedZ;
+      let canExpandUp = true;
+      let canExpandDown = true;
+      
+      // Try to expand vertically as far as possible
+      while (canExpandUp || canExpandDown) {
+        // Try expanding up (negative Z)
+        if (canExpandUp) {
+          let allCellsPresent = true;
+          for (let x = minX; x <= maxX; x++) {
+            if (!cellSet.has(`${x},${minZ - 1}`)) {
+              allCellsPresent = false;
+              break;
+            }
+          }
+          if (allCellsPresent) {
+            minZ--;
+          } else {
+            canExpandUp = false;
+          }
+        }
+        
+        // Try expanding down (positive Z)
+        if (canExpandDown) {
+          let allCellsPresent = true;
+          for (let x = minX; x <= maxX; x++) {
+            if (!cellSet.has(`${x},${maxZ + 1}`)) {
+              allCellsPresent = false;
+              break;
+            }
+          }
+          if (allCellsPresent) {
+            maxZ++;
+          } else {
+            canExpandDown = false;
+          }
+        }
+      }
+      
+      const area = (maxX - minX + 1) * (maxZ - minZ + 1);
+      
+      // Check size constraints
+      if (options.minRectangleSize && area < options.minRectangleSize) {
+        return null;
+      }
+      if (options.maxRectangleSize && area > options.maxRectangleSize) {
+        // Rectangle is too large - we'll let it be split later
+      }
+      
+      // Verify the rectangle is actually filled
+      if (!isRectangleFilled(minX, maxX, minZ, maxZ)) {
+        return null;
+      }
+      
+      const rectCells = getRectangleCells(minX, maxX, minZ, maxZ);
+      
+      return {
+        minX,
+        maxX,
+        minZ,
+        maxZ,
+        cells: rectCells,
+        area,
+      };
+    };
+    
+    // Process rectangles in batches with yielding between batches
+    const RECTANGLES_PER_BATCH = 1; // Process 1 rectangle, then yield (very frequent updates)
+    let rectangleIterations = 0;
+    let rectanglesInCurrentBatch = 0;
+    
+    while (cellSet.size > 0) {
+      rectangleIterations++;
+      rectanglesInCurrentBatch++;
+      
+      const remainingCells = Array.from(cellSet).map(key => {
+        const [x, z] = key.split(',').map(Number);
+        return { x, z, key };
+      });
+      
+      // Find the largest rectangle starting from any remaining cell
+      const MAX_SEEDS_TO_TRY = Math.min(remainingCells.length, 20);
+      let seedsToTry: Array<{x: number, z: number, key: string}>;
+      if (remainingCells.length <= MAX_SEEDS_TO_TRY) {
+        seedsToTry = remainingCells;
+      } else {
+        const step = Math.floor(remainingCells.length / MAX_SEEDS_TO_TRY);
+        seedsToTry = [];
+        for (let i = 0; i < MAX_SEEDS_TO_TRY; i++) {
+          seedsToTry.push(remainingCells[i * step]);
+        }
+      }
+      
+      let bestRect: OptimizedRectangle | null = null;
+      let bestArea = 0;
+      
+      // Try a limited subset of cells as seeds
+      for (const seed of seedsToTry) {
+        const rect = findLargestRectangleFromSeed(seed.x, seed.z);
+        if (rect && rect.area > bestArea) {
+          bestArea = rect.area;
+          bestRect = rect;
+        }
+        
+        // Early exit: if we found a rectangle that meets max size, use it immediately
+        if (options.maxRectangleSize && bestArea >= options.maxRectangleSize) {
+          break;
+        }
+      }
+      
+      // If no rectangle found, create single-cell rectangle from first remaining cell
+      if (!bestRect) {
+        const seed = remainingCells[0];
+        const rectCells = new Set([seed.key]);
+        bestRect = {
+          minX: seed.x,
+          maxX: seed.x,
+          minZ: seed.z,
+          maxZ: seed.z,
+          cells: rectCells,
+          area: 1,
+        };
+      }
+      
+      // If rectangle exceeds max size, split it into smaller rectangles
+      if (options.maxRectangleSize && bestRect.area > options.maxRectangleSize) {
+        const splitRects = this.splitRectangle(bestRect, options.maxRectangleSize);
+        splitRects.forEach(rect => {
+          rect.cells.forEach(cellKey => {
+            cellSet.delete(cellKey);
+          });
+          rectangles.push(rect);
+        });
+        continue; // Skip adding bestRect, we've already added the splits
+      }
+      
+      // Remove covered cells
+      bestRect.cells.forEach(cellKey => {
+        cellSet.delete(cellKey);
+      });
+      
+      rectangles.push(bestRect);
+      
+      // Report progress after each rectangle
+      if (options.onProgress) {
+        const processedCells = initialCellCount - cellSet.size;
+        const percentage = Math.round((processedCells / initialCellCount) * 100);
+        options.onProgress({
+          current: processedCells,
+          total: initialCellCount,
+          percentage,
+        });
+      }
+      
+      // Yield control every N rectangles to allow UI updates
+      if (rectanglesInCurrentBatch >= RECTANGLES_PER_BATCH) {
+        rectanglesInCurrentBatch = 0;
+        // Yield control to event loop - allows React to render progress updates
+        // Use setTimeout with 1ms to ensure the event loop processes other tasks
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 1);
+        });
+      }
     }
     
     return rectangles;

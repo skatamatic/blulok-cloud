@@ -1,13 +1,11 @@
-import { useState, useEffect, Fragment } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   ArrowPathIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   ServerIcon,
   CloudIcon,
-  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
-import { Menu, Transition } from '@headlessui/react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +13,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { fmsService } from '@/services/fms.service';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { FMSSyncLog } from '@/types/fms.types';
 
 interface FMSSyncStatus {
@@ -54,10 +53,10 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   const { addToast } = useToast();
   const { startSync, completeSync, canStartNewSync } = useFMSSync();
   const { subscribe, unsubscribe } = useWebSocket();
+  const { selectedFacilityId, facilities } = useGlobalFacility();
   const [size, setSize] = useState<WidgetSize>(initialSize);
   
   // FMS state
-  const [selectedFacilityId, setSelectedFacilityId] = useState<string>('');
   const [fmsStatuses, setFmsStatuses] = useState<FMSSyncStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -66,8 +65,6 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   // Sync history
   const [syncHistory, setSyncHistory] = useState<FMSSyncLog[]>([]);
 
-  // Dropdown state
-  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const [facilityNamesMap, setFacilityNamesMap] = useState<Record<string, string>>({});
 
@@ -103,24 +100,16 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     fetchFacilities();
   }, [isAdminUser]);
 
-  // Determine which facilities to show
-  // Admin: All facilities from API, Facility Admin: Their assigned facilities
-  const apiFacilities = isAdminUser
-    ? Object.keys(facilityNamesMap) // Admin sees all facilities
-    : (authState.user?.facilityIds || []); // Facility Admin sees their assigned facilities
-
-  // For admin users, fall back to WebSocket data if API hasn't loaded yet
-  const userFacilities = isAdminUser && apiFacilities.length === 0 && fmsStatuses.length > 0
-    ? fmsStatuses.map(s => s.facilityId)
-    : apiFacilities;
-
-  const hasMultipleFacilities = userFacilities.length > 1;
+  // Use facilities from global context
+  const userFacilities = facilities.map(f => f.id);
+  const hasMultipleFacilities = facilities.length > 1;
 
   // Create a mapping of facility ID to name
   const getFacilityName = (facilityId: string) => {
-    // For admin users, use the fetched facility names map first
-    if (isAdminUser && facilityNamesMap[facilityId]) {
-      return facilityNamesMap[facilityId];
+    // First try to find in global context facilities
+    const globalFacility = facilities.find(f => f.id === facilityId);
+    if (globalFacility) {
+      return globalFacility.name;
     }
 
     // Fall back to WebSocket data facility name
@@ -129,9 +118,13 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       return wsFacility.facilityName;
     }
 
-    // For facility admin, use the names from auth state
-    const index = (authState.user?.facilityIds || []).indexOf(facilityId);
-    return index >= 0 && facilityNamesFromAuth[index] ? facilityNamesFromAuth[index] : facilityId;
+    // Fall back to facility names map (for admin users)
+    if (isAdminUser && facilityNamesMap[facilityId]) {
+      return facilityNamesMap[facilityId];
+    }
+
+    // Last resort: return the ID
+    return facilityId;
   };
 
   // Check if a facility has FMS configured
@@ -201,28 +194,20 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     };
   }, [authState.user, subscribe, unsubscribe]);
 
-  // Initialize selected facility
-  useEffect(() => {
-    if (!authState.user || userFacilities.length === 0) {
-      return;
-    }
-
-    // Auto-select first facility if only one, or if none selected
-    if (!selectedFacilityId && userFacilities.length > 0) {
-      setSelectedFacilityId(userFacilities[0]);
-    }
-  }, [authState.user, userFacilities, selectedFacilityId]);
+  // Use global context facility - no need to initialize
 
   // Get current facility's status from WebSocket data
-  const currentFacilityStatus = fmsStatuses.find(s => s.facilityId === selectedFacilityId);
-  // FMS is configured if we have a status for this facility (even if never_synced)
-  const fmsConfigured = !!currentFacilityStatus;
+  // Only show status if a specific facility is selected (not "All Facilities")
+  const effectiveFacilityId = selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : null;
+  const currentFacilityStatus = effectiveFacilityId ? fmsStatuses.find(s => s.facilityId === effectiveFacilityId) : null;
+  // FMS is configured if we have a status for this facility that's not 'not_configured'
+  const fmsConfigured = effectiveFacilityId ? hasFMSConfigured(effectiveFacilityId) : false;
 
 
   // Load sync history when facility changes
   useEffect(() => {
     const loadHistory = async () => {
-      if (!selectedFacilityId) return;
+      if (!effectiveFacilityId) return;
 
       // If FMS is not configured, don't try to load history
       if (!fmsConfigured && !loading) {
@@ -231,7 +216,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       }
 
       try {
-        const history = await fmsService.getSyncHistory(selectedFacilityId, { limit: 5 });
+        const history = await fmsService.getSyncHistory(effectiveFacilityId, { limit: 5 });
         setSyncHistory(history.logs);
       } catch (error: any) {
         console.error('Failed to load sync history:', error);
@@ -243,14 +228,14 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     };
 
     loadHistory();
-  }, [selectedFacilityId, fmsConfigured, loading]);
+  }, [effectiveFacilityId, fmsConfigured, loading]);
 
   const handleManualSync = async () => {
-    if (!selectedFacilityId) {
+    if (!effectiveFacilityId) {
       addToast({
         type: 'error',
         title: 'No Facility Selected',
-        message: 'Please select a facility to sync',
+        message: 'Please select a specific facility to sync',
       });
       return;
     }
@@ -269,10 +254,10 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       setSyncing(true);
 
       // Start sync in global context
-      const facilityName = getFacilityName(selectedFacilityId);
-      startSync(selectedFacilityId, facilityName);
+      const facilityName = getFacilityName(effectiveFacilityId);
+      startSync(effectiveFacilityId, facilityName);
 
-      const result = await fmsService.triggerSync(selectedFacilityId);
+      const result = await fmsService.triggerSync(effectiveFacilityId);
 
       // Complete sync in global context with the changes detected
       if (result.changesDetected && result.changesDetected.length > 0) {
@@ -321,8 +306,10 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       }
 
       // Refresh history
-      const history = await fmsService.getSyncHistory(selectedFacilityId, { limit: 5 });
-      setSyncHistory(history.logs);
+      if (effectiveFacilityId) {
+        const history = await fmsService.getSyncHistory(effectiveFacilityId, { limit: 5 });
+        setSyncHistory(history.logs);
+      }
     } catch (error: any) {
       addToast({
         type: 'error',
@@ -417,103 +404,37 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           onSizeChange={setSize}
           onGridSizeChange={onGridSizeChange}
           onRemove={onRemove}
-          suppressTitleOverlay={dropdownOpen}
         >
           <div className="h-full flex flex-col justify-center items-center space-y-1">
-            {/* Sync button/dropdown and time ago grouped together */}
-              {hasMultipleFacilities ? (
-                <Menu as="div" className="relative z-10" onClick={(e) => e.stopPropagation()}>
-                  {({ open }) => {
-                    // Update dropdown state when menu opens/closes
-                    useEffect(() => {
-                      setDropdownOpen(open);
-                    }, [open]);
+            {/* Sync button */}
+            {effectiveFacilityId ? (
+              <button
+                onClick={handleManualSync}
+                disabled={syncing || loading || !fmsConfigured}
+                className={`no-drag w-11 h-11 text-xs font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  fmsConfigured
+                    ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                    : 'bg-gray-400 text-gray-200'
+                }`}
+                title={!fmsConfigured ? 'FMS not configured for this facility' : undefined}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <ArrowPathIcon className={`h-5 w-5 ${syncing ? 'animate-spin' : ''}`} />
+              </button>
+            ) : (
+              <div className="text-xs text-gray-400 text-center px-2">
+                Select a facility
+              </div>
+            )}
 
-                    return (
-                      <>
-                        <Menu.Button
-                    disabled={syncing || loading || !hasAnyFMSConfigured}
-                    className={`w-11 h-11 flex items-center justify-center text-xs font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                      hasAnyFMSConfigured
-                        ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                        : 'bg-gray-400 text-gray-200'
-                    }`}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <ArrowPathIcon className={`h-5 w-5 ${syncing ? 'animate-spin' : ''}`} />
-                    <ChevronDownIcon className="h-3 w-3" />
-                  </Menu.Button>
-                  <Transition
-                    as={Fragment}
-                    enter="transition ease-out duration-100"
-                    enterFrom="transform opacity-0 scale-95"
-                    enterTo="transform opacity-100 scale-100"
-                    leave="transition ease-in duration-75"
-                    leaveFrom="transform opacity-100 scale-100"
-                    leaveTo="transform opacity-0 scale-95"
-                  >
-                    <Menu.Items className="fixed z-[10000] mt-1 w-48 rounded-lg bg-white dark:bg-gray-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" onClick={(e) => e.stopPropagation()}>
-                      <div className="p-1">
-                        {userFacilities.map((facilityId) => {
-                          const configured = hasFMSConfigured(facilityId);
-                          return (
-                            <Menu.Item key={facilityId} disabled={!configured}>
-                              {({ active }) => (
-                                <button
-                                  onClick={() => {
-                                    setSelectedFacilityId(facilityId);
-                                    if (configured) handleManualSync();
-                                  }}
-                                  disabled={!configured}
-                                  className={`no-drag ${
-                                    active && configured ? 'bg-gray-100 dark:bg-gray-700' : ''
-                                  } ${
-                                    !configured ? 'opacity-50 cursor-not-allowed' : ''
-                                  } group flex w-full items-center rounded-md px-2 py-1.5 text-xs`}
-                                  title={!configured ? 'FMS not configured for this facility' : undefined}
-                                >
-                                  <ArrowPathIcon className="mr-1.5 h-3 w-3" />
-                                  <span className="flex-1 text-left text-xs">{getFacilityName(facilityId)}</span>
-                                  {!configured && (
-                                    <span className="text-xs text-gray-400">No FMS</span>
-                                  )}
-                                </button>
-                              )}
-                            </Menu.Item>
-                          );
-                        })}
-                      </div>
-                    </Menu.Items>
-                  </Transition>
-                      </>
-                    );
-                  }}
-                </Menu>
-              ) : (
-                <button
-                  onClick={handleManualSync}
-                  disabled={syncing || loading || !hasAnyFMSConfigured}
-                  className={`no-drag w-11 h-11 text-xs font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                    hasAnyFMSConfigured
-                      ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                      : 'bg-gray-400 text-gray-200'
-                  }`}
-                  title={!hasAnyFMSConfigured ? 'No facilities have FMS configured' : (!fmsConfigured ? 'FMS not configured for this facility' : undefined)}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <ArrowPathIcon className={`h-3 w-3 ${syncing ? 'animate-spin' : ''}`} />
-                </button>
-              )}
-
-              {/* Oldest sync time below button */}
-              {oldestSyncStatus && (
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    {formatTimeAgo(oldestSyncStatus.lastSyncTime!)}
-                  </div>
+            {/* Oldest sync time below button */}
+            {effectiveFacilityId && currentFacilityStatus && currentFacilityStatus.lastSyncTime && (
+              <div className="text-center">
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {formatTimeAgo(currentFacilityStatus.lastSyncTime)}
                 </div>
-              )}
+              </div>
+            )}
           </div>
         </Widget>
       </>
@@ -548,114 +469,31 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         }
       >
         <div className="h-full flex flex-col space-y-3">
-          {/* Facility Selector (if multiple facilities) */}
-          {hasMultipleFacilities && size !== 'small' && (
-            <div>
-              <select
-                value={selectedFacilityId || ''}
-                onChange={(e) => setSelectedFacilityId(e.target.value)}
-                disabled={!hasAnyFMSConfigured}
-                className={`w-full px-2 py-1.5 text-sm border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
-                  !hasAnyFMSConfigured
-                    ? 'border-gray-200 dark:border-gray-600 opacity-50 cursor-not-allowed'
-                    : 'border-gray-300 dark:border-gray-600'
-                }`}
-              >
-                {userFacilities.map((facilityId) => {
-                  const configured = hasFMSConfigured(facilityId);
-                  return (
-                    <option
-                      key={facilityId}
-                      value={facilityId}
-                      disabled={!configured}
-                      className={!configured ? 'opacity-50' : ''}
-                    >
-                      {getFacilityName(facilityId)} {!configured ? '(No FMS)' : ''}
-                    </option>
-                  );
-                })}
-              </select>
+          {/* Show message if "All Facilities" is selected */}
+          {selectedFacilityId === ALL_FACILITIES_ID && (
+            <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+              Please select a specific facility to view FMS sync status
             </div>
           )}
           
           {/* Small size - button to left of time ago */}
-          {size === 'small' && (
+          {size === 'small' && effectiveFacilityId && (
             <div className="h-full flex items-center justify-center">
               <div className="flex items-center space-x-3">
-                {/* Sync button/dropdown */}
-                {hasMultipleFacilities ? (
-                  <Menu as="div" className="relative z-10" onClick={(e) => e.stopPropagation()}>
-                    <Menu.Button
-                      disabled={syncing || loading || !hasAnyFMSConfigured}
-                      className={`flex items-center justify-center py-3 px-4 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                        hasAnyFMSConfigured
-                          ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                          : 'bg-gray-400 text-gray-200'
-                      }`}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-                      <ChevronDownIcon className="ml-1 h-3 w-3" />
-                    </Menu.Button>
-                    <Transition
-                      as={Fragment}
-                      enter="transition ease-out duration-100"
-                      enterFrom="transform opacity-0 scale-95"
-                      enterTo="transform opacity-100 scale-100"
-                      leave="transition ease-in duration-75"
-                      leaveFrom="transform opacity-100 scale-100"
-                      leaveTo="transform opacity-0 scale-95"
-                    >
-                      <Menu.Items className="fixed z-[10000] mt-1 w-48 rounded-lg bg-white dark:bg-gray-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" onClick={(e) => e.stopPropagation()}>
-                        <div className="p-1">
-                          {userFacilities.map((facilityId) => {
-                            const configured = hasFMSConfigured(facilityId);
-                            return (
-                              <Menu.Item key={facilityId} disabled={!configured}>
-                                {({ active }) => (
-                                  <button
-                                    onClick={() => {
-                                      setSelectedFacilityId(facilityId);
-                                      if (configured) handleManualSync();
-                                    }}
-                                    disabled={!configured}
-                                    className={`no-drag ${
-                                      active && configured ? 'bg-gray-100 dark:bg-gray-700' : ''
-                                    } ${
-                                      !configured ? 'opacity-50 cursor-not-allowed' : ''
-                                    } group flex w-full items-center rounded-md px-2 py-1.5 text-xs`}
-                                    title={!configured ? 'FMS not configured for this facility' : undefined}
-                                  >
-                                    <ArrowPathIcon className="mr-1.5 h-3 w-3" />
-                                    <span className="flex-1 text-left text-xs">{getFacilityName(facilityId)}</span>
-                                    {!configured && (
-                                      <span className="text-xs text-gray-400">No FMS</span>
-                                    )}
-                                  </button>
-                                )}
-                              </Menu.Item>
-                            );
-                          })}
-                        </div>
-                      </Menu.Items>
-                    </Transition>
-                  </Menu>
-                ) : (
-                  <button
-                    onClick={handleManualSync}
-                    disabled={syncing || loading || !hasAnyFMSConfigured}
-                    className={`py-3 px-4 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                      hasAnyFMSConfigured
-                        ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                        : 'bg-gray-400 text-gray-200'
-                    }`}
-                    title={!hasAnyFMSConfigured ? 'No facilities have FMS configured' : (!fmsConfigured ? 'FMS not configured for this facility' : undefined)}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-                  </button>
-                )}
+                {/* Sync button */}
+                <button
+                  onClick={handleManualSync}
+                  disabled={syncing || loading || !fmsConfigured}
+                  className={`py-3 px-4 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                    fmsConfigured
+                      ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                      : 'bg-gray-400 text-gray-200'
+                  }`}
+                  title={!fmsConfigured ? 'FMS not configured for this facility' : undefined}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+                </button>
 
                 {/* Oldest sync time to the right */}
                 {oldestSyncStatus && (
@@ -685,7 +523,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           )}
 
           {/* Show individual facility message only when some facilities have FMS but current one doesn't */}
-          {hasAnyFMSConfigured && !fmsConfigured && !loading && (
+          {effectiveFacilityId && hasAnyFMSConfigured && !fmsConfigured && !loading && (
             <div className={`flex-1 flex flex-col items-center justify-center text-center ${size === 'small' ? 'p-2' : 'p-4'}`}>
               <CloudIcon className={`${size === 'small' ? 'h-8 w-8' : 'h-12 w-12'} text-gray-400 dark:text-gray-600 mb-2`} />
               <p className={`${size === 'small' ? 'text-xs' : 'text-sm'} font-medium text-gray-700 dark:text-gray-300 mb-1`}>
@@ -693,7 +531,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               </p>
               {size !== 'small' && (
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Select a facility with FMS configured or configure this facility
+                  Configure FMS integration in Facility Details
                 </p>
               )}
             </div>
@@ -701,7 +539,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 
 
           {/* Medium size horizontal layout with sync button */}
-          {size === 'medium' && currentFacilityStatus && (
+          {size === 'medium' && effectiveFacilityId && currentFacilityStatus && (
             <div className="flex items-center space-x-3 h-full">
               {/* Last sync status - takes 66% of width */}
               <div className="flex-1 p-3 rounded-lg border" style={{ backgroundColor: getStatusColor(currentFacilityStatus.status).split(' ')[0], borderColor: getStatusColor(currentFacilityStatus.status).split(' ')[1] }}>
@@ -758,7 +596,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           )}
 
           {/* Small size sync status (when not using tiny-style layout) */}
-          {size === 'small' && currentFacilityStatus && !hasMultipleFacilities && (
+          {size === 'small' && effectiveFacilityId && currentFacilityStatus && !hasMultipleFacilities && (
             <div className="p-2 rounded-lg border" style={{ backgroundColor: getStatusColor(currentFacilityStatus.status).split(' ')[0], borderColor: getStatusColor(currentFacilityStatus.status).split(' ')[1] }}>
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center space-x-2">
@@ -782,7 +620,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 
 
           {/* Sync History (for large widgets) */}
-          {(size === 'large' || size === 'large-wide' || size === 'huge') && syncHistory.length > 0 && (
+          {(size === 'large' || size === 'large-wide' || size === 'huge') && effectiveFacilityId && syncHistory.length > 0 && (
             <div className="flex-1 min-h-0 flex flex-col">
               <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2 flex-shrink-0">Recent Syncs</h4>
               <div className="flex-1 min-h-0 overflow-y-auto">
@@ -819,7 +657,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           )}
 
           {/* Manual Sync Button for large sizes */}
-          {(size === 'large' || size === 'large-wide' || size === 'huge') && hasAnyFMSConfigured && (
+          {(size === 'large' || size === 'large-wide' || size === 'huge') && effectiveFacilityId && hasAnyFMSConfigured && (
             <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
               <button
                 onClick={handleManualSync}

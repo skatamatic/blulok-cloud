@@ -4,6 +4,7 @@ import DevicesPage from '@/pages/DevicesPage';
 import { apiService } from '@/services/api.service';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { GlobalFacilityProvider } from '@/contexts/GlobalFacilityContext';
 
 jest.mock('@/services/api.service');
 jest.mock('@/contexts/ToastContext', () => ({
@@ -26,6 +27,27 @@ jest.mock('@/contexts/AuthContext', () => ({
     logout: jest.fn(),
   }),
 }));
+jest.mock('@/contexts/WebSocketContext', () => ({
+  WebSocketProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => () => {}),
+    unsubscribe: jest.fn(),
+    isConnected: true,
+  }),
+}));
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  GlobalFacilityProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  useGlobalFacility: () => ({
+    facilities: [],
+    selectedFacilityId: null,
+    selectedFacility: null,
+    setSelectedFacilityId: jest.fn(),
+    isLoading: false,
+    hasMultipleFacilities: false,
+    isAllFacilitiesSelected: false,
+    refresh: jest.fn(),
+  }),
+}));
 
 const mockApiService = apiService as jest.Mocked<typeof apiService>;
 
@@ -40,18 +62,17 @@ describe('DevicesPage - Commands Tab', () => {
       items: [],
       total: 0,
     });
-    // Mock WebSocket subscription
-    (WebSocketProvider as any).__esModule = true;
-    (WebSocketProvider as any).default = ({ children }: any) => children;
   });
 
   it('should render commands tab for admin users', async () => {
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );
@@ -98,9 +119,11 @@ describe('DevicesPage - Commands Tab', () => {
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage initialCommandQueue={mockCommands} />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage initialCommandQueue={mockCommands} />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );
@@ -143,9 +166,11 @@ describe('DevicesPage - Commands Tab', () => {
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage initialCommandQueue={mockCommands} />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage initialCommandQueue={mockCommands} />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );
@@ -187,9 +212,11 @@ describe('DevicesPage - Commands Tab', () => {
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage initialCommandQueue={mockCommands} />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage initialCommandQueue={mockCommands} />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );

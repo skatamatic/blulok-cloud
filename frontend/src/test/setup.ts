@@ -67,9 +67,16 @@ const originalLog = console.log;
 
 beforeAll(() => {
   console.error = jest.fn((...args: any[]) => {
-    // Only log React warnings and critical errors, suppress everything else
+    // Suppress React warnings about act(), deprecated APIs, and non-boolean attributes
+    // Only show actual test failures and critical errors
     const message = args[0]?.toString() || '';
-    if (message.includes('Warning:') || (message.includes('Error:') && !message.includes('Failed to'))) {
+    const shouldSuppress = 
+      message.includes('ReactDOMTestUtils.act') ||
+      message.includes('not wrapped in act') ||
+      message.includes('non-boolean attribute') ||
+      message.includes('Warning:');
+    
+    if (!shouldSuppress && message.includes('Error:')) {
       originalError(...args);
     }
   });

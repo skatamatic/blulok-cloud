@@ -14,4 +14,7 @@ export { TranslateGizmo } from './TranslateGizmo';
 export type { GizmoAxis } from './TranslateGizmo';
 export { InputCoordinator, InputPriority } from './InputCoordinator';
 export type { InputHandler, InputEventType } from './InputCoordinator';
+export { OptimizationManager } from './OptimizationManager';
+export type { OptimizationStats } from './OptimizationManager';
+export type { OptimizationClient, OptimizationContext, OptimizationCell } from './utils/OptimizationClient';
 

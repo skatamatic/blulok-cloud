@@ -20,7 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { UserFilter } from '@/components/Common/UserFilter';
-import { FacilityDropdown } from '@/components/Common/FacilityDropdown';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -36,9 +36,9 @@ const statusColors = {
 export default function UnitsManagementPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const { selectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
-  const [facilities, setFacilities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -48,7 +48,6 @@ export default function UnitsManagementPage() {
     search: '',
     status: '',
     unit_type: '',
-    facility_id: '',
     lock_status: 'all',
     sortBy: 'unit_number',
     sortOrder: 'asc',
@@ -63,7 +62,6 @@ export default function UnitsManagementPage() {
       filters.search?.trim() ||
       filters.status ||
       filters.unit_type ||
-      filters.facility_id ||
       filters.tenant_id ||
       (filters.lock_status && filters.lock_status !== 'all')
     );
@@ -76,57 +74,11 @@ export default function UnitsManagementPage() {
 
   useEffect(() => {
     loadUnits();
-  }, [filters, currentPage]);
-
-  useEffect(() => {
-    loadFacilities();
-  }, []);
-
-  // Load and persist facility selection
-  useEffect(() => {
-    // Load from localStorage on mount
-    const savedFacilityId = localStorage.getItem('selectedFacilityId');
-    if (savedFacilityId && !filters.facility_id) {
-      setFilters(prev => ({ ...prev, facility_id: savedFacilityId }));
-    }
-  }, []);
-
-  // Auto-select facility if none selected and facilities are available
-  useEffect(() => {
-    if (facilities.length > 0 && !filters.facility_id) {
-      // Try to use saved facility if it exists in the list
-      const savedFacilityId = localStorage.getItem('selectedFacilityId');
-      const facilityToSelect = savedFacilityId && facilities.find(f => f.id === savedFacilityId)
-        ? savedFacilityId
-        : facilities[0].id;
-      
-      setFilters(prev => ({ ...prev, facility_id: facilityToSelect }));
-      localStorage.setItem('selectedFacilityId', facilityToSelect);
-    }
-  }, [facilities]);
-
-  // Persist facility selection to localStorage when it changes
-  useEffect(() => {
-    if (filters.facility_id) {
-      localStorage.setItem('selectedFacilityId', filters.facility_id);
-    }
-  }, [filters.facility_id]);
-
-  const loadFacilities = async () => {
-    try {
-      // Fetch all facilities without pagination for dropdown
-      const response = await apiService.getFacilities({ limit: 1000 });
-      // Handle both response formats (with or without success property)
-      const facilitiesData = response.success ? response.facilities : (response.facilities || []);
-      setFacilities(facilitiesData);
-    } catch (error) {
-      console.error('Failed to load facilities:', error);
-    }
-  };
+  }, [filters, currentPage, selectedFacilityId]);
 
   const loadUnits = async () => {
-    // For non-tenants, require facility selection
-    if (!isTenant && !filters.facility_id) {
+    // For non-tenants, require facility selection (unless "All Facilities" is selected)
+    if (!isTenant && !selectedFacilityId) {
       setLoading(false);
       setUnits([]);
       setAllUnits([]);
@@ -138,7 +90,9 @@ export default function UnitsManagementPage() {
       setLoading(true);
       const queryFilters: any = {
         ...filters,
-        offset: (currentPage - 1) * (filters.limit || 20)
+        offset: (currentPage - 1) * (filters.limit || 20),
+        // Add facility_id from global context if not "All Facilities"
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
       };
       
       // Only include search if it has a value (remove empty strings)
@@ -403,24 +357,6 @@ export default function UnitsManagementPage() {
       </div>
 
       {/* Facility Selection - Prominent */}
-      {!isTenant && viewMode !== 'sitemap' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Facility
-          </label>
-          <FacilityDropdown
-            facilities={facilities}
-            selectedFacilityId={filters.facility_id || ''}
-            onSelect={(facilityId) => {
-              setFilters(prev => ({ ...prev, facility_id: facilityId }));
-              setCurrentPage(1);
-            }}
-            placeholder="Select a facility"
-            required={true}
-          />
-        </div>
-      )}
-
       {/* Filters */}
       {!isTenant && viewMode !== 'sitemap' && (
         <ExpandableFilters
@@ -431,12 +367,10 @@ export default function UnitsManagementPage() {
           onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
           hasActiveFilters={hasActiveFilters()}
           onClearFilters={() => {
-            const firstFacilityId = facilities.length > 0 ? facilities[0].id : '';
             setFilters({
               search: '',
               status: '',
               unit_type: '',
-              facility_id: firstFacilityId,
               lock_status: 'all',
               sortBy: 'unit_number',
               sortOrder: 'asc',
@@ -444,9 +378,6 @@ export default function UnitsManagementPage() {
               offset: 0,
               tenant_id: ''
             });
-            if (firstFacilityId) {
-              localStorage.setItem('selectedFacilityId', firstFacilityId);
-            }
             setCurrentPage(1);
           }}
           sections={[

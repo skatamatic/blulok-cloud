@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { 
   BuildingOfficeIcon, 
   MapPinIcon, 
   PhoneIcon, 
   EnvelopeIcon,
-  ArrowLeftIcon,
   PencilIcon,
   SignalIcon,
   HomeIcon,
@@ -23,6 +22,7 @@ import {
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, BluLokDevice, Unit, DeviceFilters, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
@@ -70,12 +70,28 @@ export default function FacilityDetailsPage() {
   const ws = useWebSocket();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { authState } = useAuth();
   const { addToast } = useToast();
+  const { selectedFacilityId, setSelectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
   const [facility, setFacility] = useState<Facility | null>(null);
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules'>('overview');
+  
+  // Get initial tab from URL query parameter or location state
+  const getInitialTab = (): 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules' => {
+    const urlParams = new URLSearchParams(location.search);
+    const tabParam = urlParams.get('tab');
+    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'user-schedules'].includes(tabParam)) {
+      return tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules';
+    }
+    if ((location.state as any)?.tab) {
+      return (location.state as any).tab;
+    }
+    return 'overview';
+  };
+  
+  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules'>(getInitialTab());
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
@@ -95,6 +111,7 @@ export default function FacilityDetailsPage() {
     sortOrder: 'asc',
   });
   const [deviceLoading, setDeviceLoading] = useState(false);
+  const [devicesInitialLoad, setDevicesInitialLoad] = useState(true);
   const [unitFiltersExpanded, setUnitFiltersExpanded] = useState(false);
   const [unitFilters, setUnitFilters] = useState<UnitFilters>({
     search: '',
@@ -108,6 +125,7 @@ export default function FacilityDetailsPage() {
   const [unitTotalPages, setUnitTotalPages] = useState(1);
   const [facilityUnitsPageData, setFacilityUnitsPageData] = useState<Unit[]>([]);
   const [unitLoading, setUnitLoading] = useState(false);
+  const [unitsInitialLoad, setUnitsInitialLoad] = useState(true);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
@@ -120,12 +138,56 @@ export default function FacilityDetailsPage() {
   const loadUnitsRef = useRef<() => void>(() => {});
   const wsDeviceDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const wsUnitsDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const hasInitialSyncRef = useRef(false);
+
+  // Sync route ID with global context on initial mount only (one-way: route -> context)
+  useEffect(() => {
+    if (!hasInitialSyncRef.current && id && id !== ALL_FACILITIES_ID) {
+      setSelectedFacilityId(id);
+      hasInitialSyncRef.current = true;
+    }
+  }, [id, setSelectedFacilityId]);
+
+  // Handle facility changes from global selector (context -> route)
+  useEffect(() => {
+    // Only react if we're on a facility details page (have an id in the route)
+    if (!id) return;
+    
+    // If "All Facilities" is selected, redirect to facilities page
+    if (isAllFacilitiesSelected) {
+      navigate('/facilities', { replace: true });
+      return;
+    }
+    
+    // If the selected facility changed and it's different from the current route ID, navigate to it
+    if (selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && selectedFacilityId !== id) {
+      // Preserve the current tab when navigating
+      const urlParams = new URLSearchParams(location.search);
+      const tabParam = urlParams.get('tab') || 'overview';
+      navigate(`/facilities/${selectedFacilityId}?tab=${tabParam}`, { replace: true });
+    }
+  }, [selectedFacilityId, id, isAllFacilitiesSelected, navigate, location.search]);
+
+  // Sync active tab with URL query parameter
+  useEffect(() => {
+    const urlParams = new URLSearchParams(location.search);
+    const tabParam = urlParams.get('tab');
+    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'user-schedules'].includes(tabParam)) {
+      setActiveTab(tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules');
+    } else if (!tabParam && facility) {
+      // If no tab in URL and facility is loaded, add default tab to URL
+      urlParams.set('tab', 'overview');
+      navigate(`${location.pathname}?${urlParams.toString()}`, { replace: true });
+    }
+  }, [location.search, location.pathname, navigate, facility]);
 
   useEffect(() => {
-    if (id) {
-      loadFacilityData();
+    // Use global context facility ID if available, otherwise use route ID
+    const facilityId = selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : id;
+    if (facilityId) {
+      loadFacilityData(facilityId);
     }
-  }, [id]);
+  }, [id, selectedFacilityId]);
 
   // Subscribe to gateway status updates to update overview gateway status
   useEffect(() => {
@@ -208,18 +270,21 @@ export default function FacilityDetailsPage() {
     };
   }, [activeTab, facility?.id, ws]);
 
-  const loadFacilityData = async () => {
+  const loadFacilityData = async (facilityId?: string) => {
+    const targetId = facilityId || id;
+    if (!targetId) return;
+    
     try {
       setLoading(true);
       const [facilityResponse, unitsResponse] = await Promise.all([
-        apiService.getFacility(id!),
-        apiService.getUnits({ facility_id: id })
+        apiService.getFacility(targetId),
+        apiService.getUnits({ facility_id: targetId })
       ]);
       
       setFacility(facilityResponse.facility);
       setDeviceHierarchy(facilityResponse.deviceHierarchy);
       const allUnits: Unit[] = unitsResponse.units || [];
-      setFacilityUnitsPageData(isTenant ? allUnits.filter(u => String(u.facility_id) === String(id)) : allUnits);
+      setFacilityUnitsPageData(isTenant ? allUnits.filter(u => String(u.facility_id) === String(targetId)) : allUnits);
     } catch (error) {
       console.error('Failed to load facility data:', error);
     } finally {
@@ -244,6 +309,7 @@ export default function FacilityDetailsPage() {
       setFacilityDevices(devicesData);
       setDeviceTotal(total);
       setDeviceTotalPages(Math.max(1, Math.ceil(total / DEVICES_PAGE_LIMIT)));
+      setDevicesInitialLoad(false);
     } catch (error) {
       console.error('Failed to load facility devices:', error);
     } finally {
@@ -268,6 +334,7 @@ export default function FacilityDetailsPage() {
       setFacilityUnitsPageData(unitsData);
       setUnitTotal(total);
       setUnitTotalPages(Math.max(1, Math.ceil(total / UNITS_PAGE_LIMIT)));
+      setUnitsInitialLoad(false);
     } catch (error) {
       console.error('Failed to load facility units:', error);
     } finally {
@@ -392,11 +459,10 @@ export default function FacilityDetailsPage() {
         </p>
         <div className="mt-6">
           <Link
-            to="/facilities"
+            to="/dashboard"
             className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
           >
-            <ArrowLeftIcon className="h-4 w-4 mr-2" />
-            Back to Facilities
+            Go to Dashboard
           </Link>
         </div>
       </div>
@@ -409,7 +475,11 @@ export default function FacilityDetailsPage() {
     return (
       <div 
         className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-md hover:bg-blue-50 dark:hover:bg-blue-900/20 group"
-        onClick={() => navigate(`/units/${unit.id}`)}
+        onClick={() => {
+          // Preserve current tab in URL when navigating to unit
+          const currentTab = activeTab || 'overview';
+          navigate(`/units/${unit.id}`, { state: { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` } });
+        }}
       >
         {/* Header */}
         <div className="flex items-start justify-between mb-4">
@@ -505,12 +575,6 @@ export default function FacilityDetailsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <button
-            onClick={() => navigate('/facilities')}
-            className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-          >
-            <ArrowLeftIcon className="h-5 w-5" />
-          </button>
           {facility.branding_image && facility.image_mime_type ? (
             <img
               src={`data:${facility.image_mime_type};base64,${facility.branding_image}`}
@@ -558,7 +622,13 @@ export default function FacilityDetailsPage() {
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
-              onClick={() => setActiveTab(key as any)}
+              onClick={() => {
+                setActiveTab(key as any);
+                // Update URL with tab parameter
+                const newSearchParams = new URLSearchParams(location.search);
+                newSearchParams.set('tab', key);
+                navigate(`${location.pathname}?${newSearchParams.toString()}`, { replace: true });
+              }}
               className={`group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === key
                   ? 'border-primary-500 text-primary-600 dark:text-primary-400'
@@ -757,12 +827,12 @@ export default function FacilityDetailsPage() {
             </p>
           </div>
 
-          {deviceLoading ? (
+          {deviceLoading && devicesInitialLoad ? (
             <div className="text-center py-12">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
               <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Loading devices...</p>
             </div>
-          ) : facilityDevices.length === 0 ? (
+          ) : facilityDevices.length === 0 && !deviceLoading ? (
             <div className="text-center py-12">
               <ServerIcon className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No devices found</h3>
@@ -773,8 +843,14 @@ export default function FacilityDetailsPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {facilityDevices.map((device: any) =>
+            <div className="relative">
+              {deviceLoading && !devicesInitialLoad && (
+                <div className="absolute top-0 right-0 z-10">
+                  <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {facilityDevices.map((device: any) =>
                 device.device_category === 'blulok' ? (
                   <BluLokDeviceCardShared
                     key={device.id}
@@ -782,7 +858,11 @@ export default function FacilityDetailsPage() {
                     canManage={canManage}
                     onToggleLock={() => handleLockToggle(device as BluLokDevice)}
                     onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'facility', facilityId: facility.id } })}
-                    onViewUnit={device.unit_id ? () => navigate(`/units/${device.unit_id}`) : undefined}
+                    onViewUnit={device.unit_id ? () => {
+                      // Preserve current tab in URL when navigating to unit
+                      const currentTab = activeTab || 'overview';
+                      navigate(`/units/${device.unit_id}`, { state: { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` } });
+                    } : undefined}
                   />
                 ) : (
                   <ACDeviceCardShared
@@ -792,6 +872,7 @@ export default function FacilityDetailsPage() {
                   />
                 )
               )}
+              </div>
             </div>
           )}
 
@@ -915,18 +996,25 @@ export default function FacilityDetailsPage() {
             </p>
           </div>
 
-          {unitLoading ? (
+          {unitLoading && unitsInitialLoad ? (
             <div className="text-center py-12">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
               <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Loading units...</p>
             </div>
           ) : facilityUnitsPageData.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {facilityUnitsPageData.map((unit) => (
-                <UnitCard key={unit.id} unit={unit} />
-              ))}
+            <div className="relative">
+              {unitLoading && !unitsInitialLoad && (
+                <div className="absolute top-0 right-0 z-10">
+                  <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {facilityUnitsPageData.map((unit) => (
+                  <UnitCard key={unit.id} unit={unit} />
+                ))}
+              </div>
             </div>
-          ) : (
+          ) : !unitLoading ? (
             <div className="text-center py-12">
               <HomeIcon className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No units found</h3>
@@ -936,7 +1024,7 @@ export default function FacilityDetailsPage() {
                   : 'This facility does not have any units yet.'}
               </p>
             </div>
-          )}
+          ) : null}
 
           {unitTotalPages > 1 && (
             <div className="bg-white dark:bg-gray-800 px-4 py-3 flex items-center justify-between border-t border-gray-200 dark:border-gray-700 sm:px-6">

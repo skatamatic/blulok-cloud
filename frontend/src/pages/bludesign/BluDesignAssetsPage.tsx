@@ -19,7 +19,8 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { AssetEditor } from '@/components/bludesign/ui/AssetEditor';
 import { ThemeManagementPanel } from '@/components/bludesign/ui/panels/ThemeManagementPanel';
 import { SkinsManagementPanel } from '@/components/bludesign/ui/panels/SkinsManagementPanel';
-import { AssetService, AssetDefinition } from '@/components/bludesign/services/AssetService';
+import { StorageLockerWizard } from '@/components/bludesign/ui/dialogs/StorageLockerWizard';
+import { AssetService, AssetDefinition, CreateAssetDefinitionInput } from '@/components/bludesign/services/AssetService';
 import { AssetRegistry } from '@/components/bludesign/assets/AssetRegistry';
 import { ThumbnailGenerator } from '@/components/bludesign/utils/ThumbnailGenerator';
 import { AssetMetadata, AssetCategory } from '@/components/bludesign/core/types';
@@ -64,7 +65,7 @@ export default function BluDesignAssetsPage() {
   
   const [activeTab, setActiveTab] = useState<TabMode>(getInitialTab());
   const [assets, setAssets] = useState<AssetMetadata[]>([]);
-  const [, setCustomAssets] = useState<AssetDefinition[]>([]);
+  const [customAssets, setCustomAssets] = useState<AssetDefinition[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<AssetDefinition | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -74,6 +75,7 @@ export default function BluDesignAssetsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [skinCounts, setSkinCounts] = useState<Record<string, number>>({});
   const [skinManager] = useState(() => new SkinManager());
+  const [showLockerWizard, setShowLockerWizard] = useState(false);
 
   // Load built-in assets from registry
   useEffect(() => {
@@ -98,13 +100,33 @@ export default function BluDesignAssetsPage() {
     });
     setSkinCounts(counts);
   }, [skinManager]);
-
-  // Load custom assets from backend
+  
+  // Load custom assets from backend and merge with built-in assets
   useEffect(() => {
     const loadCustomAssets = async () => {
       try {
         const definitions = await AssetService.getAssetDefinitions({ isBuiltin: false });
         setCustomAssets(definitions);
+        
+        // Convert custom definitions to AssetMetadata format and merge with built-in
+        const customAssetMetadata: AssetMetadata[] = definitions.map(def => ({
+          id: def.id,
+          name: def.name,
+          category: def.category as AssetCategory,
+          description: def.description,
+          dimensions: def.dimensions,
+          gridUnits: def.gridUnits,
+          isSmart: def.isSmart,
+          canRotate: def.canRotate,
+          canStack: def.canStack,
+        }));
+        
+        // Merge with built-in assets
+        const builtInAssets = AssetRegistry.getInstance().getAllAssets();
+        setAssets([...builtInAssets, ...customAssetMetadata]);
+        
+        // Generate thumbnails for custom assets
+        generateThumbnails(customAssetMetadata);
       } catch (error) {
         console.error('Failed to load custom assets:', error);
       }
@@ -155,6 +177,47 @@ export default function BluDesignAssetsPage() {
     console.log('Asset updated:', updated);
   }, []);
 
+  // Handle saving a new locker asset from the wizard
+  const handleSaveLocker = useCallback(async (input: CreateAssetDefinitionInput) => {
+    const newAsset = await AssetService.createAssetDefinition(input);
+    console.log('Created new locker asset:', newAsset);
+    
+    // Reload custom assets
+    const definitions = await AssetService.getAssetDefinitions({ isBuiltin: false });
+    setCustomAssets(definitions);
+    
+    // Convert custom definitions to AssetMetadata format and merge with built-in
+    const customAssetMetadata: AssetMetadata[] = definitions.map(def => ({
+      id: def.id,
+      name: def.name,
+      category: def.category as AssetCategory,
+      description: def.description,
+      dimensions: def.dimensions,
+      gridUnits: def.gridUnits,
+      isSmart: def.isSmart,
+      canRotate: def.canRotate,
+      canStack: def.canStack,
+    }));
+    
+    // Merge with built-in assets
+    const builtInAssets = AssetRegistry.getInstance().getAllAssets();
+    setAssets([...builtInAssets, ...customAssetMetadata]);
+    
+    // Generate thumbnail for the new asset
+    const newAssetMetadata: AssetMetadata = {
+      id: newAsset.id,
+      name: newAsset.name,
+      category: newAsset.category as AssetCategory,
+      description: newAsset.description,
+      dimensions: newAsset.dimensions,
+      gridUnits: newAsset.gridUnits,
+      isSmart: newAsset.isSmart,
+      canRotate: newAsset.canRotate,
+      canStack: newAsset.canStack,
+    };
+    generateThumbnails([newAssetMetadata]);
+  }, []);
+
   const getCategoryLabel = (category: string): string => {
     return category.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   };
@@ -172,13 +235,14 @@ export default function BluDesignAssetsPage() {
               </h1>
             </div>
             <button
+              onClick={() => setShowLockerWizard(true)}
               className={`
                 flex items-center gap-2 px-4 py-2 rounded-lg transition-colors
                 bg-primary-600 hover:bg-primary-700 text-white
               `}
             >
               <PlusIcon className="w-5 h-5" />
-              <span>New Asset</span>
+              <span>Create Storage Locker</span>
             </button>
           </div>
           <p className={`${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -544,6 +608,16 @@ export default function BluDesignAssetsPage() {
               />
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Storage Locker Wizard Modal */}
+      <AnimatePresence>
+        {showLockerWizard && (
+          <StorageLockerWizard
+            onSave={handleSaveLocker}
+            onClose={() => setShowLockerWizard(false)}
+          />
         )}
       </AnimatePresence>
     </div>

@@ -7,6 +7,7 @@ import { generateHighlightId, calculatePageForItem, navigateAndHighlightWithAuto
 import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import {
   ArrowDownTrayIcon,
   ClockIcon,
@@ -165,6 +166,7 @@ const SortableHeader: React.FC<SortableHeaderProps> = ({
 export default function AccessHistoryPage() {
   const { authState } = useAuth();
   const navigate = useNavigate();
+  const { selectedFacilityId } = useGlobalFacility();
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -183,19 +185,13 @@ export default function AccessHistoryPage() {
     limit: 50,
   });
 
-  const [facilities, setFacilities] = useState<any[]>([]);
-
   const isAdmin = ['admin', 'dev_admin'].includes(authState.user?.role || '');
   const isFacilityAdmin = authState.user?.role === 'facility_admin';
   const isTenant = authState.user?.role === 'tenant';
 
   useEffect(() => {
-    loadInitialData();
-  }, []);
-
-  useEffect(() => {
     loadAccessHistory();
-  }, [filters, currentPage, sortBy, sortOrder]);
+  }, [filters, currentPage, sortBy, sortOrder, selectedFacilityId]);
 
   // Handle highlighting when page loads
   useHighlight(logs, (log) => log.id, (id) => generateHighlightId('access-log', id));
@@ -217,20 +213,6 @@ export default function AccessHistoryPage() {
     };
   }, [showExportDropdown]);
 
-  const loadInitialData = async () => {
-    try {
-      // Load facilities for filtering
-      if (isAdmin || isFacilityAdmin) {
-        const facilitiesResponse = await apiService.getFacilities();
-        setFacilities(facilitiesResponse.facilities || []);
-      }
-
-      // Units are loaded dynamically by UnitFilter component
-
-    } catch (error) {
-      console.error('Failed to load initial data:', error);
-    }
-  };
 
   const loadAccessHistory = async () => {
     try {
@@ -242,6 +224,8 @@ export default function AccessHistoryPage() {
         offset: (currentPage - 1) * (filters.limit || 50),
         sort_by: sortBy,
         sort_order: sortOrder,
+        // Add facility_id from global context if not "All Facilities"
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
       };
 
       // Apply role-based filtering
@@ -252,11 +236,18 @@ export default function AccessHistoryPage() {
           user_id: authState.user?.id,
         });
       } else if (isFacilityAdmin && authState.user?.facilityIds?.length) {
-        // Facility admins see only their assigned facilities
-        response = await apiService.getFacilityAccessHistory(
-          authState.user.facilityIds[0],
-          queryFilters
-        );
+        // Facility admins see only their assigned facilities (unless global context overrides)
+        if (selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID) {
+          response = await apiService.getFacilityAccessHistory(
+            selectedFacilityId,
+            queryFilters
+          );
+        } else {
+          response = await apiService.getFacilityAccessHistory(
+            authState.user.facilityIds[0],
+            queryFilters
+          );
+        }
       } else {
         // Admins see everything
         response = await apiService.getAccessHistory(queryFilters);
@@ -296,7 +287,6 @@ export default function AccessHistoryPage() {
       filters.action ||
       filters.success !== undefined ||
       filters.user_id ||
-      filters.facility_id ||
       filters.unit_id ||
       filters.method ||
       (filters.date_from && filters.date_to && getCurrentDateRangeSelection() === 'custom')
@@ -383,7 +373,7 @@ export default function AccessHistoryPage() {
       const exportFilters = exportType === 'all' ? {
         limit: 10000, // Large limit for export
       } : {
-        facility_id: filters.facility_id,
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
         unit_id: filters.unit_id,
         user_id: filters.user_id,
         action: filters.action,
@@ -406,7 +396,7 @@ export default function AccessHistoryPage() {
       
       // Generate filename with current date and export type
       const dateStr = new Date().toISOString().split('T')[0];
-      const facilityStr = filters.facility_id ? `-${facilities.find(f => f.id === filters.facility_id)?.name?.replace(/\s+/g, '-') || 'facility'}` : '';
+      const facilityStr = selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? '-facility' : '';
       const filename = `access-history-${exportType}${facilityStr}-${dateStr}.csv`;
       
       link.download = filename;
@@ -625,20 +615,6 @@ export default function AccessHistoryPage() {
               placeholder: 'Search users...'
             },
             {
-              title: 'Facility',
-              icon: <BuildingOfficeIcon className="h-5 w-5" />,
-              type: 'select' as const,
-              options: [
-                { key: '', label: 'All Facilities' },
-                ...facilities.map(facility => ({
-                  key: facility.id,
-                  label: facility.name
-                }))
-              ],
-              selected: filters.facility_id || '',
-              onSelect: (value: string) => handleFilterChange('facility_id', value || undefined)
-            },
-            {
               title: 'Unit',
               icon: <HomeIcon className="h-5 w-5" />,
               type: 'custom' as const,
@@ -650,7 +626,7 @@ export default function AccessHistoryPage() {
                   value={filters.unit_id || ''}
                   onChange={(unitId) => handleFilterChange('unit_id', unitId || undefined)}
                   placeholder="Search units..."
-                  facilityId={filters.facility_id}
+                  facilityId={selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : undefined}
                   className="w-full"
                 />
               )

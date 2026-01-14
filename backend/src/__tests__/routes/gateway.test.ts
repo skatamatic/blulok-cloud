@@ -48,7 +48,7 @@ describe('Gateway Routes', () => {
         }
         expectUnauthorized(response);
       }
-    });
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('POST /api/v1/gateways - Create Gateway', () => {

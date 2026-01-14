@@ -3,5 +3,7 @@
  */
 
 export { SkinEditorDialog } from './SkinEditorDialog';
-// Note: Other dialogs may be exported here as they are created
+export { StorageLockerWizard } from './StorageLockerWizard';
+export { LockerPreview3D } from './LockerPreview3D';
+export { LockerModelUpload } from './LockerModelUpload';
 

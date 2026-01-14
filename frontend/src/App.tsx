@@ -8,7 +8,7 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import { WebSocketDebugProvider } from '@/contexts/WebSocketDebugContext';
 import { FMSSyncProvider, useFMSSync } from '@/contexts/FMSSyncContext';
 import { BluFMSDemoProvider } from '@/contexts/BluFMSDemoContext';
-import { BluFMSFacilityProvider } from '@/contexts/BluFMSFacilityContext';
+import { GlobalFacilityProvider } from '@/contexts/GlobalFacilityContext';
 import { BluDesignProvider } from '@/contexts/BluDesignContext';
 import { FMSSyncStatusBar } from '@/components/FMS/FMSSyncStatusBar';
 import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
@@ -128,8 +128,8 @@ function App() {
             <WebSocketDebugProvider>
               <SidebarProvider>
                 <DropdownProvider>
-                  <BluFMSDemoProvider>
-                    <BluFMSFacilityProvider>
+                  <GlobalFacilityProvider>
+                    <BluFMSDemoProvider>
                       <BluDesignProvider>
                         <FMSSyncProvider>
                         <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
@@ -326,8 +326,8 @@ function App() {
                         </div>
                         </FMSSyncProvider>
                       </BluDesignProvider>
-                    </BluFMSFacilityProvider>
-                  </BluFMSDemoProvider>
+                    </BluFMSDemoProvider>
+                  </GlobalFacilityProvider>
                 </DropdownProvider>
               </SidebarProvider>
             </WebSocketDebugProvider>
