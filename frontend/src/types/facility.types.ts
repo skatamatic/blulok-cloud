@@ -63,6 +63,8 @@ export interface BluLokDevice {
   gateway_id: string;
   unit_id: string;
   device_serial: string;
+  /** Gateway-provided serial number (optional, separate from device_serial) */
+  serial?: string;
   firmware_version?: string;
   lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   device_status: 'online' | 'offline' | 'low_battery' | 'error';

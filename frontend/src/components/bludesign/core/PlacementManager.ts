@@ -17,7 +17,7 @@ import { BuildingManager } from './BuildingManager';
 import { isUICapturing } from '../ui/UICapture';
 
 // Placement mode determines how drag-to-place works
-type PlacementMode = 'single' | 'rectangle' | 'path' | 'line' | 'building' | 'paste';
+type PlacementMode = 'single' | 'rectangle' | 'path' | 'line' | 'building' | 'paste' | 'angled-line';
 
 // Preview item during drag (used for non-rectangle modes)
 interface PreviewItem {
@@ -41,6 +41,12 @@ export class PlacementManager {
   private isPlacing: boolean = false;
   private activeAsset: AssetMetadata | null = null;
   private activeOrientation: Orientation = Orientation.NORTH;
+  private activeRotation: number = 0; // Arbitrary rotation in radians
+  
+  // Alt+drag angled placement state
+  private isAltDragging: boolean = false;
+  private altDragStartWorld: THREE.Vector3 | null = null;
+  private altKeyPressed: boolean = false;
   
   // Wall-adjacent placement (for doors/windows)
   private wallSnappedPlacement: {
@@ -55,6 +61,9 @@ export class PlacementManager {
   
   // Visual elements
   private ghostMesh: THREE.Object3D | null = null;
+  private ghostMeshInternalYOffset: number = 0; // Internal Y offset from model grounding
+  private ghostMeshInternalXOffset: number = 0; // Internal X offset for centering
+  private ghostMeshInternalZOffset: number = 0; // Internal Z offset for centering
   private gridSelector: THREE.Mesh | null = null;
   
   // Mouse tracking for hiding preview when outside 3D view
@@ -98,6 +107,7 @@ export class PlacementManager {
   private onDeleteRequest?: (objectId: string) => void;
   private onBuildingPlaced?: (footprint: { minX: number; maxX: number; minZ: number; maxZ: number }) => void;
   private onRotationControlChange?: (enableRotation: boolean) => void;
+  private onGetHoveredAssetRotation?: (worldPos: THREE.Vector3) => number | null;
   
   // Event handlers
   private handleMouseMove: (e: MouseEvent) => void;
@@ -263,6 +273,8 @@ export class PlacementManager {
     this.isPlacing = true;
     this.activeAsset = asset;
     this.activeOrientation = orientation;
+    // Initialize rotation from orientation to ensure consistency
+    this.activeRotation = this.getRotationFromOrientation(orientation);
     
     // Determine placement mode based on asset category
     this.placementMode = this.getPlacementMode(asset.category);
@@ -331,20 +343,34 @@ export class PlacementManager {
     // NOTE: Event listeners are managed by InputCoordinator, not added here.
   }
 
-  /**
+/**
    * Create ghost meshes for paste preview
    */
   private createPasteGhosts(): void {
     this.pasteGhostMeshes.forEach(mesh => this.scene.remove(mesh));
     this.pasteGhostMeshes.clear();
-    
+
     this.pasteObjects.forEach(obj => {
       if (!obj.assetMetadata) return;
-      
+
       const ghostMesh = AssetFactory.createAssetMesh(obj.assetMetadata);
       ghostMesh.userData.isGhost = true;
       ghostMesh.userData.pasteObjectId = obj.id;
-      
+      // Store internal offsets
+      ghostMesh.userData.internalXOffset = ghostMesh.position.x;
+      ghostMesh.userData.internalYOffset = ghostMesh.position.y;
+      ghostMesh.userData.internalZOffset = ghostMesh.position.z;
+      // Store the object's rotation and exactMeshPos for preview positioning
+      ghostMesh.userData.objectRotation = obj.rotation;
+      ghostMesh.userData.hasExactMeshPos = !!obj.exactMeshPos;
+
+      // Apply rotation to ghost
+      if (obj.rotation !== undefined) {
+        ghostMesh.rotation.y = obj.rotation;
+      } else {
+        ghostMesh.rotation.y = this.getRotationFromOrientation(obj.orientation);
+      }
+
       // Make it semi-transparent
       ghostMesh.traverse((child: THREE.Object3D) => {
         if (child instanceof THREE.Mesh && child.material) {
@@ -369,6 +395,7 @@ export class PlacementManager {
     if (!this.pasteAnchorPosition) return;
     
     let allValid = true;
+    const gridSize = this.gridSystem.getGridSize();
     
     this.pasteObjects.forEach(obj => {
       const relPos = this.pasteRelativePositions.get(obj.id);
@@ -393,14 +420,48 @@ export class PlacementManager {
       // Update ghost mesh position
       const ghostMesh = this.pasteGhostMeshes.get(obj.id);
       if (ghostMesh) {
-        const worldPos = this.gridSystem.gridToWorld(objGridPos);
-        const gridSize = this.gridSystem.getGridSize();
+        const internalXOffset = ghostMesh.userData.internalXOffset ?? 0;
+        const internalYOffset = ghostMesh.userData.internalYOffset ?? 0;
+        const internalZOffset = ghostMesh.userData.internalZOffset ?? 0;
         
-        ghostMesh.position.set(
-          worldPos.x + (obj.assetMetadata.gridUnits.x * gridSize) / 2,
-          this.currentFloorY,
-          worldPos.z + (obj.assetMetadata.gridUnits.z * gridSize) / 2
-        );
+        // Calculate position based on whether object has exactMeshPos
+        if (obj.exactMeshPos && this.pasteAnchorPosition) {
+          // For objects with exactMeshPos, calculate the delta from the anchor
+          // and apply it to get the new exact position
+          const anchorWorldX = this.pasteAnchorPosition.x;
+          const anchorWorldZ = this.pasteAnchorPosition.z;
+          const gridDeltaX = anchorGridPos.x - anchorWorldX;
+          const gridDeltaZ = anchorGridPos.z - anchorWorldZ;
+          
+          // The new exact position is the original + the grid delta
+          const newExactX = obj.exactMeshPos.x + gridDeltaX;
+          const newExactZ = obj.exactMeshPos.z + gridDeltaZ;
+          
+          ghostMesh.position.set(
+            newExactX,
+            this.currentFloorY + internalYOffset,
+            newExactZ
+          );
+        } else {
+          // Grid-based positioning
+          const worldPos = this.gridSystem.gridToWorld(objGridPos);
+          
+          // Swap grid units for 90° and 270° rotations
+          const isRotated90 = obj.orientation === Orientation.EAST || 
+                              obj.orientation === Orientation.WEST;
+          const effectiveWidth = isRotated90 
+            ? obj.assetMetadata.gridUnits.z * gridSize 
+            : obj.assetMetadata.gridUnits.x * gridSize;
+          const effectiveDepth = isRotated90 
+            ? obj.assetMetadata.gridUnits.x * gridSize 
+            : obj.assetMetadata.gridUnits.z * gridSize;
+          
+          ghostMesh.position.set(
+            worldPos.x + effectiveWidth / 2 + internalXOffset,
+            this.currentFloorY + internalYOffset,
+            worldPos.z + effectiveDepth / 2 + internalZOffset
+          );
+        }
         
         // Apply color tint based on validity
         this.applyPasteGhostTint(ghostMesh, isValid ? 'valid' : 'invalid');
@@ -462,6 +523,8 @@ export class PlacementManager {
     // Clear drag state
     this.clearDragPreview();
     this.isDragging = false;
+    this.isAltDragging = false;
+    this.altDragStartWorld = null;
     this.dragStartPosition = null;
     this.mouseDownPosition = null;
     
@@ -472,6 +535,9 @@ export class PlacementManager {
     if (this.ghostMesh) {
       this.scene.remove(this.ghostMesh);
       this.ghostMesh = null;
+      this.ghostMeshInternalXOffset = 0;
+      this.ghostMeshInternalYOffset = 0;
+      this.ghostMeshInternalZOffset = 0;
     }
     
     if (this.gridSelector) {
@@ -534,16 +600,64 @@ export class PlacementManager {
    */
   setOrientation(orientation: Orientation): void {
     this.activeOrientation = orientation;
+    // Sync activeRotation with orientation
+    this.activeRotation = this.getRotationFromOrientation(orientation);
     if (this.isPlacing) {
       // Update ghost mesh rotation
       if (this.ghostMesh) {
-        const rotation = this.getRotationFromOrientation(orientation);
-        this.ghostMesh.rotation.y = rotation;
+        this.ghostMesh.rotation.y = this.activeRotation;
       }
       
       // Update grid selector size for rotated assets
       this.updateGridSelectorSize();
     }
+  }
+
+  /**
+   * Set arbitrary rotation angle in radians
+   * This overrides the orientation-based rotation
+   */
+  setRotation(rotation: number): void {
+    this.activeRotation = rotation;
+    // Update orientation to nearest 90-degree value for compatibility
+    const normalized = ((rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    if (normalized < Math.PI / 4 || normalized >= 7 * Math.PI / 4) {
+      this.activeOrientation = Orientation.NORTH;
+    } else if (normalized < 3 * Math.PI / 4) {
+      this.activeOrientation = Orientation.EAST;
+    } else if (normalized < 5 * Math.PI / 4) {
+      this.activeOrientation = Orientation.SOUTH;
+    } else {
+      this.activeOrientation = Orientation.WEST;
+    }
+    
+    if (this.isPlacing && this.ghostMesh) {
+      this.ghostMesh.rotation.y = rotation;
+    }
+  }
+
+  /**
+   * Get current rotation in radians
+   */
+  getRotation(): number {
+    return this.activeRotation;
+  }
+
+  /**
+   * Set Alt key state for angled placement mode
+   */
+  setAltKeyPressed(pressed: boolean): void {
+    this.altKeyPressed = pressed;
+    
+    // If releasing Alt while in angled drag, we stay in angled mode until mouse up
+    // This gives a smooth UX - you can press Alt, start dragging, release Alt
+  }
+
+  /**
+   * Check if Alt key is currently pressed
+   */
+  isAltKeyDown(): boolean {
+    return this.altKeyPressed;
   }
 
   /**
@@ -555,7 +669,7 @@ export class PlacementManager {
     
     // Update ghost mesh and grid selector positions if active
     if (this.ghostMesh) {
-      this.ghostMesh.position.y = y + 0.01;
+      this.ghostMesh.position.y = y + this.ghostMeshInternalYOffset + 0.01;
     }
     if (this.gridSelector) {
       this.gridSelector.position.y = y + 0.01;
@@ -577,6 +691,14 @@ export class PlacementManager {
    */
   getCurrentFloor(): number {
     return this.currentFloor;
+  }
+
+  /**
+   * Set callback for getting rotation of hovered asset
+   * This allows PlacementManager to match rotation when hovering over assets
+   */
+  setHoveredAssetRotationCallback(callback: ((worldPos: THREE.Vector3) => number | null) | undefined): void {
+    this.onGetHoveredAssetRotation = callback;
   }
 
   /**
@@ -630,6 +752,15 @@ export class PlacementManager {
       mesh.rotation.y = this.getRotationFromOrientation(this.activeOrientation);
       mesh.userData.isGhost = true;
       mesh.userData.selectable = false;
+      
+      // Store the internal offsets from CustomAssetLoader
+      // These represent how the model is positioned in its local space:
+      // - Y offset: grounding (bottom at y=0) + positionOffset.y
+      // - X/Z offset: centering (center at origin) + positionOffset.x/z
+      // We need to preserve these when positioning the ghost mesh
+      this.ghostMeshInternalYOffset = mesh.position.y;
+      this.ghostMeshInternalXOffset = mesh.position.x;
+      this.ghostMeshInternalZOffset = mesh.position.z;
       
       this.ghostMesh = mesh;
       this.scene.add(this.ghostMesh);
@@ -728,8 +859,33 @@ export class PlacementManager {
       this.currentGridPosition = gridPos;
       
       // Handle drag preview if dragging
-      if (this.isDragging && this.dragStartPosition) {
-        this.updateDragPreview(this.dragStartPosition, gridPos);
+      if (this.isDragging && this.dragStartPosition && this.altDragStartWorld) {
+        // Check Alt key state dynamically - use both internal state AND event.altKey
+        // to ensure we catch alt even if there's timing issues with state updates
+        const wantsAngledPlacement = this.altKeyPressed || e.altKey;
+        
+        // Switch to angled mode if Alt pressed
+        if (wantsAngledPlacement && !this.isAltDragging) {
+          // Use the ORIGINAL drag start position (preserved from mouse down)
+          // This ensures the drag origin stays consistent when switching modes
+          this.isAltDragging = true;
+          // Clear existing drag preview items
+          this.clearDragPreview();
+        }
+        // Switch back to normal mode if Alt released
+        else if (!wantsAngledPlacement && this.isAltDragging) {
+          this.isAltDragging = false;
+          // Clear existing drag preview items
+          this.clearDragPreview();
+        }
+        
+        // Check if this is an Alt+drag for angled line placement
+        if (this.isAltDragging) {
+          // Always use the original drag start position
+          this.updateAngledDragPreview(this.altDragStartWorld, intersectPoint);
+        } else {
+          this.updateDragPreview(this.dragStartPosition, gridPos);
+        }
         // Hide single ghost during drag
         if (this.ghostMesh) {
           this.ghostMesh.visible = false;
@@ -741,6 +897,18 @@ export class PlacementManager {
         // Single placement preview
         this.isValidPlacement = this.checkPlacementValid(gridPos);
         
+        // Check for hover-based rotation matching
+        if (this.onGetHoveredAssetRotation) {
+          const hoveredRotation = this.onGetHoveredAssetRotation(intersectPoint);
+          if (hoveredRotation !== null) {
+            // Match the rotation of the hovered asset
+            this.setRotation(hoveredRotation);
+            if (this.ghostMesh) {
+              this.ghostMesh.rotation.y = hoveredRotation;
+            }
+          }
+        }
+        
         // Update grid selector position
         this.updateGridSelector(gridPos, this.isValidPlacement);
         
@@ -749,21 +917,26 @@ export class PlacementManager {
           const worldPos = this.gridSystem.gridToWorld(gridPos);
           const gridSize = this.gridSystem.getGridSize();
           
-          // Account for rotation when calculating offsets
+          // Use grid footprint size for positioning (aligns with grid selector)
           const isRotated90 = this.activeOrientation === Orientation.EAST || 
                               this.activeOrientation === Orientation.WEST;
-          const effectiveWidth = isRotated90 
+          const gridFootprintWidth = isRotated90 
             ? this.activeAsset.gridUnits.z * gridSize 
             : this.activeAsset.gridUnits.x * gridSize;
-          const effectiveDepth = isRotated90 
+          const gridFootprintDepth = isRotated90 
             ? this.activeAsset.gridUnits.x * gridSize 
             : this.activeAsset.gridUnits.z * gridSize;
           
-          // Position ghost at center of grid cells it occupies
+          // Position ghost at center of grid footprint
+          // The ghost mesh has internal offsets from CustomAssetLoader that center it
+          // We add those offsets to maintain proper centering at the target position
+          const targetCenterX = worldPos.x + gridFootprintWidth / 2;
+          const targetCenterZ = worldPos.z + gridFootprintDepth / 2;
+          
           this.ghostMesh.position.set(
-            worldPos.x + effectiveWidth / 2,
-            this.currentFloorY + 0.01, // Slightly above current floor to avoid z-fighting
-            worldPos.z + effectiveDepth / 2
+            targetCenterX + this.ghostMeshInternalXOffset,
+            this.currentFloorY + this.ghostMeshInternalYOffset + 0.01,
+            targetCenterZ + this.ghostMeshInternalZOffset
           );
           this.ghostMesh.visible = true;
         }
@@ -862,6 +1035,11 @@ export class PlacementManager {
       const ghostMesh = AssetFactory.createGhostMesh(this.activeAsset);
       
       if (ghostMesh) {
+        // Capture internal offsets from model (centering + grounding + positionOffset)
+        const internalXOffset = ghostMesh.position.x;
+        const internalYOffset = ghostMesh.position.y;
+        const internalZOffset = ghostMesh.position.z;
+        
         // Position the ghost
         const worldPos = this.gridSystem.gridToWorld(pos);
         const gridSize = this.gridSystem.getGridSize();
@@ -875,10 +1053,14 @@ export class PlacementManager {
           ? this.activeAsset.gridUnits.x * gridSize 
           : this.activeAsset.gridUnits.z * gridSize;
         
+        // Target center of grid footprint, plus internal offsets to maintain proper centering
+        const targetCenterX = worldPos.x + effectiveWidth / 2;
+        const targetCenterZ = worldPos.z + effectiveDepth / 2;
+        
         ghostMesh.position.set(
-          worldPos.x + effectiveWidth / 2,
-          this.currentFloorY + 0.01,
-          worldPos.z + effectiveDepth / 2
+          targetCenterX + internalXOffset,
+          this.currentFloorY + internalYOffset + 0.01,
+          targetCenterZ + internalZOffset
         );
         ghostMesh.rotation.y = this.getRotationFromOrientation(orientation);
         
@@ -901,6 +1083,81 @@ export class PlacementManager {
         
         this.scene.add(ghostMesh);
         this.dragPreviewItems.push({ gridPos: pos, ghostMesh, isValid, orientation });
+      }
+    }
+  }
+
+  /**
+   * Update preview for Alt+drag angled line placement
+   * Uses world coordinates and arbitrary angles
+   */
+  private updateAngledDragPreview(startWorld: THREE.Vector3, endWorld: THREE.Vector3): void {
+    if (!this.activeAsset) return;
+    
+    // Clear existing previews
+    this.clearDragPreview();
+    
+    // Get angled line positions
+    const positions = this.getAngledLinePositions(startWorld, endWorld);
+    
+    // Limit for performance
+    const maxItems = 50;
+    const itemsToRender = positions.slice(0, maxItems);
+    
+for (const item of itemsToRender) {
+      const ghostMesh = AssetFactory.createGhostMesh(this.activeAsset);
+
+      if (ghostMesh) {
+        // Capture internal offsets from model (these are pre-rotation centering offsets)
+        const internalXOffset = ghostMesh.position.x;
+        const internalYOffset = ghostMesh.position.y;
+        const internalZOffset = ghostMesh.position.z;
+
+        // Rotate the internal offset by the mesh rotation
+        // This ensures centering works correctly for rotated objects
+        const cos = Math.cos(item.rotation);
+        const sin = Math.sin(item.rotation);
+        const rotatedXOffset = internalXOffset * cos - internalZOffset * sin;
+        const rotatedZOffset = internalXOffset * sin + internalZOffset * cos;
+
+        // Position ghost at final position
+        ghostMesh.position.set(
+          item.worldPos.x + rotatedXOffset,
+          this.currentFloorY + internalYOffset + 0.01,
+          item.worldPos.z + rotatedZOffset
+        );
+
+        // Apply the rotation
+        ghostMesh.rotation.y = item.rotation;
+        
+        // For angled placement, we skip validity checking (non-grid-aligned)
+        ghostMesh.userData.isGhost = true;
+        ghostMesh.userData.selectable = false;
+        
+        this.scene.add(ghostMesh);
+        
+        // Convert to approximate grid position for storage
+        const gridPos = this.gridSystem.worldToGrid(item.worldPos);
+        
+        // Store with the EXACT mesh position from the ghost - guaranteed match
+        const previewItem: PreviewItem & { 
+          finalMeshX?: number; 
+          finalMeshZ?: number; 
+          rotation?: number;
+          internalYOffset?: number;
+        } = {
+          gridPos,
+          ghostMesh,
+          isValid: true,
+          orientation: this.activeOrientation,
+        };
+        // Store the ACTUAL ghost mesh position - not calculated values
+        (previewItem as any).finalMeshX = ghostMesh.position.x;
+        (previewItem as any).finalMeshZ = ghostMesh.position.z;
+        (previewItem as any).rotation = item.rotation;
+        (previewItem as any).internalYOffset = internalYOffset;
+        
+        this.dragPreviewItems.push(previewItem);
       }
     }
   }
@@ -1273,6 +1530,95 @@ export class PlacementManager {
   }
 
   /**
+   * Get positions for angled line placement (Alt+drag)
+   * Returns world-space positions along an arbitrary angle, not locked to grid axes
+   * 
+   * For storage containers/lockers:
+   * - Assets rotate to face PERPENDICULAR to the drag line (outward from the row)
+   * - This creates natural rows where lockers face outward from the aisle
+   * - Spacing is based on asset width (side-by-side along the line)
+   */
+private getAngledLinePositions(
+    startWorld: THREE.Vector3,
+    endWorld: THREE.Vector3
+  ): { worldPos: THREE.Vector3; rotation: number }[] {
+    if (!this.activeAsset) return [];
+
+    const positions: { worldPos: THREE.Vector3; rotation: number }[] = [];
+
+    // Calculate direction and distance of drag line
+    const dx = endWorld.x - startWorld.x;
+    const dz = endWorld.z - startWorld.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+
+    if (distance < 0.001) {
+      // No movement, just return start position with current rotation
+      return [{ worldPos: startWorld.clone(), rotation: this.activeRotation }];
+    }
+
+    // Calculate the drag line angle (from +Z axis, clockwise positive)
+    const lineAngle = Math.atan2(dx, dz);
+
+    // Calculate both perpendicular directions
+    const perp1 = lineAngle + Math.PI / 2;
+    const perp2 = lineAngle - Math.PI / 2;
+
+    // Choose the perpendicular direction closest to the current activeRotation
+    // This prevents "flipping" when entering angled mode
+    const normalizeAngle = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const activeNorm = normalizeAngle(this.activeRotation);
+    const perp1Norm = normalizeAngle(perp1);
+    const perp2Norm = normalizeAngle(perp2);
+    
+    const diff1 = Math.min(
+      Math.abs(activeNorm - perp1Norm),
+      2 * Math.PI - Math.abs(activeNorm - perp1Norm)
+    );
+    const diff2 = Math.min(
+      Math.abs(activeNorm - perp2Norm),
+      2 * Math.PI - Math.abs(activeNorm - perp2Norm)
+    );
+    
+    const perpendicularRotation = diff1 <= diff2 ? perp1 : perp2;
+
+    // Normalize direction for stepping along the line
+    const dirX = dx / distance;
+    const dirZ = dz / distance;
+
+    // Get asset dimensions in world units
+    const gridSize = this.gridSystem.getGridSize();
+    const assetWidth = this.activeAsset.gridUnits.x * gridSize;  // X dimension (side-to-side when facing north)
+
+    // Since assets face perpendicular to the line, we step by their WIDTH
+    // (they're placed side-by-side along the drag direction)
+    const stepSize = assetWidth;
+
+    // Calculate number of steps (ensure at least 1)
+    const numSteps = Math.max(1, Math.floor(distance / stepSize) + 1);
+
+    for (let i = 0; i < numSteps; i++) {
+      const dist = i * stepSize;
+      if (dist > distance + 0.01) break; // Small tolerance
+
+      const worldPos = new THREE.Vector3(
+        startWorld.x + dirX * dist,
+        startWorld.y,
+        startWorld.z + dirZ * dist
+      );
+
+      // All assets face perpendicular to the drag line (closest to current orientation)
+      positions.push({ worldPos, rotation: perpendicularRotation });
+    }
+
+    // Ensure at least the start position is included
+    if (positions.length === 0) {
+      positions.push({ worldPos: startWorld.clone(), rotation: perpendicularRotation });
+    }
+
+    return positions;
+  }
+
+  /**
    * Handle mouse down - start potential drag
    */
   private onMouseDown(e: MouseEvent): void {
@@ -1299,6 +1645,14 @@ export class PlacementManager {
       // Store mouse position and grid position for potential drag
       this.mouseDownPosition = { x: e.clientX, y: e.clientY };
       this.dragStartPosition = { ...gridPos };
+      
+      // Store world position for Alt+drag angled placement
+      this.altDragStartWorld = intersectPoint.clone();
+      
+      // Check if Alt is held for angled line mode
+      if (this.altKeyPressed || e.altKey) {
+        this.isAltDragging = true;
+      }
     }
   }
 
@@ -1346,57 +1700,80 @@ export class PlacementManager {
     // Only process if we had a mouse down (mouseDownPosition is set)
     if (!this.mouseDownPosition) return;
     
-    if (this.isDragging && this.dragStartPosition && this.currentGridPosition) {
+if (this.isDragging && this.dragStartPosition && this.currentGridPosition) {
       // Finish drag placement
-      this.finishDragPlacement();
+      if (this.isAltDragging) {
+        this.finishAngledDragPlacement();
+      } else {
+        this.finishDragPlacement();
+      }
     } else if (this.currentGridPosition && this.isValidPlacement) {
       // Single click placement (only if we didn't start dragging)
       this.placeSingleAsset();
     }
-    
+
     // Reset drag state
     this.isDragging = false;
+    this.isAltDragging = false;
+    this.altDragStartWorld = null;
     this.dragStartPosition = null;
     this.mouseDownPosition = null;
     this.clearDragPreview();
   }
 
-  /**
+/**
    * Finish paste placement - place all objects
    */
   private finishPastePlacement(): void {
-    if (!this.currentGridPosition || !this.isValidPlacement) return;
-    
+    if (!this.currentGridPosition || !this.isValidPlacement || !this.pasteAnchorPosition) return;
+
     const objectsToPlace: PlacedObject[] = [];
     
+    // Calculate the grid delta from original anchor to current position
+    const gridDeltaX = this.currentGridPosition.x - this.pasteAnchorPosition.x;
+    const gridDeltaZ = this.currentGridPosition.z - this.pasteAnchorPosition.z;
+
     this.pasteObjects.forEach(obj => {
       const relPos = this.pasteRelativePositions.get(obj.id);
       if (!relPos || !obj.assetMetadata) return;
-      
+
       const newGridPos: GridPosition = {
         x: this.currentGridPosition!.x + relPos.x,
         z: this.currentGridPosition!.z + relPos.z,
         y: this.currentFloorY,
       };
-      
+
+      // Calculate new exactMeshPos if object has one
+      let newExactMeshPos: { x: number; z: number } | undefined;
+      if (obj.exactMeshPos) {
+        newExactMeshPos = {
+          x: obj.exactMeshPos.x + gridDeltaX,
+          z: obj.exactMeshPos.z + gridDeltaZ,
+        };
+      }
+
       const newObject: PlacedObject = {
         ...obj,
         id: `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         position: newGridPos,
         floor: this.currentFloor,
+        // Preserve rotation
+        rotation: obj.rotation,
+        // Update exactMeshPos with the offset
+        exactMeshPos: newExactMeshPos,
       };
-      
+
       objectsToPlace.push(newObject);
     });
-    
+
     // Place all objects via batch callback
     if (this.onBatchPlaced && objectsToPlace.length > 0) {
       this.onBatchPlaced(objectsToPlace);
     }
-    
+
     // Clear paste preview
     this.clearPastePreview();
-    
+
     // Keep paste mode active for multiple pastes
     // User can press Escape to exit
   }
@@ -1508,6 +1885,76 @@ export class PlacementManager {
         this.onBatchPlaced(objectsToPlace);
       } else {
         // Fallback to individual placement if batch callback not set
+        objectsToPlace.forEach(obj => this.onAssetPlaced(obj));
+      }
+    }
+  }
+
+/**
+   * Finish angled drag placement - place all items with arbitrary rotation
+   * Uses the exact mesh positions from the ghost preview - no recalculation
+   */
+  private finishAngledDragPlacement(): void {
+    if (!this.activeAsset) return;
+
+    const objectsToPlace: PlacedObject[] = [];
+    const timestamp = Date.now();
+
+    for (let i = 0; i < this.dragPreviewItems.length; i++) {
+      const item = this.dragPreviewItems[i] as PreviewItem & { 
+        finalMeshX?: number; 
+        finalMeshZ?: number; 
+        rotation?: number;
+        internalYOffset?: number;
+      };
+
+      const rotation = item.rotation ?? this.activeRotation;
+
+      // Calculate orientation from rotation
+      const normalized = ((rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      let orientation: Orientation;
+      if (normalized < Math.PI / 4 || normalized >= 7 * Math.PI / 4) {
+        orientation = Orientation.NORTH;
+      } else if (normalized < 3 * Math.PI / 4) {
+        orientation = Orientation.EAST;
+      } else if (normalized < 5 * Math.PI / 4) {
+        orientation = Orientation.SOUTH;
+      } else {
+        orientation = Orientation.WEST;
+      }
+
+      // Use grid position for collision tracking
+      const gridPos = { ...item.gridPos, y: this.currentFloorY };
+
+      // Store exact mesh position - this IS the final position, no calculation needed
+      let exactMeshPos: { x: number; z: number } | undefined = undefined;
+      if (item.finalMeshX !== undefined && item.finalMeshZ !== undefined) {
+        exactMeshPos = { x: item.finalMeshX, z: item.finalMeshZ };
+      }
+
+      const placedObject: PlacedObject = {
+        id: `asset-${timestamp}-${Math.random().toString(36).substr(2, 9)}-${i}`,
+        assetId: this.activeAsset.id,
+        assetMetadata: this.activeAsset,
+        position: gridPos,
+        orientation,
+        rotation,
+        exactMeshPos, // Store EXACT mesh position - ghost position directly
+        canStack: this.activeAsset.category === 'wall' || this.activeAsset.category === 'fence',
+        floor: this.currentFloor,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        properties: {},
+      };
+
+      objectsToPlace.push(placedObject);
+    }
+
+    // Place all objects as a batch
+    if (objectsToPlace.length > 0) {
+      if (this.onBatchPlaced) {
+        this.onBatchPlaced(objectsToPlace);
+      } else {
         objectsToPlace.forEach(obj => this.onAssetPlaced(obj));
       }
     }

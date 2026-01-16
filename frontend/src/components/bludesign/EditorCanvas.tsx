@@ -743,15 +743,16 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   }, [engine]);
   const handleSelectAsset = useCallback((assetId: string | null) => {
     if (assetId) {
-      // Find the asset metadata from the registry
-      const asset = AssetRegistry.getInstance().getAsset(assetId);
+      // First check available assets (includes custom assets), then fall back to registry
+      const asset = availableAssets.find(a => a.id === assetId) 
+        || AssetRegistry.getInstance().getAsset(assetId);
       if (asset) {
         setActiveAsset(assetId, asset);
       }
     } else {
       setActiveAsset(null);
     }
-  }, [setActiveAsset]);
+  }, [setActiveAsset, availableAssets]);
   const handleDeleteSelection = useCallback(() => {
     if (engine) {
       engine.deleteSelected();
@@ -874,7 +875,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     try {
       const facility = await bludesignApi.getFacility(id);
       
-      engine.importSceneData(facility.data);
+      // Use async import to pre-load any custom assets
+      await engine.importSceneDataAsync(facility.data);
       setCurrentFacilityId(facility.id);
       setCurrentFacilityName(facility.name);
       setHasUnsavedChanges(false);
@@ -1014,9 +1016,17 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   useEffect(() => {
     const loadCustomAssets = async () => {
       try {
+        setLoadingState({ type: 'engine', subtitle: 'Loading custom assets...', progress: 75 });
+        
         const definitions = await AssetService.getAssetDefinitions({ isBuiltin: false });
         
+        // Pre-load all custom model meshes
+        const { CustomAssetLoader } = await import('./assets/CustomAssetLoader');
+        const loader = CustomAssetLoader.getInstance();
+        await loader.preloadGlobalAssets(definitions);
+        
         // Convert custom definitions to AssetMetadata format
+        // IMPORTANT: Include all fields needed for custom model loading
         const customAssetMetadata: AssetMetadata[] = definitions.map(def => ({
           id: def.id,
           name: def.name,
@@ -1027,6 +1037,12 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           isSmart: def.isSmart,
           canRotate: def.canRotate,
           canStack: def.canStack,
+          // Custom model fields - stored in metadata for now
+          metadata: {
+            globalModelId: def.globalModelId,
+            positionOffset: def.positionOffset,
+            modelType: def.modelType,
+          },
         }));
         
         // Merge with built-in assets
@@ -1057,7 +1073,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     
     setLoadingState({ type: 'draft', subtitle: 'Rebuilding scene...', progress: 92 });
     
-    const loaded = engine.loadFromLocalStorage();
+    // Use async version to pre-load any custom assets
+    const loaded = await engine.loadFromLocalStorageAsync();
     
     setLoadingState({ type: 'draft', subtitle: 'Finalizing...', progress: 95 });
     
@@ -1132,7 +1149,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       try {
         const facility = await bludesignApi.getFacility(initialFacilityId);
         if (facility && facility.data) {
-          engine.importSceneData(facility.data);
+          // Use async import to pre-load any custom assets
+          await engine.importSceneDataAsync(facility.data);
           setCurrentFacilityId(facility.id);
           setCurrentFacilityName(facility.name);
           setHasUnsavedChanges(false);
@@ -1226,7 +1244,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           
           await new Promise(resolve => setTimeout(resolve, 100));
           
-          engine.importSceneData(lastFacility.data);
+          // Use async import to pre-load any custom assets
+          await engine.importSceneDataAsync(lastFacility.data);
           
           setLoadingState({ type: 'facility', subtitle: 'Building scene...', progress: 90 });
           

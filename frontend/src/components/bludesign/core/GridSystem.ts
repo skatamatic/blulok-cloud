@@ -12,6 +12,7 @@ import {
   GridSize,
   GridPosition,
   AssetCategory,
+  GRID_UNIT_METERS,
 } from './types';
 
 // Layer types for tile occupancy
@@ -244,9 +245,18 @@ export class GridSystem {
   }
 
   /**
-   * Get current grid size
+   * Get current grid size in meters
+   * Returns the actual size of one grid cell based on the GridSize multiplier
    */
-  getGridSize(): GridSize {
+  getGridSize(): number {
+    // GridSize is a multiplier of GRID_UNIT_METERS (0.6096m = 2 feet)
+    return this.currentGridSize * GRID_UNIT_METERS;
+  }
+  
+  /**
+   * Get current grid size multiplier (the raw GridSize enum value)
+   */
+  getGridSizeMultiplier(): GridSize {
     return this.currentGridSize;
   }
 
@@ -254,8 +264,8 @@ export class GridSystem {
    * Snap a world position to the grid
    */
   snapToGrid(position: THREE.Vector3): GridPosition {
-    const size = this.currentGridSize;
-    
+    const size = this.getGridSize(); // Size in meters
+
     return {
       x: Math.round(position.x / size) * size,
       z: Math.round(position.z / size) * size,
@@ -267,7 +277,7 @@ export class GridSystem {
    * Convert grid position to world position
    */
   gridToWorld(gridPos: GridPosition): THREE.Vector3 {
-    const size = this.currentGridSize;
+    const size = this.getGridSize(); // Size in meters
     return new THREE.Vector3(
       gridPos.x * size,
       gridPos.y ?? 0,
@@ -279,7 +289,7 @@ export class GridSystem {
    * Convert world position to grid position
    */
   worldToGrid(worldPos: THREE.Vector3): GridPosition {
-    const size = this.currentGridSize;
+    const size = this.getGridSize(); // Size in meters
     return {
       x: Math.round(worldPos.x / size),
       z: Math.round(worldPos.z / size),
@@ -293,9 +303,10 @@ export class GridSystem {
   isValidPosition(gridPos: GridPosition, _objectSize: { x: number; z: number }): boolean {
     // Check bounds
     const halfSize = this.config.size / 2;
-    const worldX = gridPos.x * this.currentGridSize;
-    const worldZ = gridPos.z * this.currentGridSize;
-    
+    const size = this.getGridSize(); // Size in meters
+    const worldX = gridPos.x * size;
+    const worldZ = gridPos.z * size;
+
     return (
       worldX >= -halfSize && worldX <= halfSize &&
       worldZ >= -halfSize && worldZ <= halfSize

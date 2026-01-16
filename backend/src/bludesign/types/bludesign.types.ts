@@ -241,6 +241,7 @@ export interface PlacedObject {
   assetId: string;
   position: GridPosition;
   orientation: Orientation;
+  rotation?: number;  // Arbitrary Y-axis rotation in radians (overrides orientation when set)
   
   binding?: ObjectBinding;
   

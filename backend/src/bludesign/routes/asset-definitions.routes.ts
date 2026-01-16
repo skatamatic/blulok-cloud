@@ -13,7 +13,7 @@ import { asyncHandler } from '@/utils/asyncHandler';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { AssetService } from '../services/asset.service';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
-import { AssetCategory } from '../types/bludesign.types';
+import { AssetCategory, StorageProviderType } from '../types/bludesign.types';
 import { createStorageProvider } from '../services/storage';
 
 const router = Router();
@@ -53,6 +53,7 @@ const assetDefinitionSchema = Joi.object({
   category: Joi.string().valid(...Object.values(AssetCategory)).required(),
   modelType: Joi.string().valid('primitive', 'gltf', 'glb', 'custom').required(),
   customModelId: Joi.string().uuid().optional(),
+  globalModelId: Joi.string().uuid().optional(),
   primitiveSpec: Joi.object({
     type: Joi.string().valid('box', 'cylinder', 'plane', 'custom').required(),
     params: Joi.object().optional(),
@@ -93,6 +94,11 @@ const assetDefinitionSchema = Joi.object({
     doorHeight: Joi.number().positive().required(),
     doorPositionX: Joi.number().required(), // Can be negative
     doorPositionY: Joi.number().min(0).required(),
+  }).optional(),
+  positionOffset: Joi.object({
+    x: Joi.number().required(),
+    y: Joi.number().required(),
+    z: Joi.number().required(),
   }).optional(),
   thumbnail: Joi.string().optional(),
 });
@@ -427,6 +433,162 @@ router.delete('/models/:projectId/:modelId', asyncHandler(async (req: Authentica
   }
   
   await AssetService.deleteCustomModel(modelId);
+  
+  res.json({ success: true });
+}));
+
+// ============================================================================
+// Global Model Endpoints
+// ============================================================================
+
+/**
+ * GET /global-models
+ * Get all global models
+ */
+router.get('/global-models', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const models = await AssetService.getGlobalModels();
+  res.json({ success: true, data: models });
+}));
+
+/**
+ * GET /global-models/:id
+ * Get a specific global model
+ */
+router.get('/global-models/:id', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  
+  const model = await AssetService.getGlobalModel(id);
+  if (!model) {
+    res.status(404).json({ success: false, message: 'Global model not found' });
+    return;
+  }
+  
+  res.json({ success: true, data: model });
+}));
+
+/**
+ * GET /global-models/:id/file
+ * Download a global model file
+ */
+router.get('/global-models/:id/file', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  
+  const model = await AssetService.getGlobalModel(id);
+  if (!model) {
+    res.status(404).json({ success: false, message: 'Global model not found' });
+    return;
+  }
+  
+  // Use local storage provider for global models
+  const provider = createStorageProvider({
+    type: StorageProviderType.LOCAL,
+    config: { basePath: './storage/bludesign' },
+  });
+  
+  try {
+    const data = await provider.downloadGlobalAsset(id, model.filename);
+    
+    res.setHeader('Content-Type', model.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${model.filename}"`);
+    res.send(data);
+  } catch (error) {
+    res.status(404).json({ success: false, message: 'Model file not found' });
+  }
+}));
+
+/**
+ * POST /global-models
+ * Upload a new global model
+ */
+router.post('/global-models', authenticateToken, upload.single('file'), asyncHandler(async (req: MulterRequest, res: Response) => {
+  const { name, description, tags } = req.body;
+  const file = req.file;
+  
+  if (!file) {
+    res.status(400).json({ success: false, message: 'No file provided' });
+    return;
+  }
+  
+  // Validate required fields
+  if (!name) {
+    res.status(400).json({ success: false, message: 'Name is required' });
+    return;
+  }
+  
+  // Determine format from file extension
+  const ext = file.originalname.toLowerCase().split('.').pop();
+  const formatMap: Record<string, 'gltf' | 'glb' | 'fbx' | 'obj'> = {
+    glb: 'glb',
+    gltf: 'gltf',
+    fbx: 'fbx',
+    obj: 'obj',
+  };
+  
+  const format = formatMap[ext || ''];
+  if (!format) {
+    res.status(400).json({ success: false, message: 'Unsupported file format' });
+    return;
+  }
+  
+  // Use local storage provider for global models
+  const provider = createStorageProvider({
+    type: StorageProviderType.LOCAL,
+    config: { basePath: './storage/bludesign' },
+  });
+  
+  // Use a unique ID for the model
+  const { v4: uuidv4 } = await import('uuid');
+  const modelId = uuidv4();
+  const storagePath = await provider.uploadGlobalAsset(
+    modelId,
+    file.originalname,
+    file.buffer,
+    file.mimetype
+  );
+  
+  // Create database record with the same ID used for storage
+  const model = await AssetService.createGlobalModel({
+    id: modelId, // Use the same ID as storage path
+    name,
+    description,
+    filename: file.originalname,
+    contentType: file.mimetype,
+    fileSize: file.size,
+    storagePath,
+    format,
+    tags: tags ? JSON.parse(tags) : undefined,
+    uploadedBy: req.user?.userId,
+  });
+  
+  res.status(201).json({ success: true, data: model });
+}));
+
+/**
+ * DELETE /global-models/:id
+ * Delete a global model
+ */
+router.delete('/global-models/:id', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  
+  const model = await AssetService.getGlobalModel(id);
+  if (!model) {
+    res.status(404).json({ success: false, message: 'Global model not found' });
+    return;
+  }
+  
+  // Use local storage provider
+  const provider = createStorageProvider({
+    type: StorageProviderType.LOCAL,
+    config: { basePath: './storage/bludesign' },
+  });
+  
+  try {
+    await provider.deleteGlobalAsset(id);
+  } catch {
+    // Ignore storage errors, continue with DB deletion
+  }
+  
+  await AssetService.deleteGlobalModel(id);
   
   res.json({ success: true });
 }));

@@ -642,6 +642,9 @@ export class DeviceSyncService {
         ? new Date(update.last_seen) 
         : update.last_seen;
     }
+    if (update.serial !== undefined) {
+      dbUpdates.serial = update.serial;
+    }
 
     return dbUpdates;
   }

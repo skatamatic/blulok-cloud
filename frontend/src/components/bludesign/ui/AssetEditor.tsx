@@ -8,6 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
+import { PencilIcon } from '@heroicons/react/24/outline';
 import { useTheme } from '../../../contexts/ThemeContext';
 import { 
   AssetDefinition, 
@@ -21,12 +22,16 @@ interface AssetEditorProps {
   asset: AssetDefinition;
   onUpdate?: (asset: AssetDefinition) => void;
   onClose?: () => void;
+  onEdit?: (asset: AssetDefinition) => void;
+  isBuiltIn?: boolean;
 }
 
 export const AssetEditor: React.FC<AssetEditorProps> = ({
   asset,
   onUpdate: _onUpdate,
   onClose,
+  onEdit,
+  isBuiltIn = false,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -189,21 +194,38 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
             </span>
           </div>
         </div>
-        {onClose && (
-          <button
-            onClick={onClose}
-            className={`
-              p-1.5 rounded-lg transition-colors
-              ${isDark 
-                ? 'hover:bg-gray-700 text-gray-400 hover:text-white' 
-                : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'}
-            `}
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Edit button for custom assets */}
+          {!isBuiltIn && onEdit && (
+            <button
+              onClick={() => onEdit(asset)}
+              className={`
+                flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium
+                ${isDark 
+                  ? 'bg-primary-600 hover:bg-primary-500 text-white' 
+                  : 'bg-primary-600 hover:bg-primary-500 text-white'}
+              `}
+            >
+              <PencilIcon className="w-4 h-4" />
+              Edit
+            </button>
+          )}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className={`
+                p-1.5 rounded-lg transition-colors
+                ${isDark 
+                  ? 'hover:bg-gray-700 text-gray-400 hover:text-white' 
+                  : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'}
+              `}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}

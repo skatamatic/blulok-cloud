@@ -58,6 +58,21 @@ export interface InputHandler {
   onKeyUp?: (e: KeyboardEvent) => void;
 }
 
+export interface AltKeyCallbacks {
+  /** Called when Alt key is pressed */
+  onAltDown?: () => void;
+  /** Called when Alt key is released */
+  onAltUp?: () => void;
+  /** Called when Alt+Q is pressed (includes time info for acceleration) */
+  onAltQ?: (holdStartTime: number) => void;
+  /** Called when Alt+E is pressed (includes time info for acceleration) */
+  onAltE?: (holdStartTime: number) => void;
+  /** Called when Q key is released */
+  onQUp?: () => void;
+  /** Called when E key is released */
+  onEUp?: () => void;
+}
+
 export class InputCoordinator {
   private container: HTMLElement;
   private handlers: Map<string, InputHandler> = new Map();
@@ -65,6 +80,14 @@ export class InputCoordinator {
   
   // Track if UI is actively capturing mouse (e.g., panel dragging)
   private uiCapturingMouse: boolean = false;
+  
+  // Alt key state tracking
+  private _altKeyPressed: boolean = false;
+  private altKeyCallbacks: AltKeyCallbacks | null = null;
+  
+  // Q/E key hold tracking for rotation acceleration
+  private qKeyHoldStart: number | null = null;
+  private eKeyHoldStart: number | null = null;
   
   // Bound event handlers
   private boundMouseDown: (e: MouseEvent) => void;
@@ -160,6 +183,36 @@ export class InputCoordinator {
    */
   isUICapturing(): boolean {
     return this.uiCapturingMouse;
+  }
+
+  /**
+   * Check if Alt key is currently pressed
+   */
+  isAltKeyPressed(): boolean {
+    return this._altKeyPressed;
+  }
+
+  /**
+   * Set callbacks for Alt key and Alt+Q/E handling
+   */
+  setAltKeyCallbacks(callbacks: AltKeyCallbacks | null): void {
+    this.altKeyCallbacks = callbacks;
+  }
+
+  /**
+   * Get Q key hold duration in milliseconds (0 if not held)
+   */
+  getQKeyHoldDuration(): number {
+    if (this.qKeyHoldStart === null) return 0;
+    return Date.now() - this.qKeyHoldStart;
+  }
+
+  /**
+   * Get E key hold duration in milliseconds (0 if not held)
+   */
+  getEKeyHoldDuration(): number {
+    if (this.eKeyHoldStart === null) return 0;
+    return Date.now() - this.eKeyHoldStart;
   }
 
   /**
@@ -381,10 +434,66 @@ export class InputCoordinator {
     ) {
       return;
     }
+    
+    // Track Alt key state
+    if (event.key === 'Alt') {
+      if (!this._altKeyPressed) {
+        this._altKeyPressed = true;
+        this.altKeyCallbacks?.onAltDown?.();
+      }
+      // Prevent default Alt behavior (menu activation)
+      event.preventDefault();
+    }
+    
+    // Track Q/E key holds when Alt is pressed
+    if (this._altKeyPressed) {
+      if (event.key === 'q' || event.key === 'Q') {
+        if (this.qKeyHoldStart === null) {
+          this.qKeyHoldStart = Date.now();
+        }
+        this.altKeyCallbacks?.onAltQ?.(this.qKeyHoldStart);
+        event.preventDefault();
+        return; // Don't dispatch to other handlers
+      }
+      if (event.key === 'e' || event.key === 'E') {
+        if (this.eKeyHoldStart === null) {
+          this.eKeyHoldStart = Date.now();
+        }
+        this.altKeyCallbacks?.onAltE?.(this.eKeyHoldStart);
+        event.preventDefault();
+        return; // Don't dispatch to other handlers
+      }
+    }
+    
     this.dispatchEvent(event, 'keydown');
   }
 
   private onKeyUp(event: KeyboardEvent): void {
+    // Track Alt key release
+    if (event.key === 'Alt') {
+      this._altKeyPressed = false;
+      // Also reset Q/E tracking when Alt is released
+      if (this.qKeyHoldStart !== null) {
+        this.qKeyHoldStart = null;
+        this.altKeyCallbacks?.onQUp?.();
+      }
+      if (this.eKeyHoldStart !== null) {
+        this.eKeyHoldStart = null;
+        this.altKeyCallbacks?.onEUp?.();
+      }
+      this.altKeyCallbacks?.onAltUp?.();
+    }
+    
+    // Track Q/E key releases
+    if (event.key === 'q' || event.key === 'Q') {
+      this.qKeyHoldStart = null;
+      this.altKeyCallbacks?.onQUp?.();
+    }
+    if (event.key === 'e' || event.key === 'E') {
+      this.eKeyHoldStart = null;
+      this.altKeyCallbacks?.onEUp?.();
+    }
+    
     this.dispatchEvent(event, 'keyup');
   }
 

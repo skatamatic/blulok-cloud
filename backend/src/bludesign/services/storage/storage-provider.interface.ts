@@ -65,6 +65,39 @@ export interface StorageProvider {
   listAssetFiles(projectId: string, assetId: string): Promise<string[]>;
   
   // ========================================================================
+  // Global Asset Operations
+  // ========================================================================
+  
+  /**
+   * Upload a global asset file (not tied to a project)
+   * @returns The storage path/URL of the uploaded file
+   */
+  uploadGlobalAsset(
+    modelId: string,
+    filename: string,
+    data: Buffer,
+    contentType: string
+  ): Promise<string>;
+  
+  /**
+   * Download a global asset file
+   */
+  downloadGlobalAsset(
+    modelId: string,
+    filename: string
+  ): Promise<Buffer>;
+  
+  /**
+   * Delete a global asset and its files
+   */
+  deleteGlobalAsset(modelId: string): Promise<void>;
+  
+  /**
+   * List files for a global asset
+   */
+  listGlobalAssetFiles(modelId: string): Promise<string[]>;
+  
+  // ========================================================================
   // Texture Operations
   // ========================================================================
   

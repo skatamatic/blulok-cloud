@@ -21,6 +21,8 @@ import { useAuth } from '@/contexts/AuthContext';
 interface DeviceDetails {
   id: string;
   device_serial: string;
+  /** Gateway-provided serial number (optional, separate from device_serial) */
+  serial?: string;
   unit_id?: string;
   unit_number?: string;
   facility_id: string;
@@ -579,6 +581,12 @@ export default function DeviceDetailsPage() {
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Serial Number</dt>
                   <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.device_serial}</dd>
                 </div>
+                {device.serial && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Gateway Serial</dt>
+                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.serial}</dd>
+                  </div>
+                )}
                 {device.firmware_version && (
                   <div>
                     <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Firmware Version</dt>

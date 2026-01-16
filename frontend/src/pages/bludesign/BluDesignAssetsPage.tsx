@@ -14,39 +14,47 @@ import {
   Squares2X2Icon,
   ListBulletIcon,
   ArrowPathIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { AssetEditor } from '@/components/bludesign/ui/AssetEditor';
 import { ThemeManagementPanel } from '@/components/bludesign/ui/panels/ThemeManagementPanel';
 import { SkinsManagementPanel } from '@/components/bludesign/ui/panels/SkinsManagementPanel';
 import { StorageLockerWizard } from '@/components/bludesign/ui/dialogs/StorageLockerWizard';
-import { AssetService, AssetDefinition, CreateAssetDefinitionInput } from '@/components/bludesign/services/AssetService';
+import { AssetService, AssetDefinition, CreateAssetDefinitionInput, UpdateAssetDefinitionInput } from '@/components/bludesign/services/AssetService';
 import { AssetRegistry } from '@/components/bludesign/assets/AssetRegistry';
 import { ThumbnailGenerator } from '@/components/bludesign/utils/ThumbnailGenerator';
 import { AssetMetadata, AssetCategory } from '@/components/bludesign/core/types';
 import { SkinManager } from '@/components/bludesign/core/SkinManager';
 
 // Convert AssetMetadata to AssetDefinition for the editor
-const assetMetadataToDefinition = (asset: AssetMetadata): AssetDefinition => ({
-  id: asset.id,
-  name: asset.name,
-  description: asset.description,
-  category: asset.category,
-  modelType: 'primitive',
-  dimensions: asset.dimensions,
-  gridUnits: asset.gridUnits,
-  isSmart: asset.isSmart,
-  canRotate: asset.canRotate,
-  canStack: asset.canStack,
-  bindingContract: undefined,
-  isBuiltin: true,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-});
+const assetMetadataToDefinition = (asset: AssetMetadata, isBuiltIn: boolean = false): AssetDefinition => {
+  const modelType = (asset.metadata?.modelType as 'primitive' | 'gltf' | 'glb' | 'custom') || 'primitive';
+  
+  return {
+    id: asset.id,
+    name: asset.name,
+    description: asset.description,
+    category: asset.category,
+    modelType,
+    globalModelId: asset.metadata?.globalModelId as string | undefined,
+    positionOffset: asset.metadata?.positionOffset as { x: number; y: number; z: number } | undefined,
+    dimensions: asset.dimensions,
+    gridUnits: asset.gridUnits,
+    isSmart: asset.isSmart,
+    canRotate: asset.canRotate,
+    canStack: asset.canStack,
+    bindingContract: undefined,
+    isBuiltin: isBuiltIn,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+};
 
 type ViewMode = 'grid' | 'list';
 type CategoryFilter = 'all' | AssetCategory;
 type TabMode = 'assets' | 'skins' | 'themes';
+type AssetSourceFilter = 'all' | 'builtin' | 'custom';
 
 export default function BluDesignAssetsPage() {
   const { effectiveTheme } = useTheme();
@@ -71,11 +79,13 @@ export default function BluDesignAssetsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [showSmartOnly, setShowSmartOnly] = useState<boolean | null>(null);
+  const [assetSourceFilter, setAssetSourceFilter] = useState<AssetSourceFilter>('all');
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [skinCounts, setSkinCounts] = useState<Record<string, number>>({});
   const [skinManager] = useState(() => new SkinManager());
   const [showLockerWizard, setShowLockerWizard] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<AssetDefinition | null>(null);
 
   // Load built-in assets from registry
   useEffect(() => {
@@ -116,9 +126,14 @@ export default function BluDesignAssetsPage() {
           description: def.description,
           dimensions: def.dimensions,
           gridUnits: def.gridUnits,
-          isSmart: def.isSmart,
-          canRotate: def.canRotate,
-          canStack: def.canStack,
+          isSmart: Boolean(def.isSmart ?? false), // Ensure boolean, default to false
+          canRotate: Boolean(def.canRotate ?? true),
+          canStack: Boolean(def.canStack ?? false),
+          metadata: {
+            modelType: def.modelType,
+            globalModelId: def.globalModelId,
+            positionOffset: def.positionOffset,
+          },
         }));
         
         // Merge with built-in assets
@@ -147,8 +162,14 @@ export default function BluDesignAssetsPage() {
       }
     }
     
-    setThumbnails(newThumbnails);
+    // Merge with existing thumbnails instead of replacing
+    setThumbnails(prev => ({ ...prev, ...newThumbnails }));
     generator.dispose();
+  }, []);
+
+  // Check if an asset is built-in
+  const isBuiltInAsset = useCallback((assetId: string): boolean => {
+    return AssetRegistry.getInstance().getAsset(assetId) !== undefined;
   }, []);
 
   // Filter assets
@@ -157,16 +178,19 @@ export default function BluDesignAssetsPage() {
                          asset.description?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = categoryFilter === 'all' || asset.category === categoryFilter;
     const matchesSmart = showSmartOnly === null || asset.isSmart === showSmartOnly;
+    const matchesSource = assetSourceFilter === 'all' || 
+                         (assetSourceFilter === 'builtin' && isBuiltInAsset(asset.id)) ||
+                         (assetSourceFilter === 'custom' && !isBuiltInAsset(asset.id));
     
-    return matchesSearch && matchesCategory && matchesSmart;
+    return matchesSearch && matchesCategory && matchesSmart && matchesSource;
   });
 
   // Get unique categories from assets
   const categories = Array.from(new Set(assets.map(a => a.category)));
 
   const handleAssetClick = useCallback((asset: AssetMetadata) => {
-    setSelectedAsset(assetMetadataToDefinition(asset));
-  }, []);
+    setSelectedAsset(assetMetadataToDefinition(asset, isBuiltInAsset(asset.id)));
+  }, [isBuiltInAsset]);
 
   const handleCloseEditor = useCallback(() => {
     setSelectedAsset(null);
@@ -177,50 +201,129 @@ export default function BluDesignAssetsPage() {
     console.log('Asset updated:', updated);
   }, []);
 
-  // Handle saving a new locker asset from the wizard
-  const handleSaveLocker = useCallback(async (input: CreateAssetDefinitionInput) => {
-    const newAsset = await AssetService.createAssetDefinition(input);
-    console.log('Created new locker asset:', newAsset);
+  // Handle saving a new or updated locker asset from the wizard
+  const handleSaveLocker = useCallback(async (
+    input: CreateAssetDefinitionInput | UpdateAssetDefinitionInput,
+    assetId?: string
+  ) => {
+    let updatedAsset: AssetDefinition;
+    
+    if (assetId && editingAsset) {
+      // Update existing asset
+      updatedAsset = await AssetService.updateAssetDefinition(assetId, input);
+      console.log('Updated locker asset:', updatedAsset);
+    } else {
+      // Create new asset
+      updatedAsset = await AssetService.createAssetDefinition(input as CreateAssetDefinitionInput);
+      console.log('Created new locker asset:', updatedAsset);
+    }
     
     // Reload custom assets
     const definitions = await AssetService.getAssetDefinitions({ isBuiltin: false });
     setCustomAssets(definitions);
     
-    // Convert custom definitions to AssetMetadata format and merge with built-in
-    const customAssetMetadata: AssetMetadata[] = definitions.map(def => ({
-      id: def.id,
-      name: def.name,
-      category: def.category as AssetCategory,
-      description: def.description,
-      dimensions: def.dimensions,
-      gridUnits: def.gridUnits,
-      isSmart: def.isSmart,
-      canRotate: def.canRotate,
-      canStack: def.canStack,
-    }));
+        // Convert custom definitions to AssetMetadata format and merge with built-in
+        const customAssetMetadata: AssetMetadata[] = definitions.map(def => ({
+          id: def.id,
+          name: def.name,
+          category: def.category as AssetCategory,
+          description: def.description,
+          dimensions: def.dimensions,
+          gridUnits: def.gridUnits,
+          isSmart: Boolean(def.isSmart ?? false), // Ensure boolean, default to false
+          canRotate: Boolean(def.canRotate ?? true),
+          canStack: Boolean(def.canStack ?? false),
+          metadata: {
+            modelType: def.modelType,
+            globalModelId: def.globalModelId,
+            positionOffset: def.positionOffset,
+          },
+        }));
+        
+        // Merge with built-in assets
+        const builtInAssets = AssetRegistry.getInstance().getAllAssets();
+        setAssets([...builtInAssets, ...customAssetMetadata]);
+        
+        // Generate thumbnail for the updated/new asset
+        const assetMetadata: AssetMetadata = {
+          id: updatedAsset.id,
+          name: updatedAsset.name,
+          category: updatedAsset.category as AssetCategory,
+          description: updatedAsset.description,
+          dimensions: updatedAsset.dimensions,
+          gridUnits: updatedAsset.gridUnits,
+          isSmart: Boolean(updatedAsset.isSmart ?? false), // Ensure boolean, default to false
+          canRotate: Boolean(updatedAsset.canRotate ?? true),
+          canStack: Boolean(updatedAsset.canStack ?? false),
+          metadata: {
+            modelType: updatedAsset.modelType,
+            globalModelId: updatedAsset.globalModelId,
+            positionOffset: updatedAsset.positionOffset,
+          },
+        };
+    generateThumbnails([assetMetadata]);
     
-    // Merge with built-in assets
-    const builtInAssets = AssetRegistry.getInstance().getAllAssets();
-    setAssets([...builtInAssets, ...customAssetMetadata]);
+    // Update selected asset if it was the one being edited
+    if (assetId && selectedAsset?.id === assetId) {
+      setSelectedAsset(updatedAsset);
+    }
     
-    // Generate thumbnail for the new asset
-    const newAssetMetadata: AssetMetadata = {
-      id: newAsset.id,
-      name: newAsset.name,
-      category: newAsset.category as AssetCategory,
-      description: newAsset.description,
-      dimensions: newAsset.dimensions,
-      gridUnits: newAsset.gridUnits,
-      isSmart: newAsset.isSmart,
-      canRotate: newAsset.canRotate,
-      canStack: newAsset.canStack,
-    };
-    generateThumbnails([newAssetMetadata]);
+    // Clear editing state
+    setEditingAsset(null);
+  }, [generateThumbnails, editingAsset, selectedAsset]);
+  
+  // Handle editing an asset
+  const handleEditAsset = useCallback((asset: AssetDefinition) => {
+    setEditingAsset(asset);
+    setShowLockerWizard(true);
   }, []);
 
   const getCategoryLabel = (category: string): string => {
     return category.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   };
+
+  // Handle deleting a custom asset
+  const handleDeleteAsset = useCallback(async (asset: AssetMetadata, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening the editor
+    
+    if (isBuiltInAsset(asset.id)) {
+      console.warn('Cannot delete built-in asset:', asset.id);
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to delete "${asset.name}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await AssetService.deleteAssetDefinition(asset.id);
+      
+      // Remove from assets list
+      setAssets(prev => prev.filter(a => a.id !== asset.id));
+      
+      // Remove thumbnail
+      setThumbnails(prev => {
+        const updated = { ...prev };
+        delete updated[asset.id];
+        return updated;
+      });
+      
+      // Remove skin count
+      setSkinCounts(prev => {
+        const updated = { ...prev };
+        delete updated[asset.id];
+        return updated;
+      });
+      
+      // Close editor if this asset was selected
+      if (selectedAsset?.id === asset.id) {
+        setSelectedAsset(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete asset:', error);
+      alert('Failed to delete asset. Please try again.');
+    }
+  }, [isBuiltInAsset, selectedAsset]);
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
@@ -395,6 +498,46 @@ export default function BluDesignAssetsPage() {
               </button>
             </div>
 
+            {/* Asset Source filter */}
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
+              <button
+                onClick={() => setAssetSourceFilter('all')}
+                className={`
+                  px-3 py-2 text-sm transition-colors
+                  ${assetSourceFilter === 'all'
+                    ? 'bg-primary-600 text-white'
+                    : isDark ? 'bg-gray-700 text-gray-300' : 'bg-white text-gray-700'
+                  }
+                `}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setAssetSourceFilter('builtin')}
+                className={`
+                  px-3 py-2 text-sm transition-colors border-l border-gray-300 dark:border-gray-600
+                  ${assetSourceFilter === 'builtin'
+                    ? 'bg-primary-600 text-white'
+                    : isDark ? 'bg-gray-700 text-gray-300' : 'bg-white text-gray-700'
+                  }
+                `}
+              >
+                Built-in
+              </button>
+              <button
+                onClick={() => setAssetSourceFilter('custom')}
+                className={`
+                  px-3 py-2 text-sm transition-colors border-l border-gray-300 dark:border-gray-600
+                  ${assetSourceFilter === 'custom'
+                    ? 'bg-primary-600 text-white'
+                    : isDark ? 'bg-gray-700 text-gray-300' : 'bg-white text-gray-700'
+                  }
+                `}
+              >
+                Custom
+              </button>
+            </div>
+
             {/* View toggle */}
             <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
               <button
@@ -438,128 +581,171 @@ export default function BluDesignAssetsPage() {
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {filteredAssets.map((asset) => (
-              <motion.button
+              <motion.div
                 key={asset.id}
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 whileHover={{ scale: 1.02 }}
-                onClick={() => handleAssetClick(asset)}
                 className={`
-                  p-4 rounded-lg transition-all text-left
+                  relative p-4 rounded-lg transition-all text-left cursor-pointer
                   ${isDark 
-                    ? 'bg-gray-800 hover:bg-gray-700 border border-gray-700' 
-                    : 'bg-white hover:bg-gray-50 border border-gray-200'
+                    ? 'bg-gray-800 border border-gray-700 hover:border-primary-500/50 hover:shadow-lg hover:shadow-primary-500/10' 
+                    : 'bg-white border border-gray-200 hover:border-primary-500/50 hover:shadow-lg hover:shadow-primary-500/10'
                   }
                   ${selectedAsset?.id === asset.id ? 'ring-2 ring-primary-500' : ''}
                 `}
               >
-                {/* Thumbnail */}
-                <div className={`
-                  aspect-square rounded-lg mb-3 flex items-center justify-center
-                  ${isDark ? 'bg-gray-700' : 'bg-gray-100'}
-                `}>
-                  {thumbnails[asset.id] ? (
-                    <img 
-                      src={thumbnails[asset.id]} 
-                      alt={asset.name}
-                      className="w-full h-full object-contain rounded-lg"
-                    />
-                  ) : (
-                    <CubeIcon className={`w-12 h-12 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
-                  )}
-                </div>
+                {/* Delete button for custom assets */}
+                {!isBuiltInAsset(asset.id) && (
+                  <button
+                    onClick={(e) => handleDeleteAsset(asset, e)}
+                    className={`
+                      absolute top-2 right-2 p-1.5 rounded-lg transition-colors z-10
+                      ${isDark 
+                        ? 'bg-gray-700 hover:bg-red-600 text-gray-400 hover:text-white' 
+                        : 'bg-gray-100 hover:bg-red-500 text-gray-500 hover:text-white'
+                      }
+                    `}
+                    title="Delete asset"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                )}
                 
-                {/* Info */}
-                <h3 className={`font-medium text-sm truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {asset.name}
-                </h3>
-                <p className={`text-xs truncate ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {getCategoryLabel(asset.category)}
-                </p>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  {asset.isSmart && (
-                    <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-primary-600/20 text-primary-400">
-                      Smart
-                    </span>
-                  )}
-                  {skinCounts[asset.id] > 0 && (
-                    <span className={`
-                      inline-block px-2 py-0.5 text-xs rounded-full
-                      ${isDark ? 'bg-purple-600/20 text-purple-400' : 'bg-purple-100 text-purple-600'}
-                    `}>
-                      {skinCounts[asset.id]} skin{skinCounts[asset.id] !== 1 ? 's' : ''}
-                    </span>
-                  )}
-                </div>
-              </motion.button>
+                <button
+                  onClick={() => handleAssetClick(asset)}
+                  className="w-full text-left"
+                >
+                  {/* Thumbnail */}
+                  <div className={`
+                    aspect-square rounded-lg mb-3 flex items-center justify-center
+                    ${isDark ? 'bg-gray-700' : 'bg-gray-100'}
+                  `}>
+                    {thumbnails[asset.id] ? (
+                      <img 
+                        src={thumbnails[asset.id]} 
+                        alt={asset.name}
+                        className="w-full h-full object-contain rounded-lg"
+                      />
+                    ) : (
+                      <CubeIcon className={`w-12 h-12 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
+                    )}
+                  </div>
+                  
+                  {/* Info */}
+                  <h3 className={`font-medium text-sm truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {asset.name}
+                  </h3>
+                  <p className={`text-xs truncate ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                    {getCategoryLabel(asset.category)}
+                  </p>
+                  <div className="flex items-center gap-1 mt-1 flex-wrap">
+                    {asset.isSmart && (
+                      <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-primary-600/20 text-primary-400">
+                        Smart
+                      </span>
+                    )}
+                    {skinCounts[asset.id] > 0 && (
+                      <span className={`
+                        inline-block px-2 py-0.5 text-xs rounded-full
+                        ${isDark ? 'bg-purple-600/20 text-purple-400' : 'bg-purple-100 text-purple-600'}
+                      `}>
+                        {skinCounts[asset.id]} skin{skinCounts[asset.id] !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              </motion.div>
             ))}
           </div>
         ) : (
           <div className="space-y-2">
             {filteredAssets.map((asset) => (
-              <motion.button
+              <motion.div
                 key={asset.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                onClick={() => handleAssetClick(asset)}
+                whileHover={{ x: 4 }}
                 className={`
-                  w-full p-4 rounded-lg transition-all text-left flex items-center gap-4
+                  relative w-full p-4 rounded-lg transition-all text-left flex items-center gap-4 cursor-pointer
                   ${isDark 
-                    ? 'bg-gray-800 hover:bg-gray-700 border border-gray-700' 
-                    : 'bg-white hover:bg-gray-50 border border-gray-200'
+                    ? 'bg-gray-800 border border-gray-700 hover:border-primary-500/50 hover:shadow-lg hover:shadow-primary-500/10' 
+                    : 'bg-white border border-gray-200 hover:border-primary-500/50 hover:shadow-lg hover:shadow-primary-500/10'
                   }
                   ${selectedAsset?.id === asset.id ? 'ring-2 ring-primary-500' : ''}
                 `}
               >
-                {/* Thumbnail */}
-                <div className={`
-                  w-16 h-16 rounded-lg flex-shrink-0 flex items-center justify-center
-                  ${isDark ? 'bg-gray-700' : 'bg-gray-100'}
-                `}>
-                  {thumbnails[asset.id] ? (
-                    <img 
-                      src={thumbnails[asset.id]} 
-                      alt={asset.name}
-                      className="w-full h-full object-contain rounded-lg"
-                    />
-                  ) : (
-                    <CubeIcon className={`w-8 h-8 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
-                  )}
-                </div>
+                {/* Delete button for custom assets */}
+                {!isBuiltInAsset(asset.id) && (
+                  <button
+                    onClick={(e) => handleDeleteAsset(asset, e)}
+                    className={`
+                      absolute top-2 right-2 p-1.5 rounded-lg transition-colors z-10
+                      ${isDark 
+                        ? 'bg-gray-700 hover:bg-red-600 text-gray-400 hover:text-white' 
+                        : 'bg-gray-100 hover:bg-red-500 text-gray-500 hover:text-white'
+                      }
+                    `}
+                    title="Delete asset"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                )}
                 
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {asset.name}
-                  </h3>
-                  <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                    {asset.description || getCategoryLabel(asset.category)}
-                  </p>
-                </div>
-                
-                {/* Tags */}
-                <div className="flex items-center gap-2">
-                  <span className={`
-                    px-2 py-1 text-xs rounded
-                    ${isDark ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}
+                <button
+                  onClick={() => handleAssetClick(asset)}
+                  className="flex items-center gap-4 flex-1 min-w-0"
+                >
+                  {/* Thumbnail */}
+                  <div className={`
+                    w-16 h-16 rounded-lg flex-shrink-0 flex items-center justify-center
+                    ${isDark ? 'bg-gray-700' : 'bg-gray-100'}
                   `}>
-                    {getCategoryLabel(asset.category)}
-                  </span>
-                  {asset.isSmart && (
-                    <span className="px-2 py-1 text-xs rounded bg-primary-600/20 text-primary-400">
-                      Smart
-                    </span>
-                  )}
-                  {skinCounts[asset.id] > 0 && (
+                    {thumbnails[asset.id] ? (
+                      <img 
+                        src={thumbnails[asset.id]} 
+                        alt={asset.name}
+                        className="w-full h-full object-contain rounded-lg"
+                      />
+                    ) : (
+                      <CubeIcon className={`w-8 h-8 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
+                    )}
+                  </div>
+                  
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {asset.name}
+                    </h3>
+                    <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                      {asset.description || getCategoryLabel(asset.category)}
+                    </p>
+                  </div>
+                  
+                  {/* Tags */}
+                  <div className="flex items-center gap-2">
                     <span className={`
                       px-2 py-1 text-xs rounded
-                      ${isDark ? 'bg-purple-600/20 text-purple-400' : 'bg-purple-100 text-purple-600'}
+                      ${isDark ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}
                     `}>
-                      {skinCounts[asset.id]} skin{skinCounts[asset.id] !== 1 ? 's' : ''}
+                      {getCategoryLabel(asset.category)}
                     </span>
-                  )}
-                </div>
-              </motion.button>
+                    {asset.isSmart && (
+                      <span className="px-2 py-1 text-xs rounded bg-primary-600/20 text-primary-400">
+                        Smart
+                      </span>
+                    )}
+                    {skinCounts[asset.id] > 0 && (
+                      <span className={`
+                        px-2 py-1 text-xs rounded
+                        ${isDark ? 'bg-purple-600/20 text-purple-400' : 'bg-purple-100 text-purple-600'}
+                      `}>
+                        {skinCounts[asset.id]} skin{skinCounts[asset.id] !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              </motion.div>
             ))}
           </div>
         )}
@@ -605,6 +791,8 @@ export default function BluDesignAssetsPage() {
                 asset={selectedAsset}
                 onUpdate={handleAssetUpdate}
                 onClose={handleCloseEditor}
+                onEdit={handleEditAsset}
+                isBuiltIn={isBuiltInAsset(selectedAsset.id)}
               />
             </motion.div>
           </motion.div>
@@ -616,7 +804,11 @@ export default function BluDesignAssetsPage() {
         {showLockerWizard && (
           <StorageLockerWizard
             onSave={handleSaveLocker}
-            onClose={() => setShowLockerWizard(false)}
+            onClose={() => {
+              setShowLockerWizard(false);
+              setEditingAsset(null);
+            }}
+            existingAsset={editingAsset || undefined}
           />
         )}
       </AnimatePresence>

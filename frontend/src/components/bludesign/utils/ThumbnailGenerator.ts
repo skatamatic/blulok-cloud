@@ -98,17 +98,36 @@ export class ThumbnailGenerator {
     if (cached) return cached;
 
     try {
-      // Create mesh from metadata
-      const mesh = AssetFactory.createAssetMesh(assetMetadata);
-      const dataUrl = await this.generateFromMesh(mesh, options);
+      // Check if this is a custom model asset - check metadata only (AssetMetadata stores it there)
+      const asset = assetMetadata as any;
+      const globalModelId = asset.metadata?.globalModelId;
+      const modelType = asset.metadata?.modelType;
+      
+      if (globalModelId && modelType && modelType !== 'primitive') {
+        // Use async method for custom models
+        const mesh = await AssetFactory.createAssetMeshAsync(assetMetadata);
+        const dataUrl = await this.generateFromMesh(mesh, options);
 
-      // Cache it
-      this.setCached(cacheKey, dataUrl);
+        // Cache it
+        this.setCached(cacheKey, dataUrl);
 
-      // Cleanup
-      AssetFactory.disposeAsset(mesh);
+        // Cleanup
+        AssetFactory.disposeAsset(mesh);
 
-      return dataUrl;
+        return dataUrl;
+      } else {
+        // Create mesh from metadata using synchronous method for built-in assets
+        const mesh = AssetFactory.createAssetMesh(assetMetadata);
+        const dataUrl = await this.generateFromMesh(mesh, options);
+
+        // Cache it
+        this.setCached(cacheKey, dataUrl);
+
+        // Cleanup
+        AssetFactory.disposeAsset(mesh);
+
+        return dataUrl;
+      }
     } catch (error) {
       console.error('Failed to generate thumbnail for', assetMetadata.id, error);
       return this.getPlaceholder();

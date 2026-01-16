@@ -31,6 +31,7 @@ import {
   DeviceState,
   AssetDimensions,
 } from '../core/types';
+import { CustomAssetLoader } from './CustomAssetLoader';
 
 /**
  * Locker specification for procedurally generated storage units
@@ -138,11 +139,24 @@ const MATERIALS = {
 export class AssetFactory {
   /**
    * Create a 3D mesh for an asset
+   * SYNCHRONOUS version - uses cached custom models if available
+   * Falls back to primitive geometry if custom model not cached
    */
   static createAssetMesh(
     asset: AssetMetadata,
     state?: DeviceState
   ): THREE.Object3D {
+    // Check if this is a custom model and try to get from cache
+    if (CustomAssetLoader.isCustomModel(asset)) {
+      const loader = CustomAssetLoader.getInstance();
+      const cachedMesh = loader.getCachedMesh(asset);
+      if (cachedMesh) {
+        return cachedMesh;
+      }
+      // Custom model not cached - fall through to primitive fallback
+      console.warn(`Custom model not cached for ${asset.name}, using primitive fallback`);
+    }
+    
     switch (asset.category) {
       case AssetCategory.STORAGE_UNIT:
         return this.createStorageUnit(asset, state ?? DeviceState.LOCKED);
@@ -185,6 +199,42 @@ export class AssetFactory {
       default:
         return this.createGenericBox(asset);
     }
+  }
+
+  /**
+   * Create a 3D mesh for an asset (ASYNC version)
+   * Handles custom models via CustomAssetLoader
+   * Falls back to synchronous createAssetMesh for built-in primitives
+   */
+  static async createAssetMeshAsync(
+    asset: AssetMetadata | any, // any to support AssetDefinition from CustomAssetLoader
+    state?: DeviceState
+  ): Promise<THREE.Object3D> {
+    // Check if this is a custom model asset - check both direct fields and metadata
+    const globalModelId = asset.globalModelId || asset.metadata?.globalModelId;
+    const modelType = asset.modelType || asset.metadata?.modelType;
+    
+    if (globalModelId && modelType !== 'primitive') {
+      try {
+        const loader = CustomAssetLoader.getInstance();
+        
+        // Pass the asset with globalModelId in the expected location
+        const assetWithGlobalId = {
+          ...asset,
+          globalModelId,
+          modelType,
+          positionOffset: asset.positionOffset || asset.metadata?.positionOffset,
+        };
+        
+        return await loader.getMesh(assetWithGlobalId);
+      } catch (error) {
+        console.error('Failed to load custom model, falling back to primitive:', error);
+        // Fall back to primitive
+      }
+    }
+
+    // Use synchronous version for built-in primitives
+    return this.createAssetMesh(asset, state);
   }
 
   /**

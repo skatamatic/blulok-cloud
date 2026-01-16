@@ -64,6 +64,7 @@ export interface AssetDefinition {
   category: string;
   modelType: 'primitive' | 'gltf' | 'glb' | 'custom';
   customModelId?: string;
+  globalModelId?: string;
   primitiveSpec?: PrimitiveSpec;
   dimensions: AssetDimensions;
   gridUnits: GridUnits;
@@ -74,6 +75,8 @@ export interface AssetDefinition {
   defaultMaterials?: Record<string, MaterialConfig>;
   /** Locker-specific configuration for procedural storage units */
   lockerSpec?: LockerSpec;
+  /** Position offset for custom models (meters from grid origin) */
+  positionOffset?: { x: number; y: number; z: number };
   isBuiltin: boolean;
   thumbnail?: string;
   createdBy?: string;
@@ -111,12 +114,29 @@ export interface CustomModel {
   uploadedAt: string;
 }
 
+export interface GlobalModel {
+  id: string;
+  name: string;
+  description?: string;
+  filename: string;
+  contentType: string;
+  fileSize: number;
+  storagePath: string;
+  format: 'gltf' | 'glb' | 'fbx' | 'obj';
+  modelMetadata?: Record<string, unknown>;
+  thumbnail?: string;
+  tags?: string[];
+  uploadedBy?: string;
+  uploadedAt: string;
+}
+
 export interface CreateAssetDefinitionInput {
   name: string;
   description?: string;
   category: string;
   modelType: 'primitive' | 'gltf' | 'glb' | 'custom';
   customModelId?: string;
+  globalModelId?: string;
   primitiveSpec?: PrimitiveSpec;
   dimensions: AssetDimensions;
   gridUnits: GridUnits;
@@ -127,6 +147,8 @@ export interface CreateAssetDefinitionInput {
   defaultMaterials?: Record<string, MaterialConfig>;
   /** Locker-specific configuration for procedural storage units */
   lockerSpec?: LockerSpec;
+  /** Position offset for custom models (meters from grid origin) */
+  positionOffset?: { x: number; y: number; z: number };
   thumbnail?: string;
 }
 
@@ -135,15 +157,19 @@ export interface UpdateAssetDefinitionInput {
   description?: string;
   modelType?: 'primitive' | 'gltf' | 'glb' | 'custom';
   customModelId?: string;
+  globalModelId?: string;
   primitiveSpec?: PrimitiveSpec;
   dimensions?: AssetDimensions;
   gridUnits?: GridUnits;
+  isSmart?: boolean;
   canRotate?: boolean;
   canStack?: boolean;
   bindingContract?: BindingContract;
   defaultMaterials?: Record<string, MaterialConfig>;
   /** Locker-specific configuration for procedural storage units */
   lockerSpec?: LockerSpec;
+  /** Position offset for custom models (meters from grid origin) */
+  positionOffset?: { x: number; y: number; z: number };
   thumbnail?: string;
 }
 
@@ -507,6 +533,93 @@ export class AssetService {
     }
 
     cache.invalidateProjectModels(projectId);
+  }
+
+  // ========================================================================
+  // Global Models
+  // ========================================================================
+
+  static async getGlobalModels(): Promise<GlobalModel[]> {
+    try {
+      const response = await apiService.get(`${this.BASE_URL}/global-models`);
+      
+      if (response?.success && response.data) {
+        return response.data;
+      }
+      
+      if (Array.isArray(response)) {
+        return response;
+      }
+      
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async getGlobalModel(id: string): Promise<GlobalModel | null> {
+    try {
+      const response = await apiService.get(`${this.BASE_URL}/global-models/${id}`);
+      
+      if (response?.success && response.data) {
+        return response.data;
+      }
+      
+      if (response && response.id) {
+        return response;
+      }
+      
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  static getGlobalModelUrl(id: string): string {
+    return `${this.BASE_URL}/global-models/${id}/file`;
+  }
+
+  static async uploadGlobalModel(
+    file: File,
+    name: string,
+    description?: string,
+    tags?: string[]
+  ): Promise<GlobalModel> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', name);
+    if (description) formData.append('description', description);
+    if (tags) formData.append('tags', JSON.stringify(tags));
+
+    const response = await apiService.post(
+      `${this.BASE_URL}/global-models`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+
+    if (response?.success && response.data) {
+      return response.data;
+    }
+    
+    if (response && response.id) {
+      return response;
+    }
+
+    throw new Error(response?.message || 'Failed to upload global model');
+  }
+
+  static async deleteGlobalModel(modelId: string): Promise<void> {
+    const response = await apiService.delete(
+      `${this.BASE_URL}/global-models/${modelId}`
+    );
+
+    if (response?.success === false) {
+      throw new Error(response?.message || 'Failed to delete global model');
+    }
   }
 
   // ========================================================================

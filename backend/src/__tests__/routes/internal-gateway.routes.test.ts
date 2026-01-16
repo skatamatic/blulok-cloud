@@ -336,6 +336,32 @@ describe('Internal Gateway Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
     });
+
+    it('accepts state update with serial field', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'fac-1',
+          updates: [
+            {
+              lock_id: 'lock-1',
+              serial: 'LOCK-ABC-105',
+              lock_state: 'LOCKED',
+              battery_level: 90,
+              online: false,
+            },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(updateDeviceStatesMock).toHaveBeenCalledTimes(1);
+      
+      // Verify serial is passed to the service
+      const [gatewayId, updates] = updateDeviceStatesMock.mock.calls[0];
+      expect(updates[0].serial).toBe('LOCK-ABC-105');
+    });
   });
 
   describe('Deprecated device-sync endpoint', () => {

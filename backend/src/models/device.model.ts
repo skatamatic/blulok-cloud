@@ -84,6 +84,8 @@ export interface BluLokDevice {
   unit_id: string | null;
   /** Manufacturer-assigned serial number */
   device_serial: string;
+  /** Gateway-provided serial number (optional, separate from device_serial) */
+  serial?: string;
   /** Current firmware version installed */
   firmware_version?: string;
   /** Current lock mechanism status */
@@ -128,6 +130,8 @@ export interface DeviceStateUpdate {
   lock_id: string;
   /** Lock number for display */
   lock_number?: number;
+  /** Device serial number (optional identifier) */
+  serial?: string;
   /** Device state from gateway: 'CLOSED' = locked, 'OPENED' = unlocked */
   state?: 'CLOSED' | 'OPENED' | 'ERROR' | 'UNKNOWN';
   /** Legacy lock state field */
@@ -361,6 +365,7 @@ export class DeviceModel {
         facility_id: row.gateway_facility_id,
         unit_id: row.unit_id,
         device_serial: row.device_serial,
+        serial: row.serial,
         firmware_version: row.firmware_version,
         lock_status: row.lock_status,
         device_status: row.device_status,
@@ -563,6 +568,7 @@ export class DeviceModel {
       error_message: string | null;
       firmware_version: string;
       last_seen: Date;
+      serial: string;
     }>
   ): Promise<boolean> {
     const knex = this.db.connection;
@@ -597,6 +603,9 @@ export class DeviceModel {
     }
     if (updates.last_seen !== undefined) {
       updateData.last_seen = updates.last_seen;
+    }
+    if (updates.serial !== undefined) {
+      updateData.serial = updates.serial;
     }
 
     // Always update updated_at

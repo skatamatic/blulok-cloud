@@ -67,19 +67,35 @@ export class ClipboardManager {
     
     // Create new objects with new IDs and adjusted positions
     return objects.map(obj => {
-      // Calculate relative position from center
+      // Calculate relative position from center (grid units)
       const relX = obj.position.x - centerOffset.x;
       const relZ = obj.position.z - centerOffset.z;
       
-      return {
-        ...this.cloneObject(obj),
-        id: `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // New unique ID
-        position: {
-          x: targetPosition.x + relX,
-          z: targetPosition.z + relZ,
-          y: targetPosition.y ?? obj.position.y,
-        },
+      const cloned = this.cloneObject(obj);
+      
+      // Update grid position
+      cloned.id = `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`; // New unique ID
+      cloned.position = {
+        x: targetPosition.x + relX,
+        z: targetPosition.z + relZ,
+        y: targetPosition.y ?? obj.position.y,
       };
+      
+      // If object has exactMeshPos, update it by the same delta in world space
+      // Grid size is assumed to be 1.0 for simplicity (world coords = grid coords)
+      if (cloned.exactMeshPos && obj.exactMeshPos) {
+        // Calculate the world-space delta from original grid pos to target grid pos
+        const gridDeltaX = targetPosition.x - centerOffset.x;
+        const gridDeltaZ = targetPosition.z - centerOffset.z;
+        
+        // Apply the same delta to exactMeshPos
+        cloned.exactMeshPos = {
+          x: obj.exactMeshPos.x + gridDeltaX,
+          z: obj.exactMeshPos.z + gridDeltaZ,
+        };
+      }
+      
+      return cloned;
     });
   }
   
@@ -142,7 +158,7 @@ export class ClipboardManager {
   }
   
   /**
-   * Deep clone a placed object (including skin and all properties)
+   * Deep clone a placed object (including skin, rotation, and all properties)
    */
   private cloneObject(obj: PlacedObject): PlacedObject {
     return {
@@ -150,6 +166,10 @@ export class ClipboardManager {
       assetId: obj.assetId,
       position: { ...obj.position },
       orientation: obj.orientation,
+      // Preserve arbitrary rotation
+      rotation: obj.rotation,
+      // Preserve exact mesh position for angled/off-grid placement
+      exactMeshPos: obj.exactMeshPos ? { ...obj.exactMeshPos } : undefined,
       properties: obj.properties ? { ...obj.properties } : {},
       canStack: obj.canStack,
       assetMetadata: obj.assetMetadata ? { ...obj.assetMetadata } : ({} as AssetMetadata),

@@ -74,6 +74,10 @@ export class LocalStorageProvider implements StorageProvider {
     return path.join(this.getAssetPath(projectId, assetId), 'textures');
   }
 
+  private getGlobalAssetPath(modelId: string): string {
+    return path.join(this.basePath, 'global', 'models', modelId);
+  }
+
   private validateExtension(filename: string): void {
     const ext = path.extname(filename).toLowerCase();
     if (!this.allowedExtensions.includes(ext)) {
@@ -152,6 +156,75 @@ export class LocalStorageProvider implements StorageProvider {
 
   async listAssetFiles(projectId: string, assetId: string): Promise<string[]> {
     const assetPath = this.getAssetPath(projectId, assetId);
+
+    try {
+      const entries = await fs.readdir(assetPath, { withFileTypes: true });
+      return entries
+        .filter(e => e.isFile())
+        .map(e => e.name);
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        return [];
+      }
+      throw err;
+    }
+  }
+
+  // ==========================================================================
+  // Global Asset Operations
+  // ==========================================================================
+
+  async uploadGlobalAsset(
+    modelId: string,
+    filename: string,
+    data: Buffer,
+    _contentType: string
+  ): Promise<string> {
+    this.validateExtension(filename);
+    this.validateFileSize(data);
+
+    const assetPath = this.getGlobalAssetPath(modelId);
+    await fs.mkdir(assetPath, { recursive: true });
+
+    const filePath = path.join(assetPath, filename);
+    await fs.writeFile(filePath, data);
+
+    return filePath;
+  }
+
+  async downloadGlobalAsset(
+    modelId: string,
+    filename: string
+  ): Promise<Buffer> {
+    const filePath = path.join(this.getGlobalAssetPath(modelId), filename);
+
+    try {
+      return await fs.readFile(filePath);
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        throw new StorageError(
+          `Global asset file not found: ${filename}`,
+          StorageErrorCode.NOT_FOUND
+        );
+      }
+      throw err;
+    }
+  }
+
+  async deleteGlobalAsset(modelId: string): Promise<void> {
+    const assetPath = this.getGlobalAssetPath(modelId);
+    
+    try {
+      await fs.rm(assetPath, { recursive: true, force: true });
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        throw err;
+      }
+    }
+  }
+
+  async listGlobalAssetFiles(modelId: string): Promise<string[]> {
+    const assetPath = this.getGlobalAssetPath(modelId);
 
     try {
       const entries = await fs.readdir(assetPath, { withFileTypes: true });

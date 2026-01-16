@@ -40,6 +40,7 @@ import {
   BuildingMaterials,
 } from './types';
 import { AssetRegistry } from '../assets/AssetRegistry';
+import { AssetService, AssetDefinition } from '../services/AssetService';
 import { SceneManager } from './SceneManager';
 import { CameraController } from './CameraController';
 import { SelectionManager } from './SelectionManager';
@@ -56,6 +57,7 @@ import {
   PlaceActionData, 
   DeleteActionData, 
   MoveActionData,
+  RotateActionData,
   BuildingCreateActionData,
   BuildingDeleteActionData,
   BuildingMoveActionData,
@@ -65,6 +67,7 @@ import {
 } from './ActionHistory';
 import { ClipboardManager } from './ClipboardManager';
 import { TranslateGizmo, GizmoAxis } from './TranslateGizmo';
+import { RotateGizmo } from './RotateGizmo';
 import { InputCoordinator, InputPriority, InputEventType } from './InputCoordinator';
 import { getThemeManager, Theme } from './ThemeManager';
 import { getSkinRegistry, CategorySkin } from './SkinRegistry';
@@ -83,6 +86,9 @@ export interface BluDesignEngineOptions {
 // Local storage key for auto-save drafts
 const AUTOSAVE_STORAGE_KEY = 'bludesign-autosave-draft';
 const AUTOSAVE_DEBOUNCE_MS = 1000; // Wait 1 second after last change before saving
+
+// Special skin ID for restoring original asset materials (useful for imported GLBs)
+export const ORIGINAL_MATERIALS_SKIN_ID = 'skin-original-materials';
 
 export class BluDesignEngine {
   // Core Three.js objects
@@ -104,10 +110,25 @@ export class BluDesignEngine {
   private actionHistory: ActionHistory;
   private clipboardManager: ClipboardManager;
   private translateGizmo: TranslateGizmo;
+  private rotateGizmo: RotateGizmo;
   private inputCoordinator: InputCoordinator;
   private windowManager: WindowManager;
   private groundTileManager: GroundTileManager;
   
+// Gizmo mode: 'translate' or 'rotate' (Alt key switches between them)
+  private gizmoMode: 'translate' | 'rotate' = 'translate';
+  
+  // Rotation state tracking for undo/redo
+  private rotationStartStates: Map<string, {
+    position: GridPosition;
+    rotation: number | undefined;
+    orientation: Orientation;
+    exactMeshPos?: { x: number; z: number };
+  }> | null = null;
+  
+  // Reusable raycaster for hover detection (avoids creating new instances)
+  private raycaster: THREE.Raycaster = new THREE.Raycaster();
+
   // Texture loader for skins with textures
   private textureLoader: THREE.TextureLoader;
   private textureCache: Map<string, THREE.Texture> = new Map();
@@ -141,7 +162,7 @@ export class BluDesignEngine {
   
   // Pending move state for smooth visual feedback
   private pendingMove: {
-    originalPositions: Map<string, { position: GridPosition; orientation: Orientation }>;
+    originalPositions: Map<string, { position: GridPosition; orientation: Orientation; rotation?: number; exactMeshPos?: { x: number; z: number } }>;
     accumulatedDelta: { x: number; z: number };
     commitTimer: ReturnType<typeof setTimeout> | null;
     isBuildingMove: boolean;
@@ -305,6 +326,11 @@ export class BluDesignEngine {
       if (this.state.activeTool === EditorTool.PLACE) {
         this.cameraController.setRotationEnabled(enableRotation);
       }
+    });
+    
+    // Set up hover rotation matching callback
+    this.placementManager.setHoveredAssetRotationCallback((worldPos) => {
+      return this.getHoveredAssetRotation(worldPos);
     });
     
     // Initialize action history
@@ -491,6 +517,54 @@ export class BluDesignEngine {
       }
     );
     
+    // Initialize rotate gizmo for Y-axis rotation
+    this.rotateGizmo = new RotateGizmo(
+      this.scene,
+      this.cameraController.getCamera(),
+      this.container,
+      {
+        onDragStart: () => {
+          console.log('[RotateGizmo] Drag started');
+          this.cameraController.setControlsEnabled(false);
+          this.selectionManager.setEnabled(false);
+          // Capture start state for undo
+          this.captureRotationStartState();
+        },
+        onDrag: (deltaAngle, _totalAngle) => {
+          this.handleRotateGizmoDrag(deltaAngle);
+        },
+        onDragEnd: (_totalAngle) => {
+          console.log('[RotateGizmo] Drag ended');
+          // Record rotation to history before re-enabling controls
+          this.recordRotationToHistory();
+          this.cameraController.setControlsEnabled(true);
+          const isSelectionTool = this.state.activeTool === EditorTool.SELECT || 
+                                   this.state.activeTool === EditorTool.SELECT_BUILDING;
+          const isViewTool = this.state.activeTool === EditorTool.VIEW;
+          this.selectionManager.setEnabled(isSelectionTool || isViewTool);
+          this.selectionManager.setDragSelectionEnabled(isSelectionTool);
+          this.updateGizmoVisibility();
+        },
+        onHoverChange: (isHovered) => {
+          if (isHovered) {
+            this.cameraController.setControlsEnabled(false);
+          } else if (!this.rotateGizmo.isDraggingGizmo()) {
+            this.cameraController.setControlsEnabled(true);
+          }
+        },
+      }
+    );
+    
+    // Set up Alt key callbacks for gizmo switching
+    this.inputCoordinator.setAltKeyCallbacks({
+      onAltDown: () => this.onAltKeyDown(),
+      onAltUp: () => this.onAltKeyUp(),
+      onAltQ: (holdStartTime) => this.handleAltQRotation(holdStartTime),
+      onAltE: (holdStartTime) => this.handleAltERotation(holdStartTime),
+      onQUp: () => this.onRotationKeyUp(),
+      onEUp: () => this.onRotationKeyUp(),
+    });
+    
     // Attach to DOM
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.labelRenderer.domElement);
@@ -529,11 +603,17 @@ export class BluDesignEngine {
         if (eventType === 'wheel') return false;
         // Only block left-click events when gizmo is active
         if (event instanceof MouseEvent && event.button === 0) {
-          return this.translateGizmo.isDraggingGizmo() || this.translateGizmo.isHovered();
+          const translateActive = this.translateGizmo.isDraggingGizmo() || this.translateGizmo.isHovered();
+          const rotateActive = this.rotateGizmo.isDraggingGizmo() || this.rotateGizmo.isGizmoHovered();
+          return translateActive || rotateActive;
         }
         return false;
       },
-      wantsInput: () => this.translateGizmo.isHovered() || this.translateGizmo.isDraggingGizmo(),
+      wantsInput: () => {
+        const translateActive = this.translateGizmo.isHovered() || this.translateGizmo.isDraggingGizmo();
+        const rotateActive = this.rotateGizmo.isGizmoHovered() || this.rotateGizmo.isDraggingGizmo();
+        return translateActive || rotateActive;
+      },
       // Gizmo handles its own events via direct listeners on its meshes
     });
 
@@ -1002,16 +1082,26 @@ export class BluDesignEngine {
         if (skinId) {
           // Store skinId at the top level of PlacedObject for consistent access
           placedObj.skinId = skinId;
-          // Store default materials if not already stored
-          this.storeDefaultMaterials(obj as THREE.Group);
-          // Apply the skin from SkinRegistry (contains both built-in and custom skins)
-          const skinRegistry = getSkinRegistry();
-          const skin = skinRegistry.getSkin(skinId);
-          if (skin) {
-            console.log(`[updateObjectSkin] Applying skin "${skin.name}" to object ${id}`);
-            this.applySkinToObject(obj as THREE.Group, skin);
+          
+          // Check if this is the special "original materials" skin
+          if (skinId === ORIGINAL_MATERIALS_SKIN_ID) {
+            // Store default materials if not already stored
+            this.storeDefaultMaterials(obj as THREE.Group);
+            // Restore original materials (from imported GLB, etc.)
+            this.resetToDefaultMaterials(obj as THREE.Group);
+            console.log(`[updateObjectSkin] Restored original materials for object ${id}`);
           } else {
-            console.warn(`[updateObjectSkin] Skin "${skinId}" not found in registry`);
+            // Store default materials if not already stored
+            this.storeDefaultMaterials(obj as THREE.Group);
+            // Apply the skin from SkinRegistry (contains both built-in and custom skins)
+            const skinRegistry = getSkinRegistry();
+            const skin = skinRegistry.getSkin(skinId);
+            if (skin) {
+              console.log(`[updateObjectSkin] Applying skin "${skin.name}" to object ${id}`);
+              this.applySkinToObject(obj as THREE.Group, skin);
+            } else {
+              console.warn(`[updateObjectSkin] Skin "${skinId}" not found in registry`);
+            }
           }
         } else {
           delete placedObj.skinId;
@@ -1028,45 +1118,183 @@ export class BluDesignEngine {
 
   /**
    * Store default material properties before applying a skin
+   * Stores materials for ALL meshes (not just those with partName) to support imported GLBs
+   * We store CLONES of materials on the MESH (not the material) since materials get replaced by skins
    */
   private storeDefaultMaterials(object: THREE.Object3D): void {
     const group = object as THREE.Group;
     group.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.userData.partName) {
-        const mat = child.material as THREE.MeshStandardMaterial;
-        if (mat && !child.userData.defaultMaterial) {
-          // Store a copy of the default material properties
-          child.userData.defaultMaterial = {
-            color: '#' + mat.color.getHexString(),
-            metalness: mat.metalness,
-            roughness: mat.roughness,
-            emissive: mat.emissive ? '#' + mat.emissive.getHexString() : '#000000',
-            emissiveIntensity: mat.emissiveIntensity,
-            transparent: mat.transparent,
-            opacity: mat.opacity,
-          };
+      if (child instanceof THREE.Mesh) {
+        // Skip if already stored on the mesh
+        if (child.userData.originalMaterialsStored) return;
+        
+        // Handle both single materials and material arrays
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        const clonedMaterials: THREE.Material[] = [];
+        
+        for (let i = 0; i < materials.length; i++) {
+          const mat = materials[i] as THREE.MeshStandardMaterial;
+          if (mat) {
+            try {
+              // Clone the ENTIRE material to preserve all properties
+              const clonedMat = mat.clone();
+              clonedMaterials.push(clonedMat);
+              console.log(`[storeDefaultMaterials] Stored clone on mesh: color=${clonedMat.color?.getHexString()}, metalness=${clonedMat.metalness}, roughness=${clonedMat.roughness}`);
+            } catch (e) {
+              console.warn('[storeDefaultMaterials] Failed to clone material:', e);
+              clonedMaterials.push(mat); // Store reference as fallback
+            }
+          }
+        }
+        
+        // Store on the MESH, not the material (materials get replaced by skins)
+        child.userData.originalMaterialClones = clonedMaterials;
+        child.userData.originalMaterialsStored = true;
+        
+        // Also store basic properties for backward compatibility (for partName-based meshes)
+        if (child.userData.partName && !child.userData.defaultMaterial) {
+          const mat = materials[0] as THREE.MeshStandardMaterial;
+          if (mat) {
+            child.userData.defaultMaterial = {
+              color: mat.color ? '#' + mat.color.getHexString() : '#ffffff',
+              metalness: mat.metalness ?? 0,
+              roughness: mat.roughness ?? 1,
+              emissive: mat.emissive ? '#' + mat.emissive.getHexString() : '#000000',
+              emissiveIntensity: mat.emissiveIntensity ?? 0,
+              transparent: mat.transparent ?? false,
+              opacity: mat.opacity ?? 1,
+            };
+          }
         }
       }
     });
   }
 
   /**
+   * Check if a texture is valid and can be used by the renderer
+   * A valid texture must have a matrix property with elements array
+   */
+  private isValidTexture(texture: THREE.Texture | null | undefined): texture is THREE.Texture {
+    if (!texture) return false;
+    // Check that this is actually a Texture instance
+    if (!(texture instanceof THREE.Texture)) return false;
+    // Check that the texture has the required matrix property for UV transforms
+    // This is what Three.js accesses in refreshTransformUniform
+    if (!texture.matrix) {
+      // Try to fix the texture by creating a new matrix
+      try {
+        texture.matrix = new THREE.Matrix3();
+        console.warn('[isValidTexture] Fixed missing matrix on texture');
+      } catch {
+        return false;
+      }
+    }
+    if (!texture.matrix.elements) return false;
+    return true;
+  }
+
+  /**
    * Reset mesh materials to their stored defaults
+   * Uses the cloned original materials stored on the MESH (not material userData)
+   * This survives material replacement from skin application
    */
   private resetToDefaultMaterials(group: THREE.Group): void {
     group.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.userData.partName) {
-        const mat = child.material as THREE.MeshStandardMaterial;
-        const defaults = child.userData.defaultMaterial;
-        if (mat && defaults) {
-          mat.color.setStyle(defaults.color);
-          mat.metalness = defaults.metalness;
-          mat.roughness = defaults.roughness;
-          if (defaults.emissive) mat.emissive.setStyle(defaults.emissive);
-          mat.emissiveIntensity = defaults.emissiveIntensity || 0;
-          mat.transparent = defaults.transparent || false;
-          mat.opacity = defaults.opacity ?? 1;
-          mat.needsUpdate = true;
+      if (child instanceof THREE.Mesh) {
+        // BEST: Use the cloned materials stored on the mesh
+        const originalClones = child.userData.originalMaterialClones as THREE.MeshStandardMaterial[] | undefined;
+        if (originalClones && originalClones.length > 0) {
+          const isArray = Array.isArray(child.material);
+          const newMaterials: THREE.Material[] = [];
+          
+          for (let i = 0; i < originalClones.length; i++) {
+            const originalClone = originalClones[i];
+            if (!originalClone) continue;
+            
+            try {
+              console.log(`[resetToDefaultMaterials] Restoring from mesh-stored clone: color=${originalClone.color?.getHexString()}, metalness=${originalClone.metalness}, roughness=${originalClone.roughness}`);
+              // Create a fresh clone from the stored original
+              const freshClone = originalClone.clone();
+              // Ensure the material can use scene environment for reflections
+              if (!freshClone.envMap && this.sceneManager) {
+                const sceneEnvMap = this.sceneManager.getEnvironmentMap();
+                if (sceneEnvMap) {
+                  freshClone.envMap = sceneEnvMap;
+                  console.log(`[resetToDefaultMaterials] Applied scene environment map`);
+                }
+              }
+              freshClone.needsUpdate = true;
+              console.log(`[resetToDefaultMaterials] Fresh clone ready: color=${freshClone.color?.getHexString()}, metalness=${freshClone.metalness}`);
+              newMaterials.push(freshClone);
+            } catch (e) {
+              console.warn('[resetToDefaultMaterials] Failed to clone original material:', e);
+              newMaterials.push(originalClone); // Use original as fallback
+            }
+          }
+          
+          // Apply the restored materials
+          if (newMaterials.length > 0) {
+            if (isArray) {
+              child.material = newMaterials;
+            } else {
+              child.material = newMaterials[0];
+            }
+          }
+          return; // Skip fallback paths since we restored from mesh-stored clones
+        }
+        
+        // FALLBACK for legacy data: restore from material userData or mesh userData
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const mat of materials) {
+          if (!(mat instanceof THREE.MeshStandardMaterial)) continue;
+          
+          // Try material userData
+          const originalMaterial = mat.userData.originalMaterial;
+          if (originalMaterial && originalMaterial.color) {
+            try {
+              mat.color.setStyle(originalMaterial.color);
+              mat.metalness = originalMaterial.metalness ?? 0;
+              mat.roughness = originalMaterial.roughness ?? 1;
+              if (originalMaterial.emissive && mat.emissive) {
+                mat.emissive.setStyle(originalMaterial.emissive);
+              }
+              mat.emissiveIntensity = originalMaterial.emissiveIntensity ?? 0;
+              mat.transparent = originalMaterial.transparent ?? false;
+              mat.opacity = originalMaterial.opacity ?? 1;
+              mat.envMapIntensity = originalMaterial.envMapIntensity ?? 1;
+              if (!mat.envMap && this.sceneManager) {
+                const sceneEnvMap = this.sceneManager.getEnvironmentMap();
+                if (sceneEnvMap) mat.envMap = sceneEnvMap;
+              }
+              mat.needsUpdate = true;
+              continue;
+            } catch (e) {
+              console.warn('[resetToDefaultMaterials] Error restoring material properties:', e);
+            }
+          }
+          
+          // Try mesh userData
+          if (child.userData.defaultMaterial) {
+            const defaults = child.userData.defaultMaterial;
+            try {
+              if (defaults.color) mat.color.setStyle(defaults.color);
+              mat.metalness = defaults.metalness ?? 0;
+              mat.roughness = defaults.roughness ?? 1;
+              if (defaults.emissive && mat.emissive) {
+                mat.emissive.setStyle(defaults.emissive);
+              }
+              mat.emissiveIntensity = defaults.emissiveIntensity ?? 0;
+              mat.transparent = defaults.transparent ?? false;
+              mat.opacity = defaults.opacity ?? 1;
+              if (!mat.envMap && this.sceneManager) {
+                const sceneEnvMap = this.sceneManager.getEnvironmentMap();
+                if (sceneEnvMap) mat.envMap = sceneEnvMap;
+              }
+              mat.needsUpdate = true;
+            } catch (e) {
+              console.warn('[resetToDefaultMaterials] Error restoring default material:', e);
+            }
+          }
         }
       }
     });
@@ -1671,28 +1899,49 @@ export class BluDesignEngine {
     
     // Standard placement for non-ground tiles
     const mesh = AssetFactory.createAssetMesh(asset);
-    
-    // Position the mesh (centered on grid cells, accounting for rotation)
-    const worldPos = this.gridSystem.gridToWorld(placedObject.position);
     const gridSize = this.gridSystem.getGridSize();
-    
-    // Swap grid units for 90° and 270° rotations
-    const isRotated90 = placedObject.orientation === Orientation.EAST || 
-                        placedObject.orientation === Orientation.WEST;
-    const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-    const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
-    
-    const centerOffsetX = (effectiveGridX * gridSize) / 2;
-    const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
     
     // Calculate Y position based on floor
     const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
     
-    mesh.position.set(
-      worldPos.x + centerOffsetX,
-      floorY, // Flush with the floor level
-      worldPos.z + centerOffsetZ
-    );
+    // Preserve existing offsets from CustomAssetLoader (centering + grounding + positionOffset)
+    // Store them in userData so we can use them during moves
+    const existingXOffset = mesh.position.x;
+    const existingYOffset = mesh.position.y;
+    const existingZOffset = mesh.position.z;
+    mesh.userData.internalXOffset = existingXOffset;
+    mesh.userData.internalYOffset = existingYOffset;
+    mesh.userData.internalZOffset = existingZOffset;
+    
+    // Position the mesh
+    if (placedObject.exactMeshPos) {
+      // EXACT mesh position from ghost preview - use directly, no calculation needed
+      // This is the exact position the ghost was displayed at
+      mesh.position.set(
+        placedObject.exactMeshPos.x,
+        floorY + existingYOffset,
+        placedObject.exactMeshPos.z
+      );
+    } else {
+      // Grid-based positioning (centered on grid cells, accounting for rotation)
+      const worldPos = this.gridSystem.gridToWorld(placedObject.position);
+      
+      // Swap grid units for 90° and 270° rotations
+      const isRotated90 = placedObject.orientation === Orientation.EAST || 
+                          placedObject.orientation === Orientation.WEST;
+      const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
+      const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
+      
+      const centerOffsetX = (effectiveGridX * gridSize) / 2;
+      const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
+      
+      // Position at center of grid footprint, adding internal offsets
+      mesh.position.set(
+        worldPos.x + centerOffsetX + existingXOffset,
+        floorY + existingYOffset,
+        worldPos.z + centerOffsetZ + existingZOffset
+      );
+    }
     
     // Store floor info and asset metadata in mesh userData
     mesh.userData.floor = placedObject.floor ?? 0;
@@ -1730,22 +1979,29 @@ export class BluDesignEngine {
       }
     }
     
-    // Apply rotation
-    const rotation = this.getRotationFromOrientation(placedObject.orientation);
-    mesh.rotation.y = rotation;
+    // Apply rotation - prefer arbitrary rotation, fall back to orientation
+    mesh.rotation.y = this.getEffectiveRotation(placedObject);
     
     // Add to scene
     this.sceneManager.addObject(placedObject.id, mesh, placedObject);
     
+    // Store original materials FIRST (before applying any skin/theme)
+    // This allows restoring original materials from imported GLBs
+    this.storeDefaultMaterials(mesh);
+    
     // Apply skin or theme
     if (placedObject.skinId) {
-      const skinRegistry = getSkinRegistry();
-      const skin = skinRegistry.getSkin(placedObject.skinId);
-      if (skin) {
-        this.storeDefaultMaterials(mesh);
-        this.applySkinToObject(mesh as THREE.Group, skin);
+      if (placedObject.skinId === ORIGINAL_MATERIALS_SKIN_ID) {
+        // Special case: restore original materials
+        this.resetToDefaultMaterials(mesh as THREE.Group);
       } else {
-        this.applyActiveThemeSkin(mesh, placedObject);
+        const skinRegistry = getSkinRegistry();
+        const skin = skinRegistry.getSkin(placedObject.skinId);
+        if (skin) {
+          this.applySkinToObject(mesh as THREE.Group, skin);
+        } else {
+          this.applyActiveThemeSkin(mesh, placedObject);
+        }
       }
     } else {
       this.applyActiveThemeSkin(mesh, placedObject);
@@ -1908,40 +2164,66 @@ export class BluDesignEngine {
 
       // Non-ground: create mesh using asset
       const mesh = AssetFactory.createAssetMesh(asset);
-      const worldPos = this.gridSystem.gridToWorld(placedObject.position);
-
-      const isRotated90 = placedObject.orientation === Orientation.EAST || 
-                          placedObject.orientation === Orientation.WEST;
-      const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-      const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
-
-      const centerOffsetX = (effectiveGridX * gridSize) / 2;
-      const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
       const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
 
-      mesh.position.set(
-        worldPos.x + centerOffsetX,
-        floorY,
-        worldPos.z + centerOffsetZ
-      );
+      // Preserve existing offsets from CustomAssetLoader (centering + grounding + positionOffset)
+      // Store them in userData so we can use them during moves
+      const existingXOffset = mesh.position.x;
+      const existingYOffset = mesh.position.y;
+      const existingZOffset = mesh.position.z;
+      mesh.userData.internalXOffset = existingXOffset;
+      mesh.userData.internalYOffset = existingYOffset;
+      mesh.userData.internalZOffset = existingZOffset;
+      
+      // Position the mesh
+      if (placedObject.exactMeshPos) {
+        // EXACT mesh position from ghost preview - use directly
+        mesh.position.set(
+          placedObject.exactMeshPos.x,
+          floorY + existingYOffset,
+          placedObject.exactMeshPos.z
+        );
+      } else {
+        // Grid-based positioning
+        const worldPos = this.gridSystem.gridToWorld(placedObject.position);
+        const isRotated90 = placedObject.orientation === Orientation.EAST || 
+                            placedObject.orientation === Orientation.WEST;
+        const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
+        const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
+        const centerOffsetX = (effectiveGridX * gridSize) / 2;
+        const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
+        
+        mesh.position.set(
+          worldPos.x + centerOffsetX + existingXOffset,
+          floorY + existingYOffset,
+          worldPos.z + centerOffsetZ + existingZOffset
+        );
+      }
 
       mesh.userData.floor = placedObject.floor ?? 0;
       mesh.userData.selectable = true;
 
-      const rotation = this.getRotationFromOrientation(placedObject.orientation);
-      mesh.rotation.y = rotation;
+      // Apply rotation - prefer arbitrary rotation, fall back to orientation
+      mesh.rotation.y = this.getEffectiveRotation(placedObject);
 
       this.sceneManager.addObject(placedObject.id, mesh, placedObject);
 
+      // Store original materials FIRST (before applying any skin/theme)
+      this.storeDefaultMaterials(mesh);
+
       // Apply skin/theme
       if (placedObject.skinId) {
-        const skinRegistry = getSkinRegistry();
-        const skin = skinRegistry.getSkin(placedObject.skinId);
-        if (skin) {
-          this.storeDefaultMaterials(mesh);
-          this.applySkinToObject(mesh as THREE.Group, skin);
+        if (placedObject.skinId === ORIGINAL_MATERIALS_SKIN_ID) {
+          // Special case: restore original materials
+          this.resetToDefaultMaterials(mesh as THREE.Group);
         } else {
-          this.applyActiveThemeSkin(mesh, placedObject);
+          const skinRegistry = getSkinRegistry();
+          const skin = skinRegistry.getSkin(placedObject.skinId);
+          if (skin) {
+            this.applySkinToObject(mesh as THREE.Group, skin);
+          } else {
+            this.applyActiveThemeSkin(mesh, placedObject);
+          }
         }
       } else {
         this.applyActiveThemeSkin(mesh, placedObject);
@@ -2037,6 +2319,17 @@ export class BluDesignEngine {
       default:
         return 0;
     }
+  }
+
+  /**
+   * Get effective rotation for a placed object
+   * Prefers the arbitrary rotation field if set, otherwise falls back to orientation
+   */
+  private getEffectiveRotation(obj: PlacedObject): number {
+    if (obj.rotation !== undefined) {
+      return obj.rotation;
+    }
+    return this.getRotationFromOrientation(obj.orientation);
   }
 
   /**
@@ -2598,7 +2891,8 @@ export class BluDesignEngine {
           // Handle texture (diffuse/color map)
           if (skinMaterial.textureUrl) {
             const texture = this.loadTexture(skinMaterial.textureUrl);
-            mat.map = texture;
+            // Only assign if texture is valid
+            mat.map = this.isValidTexture(texture) ? texture : null;
           } else {
             mat.map = null;
           }
@@ -2606,7 +2900,7 @@ export class BluDesignEngine {
           // Handle normal map
           if (skinMaterial.normalMapUrl) {
             const normalMap = this.loadTexture(skinMaterial.normalMapUrl);
-            mat.normalMap = normalMap;
+            mat.normalMap = this.isValidTexture(normalMap) ? normalMap : null;
           } else {
             mat.normalMap = null;
           }
@@ -2614,7 +2908,7 @@ export class BluDesignEngine {
           // Handle roughness map
           if (skinMaterial.roughnessMapUrl) {
             const roughnessMap = this.loadTexture(skinMaterial.roughnessMapUrl);
-            mat.roughnessMap = roughnessMap;
+            mat.roughnessMap = this.isValidTexture(roughnessMap) ? roughnessMap : null;
           } else {
             mat.roughnessMap = null;
           }
@@ -2758,10 +3052,16 @@ export class BluDesignEngine {
       if (obj.properties && Object.keys(obj.properties).length > 0) {
         serialized.properties = obj.properties;
       }
-      if (obj.skinId) {
+if (obj.skinId) {
         serialized.skinId = obj.skinId;
       }
-      
+      if (obj.rotation !== undefined) {
+        serialized.rotation = obj.rotation;
+      }
+      if (obj.exactMeshPos) {
+        serialized.exactMeshPos = obj.exactMeshPos;
+      }
+
       return serialized;
     });
     
@@ -2827,7 +3127,84 @@ export class BluDesignEngine {
   }
 
   /**
+   * Convert AssetDefinition (from backend) to AssetMetadata (for engine use)
+   */
+  private assetDefinitionToMetadata(def: AssetDefinition): AssetMetadata {
+    return {
+      id: def.id,
+      name: def.name,
+      category: def.category as AssetCategory,
+      description: def.description,
+      dimensions: def.dimensions,
+      gridUnits: def.gridUnits,
+      isSmart: def.isSmart,
+      canRotate: def.canRotate,
+      canStack: def.canStack,
+      thumbnail: def.thumbnail,
+      // Include metadata for custom models
+      metadata: {
+        modelType: def.modelType,
+        globalModelId: def.globalModelId,
+        positionOffset: def.positionOffset,
+        lockerSpec: def.lockerSpec,
+      },
+    };
+  }
+
+  /**
+   * Pre-fetch and register any custom assets that are not in AssetRegistry
+   */
+  private async preloadCustomAssets(assetIds: string[]): Promise<void> {
+    const registry = AssetRegistry.getInstance();
+    const missingIds = assetIds.filter(id => !registry.getAsset(id));
+    
+    if (missingIds.length === 0) return;
+    
+    console.log(`[BluDesignEngine] Pre-loading ${missingIds.length} custom assets...`);
+    
+    // Fetch all custom asset definitions
+    const fetchPromises = missingIds.map(async (id) => {
+      try {
+        const definition = await AssetService.getAssetDefinition(id);
+        if (definition) {
+          // Convert to AssetMetadata and register
+          const metadata = this.assetDefinitionToMetadata(definition);
+          registry.registerAsset(metadata);
+          console.log(`[BluDesignEngine] ✓ Loaded custom asset: ${definition.name}`);
+        }
+      } catch (error) {
+        console.warn(`[BluDesignEngine] Failed to load custom asset ${id}:`, error);
+      }
+    });
+    
+    await Promise.allSettled(fetchPromises);
+  }
+
+  /**
    * Import scene data from a saved facility (handles both new and legacy formats)
+   * This is the async version that pre-fetches custom assets
+   */
+  async importSceneDataAsync(data: FacilityData | LegacyFacilityData): Promise<void> {
+    // Pre-fetch any custom assets that aren't in the registry
+    if (data.placedObjects && data.placedObjects.length > 0) {
+      const isLegacyFormat = data.version === '1.0.0' || 
+        (data.placedObjects.length > 0 && 'assetMetadata' in data.placedObjects[0]);
+      
+      if (!isLegacyFormat) {
+        // New format - extract asset IDs and pre-load missing ones
+        const assetIds = (data.placedObjects as SerializedPlacedObject[]).map(obj => obj.assetId);
+        const uniqueIds = [...new Set(assetIds)];
+        await this.preloadCustomAssets(uniqueIds);
+      }
+    }
+    
+    // Now call the synchronous import
+    this.importSceneData(data);
+  }
+
+  /**
+   * Import scene data from a saved facility (handles both new and legacy formats)
+   * Use importSceneDataAsync for projects with custom assets
    */
   importSceneData(data: FacilityData | LegacyFacilityData): void {
     // Clear current scene
@@ -2979,6 +3356,8 @@ export class BluDesignEngine {
         assetMetadata,
         position: serialized.position,
         orientation: serialized.orientation,
+        rotation: serialized.rotation, // Restore arbitrary rotation
+        exactMeshPos: serialized.exactMeshPos, // Restore exact mesh position for angled placement
         canStack: assetMetadata.canStack,
         floor: serialized.floor ?? 0,
         buildingId: serialized.buildingId,
@@ -3031,8 +3410,8 @@ export class BluDesignEngine {
           mesh.position.copy(wallPos);
           mesh.position.y = floorY;
           
-          // Apply rotation from saved orientation (was determined during placement)
-          mesh.rotation.y = this.getRotationFromOrientation(obj.orientation);
+          // Apply rotation - prefer arbitrary rotation, fall back to orientation
+          mesh.rotation.y = this.getEffectiveRotation(obj);
           
           // Create wall opening for this door/window (restore from saved data)
           const opening = {
@@ -3045,21 +3424,49 @@ export class BluDesignEngine {
           this.buildingManager.addWallOpening(obj.wallAttachment.wallId, opening);
         } else {
           // Fallback: place at grid position if wall not found
+          // Still preserve internal Y offset for custom models
+          const existingYOffset = mesh.position.y;
           mesh.position.set(
             worldPos.x + (effectiveWidth * gridSize) / 2,
-            floorY,
+            floorY + existingYOffset,
             worldPos.z + (effectiveDepth * gridSize) / 2
           );
-          mesh.rotation.y = this.getRotationFromOrientation(obj.orientation);
+          mesh.rotation.y = this.getEffectiveRotation(obj);
         }
       } else {
         // Standard positioning for non-wall-attached assets
-        mesh.position.set(
-          worldPos.x + (effectiveWidth * gridSize) / 2,
-          floorY,
-          worldPos.z + (effectiveDepth * gridSize) / 2
-        );
-        mesh.rotation.y = this.getRotationFromOrientation(obj.orientation);
+        // IMPORTANT: Custom models already have internal Y offset (grounding + positionOffset)
+        // from CustomAssetLoader. We must preserve that offset, not overwrite it.
+        const existingXOffset = mesh.position.x;
+        const existingYOffset = mesh.position.y;
+        const existingZOffset = mesh.position.z;
+        
+        // Store internal offsets in userData
+        mesh.userData.internalXOffset = existingXOffset;
+        mesh.userData.internalYOffset = existingYOffset;
+        mesh.userData.internalZOffset = existingZOffset;
+        
+        if (obj.exactMeshPos) {
+          // Use exact mesh position for angled/off-grid placement
+          mesh.position.set(
+            obj.exactMeshPos.x,
+            floorY + existingYOffset,
+            obj.exactMeshPos.z
+          );
+        } else {
+          // Grid-based positioning
+          mesh.position.set(
+            worldPos.x + (effectiveWidth * gridSize) / 2 + existingXOffset,
+            floorY + existingYOffset,
+            worldPos.z + (effectiveDepth * gridSize) / 2 + existingZOffset
+          );
+        }
+        mesh.rotation.y = this.getEffectiveRotation(obj);
+      }
+      
+      // Store internal Y offset in userData for use during moves (if not already set)
+      if (mesh.userData.internalYOffset === undefined) {
+        mesh.userData.internalYOffset = mesh.position.y - floorY;
       }
       
       // Set user data
@@ -3073,17 +3480,24 @@ export class BluDesignEngine {
       
       this.sceneManager.addObject(obj.id, mesh, obj);
       
+      // Store original materials FIRST (before applying any skin/theme)
+      this.storeDefaultMaterials(mesh);
+      
       // Apply skin or theme based on object's saved state
       if (obj.skinId) {
-        // Object has a specific skin override - apply that skin from SkinRegistry
-        const skinRegistry = getSkinRegistry();
-        const skin = skinRegistry.getSkin(obj.skinId);
-        if (skin) {
-          this.storeDefaultMaterials(mesh);
-          this.applySkinToObject(mesh as THREE.Group, skin);
+        if (obj.skinId === ORIGINAL_MATERIALS_SKIN_ID) {
+          // Special case: restore original materials
+          this.resetToDefaultMaterials(mesh as THREE.Group);
         } else {
-          console.warn(`[placeObjectFromSavedData] Skin "${obj.skinId}" not found, falling back to theme`);
-          this.applyActiveThemeSkin(mesh as THREE.Group, obj);
+          // Object has a specific skin override - apply that skin from SkinRegistry
+          const skinRegistry = getSkinRegistry();
+          const skin = skinRegistry.getSkin(obj.skinId);
+          if (skin) {
+            this.applySkinToObject(mesh as THREE.Group, skin);
+          } else {
+            console.warn(`[placeObjectFromSavedData] Skin "${obj.skinId}" not found, falling back to theme`);
+            this.applyActiveThemeSkin(mesh as THREE.Group, obj);
+          }
         }
       } else {
         // No skin override - apply theme's skin for this category
@@ -3185,7 +3599,30 @@ export class BluDesignEngine {
   }
 
   /**
-   * Load draft from local storage if available
+   * Load draft from local storage if available (async version)
+   * Returns true if a draft was loaded
+   */
+  async loadFromLocalStorageAsync(): Promise<boolean> {
+    try {
+      const stored = localStorage.getItem(AUTOSAVE_STORAGE_KEY);
+      if (!stored) return false;
+      
+      const draft = JSON.parse(stored);
+      if (!draft.data) return false;
+      
+      console.log(`[AutoSave] Found draft from ${new Date(draft.timestamp).toLocaleString()}`);
+      
+      // Use async import to pre-load any custom assets
+      await this.importSceneDataAsync(draft.data);
+      return true;
+    } catch (error) {
+      console.error('[AutoSave] Failed to load draft:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Load draft from local storage if available (sync version - deprecated, use async)
    * Returns true if a draft was loaded
    */
   loadFromLocalStorage(): boolean {
@@ -3366,9 +3803,21 @@ export class BluDesignEngine {
         break;
       }
       case 'move': {
-        // Undo move = move back to original position
+        // Undo move = move back to original position with full state
         const data = action.data as MoveActionData;
-        this.moveObjectInternal(data.objectId, data.fromPosition, data.fromOrientation);
+        this.moveObjectInternal(
+          data.objectId, 
+          data.fromPosition, 
+          data.fromOrientation,
+          data.fromRotation,
+          data.fromExactMeshPos
+        );
+        break;
+      }
+      case 'rotate': {
+        // Undo rotate = restore before states
+        const data = action.data as RotateActionData;
+        this.applyRotationState(data.beforeStates);
         break;
       }
       case 'batch': {
@@ -3443,9 +3892,21 @@ export class BluDesignEngine {
         break;
       }
       case 'move': {
-        // Redo move = move to new position
+        // Redo move = move to new position with full state
         const data = action.data as MoveActionData;
-        this.moveObjectInternal(data.objectId, data.toPosition, data.toOrientation);
+        this.moveObjectInternal(
+          data.objectId, 
+          data.toPosition, 
+          data.toOrientation,
+          data.toRotation,
+          data.toExactMeshPos
+        );
+        break;
+      }
+      case 'rotate': {
+        // Redo rotate = restore after states
+        const data = action.data as RotateActionData;
+        this.applyRotationState(data.afterStates);
         break;
       }
       case 'batch': {
@@ -3544,24 +4005,47 @@ export class BluDesignEngine {
     
     // Standard placement for non-ground tiles
     const mesh = AssetFactory.createAssetMesh(asset);
-    const worldPos = this.gridSystem.gridToWorld(placedObject.position);
     const gridSize = this.gridSystem.getGridSize();
+    const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
     
-    // Swap grid units for 90° and 270° rotations
-    const isRotated90 = placedObject.orientation === Orientation.EAST || 
-                        placedObject.orientation === Orientation.WEST;
-    const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-    const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
+    // Preserve existing offsets from CustomAssetLoader (centering + grounding + positionOffset)
+    // Store them in userData so we can use them during moves
+    const existingXOffset = mesh.position.x;
+    const existingYOffset = mesh.position.y;
+    const existingZOffset = mesh.position.z;
+    mesh.userData.internalXOffset = existingXOffset;
+    mesh.userData.internalYOffset = existingYOffset;
+    mesh.userData.internalZOffset = existingZOffset;
     
-    const centerOffsetX = (effectiveGridX * gridSize) / 2;
-    const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
-    
-    mesh.position.set(
-      worldPos.x + centerOffsetX,
-      (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize, // Floor height offset
-      worldPos.z + centerOffsetZ
-    );
-    mesh.rotation.y = this.getRotationFromOrientation(placedObject.orientation);
+    // Position the mesh
+    if (placedObject.exactMeshPos) {
+      // Exact mesh position for angled/off-grid placement
+      // This is the EXACT position the ghost used - no calculation needed
+      mesh.position.set(
+        placedObject.exactMeshPos.x,
+        floorY + existingYOffset,
+        placedObject.exactMeshPos.z
+      );
+    } else {
+      // Grid-based positioning for standard placement
+      const worldPos = this.gridSystem.gridToWorld(placedObject.position);
+      
+      // Swap grid units for 90° and 270° rotations
+      const isRotated90 = placedObject.orientation === Orientation.EAST || 
+                          placedObject.orientation === Orientation.WEST;
+      const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
+      const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
+      
+      const centerOffsetX = (effectiveGridX * gridSize) / 2;
+      const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
+      
+      mesh.position.set(
+        worldPos.x + centerOffsetX + existingXOffset,
+        floorY + existingYOffset,
+        worldPos.z + centerOffsetZ + existingZOffset
+      );
+    }
+    mesh.rotation.y = this.getEffectiveRotation(placedObject);
     
     // Store floor info in mesh userData
     mesh.userData.floor = placedObject.floor ?? 0;
@@ -3693,8 +4177,15 @@ export class BluDesignEngine {
   
   /**
    * Move an object without recording in history (for undo/redo)
+   * Now supports restoring rotation and exactMeshPos for angled objects
    */
-  private moveObjectInternal(objectId: string, newPosition: GridPosition, newOrientation: Orientation): void {
+  private moveObjectInternal(
+    objectId: string, 
+    newPosition: GridPosition, 
+    newOrientation: Orientation,
+    newRotation?: number,
+    newExactMeshPos?: { x: number; z: number }
+  ): void {
     const placedObject = this.sceneManager.getObjectData(objectId);
     const mesh = this.sceneManager.getObject(objectId);
     
@@ -3709,29 +4200,57 @@ export class BluDesignEngine {
     // Clear old occupancy
     this.gridSystem.clearOccupied(objectId);
     
-    // Update position (accounting for rotation)
-    const worldPos = this.gridSystem.gridToWorld(newPosition);
     const gridSize = this.gridSystem.getGridSize();
+    const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
     
-    // Swap grid units for 90° and 270° rotations
-    const isRotated90 = newOrientation === Orientation.EAST || 
-                        newOrientation === Orientation.WEST;
-    const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-    const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
+    // Use stored internal offsets
+    const internalXOffset = mesh.userData.internalXOffset ?? 0;
+    const internalYOffset = mesh.userData.internalYOffset ?? 0;
+    const internalZOffset = mesh.userData.internalZOffset ?? 0;
     
-    const centerOffsetX = (effectiveGridX * gridSize) / 2;
-    const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
+    if (newExactMeshPos) {
+      // Use exact mesh position for angled objects
+      mesh.position.set(
+        newExactMeshPos.x,
+        floorY + internalYOffset,
+        newExactMeshPos.z
+      );
+      placedObject.exactMeshPos = { ...newExactMeshPos };
+    } else {
+      // Grid-based positioning
+      const worldPos = this.gridSystem.gridToWorld(newPosition);
+      
+      // Swap grid units for 90° and 270° rotations
+      const isRotated90 = newOrientation === Orientation.EAST || 
+                          newOrientation === Orientation.WEST;
+      const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
+      const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
+      
+      const centerOffsetX = (effectiveGridX * gridSize) / 2;
+      const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
+      
+      mesh.position.set(
+        worldPos.x + centerOffsetX + internalXOffset,
+        floorY + internalYOffset,
+        worldPos.z + centerOffsetZ + internalZOffset
+      );
+      placedObject.exactMeshPos = undefined;
+    }
     
-    mesh.position.set(
-      worldPos.x + centerOffsetX,
-      (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize, // Floor height offset
-      worldPos.z + centerOffsetZ
-    );
-    mesh.rotation.y = this.getRotationFromOrientation(newOrientation);
+    // Apply rotation
+    if (newRotation !== undefined) {
+      mesh.rotation.y = newRotation;
+      placedObject.rotation = newRotation;
+    } else {
+      mesh.rotation.y = this.getRotationFromOrientation(newOrientation);
+      placedObject.rotation = undefined;
+    }
     
     // Update data
     placedObject.position = newPosition;
     placedObject.orientation = newOrientation;
+    // Clear arbitrary rotation when orientation is explicitly set (90-degree rotations)
+    placedObject.rotation = undefined;
     
     // Mark new occupancy on the object's floor
     this.gridSystem.markOccupied(
@@ -4310,44 +4829,271 @@ export class BluDesignEngine {
    * Update gizmo visibility based on current selection
    * In readonly mode, gizmo is never shown
    */
-  private updateGizmoVisibility(): void {
+private updateGizmoVisibility(): void {
     // Never show gizmo in readonly mode
     if (this.readonly) {
       this.translateGizmo.hide();
+      this.rotateGizmo.hide();
       return;
     }
-    
+
     const selectedIds = this.state.selection.selectedIds;
-    
+
     if (selectedIds.length === 0) {
       this.translateGizmo.hide();
+      this.rotateGizmo.hide();
       return;
     }
-    
-    // Calculate selection center
-    const center = this.getSelectionCenter();
-    if (center) {
+
+    // Calculate selection center in world coordinates
+    const centerWorld = this.getSelectionCenterWorld();
+    if (centerWorld) {
       const floorY = this.floorManager.getCurrentFloorY();
-      this.translateGizmo.show(center, floorY);
+      const gridCenter = this.getSelectionCenter();
+      
+      if (this.gizmoMode === 'translate' && gridCenter) {
+        this.rotateGizmo.hide();
+        this.translateGizmo.show(gridCenter, floorY);
+      } else if (this.gizmoMode === 'rotate') {
+        this.translateGizmo.hide();
+        // Get current rotation of first selected object for indicator
+        const firstId = selectedIds[0];
+        const placedObject = this.sceneManager.getObjectData(firstId);
+        const currentRotation = placedObject?.rotation ?? this.getRotationFromOrientation(placedObject?.orientation ?? Orientation.NORTH);
+        // Position rotate gizmo at ground level (X/Z from center, Y from floor)
+        this.rotateGizmo.show({ x: centerWorld.x, z: centerWorld.z }, floorY, currentRotation);
+      }
     } else {
       this.translateGizmo.hide();
+      this.rotateGizmo.hide();
     }
+  }
+  
+/**
+   * Get the center of selection in world coordinates
+   * Uses logical world positions (accounting for internal offsets) for consistent rotation behavior
+   */
+  private getSelectionCenterWorld(): THREE.Vector3 | null {
+    const selectedIds = this.state.selection.selectedIds;
+    if (selectedIds.length === 0) return null;
+
+    let minX = Infinity, maxX = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    let sumY = 0;
+    let count = 0;
+
+    for (const id of selectedIds) {
+      const mesh = this.sceneManager.getObject(id);
+      const placedObject = this.sceneManager.getObjectData(id);
+
+      if (mesh && placedObject) {
+        const internalXOffset = mesh.userData?.internalXOffset || 0;
+        const internalZOffset = mesh.userData?.internalZOffset || 0;
+        
+        // Get logical center (world position without internal offsets)
+        // Grid-placed objects use UNROTATED offsets, angled-placed use ROTATED offsets
+        let worldX: number, worldZ: number;
+        
+        if (placedObject.exactMeshPos) {
+          // For angled-placed objects: subtract rotated offset
+          const currentRotation = placedObject.rotation ?? 
+            this.getRotationFromOrientation(placedObject.orientation);
+          const cos = Math.cos(currentRotation);
+          const sin = Math.sin(currentRotation);
+          const rotatedXOffset = internalXOffset * cos - internalZOffset * sin;
+          const rotatedZOffset = internalXOffset * sin + internalZOffset * cos;
+          worldX = mesh.position.x - rotatedXOffset;
+          worldZ = mesh.position.z - rotatedZOffset;
+        } else {
+          // For grid-placed objects: subtract unrotated offset
+          worldX = mesh.position.x - internalXOffset;
+          worldZ = mesh.position.z - internalZOffset;
+        }
+
+        minX = Math.min(minX, worldX);
+        maxX = Math.max(maxX, worldX);
+        minZ = Math.min(minZ, worldZ);
+        maxZ = Math.max(maxZ, worldZ);
+        sumY += mesh.position.y;
+        count++;
+      }
+    }
+
+    if (count === 0) return null;
+
+    return new THREE.Vector3(
+      (minX + maxX) / 2,
+      sumY / count,
+      (minZ + maxZ) / 2
+    );
+  }
+
+  /**
+   * Get the rotation of an asset at the given world position
+   * Used for hover-based rotation matching during placement
+   * 
+   * Performance: Uses cached objects map instead of scene traversal
+   */
+  private getHoveredAssetRotation(worldPos: THREE.Vector3): number | null {
+    // Raycast from camera through the world position to find assets
+    const cameraPos = this.cameraController.getCamera().position;
+    const direction = worldPos.clone().sub(cameraPos).normalize();
+    
+    // Reuse raycaster with proper settings
+    this.raycaster.set(cameraPos, direction);
+    this.raycaster.near = 0.1;
+    this.raycaster.far = 1000;
+    
+    // Use cached objects from SceneManager - O(n) where n is tracked objects,
+    // not entire scene graph. Only check top-level selectable objects.
+    const objects = this.sceneManager.getAllObjects();
+    const selectableMeshes: THREE.Object3D[] = [];
+    
+    for (const [, obj] of objects) {
+      if (obj.userData.selectable) {
+        selectableMeshes.push(obj);
+      }
+    }
+    
+    // Early exit if no selectable objects
+    if (selectableMeshes.length === 0) return null;
+    
+    const intersects = this.raycaster.intersectObjects(selectableMeshes, true);
+    
+    if (intersects.length > 0) {
+      // Find the parent with the id
+      let obj: THREE.Object3D | null = intersects[0].object;
+      while (obj && !obj.userData.id) {
+        obj = obj.parent;
+      }
+      
+      if (obj && obj.userData.id) {
+        const placedObject = this.sceneManager.getObjectData(obj.userData.id);
+        if (placedObject) {
+          // Return the rotation (prefer arbitrary rotation, fallback to orientation)
+          return placedObject.rotation ?? this.getRotationFromOrientation(placedObject.orientation);
+        }
+      }
+    }
+    
+    return null;
   }
 
   /**
    * Update gizmo position to match selection
+   * Skips update if gizmo is being dragged (to allow smooth mouse following)
    */
   private updateGizmoPosition(): void {
     if (this.state.selection.selectedIds.length === 0) {
       this.translateGizmo.hide();
+      this.rotateGizmo.hide();
+      return;
+    }
+    
+    // Don't update gizmo position during drag - the gizmo tracks the mouse directly
+    if (this.translateGizmo.isDraggingGizmo() || this.rotateGizmo.isDraggingGizmo()) {
       return;
     }
     
     const center = this.getSelectionCenter();
-    if (center) {
-      const floorY = this.floorManager.getCurrentFloorY();
+    const centerWorld = this.getSelectionCenterWorld();
+    const floorY = this.floorManager.getCurrentFloorY();
+
+    if (this.gizmoMode === 'translate' && center) {
       this.translateGizmo.setPosition(center, floorY);
+    } else if (this.gizmoMode === 'rotate' && centerWorld) {
+      // Position rotate gizmo at ground level (X/Z from center, Y from floor)
+      this.rotateGizmo.setPosition({ x: centerWorld.x, z: centerWorld.z }, floorY);
     }
+  }
+  
+  /**
+   * Handle Alt key press - switch to rotate gizmo
+   */
+  private onAltKeyDown(): void {
+    // Notify PlacementManager for Alt+drag angled placement
+    this.placementManager.setAltKeyPressed(true);
+    
+    // Handle gizmo switching only if we have selection
+    if (this.state.selection.selectedIds.length === 0) return;
+    if (this.gizmoMode === 'rotate') return; // Already in rotate mode
+    
+    this.gizmoMode = 'rotate';
+    this.updateGizmoVisibility();
+  }
+  
+  /**
+   * Handle Alt key release - switch back to translate gizmo
+   */
+  private onAltKeyUp(): void {
+    // Notify PlacementManager
+    this.placementManager.setAltKeyPressed(false);
+    
+    if (this.gizmoMode === 'translate') return; // Already in translate mode
+    
+    this.gizmoMode = 'translate';
+    this.updateGizmoVisibility();
+  }
+  
+  /**
+   * Handle rotate gizmo drag - rotate selection by angle
+   */
+  private handleRotateGizmoDrag(deltaAngle: number): void {
+    this.rotateSelectionByAngle(deltaAngle);
+  }
+  
+  /**
+   * Handle Alt+Q rotation - counter-clockwise
+   */
+  private handleAltQRotation(holdStartTime: number): void {
+    // Capture start state on first frame of rotation
+    if (!this.rotationStartStates) {
+      this.captureRotationStartState();
+    }
+    const deltaAngle = this.calculateRotationDelta(holdStartTime, -1);
+    this.rotateSelectionByAngle(deltaAngle);
+  }
+  
+  /**
+   * Handle Alt+E rotation - clockwise
+   */
+  private handleAltERotation(holdStartTime: number): void {
+    // Capture start state on first frame of rotation
+    if (!this.rotationStartStates) {
+      this.captureRotationStartState();
+    }
+    const deltaAngle = this.calculateRotationDelta(holdStartTime, 1);
+    this.rotateSelectionByAngle(deltaAngle);
+  }
+  
+  /**
+   * Handle rotation key release - record rotation to history
+   */
+  private onRotationKeyUp(): void {
+    this.recordRotationToHistory();
+  }
+  
+  /**
+   * Calculate rotation delta based on hold time and direction
+   * Starts at ~5 deg/sec, accelerates to 45 deg/sec after 1.5 seconds
+   */
+  private calculateRotationDelta(holdStartTime: number, direction: number): number {
+    const holdDuration = Date.now() - holdStartTime;
+    const accelerationTime = 1500; // 1.5 seconds to reach max speed
+    
+    // Start at 5 degrees per second, accelerate to 45 degrees per second
+    const minDegreesPerSecond = 5;
+    const maxDegreesPerSecond = 45;
+    
+    // Use time-based rotation (assuming ~60fps gives ~16.67ms per frame)
+    const frameTime = 1 / 60; // seconds per frame
+    
+    // Linear interpolation based on hold time
+    const t = Math.min(holdDuration / accelerationTime, 1);
+    const degreesPerSecond = minDegreesPerSecond + (maxDegreesPerSecond - minDegreesPerSecond) * t;
+    const degreesPerFrame = degreesPerSecond * frameTime;
+    
+    return (degreesPerFrame * Math.PI / 180) * direction;
   }
 
   /**
@@ -4470,6 +5216,8 @@ export class BluDesignEngine {
             this.pendingMove.originalPositions.set(id, {
               position: { ...obj.position },
               orientation: obj.orientation,
+              rotation: obj.rotation,
+              exactMeshPos: obj.exactMeshPos ? { ...obj.exactMeshPos } : undefined,
             });
             
             // Check if this is a window with wall attachment - set up wall-constrained dragging
@@ -4913,7 +5661,21 @@ export class BluDesignEngine {
           const fromPosition = original?.position ?? obj.position;
           const fromOrientation = original?.orientation ?? obj.orientation;
           
-          // Record this move action
+          // Calculate new exactMeshPos if object has one
+          let toExactMeshPos: { x: number; z: number } | undefined;
+          if (obj.exactMeshPos) {
+            // Apply the same grid delta to exactMeshPos
+            const gridDeltaX = newPosition.x - fromPosition.x;
+            const gridDeltaZ = newPosition.z - fromPosition.z;
+            toExactMeshPos = {
+              x: obj.exactMeshPos.x + gridDeltaX,
+              z: obj.exactMeshPos.z + gridDeltaZ,
+            };
+            // Update the object's exactMeshPos
+            obj.exactMeshPos = toExactMeshPos;
+          }
+          
+          // Record this move action with full state
           moveActions.push({
             type: 'move',
             data: {
@@ -4921,7 +5683,11 @@ export class BluDesignEngine {
               fromPosition: { ...fromPosition },
               toPosition: { ...newPosition },
               fromOrientation,
-              toOrientation: obj.orientation, // Orientation doesn't change during translation
+              toOrientation: obj.orientation,
+              fromRotation: obj.rotation,
+              toRotation: obj.rotation, // Rotation doesn't change during translation
+              fromExactMeshPos: original?.exactMeshPos ? { ...original.exactMeshPos } : undefined,
+              toExactMeshPos,
             } as MoveActionData,
             timestamp: Date.now(),
           });
@@ -5001,10 +5767,13 @@ export class BluDesignEngine {
         
         const centerOffsetX = (effectiveGridX * gridSize) / 2;
         const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
+        const floorY = (obj.floor ?? 0) * FLOOR_HEIGHT * gridSize;
         
+        // Use stored internal Y offset (grounding + positionOffset from CustomAssetLoader)
+        const internalYOffset = mesh.userData.internalYOffset ?? 0;
         mesh.position.set(
           worldPos.x + centerOffsetX,
-          (obj.floor ?? 0) * FLOOR_HEIGHT * gridSize,
+          floorY + internalYOffset,
           worldPos.z + centerOffsetZ
         );
       }
@@ -5259,34 +6028,344 @@ export class BluDesignEngine {
     const selectedIds = this.state.selection.selectedIds;
     if (selectedIds.length === 0) return;
     
-    const rotationOrder: Orientation[] = [
-      Orientation.NORTH,
-      Orientation.EAST,
-      Orientation.SOUTH,
-      Orientation.WEST,
-    ];
+    // Capture start state for undo
+    this.captureRotationStartState();
+    
+    // Rotate by 90 degrees using the angle-based rotation
+    // This preserves exactMeshPos for angled assets
+    const deltaAngle = direction === 'cw' ? Math.PI / 2 : -Math.PI / 2;
+    this.rotateSelectionByAngle(deltaAngle);
+    
+    // Record to history
+    this.recordRotationToHistory();
+  }
+  
+  /**
+   * Rotate selected objects by an arbitrary angle around the selection centroid
+   * 
+   * Uses THREE.js parenting for guaranteed correct group rotation:
+   * 1. Create temporary pivot at centroid
+   * 2. Parent all meshes to pivot (preserves world transforms)
+   * 3. Rotate pivot
+   * 4. Unparent meshes (preserves world transforms)
+   * 5. Update PlacedObject data to match
+   * 
+   * @param deltaAngle - Angle to rotate in radians (positive = clockwise)
+   */
+  rotateSelectionByAngle(deltaAngle: number): void {
+    const selectedIds = this.state.selection.selectedIds;
+    if (selectedIds.length === 0) return;
+    
+    const isMultiSelection = selectedIds.length > 1;
+    
+    // Collect valid meshes and their data
+    const meshesToRotate: { mesh: THREE.Object3D; placedObject: PlacedObject; asset: AssetMetadata | null }[] = [];
+    
+    for (const id of selectedIds) {
+      if (id.startsWith('floor-tile-') || id.startsWith('wall-')) continue;
+      
+      const placedObject = this.sceneManager.getObjectData(id);
+      const mesh = this.sceneManager.getObject(id);
+      
+      if (placedObject && mesh) {
+        meshesToRotate.push({ 
+          mesh, 
+          placedObject, 
+          asset: placedObject.assetMetadata 
+        });
+      }
+    }
+    
+    if (meshesToRotate.length === 0) return;
+    
+    if (isMultiSelection) {
+      // GROUP ROTATION using THREE.js parenting
+      // This guarantees correct world-space transforms
+      
+      // Calculate centroid from mesh positions
+      let sumX = 0, sumZ = 0, sumY = 0;
+      for (const { mesh } of meshesToRotate) {
+        sumX += mesh.position.x;
+        sumZ += mesh.position.z;
+        sumY += mesh.position.y;
+      }
+      const centroid = new THREE.Vector3(
+        sumX / meshesToRotate.length,
+        sumY / meshesToRotate.length,
+        sumZ / meshesToRotate.length
+      );
+      
+      // Create temporary pivot at centroid
+      const pivot = new THREE.Object3D();
+      pivot.position.copy(centroid);
+      this.scene.add(pivot);
+      
+      // Parent all meshes to pivot, preserving world position
+      for (const { mesh } of meshesToRotate) {
+        // Store current world position and rotation
+        const worldPos = new THREE.Vector3();
+        mesh.getWorldPosition(worldPos);
+        const worldRotY = mesh.rotation.y;
+        
+        // Remove from scene, add to pivot
+        this.scene.remove(mesh);
+        pivot.add(mesh);
+        
+        // Convert world position to local position relative to pivot
+        mesh.position.set(
+          worldPos.x - centroid.x,
+          worldPos.y - centroid.y,
+          worldPos.z - centroid.z
+        );
+        mesh.rotation.y = worldRotY;
+      }
+      
+      // Rotate the pivot
+      pivot.rotation.y = deltaAngle;
+      
+      // Update pivot's world matrix
+      pivot.updateMatrixWorld(true);
+      
+      // Unparent meshes back to scene, preserving world transforms
+      for (const { mesh, placedObject, asset } of meshesToRotate) {
+        // Get world position and rotation after pivot rotation
+        const worldPos = new THREE.Vector3();
+        mesh.getWorldPosition(worldPos);
+        const worldRotY = mesh.rotation.y + pivot.rotation.y;
+        
+        // Remove from pivot, add back to scene
+        pivot.remove(mesh);
+        this.scene.add(mesh);
+        
+        // Set world position and rotation
+        mesh.position.copy(worldPos);
+        mesh.rotation.y = worldRotY;
+        
+        // Clear old grid occupancy
+        if (asset) {
+          this.gridSystem.clearOccupied(placedObject.id);
+        }
+        
+        // Update PlacedObject data
+        placedObject.exactMeshPos = { x: mesh.position.x, z: mesh.position.z };
+        placedObject.rotation = worldRotY;
+        
+        // Update grid position for collision detection
+        const gridPos = this.gridSystem.worldToGrid(worldPos);
+        placedObject.position = { x: gridPos.x, z: gridPos.z };
+        
+        // Mark new grid occupancy
+        if (asset) {
+          this.gridSystem.markOccupied(
+            placedObject.id,
+            placedObject.position,
+            { x: asset.gridUnits.x, z: asset.gridUnits.z },
+            asset.canStack ?? false,
+            asset.category,
+            placedObject.floor ?? 0
+          );
+        }
+        
+        // Sync orientation to nearest 90 degrees
+        this.syncOrientationFromRotation(placedObject, worldRotY);
+      }
+      
+      // Clean up pivot
+      this.scene.remove(pivot);
+      
+      // Update gizmo position
+      const newCentroid = this.getSelectionCenterWorld();
+      if (newCentroid) {
+        const floorY = this.floorManager.getCurrentFloorY();
+        // Position rotate gizmo at ground level (X/Z from center, Y from floor)
+        this.rotateGizmo.setPosition({ x: newCentroid.x, z: newCentroid.z }, floorY);
+      }
+    } else {
+      // SINGLE SELECTION - just rotate in place
+      const { mesh, placedObject } = meshesToRotate[0];
+      const currentRotation = placedObject.rotation ?? 
+        this.getRotationFromOrientation(placedObject.orientation);
+      const newRotation = currentRotation + deltaAngle;
+      
+      mesh.rotation.y = newRotation;
+      placedObject.rotation = newRotation;
+      placedObject.exactMeshPos = { x: mesh.position.x, z: mesh.position.z };
+      
+      this.syncOrientationFromRotation(placedObject, newRotation);
+    }
+    
+    this.scheduleAutoSave();
+  }
+  
+  /**
+   * Sync orientation enum to nearest 90 degrees from rotation
+   */
+  private syncOrientationFromRotation(placedObject: PlacedObject, rotation: number): void {
+    const normalizedRotation = ((rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    if (normalizedRotation < Math.PI / 4 || normalizedRotation >= 7 * Math.PI / 4) {
+      placedObject.orientation = Orientation.NORTH;
+    } else if (normalizedRotation < 3 * Math.PI / 4) {
+      placedObject.orientation = Orientation.EAST;
+    } else if (normalizedRotation < 5 * Math.PI / 4) {
+      placedObject.orientation = Orientation.SOUTH;
+    } else {
+      placedObject.orientation = Orientation.WEST;
+    }
+  }
+  
+  /**
+   * Capture the current state of selected objects before rotation
+   * Called at the start of a rotation operation
+   */
+  private captureRotationStartState(): void {
+    const selectedIds = this.state.selection.selectedIds;
+    if (selectedIds.length === 0) return;
+    
+    this.rotationStartStates = new Map();
     
     for (const id of selectedIds) {
       // Skip building elements
       if (id.startsWith('floor-tile-') || id.startsWith('wall-')) continue;
       
-      const obj = this.sceneManager.getObjectData(id);
-      if (obj) {
-        const currentIndex = rotationOrder.indexOf(obj.orientation);
-        let newIndex: number;
+      const placedObject = this.sceneManager.getObjectData(id);
+      if (!placedObject) continue;
+      
+      this.rotationStartStates.set(id, {
+        position: { ...placedObject.position },
+        rotation: placedObject.rotation,
+        orientation: placedObject.orientation,
+        exactMeshPos: placedObject.exactMeshPos ? { ...placedObject.exactMeshPos } : undefined,
+      });
+    }
+  }
+  
+  /**
+   * Record rotation to history and clear start states
+   * Called at the end of a rotation operation
+   */
+  private recordRotationToHistory(): void {
+    if (!this.rotationStartStates || this.rotationStartStates.size === 0) {
+      this.rotationStartStates = null;
+      return;
+    }
+    
+    // Capture end states
+    const afterStates = new Map<string, {
+      position: GridPosition;
+      rotation: number | undefined;
+      orientation: Orientation;
+      exactMeshPos?: { x: number; z: number };
+    }>();
+    
+    let hasChanges = false;
+    
+    for (const [id, beforeState] of this.rotationStartStates) {
+      const placedObject = this.sceneManager.getObjectData(id);
+      if (!placedObject) continue;
+      
+      // Check if anything changed
+      const posChanged = placedObject.position.x !== beforeState.position.x || 
+                         placedObject.position.z !== beforeState.position.z;
+      const rotChanged = placedObject.rotation !== beforeState.rotation;
+      const exactPosChanged = placedObject.exactMeshPos?.x !== beforeState.exactMeshPos?.x ||
+                              placedObject.exactMeshPos?.z !== beforeState.exactMeshPos?.z;
+      
+      if (posChanged || rotChanged || exactPosChanged) {
+        hasChanges = true;
+      }
+      
+      afterStates.set(id, {
+        position: { ...placedObject.position },
+        rotation: placedObject.rotation,
+        orientation: placedObject.orientation,
+        exactMeshPos: placedObject.exactMeshPos ? { ...placedObject.exactMeshPos } : undefined,
+      });
+    }
+    
+    // Only record if something actually changed
+    if (hasChanges) {
+      this.actionHistory.pushRotate(this.rotationStartStates, afterStates);
+    }
+    
+    this.rotationStartStates = null;
+  }
+  
+  /**
+   * Apply a rotation state to objects (used for undo/redo)
+   * Restores position, rotation, and orientation for each object
+   */
+private applyRotationState(
+    states: Map<string, { position: GridPosition; rotation: number | undefined; orientation: Orientation; exactMeshPos?: { x: number; z: number } }>
+  ): void {
+    for (const [id, state] of states) {
+      const placedObject = this.sceneManager.getObjectData(id);
+      const mesh = this.sceneManager.getObject(id);
+      
+      if (!placedObject || !mesh) continue;
+      
+      const asset = placedObject.assetMetadata;
+      
+      // Clear old grid occupancy
+      if (asset) {
+        this.gridSystem.clearOccupied(id);
+      }
+      
+      // Restore position
+      placedObject.position = { ...state.position };
+      placedObject.exactMeshPos = state.exactMeshPos ? { ...state.exactMeshPos } : undefined;
+
+      const internalYOffset = mesh.userData.internalYOffset ?? 0;
+      const floorY = this.floorManager.getCurrentFloorY();
+      
+      // Position mesh using exact mesh pos if available, otherwise grid-based
+      if (state.exactMeshPos) {
+        // Exact mesh position - use directly, no calculation needed
+        mesh.position.set(
+          state.exactMeshPos.x,
+          floorY + internalYOffset,
+          state.exactMeshPos.z
+        );
+      } else {
+        // Grid-based positioning
+        const worldPos = this.gridSystem.gridToWorld(placedObject.position);
+        const gridSize = this.gridSystem.getGridSize();
+        const internalXOffset = mesh.userData.internalXOffset || 0;
+        const internalZOffset = mesh.userData.internalZOffset || 0;
         
-        if (direction === 'cw') {
-          newIndex = (currentIndex + 1) % 4;
-        } else {
-          newIndex = (currentIndex - 1 + 4) % 4;
-        }
+        // Get the asset dimensions for proper centering
+        const assetWidth = asset ? asset.gridUnits.x * gridSize : gridSize;
+        const assetDepth = asset ? asset.gridUnits.z * gridSize : gridSize;
         
-        const newOrientation = rotationOrder[newIndex];
-        this.moveObjectInternal(id, obj.position, newOrientation);
+        mesh.position.set(
+          worldPos.x + assetWidth / 2 + internalXOffset,
+          floorY + internalYOffset,
+          worldPos.z + assetDepth / 2 + internalZOffset
+        );
+      }
+      
+      // Restore rotation
+      placedObject.rotation = state.rotation;
+      placedObject.orientation = state.orientation;
+      
+      // Apply rotation to mesh
+      const effectiveRotation = state.rotation ?? this.getRotationFromOrientation(state.orientation);
+      mesh.rotation.y = effectiveRotation;
+      
+      // Mark new grid occupancy
+      if (asset) {
+        this.gridSystem.markOccupied(
+          id,
+          placedObject.position,
+          { x: asset.gridUnits.x, z: asset.gridUnits.z },
+          asset.canStack ?? false,
+          asset.category,
+          placedObject.floor ?? 0
+        );
       }
     }
     
-    this.scheduleAutoSave();
+    // Update gizmo if objects are selected
+    this.updateGizmoVisibility();
   }
   
   /**
@@ -5515,6 +6594,7 @@ export class BluDesignEngine {
     this.gridSystem.dispose();
     this.placementManager.dispose();
     this.translateGizmo.dispose();
+    this.rotateGizmo.dispose();
     this.inputCoordinator.dispose();
     this.windowManager.dispose();
     this.groundTileManager.dispose();

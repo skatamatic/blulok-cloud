@@ -31,6 +31,7 @@ import {
 import { useTheme } from '@/contexts/ThemeContext';
 import { AssetRegistry } from '../../assets/AssetRegistry';
 import { getSkinRegistry, CategorySkin } from '../../core/SkinRegistry';
+import { ORIGINAL_MATERIALS_SKIN_ID } from '../../core/BluDesignEngine';
 import {
   getBluLokUnits,
   getBluLokDevices,
@@ -312,14 +313,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </p>
                 <select
                   className={`w-full rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary-500 ${
-                    isDark 
-                      ? 'bg-gray-800 border border-gray-700 text-white' 
+                    isDark
+                      ? 'bg-gray-800 border border-gray-700 text-white'
                       : 'bg-gray-100 border border-gray-200 text-gray-900'
                   }`}
                   value={singleSelection.skinId ?? ''}
                   onChange={(e) => handleSkinChange(e.target.value || undefined)}
                 >
                   <option value="">Use Theme Default</option>
+                  <option value={ORIGINAL_MATERIALS_SKIN_ID}>Original Materials</option>
                   {categorySkins.map(skin => (
                     <option key={skin.id} value={skin.id}>
                       {skin.name}{skin.isBuiltin ? ' (built-in)' : ''}
@@ -334,6 +336,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       Current:
                     </span>
                     {(() => {
+                      if (singleSelection.skinId === ORIGINAL_MATERIALS_SKIN_ID) {
+                        return (
+                          <span className={`text-xs ${isDark ? 'text-white' : 'text-gray-700'}`}>
+                            Original Materials (from model)
+                          </span>
+                        );
+                      }
                       const currentSkin = categorySkins.find(s => s.id === singleSelection.skinId);
                       if (!currentSkin) return null;
                       return (
@@ -721,8 +730,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </p>
                 <select
                   className={`w-full rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary-500 ${
-                    isDark 
-                      ? 'bg-gray-800 border border-gray-700 text-white' 
+                    isDark
+                      ? 'bg-gray-800 border border-gray-700 text-white'
                       : 'bg-gray-100 border border-gray-200 text-gray-900'
                   }`}
                   value={hasMixedSkins ? '__mixed__' : (sharedSkinId ?? '')}
@@ -736,6 +745,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     <option value="__mixed__" disabled>Mixed values</option>
                   )}
                   <option value="">Use Theme Default</option>
+                  <option value={ORIGINAL_MATERIALS_SKIN_ID}>Original Materials</option>
                   {multiSelectCategorySkins.map(skin => (
                     <option key={skin.id} value={skin.id}>
                       {skin.name}{skin.isBuiltin ? ' (built-in)' : ''}

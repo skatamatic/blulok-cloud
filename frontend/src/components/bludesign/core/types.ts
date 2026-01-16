@@ -447,6 +447,8 @@ export interface PlacedObject {
   position: GridPosition;
   orientation: Orientation;
   rotation?: number; // Rotation in radians (Y-axis)
+  /** Exact mesh position for angled/off-grid placement (used directly, no offset calculation) */
+  exactMeshPos?: { x: number; z: number };
   canStack: boolean; // true for walls - can overlap with other assets
   
   /** Display name for the object (user-editable) */
@@ -795,10 +797,14 @@ export interface GridConfig {
   secondaryOpacity?: number; // Fine grid line opacity (higher for dark theme)
 }
 
-/** Default grid config for light theme */
+/** 
+ * Default grid config for light theme 
+ * Divisions calculated so each cell = GRID_UNIT_METERS (0.6096m = 2 feet)
+ * 200m / 0.6096m ≈ 328 divisions
+ */
 export const DEFAULT_GRID_CONFIG: GridConfig = {
   size: 200,
-  divisions: 200,
+  divisions: Math.round(200 / GRID_UNIT_METERS), // ~328 divisions for 0.6096m cells
   fadeDistance: 90,
   primaryColor: '#1f8bff',
   secondaryColor: '#5a6a8a', // Brighter for visibility
@@ -809,7 +815,7 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
 /** Dark theme grid config - brighter lines */
 export const DARK_THEME_GRID_CONFIG: GridConfig = {
   size: 200,
-  divisions: 200,
+  divisions: Math.round(200 / GRID_UNIT_METERS), // ~328 divisions for 0.6096m cells
   fadeDistance: 90,
   primaryColor: '#4da6ff', // Brighter primary
   secondaryColor: '#8899bb', // Much brighter secondary for dark bg
@@ -860,6 +866,8 @@ export interface SerializedPlacedObject {
   assetId: string;
   position: GridPosition;
   orientation: Orientation;
+  rotation?: number;  // Arbitrary Y-axis rotation in radians (overrides orientation when set)
+  exactMeshPos?: { x: number; z: number };  // Exact mesh position for angled placement (used directly)
   floor?: number;
   buildingId?: string;
   name?: string;  // User-defined display name

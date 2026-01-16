@@ -120,8 +120,8 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         // Hide grid in view-only mode (before and after import to ensure it stays hidden)
         engine.getGridSystem()?.setVisible(false);
         
-        // Import scene data
-        engine.importSceneData(facility.data);
+        // Import scene data (use async to pre-load any custom assets)
+        await engine.importSceneDataAsync(facility.data);
         
         // Ensure grid stays hidden after import
         engine.getGridSystem()?.setVisible(false);

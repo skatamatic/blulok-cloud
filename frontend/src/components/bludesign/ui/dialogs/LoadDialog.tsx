@@ -369,9 +369,9 @@ const FacilityCard: React.FC<FacilityCardProps> = ({
   const lastActivity = facility.lastOpened || facility.updatedAt;
 
   return (
-    <button
+    <div
       className={`
-        group relative rounded-xl border overflow-hidden text-left transition-all duration-200
+        group relative rounded-xl border overflow-hidden text-left transition-all duration-200 cursor-pointer
         ${isLoading 
           ? 'ring-2 ring-primary-500 scale-[0.98]'
           : isDisabled
@@ -381,8 +381,15 @@ const FacilityCard: React.FC<FacilityCardProps> = ({
               : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-lg'
         }
       `}
-      onClick={onLoad}
-      disabled={isLoading || isDeleting || isDisabled}
+      onClick={isLoading || isDeleting || isDisabled ? undefined : onLoad}
+      role="button"
+      tabIndex={isLoading || isDeleting || isDisabled ? -1 : 0}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !isLoading && !isDeleting && !isDisabled) {
+          e.preventDefault();
+          onLoad();
+        }
+      }}
     >
       {/* Thumbnail */}
       <div className={`
@@ -471,7 +478,7 @@ const FacilityCard: React.FC<FacilityCardProps> = ({
           <TrashIcon className="w-4 h-4" />
         )}
       </button>
-    </button>
+    </div>
   );
 };
 

@@ -12,6 +12,7 @@ export type ActionType =
   | 'place' 
   | 'delete' 
   | 'move' 
+  | 'rotate'
   | 'property-change' 
   | 'batch'
   | 'building-create'
@@ -36,6 +37,29 @@ export interface MoveActionData {
   toPosition: GridPosition;
   fromOrientation: Orientation;
   toOrientation: Orientation;
+  /** Rotation before move (for preserving angled objects) */
+  fromRotation?: number;
+  toRotation?: number;
+  /** Exact mesh position before/after move (for angled objects) */
+  fromExactMeshPos?: { x: number; z: number };
+  toExactMeshPos?: { x: number; z: number };
+}
+
+export interface RotateActionData {
+  /** Object states before rotation: id -> { position, rotation, orientation, exactMeshPos } */
+  beforeStates: Map<string, {
+    position: GridPosition;
+    rotation: number | undefined;
+    orientation: Orientation;
+    exactMeshPos?: { x: number; z: number };
+  }>;
+  /** Object states after rotation: id -> { position, rotation, orientation, exactMeshPos } */
+  afterStates: Map<string, {
+    position: GridPosition;
+    rotation: number | undefined;
+    orientation: Orientation;
+    exactMeshPos?: { x: number; z: number };
+  }>;
 }
 
 export interface PropertyChangeData {
@@ -87,6 +111,7 @@ export type ActionData =
   | PlaceActionData 
   | DeleteActionData 
   | MoveActionData 
+  | RotateActionData
   | PropertyChangeData 
   | BatchActionData
   | BuildingCreateActionData
@@ -203,7 +228,11 @@ export class ActionHistory {
     fromPosition: GridPosition,
     toPosition: GridPosition,
     fromOrientation: Orientation,
-    toOrientation: Orientation
+    toOrientation: Orientation,
+    fromRotation?: number,
+    toRotation?: number,
+    fromExactMeshPos?: { x: number; z: number },
+    toExactMeshPos?: { x: number; z: number }
   ): void {
     this.push({
       type: 'move',
@@ -213,6 +242,10 @@ export class ActionHistory {
         toPosition,
         fromOrientation,
         toOrientation,
+        fromRotation,
+        toRotation,
+        fromExactMeshPos,
+        toExactMeshPos,
       } as MoveActionData,
       timestamp: Date.now(),
     });
@@ -235,6 +268,23 @@ export class ActionHistory {
         oldValue,
         newValue,
       } as PropertyChangeData,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Push a rotate action for multiple objects
+   * Records before/after states for all rotated objects
+   */
+  pushRotate(
+    beforeStates: Map<string, { position: GridPosition; rotation: number | undefined; orientation: Orientation }>,
+    afterStates: Map<string, { position: GridPosition; rotation: number | undefined; orientation: Orientation }>
+  ): void {
+    if (beforeStates.size === 0) return;
+    
+    this.push({
+      type: 'rotate',
+      data: { beforeStates, afterStates } as RotateActionData,
       timestamp: Date.now(),
     });
   }
@@ -427,6 +477,10 @@ export class ActionHistory {
         return 'Delete asset';
       case 'move':
         return 'Move asset';
+      case 'rotate': {
+        const data = action.data as RotateActionData;
+        return data.beforeStates.size > 1 ? `Rotate ${data.beforeStates.size} assets` : 'Rotate asset';
+      }
       case 'property-change': {
         const data = action.data as PropertyChangeData;
         return `Change ${data.property}`;

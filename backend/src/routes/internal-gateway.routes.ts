@@ -230,6 +230,7 @@ const stateUpdateSchema = Joi.object({
     Joi.object({
       lock_id: Joi.string().required(),
       lock_number: Joi.number().optional(),
+      serial: Joi.string().optional(),
       // State fields (matching gateway payload format)
       state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
       lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),

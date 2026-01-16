@@ -80,6 +80,7 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     const key = event.key.toLowerCase();
     const isCtrl = event.ctrlKey || event.metaKey;
     const isShift = event.shiftKey;
+    const isAlt = event.altKey;
 
     // Tool shortcuts
     if (!isCtrl && !isShift) {
@@ -106,6 +107,8 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
           event.preventDefault();
           break;
         case 'q':
+          // Skip 90-degree rotation when Alt is held - Alt+Q/E does fine rotation via InputCoordinator
+          if (isAlt) break;
           // Rotate asset orientation during placement, rotate selection if selected
           if (activeTool === EditorTool.PLACE) {
             onRotateOrientation?.('ccw');
@@ -115,6 +118,8 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
           event.preventDefault();
           break;
         case 'e':
+          // Skip 90-degree rotation when Alt is held - Alt+Q/E does fine rotation via InputCoordinator
+          if (isAlt) break;
           // Rotate asset orientation during placement, rotate selection if selected
           if (activeTool === EditorTool.PLACE) {
             onRotateOrientation?.('cw');

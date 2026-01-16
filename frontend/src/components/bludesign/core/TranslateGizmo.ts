@@ -43,12 +43,12 @@ export class TranslateGizmo {
   private mouse: THREE.Vector2;
   private dragPlane: THREE.Plane;
   
-  // Appearance - 3x larger for better visibility and usability
-  private readonly arrowLength = 4.5;
-  private readonly arrowWidth = 0.45;
-  private readonly arrowHeadLength = 1.2;
-  private readonly arrowHeadWidth = 0.9;
-  private readonly centerHandleSize = 0.75;
+  // Appearance - 30% larger for better visibility and easier interaction
+  private readonly arrowLength = 5.85;       // 4.5 * 1.3
+  private readonly arrowWidth = 0.585;       // 0.45 * 1.3
+  private readonly arrowHeadLength = 1.56;   // 1.2 * 1.3
+  private readonly arrowHeadWidth = 1.17;    // 0.9 * 1.3
+  private readonly centerHandleSize = 1.5;   // Larger square for free movement (was 0.75)
   private readonly hoverScale = 1.15;
   
   // Colors
@@ -172,7 +172,7 @@ export class TranslateGizmo {
     
     group.add(head);
     
-    // Set render order for all meshes
+    // Set render order for all meshes - ensure they render on top
     shaft.renderOrder = 9999;
     head.renderOrder = 9999;
     
@@ -180,7 +180,11 @@ export class TranslateGizmo {
     // We use a simple geometry as the base and add children
     const wrapperGeometry = new THREE.BoxGeometry(0.01, 0.01, 0.01);
     wrapperGeometry.translate(0, 0, 0);
-    const wrapperMaterial = new THREE.MeshStandardMaterial({ visible: false });
+    const wrapperMaterial = new THREE.MeshStandardMaterial({ 
+      visible: false,
+      depthTest: false,
+      depthWrite: false,
+    });
     const wrapper = new THREE.Mesh(wrapperGeometry, wrapperMaterial);
     wrapper.renderOrder = 9999;
     
@@ -230,6 +234,9 @@ export class TranslateGizmo {
       worldPos.z + gridSize / 2
     );
     
+    // Ensure all children render on top
+    this.ensureRenderOnTop(this.gizmoGroup);
+    
     this.gizmoGroup.visible = true;
     this.isVisible = true;
     
@@ -237,6 +244,28 @@ export class TranslateGizmo {
     this.container.addEventListener('mousemove', this.handleMouseMove, { capture: true });
     this.container.addEventListener('mousedown', this.handleMouseDown, { capture: true });
     this.container.addEventListener('mouseup', this.handleMouseUp, { capture: true });
+  }
+  
+  /**
+   * Recursively ensure all gizmo children render on top
+   */
+  private ensureRenderOnTop(obj: THREE.Object3D): void {
+    obj.renderOrder = 9999;
+    obj.traverse((child) => {
+      child.renderOrder = 9999;
+      if (child instanceof THREE.Mesh) {
+        if (child.material instanceof THREE.MeshStandardMaterial || 
+            child.material instanceof THREE.MeshBasicMaterial) {
+          child.material.depthTest = false;
+          child.material.depthWrite = false;
+        }
+      } else if (child instanceof THREE.Line) {
+        if (child.material instanceof THREE.LineBasicMaterial) {
+          child.material.depthTest = false;
+          child.material.depthWrite = false;
+        }
+      }
+    });
   }
 
   /**
@@ -400,6 +429,7 @@ export class TranslateGizmo {
   /**
    * Handle drag movement
    * Emits INCREMENTAL deltas (change since last callback, not cumulative from start)
+   * Gizmo follows mouse smoothly while objects snap to grid
    */
   private handleDrag(): void {
     if (!this.isDragging || !this.dragAxis || !this.gizmoGroup || !this.currentGridPosition) return;
@@ -412,12 +442,29 @@ export class TranslateGizmo {
     
     const intersectPoint = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.dragPlane, intersectPoint)) {
-      // Convert to grid position
+      // Apply axis constraint to world position for smooth gizmo movement
+      let smoothX = intersectPoint.x;
+      let smoothZ = intersectPoint.z;
+      
+      if (this.dragAxis === 'x') {
+        // Lock Z to starting position (use gizmo's current locked Z)
+        smoothZ = this.gizmoGroup.position.z;
+      } else if (this.dragAxis === 'z') {
+        // Lock X to starting position (use gizmo's current locked X)
+        smoothX = this.gizmoGroup.position.x;
+      }
+      // For 'xz', both axes follow mouse
+      
+      // Update gizmo position smoothly (follows mouse, not grid-snapped)
+      this.gizmoGroup.position.x = smoothX;
+      this.gizmoGroup.position.z = smoothZ;
+      
+      // Convert to grid position for object snapping
       const gridPos = this.gridSystem.worldToGrid(
         new THREE.Vector3(intersectPoint.x, 0, intersectPoint.z)
       );
       
-      // Apply axis constraint - use current position for constrained axis
+      // Apply axis constraint for grid position
       let newGridX = gridPos.x;
       let newGridZ = gridPos.z;
       
@@ -439,13 +486,7 @@ export class TranslateGizmo {
         // Update current position BEFORE emitting callback
         this.currentGridPosition = { x: newGridX, z: newGridZ };
         
-        // Update gizmo visual position immediately to stay in sync
-        const newWorldPos = this.gridSystem.gridToWorld({ x: newGridX, z: newGridZ, y: 0 });
-        const gridSize = this.gridSystem.getGridSize();
-        this.gizmoGroup.position.x = newWorldPos.x + gridSize / 2;
-        this.gizmoGroup.position.z = newWorldPos.z + gridSize / 2;
-        
-        // Emit incremental delta
+        // Emit incremental delta (objects will snap to grid)
         this.callbacks.onDrag(deltaX, deltaZ, this.dragAxis);
       }
     }
@@ -537,6 +578,12 @@ export class TranslateGizmo {
   private updateArrowMaterial(mesh: THREE.Mesh, baseColor: THREE.Color, isHovered: boolean): void {
     mesh.traverse((child) => {
       if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+        // Ensure depth settings are maintained
+        child.material.depthTest = false;
+        child.material.depthWrite = false;
+        // Ensure render order is set
+        child.renderOrder = 9999;
+        
         if (isHovered) {
           child.material.color.copy(this.hoverColor);
           child.material.emissive.copy(baseColor);
@@ -556,6 +603,12 @@ export class TranslateGizmo {
   private setMeshOpacity(mesh: THREE.Mesh, opacity: number): void {
     mesh.traverse((child) => {
       if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+        // Ensure depth settings are maintained
+        child.material.depthTest = false;
+        child.material.depthWrite = false;
+        // Ensure render order is set
+        child.renderOrder = 9999;
+        
         child.material.transparent = opacity < 1.0;
         child.material.opacity = opacity;
         child.material.needsUpdate = true;
