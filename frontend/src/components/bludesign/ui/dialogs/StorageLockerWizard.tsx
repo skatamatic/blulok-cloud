@@ -25,7 +25,6 @@ import {
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { 
-  GRID_UNIT_METERS, 
   feetToMeters, 
   metersToFeet, 
   metersToGridUnits,

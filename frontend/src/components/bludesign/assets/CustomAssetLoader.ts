@@ -158,7 +158,7 @@ export class CustomAssetLoader {
     let model: THREE.Object3D;
 
     try {
-      if (format === 'glb' || format === 'gltf') {
+      if (format === 'glb') {
         const gltf = await new Promise<{ scene: THREE.Object3D }>((resolve, reject) => {
           this.gltfLoader.load(url, resolve, undefined, reject);
         });

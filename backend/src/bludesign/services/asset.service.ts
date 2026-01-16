@@ -7,6 +7,9 @@
 import { DatabaseService } from '@/services/database.service';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '@/utils/logger';
+import { createStorageProvider } from './storage';
+import { BluDesignProjectModel } from '../models/bludesign-project.model';
+import { StorageProviderType } from '../types/bludesign.types';
 
 // Types
 export interface AssetCategory {
@@ -340,13 +343,96 @@ export class AssetService {
     try {
       const db = DatabaseService.getInstance().connection;
       
-      // Don't allow deleting built-in assets
+      // Get the asset definition first to check for associated models
       const asset = await db('bludesign_asset_definitions').where('id', id).first();
       if (!asset) return false;
       if (asset.is_builtin) {
         throw new Error('Cannot delete built-in assets');
       }
 
+      // Delete associated custom model if present and not used by other asset definitions
+      if (asset.custom_model_id) {
+        try {
+          // Check if this custom model is used by other asset definitions
+          const otherAssetsUsingModel = await db('bludesign_asset_definitions')
+            .where('custom_model_id', asset.custom_model_id)
+            .where('id', '!=', id)
+            .count('* as count')
+            .first();
+          
+          const isUsedElsewhere = otherAssetsUsingModel && Number(otherAssetsUsingModel.count) > 0;
+          
+          if (!isUsedElsewhere) {
+            const customModel = await this.getCustomModel(asset.custom_model_id);
+            if (customModel) {
+              // Get the project for the custom model
+              const project = await BluDesignProjectModel.findById(customModel.projectId);
+              if (project) {
+                const provider = createStorageProvider({
+                  type: project.storageProvider,
+                  config: project.storageConfig || { basePath: './storage/bludesign' },
+                });
+                // Extract the model ID from the storage path to delete the asset files
+                const pathParts = customModel.storagePath.split('/');
+                const modelAssetId = pathParts.length > 2 ? pathParts[pathParts.length - 2] : customModel.id;
+                try {
+                  await provider.deleteAssetFiles(customModel.projectId, modelAssetId);
+                } catch (storageError) {
+                  logger.warn('Failed to delete custom model storage files:', storageError);
+                  // Continue with DB deletion even if file deletion fails
+                }
+              }
+              // Delete the custom model database record
+              await this.deleteCustomModel(asset.custom_model_id);
+            }
+          } else {
+            logger.info(`Custom model ${asset.custom_model_id} is used by other asset definitions, skipping deletion`);
+          }
+        } catch (modelError) {
+          logger.warn('Failed to delete custom model:', modelError);
+          // Continue with asset definition deletion even if model deletion fails
+        }
+      }
+
+      // Delete associated global model if present and not used by other asset definitions
+      if (asset.global_model_id) {
+        try {
+          // Check if this global model is used by other asset definitions
+          const otherAssetsUsingModel = await db('bludesign_asset_definitions')
+            .where('global_model_id', asset.global_model_id)
+            .where('id', '!=', id)
+            .count('* as count')
+            .first();
+          
+          const isUsedElsewhere = otherAssetsUsingModel && Number(otherAssetsUsingModel.count) > 0;
+          
+          if (!isUsedElsewhere) {
+            const globalModel = await this.getGlobalModel(asset.global_model_id);
+            if (globalModel) {
+              // Use local storage provider for global models
+              const provider = createStorageProvider({
+                type: StorageProviderType.LOCAL,
+                config: { basePath: './storage/bludesign' },
+              });
+              try {
+                await provider.deleteGlobalAsset(asset.global_model_id);
+              } catch (storageError) {
+                logger.warn('Failed to delete global model storage files:', storageError);
+                // Continue with DB deletion even if file deletion fails
+              }
+              // Delete the global model database record
+              await this.deleteGlobalModel(asset.global_model_id);
+            }
+          } else {
+            logger.info(`Global model ${asset.global_model_id} is used by other asset definitions, skipping deletion`);
+          }
+        } catch (modelError) {
+          logger.warn('Failed to delete global model:', modelError);
+          // Continue with asset definition deletion even if model deletion fails
+        }
+      }
+
+      // Finally, delete the asset definition
       await db('bludesign_asset_definitions').where('id', id).delete();
       return true;
     } catch (error) {

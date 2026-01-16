@@ -325,7 +325,6 @@ export const LockerPreview3D: React.FC<LockerPreview3DProps> = ({
     
     const model = lockerMeshRef.current;
     const size = originalModelSizeRef.current;
-    const center = originalModelCenterRef.current;
     
     let scaleX: number, scaleY: number, scaleZ: number;
     
