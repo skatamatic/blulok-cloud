@@ -253,6 +253,104 @@ VITE_WS_URL=ws://localhost:3000/ws
    - Configure FMS in Facility Details for a facility
    - Check backend logs for provider registration
 
+### BluDesign Storage Providers
+
+BluDesign supports multiple storage providers for asset files. Configure storage when creating or updating a BluDesign project.
+
+#### Local Storage (Development)
+
+Default provider for local development:
+- Files stored in `./storage/bludesign/` (configurable)
+- **Note**: Ephemeral in Cloud Run - files are lost on container restart
+- **Configuration**:
+  ```json
+  {
+    "type": "local",
+    "config": {
+      "basePath": "./storage/bludesign"
+    }
+  }
+  ```
+
+#### Google Cloud Storage (GCS) - Recommended for Production
+
+Persistent object storage on GCP:
+- Files stored in GCS buckets
+- Supports signed URLs for private access
+- Public URLs for public buckets
+- **Setup**:
+  1. Create a GCS bucket in your GCP project
+  2. Create a service account with Storage Admin role
+  3. Download service account JSON key file
+  4. **Configuration**:
+     ```json
+     {
+       "type": "gcs",
+       "config": {
+         "bucketName": "your-bucket-name",
+         "projectId": "your-gcp-project-id",
+         "keyFilePath": "/path/to/service-account-key.json",
+         "publicBucket": false
+       }
+     }
+     ```
+  - Alternative: Use `keyFileContents` (JSON string) instead of `keyFilePath`
+  - For Cloud Run: Use Workload Identity or store key in Secret Manager
+
+#### Google Drive - Free Alternative
+
+Store files in Google Drive folders:
+- Free storage (15GB per Google account)
+- OAuth2 authentication required
+- **Setup**:
+  1. Create OAuth2 credentials in Google Cloud Console:
+     - Go to APIs & Services > Credentials
+     - Create OAuth 2.0 Client ID (Web application)
+     - Add authorized redirect URI: `urn:ietf:wg:oauth:2.0:oob`
+  2. Create a Google Drive folder for BluDesign assets
+  3. Get folder ID from folder URL: `drive.google.com/drive/folders/[FOLDER_ID]`
+  4. **OAuth Flow**:
+     - Use `/api/v1/bludesign/storage/gdrive/auth-url` to get authorization URL
+     - Complete OAuth flow in browser
+     - Exchange authorization code for tokens via `/api/v1/bludesign/storage/gdrive/callback`
+  5. **Configuration**:
+     ```json
+     {
+       "type": "gdrive",
+       "config": {
+         "clientId": "your-client-id.apps.googleusercontent.com",
+         "clientSecret": "your-client-secret",
+         "rootFolderId": "your-folder-id",
+         "accessToken": "oauth-access-token",
+         "refreshToken": "oauth-refresh-token"
+       }
+     }
+     ```
+  - Tokens are automatically refreshed when expired
+  - Store tokens securely (encrypted in production)
+
+#### Testing Storage Configuration
+
+Test storage provider connection:
+```bash
+# Via API
+POST /api/v1/bludesign/storage/{provider}/test
+{
+  "storageConfig": { ... }
+}
+
+# Via frontend
+Navigate to BluDesign Configuration > Storage Configuration
+Click "Test Connection" button
+```
+
+#### Switching Providers
+
+- Switching providers does NOT migrate existing files
+- New files go to the new provider
+- Old files remain in the original provider
+- Consider manual migration if needed
+
 ### Deployment
 
 1. **Build**:

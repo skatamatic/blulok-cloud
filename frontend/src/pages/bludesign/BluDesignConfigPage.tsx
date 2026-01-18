@@ -38,23 +38,24 @@ const BLUDESIGN_STORAGE_KEYS = {
 };
 
 // Storage provider types
-type StorageProviderType = 'local' | 's3' | 'azure' | 'gcs';
+type StorageProviderType = 'local' | 'gcs' | 'gdrive';
 
 interface StorageConfig {
   type: StorageProviderType;
   // Local storage settings
   localPath?: string;
-  // S3 settings
-  s3Bucket?: string;
-  s3Region?: string;
-  s3AccessKey?: string;
-  s3SecretKey?: string;
-  // Azure settings
-  azureContainer?: string;
-  azureConnectionString?: string;
   // GCS settings
-  gcsProject?: string;
   gcsBucket?: string;
+  gcsProject?: string;
+  gcsKeyFilePath?: string;
+  gcsKeyFileContents?: string;
+  gcsPublicBucket?: boolean;
+  // Google Drive settings
+  gdriveClientId?: string;
+  gdriveClientSecret?: string;
+  gdriveRootFolderId?: string;
+  gdriveAccessToken?: string;
+  gdriveRefreshToken?: string;
 }
 
 // interface FacilityLinkItem {
@@ -86,6 +87,9 @@ const BluDesignConfigPage: React.FC = () => {
   const [isStorageSaving, setIsStorageSaving] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [storageSaved, setStorageSaved] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [gdriveAuthUrl, setGdriveAuthUrl] = useState<string | null>(null);
+  const [gdriveTokenStatus, setGdriveTokenStatus] = useState<'valid' | 'expired' | 'missing' | null>(null);
 
   // Facility linking state
   const [blulokFacilities, setBlulokFacilities] = useState<{ id: string; name: string }[]>([]);
@@ -223,17 +227,63 @@ const BluDesignConfigPage: React.FC = () => {
     setStorageError(null);
   };
 
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    setStorageError(null);
+
+    try {
+      // Build storage config for backend
+      const backendConfig: Record<string, unknown> = {};
+      
+      if (storageConfig.type === 'local') {
+        backendConfig.basePath = storageConfig.localPath || './storage/bludesign';
+      } else if (storageConfig.type === 'gcs') {
+        backendConfig.bucketName = storageConfig.gcsBucket;
+        backendConfig.projectId = storageConfig.gcsProject;
+        if (storageConfig.gcsKeyFilePath) {
+          backendConfig.keyFilePath = storageConfig.gcsKeyFilePath;
+        }
+        if (storageConfig.gcsKeyFileContents) {
+          backendConfig.keyFileContents = storageConfig.gcsKeyFileContents;
+        }
+        backendConfig.publicBucket = storageConfig.gcsPublicBucket || false;
+      } else if (storageConfig.type === 'gdrive') {
+        backendConfig.clientId = storageConfig.gdriveClientId;
+        backendConfig.clientSecret = storageConfig.gdriveClientSecret;
+        backendConfig.rootFolderId = storageConfig.gdriveRootFolderId;
+        if (storageConfig.gdriveAccessToken) {
+          backendConfig.accessToken = storageConfig.gdriveAccessToken;
+        }
+        if (storageConfig.gdriveRefreshToken) {
+          backendConfig.refreshToken = storageConfig.gdriveRefreshToken;
+        }
+      }
+
+      const result = await bludesignApi.testStorageProvider(storageConfig.type, backendConfig);
+      
+      if (result.success) {
+        setStorageSaved(true);
+        setTimeout(() => setStorageSaved(false), 3000);
+      } else {
+        setStorageError(result.message || 'Connection test failed');
+      }
+    } catch (error: any) {
+      setStorageError(error.response?.data?.message || error.message || 'Failed to test connection');
+      console.error('Failed to test storage connection:', error);
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
   const handleSaveStorage = async () => {
     setIsStorageSaving(true);
     setStorageError(null);
     setStorageSaved(false);
 
     try {
-      // This would save to the backend
-      // await bludesignApi.saveStorageConfig(storageConfig);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulated delay
-      setStorageSaved(true);
-      setTimeout(() => setStorageSaved(false), 3000);
+      // This would save to the backend project configuration
+      // For now, we'll just test the connection
+      await handleTestConnection();
     } catch (error) {
       setStorageError('Failed to save storage configuration.');
       console.error('Failed to save storage config:', error);
@@ -402,12 +452,11 @@ const BluDesignConfigPage: React.FC = () => {
               </p>
 
               {/* Storage Type Selection */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
                 {[
                   { type: 'local' as const, label: 'Local', icon: FolderIcon },
-                  { type: 's3' as const, label: 'Amazon S3', icon: CloudIcon },
-                  { type: 'azure' as const, label: 'Azure Blob', icon: ServerIcon },
-                  { type: 'gcs' as const, label: 'Google Cloud', icon: CloudIcon },
+                  { type: 'gcs' as const, label: 'Google Cloud Storage', icon: CloudIcon },
+                  { type: 'gdrive' as const, label: 'Google Drive', icon: CloudIcon },
                 ].map((provider) => (
                   <button
                     key={provider.type}
@@ -457,105 +506,259 @@ const BluDesignConfigPage: React.FC = () => {
                   </div>
                 )}
 
-                {storageConfig.type === 's3' && (
-                  <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className={labelClass}>S3 Bucket</label>
-                        <input
-                          type="text"
-                          value={storageConfig.s3Bucket || ''}
-                          onChange={(e) => setStorageConfig({ ...storageConfig, s3Bucket: e.target.value })}
-                          placeholder="my-bucket"
-                          className={inputClass}
-                        />
-                      </div>
-                      <div>
-                        <label className={labelClass}>Region</label>
-                        <input
-                          type="text"
-                          value={storageConfig.s3Region || ''}
-                          onChange={(e) => setStorageConfig({ ...storageConfig, s3Region: e.target.value })}
-                          placeholder="us-east-1"
-                          className={inputClass}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className={labelClass}>Access Key ID</label>
-                      <input
-                        type="password"
-                        value={storageConfig.s3AccessKey || ''}
-                        onChange={(e) => setStorageConfig({ ...storageConfig, s3AccessKey: e.target.value })}
-                        placeholder="AKIA..."
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelClass}>Secret Access Key</label>
-                      <input
-                        type="password"
-                        value={storageConfig.s3SecretKey || ''}
-                        onChange={(e) => setStorageConfig({ ...storageConfig, s3SecretKey: e.target.value })}
-                        placeholder="••••••••"
-                        className={inputClass}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {storageConfig.type === 'azure' && (
-                  <>
-                    <div>
-                      <label className={labelClass}>Container Name</label>
-                      <input
-                        type="text"
-                        value={storageConfig.azureContainer || ''}
-                        onChange={(e) => setStorageConfig({ ...storageConfig, azureContainer: e.target.value })}
-                        placeholder="bludesign-data"
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelClass}>Connection String</label>
-                      <textarea
-                        value={storageConfig.azureConnectionString || ''}
-                        onChange={(e) => setStorageConfig({ ...storageConfig, azureConnectionString: e.target.value })}
-                        placeholder="DefaultEndpointsProtocol=https;AccountName=..."
-                        rows={3}
-                        className={inputClass}
-                      />
-                    </div>
-                  </>
-                )}
-
                 {storageConfig.type === 'gcs' && (
                   <>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className={labelClass}>Project ID</label>
+                        <label className={labelClass}>
+                          Project ID <span className="text-red-500">*</span>
+                        </label>
                         <input
                           type="text"
                           value={storageConfig.gcsProject || ''}
                           onChange={(e) => setStorageConfig({ ...storageConfig, gcsProject: e.target.value })}
-                          placeholder="my-project"
+                          placeholder="my-gcp-project"
                           className={inputClass}
+                          required
                         />
+                        <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                          Your Google Cloud Platform project ID
+                        </p>
                       </div>
                       <div>
-                        <label className={labelClass}>Bucket Name</label>
+                        <label className={labelClass}>
+                          Bucket Name <span className="text-red-500">*</span>
+                        </label>
                         <input
                           type="text"
                           value={storageConfig.gcsBucket || ''}
                           onChange={(e) => setStorageConfig({ ...storageConfig, gcsBucket: e.target.value })}
-                          placeholder="my-bucket"
+                          placeholder="blulok-assets"
                           className={inputClass}
+                          required
                         />
+                        <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                          GCS bucket name (must exist)
+                        </p>
                       </div>
                     </div>
-                    <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                      Note: GCS authentication is handled via environment variables or service account file.
-                    </p>
+                    <div>
+                      <label className={labelClass}>Service Account Key File Path (Optional)</label>
+                      <input
+                        type="text"
+                        value={storageConfig.gcsKeyFilePath || ''}
+                        onChange={(e) => setStorageConfig({ ...storageConfig, gcsKeyFilePath: e.target.value })}
+                        placeholder="/path/to/service-account-key.json"
+                        className={inputClass}
+                      />
+                      <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                        Path to service account JSON key file. Leave empty to use default credentials or key file contents.
+                      </p>
+                    </div>
+                    <div>
+                      <label className={labelClass}>Service Account Key File Contents (Optional)</label>
+                      <textarea
+                        value={storageConfig.gcsKeyFileContents || ''}
+                        onChange={(e) => setStorageConfig({ ...storageConfig, gcsKeyFileContents: e.target.value })}
+                        placeholder='{"type": "service_account", "project_id": "...", ...}'
+                        rows={6}
+                        className={inputClass}
+                      />
+                      <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                        Paste service account JSON key file contents here. Alternative to key file path.
+                      </p>
+                    </div>
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="gcsPublicBucket"
+                        checked={storageConfig.gcsPublicBucket || false}
+                        onChange={(e) => setStorageConfig({ ...storageConfig, gcsPublicBucket: e.target.checked })}
+                        className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500"
+                      />
+                      <label htmlFor="gcsPublicBucket" className={`ml-2 text-sm ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Public bucket (files accessible via public URLs)
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                {storageConfig.type === 'gdrive' && (
+                  <>
+                    <div>
+                      <label className={labelClass}>
+                        Client ID <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={storageConfig.gdriveClientId || ''}
+                        onChange={(e) => setStorageConfig({ ...storageConfig, gdriveClientId: e.target.value })}
+                        placeholder="xxxxx.apps.googleusercontent.com"
+                        className={inputClass}
+                        required
+                      />
+                      <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                        OAuth2 client ID from Google Cloud Console
+                      </p>
+                    </div>
+                    <div>
+                      <label className={labelClass}>
+                        Client Secret <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={storageConfig.gdriveClientSecret || ''}
+                        onChange={(e) => setStorageConfig({ ...storageConfig, gdriveClientSecret: e.target.value })}
+                        placeholder="GOCSPX-..."
+                        className={inputClass}
+                        required
+                      />
+                      <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                        OAuth2 client secret from Google Cloud Console
+                      </p>
+                    </div>
+                    <div>
+                      <label className={labelClass}>
+                        Root Folder ID <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={storageConfig.gdriveRootFolderId || ''}
+                        onChange={(e) => setStorageConfig({ ...storageConfig, gdriveRootFolderId: e.target.value })}
+                        placeholder="1AbC2dEf3GhI4jKl5MnOp6QrSt7UvWx8Yz"
+                        className={inputClass}
+                        required
+                      />
+                      <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                        Google Drive folder ID where files will be stored. Get this from the folder URL: drive.google.com/drive/folders/[FOLDER_ID]
+                      </p>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <label className={labelClass}>OAuth2 Authentication</label>
+                          <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {gdriveTokenStatus === 'valid' && (
+                              <span className="text-green-500">✓ Tokens are valid</span>
+                            )}
+                            {gdriveTokenStatus === 'expired' && (
+                              <span className="text-yellow-500">⚠ Tokens expired - refresh needed</span>
+                            )}
+                            {gdriveTokenStatus === 'missing' && (
+                              <span className="text-red-500">✗ No tokens - authentication required</span>
+                            )}
+                            {!gdriveTokenStatus && storageConfig.gdriveAccessToken && (
+                              <span className="text-gray-500">Tokens configured</span>
+                            )}
+                            {!gdriveTokenStatus && !storageConfig.gdriveAccessToken && (
+                              <span className="text-gray-500">Click "Connect to Google Drive" to authenticate</span>
+                            )}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!storageConfig.gdriveClientId || !storageConfig.gdriveClientSecret) {
+                              setStorageError('Client ID and Client Secret are required');
+                              return;
+                            }
+                            try {
+                              const response = await bludesignApi.getGDriveAuthUrl(
+                                storageConfig.gdriveClientId,
+                                storageConfig.gdriveClientSecret
+                              );
+                              setGdriveAuthUrl(response.authUrl);
+                              // Open in popup
+                              const popup = window.open(
+                                response.authUrl,
+                                'gdrive-auth',
+                                'width=600,height=700,scrollbars=yes,resizable=yes'
+                              );
+                              
+                              // Listen for OAuth callback
+                              const checkInterval = setInterval(() => {
+                                if (popup?.closed) {
+                                  clearInterval(checkInterval);
+                                  // Check if we have tokens (user would need to paste code manually for now)
+                                  // In production, you'd use a proper OAuth callback URL
+                                }
+                              }, 1000);
+                            } catch (error: any) {
+                              setStorageError(error.message || 'Failed to get OAuth URL');
+                            }
+                          }}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                        >
+                          Connect to Google Drive
+                        </button>
+                      </div>
+                      {gdriveAuthUrl && (
+                        <div className={`p-3 rounded-lg ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
+                          <p className={`text-sm ${isDark ? 'text-blue-300' : 'text-blue-800'}`}>
+                            Authorization URL generated. Complete the OAuth flow in the popup window.
+                            After authorization, paste the authorization code below:
+                          </p>
+                          <input
+                            type="text"
+                            placeholder="Paste authorization code here"
+                            className={`mt-2 ${inputClass}`}
+                            onKeyDown={async (e) => {
+                              if (e.key === 'Enter' && e.currentTarget.value) {
+                                try {
+                                  const response = await bludesignApi.exchangeGDriveCode(
+                                    e.currentTarget.value,
+                                    storageConfig.gdriveClientId!,
+                                    storageConfig.gdriveClientSecret!
+                                  );
+                                  setStorageConfig({
+                                    ...storageConfig,
+                                    gdriveAccessToken: response.tokens.accessToken,
+                                    gdriveRefreshToken: response.tokens.refreshToken,
+                                  });
+                                  setGdriveTokenStatus('valid');
+                                  setGdriveAuthUrl(null);
+                                  e.currentTarget.value = '';
+                                } catch (error: any) {
+                                  setStorageError(error.message || 'Failed to exchange code for tokens');
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                      )}
+                      {(storageConfig.gdriveAccessToken || storageConfig.gdriveRefreshToken) && (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!storageConfig.gdriveRefreshToken) {
+                                setStorageError('Refresh token is required');
+                                return;
+                              }
+                              try {
+                                const response = await bludesignApi.refreshGDriveTokens(
+                                  storageConfig.gdriveClientId!,
+                                  storageConfig.gdriveClientSecret!,
+                                  storageConfig.gdriveRefreshToken
+                                );
+                                setStorageConfig({
+                                  ...storageConfig,
+                                  gdriveAccessToken: response.tokens.accessToken,
+                                  gdriveRefreshToken: response.tokens.refreshToken || storageConfig.gdriveRefreshToken,
+                                });
+                                setGdriveTokenStatus('valid');
+                              } catch (error: any) {
+                                setStorageError(error.message || 'Failed to refresh tokens');
+                                setGdriveTokenStatus('expired');
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-gray-600 text-white rounded text-sm hover:bg-gray-700 transition-colors"
+                          >
+                            Refresh Tokens
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
@@ -586,8 +789,26 @@ const BluDesignConfigPage: React.FC = () => {
                 )}
               </AnimatePresence>
 
-              {/* Save Button */}
-              <div className="mt-6 flex justify-end">
+              {/* Action Buttons */}
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={handleTestConnection}
+                  disabled={isTestingConnection}
+                  className={`
+                    px-4 py-2 rounded-lg text-sm font-medium
+                    transition-all duration-150
+                    ${isTestingConnection
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:opacity-90'
+                    }
+                    ${isDark
+                      ? 'bg-gray-700 text-white hover:bg-gray-600'
+                      : 'bg-gray-200 text-gray-900 hover:bg-gray-300'
+                    }
+                  `}
+                >
+                  {isTestingConnection ? 'Testing...' : 'Test Connection'}
+                </button>
                 <button
                   onClick={handleSaveStorage}
                   disabled={isStorageSaving}

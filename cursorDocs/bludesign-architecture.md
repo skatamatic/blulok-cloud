@@ -29,27 +29,76 @@ Comprehensive type definitions:
 
 ### Storage Providers (`services/storage/`)
 
+BluDesign uses a pluggable storage provider system that allows seamless switching between different storage backends without code changes. All providers implement the same interface, ensuring consistent behavior across storage types.
+
 #### `storage-provider.interface.ts`
 Abstract interface for storage backends:
 - Asset file upload/download
+- Global asset operations
 - Texture management
 - Facility manifest storage
 - Project initialization/cleanup
 - Zip export/import
 - Signed URL generation
+- Public URL generation (for public buckets)
+- Storage usage calculation
 
 #### `local.provider.ts`
 File-based storage implementation:
-- Project directory structure
+- Stores files in local filesystem
+- Project directory structure: `projects/{projectId}/assets/{assetId}/`
+- Global assets: `global/models/{modelId}/`
 - Asset and texture file management
 - Zip export with archiver
 - Storage usage calculation
+- **Note**: Ephemeral in Cloud Run deployments - files are lost on container restart
+
+#### `gcs.provider.ts`
+Google Cloud Storage implementation:
+- Stores files in GCS buckets
+- Path structure: `projects/{projectId}/assets/{assetId}/filename`
+- Global assets: `global/models/{modelId}/filename`
+- Supports service account authentication (key file path or contents)
+- Signed URL generation for private buckets
+- Public URL generation for public buckets
+- Automatic bucket existence validation
+- **Configuration**:
+  - `bucketName` (required) - GCS bucket name
+  - `projectId` (required) - GCP project ID
+  - `keyFilePath` (optional) - Path to service account JSON key file
+  - `keyFileContents` (optional) - Service account JSON as string
+  - `publicBucket` (optional) - Whether bucket is public (default: false)
+
+#### `gdrive.provider.ts`
+Google Drive implementation:
+- Stores files in Google Drive folders
+- Folder structure: `{rootFolderId}/projects/{projectId}/assets/{assetId}/`
+- Global assets: `{rootFolderId}/global/models/{modelId}/`
+- OAuth2 authentication with automatic token refresh
+- Resumable uploads for large files (>5MB)
+- Rate limit handling with exponential backoff
+- **Configuration**:
+  - `clientId` (required) - OAuth2 client ID
+  - `clientSecret` (required) - OAuth2 client secret
+  - `rootFolderId` (required) - Google Drive folder ID
+  - `accessToken` (optional) - OAuth2 access token (auto-refreshed)
+  - `refreshToken` (required) - OAuth2 refresh token for token renewal
+- **OAuth Flow**: Use `/api/v1/bludesign/storage/gdrive/auth-url` to get authorization URL, then exchange code for tokens via `/api/v1/bludesign/storage/gdrive/callback`
 
 #### `storage.factory.ts`
 Provider factory and validation:
 - Creates provider instances from config
-- Validates storage configuration
+- Validates storage configuration for all provider types
 - Provider caching for reuse
+- Default provider (local) for development
+- Supports: `LOCAL`, `GCS`, `GDRIVE`
+
+#### `storage.routes.ts`
+Storage provider API routes:
+- `GET /api/v1/bludesign/storage/gdrive/auth-url` - Get OAuth2 authorization URL
+- `GET /api/v1/bludesign/storage/gdrive/callback` - Exchange OAuth code for tokens
+- `POST /api/v1/bludesign/storage/gdrive/refresh-tokens` - Manually refresh tokens
+- `POST /api/v1/bludesign/storage/:provider/test` - Test storage connection
 
 ### Models (`models/`)
 

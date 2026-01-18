@@ -651,3 +651,80 @@ export async function updateSkinApi(id: string, updates: Partial<SkinApiData>): 
 export async function deleteSkinApi(id: string): Promise<void> {
   await apiService.delete(`${API_BASE}/skins/${id}`);
 }
+
+// ==========================================================================
+// Storage Configuration API
+// ==========================================================================
+
+/**
+ * Get OAuth2 authorization URL for Google Drive
+ */
+export async function getGDriveAuthUrl(
+  clientId: string,
+  clientSecret: string,
+  redirectUri?: string
+): Promise<{ authUrl: string }> {
+  const params = new URLSearchParams({
+    clientId,
+    clientSecret,
+    ...(redirectUri && { redirectUri }),
+  });
+  return await apiService.get(`${API_BASE}/storage/gdrive/auth-url?${params.toString()}`);
+}
+
+/**
+ * Exchange OAuth2 code for tokens
+ */
+export async function exchangeGDriveCode(
+  code: string,
+  clientId: string,
+  clientSecret: string,
+  redirectUri?: string
+): Promise<{
+  tokens: {
+    accessToken: string;
+    refreshToken: string;
+    expiryDate?: number;
+  };
+}> {
+  const params = new URLSearchParams({
+    code,
+    clientId,
+    clientSecret,
+    ...(redirectUri && { redirectUri }),
+  });
+  return await apiService.get(`${API_BASE}/storage/gdrive/callback?${params.toString()}`);
+}
+
+/**
+ * Refresh Google Drive tokens
+ */
+export async function refreshGDriveTokens(
+  clientId: string,
+  clientSecret: string,
+  refreshToken: string
+): Promise<{
+  tokens: {
+    accessToken: string;
+    refreshToken: string;
+    expiryDate?: number;
+  };
+}> {
+  return await apiService.post(`${API_BASE}/storage/gdrive/refresh-tokens`, {
+    clientId,
+    clientSecret,
+    refreshToken,
+  });
+}
+
+/**
+ * Test storage provider configuration
+ */
+export async function testStorageProvider(
+  provider: 'local' | 'gcs' | 'gdrive',
+  storageConfig: Record<string, unknown>
+): Promise<{ success: boolean; message: string }> {
+  return await apiService.post(`${API_BASE}/storage/${provider}/test`, {
+    storageConfig,
+  });
+}

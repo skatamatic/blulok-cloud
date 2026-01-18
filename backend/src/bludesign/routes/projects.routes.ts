@@ -265,5 +265,68 @@ router.get('/:id/storage-usage', asyncHandler(async (req: AuthenticatedRequest, 
   }
 }));
 
+/**
+ * POST /api/v1/bludesign/projects/:id/storage/test
+ * Test storage provider configuration for a project
+ */
+router.post('/:id/storage/test', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.user!;
+  const { id } = req.params;
+  
+  const project = await BluDesignProjectModel.findById(id);
+  
+  if (!project) {
+    res.status(404).json({ success: false, message: 'Project not found' });
+    return;
+  }
+  
+  if (project.ownerId !== user.userId) {
+    res.status(403).json({ success: false, message: 'Access denied' });
+    return;
+  }
+  
+  try {
+    // Validate storage config
+    const config = {
+      type: project.storageProvider,
+      config: project.storageConfig || { basePath: './storage/bludesign' },
+    };
+    
+    const validationErrors = validateStorageConfig(config);
+    if (validationErrors.length > 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Storage configuration validation failed',
+        errors: validationErrors,
+      });
+      return;
+    }
+    
+    // Create provider and test connection
+    const provider = createStorageProvider(config);
+    await provider.initialize();
+    
+    const isHealthy = await provider.healthCheck();
+    
+    if (isHealthy) {
+      res.json({
+        success: true,
+        message: 'Storage provider connection successful',
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Storage provider health check failed',
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to test storage provider',
+      error: error.message,
+    });
+  }
+}));
+
 export { router as bluDesignProjectsRouter };
 

@@ -14,6 +14,8 @@ import {
   StorageErrorCode,
 } from './storage-provider.interface';
 import { LocalStorageProvider } from './local.provider';
+import { GCSStorageProvider } from './gcs.provider';
+import { GDriveStorageProvider } from './gdrive.provider';
 import { StorageProviderType } from '../../types/bludesign.types';
 
 // Provider cache for reuse
@@ -39,18 +41,12 @@ export function createStorageProvider(config: StorageProviderConfig): StoragePro
       break;
       
     case StorageProviderType.GCS:
-      // TODO: Implement GCS provider
-      throw new StorageError(
-        'Google Cloud Storage provider not yet implemented',
-        StorageErrorCode.CONFIGURATION_ERROR
-      );
+      provider = new GCSStorageProvider(config.config as unknown as GCSProviderConfig);
+      break;
       
     case StorageProviderType.GDRIVE:
-      // TODO: Implement Google Drive provider
-      throw new StorageError(
-        'Google Drive provider not yet implemented',
-        StorageErrorCode.CONFIGURATION_ERROR
-      );
+      provider = new GDriveStorageProvider(config.config as unknown as GDriveProviderConfig);
+      break;
       
     default:
       throw new StorageError(

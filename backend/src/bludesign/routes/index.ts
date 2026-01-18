@@ -11,6 +11,7 @@ import { bluDesignAssetDefinitionsRouter } from './asset-definitions.routes';
 import userFacilitiesRouter from './facilities.routes'; // User-based save/load system
 import { bluDesignThemesRouter } from './themes.routes';
 import { bluDesignSkinsRouter } from './skins.routes';
+import { storageRouter } from './storage.routes';
 
 const router = Router();
 
@@ -29,6 +30,9 @@ router.use('/projects', bluDesignProjectsRouter);
 
 // Project-specific asset routes
 router.use('/projects/:projectId/assets', bluDesignAssetsRouter);
+
+// Storage provider routes (OAuth, testing, etc.)
+router.use('/storage', storageRouter);
 
 export { router as bluDesignRouter };
 
