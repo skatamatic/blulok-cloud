@@ -545,7 +545,8 @@ export class GCSStorageProvider implements StorageProvider {
       
       for (const file of files) {
         const [metadata] = await file.getMetadata();
-        totalSize += parseInt(metadata.size || '0', 10);
+        const size = metadata.size;
+        totalSize += typeof size === 'number' ? size : parseInt(String(size || '0'), 10);
       }
       
       return totalSize;

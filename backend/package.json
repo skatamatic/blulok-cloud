@@ -33,7 +33,7 @@
     "ws:e2e": "node scripts/ws-gateway-e2e.js"
   },
   "dependencies": {
-    "@google-cloud/storage": "^6.15.0",
+    "@google-cloud/storage": "^7.18.0",
     "@types/uuid": "^8.3.4",
     "@types/ws": "^8.18.1",
     "archiver": "^7.0.1",

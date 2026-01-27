@@ -13,6 +13,7 @@ class NoopTransport implements GatewayTransport {
   initialize(_server: HTTPServer): void { /* noop */ }
   broadcast(_payload: any): void { /* noop */ }
   unicastToFacility(_facilityId: string, _payload: any): void { /* noop */ }
+  shutdown(): void { /* noop */ }
 }
 
 /**
@@ -117,6 +118,16 @@ export class GatewayEventsService {
       }
     }
     return { connected: false };
+  }
+
+  /**
+   * Shutdown the gateway events service and cleanup resources.
+   * Stops heartbeat timers and closes all connections.
+   */
+  public shutdown(): void {
+    if (this.transport && typeof this.transport.shutdown === 'function') {
+      this.transport.shutdown();
+    }
   }
 }
 

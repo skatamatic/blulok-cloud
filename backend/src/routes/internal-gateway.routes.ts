@@ -40,12 +40,12 @@ router.get('/time-sync', authenticateToken, requireFacilityAdmin, asyncHandler(a
 // POST /api/v1/internal/gateway/request-time-sync
 const startupSchema = Joi.object({ lock_id: Joi.string().required() });
 router.post('/request-time-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error } = startupSchema.validate(req.body);
+  const { error, value } = startupSchema.validate(req.body);
   if (error) {
     res.status(400).json({ success: false, message: error.message });
     return;
   }
-  const pkt = await TimeSyncService.buildSecureTimeSync();
+  const pkt = await TimeSyncService.buildSecureTimeSync(undefined, value.lock_id);
   res.json({ success: true, ...pkt });
 }));
 

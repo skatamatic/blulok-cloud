@@ -319,7 +319,7 @@ describe('GCSStorageProvider', () => {
       await provider.saveFacilityManifest('project-1', 'facility-1', manifest);
       
       expect(mockFile.save).toHaveBeenCalledWith(
-        expect.stringContaining('manifest.json'),
+        expect.stringContaining('"id": "facility-1"'), // JSON stringified manifest data (with space after colon)
         expect.objectContaining({
           metadata: expect.objectContaining({
             contentType: 'application/json',
@@ -378,8 +378,12 @@ describe('GCSStorageProvider', () => {
       await provider.initializeProject('project-1');
       
       expect(mockFile.save).toHaveBeenCalledWith(
-        expect.stringContaining('project.json'),
-        expect.anything()
+        expect.stringContaining('"projectId": "project-1"'), // JSON stringified metadata (note: space after colon)
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            contentType: 'application/json',
+          }),
+        })
       );
     });
 
@@ -394,16 +398,22 @@ describe('GCSStorageProvider', () => {
     });
 
     it('should calculate project storage usage', async () => {
-      const mockFiles = [
-        { name: 'projects/project-1/file1.glb' },
-        { name: 'projects/project-1/file2.png' },
-      ];
+      const mockFile1 = {
+        name: 'projects/project-1/file1.glb',
+        getMetadata: jest.fn().mockResolvedValue([{ size: '1024' }]),
+      };
+      const mockFile2 = {
+        name: 'projects/project-1/file2.png',
+        getMetadata: jest.fn().mockResolvedValue([{ size: '2048' }]),
+      };
+      const mockFiles = [mockFile1, mockFile2];
       mockBucket.getFiles.mockResolvedValue([mockFiles]);
-      mockFile.getMetadata.mockResolvedValue([{ size: '1024' }]);
 
       const usage = await provider.getProjectStorageUsage('project-1');
       
       expect(usage).toBeGreaterThan(0);
+      expect(mockFile1.getMetadata).toHaveBeenCalled();
+      expect(mockFile2.getMetadata).toHaveBeenCalled();
     });
   });
 

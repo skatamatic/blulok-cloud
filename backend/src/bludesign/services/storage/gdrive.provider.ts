@@ -6,7 +6,7 @@
  */
 
 import { google } from 'googleapis';
-import { drive_v3, OAuth2Client } from 'googleapis';
+import { drive_v3 } from 'googleapis';
 import { Readable } from 'stream';
 import archiver from 'archiver';
 import unzipper from 'unzipper';
@@ -30,12 +30,12 @@ interface DriveFile {
   id: string;
   name: string;
   mimeType: string;
-  size?: string;
+  size?: string | null;
 }
 
 export class GDriveStorageProvider implements StorageProvider {
   readonly type = StorageProviderType.GDRIVE;
-  private oauth2Client: OAuth2Client;
+  private oauth2Client: InstanceType<typeof google.auth.OAuth2>;
   private drive: drive_v3.Drive;
   private config: GDriveProviderConfig;
   private rootFolderId: string;
@@ -284,7 +284,7 @@ export class GDriveStorageProvider implements StorageProvider {
         id: response.data.id!,
         name: response.data.name!,
         mimeType: response.data.mimeType!,
-        size: response.data.size,
+        size: response.data.size ?? undefined,
       };
     } catch (error: any) {
       if (error.code === 429) {
@@ -329,7 +329,7 @@ export class GDriveStorageProvider implements StorageProvider {
         id: createResponse.data.id!,
         name: createResponse.data.name!,
         mimeType: createResponse.data.mimeType!,
-        size: createResponse.data.size,
+        size: createResponse.data.size ?? undefined,
       };
     } catch (error: any) {
       if (error.code === 429) {
@@ -421,7 +421,7 @@ export class GDriveStorageProvider implements StorageProvider {
         id: file.id!,
         name: file.name!,
         mimeType: file.mimeType!,
-        size: file.size,
+        size: file.size ?? undefined,
       }));
     } catch (error: any) {
       if (error.code === 429) {

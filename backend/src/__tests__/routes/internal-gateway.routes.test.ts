@@ -1,6 +1,8 @@
 import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData } from '@/__tests__/utils/mock-test-helpers';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { TimeSyncJwtPayload } from '@/types/gateway.types';
 
 // Avoid DB persistence during time-sync in route tests
 jest.mock('@/services/database.service', () => ({
@@ -86,6 +88,36 @@ describe('Internal Gateway Routes', () => {
       .send({ lock_id: 'lock-1' })
       .expect(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it('POST /api/v1/internal/gateway/request-time-sync includes lock_id in returned JWT', async () => {
+    const lockId = 'lock-test-123';
+    const res = await request(app)
+      .post('/api/v1/internal/gateway/request-time-sync')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .send({ lock_id: lockId })
+      .expect(200);
+    
+    expect(res.body.success).toBe(true);
+    expect(typeof res.body.timeSyncJwt).toBe('string');
+
+    const claims = await Ed25519Service.verifyJwt(res.body.timeSyncJwt) as TimeSyncJwtPayload;
+    expect(claims.cmd_type).toBe('SECURE_TIME_SYNC');
+    expect(claims.iss).toBe('BluCloud:Root');
+    expect(claims.lock_id).toBe(lockId);
+    expect(typeof claims.ts).toBe('number');
+  });
+
+  it('POST /api/v1/internal/gateway/request-time-sync JWT payload contains lock_id matching request body', async () => {
+    const lockId = 'lock-abc-456';
+    const res = await request(app)
+      .post('/api/v1/internal/gateway/request-time-sync')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .send({ lock_id: lockId })
+      .expect(200);
+    
+    const claims = await Ed25519Service.verifyJwt(res.body.timeSyncJwt) as TimeSyncJwtPayload;
+    expect(claims.lock_id).toBe(lockId);
   });
 
   it('POST /api/v1/internal/gateway/fallback-pass validates body', async () => {

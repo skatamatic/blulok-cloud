@@ -20,11 +20,22 @@ jest.mock('googleapis', () => {
     },
   };
 
+  // Create mutable credentials object
+  const credentials = {
+    access_token: 'mock-access-token',
+    refresh_token: 'mock-refresh-token',
+  };
+
   const mockOAuth2Client = {
-    setCredentials: jest.fn(),
+    setCredentials: jest.fn().mockImplementation((creds) => {
+      Object.assign(credentials, creds);
+    }),
     refreshAccessToken: jest.fn(),
     generateAuthUrl: jest.fn(),
     getToken: jest.fn(),
+    get credentials() {
+      return credentials;
+    },
   };
 
   return {
@@ -90,6 +101,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
 
       await provider.initialize();
@@ -134,6 +146,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'invalid-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
 
       await expect(provider.initialize()).rejects.toThrow(StorageError);
@@ -147,6 +160,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
 
       const isHealthy = await provider.healthCheck();
@@ -161,6 +175,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
 
       const isHealthy = await provider.healthCheck();
@@ -175,6 +190,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
 
       // Simulate expired token
@@ -212,6 +228,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
     });
 
@@ -294,16 +311,25 @@ describe('GDriveStorageProvider', () => {
     });
 
     it('should retry on rate limit error', async () => {
+      // Mock all the folder resolution calls first (getProjectFolder, getAssetFolder)
+      // These happen before the actual listFiles call
       mockDrive.files.list
-        .mockRejectedValueOnce({ code: 429 })
-        .mockResolvedValueOnce({
+        // Folder resolution calls (projects, project-1, assets, asset-1)
+        .mockResolvedValueOnce({ data: { files: [] } }) // projects folder check
+        .mockResolvedValueOnce({ data: { files: [] } }) // project-1 folder check
+        .mockResolvedValueOnce({ data: { files: [] } }) // assets folder check
+        .mockResolvedValueOnce({ data: { files: [] } }) // asset-1 folder check
+        // Now the actual listFiles call that should retry on rate limit
+        .mockRejectedValueOnce({ code: 429 }) // First attempt fails with rate limit
+        .mockResolvedValueOnce({ // Retry succeeds
           data: { files: [] },
         });
 
       const files = await provider.listAssetFiles('project-1', 'asset-1');
       
       expect(files).toEqual([]);
-      expect(mockDrive.files.list).toHaveBeenCalledTimes(2);
+      // Should be called 6 times: 4 for folder resolution + 2 for the retry
+      expect(mockDrive.files.list).toHaveBeenCalledTimes(6);
     });
   });
 
@@ -314,6 +340,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
     });
 
@@ -359,6 +386,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
     });
 
@@ -405,6 +433,7 @@ describe('GDriveStorageProvider', () => {
         clientSecret: 'test-client-secret',
         rootFolderId: 'root-folder-id',
         refreshToken: 'refresh-token',
+        accessToken: 'test-access-token', // Provide accessToken so credentials are set
       });
     });
 

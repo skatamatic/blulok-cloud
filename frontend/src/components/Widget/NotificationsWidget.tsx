@@ -47,9 +47,11 @@ interface NotificationsWidgetProps {
 const transformAccessLogToNotification = (log: AccessLog): Notification | null => {
   // Only create notifications for significant events
   const isScheduleViolation = log.action === 'schedule_violation';
+  const isManualOverride = log.action === 'manual_override';
   
   // Skip successful routine operations - they are not notification-worthy
-  if (log.success && !isScheduleViolation && !['manual_override', 'emergency'].includes(log.method)) {
+  // Exception: manual_override actions and emergency methods should always create notifications
+  if (log.success && !isScheduleViolation && !isManualOverride && !['manual_override', 'emergency'].includes(log.method)) {
     return null;
   }
 

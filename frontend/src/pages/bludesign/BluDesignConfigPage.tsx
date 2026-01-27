@@ -11,7 +11,6 @@ import {
   Cog6ToothIcon,
   CloudIcon,
   LinkIcon,
-  ServerIcon,
   FolderIcon,
   CheckCircleIcon,
   ExclamationCircleIcon,

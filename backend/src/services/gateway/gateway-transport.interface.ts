@@ -21,6 +21,12 @@ export interface GatewayTransport {
    * Send a message to the gateway connected for a specific facility.
    */
   unicastToFacility(facilityId: string, payload: any): void;
+
+  /**
+   * Shutdown the transport and cleanup resources.
+   * Optional method for graceful shutdown.
+   */
+  shutdown?(): void;
 }
 
 

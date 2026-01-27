@@ -82,12 +82,18 @@ export class Ed25519Service {
    * Uses consistent format with other command JWTs (iss, iat, cmd_type).
    * 
    * @param ts - Unix timestamp to synchronize
+   * @param lockId - Optional lock identifier for lock-specific time synchronization
    * @returns Promise resolving to signed JWT string
    */
-  public static async signTimeSyncJwt(ts: number): Promise<string> {
+  public static async signTimeSyncJwt(ts: number, lockId?: string): Promise<string> {
     const privateKey = await this.getOpsPrivateKey();
     const now = Math.floor(Date.now() / 1000);
-    const payload = { iss: 'BluCloud:Root', cmd_type: 'SECURE_TIME_SYNC', ts };
+    const payload: { iss: 'BluCloud:Root'; cmd_type: 'SECURE_TIME_SYNC'; ts: number; lock_id?: string } = {
+      iss: 'BluCloud:Root',
+      cmd_type: 'SECURE_TIME_SYNC',
+      ts,
+      ...(lockId ? { lock_id: lockId } : {}),
+    };
     return await new SignJWT(payload as any)
       .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
       .setIssuedAt(now)

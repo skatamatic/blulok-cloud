@@ -24,11 +24,8 @@ jest.mock('@/contexts/AuthContext', () => ({
         firstName: 'Test',
         lastName: 'User',
         role: 'admin' as const,
-        facilities: [
-          { id: 'facility-1', name: 'Downtown Storage' },
-          { id: 'facility-2', name: 'Warehouse District' },
-          { id: 'facility-3', name: 'Airport Facility' },
-        ]
+        facilityIds: ['facility-1', 'facility-2', 'facility-3'],
+        facilityNames: ['Downtown Storage', 'Warehouse District', 'Airport Facility'],
       },
       isAuthenticated: true,
     },
@@ -41,8 +38,11 @@ jest.mock('@/contexts/AuthContext', () => ({
 // Mock framer-motion to avoid animation issues in tests
 jest.mock('framer-motion', () => ({
   motion: {
-    div: ({ children, ...props }: React.PropsWithChildren<object>) => <div {...props}>{children}</div>,
+    div: ({ children, initial, animate, transition, ...props }: React.PropsWithChildren<any>) => (
+      <div {...props}>{children}</div>
+    ),
   },
+  AnimatePresence: ({ children }: React.PropsWithChildren<object>) => <>{children}</>,
 }));
 
 const renderWithProviders = (component: React.ReactElement) => {
@@ -74,6 +74,11 @@ describe('HistogramWidget', () => {
     mockGetActivityStats.mockResolvedValue(mockActivityStats);
   });
 
+  afterEach(() => {
+    // Ensure all pending promises are resolved
+    jest.runOnlyPendingTimers();
+  });
+
   describe('Basic Rendering', () => {
     it('renders with default props', async () => {
       renderWithProviders(
@@ -83,14 +88,28 @@ describe('HistogramWidget', () => {
       expect(screen.getByText('Activity Histogram')).toBeInTheDocument();
     });
 
-    it('displays loading state initially', () => {
-      mockGetActivityStats.mockImplementation(() => new Promise(() => {}));
+    it('displays loading state initially', async () => {
+      // Create a promise that resolves after a delay to test loading state
+      let resolvePromise: (value: any) => void;
+      const hangingPromise = new Promise((resolve) => {
+        resolvePromise = resolve;
+      });
+      mockGetActivityStats.mockImplementation(() => hangingPromise);
       
       renderWithProviders(
         <HistogramWidget id="test-widget" title="Activity Histogram" />
       );
       
+      // Should show loading state
       expect(screen.getByText('Loading activity data...')).toBeInTheDocument();
+      
+      // Resolve the promise to prevent hanging
+      resolvePromise!(mockActivityStats);
+      
+      // Wait for the component to update
+      await waitFor(() => {
+        expect(screen.queryByText('Loading activity data...')).not.toBeInTheDocument();
+      }, { timeout: 2000 });
     });
 
     it('calls API on mount with default period', async () => {

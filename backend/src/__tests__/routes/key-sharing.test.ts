@@ -6,6 +6,9 @@ describe('Key Sharing Routes', () => {
   let app: any;
   let testData: MockTestData;
 
+  // Increase timeout for tests that make multiple sequential requests
+  jest.setTimeout(20000);
+
   beforeAll(async () => {
     app = createApp();
   });

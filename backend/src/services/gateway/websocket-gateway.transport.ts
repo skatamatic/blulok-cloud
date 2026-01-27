@@ -42,7 +42,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   // - inactivityTimeoutMs: maximum allowed silence (no messages or PONG) before we close
   private readonly pingIntervalMs = (Number(process.env.GATEWAY_PING_INTERVAL_SEC) || 10) * 1000;
   private readonly inactivityTimeoutMs = (Number(process.env.GATEWAY_PONG_TIMEOUT_SEC) || 20) * 1000;
-  private heartbeatTimer?: NodeJS.Timer;
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
 
   public initialize(server: HTTPServer): void {
     if (this.wss) return;
@@ -123,6 +123,38 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     } else {
       logger.warn(`Gateway socket not open for facility ${facilityId}`);
     }
+  }
+
+  /**
+   * Safely extract tid (transaction ID) from request body.
+   * Preserves type (number or string) from request.
+   * 
+   * @param body - Request body (any type)
+   * @returns tid if present (number or string), undefined otherwise
+   */
+  private extractTid(body: any): number | string | undefined {
+    if (body && typeof body === 'object' && body !== null && 'tid' in body) {
+      const tid = body.tid;
+      if (typeof tid === 'number' || typeof tid === 'string') {
+        return tid;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Merge tid into response body while preserving response type.
+   * Only adds tid if it's defined.
+   * 
+   * @param responseBody - Original response body
+   * @param tid - Transaction ID to merge (number, string, or undefined)
+   * @returns Response body with tid added if provided
+   */
+  private mergeTidIntoResponse<T>(responseBody: T, tid: number | string | undefined): T & { tid?: number | string } {
+    if (tid !== undefined) {
+      return { ...responseBody, tid } as T & { tid: number | string };
+    }
+    return responseBody as T & { tid?: number | string };
   }
 
   private bindConnection(ws: RemoteWebSocket): void {
@@ -264,14 +296,17 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         const headers = (msg?.headers || {}) as Record<string, string>;
         const query = msg?.query || undefined;
         const body = msg?.body || undefined;
+        const tid = this.extractTid(body);
         try {
           const response = await this.proxyHttp(authed, { method, path, headers, query, body });
-          safeSend(ws, { type: 'PROXY_RESPONSE', id, status: response.status, headers: response.headers, body: response.data });
+          const responseBody = this.mergeTidIntoResponse(response.data, tid);
+          safeSend(ws, { type: 'PROXY_RESPONSE', id, status: response.status, headers: response.headers, body: responseBody });
         } catch (e: any) {
           const status = e?.response?.status || 500;
           const data = e?.response?.data || { error: 'Proxy failed' };
+          const errorBody = this.mergeTidIntoResponse(data, tid);
           logger.warn(`Gateway WS proxy error facility=${authed.facilityId} user=${authed.user.userId} method=${method} path=${path} status=${status}`);
-          safeSend(ws, { type: 'PROXY_RESPONSE', id, status, body: data });
+          safeSend(ws, { type: 'PROXY_RESPONSE', id, status, body: errorBody });
         }
         return;
       }
@@ -322,6 +357,30 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         }
       }
     }, this.pingIntervalMs);
+  }
+
+  /**
+   * Shutdown the transport and cleanup resources.
+   * Stops heartbeat timer and closes all connections.
+   */
+  public shutdown(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    // Close all WebSocket connections
+    for (const client of this.facilityToClient.values()) {
+      try {
+        if (client.ws.readyState === WebSocket.OPEN) {
+          client.ws.close();
+        }
+      } catch {}
+    }
+    this.facilityToClient.clear();
+    if (this.wss) {
+      this.wss.close();
+      this.wss = undefined;
+    }
   }
 
   private async proxyHttp(authed: AuthedClient, req: { method: string; path: string; headers?: Record<string, string>; query?: any; body?: any }) {

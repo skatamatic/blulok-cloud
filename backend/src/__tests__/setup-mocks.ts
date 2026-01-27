@@ -1906,6 +1906,108 @@ jest.mock('../utils/logger', () => ({
   },
 }));
 
+// Mock @google-cloud/storage to prevent blocking during test discovery
+// This MUST be hoisted and applied before any module imports the Storage class
+jest.mock('@google-cloud/storage', () => {
+  const mockFile = {
+    exists: jest.fn().mockResolvedValue([false]),
+    save: jest.fn().mockResolvedValue(undefined),
+    download: jest.fn().mockResolvedValue([Buffer.from('test')]),
+    delete: jest.fn().mockResolvedValue(undefined),
+    getMetadata: jest.fn().mockResolvedValue([{ size: '1024' }]),
+    getSignedUrl: jest.fn().mockResolvedValue(['https://signed-url.example.com/file']),
+  };
+
+  const mockBucket = {
+    exists: jest.fn().mockResolvedValue([true]),
+    file: jest.fn().mockReturnValue(mockFile),
+    getFiles: jest.fn().mockResolvedValue([[]]),
+  };
+
+  // Return a factory function that returns the mock storage instance
+  const MockStorage = jest.fn().mockImplementation(() => ({
+    bucket: jest.fn().mockReturnValue(mockBucket),
+  }));
+
+  return {
+    Storage: MockStorage,
+    Bucket: jest.fn(),
+    File: jest.fn(),
+    __mockBucket: mockBucket,
+    __mockFile: mockFile,
+  };
+});
+
+// Mock googleapis to prevent blocking during test discovery
+// This MUST be hoisted and applied before any module imports googleapis
+// Note: Test-specific mocks can override this, but this ensures no blocking during discovery
+jest.mock('googleapis', () => {
+  // Create a mutable credentials object that can be updated by setCredentials
+  const credentials = {
+    access_token: 'mock-access-token',
+    refresh_token: 'mock-refresh-token',
+  };
+
+  const mockOAuth2Client = {
+    setCredentials: jest.fn().mockImplementation((creds) => {
+      Object.assign(credentials, creds);
+    }),
+    getAccessToken: jest.fn().mockResolvedValue({ token: 'mock-token' }),
+    refreshAccessToken: jest.fn().mockResolvedValue({
+      credentials: {
+        access_token: 'new-mock-access-token',
+        refresh_token: 'new-mock-refresh-token',
+      },
+    }),
+    generateAuthUrl: jest.fn().mockReturnValue('https://auth-url.example.com'),
+    getToken: jest.fn().mockResolvedValue({
+      tokens: {
+        access_token: 'mock-access-token',
+        refresh_token: 'mock-refresh-token',
+      },
+    }),
+    get credentials() {
+      return credentials;
+    },
+  };
+
+  // Factory function for OAuth2 that returns the mock client
+  const MockOAuth2 = jest.fn().mockImplementation(() => mockOAuth2Client);
+
+  const mockDrive = {
+    files: {
+      list: jest.fn().mockResolvedValue({ data: { files: [] } }),
+      get: jest.fn().mockResolvedValue({
+        data: {
+          id: 'file-id',
+          name: 'test-file',
+          mimeType: 'application/vnd.google-apps.folder',
+        },
+      }),
+      create: jest.fn().mockResolvedValue({ data: { id: 'new-file-id' } }),
+      delete: jest.fn().mockResolvedValue(undefined),
+      update: jest.fn().mockResolvedValue({ data: { id: 'updated-file-id' } }),
+    },
+    permissions: {
+      create: jest.fn().mockResolvedValue({ data: {} }),
+    },
+  };
+
+  // Factory function for drive that returns the mock drive instance
+  const MockDrive = jest.fn().mockReturnValue(mockDrive);
+
+  return {
+    google: {
+      auth: {
+        OAuth2: MockOAuth2,
+      },
+      drive: MockDrive,
+    },
+    __mockOAuth2Client: mockOAuth2Client,
+    __mockDrive: mockDrive,
+  };
+});
+
 // Global test setup
 beforeEach(() => {
   resetMocks();

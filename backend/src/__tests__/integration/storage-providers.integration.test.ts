@@ -35,9 +35,9 @@ describe('Storage Provider Integration Tests', () => {
       const filePath = await provider.uploadAssetFile(
         TEST_PROJECT_ID,
         TEST_ASSET_ID,
-        'test.txt',
+        'test.json',
         testData,
-        'text/plain'
+        'application/json'
       );
       expect(filePath).toBeDefined();
 
@@ -45,18 +45,18 @@ describe('Storage Provider Integration Tests', () => {
       const downloaded = await provider.downloadAssetFile(
         TEST_PROJECT_ID,
         TEST_ASSET_ID,
-        'test.txt'
+        'test.json'
       );
       expect(downloaded.toString()).toBe('test content');
 
       // List files
       const files = await provider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
-      expect(files).toContain('test.txt');
+      expect(files).toContain('test.json');
 
       // Delete files
       await provider.deleteAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
       const filesAfterDelete = await provider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
-      expect(filesAfterDelete).not.toContain('test.txt');
+      expect(filesAfterDelete).not.toContain('test.json');
 
       // Cleanup
       await provider.deleteProject(TEST_PROJECT_ID);
@@ -87,9 +87,9 @@ describe('Storage Provider Integration Tests', () => {
       const filePath = await provider.uploadAssetFile(
         TEST_PROJECT_ID,
         TEST_ASSET_ID,
-        'test.txt',
+        'test.json',
         testData,
-        'text/plain'
+        'application/json'
       );
       expect(filePath).toBeDefined();
 
@@ -97,18 +97,18 @@ describe('Storage Provider Integration Tests', () => {
       const downloaded = await provider.downloadAssetFile(
         TEST_PROJECT_ID,
         TEST_ASSET_ID,
-        'test.txt'
+        'test.json'
       );
       expect(downloaded.toString()).toBe('test content');
 
       // List files
       const files = await provider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
-      expect(files).toContain('test.txt');
+      expect(files).toContain('test.json');
 
       // Generate signed URL
       const signedUrl = await provider.getSignedUrl(
         TEST_PROJECT_ID,
-        `assets/${TEST_ASSET_ID}/test.txt`,
+        `assets/${TEST_ASSET_ID}/test.json`,
         3600
       );
       expect(signedUrl).toBeDefined();
@@ -117,7 +117,7 @@ describe('Storage Provider Integration Tests', () => {
       // Delete files
       await provider.deleteAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
       const filesAfterDelete = await provider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
-      expect(filesAfterDelete).not.toContain('test.txt');
+      expect(filesAfterDelete).not.toContain('test.json');
 
       // Cleanup
       await provider.deleteProject(TEST_PROJECT_ID);
@@ -148,9 +148,9 @@ describe('Storage Provider Integration Tests', () => {
       const fileId = await provider.uploadAssetFile(
         TEST_PROJECT_ID,
         TEST_ASSET_ID,
-        'test.txt',
+        'test.json',
         testData,
-        'text/plain'
+        'application/json'
       );
       expect(fileId).toBeDefined();
 
@@ -158,18 +158,18 @@ describe('Storage Provider Integration Tests', () => {
       const downloaded = await provider.downloadAssetFile(
         TEST_PROJECT_ID,
         TEST_ASSET_ID,
-        'test.txt'
+        'test.json'
       );
       expect(downloaded.toString()).toBe('test content');
 
       // List files
       const files = await provider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
-      expect(files).toContain('test.txt');
+      expect(files).toContain('test.json');
 
       // Delete files
       await provider.deleteAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
       const filesAfterDelete = await provider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
-      expect(filesAfterDelete).not.toContain('test.txt');
+      expect(filesAfterDelete).not.toContain('test.json');
 
       // Cleanup
       await provider.deleteProject(TEST_PROJECT_ID);
@@ -194,9 +194,9 @@ describe('Storage Provider Integration Tests', () => {
       await localProvider.uploadAssetFile(
         TEST_PROJECT_ID,
         TEST_ASSET_ID,
-        'test.txt',
+        'test.json',
         testData,
-        'text/plain'
+        'application/json'
       );
 
       // Switch to GCS (if configured)
@@ -219,19 +219,19 @@ describe('Storage Provider Integration Tests', () => {
         await gcsProvider.uploadAssetFile(
           TEST_PROJECT_ID,
           TEST_ASSET_ID,
-          'test-gcs.txt',
+          'test-gcs.json',
           gcsData,
-          'text/plain'
+          'application/json'
         );
 
         // Verify files are in different providers
         const localFiles = await localProvider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
         const gcsFiles = await gcsProvider.listAssetFiles(TEST_PROJECT_ID, TEST_ASSET_ID);
 
-        expect(localFiles).toContain('test.txt');
-        expect(localFiles).not.toContain('test-gcs.txt');
-        expect(gcsFiles).toContain('test-gcs.txt');
-        expect(gcsFiles).not.toContain('test.txt');
+        expect(localFiles).toContain('test.json');
+        expect(localFiles).not.toContain('test-gcs.json');
+        expect(gcsFiles).toContain('test-gcs.json');
+        expect(gcsFiles).not.toContain('test.json');
 
         // Cleanup
         await gcsProvider.deleteProject(TEST_PROJECT_ID);

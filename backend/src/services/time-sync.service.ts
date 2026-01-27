@@ -25,7 +25,7 @@ export class TimeSyncService {
   // In-memory cache of last issued timestamp for performance
   private static lastIssuedTs = 0;
 
-  public static async buildSecureTimeSync(ts?: number): Promise<{ timeSyncJwt: string }> {
+  public static async buildSecureTimeSync(ts?: number, lockId?: string): Promise<{ timeSyncJwt: string }> {
     const timestamp = ts ?? Math.floor(Date.now() / 1000);
     let effective = Math.max(timestamp, this.lastIssuedTs);
     try {
@@ -43,7 +43,7 @@ export class TimeSyncService {
       logger.error('Failed to persist last_time_sync_ts. Proceeding with in-memory monotonicity only.', error as any);
     }
     this.lastIssuedTs = effective;
-    const jwt = await Ed25519Service.signTimeSyncJwt(effective);
+    const jwt = await Ed25519Service.signTimeSyncJwt(effective, lockId);
     return { timeSyncJwt: jwt };
   }
 }

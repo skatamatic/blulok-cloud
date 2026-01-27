@@ -2,7 +2,7 @@
  * Simplified tests for StorageLockerWizard - focusing on key functionality
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StorageLockerWizard } from '@/components/bludesign/ui/dialogs/StorageLockerWizard';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { AssetService } from '@/components/bludesign/services/AssetService';
@@ -10,6 +10,16 @@ import { GRID_UNIT_METERS, feetToMeters, metersToGridUnits } from '@/components/
 
 // Mock AssetService
 jest.mock('@/components/bludesign/services/AssetService');
+
+// Mock framer-motion to avoid animation issues in tests
+jest.mock('framer-motion', () => ({
+  motion: {
+    div: ({ children, initial, animate, exit, transition, ...props }: React.PropsWithChildren<any>) => (
+      <div {...props}>{children}</div>
+    ),
+  },
+  AnimatePresence: ({ children }: React.PropsWithChildren) => <>{children}</>,
+}));
 
 // Mock 3D components to avoid Three.js in tests
 jest.mock('@/components/bludesign/ui/dialogs/LockerPreview3D', () => ({
@@ -49,21 +59,32 @@ describe('StorageLockerWizard - Basic Tests', () => {
       expect(screen.getByText('Create Storage Locker')).toBeInTheDocument();
     });
 
-    it('should show 3D preview', () => {
+    it('should show 3D preview after mode selection', async () => {
       renderWithProviders(
         <StorageLockerWizard onSave={mockOnSave} onClose={mockOnClose} />
       );
 
-      expect(screen.getByTestId('locker-preview')).toBeInTheDocument();
+      // Initially, preview should not be visible (we're on modeSelect step)
+      expect(screen.queryByTestId('locker-preview')).not.toBeInTheDocument();
+
+      // Select a mode to proceed to the next step where preview is shown
+      const buildButton = screen.getByRole('button', { name: /Build from Dimensions/i });
+      fireEvent.click(buildButton);
+
+      // Now the preview should be visible
+      await waitFor(() => {
+        expect(screen.getByTestId('locker-preview')).toBeInTheDocument();
+      });
     });
 
-    it('should have mode toggle buttons', () => {
+    it('should have mode selection buttons', () => {
       renderWithProviders(
         <StorageLockerWizard onSave={mockOnSave} onClose={mockOnClose} />
       );
 
-      expect(screen.getByRole('button', { name: /geometry/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /upload/i })).toBeInTheDocument();
+      // Check for the mode selection buttons (not toggle buttons)
+      expect(screen.getByRole('button', { name: /Build from Dimensions/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Upload 3D Model/i })).toBeInTheDocument();
     });
   });
 

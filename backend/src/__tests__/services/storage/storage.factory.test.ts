@@ -11,10 +11,30 @@ import {
 import { StorageProviderType } from '@/bludesign/types/bludesign.types';
 import { StorageError } from '@/bludesign/services/storage/storage-provider.interface';
 
-// Mock providers
-jest.mock('@/bludesign/services/storage/local.provider');
-jest.mock('@/bludesign/services/storage/gcs.provider');
-jest.mock('@/bludesign/services/storage/gdrive.provider');
+// Mock providers to preserve type property
+jest.mock('@/bludesign/services/storage/local.provider', () => ({
+  LocalStorageProvider: jest.fn().mockImplementation(() => ({
+    type: StorageProviderType.LOCAL,
+    initialize: jest.fn().mockResolvedValue(undefined),
+    healthCheck: jest.fn().mockResolvedValue(true),
+  })),
+}));
+
+jest.mock('@/bludesign/services/storage/gcs.provider', () => ({
+  GCSStorageProvider: jest.fn().mockImplementation(() => ({
+    type: StorageProviderType.GCS,
+    initialize: jest.fn().mockResolvedValue(undefined),
+    healthCheck: jest.fn().mockResolvedValue(true),
+  })),
+}));
+
+jest.mock('@/bludesign/services/storage/gdrive.provider', () => ({
+  GDriveStorageProvider: jest.fn().mockImplementation(() => ({
+    type: StorageProviderType.GDRIVE,
+    initialize: jest.fn().mockResolvedValue(undefined),
+    healthCheck: jest.fn().mockResolvedValue(true),
+  })),
+}));
 
 describe('Storage Factory', () => {
   beforeEach(() => {

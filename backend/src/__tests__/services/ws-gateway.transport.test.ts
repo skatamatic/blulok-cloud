@@ -40,6 +40,8 @@ describe('WebsocketGatewayTransport', () => {
   });
 
   afterAll((done) => {
+    // Shutdown gateway transport to stop heartbeat timer
+    GatewayEventsService.getInstance().shutdown();
     server.close(() => done());
   });
 
@@ -114,6 +116,202 @@ describe('WebsocketGatewayTransport', () => {
 
     expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.close();
+  });
+
+  describe('tid passthrough', () => {
+    it('PROXY_REQUEST with tid in body returns tid in PROXY_RESPONSE body', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      const reqId = 'test-tid-1';
+      const tid = 12345;
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqId,
+        method: 'GET',
+        path: '/auth/verify-token',
+        body: { tid },
+      }));
+      const resp = await waitForMessage(ws);
+      expect(resp?.type).toBe('PROXY_RESPONSE');
+      expect(resp?.id).toBe(reqId);
+      expect(resp?.status).toBe(200);
+      expect(resp?.body?.tid).toBe(tid);
+      expect(resp?.body?.success).toBe(true);
+      ws.close();
+    });
+
+    it('PROXY_REQUEST without tid does not add tid to response (backward compatibility)', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      const reqId = 'test-tid-2';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqId,
+        method: 'GET',
+        path: '/auth/verify-token',
+      }));
+      const resp = await waitForMessage(ws);
+      expect(resp?.type).toBe('PROXY_RESPONSE');
+      expect(resp?.id).toBe(reqId);
+      expect(resp?.status).toBe(200);
+      expect(resp?.body?.tid).toBeUndefined();
+      expect(resp?.body?.success).toBe(true);
+      ws.close();
+    });
+
+    it('tid passthrough works with successful responses (200 status)', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      const reqId = 'test-tid-3';
+      const tid = 'abc-123';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqId,
+        method: 'GET',
+        path: '/auth/verify-token',
+        body: { tid },
+      }));
+      const resp = await waitForMessage(ws);
+      expect(resp?.status).toBe(200);
+      expect(resp?.body?.tid).toBe(tid);
+      ws.close();
+    });
+
+    it('tid passthrough works with error responses (4xx/5xx status)', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      const reqId = 'test-tid-4';
+      const tid = 999;
+      // Request a non-existent endpoint to trigger an error
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqId,
+        method: 'GET',
+        path: '/nonexistent-endpoint-xyz',
+        body: { tid },
+      }));
+      const resp = await waitForMessage(ws);
+      expect(resp?.type).toBe('PROXY_RESPONSE');
+      expect(resp?.id).toBe(reqId);
+      expect(resp?.status).toBeGreaterThanOrEqual(400);
+      expect(resp?.body?.tid).toBe(tid);
+      ws.close();
+    });
+
+    it('tid preserves type (number or string) from request', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      // Test with number tid
+      const reqId1 = 'test-tid-5';
+      const tidNumber = 12345;
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqId1,
+        method: 'GET',
+        path: '/auth/verify-token',
+        body: { tid: tidNumber },
+      }));
+      const resp1 = await waitForMessage(ws);
+      expect(resp1?.body?.tid).toBe(tidNumber);
+      expect(typeof resp1?.body?.tid).toBe('number');
+
+      // Test with string tid
+      const reqId2 = 'test-tid-6';
+      const tidString = 'transaction-abc';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqId2,
+        method: 'GET',
+        path: '/auth/verify-token',
+        body: { tid: tidString },
+      }));
+      const resp2 = await waitForMessage(ws);
+      expect(resp2?.body?.tid).toBe(tidString);
+      expect(typeof resp2?.body?.tid).toBe('string');
+      ws.close();
+    });
+
+    it('tid works with different endpoint types (GET, POST, PUT)', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      const tid = 'multi-method-test';
+
+      // GET request
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: 'test-get',
+        method: 'GET',
+        path: '/auth/verify-token',
+        body: { tid },
+      }));
+      const respGet = await waitForMessage(ws);
+      expect(respGet?.body?.tid).toBe(tid);
+
+      // POST request
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: 'test-post',
+        method: 'POST',
+        path: '/auth/verify-token',
+        body: { tid, someData: 'test' },
+      }));
+      const respPost = await waitForMessage(ws);
+      expect(respPost?.body?.tid).toBe(tid);
+
+      // PUT request
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: 'test-put',
+        method: 'PUT',
+        path: '/auth/verify-token',
+        body: { tid, updateData: 'test' },
+      }));
+      const respPut = await waitForMessage(ws);
+      expect(respPut?.body?.tid).toBe(tid);
+      ws.close();
+    });
+
+    it('tid is merged into response body alongside existing data', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      const reqId = 'test-tid-7';
+      const tid = 'merge-test';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqId,
+        method: 'GET',
+        path: '/auth/verify-token',
+        body: { tid },
+      }));
+      const resp = await waitForMessage(ws);
+      expect(resp?.body?.tid).toBe(tid);
+      expect(resp?.body?.success).toBe(true);
+      // Verify that existing response fields are preserved
+      expect(resp?.body).toHaveProperty('success');
+      expect(resp?.body).toHaveProperty('tid');
+      ws.close();
+    });
   });
 });
 

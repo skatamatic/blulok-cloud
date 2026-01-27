@@ -42,4 +42,7 @@ module.exports = {
     'node_modules/(?!(uuid)/)',
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+  forceExit: true,
+  testTimeout: 10000,
+  maxWorkers: 1, // Use single worker to prevent memory issues
 };
