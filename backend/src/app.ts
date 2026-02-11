@@ -31,6 +31,9 @@ import { denylistRouter } from '@/routes/denylist.routes';
 import { routePassesRouter } from '@/routes/route-passes.routes';
 import { schedulesRouter } from '@/routes/schedules.routes';
 import { bluDesignRouter } from '@/bludesign';
+import { accessControlRouter } from '@/routes/access-control.routes';
+import { notificationsRouter } from '@/routes/notifications.routes';
+import { activityRouter } from '@/routes/activity.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -111,6 +114,11 @@ export function createApp(): Application {
     app.use('/api/v1/commands', commandsRouter);
     app.use('/api/v1/dev', authenticateToken, devRouter);
   app.use('/api/v1/system-settings', systemSettingsRouter);
+  
+  // Access control, notifications, and activity routes
+  app.use('/api/v1/access-control', accessControlRouter);
+  app.use('/api/v1/notifications', notificationsRouter);
+  app.use('/api/v1/activity', activityRouter);
   
   // BluDesign routes (isolated 3D facility design system)
   app.use('/api/v1/bludesign', bluDesignRouter);

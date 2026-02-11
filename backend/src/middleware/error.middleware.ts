@@ -76,6 +76,50 @@ export class AppError extends Error implements ApiError {
 }
 
 /**
+ * Access Denied Error (403)
+ * 
+ * Thrown when a user lacks permission to access a resource.
+ */
+export class AccessDeniedError extends AppError {
+  constructor(message: string = 'Access denied') {
+    super(message, 403);
+  }
+}
+
+/**
+ * Not Found Error (404)
+ * 
+ * Thrown when a requested resource does not exist.
+ */
+export class NotFoundError extends AppError {
+  constructor(resource: string = 'Resource') {
+    super(`${resource} not found`, 404);
+  }
+}
+
+/**
+ * Validation Error (400)
+ * 
+ * Thrown when input validation fails.
+ */
+export class ValidationError extends AppError {
+  constructor(message: string = 'Validation failed') {
+    super(message, 400);
+  }
+}
+
+/**
+ * Unauthorized Error (401)
+ * 
+ * Thrown when authentication is required but not provided.
+ */
+export class UnauthorizedError extends AppError {
+  constructor(message: string = 'Authentication required') {
+    super(message, 401);
+  }
+}
+
+/**
  * Global Error Handler Middleware
  *
  * Express error handling middleware that formats and logs all application errors.

@@ -165,6 +165,8 @@ export interface DeviceStateUpdate {
 }
 
 export interface DeviceWithContext extends BluLokDevice {
+  /** Facility ID (derived from gateway's facility) */
+  facility_id: string;
   unit_number: string | null; // Nullable for devices not yet assigned to units
   unit_type?: string | null;
   facility_name: string | null; // Nullable for devices without units (can get from gateway)
@@ -201,6 +203,8 @@ export interface DeviceFilters {
   gateway_id?: string;
   unit_id?: string;
   device_type?: 'access_control' | 'blulok' | 'all';
+  /** Filter access control devices by sub-type (door, gate, elevator) */
+  access_control_type?: 'door' | 'gate' | 'elevator';
   status?: string;
   search?: string;
   sortBy?: 'name' | 'unit_number' | 'facility_name' | 'gateway_name' | 'device_type' | 'status' | 'last_activity' | 'created_at';
@@ -209,9 +213,19 @@ export interface DeviceFilters {
   offset?: number;
 }
 
+// Valid columns for sorting access control devices
+const VALID_ACCESS_CONTROL_SORT_COLUMNS = ['name', 'device_type', 'status', 'last_activity', 'created_at'];
+
 export class DeviceModel {
   private db = DatabaseService.getInstance();
   private eventService = DeviceEventService.getInstance();
+
+  /**
+   * Escape LIKE pattern special characters to prevent SQL pattern injection
+   */
+  private escapeLikePattern(value: string): string {
+    return value.replace(/[%_\\]/g, '\\$&');
+  }
 
   /**
    * Safely parse JSON fields that may already be parsed objects or still be strings
@@ -250,18 +264,26 @@ export class DeviceModel {
       query = query.where('access_control_devices.gateway_id', filters.gateway_id);
     }
 
+    if (filters.access_control_type) {
+      query = query.where('access_control_devices.device_type', filters.access_control_type);
+    }
+
     if (filters.status) {
       query = query.where('access_control_devices.status', filters.status);
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function(this: any) {
-        this.where('access_control_devices.name', 'like', `%${filters.search}%`)
-            .orWhere('access_control_devices.location_description', 'like', `%${filters.search}%`);
+        this.where('access_control_devices.name', 'like', `%${escapedSearch}%`)
+            .orWhere('access_control_devices.location_description', 'like', `%${escapedSearch}%`);
       });
     }
 
-    const sortBy = filters.sortBy || 'name';
+    // Validate sortBy to prevent column injection
+    const sortBy = filters.sortBy && VALID_ACCESS_CONTROL_SORT_COLUMNS.includes(filters.sortBy) 
+      ? filters.sortBy 
+      : 'name';
     const sortOrder = filters.sortOrder || 'asc';
     query = query.orderBy(`access_control_devices.${sortBy}`, sortOrder);
 
@@ -309,9 +331,10 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function(this: any) {
-        this.where('units.unit_number', 'like', `%${filters.search}%`)
-            .orWhere('blulok_devices.device_serial', 'like', `%${filters.search}%`);
+        this.where('units.unit_number', 'like', `%${escapedSearch}%`)
+            .orWhere('blulok_devices.device_serial', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -404,6 +427,41 @@ export class DeviceModel {
   async findBluLokDeviceById(id: string): Promise<DeviceWithContext | null> {
     const results = await this.findBluLokDevices({ ...(undefined as any), id } as any);
     return results[0] || null;
+  }
+
+  /**
+   * Find an access control device by ID
+   */
+  async findAccessControlDeviceById(id: string): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('access_control_devices').where('id', id).first();
+    return device || null;
+  }
+
+  /**
+   * Find an access control device by ID with gateway info (single query, avoids N+1)
+   */
+  async findAccessControlDeviceWithGateway(id: string): Promise<(AccessControlDevice & { facility_id: string; gateway_name: string }) | null> {
+    const knex = this.db.connection;
+    const result = await knex('access_control_devices')
+      .select(
+        'access_control_devices.*',
+        'gateways.facility_id',
+        'gateways.name as gateway_name'
+      )
+      .leftJoin('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .where('access_control_devices.id', id)
+      .first();
+    return result || null;
+  }
+
+  /**
+   * Find a gateway by ID
+   */
+  async findGatewayById(id: string): Promise<{ id: string; facility_id: string; name: string } | null> {
+    const knex = this.db.connection;
+    const gateway = await knex('gateways').where('id', id).select('id', 'facility_id', 'name').first();
+    return gateway || null;
   }
 
   async createAccessControlDevice(data: CreateAccessControlDeviceData): Promise<AccessControlDevice> {
@@ -747,8 +805,8 @@ export class DeviceModel {
       query = query.where('access_control_devices.gateway_id', filters.gateway_id);
     }
 
-    if (filters.device_type && filters.device_type !== 'all') {
-      query = query.where('access_control_devices.device_type', filters.device_type);
+    if (filters.access_control_type) {
+      query = query.where('access_control_devices.device_type', filters.access_control_type);
     }
 
     if (filters.status) {
@@ -756,9 +814,10 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function() {
-        this.where('access_control_devices.name', 'like', `%${filters.search}%`)
-          .orWhere('access_control_devices.location_description', 'like', `%${filters.search}%`);
+        this.where('access_control_devices.name', 'like', `%${escapedSearch}%`)
+          .orWhere('access_control_devices.location_description', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -791,10 +850,11 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function() {
-        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
-          .orWhere('units.unit_number', 'like', `%${filters.search}%`)
-          .orWhere('facilities.name', 'like', `%${filters.search}%`);
+        this.where('blulok_devices.device_serial', 'like', `%${escapedSearch}%`)
+          .orWhere('units.unit_number', 'like', `%${escapedSearch}%`)
+          .orWhere('facilities.name', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -860,10 +920,11 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function(this: any) {
-        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
-            .orWhere('facilities.name', 'like', `%${filters.search}%`)
-            .orWhere('gateways.name', 'like', `%${filters.search}%`);
+        this.where('blulok_devices.device_serial', 'like', `%${escapedSearch}%`)
+            .orWhere('facilities.name', 'like', `%${escapedSearch}%`)
+            .orWhere('gateways.name', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -892,6 +953,7 @@ export class DeviceModel {
     const mapped: DeviceWithContext[] = results.map((row: any) => ({
       id: row.id,
       gateway_id: row.gateway_id,
+      facility_id: row.gateway_facility_id,
       unit_id: null, // Always null for unassigned devices
       device_serial: row.device_serial,
       firmware_version: row.firmware_version,
@@ -936,10 +998,11 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function() {
-        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
-          .orWhere('facilities.name', 'like', `%${filters.search}%`)
-          .orWhere('gateways.name', 'like', `%${filters.search}%`);
+        this.where('blulok_devices.device_serial', 'like', `%${escapedSearch}%`)
+          .orWhere('facilities.name', 'like', `%${escapedSearch}%`)
+          .orWhere('gateways.name', 'like', `%${escapedSearch}%`);
       });
     }
 

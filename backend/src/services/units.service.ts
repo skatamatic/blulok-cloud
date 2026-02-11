@@ -2,6 +2,8 @@ import { UserRole } from '@/types/auth.types';
 import { UnitModel, UnitAssignment } from '@/models/unit.model';
 import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitAssignmentEventsService } from './events/unit-assignment-events.service';
+import { NotificationService } from '@/services/notification.service';
+import { ActivityService } from '@/services/activity.service';
 import { logger } from '@/utils/logger';
 
 /**
@@ -224,6 +226,13 @@ export class UnitsService {
         source: options.source || 'api',
         facilityId: unit.facility_id,
       });
+
+      // Fire-and-forget: Create notification and activity log for the assignment
+      this.logAssignmentSideEffects(
+        unitId, unit.facility_id, unit.unit_number, tenantId,
+        options.performedBy, options.source || 'api'
+      ).catch(err => logger.error('Failed to log assignment side effects:', err));
+
     } catch (error) {
       logger.error('Error assigning tenant to unit:', error);
       throw error;
@@ -404,10 +413,111 @@ export class UnitsService {
         source: options.source || 'api',
         facilityId: unit.facility_id,
       });
+
+      // Fire-and-forget: Create notification and activity log for the unassignment
+      this.logUnassignmentSideEffects(
+        unitId, unit.facility_id, unit.unit_number, tenantId,
+        options.performedBy, options.source || 'api'
+      ).catch(err => logger.error('Failed to log unassignment side effects:', err));
+
     } catch (error) {
       logger.error('Error unassigning tenant from unit:', error);
       throw error;
     }
+  }
+
+  // ============================================
+  // Side-effect helpers (notifications + activity logs)
+  // ============================================
+
+  /**
+   * Log notification and activity for a tenant assignment.
+   * Runs as fire-and-forget so it never blocks the main assignment flow.
+   */
+  private async logAssignmentSideEffects(
+    unitId: string,
+    facilityId: string,
+    unitNumber: string,
+    tenantId: string,
+    performedBy: string,
+    source: string
+  ): Promise<void> {
+    // Look up facility name for the notification message
+    const { FacilityModel } = await import('@/models/facility.model');
+    const facilityModel = new FacilityModel();
+    const facility = await facilityModel.findById(facilityId);
+    const facilityName = facility?.name || 'Unknown Facility';
+
+    // Look up performer name for activity log
+    const { UserModel } = await import('@/models/user.model');
+    const performer = await UserModel.findById(performedBy) as any;
+    const performerName = performer
+      ? `${performer.first_name || ''} ${performer.last_name || ''}`.trim() || performer.email
+      : 'System';
+
+    // Send notification to the assigned tenant
+    await NotificationService.getInstance().notifyUnitAssigned(
+      tenantId,
+      unitNumber,
+      facilityName,
+      facilityId,
+      unitId
+    );
+
+    // Log the assignment in activity logs
+    await ActivityService.getInstance().logAssignmentChange(
+      unitId,
+      facilityId,
+      tenantId,
+      performerName,
+      true, // assigned
+      performedBy,
+      performerName
+    );
+  }
+
+  /**
+   * Log notification and activity for a tenant unassignment.
+   * Runs as fire-and-forget so it never blocks the main unassignment flow.
+   */
+  private async logUnassignmentSideEffects(
+    unitId: string,
+    facilityId: string,
+    unitNumber: string,
+    tenantId: string,
+    performedBy: string,
+    source: string
+  ): Promise<void> {
+    const { FacilityModel } = await import('@/models/facility.model');
+    const facilityModel = new FacilityModel();
+    const facility = await facilityModel.findById(facilityId);
+    const facilityName = facility?.name || 'Unknown Facility';
+
+    const { UserModel } = await import('@/models/user.model');
+    const performer = await UserModel.findById(performedBy) as any;
+    const performerName = performer
+      ? `${performer.first_name || ''} ${performer.last_name || ''}`.trim() || performer.email
+      : 'System';
+
+    // Send notification to the unassigned tenant
+    await NotificationService.getInstance().notifyUnitUnassigned(
+      tenantId,
+      unitNumber,
+      facilityName,
+      facilityId,
+      unitId
+    );
+
+    // Log the unassignment in activity logs
+    await ActivityService.getInstance().logAssignmentChange(
+      unitId,
+      facilityId,
+      tenantId,
+      performerName,
+      false, // unassigned
+      performedBy,
+      performerName
+    );
   }
 
 }

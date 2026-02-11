@@ -73,7 +73,7 @@ const deviceModel = new DeviceModel();
 const accessControlDeviceSchema = Joi.object({
   gateway_id: Joi.string().required(),
   name: Joi.string().required(),
-  device_type: Joi.string().valid('access_control').required(),
+  device_type: Joi.string().valid('door', 'gate', 'elevator').required(),
   location_description: Joi.string().required(),
   relay_channel: Joi.number().integer().min(1).max(8).required(),
 });

@@ -12,6 +12,8 @@ import { CommandQueueSubscriptionManager } from './command-queue-subscription-ma
 import { DevNotificationsSubscriptionManager } from './dev-notifications-subscription-manager';
 import { GatewayDebugSubscriptionManager } from './gateway-debug-subscription-manager';
 import { DeviceStatusSubscriptionManager } from './device-status-subscription-manager';
+import { NotificationSubscriptionManager } from './notification-subscription-manager';
+import { ActivitySubscriptionManager } from './activity-subscription-manager';
 
 /**
  * Subscription Registry
@@ -57,6 +59,8 @@ export class SubscriptionRegistry {
     this.registerManager(new CommandQueueSubscriptionManager());
     this.registerManager(new DevNotificationsSubscriptionManager());
     this.registerManager(new GatewayDebugSubscriptionManager());
+    this.registerManager(new NotificationSubscriptionManager());
+    this.registerManager(new ActivitySubscriptionManager());
   }
 
   private registerManager(manager: SubscriptionManager): void {
@@ -148,5 +152,13 @@ export class SubscriptionRegistry {
 
   public getDeviceStatusManager(): DeviceStatusSubscriptionManager | undefined {
     return this.getManager('device_status') as DeviceStatusSubscriptionManager;
+  }
+
+  public getNotificationManager(): NotificationSubscriptionManager | undefined {
+    return this.getManager('notifications') as NotificationSubscriptionManager;
+  }
+
+  public getActivityManager(): ActivitySubscriptionManager | undefined {
+    return this.getManager('activity') as ActivitySubscriptionManager;
   }
 }

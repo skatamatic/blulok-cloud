@@ -10,6 +10,7 @@ jest.mock('../../../src/services/device-event.service');
 const createDeviceWithContext = (overrides: Partial<DeviceWithContext> = {}): DeviceWithContext => ({
   id: 'device-1',
   gateway_id: 'gateway-123',
+  facility_id: 'facility-1',
   unit_id: 'unit-1',
   device_serial: 'ABC123',
   firmware_version: '1.0.0',

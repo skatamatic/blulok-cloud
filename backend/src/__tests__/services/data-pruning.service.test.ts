@@ -69,13 +69,19 @@ describe('DataPruningService', () => {
       mockQueryBuilder.del
         .mockRejectedValueOnce(new Error('Database error for invites'))
         .mockResolvedValueOnce(5)  // otps succeed
-        .mockResolvedValueOnce(3); // tokens succeed
+        .mockResolvedValueOnce(3)  // tokens succeed
+        .mockResolvedValueOnce(2)  // expired notifications succeed
+        .mockResolvedValueOnce(1)  // deleted notifications succeed
+        .mockResolvedValueOnce(10); // activity logs succeed
 
       const results = await service.prune();
 
       expect(results.invites).toBe(0); // Failed, so 0
       expect(results.otps).toBe(5); // Succeeded
       expect(results.passwordResetTokens).toBe(3); // Succeeded
+      expect(results.expiredNotifications).toBe(2); // Succeeded
+      expect(results.deletedNotifications).toBe(1); // Succeeded
+      expect(results.activityLogs).toBe(10); // Succeeded
       expect(results.errors).toBeDefined();
       expect(results.errors?.length).toBe(1);
       expect(results.errors?.[0]).toContain('user_invites');
@@ -89,7 +95,10 @@ describe('DataPruningService', () => {
       expect(results.invites).toBe(0);
       expect(results.otps).toBe(0);
       expect(results.passwordResetTokens).toBe(0);
-      expect(results.errors?.length).toBe(3); // All three failed
+      expect(results.expiredNotifications).toBe(0);
+      expect(results.deletedNotifications).toBe(0);
+      expect(results.activityLogs).toBe(0);
+      expect(results.errors?.length).toBe(6); // All six cleanup operations failed
     });
   });
 

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { WebSocketService } from './websocket.service';
+import { logger } from '@/utils/logger';
 
 /**
  * Device Event Types
@@ -210,6 +211,13 @@ export class DeviceEventService extends EventEmitter {
       } catch (error) {
         console.error('Failed to broadcast units update:', error);
       }
+
+      // Log activity for lock status changes (lock/unlock only, not transitional states)
+      if (event.newStatus === 'locked' || event.newStatus === 'unlocked') {
+        this.logLockActivity(event).catch(err =>
+          logger.error('Failed to log lock activity:', err)
+        );
+      }
     });
 
     // Broadcast updates when device status changes (online/offline)
@@ -229,6 +237,11 @@ export class DeviceEventService extends EventEmitter {
       } catch (error) {
         console.error('Failed to broadcast device status update:', error);
       }
+
+      // Log activity for device status changes
+      this.logDeviceStatusActivity(event).catch(err =>
+        logger.error('Failed to log device status activity:', err)
+      );
     });
 
     // Broadcast updates when telemetry changes (battery, signal, temperature, errors)
@@ -297,5 +310,62 @@ export class DeviceEventService extends EventEmitter {
    */
   public emitDeviceTelemetryUpdated(event: DeviceTelemetryUpdatedEvent): void {
     this.emit(DeviceEvent.DEVICE_TELEMETRY_UPDATED, event);
+  }
+
+  // ============================================
+  // Activity logging helpers
+  // ============================================
+
+  /**
+   * Log a lock/unlock activity when a device lock status changes.
+   * Uses dynamic import to avoid circular dependency issues at startup.
+   */
+  private async logLockActivity(event: LockStatusChangedEvent): Promise<void> {
+    const { ActivityService } = await import('@/services/activity.service');
+    const { DeviceModel } = await import('@/models/device.model');
+
+    const deviceModel = new DeviceModel();
+    const gateway = await deviceModel.findGatewayById(event.gatewayId);
+    if (!gateway) {
+      logger.warn(`Cannot log lock activity: gateway ${event.gatewayId} not found`);
+      return;
+    }
+
+    const isLocked = event.newStatus === 'locked';
+    await ActivityService.getInstance().logLockEvent(
+      event.deviceId,
+      event.unitId || undefined,
+      gateway.facility_id,
+      isLocked,
+      'gateway',
+      undefined,
+      'Gateway',
+      'success',
+      { oldStatus: event.oldStatus, newStatus: event.newStatus, gatewayId: event.gatewayId }
+    );
+  }
+
+  /**
+   * Log an activity when a device's connectivity status changes.
+   * Uses dynamic import to avoid circular dependency issues at startup.
+   */
+  private async logDeviceStatusActivity(event: DeviceStatusChangedEvent): Promise<void> {
+    const { ActivityService } = await import('@/services/activity.service');
+    const { DeviceModel } = await import('@/models/device.model');
+
+    const deviceModel = new DeviceModel();
+    const gateway = await deviceModel.findGatewayById(event.gatewayId);
+    if (!gateway) {
+      logger.warn(`Cannot log device status activity: gateway ${event.gatewayId} not found`);
+      return;
+    }
+
+    await ActivityService.getInstance().logStatusChange(
+      event.deviceId,
+      gateway.facility_id,
+      event.oldStatus,
+      event.newStatus,
+      { gatewayId: event.gatewayId, deviceType: event.deviceType }
+    );
   }
 }

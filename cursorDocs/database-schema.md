@@ -244,6 +244,120 @@ CREATE TABLE default_widget_templates (
 - Default layout configurations
 - Size constraint definitions
 
+### Notifications Table
+
+```sql
+CREATE TABLE notifications (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) NOT NULL,
+  notification_type ENUM('access_granted', 'access_denied', 'device_registered', 
+    'password_reset', 'unit_assigned', 'unit_unassigned', 'system_alert', 
+    'maintenance_alert', 'security_alert', 'general') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  priority ENUM('low', 'normal', 'high', 'urgent') DEFAULT 'normal',
+  is_read BOOLEAN DEFAULT FALSE,
+  read_at DATETIME,
+  reference_type VARCHAR(50),
+  reference_id VARCHAR(36),
+  facility_id VARCHAR(36),
+  metadata JSON,
+  expires_at DATETIME,
+  is_deleted BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE SET NULL,
+  
+  INDEX idx_notifications_user_unread (user_id, is_read, is_deleted),
+  INDEX idx_notifications_user_type (user_id, notification_type),
+  INDEX idx_notifications_user_created (user_id, created_at),
+  INDEX idx_notifications_facility (facility_id),
+  INDEX idx_notifications_expires (expires_at),
+  INDEX idx_notifications_reference (reference_type, reference_id)
+);
+```
+
+**Purpose**: Store user notifications with read receipt support  
+**Key Features**:
+- Flexible notification types for various system events
+- Read receipt tracking with timestamp
+- Priority levels for UI treatment
+- Reference linking to related entities (units, devices, etc.)
+- Facility-scoped notifications
+- Soft delete support
+- Automatic expiration support
+
+**Query Efficiency**:
+- Model enforces `DEFAULT_LIMIT=50`, `MAX_LIMIT=100` on all `find()` queries as a safety net
+- `markAsRead()` accepts pre-fetched notification to avoid redundant SELECT after UPDATE (2 queries instead of 3)
+- `markMultipleAsRead()` uses single `WHERE IN` UPDATE -- no per-row queries
+- `markAllAsRead()` uses single filtered UPDATE -- no per-row queries
+- `findByIds()` uses single `WHERE IN` SELECT for batch lookups (avoids N+1 in mark-multiple flow)
+- `count()` strips pagination/sort params before executing
+- `getUserNotifications()` runs `find`, `count`, `getUnreadCount` in parallel via `Promise.all`
+- All queries default to `ORDER BY created_at DESC` (newest first)
+
+### Activity Logs Table
+
+```sql
+CREATE TABLE activity_logs (
+  id VARCHAR(36) PRIMARY KEY,
+  entity_type ENUM('unit', 'device', 'facility', 'user', 'gateway') NOT NULL,
+  entity_id VARCHAR(36) NOT NULL,
+  activity_type ENUM('lock', 'unlock', 'locking', 'unlocking', 'access_attempt',
+    'status_change', 'error', 'maintenance_start', 'maintenance_end',
+    'assignment_change', 'configuration_change', 'connection_change', 'general') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  actor_type ENUM('user', 'system', 'device', 'gateway') NOT NULL,
+  actor_id VARCHAR(36),
+  actor_name VARCHAR(255),
+  result ENUM('success', 'failure', 'pending', 'unknown') DEFAULT 'success',
+  result_message VARCHAR(500),
+  facility_id VARCHAR(36),
+  unit_id VARCHAR(36),
+  device_id VARCHAR(36),
+  metadata JSON,
+  ip_address VARCHAR(45),
+  occurred_at DATETIME NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE SET NULL,
+  FOREIGN KEY (unit_id) REFERENCES units(id) ON DELETE SET NULL,
+  
+  INDEX idx_activity_logs_entity (entity_type, entity_id),
+  INDEX idx_activity_logs_facility_time (facility_id, occurred_at),
+  INDEX idx_activity_logs_unit_time (unit_id, occurred_at),
+  INDEX idx_activity_logs_device_time (device_id, occurred_at),
+  INDEX idx_activity_logs_type (activity_type),
+  INDEX idx_activity_logs_actor (actor_type, actor_id),
+  INDEX idx_activity_logs_occurred (occurred_at),
+  INDEX idx_activity_logs_result (result)
+);
+```
+
+**Purpose**: Historical record of unit and device state changes  
+**Key Features**:
+- Comprehensive activity tracking for devices and units
+- Lock/unlock event logging
+- Access attempt tracking (granted/denied)
+- Actor tracking (who/what performed the action)
+- Result tracking for success/failure auditing
+- Facility, unit, and device scoping
+
+**Query Efficiency**:
+- Model enforces `DEFAULT_LIMIT=50`, `MAX_LIMIT=100` on all `find()` and `findWithContext()` queries
+- `findWithContext()` uses LEFT JOINs to enrich data in a single query (avoids N+1 for unit/device/facility names)
+- `count()` strips pagination/sort params before executing
+- Service layer runs `findWithContext` + `count` in parallel via `Promise.all`
+- Device activity lookup checks both BluLok and access control device types in parallel
+- All queries default to `ORDER BY occurred_at DESC` (newest first)
+- Rich context with metadata support
+- IP address logging for security audits
+
 ## Migration Best Practices
 
 ### Writing Idempotent Migrations

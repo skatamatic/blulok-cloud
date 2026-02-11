@@ -316,7 +316,7 @@ describe('Devices Routes', () => {
       const validAccessControlData = {
         gateway_id: 'gateway-1',
         name: 'Main Gate Controller',
-        device_type: 'access_control',
+        device_type: 'gate',
         location_description: 'Main entrance gate',
         relay_channel: 1
       };
@@ -868,7 +868,7 @@ describe('Devices Routes', () => {
       const validAccessControlData = {
         gateway_id: 'gateway-1',
         name: 'Main Gate Controller',
-        device_type: 'access_control',
+        device_type: 'gate',
         location_description: 'Main entrance gate',
         relay_channel: 1
       };
@@ -1240,7 +1240,7 @@ describe('Devices Routes', () => {
       const maliciousData = {
         gateway_id: 'gateway-1',
         name: '<script>alert("xss")</script>Malicious Device',
-        device_type: 'access_control',
+        device_type: 'door',
         location_description: 'Test location',
         relay_channel: 1
       };

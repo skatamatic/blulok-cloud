@@ -8,6 +8,9 @@
  * - Expired/consumed user invites
  * - Expired OTPs (with max attempts exceeded)
  * - Expired/used password reset tokens
+ * - Expired notifications
+ * - Soft-deleted notifications (after retention period)
+ * - Old activity logs (after retention period)
  *
  * Scheduling:
  * - Runs daily (every 24 hours)
@@ -18,18 +21,47 @@
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 
+/**
+ * Parse an integer from environment variable with a default fallback
+ */
+function parseEnvInt(key: string, defaultValue: number): number {
+  const value = process.env[key];
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+  const parsed = parseInt(value, 10);
+  return isNaN(parsed) ? defaultValue : parsed;
+}
+
 export class DataPruningService {
   private static instance: DataPruningService;
   private db = DatabaseService.getInstance().connection;
   private intervalId: NodeJS.Timeout | null = null;
   private readonly DAILY_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
-  // Retention periods (how long to keep records after expiration/consumption)
-  private readonly INVITE_RETENTION_DAYS = 7; // Keep consumed/expired invites for 7 days
-  private readonly OTP_RETENTION_DAYS = 1; // Keep expired OTPs for 1 day
-  private readonly PASSWORD_RESET_RETENTION_DAYS = 1; // Keep used/expired tokens for 1 day
+  // Retention periods (configurable via environment variables)
+  private readonly INVITE_RETENTION_DAYS: number;
+  private readonly OTP_RETENTION_DAYS: number;
+  private readonly PASSWORD_RESET_RETENTION_DAYS: number;
+  private readonly NOTIFICATION_DELETED_RETENTION_DAYS: number;
+  private readonly ACTIVITY_LOG_RETENTION_DAYS: number;
 
-  private constructor() {}
+  private constructor() {
+    // Load retention periods from environment variables with sensible defaults
+    this.INVITE_RETENTION_DAYS = parseEnvInt('DATA_PRUNING_INVITE_RETENTION_DAYS', 7);
+    this.OTP_RETENTION_DAYS = parseEnvInt('DATA_PRUNING_OTP_RETENTION_DAYS', 1);
+    this.PASSWORD_RESET_RETENTION_DAYS = parseEnvInt('DATA_PRUNING_PASSWORD_RESET_RETENTION_DAYS', 1);
+    this.NOTIFICATION_DELETED_RETENTION_DAYS = parseEnvInt('DATA_PRUNING_NOTIFICATION_DELETED_RETENTION_DAYS', 30);
+    this.ACTIVITY_LOG_RETENTION_DAYS = parseEnvInt('DATA_PRUNING_ACTIVITY_LOG_RETENTION_DAYS', 90);
+
+    logger.debug('Data pruning retention periods configured:', {
+      invites: this.INVITE_RETENTION_DAYS,
+      otps: this.OTP_RETENTION_DAYS,
+      passwordResetTokens: this.PASSWORD_RESET_RETENTION_DAYS,
+      deletedNotifications: this.NOTIFICATION_DELETED_RETENTION_DAYS,
+      activityLogs: this.ACTIVITY_LOG_RETENTION_DAYS,
+    });
+  }
 
   public static getInstance(): DataPruningService {
     if (!this.instance) {
@@ -88,6 +120,9 @@ export class DataPruningService {
     invites: number;
     otps: number;
     passwordResetTokens: number;
+    expiredNotifications: number;
+    deletedNotifications: number;
+    activityLogs: number;
     errors?: string[];
   }> {
     logger.info('Starting data pruning');
@@ -96,6 +131,9 @@ export class DataPruningService {
       invites: 0,
       otps: 0,
       passwordResetTokens: 0,
+      expiredNotifications: 0,
+      deletedNotifications: 0,
+      activityLogs: 0,
       errors: [] as string[],
     };
 
@@ -156,10 +194,63 @@ export class DataPruningService {
       results.errors.push(errorMsg);
     }
 
+    // Prune expired notifications: expires_at has passed
+    // Table: notifications
+    // Fields: expires_at (timestamp, nullable)
+    try {
+      const now = new Date();
+      results.expiredNotifications = await this.db('notifications')
+        .whereNotNull('expires_at')
+        .where('expires_at', '<', now)
+        .del();
+      logger.debug(`Pruned ${results.expiredNotifications} expired notifications`);
+    } catch (error: any) {
+      const errorMsg = `Failed to prune expired notifications: ${error?.message || error}`;
+      logger.error(errorMsg, error);
+      results.errors.push(errorMsg);
+    }
+
+    // Prune soft-deleted notifications: is_deleted = true and older than retention period
+    // Table: notifications
+    // Fields: is_deleted (boolean), updated_at (timestamp)
+    try {
+      const deletedCutoff = new Date(Date.now() - this.NOTIFICATION_DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+      results.deletedNotifications = await this.db('notifications')
+        .where('is_deleted', true)
+        .where('updated_at', '<', deletedCutoff)
+        .del();
+      logger.debug(`Pruned ${results.deletedNotifications} soft-deleted notifications`);
+    } catch (error: any) {
+      const errorMsg = `Failed to prune deleted notifications: ${error?.message || error}`;
+      logger.error(errorMsg, error);
+      results.errors.push(errorMsg);
+    }
+
+    // Prune old activity logs: occurred_at older than retention period
+    // Table: activity_logs
+    // Fields: occurred_at (timestamp)
+    try {
+      const activityCutoff = new Date(Date.now() - this.ACTIVITY_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+      results.activityLogs = await this.db('activity_logs')
+        .where('occurred_at', '<', activityCutoff)
+        .del();
+      logger.debug(`Pruned ${results.activityLogs} old activity logs`);
+    } catch (error: any) {
+      const errorMsg = `Failed to prune activity_logs: ${error?.message || error}`;
+      logger.error(errorMsg, error);
+      results.errors.push(errorMsg);
+    }
+
     if (results.errors.length > 0) {
-      logger.warn(`Data pruning completed with ${results.errors.length} error(s): ${results.invites} invites, ${results.otps} OTPs, ${results.passwordResetTokens} password reset tokens removed`);
+      logger.warn(`Data pruning completed with ${results.errors.length} error(s): ` +
+        `${results.invites} invites, ${results.otps} OTPs, ${results.passwordResetTokens} password reset tokens, ` +
+        `${results.expiredNotifications} expired notifications, ${results.deletedNotifications} deleted notifications, ` +
+        `${results.activityLogs} activity logs removed`);
     } else {
-      logger.info(`Data pruning complete: ${results.invites} invites, ${results.otps} OTPs, ${results.passwordResetTokens} password reset tokens removed`);
+      logger.info(`Data pruning complete: ` +
+        `${results.invites} invites, ${results.otps} OTPs, ${results.passwordResetTokens} password reset tokens, ` +
+        `${results.expiredNotifications} expired notifications, ${results.deletedNotifications} deleted notifications, ` +
+        `${results.activityLogs} activity logs removed`);
     }
 
     return results;

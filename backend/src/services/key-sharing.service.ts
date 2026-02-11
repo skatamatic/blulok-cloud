@@ -271,7 +271,34 @@ export class KeySharingService {
       access_restrictions,
     };
 
-    return await this.keySharings.create(sharingData);
+    const result = await this.keySharings.create(sharingData);
+
+    // Fire-and-forget: Notify the recipient about the access grant
+    this.notifyAccessGranted(shared_with_user_id, unit_id).catch(err =>
+      logger.error('Failed to send access granted notification:', err)
+    );
+
+    return result;
+  }
+
+  /**
+   * Send an access-granted notification to the shared user.
+   * Looks up unit and facility details for the notification message.
+   */
+  private async notifyAccessGranted(userId: string, unitId: string): Promise<void> {
+    const { NotificationService } = await import('@/services/notification.service');
+
+    const unit = await this.db('units')
+      .where('id', unitId)
+      .first('unit_number', 'facility_id');
+    if (!unit) return;
+
+    await NotificationService.getInstance().notifyAccessGranted(
+      userId,
+      unit.unit_number,
+      unit.facility_id,
+      unitId
+    );
   }
 
   public async updateShare(ctx: { userId: string; role: UserRole }, id: string, dto: {
