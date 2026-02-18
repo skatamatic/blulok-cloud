@@ -13,7 +13,7 @@ import { AuthenticatedRequest } from '@/types/auth.types';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
 import { BluDesignAssetModel } from '../models/bludesign-asset.model';
 import { AssetCategory, GeometryType } from '../types/bludesign.types';
-import { createStorageProvider } from '../services/storage';
+import { createStorageProvider, storageConfigForProject } from '../services/storage';
 
 const router = Router({ mergeParams: true });
 
@@ -263,10 +263,7 @@ router.delete('/:assetId', asyncHandler(async (req: AuthenticatedRequest, res: R
   try {
     const project = await BluDesignProjectModel.findById(projectId);
     if (project) {
-      const provider = createStorageProvider({
-        type: project.storageProvider,
-        config: project.storageConfig || { basePath: './storage/bludesign' },
-      });
+      const provider = createStorageProvider(storageConfigForProject(project));
       await provider.deleteAssetFiles(projectId, assetId);
     }
   } catch (storageError) {
@@ -306,10 +303,7 @@ router.post('/:assetId/upload', upload.single('file'), asyncHandler(async (req: 
   }
   
   try {
-    const provider = createStorageProvider({
-      type: project.storageProvider,
-      config: project.storageConfig || { basePath: './storage/bludesign' },
-    });
+    const provider = createStorageProvider(storageConfigForProject(project));
     
     const storagePath = await provider.uploadAssetFile(
       projectId,
@@ -375,10 +369,7 @@ router.post('/:assetId/textures', upload.single('texture'), asyncHandler(async (
   }
   
   try {
-    const provider = createStorageProvider({
-      type: project.storageProvider,
-      config: project.storageConfig || { basePath: './storage/bludesign' },
-    });
+    const provider = createStorageProvider(storageConfigForProject(project));
     
     const storagePath = await provider.uploadTexture(
       projectId,
@@ -426,10 +417,7 @@ router.get('/:assetId/download/:filename', asyncHandler(async (req: Authenticate
   }
   
   try {
-    const provider = createStorageProvider({
-      type: project.storageProvider,
-      config: project.storageConfig || { basePath: './storage/bludesign' },
-    });
+    const provider = createStorageProvider(storageConfigForProject(project));
     
     const data = await provider.downloadAssetFile(projectId, assetId, filename);
     
@@ -778,10 +766,7 @@ router.post('/models/:projectId', authenticateToken, upload.single('file'), asyn
   }
   
   // Save file using storage provider
-  const provider = createStorageProvider({
-    type: project.storageProvider,
-    config: project.storageConfig || { basePath: './storage/bludesign' },
-  });
+  const provider = createStorageProvider(storageConfigForProject(project));
   
   // Use a unique ID for the model
   const modelId = `model-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -827,10 +812,7 @@ router.delete('/models/:projectId/:modelId', authenticateToken, asyncHandler(asy
   const project = await BluDesignProjectModel.findById(projectId);
   if (project) {
     try {
-      const provider = createStorageProvider({
-        type: project.storageProvider,
-        config: project.storageConfig || { basePath: './storage/bludesign' },
-      });
+      const provider = createStorageProvider(storageConfigForProject(project));
       // Extract the model ID from the storage path to delete the asset files
       const pathParts = model.storagePath.split('/');
       const modelAssetId = pathParts.length > 2 ? pathParts[pathParts.length - 2] : modelId;

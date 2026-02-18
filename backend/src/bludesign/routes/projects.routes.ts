@@ -11,12 +11,7 @@ import { asyncHandler } from '@/utils/asyncHandler';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
 import { StorageProviderType } from '../types/bludesign.types';
-import { createStorageProvider, validateStorageConfig } from '../services/storage';
-
-const DEFAULT_STORAGE_CONFIG = {
-  projectId: process.env.GCS_PROJECT_ID || 'BluLok-Cloud-Dev',
-  bucketName: process.env.GCS_BUCKET_NAME || 'blulok-develop',
-};
+import { createStorageProvider, validateStorageConfig, storageConfigForProject } from '../services/storage';
 
 const router = Router();
 
@@ -133,10 +128,7 @@ router.post('/', asyncHandler(async (req: AuthenticatedRequest, res: Response) =
   
   // Initialize storage for the project
   try {
-    const provider = createStorageProvider({
-      type: project.storageProvider,
-      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
-    });
+    const provider = createStorageProvider(storageConfigForProject(project));
     await provider.initialize();
     await provider.initializeProject(project.id);
   } catch (storageError: any) {
@@ -210,10 +202,7 @@ router.delete('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Respon
   
   // Delete storage
   try {
-    const provider = createStorageProvider({
-      type: project.storageProvider,
-      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
-    });
+    const provider = createStorageProvider(storageConfigForProject(project));
     await provider.deleteProject(id);
   } catch (storageError) {
     console.error('Failed to delete project storage:', storageError);
@@ -247,10 +236,7 @@ router.get('/:id/storage-usage', asyncHandler(async (req: AuthenticatedRequest, 
   }
   
   try {
-    const provider = createStorageProvider({
-      type: project.storageProvider,
-      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
-    });
+    const provider = createStorageProvider(storageConfigForProject(project));
     const bytes = await provider.getProjectStorageUsage(id);
     
     res.json({
@@ -292,10 +278,7 @@ router.post('/:id/storage/test', asyncHandler(async (req: AuthenticatedRequest, 
   
   try {
     // Validate storage config
-    const config = {
-      type: project.storageProvider,
-      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
-    };
+    const config = storageConfigForProject(project);
     
     const validationErrors = validateStorageConfig(config);
     if (validationErrors.length > 0) {

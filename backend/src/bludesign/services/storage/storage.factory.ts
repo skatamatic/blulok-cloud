@@ -76,14 +76,36 @@ export function createStorageProvider(config: StorageProviderConfig): StoragePro
 }
 
 /**
+ * Default GCS storage config used when a project has no explicit config.
+ * Centralised so every caller shares the same fallback.
+ */
+export const DEFAULT_BLUDESIGN_STORAGE_CONFIG: Record<string, unknown> = {
+  projectId: process.env.GCS_PROJECT_ID || 'BluLok-Cloud-Dev',
+  bucketName: process.env.GCS_BUCKET_NAME || 'blulok-develop',
+};
+
+/**
+ * Build a StorageProviderConfig from a project record, falling back
+ * to the system-wide GCS default when the project has no explicit config.
+ */
+export function storageConfigForProject(project: {
+  storageProvider: StorageProviderType;
+  storageConfig?: Record<string, unknown> | null;
+}): StorageProviderConfig {
+  return {
+    type: project.storageProvider,
+    config: project.storageConfig || DEFAULT_BLUDESIGN_STORAGE_CONFIG,
+  };
+}
+
+/**
  * Get the default storage provider (GCS with Application Default Credentials)
  */
 export function getDefaultStorageProvider(): StorageProvider {
   const config: StorageProviderConfig = {
     type: StorageProviderType.GCS,
     config: {
-      projectId: process.env.GCS_PROJECT_ID || 'BluLok-Cloud-Dev',
-      bucketName: process.env.GCS_BUCKET_NAME || 'blulok-develop',
+      ...DEFAULT_BLUDESIGN_STORAGE_CONFIG,
       maxFileSizeMb: 100,
       allowedExtensions: ['.glb', '.gltf', '.fbx', '.png', '.jpg', '.jpeg', '.webp'],
     } as unknown as Record<string, unknown>,

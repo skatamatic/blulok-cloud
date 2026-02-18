@@ -7,9 +7,8 @@
 import { DatabaseService } from '@/services/database.service';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '@/utils/logger';
-import { createStorageProvider } from './storage';
+import { createStorageProvider, getDefaultStorageProvider, storageConfigForProject } from './storage';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
-import { StorageProviderType } from '../types/bludesign.types';
 
 // Types
 export interface AssetCategory {
@@ -301,7 +300,6 @@ export class AssetService {
       });
 
       return (await this.getAssetDefinition(id))!;
-      return (await this.getAssetDefinition(id))!;
     } catch (error) {
       logger.error('Failed to create asset definition:', error);
       throw error;
@@ -368,10 +366,7 @@ export class AssetService {
               // Get the project for the custom model
               const project = await BluDesignProjectModel.findById(customModel.projectId);
               if (project) {
-                const provider = createStorageProvider({
-                  type: project.storageProvider,
-                  config: project.storageConfig || { basePath: './storage/bludesign' },
-                });
+                const provider = createStorageProvider(storageConfigForProject(project));
                 // Extract the model ID from the storage path to delete the asset files
                 const pathParts = customModel.storagePath.split('/');
                 const modelAssetId = pathParts.length > 2 ? pathParts[pathParts.length - 2] : customModel.id;
@@ -409,11 +404,7 @@ export class AssetService {
           if (!isUsedElsewhere) {
             const globalModel = await this.getGlobalModel(asset.global_model_id);
             if (globalModel) {
-              // Use local storage provider for global models
-              const provider = createStorageProvider({
-                type: StorageProviderType.LOCAL,
-                config: { basePath: './storage/bludesign' },
-              });
+              const provider = getDefaultStorageProvider();
               try {
                 await provider.deleteGlobalAsset(asset.global_model_id);
               } catch (storageError) {

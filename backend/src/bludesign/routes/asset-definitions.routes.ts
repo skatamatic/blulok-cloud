@@ -13,8 +13,8 @@ import { asyncHandler } from '@/utils/asyncHandler';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { AssetService } from '../services/asset.service';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
-import { AssetCategory, StorageProviderType } from '../types/bludesign.types';
-import { createStorageProvider } from '../services/storage';
+import { AssetCategory } from '../types/bludesign.types';
+import { createStorageProvider, getDefaultStorageProvider, storageConfigForProject } from '../services/storage';
 
 const router = Router();
 
@@ -370,10 +370,7 @@ router.post('/models/:projectId', upload.single('file'), asyncHandler(async (req
   }
   
   // Save file using storage provider
-  const provider = createStorageProvider({
-    type: project.storageProvider,
-    config: project.storageConfig || { basePath: './storage/bludesign' },
-  });
+  const provider = createStorageProvider(storageConfigForProject(project));
   
   // Use a unique ID for the model
   const modelId = `model-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -419,10 +416,7 @@ router.delete('/models/:projectId/:modelId', asyncHandler(async (req: Authentica
   const project = await BluDesignProjectModel.findById(projectId);
   if (project) {
     try {
-      const provider = createStorageProvider({
-        type: project.storageProvider,
-        config: project.storageConfig || { basePath: './storage/bludesign' },
-      });
+      const provider = createStorageProvider(storageConfigForProject(project));
       // Extract the model ID from the storage path to delete the asset files
       const pathParts = model.storagePath.split('/');
       const modelAssetId = pathParts.length > 2 ? pathParts[pathParts.length - 2] : modelId;
@@ -479,11 +473,7 @@ router.get('/global-models/:id/file', authenticateToken, asyncHandler(async (req
     return;
   }
   
-  // Use local storage provider for global models
-  const provider = createStorageProvider({
-    type: StorageProviderType.LOCAL,
-    config: { basePath: './storage/bludesign' },
-  });
+  const provider = getDefaultStorageProvider();
   
   try {
     const data = await provider.downloadGlobalAsset(id, model.filename);
@@ -530,11 +520,7 @@ router.post('/global-models', authenticateToken, upload.single('file'), asyncHan
     return;
   }
   
-  // Use local storage provider for global models
-  const provider = createStorageProvider({
-    type: StorageProviderType.LOCAL,
-    config: { basePath: './storage/bludesign' },
-  });
+  const provider = getDefaultStorageProvider();
   
   // Use a unique ID for the model
   const { v4: uuidv4 } = await import('uuid');
@@ -576,11 +562,7 @@ router.delete('/global-models/:id', authenticateToken, asyncHandler(async (req: 
     return;
   }
   
-  // Use local storage provider
-  const provider = createStorageProvider({
-    type: StorageProviderType.LOCAL,
-    config: { basePath: './storage/bludesign' },
-  });
+  const provider = getDefaultStorageProvider();
   
   try {
     await provider.deleteGlobalAsset(id);
