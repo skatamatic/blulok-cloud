@@ -730,6 +730,68 @@ class ApiService {
     return response.data;
   }
 
+  // =========================================================================
+  // Firmware OTA
+  // =========================================================================
+
+  async uploadFirmware(file: File, metadata: { version: string; target_type?: string; description?: string; release_notes?: string; compatible_models?: string; minimum_version?: string }) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('version', metadata.version);
+    if (metadata.target_type) formData.append('target_type', metadata.target_type);
+    if (metadata.description) formData.append('description', metadata.description);
+    if (metadata.release_notes) formData.append('release_notes', metadata.release_notes);
+    if (metadata.compatible_models) formData.append('compatible_models', metadata.compatible_models);
+    if (metadata.minimum_version) formData.append('minimum_version', metadata.minimum_version);
+    const response = await this.api.post('/firmware/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
+  async listFirmware(targetType?: string) {
+    const params: Record<string, string> = {};
+    if (targetType) params.target_type = targetType;
+    const response = await this.api.get('/firmware', { params });
+    return response.data;
+  }
+
+  async getFirmwareById(id: string) {
+    const response = await this.api.get(`/firmware/${id}`);
+    return response.data;
+  }
+
+  async deleteFirmware(id: string) {
+    const response = await this.api.delete(`/firmware/${id}`);
+    return response.data;
+  }
+
+  async pushFirmware(firmwareId: string, gatewayId: string) {
+    const response = await this.api.post(`/firmware/${firmwareId}/push/${gatewayId}`, {});
+    return response.data;
+  }
+
+  async getFirmwarePushStatus(gatewayId: string, targetType?: string) {
+    const params: Record<string, string> = {};
+    if (targetType) params.target_type = targetType;
+    const response = await this.api.get(`/firmware/push-status/${gatewayId}`, { params });
+    return response.data;
+  }
+
+  async getFirmwarePushHistory(gatewayId: string, targetType?: string, limit = 50, offset = 0) {
+    const params: Record<string, string> = {};
+    if (targetType) params.target_type = targetType;
+    if (limit !== 50) (params as any).limit = String(limit);
+    if (offset > 0) (params as any).offset = String(offset);
+    const response = await this.api.get(`/firmware/push-history/${gatewayId}`, { params });
+    return response.data;
+  }
+
+  async cancelFirmwarePush(pushId: string) {
+    const response = await this.api.post(`/firmware/push/${pushId}/cancel`);
+    return response.data;
+  }
+
   // Generic HTTP methods for flexibility
   async get(url: string, config?: any) {
     const response = await this.api.get(url, config);

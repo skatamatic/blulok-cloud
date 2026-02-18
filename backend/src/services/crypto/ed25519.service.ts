@@ -23,6 +23,15 @@ export class Ed25519Service {
     return String((config as any).security.opsPublicKeyB64 || '');
   }
 
+  /**
+   * Get the Ops public key as a raw base64url string.
+   * Used by AUTH_OK to distribute the public key to gateways for payload verification.
+   */
+  public static getOpsPublicKeyB64(): string {
+    if (this.testGenerated?.x) return this.testGenerated.x;
+    return String(config.security.opsPublicKeyB64 || '');
+  }
+
 	private static async getOpsPrivateKey(): Promise<KeyLike> {
 		if (!this.opsPrivateKeyPromise) {
 			let d = config.security.opsPrivateKeyB64 as string;
@@ -116,7 +125,7 @@ export class Ed25519Service {
    * - iat: current timestamp
    * - All fields from payload
    */
-  public static async signCommandJwt(payload: Record<string, any>): Promise<string> {
+  public static async signCommandJwt(payload: Record<string, any>, ttlSeconds = 1800): Promise<string> {
     const privateKey = await this.getOpsPrivateKey();
     const now = Math.floor(Date.now() / 1000);
     const fullPayload = {
@@ -126,6 +135,7 @@ export class Ed25519Service {
     return await new SignJWT(fullPayload as any)
       .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
       .setIssuedAt(now)
+      .setExpirationTime(now + ttlSeconds)
       .sign(privateKey);
   }
 

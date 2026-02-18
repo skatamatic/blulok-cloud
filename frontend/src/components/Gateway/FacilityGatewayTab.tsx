@@ -9,8 +9,10 @@ import {
   CloudIcon,
   InformationCircleIcon,
   WrenchScrewdriverIcon,
-  DocumentDuplicateIcon
+  DocumentDuplicateIcon,
+  CpuChipIcon,
 } from '@heroicons/react/24/outline';
+import GatewayFirmwareTab from './GatewayFirmwareTab';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -81,7 +83,7 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
       errors: string[];
     };
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'devtools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'firmware' | 'devtools'>('overview');
   const [configForm, setConfigForm] = useState({
     gateway_type: 'http' as 'physical' | 'http' | 'simulated',
     base_url: '',
@@ -405,6 +407,7 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   const navTabs = [
     { id: 'overview' as const, label: 'Overview', icon: InformationCircleIcon },
     { id: 'sync' as const, label: 'Sync', icon: CloudIcon },
+    { id: 'firmware' as const, label: 'Firmware', icon: CpuChipIcon },
     { id: 'devtools' as const, label: 'DevTools/Diag', icon: WrenchScrewdriverIcon },
   ];
 
@@ -1234,6 +1237,13 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
       <div className="flex-1 min-w-0">
         {activeTab === 'overview' && renderOverviewTab()}
         {activeTab === 'sync' && renderSyncTab()}
+        {activeTab === 'firmware' && gateway && (
+          <GatewayFirmwareTab
+            gatewayId={gateway.id}
+            currentFirmwareVersion={gateway.firmware_version}
+            gatewayModel={gateway.model}
+          />
+        )}
         {activeTab === 'devtools' && renderDevtoolsTab()}
         {renderRotationModal()}
       </div>

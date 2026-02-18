@@ -50,8 +50,35 @@ export type CommandAckMessage = {
   message?: string;
 };
 
-export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage;
-export type GatewayOutboundMessage = AuthOkMessage | ErrorMessage | PingMessage | ProxyResponseMessage | CommandMessage;
+// Firmware OTA Messages (Cloud -> Gateway)
+export type FirmwareManifestMessage = {
+  type: 'FIRMWARE_MANIFEST';
+  jwt: string;
+};
+
+export type FirmwareChunkMessage = {
+  type: 'FIRMWARE_CHUNK';
+  jwt: string;
+};
+
+// Firmware OTA Messages (Gateway -> Cloud)
+export type FirmwareChunkAckMessage = {
+  type: 'FIRMWARE_CHUNK_ACK';
+  nonce: string;
+  chunkIndex: number;
+  status: 'ok' | 'error';
+  message?: string;
+};
+
+export type FirmwareUpdateStatusMessage = {
+  type: 'FIRMWARE_UPDATE_STATUS';
+  nonce: string;
+  status: string;
+  message?: string;
+};
+
+export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage | FirmwareChunkAckMessage | FirmwareUpdateStatusMessage;
+export type GatewayOutboundMessage = AuthOkMessage | ErrorMessage | PingMessage | ProxyResponseMessage | CommandMessage | FirmwareManifestMessage | FirmwareChunkMessage;
 
 // Minimal runtime guards (no zod dependency)
 export function isAuthMessage(m: any): m is AuthMessage {

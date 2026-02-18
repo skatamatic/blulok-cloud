@@ -329,17 +329,19 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId) {
   const authMsg = { type: 'AUTH', token, facilityId };
   if (VERBOSE) console.log('[WS ->]', JSON.stringify(authMsg));
   ws.send(JSON.stringify(authMsg));
+  let authOkData = null;
   await new Promise((res, rej) => {
     const timer = setTimeout(() => rej(new Error('AUTH timeout')), 4000);
     ws.once('message', (data) => {
       try {
         if (VERBOSE) console.log('[WS <-]', data.toString());
         const m = JSON.parse(data.toString());
-        if (m?.type === 'AUTH_OK' && m.facilityId === facilityId) { clearTimeout(timer); res(null); }
+        if (m?.type === 'AUTH_OK' && m.facilityId === facilityId) { authOkData = m; clearTimeout(timer); res(null); }
         else { clearTimeout(timer); rej(new Error('AUTH not ok')); }
       } catch (e) { clearTimeout(timer); rej(e); }
     });
   });
+  ws._authOkData = authOkData;
   return ws;
 }
 
@@ -452,7 +454,7 @@ if (VERBOSE) {
 async function login(attempt = 1) {
   try {
     const res = await axios.post(`${API_BASE}/auth/login`, { email: EMAIL, password: PASSWORD });
-    return res.data.token;
+    return { token: res.data.token, ops_public_key: res.data.ops_public_key };
   } catch (err) {
     if (err?.response?.status === 429 && attempt < 6) {
       const waitMs = 750 * attempt * attempt;
@@ -828,6 +830,139 @@ function waitForCommand(ws, predicate, timeoutMs = 15000) {
   });
 }
 
+/**
+ * Verify an Ed25519 JWT signature using the ops public key and return decoded payload.
+ * @param {string} jwt - Compact JWS (header.payload.signature, base64url parts)
+ * @param {string} opsKeyB64 - Raw 32-byte Ed25519 public key (base64url or standard base64)
+ * @returns {object} Decoded JWT payload
+ */
+function verifyAndDecodeJwt(jwt, opsKeyB64) {
+  const crypto = require('crypto');
+  const parts = jwt.split('.');
+  if (parts.length !== 3) throw new Error(`JWT has ${parts.length} parts, expected 3`);
+
+  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+
+  // Verify JWT has an expiration claim
+  if (!payload.exp) throw new Error('JWT missing exp claim — command JWTs must have expiration');
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp < now) throw new Error(`JWT expired: exp=${payload.exp}, now=${now}`);
+
+  // Build Ed25519 SPKI DER public key from raw bytes
+  const keyNorm = opsKeyB64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const rawPubKey = Buffer.from(keyNorm, 'base64url');
+  if (rawPubKey.length !== 32) throw new Error(`Ed25519 public key should be 32 bytes, got ${rawPubKey.length}`);
+
+  const derPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+  const derKey = Buffer.concat([derPrefix, rawPubKey]);
+  const keyObj = crypto.createPublicKey({ key: derKey, format: 'der', type: 'spki' });
+
+  const sigInput = Buffer.from(parts[0] + '.' + parts[1]);
+  const signature = Buffer.from(parts[2], 'base64url');
+  const valid = crypto.verify(null, sigInput, keyObj, signature);
+  if (!valid) throw new Error('Ed25519 JWT signature verification failed');
+
+  return payload;
+}
+
+/**
+ * Simulate gateway-side firmware OTA reception over WebSocket.
+ *
+ * Listens on the gateway WS for FIRMWARE_MANIFEST and FIRMWARE_CHUNK messages,
+ * verifies every JWT signature with the ops public key, validates per-chunk
+ * SHA-256 integrity, sends FIRMWARE_CHUNK_ACK for each chunk, and resolves
+ * with the reassembled binary + manifest once all chunks are delivered.
+ *
+ * @param {WebSocket} ws - The authenticated gateway WebSocket
+ * @param {string} opsKeyB64 - Ops Ed25519 public key (base64url)
+ * @param {number} [timeoutMs=60000] - Overall timeout
+ * @returns {Promise<{manifest: object, reassembled: Buffer, finalHash: string}>}
+ */
+function handleFirmwareDelivery(ws, opsKeyB64, timeoutMs = 60000) {
+  const crypto = require('crypto');
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Firmware delivery timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    let manifest = null;
+    const chunks = [];
+    let expectedChunks = 0;
+
+    const onMsg = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === 'FIRMWARE_MANIFEST' && msg.jwt) {
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type !== 'FIRMWARE_MANIFEST') throw new Error(`Expected cmd_type FIRMWARE_MANIFEST, got ${payload.cmd_type}`);
+          if (!payload.sha256 || !payload.version || !payload.nonce) throw new Error('Manifest missing required fields (sha256, version, nonce)');
+          if (typeof payload.chunk_count !== 'number' || payload.chunk_count < 1) throw new Error(`Invalid chunk_count: ${payload.chunk_count}`);
+          manifest = payload;
+          expectedChunks = payload.chunk_count;
+          if (VERBOSE) console.log(`[FW] Manifest verified: version=${payload.version} chunks=${expectedChunks} sha256=${payload.sha256.substring(0, 12)}...`);
+          return;
+        }
+
+        if (msg.type === 'FIRMWARE_CHUNK' && msg.jwt) {
+          if (!manifest) throw new Error('Received FIRMWARE_CHUNK before FIRMWARE_MANIFEST');
+
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type !== 'FIRMWARE_CHUNK') throw new Error(`Expected cmd_type FIRMWARE_CHUNK, got ${payload.cmd_type}`);
+          if (payload.nonce !== manifest.nonce) throw new Error(`Chunk nonce mismatch: expected ${manifest.nonce}, got ${payload.nonce}`);
+          if (typeof payload.chunk_index !== 'number') throw new Error('FIRMWARE_CHUNK missing chunk_index');
+          // Verify target_type is carried on chunks
+          if (manifest.target_type && payload.target_type !== manifest.target_type) {
+            throw new Error(`Chunk target_type mismatch: expected ${manifest.target_type}, got ${payload.target_type}`);
+          }
+
+          // Verify per-chunk SHA-256
+          const chunkBuf = Buffer.from(payload.data, 'base64');
+          const chunkHash = crypto.createHash('sha256').update(chunkBuf).digest('hex');
+          if (chunkHash !== payload.chunk_sha256) {
+            throw new Error(`Chunk ${payload.chunk_index} SHA-256 mismatch: expected ${payload.chunk_sha256}, got ${chunkHash}`);
+          }
+
+          chunks[payload.chunk_index] = chunkBuf;
+          if (VERBOSE) console.log(`[FW] Chunk ${payload.chunk_index + 1}/${expectedChunks} verified (${chunkBuf.length} bytes)`);
+
+          // ACK the chunk so the server proceeds to the next one
+          ws.send(JSON.stringify({
+            type: 'FIRMWARE_CHUNK_ACK',
+            nonce: payload.nonce,
+            chunkIndex: payload.chunk_index,
+            status: 'ok',
+          }));
+
+          // Check if all chunks have been received
+          const receivedCount = chunks.filter(c => c !== undefined).length;
+          if (receivedCount === expectedChunks) {
+            cleanup();
+            const reassembled = Buffer.concat(chunks);
+            const finalHash = crypto.createHash('sha256').update(reassembled).digest('hex');
+            resolve({ manifest, reassembled, finalHash });
+          }
+          return;
+        }
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+
+    const onErr = (err) => { cleanup(); reject(err); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeListener('message', onMsg);
+      ws.removeListener('error', onErr);
+    };
+
+    ws.on('message', onMsg);
+    ws.on('error', onErr);
+  });
+}
+
 function waitForProxyResponse(ws, id, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { cleanup(); reject(new Error(`Timed out waiting for PROXY_RESPONSE id=${id}`)); }, timeoutMs);
@@ -849,17 +984,13 @@ async function run() {
   console.log(C.gray(`API_BASE_URL=${API_BASE}`));
   console.log(C.gray(`WS_URL=${WS_URL}`));
 
-  const token = await login();
-  const devAdminProfile = await fetchAuthProfile(token).catch((err) => {
-    warn(`Failed to fetch auth profile: ${err?.response?.status || err?.message || err}`);
-    return null;
-  });
-  if (devAdminProfile?.id) {
-    step('Verifying user details endpoint');
-    await verifyUserDetailsEndpoint(token, devAdminProfile.id);
-  } else {
-    warn('Skipping user details verification (profile missing id)');
-  }
+  const loginResult = await login();
+  const token = loginResult.token;
+  const loginOpsPublicKey = loginResult.ops_public_key;
+  const devAdminProfile = await fetchAuthProfile(token);
+  if (!devAdminProfile?.id) throw new Error('Failed to fetch auth profile or profile missing id');
+  step('Verifying user details endpoint');
+  await verifyUserDetailsEndpoint(token, devAdminProfile.id);
   let rateLimitBypassEnabled = await setRateLimitBypass(token, true, 900);
   let notificationsTestModeEnabled = await setNotificationsTestMode(token, true);
   await cleanupPreviousArtifacts(token);
@@ -886,6 +1017,7 @@ async function run() {
     accessControlDeviceIds: [],
     facilityAdminId: null,
     facilityAdminToken: null,
+    primaryAppDevId: null,
   };
   const facilityAdmin = { id: null, token: null, email: null };
   let share1Token = null;
@@ -924,16 +1056,50 @@ async function run() {
   heading('Gateway WebSocket');
   ok('Gateway AUTH_OK');
 
+  // ---- Ops Public Key Distribution Tests ----
+  heading('Ops Public Key Distribution');
+
+  // Verify ops_public_key in HTTP login response
+  step('Verifying ops_public_key in HTTP login response');
+  if (!loginOpsPublicKey) throw new Error('ops_public_key missing from HTTP login response');
+  if (typeof loginOpsPublicKey !== 'string' || loginOpsPublicKey.length === 0) throw new Error('ops_public_key should be a non-empty string');
+  ok(`HTTP login includes ops_public_key (${loginOpsPublicKey.substring(0, 16)}...)`);
+
+  // Verify ops_public_key in gateway WS AUTH_OK
+  step('Verifying ops_public_key in gateway WS AUTH_OK');
+  const authOkKey = ws._authOkData?.ops_public_key;
+  if (!authOkKey) throw new Error('ops_public_key missing from gateway AUTH_OK');
+  if (typeof authOkKey !== 'string' || authOkKey.length === 0) throw new Error('AUTH_OK ops_public_key should be a non-empty string');
+  ok(`Gateway AUTH_OK includes ops_public_key (${authOkKey.substring(0, 16)}...)`);
+
+  // Verify both keys match (same server key)
+  step('Verifying ops_public_key is consistent across login and AUTH_OK');
+  if (loginOpsPublicKey !== authOkKey) throw new Error(`ops_public_key mismatch: login=${loginOpsPublicKey} vs AUTH_OK=${authOkKey}`);
+  ok('ops_public_key consistent across HTTP login and gateway AUTH_OK');
+
+  // Verify ops_public_key in WS proxy login
+  step('Verifying ops_public_key in WS proxy login');
+  const proxyLoginId = 'req-proxy-login';
+  ws.send(JSON.stringify({
+    type: 'PROXY_REQUEST',
+    id: proxyLoginId,
+    method: 'POST',
+    path: '/auth/login',
+    body: { email: EMAIL, password: PASSWORD },
+  }));
+  const proxyLoginResp = await waitForProxyResponse(ws, proxyLoginId);
+  if (proxyLoginResp.status !== 200) throw new Error(`Proxy login failed with status ${proxyLoginResp.status}`);
+  const proxyOpsKey = proxyLoginResp.body?.ops_public_key;
+  if (!proxyOpsKey) throw new Error('ops_public_key missing from WS proxy login response');
+  if (proxyOpsKey !== loginOpsPublicKey) throw new Error(`Proxy ops_public_key mismatch: ${proxyOpsKey} vs ${loginOpsPublicKey}`);
+  ok('WS proxy login includes matching ops_public_key');
+
   step('Checking gateway connection status via admin endpoint');
-  try {
-    const gatewayStatus = await axios.get(`${API_BASE}/gateways/status/${facilityId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!gatewayStatus.data?.success) throw new Error('Gateway status endpoint failed');
-    ok('Gateway status reported successfully');
-  } catch (err) {
-    warn(`Gateway status endpoint unavailable (${err?.response?.status || err?.message || err})`);
-  }
+  const gatewayStatus = await axios.get(`${API_BASE}/gateways/status/${facilityId}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!gatewayStatus.data?.success) throw new Error('Gateway status endpoint failed');
+  ok('Gateway status reported successfully');
 
   step('Forcing gateway PING via dev-tools endpoint and asserting PONG_OK');
   gatewayWsEvents.length = 0;
@@ -1078,13 +1244,12 @@ async function run() {
       return false;
     }).filter((c) => c.is_valid !== false);
     const changeIds = wanted.map((c) => c.id);
-    if (changeIds.length > 0) {
-      await axios.post(`${API_BASE}/fms/changes/review`, { syncLogId, changeIds, accepted: true }, { headers: { Authorization: `Bearer ${token}` } });
-      const applied = await axios.post(`${API_BASE}/fms/changes/apply`, { syncLogId, changeIds }, { headers: { Authorization: `Bearer ${token}` } });
-      ok(`FMS changes applied: ${applied.data?.result?.changesApplied || changeIds.length}`);
-    } else {
-      warn('No applicable Storedge FMS changes detected for test dataset');
+    if (changeIds.length === 0) {
+      throw new Error('No applicable Storedge FMS changes detected for test dataset');
     }
+    await axios.post(`${API_BASE}/fms/changes/review`, { syncLogId, changeIds, accepted: true }, { headers: { Authorization: `Bearer ${token}` } });
+    const applied = await axios.post(`${API_BASE}/fms/changes/apply`, { syncLogId, changeIds }, { headers: { Authorization: `Bearer ${token}` } });
+    ok(`FMS changes applied: ${applied.data?.result?.changesApplied || changeIds.length}`);
 
     // Phase 1: Simulate realistic gateway device syncs (add, then remove)
     heading('Gateway Device Sync');
@@ -1168,33 +1333,28 @@ async function run() {
 
     // Create access control devices now that we have a confirmed gatewayId
     heading('Access Control Device Setup');
-    if (gatewayId) {
-      const acDeviceTypes = [
-        { name: 'Main Entrance Door', device_type: 'door', location_description: 'Building A - Ground Floor', relay_channel: 1 },
-        { name: 'Parking Gate', device_type: 'gate', location_description: 'North Parking Lot', relay_channel: 2 },
-        { name: 'Service Elevator', device_type: 'elevator', location_description: 'Building A - Rear', relay_channel: 3 },
-      ];
-      for (const acDef of acDeviceTypes) {
-        try {
-          step(`Creating ${acDef.device_type} device: ${acDef.name}`);
-          const acResp = await axios.post(`${API_BASE}/devices/access-control`, {
-            gateway_id: gatewayId,
-            ...acDef
-          }, { headers: { Authorization: `Bearer ${token}` } });
-          if (acResp.data?.success && acResp.data?.device?.id) {
-            created.accessControlDeviceIds.push(acResp.data.device.id);
-            ok(`Created ${acDef.device_type}: ${acResp.data.device.id}`);
-          } else {
-            warn(`${acDef.device_type} creation returned unexpected response`);
-          }
-        } catch (e) {
-          warn(`Failed to create ${acDef.device_type} device: ${e?.response?.data?.message || e?.message || e}`);
-        }
+    if (!gatewayId) throw new Error('No gatewayId available – cannot create access control devices');
+    const acDeviceTypes = [
+      { name: 'Main Entrance Door', device_type: 'door', location_description: 'Building A - Ground Floor', relay_channel: 1 },
+      { name: 'Parking Gate', device_type: 'gate', location_description: 'North Parking Lot', relay_channel: 2 },
+      { name: 'Service Elevator', device_type: 'elevator', location_description: 'Building A - Rear', relay_channel: 3 },
+    ];
+    for (const acDef of acDeviceTypes) {
+      step(`Creating ${acDef.device_type} device: ${acDef.name}`);
+      const acResp = await axios.post(`${API_BASE}/devices/access-control`, {
+        gateway_id: gatewayId,
+        ...acDef
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      if (!acResp.data?.success || !acResp.data?.device?.id) {
+        throw new Error(`${acDef.device_type} creation returned unexpected response: ${JSON.stringify(acResp.data)}`);
       }
-      ok(`Created ${created.accessControlDeviceIds.length} access control devices`);
-    } else {
-      warn('No gatewayId available – skipping access control device creation');
+      created.accessControlDeviceIds.push(acResp.data.device.id);
+      ok(`Created ${acDef.device_type}: ${acResp.data.device.id}`);
     }
+    if (created.accessControlDeviceIds.length !== 3) {
+      throw new Error(`Expected 3 access control devices, created ${created.accessControlDeviceIds.length}`);
+    }
+    ok(`Created ${created.accessControlDeviceIds.length} access control devices`);
 
     // Resolve unit that arrived via FMS sync
     heading('Unit and Device Setup');
@@ -1243,8 +1403,9 @@ async function run() {
     ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqTsLock, method: 'POST', path: `/internal/gateway/request-time-sync`, body: { lock_id: deviceId } }));
     const respTsLock = await waitForProxyResponse(ws, reqTsLock);
     if (respTsLock.status !== 200 || !respTsLock.body?.success) {
-      console.warn('⚠️  Proxy POST request-time-sync returned non-200 or unsuccessful:', respTsLock.status);
+      throw new Error(`Proxy POST request-time-sync returned non-200 or unsuccessful: status=${respTsLock.status}`);
     }
+    ok('Proxy POST request-time-sync succeeded');
 
     // Negative test: device-sync should reject devices without any identifiers
     step('Negative device-sync payload (missing identifiers) should be rejected');
@@ -1420,25 +1581,19 @@ async function run() {
     // First, assign one of the inventory devices to a unit (will replace the original device)
     let testDeviceId = null;
     let originalDeviceWasReplaced = false;
-    try {
-      const resDevicesForUnit = await axios.get(`${API_BASE}/devices/unassigned`, {
-        headers: { Authorization: `Bearer ${token}` },
-        params: { facility_id: facilityId, limit: 10 }
-      });
-      const unassignedDevices = resDevicesForUnit.data?.devices || [];
-      const testDevice = unassignedDevices.find((d) => 
-        d.device_serial === inventorySerial1 || d.device_serial === inventorySerial2
-      );
-      if (testDevice) {
-        testDeviceId = testDevice.id;
-        // Assign it to the unit (this will unassign the original deviceId since units can only have 1 device)
-        await assignDeviceToUnit(token, testDeviceId, unitId);
-        originalDeviceWasReplaced = true;
-        ok(`Assigned test device ${testDeviceId} to unit ${unitId} (replaced original device)`);
-      }
-    } catch (e) {
-      console.warn('Could not assign test device to unit:', e.message);
-    }
+    const resDevicesForUnit = await axios.get(`${API_BASE}/devices/unassigned`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { facility_id: facilityId, limit: 10 }
+    });
+    const unassignedDevices = resDevicesForUnit.data?.devices || [];
+    const testDevice = unassignedDevices.find((d) => 
+      d.device_serial === inventorySerial1 || d.device_serial === inventorySerial2
+    );
+    if (!testDevice) throw new Error('Could not find inventory device to assign to unit');
+    testDeviceId = testDevice.id;
+    await assignDeviceToUnit(token, testDeviceId, unitId);
+    originalDeviceWasReplaced = true;
+    ok(`Assigned test device ${testDeviceId} to unit ${unitId} (replaced original device)`);
 
     // Verify unit still has the device
     if (testDeviceId) {
@@ -1903,8 +2058,7 @@ async function run() {
       throw new Error(`Key-sharing invite HTTP error: status=${status} body=${JSON.stringify(body)}`);
     }
     if (!inviteShareRes.data?.success || !inviteShareRes.data?.share_id) {
-      warn(`Unexpected response from /key-sharing/invite: ${JSON.stringify(inviteShareRes.data)}`);
-      throw new Error(`Key-sharing invite failed: ${inviteShareRes.data?.message || 'unknown error'}`);
+      throw new Error(`Key-sharing invite failed: ${JSON.stringify(inviteShareRes.data)}`);
     }
     const newShareId = inviteShareRes.data.share_id;
     created.shares.push(newShareId);
@@ -1962,7 +2116,7 @@ async function run() {
     
     // For a new invitee (phone-only), needs_profile should be true
     if (!needsProfile) {
-      console.log(C.yellow('  ⚠️ Warning: Expected needs_profile=true for phone-only invitee, but got false'));
+      throw new Error('Expected needs_profile=true for phone-only invitee, but got false');
     }
 
     // First attempt: set password WITHOUT profile details → should be rejected
@@ -2076,6 +2230,7 @@ async function run() {
 
     // Primary tenant: ensure an active route pass so DENYLIST_ADD will be emitted on deactivation
     const primaryAppDevId = `e2e-dev-${Date.now()}-primary`;
+    created.primaryAppDevId = primaryAppDevId;
     step(`Registering user-device ${primaryAppDevId} for primary tenant`);
     await registerUserDevice(primaryToken, primaryAppDevId, dummyPubKeyB64);
     step('Requesting route pass for primary tenant');
@@ -2665,237 +2820,203 @@ async function run() {
     ok('Used token correctly rejected');
     // Schedule Management Tests
     heading('Schedule Management');
-    if (created.facilityId && created.primaryTenantId) {
-      step('Testing schedule creation and management');
-      try {
-        // Get facility schedules
-        const schedulesResp = await axios.get(`${API_BASE}/facilities/${created.facilityId}/schedules`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        ok(`Retrieved ${schedulesResp.data?.schedules?.length || 0} schedules for facility`);
+    step('Testing schedule creation and management');
+    // Get facility schedules
+    const schedulesResp = await axios.get(`${API_BASE}/facilities/${created.facilityId}/schedules`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    ok(`Retrieved ${schedulesResp.data?.schedules?.length || 0} schedules for facility`);
 
-        // Create a custom schedule
-        const customScheduleResp = await axios.post(
-          `${API_BASE}/facilities/${created.facilityId}/schedules`,
-          {
-            name: 'E2E Test Schedule',
-            schedule_type: 'custom',
-            is_active: true,
-            time_windows: [
-              { day_of_week: 1, start_time: '09:00:00', end_time: '17:00:00' },
-              { day_of_week: 2, start_time: '09:00:00', end_time: '17:00:00' },
-            ],
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const customScheduleId = customScheduleResp.data?.schedule?.id;
-        if (customScheduleId) {
-          created.scheduleId = customScheduleId;
-          ok(`Created custom schedule ${customScheduleId}`);
+    // Create a custom schedule
+    const customScheduleResp = await axios.post(
+      `${API_BASE}/facilities/${created.facilityId}/schedules`,
+      {
+        name: 'E2E Test Schedule',
+        schedule_type: 'custom',
+        is_active: true,
+        time_windows: [
+          { day_of_week: 1, start_time: '09:00:00', end_time: '17:00:00' },
+          { day_of_week: 2, start_time: '09:00:00', end_time: '17:00:00' },
+        ],
+      },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const customScheduleId = customScheduleResp.data?.schedule?.id;
+    if (!customScheduleId) throw new Error('Failed to create custom schedule');
+    created.scheduleId = customScheduleId;
+    ok(`Created custom schedule ${customScheduleId}`);
 
-          // Assign schedule to user
-          await axios.put(
-            `${API_BASE}/users/${created.primaryTenantId}/facilities/${created.facilityId}/schedule`,
-            { scheduleId: customScheduleId },
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          ok(`Assigned schedule to user ${created.primaryTenantId}`);
+    // Assign schedule to user
+    await axios.put(
+      `${API_BASE}/users/${created.primaryTenantId}/facilities/${created.facilityId}/schedule`,
+      { scheduleId: customScheduleId },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    ok(`Assigned schedule to user ${created.primaryTenantId}`);
 
-          // Verify route pass includes schedule
-          step('Verifying route pass includes schedule data');
-          try {
-            if (created.deviceId && primaryToken) {
-              const routePassResp = await axios.post(
-                `${API_BASE}/passes/request`,
-                {},
-                { headers: { Authorization: `Bearer ${primaryToken}`, 'X-App-Device-Id': created.deviceId } }
-              );
-              if (routePassResp.data?.routePass) {
-                // Decode JWT to check for schedule (simplified check)
-                const parts = routePassResp.data.routePass.split('.');
-                if (parts.length === 3) {
-                  const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-                  if (payload.schedule) {
-                    ok('Route pass includes schedule data');
-                  } else {
-                    console.warn('Route pass does not include schedule data');
-                  }
-                }
-              }
-            } else {
-              console.warn('Skipping route pass verification - device or token not available');
-            }
-          } catch (e) {
-            console.warn('Route pass verification skipped:', e?.response?.data?.message || e?.message || e);
-          }
+    // Verify route pass includes schedule
+    step('Verifying route pass includes schedule data');
+    if (!created.primaryAppDevId || !primaryToken) throw new Error('Primary app device or token unavailable for route pass verification');
+    const routePassResp = await axios.post(
+      `${API_BASE}/passes/request`,
+      {},
+      { headers: { Authorization: `Bearer ${primaryToken}`, 'X-App-Device-Id': created.primaryAppDevId } }
+    );
+    if (!routePassResp.data?.routePass) throw new Error('Route pass response missing routePass field');
+    const rpParts = routePassResp.data.routePass.split('.');
+    if (rpParts.length !== 3) throw new Error(`Route pass JWT has ${rpParts.length} parts, expected 3`);
+    const rpPayload = JSON.parse(Buffer.from(rpParts[1], 'base64').toString());
+    if (!rpPayload.schedule) throw new Error('Route pass does not include schedule data');
+    ok('Route pass includes schedule data');
 
-          // Test schedule usage endpoint
-          step('Testing schedule usage endpoint');
-          try {
-            const usageResp = await axios.get(
-              `${API_BASE}/facilities/${created.facilityId}/schedules/${customScheduleId}/usage`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            if (usageResp.data?.usage) {
-              ok(`Schedule usage: ${usageResp.data.usage.totalCount} total users (${usageResp.data.usage.tenantCount} tenants, ${usageResp.data.usage.maintenanceCount} maintenance)`);
-            }
-          } catch (e) {
-            console.warn('Schedule usage check failed:', e?.response?.data || e?.message || e);
-          }
+    // Test schedule usage endpoint
+    step('Testing schedule usage endpoint');
+    const usageResp = await axios.get(
+      `${API_BASE}/facilities/${created.facilityId}/schedules/${customScheduleId}/usage`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!usageResp.data?.usage) throw new Error('Schedule usage response missing usage field');
+    ok(`Schedule usage: ${usageResp.data.usage.totalCount} total users (${usageResp.data.usage.tenantCount} tenants, ${usageResp.data.usage.maintenanceCount} maintenance)`);
 
-          // Test schedule deletion with user reassignment
-          step('Testing schedule deletion with user reassignment');
-          try {
-            // Create another user and assign them to the schedule
-            const testUserResp = await axios.post(
-              `${API_BASE}/users`,
-              {
-                email: `e2e-schedule-test-${Date.now()}@test.com`,
-                firstName: 'Schedule',
-                lastName: 'Test',
-                role: 'tenant',
-                password: 'TestUser123!',
-              },
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            const testUserId = testUserResp.data?.user?.id;
-            if (testUserId) {
-              created.users.push(testUserId);
-              // Add user to facility
-              await axios.post(
-                `${API_BASE}/user-facilities`,
-                { userId: testUserId, facilityId: created.facilityId },
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              
-              // Assign schedule to test user
-              await axios.put(
-                `${API_BASE}/users/${testUserId}/facilities/${created.facilityId}/schedule`,
-                { scheduleId: customScheduleId },
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
+    // Test schedule deletion with user reassignment
+    step('Testing schedule deletion with user reassignment');
+    // Create another user and assign them to the schedule
+    const testUserResp = await axios.post(
+      `${API_BASE}/users`,
+      {
+        email: `e2e-schedule-test-${Date.now()}@test.com`,
+        firstName: 'Schedule',
+        lastName: 'Test',
+        role: 'tenant',
+        password: 'TestUser123!',
+      },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const testUserId = testUserResp.data?.userId;
+    if (!testUserId) throw new Error(`Failed to create test user for schedule deletion test: ${JSON.stringify(testUserResp.data)}`);
+    created.users.push(testUserId);
+    // Add user to facility
+    await assignUserToFacility(token, testUserId, created.facilityId);
 
-              // Check usage before deletion
-              const usageBefore = await axios.get(
-                `${API_BASE}/facilities/${created.facilityId}/schedules/${customScheduleId}/usage`,
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              ok(`Before deletion: ${usageBefore.data?.usage?.totalCount || 0} users assigned`);
+    // Assign schedule to test user
+    await axios.put(
+      `${API_BASE}/users/${testUserId}/facilities/${created.facilityId}/schedule`,
+      { scheduleId: customScheduleId },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
 
-              // Delete the schedule
-              await axios.delete(
-                `${API_BASE}/facilities/${created.facilityId}/schedules/${customScheduleId}`,
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              ok('Schedule deleted successfully');
+    // Check usage before deletion
+    const usageBefore = await axios.get(
+      `${API_BASE}/facilities/${created.facilityId}/schedules/${customScheduleId}/usage`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    ok(`Before deletion: ${usageBefore.data?.usage?.totalCount || 0} users assigned`);
 
-              // Verify users were reassigned to default schedule
-              const userScheduleResp = await axios.get(
-                `${API_BASE}/users/${testUserId}/facilities/${created.facilityId}/schedule`,
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              if (userScheduleResp.data?.schedule) {
-                ok(`User reassigned to default schedule: ${userScheduleResp.data.schedule.name}`);
-              }
+    // Delete the schedule
+    await axios.delete(
+      `${API_BASE}/facilities/${created.facilityId}/schedules/${customScheduleId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    ok('Schedule deleted successfully');
 
-              // Clear scheduleId so cleanup doesn't try to delete it again
-              created.scheduleId = null;
-            }
-          } catch (e) {
-            console.warn('Schedule deletion test failed:', e?.response?.data || e?.message || e);
-          }
-        }
-      } catch (e) {
-        console.warn('Schedule management tests failed:', e?.response?.data || e?.message || e);
-      }
+    // Verify user schedule was cleared after custom schedule deletion
+    const userScheduleResp = await axios.get(
+      `${API_BASE}/users/${testUserId}/facilities/${created.facilityId}/schedule`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    // After custom schedule deletion, user may be reassigned to default or have no schedule
+    const postDeleteSchedule = userScheduleResp.data?.schedule;
+    if (postDeleteSchedule && postDeleteSchedule.id === customScheduleId) {
+      throw new Error('User still assigned to deleted custom schedule');
     }
+    ok(`User schedule after deletion: ${postDeleteSchedule ? postDeleteSchedule.name : '(cleared/default)'}`);
+
+    // Clear scheduleId so cleanup doesn't try to delete it again
+    created.scheduleId = null;
 
     // ================================================================
     // Access Control API Tests
     // ================================================================
     heading('Access Control API');
-    if (created.facilityId) {
-      step('Testing access control device query');
-      try {
-        // Get access control devices for facility
-        const acDevicesResp = await axios.get(
-          `${API_BASE}/access-control/facilities/${created.facilityId}/devices`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const acDevices = acDevicesResp.data?.devices || [];
-        if (acDevices.length === 0) {
-          throw new Error('Expected access control devices but got 0 (were they created during setup?)');
-        }
-        ok(`Retrieved ${acDevices.length} access control devices`);
-
-        // Validate device structure
-        const firstAcDevice = acDevices[0];
-        const requiredAcFields = ['id', 'name', 'deviceType', 'status', 'isLocked', 'facilityId', 'gatewayId'];
-        const missingAcFields = requiredAcFields.filter(f => !(f in firstAcDevice));
-        if (missingAcFields.length > 0) {
-          throw new Error(`Access control device missing fields: ${missingAcFields.join(', ')}`);
-        }
-        ok(`Device structure validated (fields: ${requiredAcFields.join(', ')})`);
-
-        // Verify we have all three types
-        const acTypes = new Set(acDevices.map(d => d.deviceType));
-        const expectedTypes = ['door', 'gate', 'elevator'];
-        const foundTypes = expectedTypes.filter(t => acTypes.has(t));
-        ok(`Device types found: ${foundTypes.join(', ')} (expected: ${expectedTypes.join(', ')})`);
-
-        // Test device type filter
-        step('Testing access control type filter');
-        const doorFilterResp = await axios.get(
-          `${API_BASE}/access-control/facilities/${created.facilityId}/devices`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            params: { deviceType: 'door' }
-          }
-        );
-        const doorDevices = doorFilterResp.data?.devices || [];
-        if (doorDevices.length > 0 && doorDevices.every(d => d.deviceType === 'door')) {
-          ok(`Door filter returned ${doorDevices.length} door device(s)`);
-        } else if (doorDevices.length === 0) {
-          warn('Door filter returned 0 devices (expected at least 1)');
-        }
-
-        // Get access control summary for facility
-        step('Testing access control summary');
-        const acSummaryResp = await axios.get(
-          `${API_BASE}/access-control/facilities/${created.facilityId}/summary`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const summary = acSummaryResp.data?.summary;
-        if (!summary) throw new Error('Summary response missing summary field');
-        if (summary.total === 0) throw new Error('Summary reports 0 total devices');
-        ok(`Access control summary: ${summary.total} total (doors: ${summary.byType.doors}, gates: ${summary.byType.gates}, elevators: ${summary.byType.elevators})`);
-
-        // Test single device lookup
-        if (created.accessControlDeviceIds.length > 0) {
-          step('Testing single device lookup');
-          const singleDevResp = await axios.get(
-            `${API_BASE}/access-control/devices/${created.accessControlDeviceIds[0]}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          if (!singleDevResp.data?.device?.id) throw new Error('Single device lookup returned no device');
-          ok(`Single device lookup: ${singleDevResp.data.device.name} (${singleDevResp.data.device.deviceType})`);
-        }
-
-        // Test facility admin access
-        if (created.facilityAdminId && created.facilityAdminToken) {
-          step('Testing access control API with facility admin');
-          const facAdminAcResp = await axios.get(
-            `${API_BASE}/access-control/facilities/${created.facilityId}/devices`,
-            { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } }
-          );
-          const facAdminDevices = facAdminAcResp.data?.devices || [];
-          if (facAdminDevices.length === 0) throw new Error('Facility admin saw 0 access control devices');
-          ok(`Facility admin retrieved ${facAdminDevices.length} access control devices`);
-        }
-      } catch (e) {
-        console.warn('Access control API tests failed:', e?.response?.data || e?.message || e);
-      }
+    step('Testing access control device query');
+    // Get access control devices for facility
+    const acDevicesResp = await axios.get(
+      `${API_BASE}/access-control/facilities/${created.facilityId}/devices`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const acDevices = acDevicesResp.data?.devices || [];
+    if (acDevices.length === 0) {
+      throw new Error('Expected access control devices but got 0 (were they created during setup?)');
     }
+    ok(`Retrieved ${acDevices.length} access control devices`);
+
+    // Validate device structure
+    const firstAcDevice = acDevices[0];
+    const requiredAcFields = ['id', 'name', 'deviceType', 'status', 'isLocked', 'facilityId', 'gatewayId'];
+    const missingAcFields = requiredAcFields.filter(f => !(f in firstAcDevice));
+    if (missingAcFields.length > 0) {
+      throw new Error(`Access control device missing fields: ${missingAcFields.join(', ')}`);
+    }
+    ok(`Device structure validated (fields: ${requiredAcFields.join(', ')})`);
+
+    // Verify we have all three types
+    const acTypes = new Set(acDevices.map(d => d.deviceType));
+    const expectedTypes = ['door', 'gate', 'elevator'];
+    const missingTypes = expectedTypes.filter(t => !acTypes.has(t));
+    if (missingTypes.length > 0) {
+      throw new Error(`Missing access control device types: ${missingTypes.join(', ')}`);
+    }
+    ok(`Device types found: ${expectedTypes.join(', ')}`);
+
+    // Test device type filter
+    step('Testing access control type filter');
+    const doorFilterResp = await axios.get(
+      `${API_BASE}/access-control/facilities/${created.facilityId}/devices`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { deviceType: 'door' }
+      }
+    );
+    const doorDevices = doorFilterResp.data?.devices || [];
+    if (doorDevices.length === 0) {
+      throw new Error('Door filter returned 0 devices (expected at least 1)');
+    }
+    if (!doorDevices.every(d => d.deviceType === 'door')) {
+      throw new Error('Door filter returned non-door devices');
+    }
+    ok(`Door filter returned ${doorDevices.length} door device(s)`);
+
+    // Get access control summary for facility
+    step('Testing access control summary');
+    const acSummaryResp = await axios.get(
+      `${API_BASE}/access-control/facilities/${created.facilityId}/summary`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const summary = acSummaryResp.data?.summary;
+    if (!summary) throw new Error('Summary response missing summary field');
+    if (summary.total === 0) throw new Error('Summary reports 0 total devices');
+    ok(`Access control summary: ${summary.total} total (doors: ${summary.byType.doors}, gates: ${summary.byType.gates}, elevators: ${summary.byType.elevators})`);
+
+    // Test single device lookup
+    step('Testing single device lookup');
+    if (created.accessControlDeviceIds.length === 0) throw new Error('No access control device IDs tracked for single lookup test');
+    const singleDevResp = await axios.get(
+      `${API_BASE}/access-control/devices/${created.accessControlDeviceIds[0]}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!singleDevResp.data?.device?.id) throw new Error('Single device lookup returned no device');
+    ok(`Single device lookup: ${singleDevResp.data.device.name} (${singleDevResp.data.device.deviceType})`);
+
+    // Test facility admin access
+    step('Testing access control API with facility admin');
+    if (!created.facilityAdminToken) throw new Error('Facility admin token unavailable for access control test');
+    const facAdminAcResp = await axios.get(
+      `${API_BASE}/access-control/facilities/${created.facilityId}/devices`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } }
+    );
+    const facAdminDevices = facAdminAcResp.data?.devices || [];
+    if (facAdminDevices.length === 0) throw new Error('Facility admin saw 0 access control devices');
+    ok(`Facility admin retrieved ${facAdminDevices.length} access control devices`);
 
     // ================================================================
     // Notifications API Tests
@@ -2903,22 +3024,21 @@ async function run() {
     // which generate real notifications for the primary tenant.
     // ================================================================
     heading('Notifications API');
-    if (created.primaryTenantId && primaryToken) {
-      // Allow a brief settle for async notification creation
-      await delay(1000);
-      step('Testing notifications API');
-      try {
-        // Get notifications for the primary tenant (should have unit_assigned + access_granted)
-        const notificationsResp = await axios.get(
-          `${API_BASE}/notifications`,
-          { headers: { Authorization: `Bearer ${primaryToken}` } }
-        );
-        const notifications = notificationsResp.data?.notifications || [];
-        const unreadCount = notificationsResp.data?.unreadCount ?? 0;
-        if (notifications.length === 0) {
-          throw new Error('Expected notifications from unit assignment / key sharing but got 0');
-        }
-        ok(`Retrieved ${notifications.length} notifications, unread: ${unreadCount}`);
+    if (!created.primaryTenantId || !primaryToken) throw new Error('Primary tenant not available for notification tests');
+    // Allow a brief settle for async notification creation
+    await delay(1000);
+    step('Testing notifications API');
+    // Get notifications for the primary tenant (should have unit_assigned + access_granted)
+      const notificationsResp = await axios.get(
+        `${API_BASE}/notifications`,
+        { headers: { Authorization: `Bearer ${primaryToken}` } }
+      );
+      const notifications = notificationsResp.data?.notifications || [];
+      const unreadCount = notificationsResp.data?.unreadCount ?? 0;
+      if (notifications.length === 0) {
+        throw new Error('Expected notifications from unit assignment / key sharing but got 0');
+      }
+      ok(`Retrieved ${notifications.length} notifications, unread: ${unreadCount}`);
 
         // Validate notification structure
         const firstNotif = notifications[0];
@@ -2945,10 +3065,9 @@ async function run() {
         );
         const unreadBefore = unreadCountResp.data?.unreadCount ?? 0;
         if (unreadBefore === 0) {
-          warn('Unread count is 0 even though notifications exist (may already be read)');
-        } else {
-          ok(`Unread count before any reads: ${unreadBefore}`);
+          throw new Error('Unread count is 0 even though fresh notifications should exist');
         }
+        ok(`Unread count before any reads: ${unreadBefore}`);
 
         // --- Mark a single notification as read and verify unread count delta ---
         const unreadNotifs = notifications.filter(n => !n.isRead);
@@ -2974,11 +3093,11 @@ async function run() {
             { headers: { Authorization: `Bearer ${primaryToken}` } }
           );
           const unreadAfterOne = unreadAfterOneResp.data?.unreadCount ?? 0;
-          if (unreadBefore > 0 && unreadAfterOne === unreadBefore - 1) {
-            ok(`Unread count decreased by 1: ${unreadBefore} -> ${unreadAfterOne}`);
-          } else if (unreadBefore > 0) {
-            warn(`Unread count delta unexpected: ${unreadBefore} -> ${unreadAfterOne} (expected ${unreadBefore - 1})`);
+          if (unreadBefore === 0) throw new Error('Unread count was 0 before marking, expected at least 1 unread notification');
+          if (unreadAfterOne !== unreadBefore - 1) {
+            throw new Error(`Unread count delta unexpected: ${unreadBefore} -> ${unreadAfterOne} (expected ${unreadBefore - 1})`);
           }
+          ok(`Unread count decreased by 1: ${unreadBefore} -> ${unreadAfterOne}`);
 
           // Verify the notification appears in isRead=true filtered list
           step('Testing isRead filter (read notifications)');
@@ -2991,11 +3110,10 @@ async function run() {
           );
           const readNotifs = readFilterResp.data?.notifications || [];
           const foundRead = readNotifs.some(n => n.id === targetNotif.id);
-          if (foundRead) {
-            ok(`Marked notification appears in isRead=true filtered results`);
-          } else {
-            warn(`Marked notification not found in isRead=true filtered results (got ${readNotifs.length} results)`);
+          if (!foundRead) {
+            throw new Error(`Marked notification not found in isRead=true filtered results (got ${readNotifs.length} results)`);
           }
+          ok(`Marked notification appears in isRead=true filtered results`);
 
           // Verify the notification does NOT appear in isRead=false filtered list
           step('Testing isRead filter (unread notifications)');
@@ -3026,56 +3144,6 @@ async function run() {
           }
         }
 
-        // --- Test mark multiple as read ---
-        step('Testing mark multiple notifications as read');
-        // Re-fetch to get current unread list
-        const refreshResp = await axios.get(
-          `${API_BASE}/notifications`,
-          {
-            headers: { Authorization: `Bearer ${primaryToken}` },
-            params: { isRead: 'false' }
-          }
-        );
-        const currentUnread = refreshResp.data?.notifications || [];
-        if (currentUnread.length >= 2) {
-          const batchIds = currentUnread.slice(0, 2).map(n => n.id);
-          const markMultiResp = await axios.post(
-            `${API_BASE}/notifications/read`,
-            { notificationIds: batchIds },
-            { headers: { Authorization: `Bearer ${primaryToken}` } }
-          );
-          if (markMultiResp.data?.markedCount === undefined) {
-            throw new Error('Expected markedCount in mark-multiple response');
-          }
-          ok(`Marked ${markMultiResp.data.markedCount} notifications as read via batch (sent ${batchIds.length} IDs)`);
-
-          // Verify those IDs are now read
-          const verifyBatchResp = await axios.get(
-            `${API_BASE}/notifications`,
-            {
-              headers: { Authorization: `Bearer ${primaryToken}` },
-              params: { isRead: 'false' }
-            }
-          );
-          const stillUnread = verifyBatchResp.data?.notifications || [];
-          const batchStillUnread = stillUnread.filter(n => batchIds.includes(n.id));
-          if (batchStillUnread.length === 0) {
-            ok('All batch-marked notifications confirmed as read');
-          } else {
-            throw new Error(`${batchStillUnread.length} of ${batchIds.length} batch notifications still unread`);
-          }
-        } else if (currentUnread.length === 1) {
-          const batchIds = [currentUnread[0].id];
-          const markMultiResp = await axios.post(
-            `${API_BASE}/notifications/read`,
-            { notificationIds: batchIds },
-            { headers: { Authorization: `Bearer ${primaryToken}` } }
-          );
-          ok(`Marked ${markMultiResp.data?.markedCount ?? 1} notification via batch (only 1 unread left)`);
-        } else {
-          info('No unread notifications remaining to test mark-multiple');
-        }
-
         // Get a single notification by ID
         if (notifications.length > 0) {
           step('Testing single notification retrieval');
@@ -3088,41 +3156,17 @@ async function run() {
           }
         }
 
-        // Test mark all as read (should handle already-read gracefully)
-        step('Testing mark all notifications as read');
-        const markAllResp = await axios.post(
-          `${API_BASE}/notifications/read-all`,
-          {},
-          { headers: { Authorization: `Bearer ${primaryToken}` } }
-        );
-        ok(`Marked ${markAllResp.data?.markedCount ?? 'all'} notifications as read`);
-
-        // Verify unread count is now 0
-        const unreadAfterResp = await axios.get(
-          `${API_BASE}/notifications/unread-count`,
-          { headers: { Authorization: `Bearer ${primaryToken}` } }
-        );
-        if (unreadAfterResp.data?.unreadCount === 0) {
-          ok('Unread count is now 0 after marking all as read');
-        } else {
-          throw new Error(`Expected 0 unread after mark-all, got ${unreadAfterResp.data?.unreadCount}`);
-        }
-
-        // Verify all notifications show as read in the list
-        step('Verifying all notifications are read after mark-all');
-        const allReadResp = await axios.get(
+        // Test type filter
+        step('Testing notifications with type filter');
+        const typeFilterResp = await axios.get(
           `${API_BASE}/notifications`,
           {
             headers: { Authorization: `Bearer ${primaryToken}` },
-            params: { isRead: 'false' }
+            params: { type: 'unit_assigned' }
           }
         );
-        const remainingUnread = allReadResp.data?.notifications || [];
-        if (remainingUnread.length === 0) {
-          ok('Confirmed: zero unread notifications after mark-all');
-        } else {
-          throw new Error(`Expected 0 unread notifications after mark-all, found ${remainingUnread.length}`);
-        }
+        const filteredNotifs = typeFilterResp.data?.notifications || [];
+        ok(`Type filter (unit_assigned): ${filteredNotifs.length} results`);
 
         // Test delete notification
         if (notifications.length > 0) {
@@ -3151,20 +3195,13 @@ async function run() {
           }
         }
 
-        // Test type filter
-        step('Testing notifications with type filter');
-        const typeFilterResp = await axios.get(
-          `${API_BASE}/notifications`,
-          {
-            headers: { Authorization: `Bearer ${primaryToken}` },
-            params: { type: 'unit_assigned' }
-          }
-        );
-        const filteredNotifs = typeFilterResp.data?.notifications || [];
-        ok(`Type filter (unit_assigned): ${filteredNotifs.length} results`);
-
-        // Test shared user notifications (should have access_granted from key sharing)
-        if (share1Token) {
+        // ------------------------------------------------------------------
+        // Mark-all / mark-multiple / single-read with REAL unread items
+        // Use share1 who has access_granted notifications, plus generate
+        // additional ones via revoke+re-share to ensure multiple unreads.
+        // ------------------------------------------------------------------
+        if (!share1Token || created.shares.length === 0) throw new Error('share1Token or shares unavailable for notification mark tests');
+        {
           step('Testing shared user notifications (access_granted)');
           const shareNotifResp = await axios.get(
             `${API_BASE}/notifications`,
@@ -3179,11 +3216,200 @@ async function run() {
           } else if (shareNotifs.length > 0) {
             info(`Shared user notification types: ${[...new Set(shareNotifs.map(n => n.type))].join(', ')}`);
           }
+
+          // Test mark-all FIRST while share1 still has unread notifications
+          const share1Idx = created.shares.length > 1 ? 1 : 0;
+          let notifShareId = created.shares[share1Idx];
+
+          // Verify share1 has unread notifications for mark-all
+          step('Testing mark all notifications as read');
+          const preMarkAllCountResp = await axios.get(
+            `${API_BASE}/notifications/unread-count`,
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          const preMarkAllUnread = preMarkAllCountResp.data?.unreadCount ?? 0;
+          if (preMarkAllUnread === 0) {
+            throw new Error('Expected share1 to have unread notifications for mark-all test');
+          }
+          ok(`${preMarkAllUnread} unread notification(s) before mark-all`);
+
+          const markAllResp = await axios.post(
+            `${API_BASE}/notifications/read-all`,
+            {},
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          const markedAllCount = markAllResp.data?.markedCount ?? 0;
+          if (markedAllCount === 0) {
+            throw new Error(`mark-all returned markedCount=0 but expected at least ${preMarkAllUnread}`);
+          }
+          ok(`Marked ${markedAllCount} notifications as read via mark-all`);
+
+          // Verify unread count is now 0
+          const unreadAfterAllResp = await axios.get(
+            `${API_BASE}/notifications/unread-count`,
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          if (unreadAfterAllResp.data?.unreadCount !== 0) {
+            throw new Error(`Expected 0 unread after mark-all, got ${unreadAfterAllResp.data?.unreadCount}`);
+          }
+          ok('Unread count is now 0 after marking all as read');
+
+          // Verify no unread via filter
+          const allReadResp = await axios.get(
+            `${API_BASE}/notifications`,
+            {
+              headers: { Authorization: `Bearer ${share1Token}` },
+              params: { isRead: 'false' }
+            }
+          );
+          const remainingUnread = allReadResp.data?.notifications || [];
+          if (remainingUnread.length !== 0) {
+            throw new Error(`Expected 0 unread notifications after mark-all, found ${remainingUnread.length}`);
+          }
+          ok('Confirmed: zero unread notifications after mark-all');
+
+          // Now generate a fresh notification for single-read + delta tests
+          // Revoke and reactivate share to trigger new access_granted notification
+          step('Generating fresh notification for single-read tests');
+          await revokeShare(token, notifShareId);
+          created.shares = created.shares.filter(id => id !== notifShareId);
+          await delay(500);
+          await axios.put(
+            `${API_BASE}/key-sharing/${notifShareId}`,
+            { is_active: true },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          created.shares.push(notifShareId);
+          await delay(1000);
+
+          // Fetch fresh notifications
+          const freshResp = await axios.get(
+            `${API_BASE}/notifications`,
+            {
+              headers: { Authorization: `Bearer ${share1Token}` },
+              params: { isRead: 'false' }
+            }
+          );
+          const freshUnread = freshResp.data?.notifications || [];
+
+          // Test mark single notification as read (with delta verification)
+          if (freshUnread.length > 0) {
+            ok(`${freshUnread.length} fresh unread notification(s) available for single-read test`);
+            step('Testing mark single notification as read (with delta verification)');
+            const targetNotif = freshUnread[0];
+            const unreadCountBefore = freshUnread.length;
+            const markOneResp = await axios.post(
+              `${API_BASE}/notifications/${targetNotif.id}/read`,
+              {},
+              { headers: { Authorization: `Bearer ${share1Token}` } }
+            );
+            if (!markOneResp.data?.notification?.isRead) {
+              throw new Error('Expected isRead=true in mark-as-read response');
+            }
+            if (!markOneResp.data.notification.readAt) {
+              throw new Error('Expected readAt timestamp in mark-as-read response');
+            }
+            ok(`Marked notification ${targetNotif.id} as read (isRead=${markOneResp.data.notification.isRead}, readAt=${markOneResp.data.notification.readAt})`);
+
+            // Verify unread count decreased by exactly 1
+            const unreadAfterOneResp = await axios.get(
+              `${API_BASE}/notifications/unread-count`,
+              { headers: { Authorization: `Bearer ${share1Token}` } }
+            );
+            const unreadAfterOne = unreadAfterOneResp.data?.unreadCount ?? 0;
+            if (unreadAfterOne !== unreadCountBefore - 1) {
+              throw new Error(`Unread count delta unexpected: ${unreadCountBefore} -> ${unreadAfterOne} (expected ${unreadCountBefore - 1})`);
+            }
+            ok(`Unread count decreased by 1: ${unreadCountBefore} -> ${unreadAfterOne}`);
+
+            // Verify the notification appears in isRead=true filtered list
+            step('Testing isRead filter (read notifications)');
+            const readFilterResp = await axios.get(
+              `${API_BASE}/notifications`,
+              {
+                headers: { Authorization: `Bearer ${share1Token}` },
+                params: { isRead: 'true' }
+              }
+            );
+            const readNotifs = readFilterResp.data?.notifications || [];
+            const foundRead = readNotifs.some(n => n.id === targetNotif.id);
+            if (!foundRead) {
+              throw new Error(`Marked notification not found in isRead=true filtered results (got ${readNotifs.length} results)`);
+            }
+            ok('Marked notification appears in isRead=true filtered results');
+
+            // Verify the notification does NOT appear in isRead=false filtered list
+            step('Testing isRead filter (unread notifications)');
+            const unreadFilterResp = await axios.get(
+              `${API_BASE}/notifications`,
+              {
+                headers: { Authorization: `Bearer ${share1Token}` },
+                params: { isRead: 'false' }
+              }
+            );
+            const unreadNotifs2 = unreadFilterResp.data?.notifications || [];
+            const foundInUnread = unreadNotifs2.some(n => n.id === targetNotif.id);
+            if (!foundInUnread) {
+              ok('Marked notification no longer appears in isRead=false filtered results');
+            } else {
+              throw new Error(`Notification ${targetNotif.id} still appears as unread after marking as read`);
+            }
+
+            // Verify idempotency: marking same notification as read again should still succeed
+            step('Testing mark-as-read idempotency');
+            const markAgainResp = await axios.post(
+              `${API_BASE}/notifications/${targetNotif.id}/read`,
+              {},
+              { headers: { Authorization: `Bearer ${share1Token}` } }
+            );
+            if (markAgainResp.data?.notification?.isRead) {
+              ok('Re-marking already-read notification still returns isRead=true');
+            }
+          }
+
+          // Test mark multiple as read
+          const refreshMultiResp = await axios.get(
+            `${API_BASE}/notifications`,
+            {
+              headers: { Authorization: `Bearer ${share1Token}` },
+              params: { isRead: 'false' }
+            }
+          );
+          const currentUnread = refreshMultiResp.data?.notifications || [];
+          if (currentUnread.length >= 2) {
+            step('Testing mark multiple notifications as read');
+            const batchIds = currentUnread.slice(0, 2).map(n => n.id);
+            const markMultiResp = await axios.post(
+              `${API_BASE}/notifications/read`,
+              { notificationIds: batchIds },
+              { headers: { Authorization: `Bearer ${share1Token}` } }
+            );
+            if (markMultiResp.data?.markedCount === undefined) {
+              throw new Error('Expected markedCount in mark-multiple response');
+            }
+            ok(`Marked ${markMultiResp.data.markedCount} notifications as read via batch (sent ${batchIds.length} IDs)`);
+
+            // Verify those IDs are now read
+            const verifyBatchResp = await axios.get(
+              `${API_BASE}/notifications`,
+              {
+                headers: { Authorization: `Bearer ${share1Token}` },
+                params: { isRead: 'false' }
+              }
+            );
+            const stillUnread = verifyBatchResp.data?.notifications || [];
+            const batchStillUnread = stillUnread.filter(n => batchIds.includes(n.id));
+            if (batchStillUnread.length === 0) {
+              ok('All batch-marked notifications confirmed as read');
+            } else {
+              throw new Error(`${batchStillUnread.length} of ${batchIds.length} batch notifications still unread`);
+            }
+          } else {
+            info(`Only ${currentUnread.length} unread notification(s) remaining, skipping mark-multiple test`);
+          }
+
+          // (mark-all was tested above before single-read)
         }
-      } catch (e) {
-        console.warn('Notifications API tests failed:', e?.response?.data || e?.message || e);
-      }
-    }
 
     // ================================================================
     // Activity Logs API Tests
@@ -3191,13 +3417,11 @@ async function run() {
     // tenant assignments have occurred, generating real activity logs.
     // ================================================================
     heading('Activity Logs API');
-    if (created.facilityId) {
-      // Allow a brief settle for async activity log creation
-      await delay(1000);
-      step('Testing activity logs API');
-      try {
-        // Get activity logs for facility
-        const activityResp = await axios.get(
+    // Allow a brief settle for async activity log creation
+    await delay(1000);
+    step('Testing activity logs API');
+    // Get activity logs for facility
+    const activityResp = await axios.get(
           `${API_BASE}/activity/facilities/${created.facilityId}`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -3241,35 +3465,29 @@ async function run() {
         }
         ok(`Retrieved ${generalActivities.length} general activity logs`);
 
-        // Test activity logs for unit
-        if (created.unitId) {
-          step('Testing unit activity logs');
-          const unitActivityResp = await axios.get(
-            `${API_BASE}/activity/units/${created.unitId}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          const unitActivities = unitActivityResp.data?.activities || [];
-          ok(`Retrieved ${unitActivities.length} activity logs for unit`);
-          if (unitActivities.length > 0) {
-            const unitActivityTypes = [...new Set(unitActivities.map(a => a.activityType))];
-            info(`Unit activity types: ${unitActivityTypes.join(', ')}`);
-          }
-        }
+    // Test activity logs for unit
+    if (!created.unitId) throw new Error('No unit available for unit activity logs test');
+    step('Testing unit activity logs');
+    const unitActivityResp = await axios.get(
+      `${API_BASE}/activity/units/${created.unitId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const unitActivities = unitActivityResp.data?.activities || [];
+    if (unitActivities.length === 0) throw new Error('Expected unit activity logs but got 0');
+    ok(`Retrieved ${unitActivities.length} activity logs for unit`);
+    info(`Unit activity types: ${[...new Set(unitActivities.map(a => a.activityType))].join(', ')}`);
 
-        // Test activity logs for device
-        if (created.deviceId) {
-          step('Testing device activity logs');
-          const deviceActivityResp = await axios.get(
-            `${API_BASE}/activity/devices/${created.deviceId}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          const deviceActivities = deviceActivityResp.data?.activities || [];
-          ok(`Retrieved ${deviceActivities.length} activity logs for device`);
-          if (deviceActivities.length > 0) {
-            const deviceActivityTypes = [...new Set(deviceActivities.map(a => a.activityType))];
-            info(`Device activity types: ${deviceActivityTypes.join(', ')}`);
-          }
-        }
+    // Test activity logs for device
+    if (!created.deviceId) throw new Error('No device available for device activity logs test');
+    step('Testing device activity logs');
+    const deviceActivityResp = await axios.get(
+      `${API_BASE}/activity/devices/${created.deviceId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const deviceActivities = deviceActivityResp.data?.activities || [];
+    if (deviceActivities.length === 0) throw new Error('Expected device activity logs but got 0');
+    ok(`Retrieved ${deviceActivities.length} activity logs for device`);
+    info(`Device activity types: ${[...new Set(deviceActivities.map(a => a.activityType))].join(', ')}`);
 
         // Test activity logs with type filter
         step('Testing activity logs with type filter (lock)');
@@ -3280,65 +3498,375 @@ async function run() {
             params: { activityType: 'lock', limit: 5 }
           }
         );
-        const lockActivities = filteredLockResp.data?.activities || [];
-        ok(`Lock activity filter: ${lockActivities.length} results`);
-        if (lockActivities.length > 0) {
-          // Verify all results are actually lock type
-          const allLock = lockActivities.every(a => a.activityType === 'lock');
-          if (allLock) ok('All filtered results have activityType=lock');
-        }
-
-        // Test activity logs with unlock filter
-        step('Testing activity logs with type filter (unlock)');
-        const filteredUnlockResp = await axios.get(
-          `${API_BASE}/activity`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            params: { activityType: 'unlock', limit: 5 }
-          }
-        );
-        ok(`Unlock activity filter: ${(filteredUnlockResp.data?.activities || []).length} results`);
-
-        // Test activity logs with assignment_change filter
-        step('Testing activity logs with type filter (assignment_change)');
-        const filteredAssignResp = await axios.get(
-          `${API_BASE}/activity`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            params: { activityType: 'assignment_change', limit: 5 }
-          }
-        );
-        ok(`Assignment change filter: ${(filteredAssignResp.data?.activities || []).length} results`);
-
-        // Test date range filter
-        step('Testing activity logs with date range');
-        const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
-        const dateRangeResp = await axios.get(
-          `${API_BASE}/activity/facilities/${created.facilityId}`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            params: { fromDate: oneHourAgo, limit: 20 }
-          }
-        );
-        ok(`Date range filter (last hour): ${(dateRangeResp.data?.activities || []).length} results`);
-
-        // Test facility admin access to activity logs
-        if (created.facilityAdminToken) {
-          step('Testing activity logs API with facility admin');
-          const facAdminActivityResp = await axios.get(
-            `${API_BASE}/activity/facilities/${created.facilityId}`,
-            { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } }
-          );
-          const facAdminActivities = facAdminActivityResp.data?.activities || [];
-          if (facAdminActivities.length === 0) {
-            throw new Error('Facility admin expected activity logs but got 0');
-          }
-          ok(`Facility admin retrieved ${facAdminActivities.length} activity logs`);
-        }
-      } catch (e) {
-        console.warn('Activity logs API tests failed:', e?.response?.data || e?.message || e);
-      }
+    const lockActivities = filteredLockResp.data?.activities || [];
+    ok(`Lock activity filter: ${lockActivities.length} results`);
+    if (lockActivities.length > 0) {
+      const allLock = lockActivities.every(a => a.activityType === 'lock');
+      if (!allLock) throw new Error('Lock filter returned non-lock activity types');
+      ok('All filtered results have activityType=lock');
     }
+
+    // Test activity logs with unlock filter
+    step('Testing activity logs with type filter (unlock)');
+    const filteredUnlockResp = await axios.get(
+      `${API_BASE}/activity`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { activityType: 'unlock', limit: 5 }
+      }
+    );
+    ok(`Unlock activity filter: ${(filteredUnlockResp.data?.activities || []).length} results`);
+
+    // Test activity logs with assignment_change filter
+    step('Testing activity logs with type filter (assignment_change)');
+    const filteredAssignResp = await axios.get(
+      `${API_BASE}/activity`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { activityType: 'assignment_change', limit: 5 }
+      }
+    );
+    ok(`Assignment change filter: ${(filteredAssignResp.data?.activities || []).length} results`);
+
+    // Test date range filter
+    step('Testing activity logs with date range');
+    const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+    const dateRangeResp = await axios.get(
+      `${API_BASE}/activity/facilities/${created.facilityId}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { fromDate: oneHourAgo, limit: 20 }
+      }
+    );
+    ok(`Date range filter (last hour): ${(dateRangeResp.data?.activities || []).length} results`);
+
+    // Test facility admin access to activity logs
+    step('Testing activity logs API with facility admin');
+    if (!created.facilityAdminToken) throw new Error('Facility admin token unavailable for activity logs test');
+    const facAdminActivityResp = await axios.get(
+      `${API_BASE}/activity/facilities/${created.facilityId}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } }
+    );
+    const facAdminActivities = facAdminActivityResp.data?.activities || [];
+    if (facAdminActivities.length === 0) {
+      throw new Error('Facility admin expected activity logs but got 0');
+    }
+    ok(`Facility admin retrieved ${facAdminActivities.length} activity logs`);
+
+    // =====================================================================
+    // Firmware OTA E2E
+    // =====================================================================
+    heading('Firmware OTA');
+
+    let firmwareId = null;
+    let pushId = null;
+    // Step 1: Upload gateway firmware (HTTP)
+    step('Uploading test gateway firmware binary');
+    const crypto = require('crypto');
+    const FormData = require('form-data');
+    const testBinary = crypto.randomBytes(512 * 1024); // 512KB test binary
+    const testVersion = `e2e-test-${Date.now()}`;
+    const formData = new FormData();
+    formData.append('file', testBinary, { filename: 'test-firmware.bin', contentType: 'application/octet-stream' });
+    formData.append('version', testVersion);
+    formData.append('target_type', 'gateway');
+    formData.append('description', 'E2E test firmware (gateway)');
+    const uploadResp = await axios.post(`${API_BASE}/firmware/upload`, formData, {
+      headers: { Authorization: `Bearer ${token}`, ...formData.getHeaders() },
+      maxContentLength: 100 * 1024 * 1024,
+    });
+    if (uploadResp.status !== 201) throw new Error(`Upload status expected 201 got ${uploadResp.status}`);
+    const fwData = uploadResp.data.data;
+    if (fwData.version !== testVersion) throw new Error('Version mismatch');
+    if (fwData.target_type !== 'gateway') throw new Error(`Expected target_type=gateway, got ${fwData.target_type}`);
+    if (!fwData.sha256_hash) throw new Error('Missing SHA-256');
+    if (fwData.size_bytes !== 512 * 1024) throw new Error(`Size mismatch: ${fwData.size_bytes}`);
+    if (fwData.storage_path !== undefined) throw new Error('storage_path should not be exposed in API response');
+    firmwareId = fwData.id;
+    ok(`Gateway firmware uploaded: id=${firmwareId} target_type=${fwData.target_type} sha256=${fwData.sha256_hash.substring(0, 12)}...`);
+
+    // Step 2: List firmware
+    step('Listing firmware catalog');
+    const listResp = await axios.get(`${API_BASE}/firmware`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const found = (listResp.data.data || []).find(f => f.id === firmwareId);
+    if (!found) throw new Error('Uploaded firmware not found in list');
+    if (found.storage_path !== undefined) throw new Error('storage_path should not be exposed in list API response');
+    ok(`Firmware appears in catalog (${listResp.data.data.length} total)`);
+
+    // Step 3: Full OTA delivery flow — gateway receives manifest + chunks, ACKs each
+    if (!created.gatewayId) throw new Error('No gateway available for firmware push test');
+    if (!loginOpsPublicKey) throw new Error('ops_public_key unavailable for firmware JWT verification');
+
+    // Start the gateway-side firmware delivery handler BEFORE initiating the push
+    // so we don't miss the first message
+    step('Starting gateway-side firmware delivery listener');
+    const deliveryPromise = handleFirmwareDelivery(ws, loginOpsPublicKey, 60000);
+
+    step('Initiating firmware push to gateway');
+    const pushResp = await axios.post(
+      `${API_BASE}/firmware/${firmwareId}/push/${created.gatewayId}`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (pushResp.status !== 200) throw new Error(`Push status expected 200 got ${pushResp.status}`);
+    pushId = pushResp.data.data?.id;
+    if (!pushId) throw new Error('Push initiated but no pushId returned');
+    ok(`Push initiated: pushId=${pushId}`);
+
+    // Wait for the full chunked delivery to complete (manifest + all chunks ACKed)
+    step('Awaiting full firmware delivery (manifest + chunks + ACKs)');
+    const delivery = await deliveryPromise;
+    ok(`Firmware delivered: ${delivery.manifest.chunk_count} chunks received and ACKed`);
+
+    // Verify manifest fields match what we uploaded
+    step('Verifying firmware manifest fields');
+    if (delivery.manifest.target_type !== 'gateway') throw new Error(`Manifest target_type mismatch: expected gateway, got ${delivery.manifest.target_type}`);
+    if (delivery.manifest.version !== testVersion) throw new Error(`Manifest version mismatch: expected ${testVersion}, got ${delivery.manifest.version}`);
+    if (delivery.manifest.size !== 512 * 1024) throw new Error(`Manifest size mismatch: expected ${512 * 1024}, got ${delivery.manifest.size}`);
+    if (delivery.manifest.chunk_count !== Math.ceil((512 * 1024) / (256 * 1024))) throw new Error(`Manifest chunk_count mismatch: expected 2, got ${delivery.manifest.chunk_count}`);
+    if (delivery.manifest.chunk_size !== 256 * 1024) throw new Error(`Manifest chunk_size mismatch: expected ${256 * 1024}, got ${delivery.manifest.chunk_size}`);
+    if (!delivery.manifest.exp) throw new Error('Manifest JWT missing exp claim');
+    if (delivery.manifest.exp <= delivery.manifest.iat) throw new Error('Manifest JWT exp must be after iat');
+    ok(`Manifest verified: target_type=${delivery.manifest.target_type} version=${delivery.manifest.version} size=${delivery.manifest.size} chunks=${delivery.manifest.chunk_count} exp=${delivery.manifest.exp}`);
+
+    // Verify reassembled binary integrity
+    step('Verifying reassembled binary integrity');
+    if (delivery.reassembled.length !== testBinary.length) throw new Error(`Reassembled size mismatch: expected ${testBinary.length}, got ${delivery.reassembled.length}`);
+    if (delivery.finalHash !== fwData.sha256_hash) throw new Error(`SHA-256 mismatch: expected ${fwData.sha256_hash}, got ${delivery.finalHash}`);
+    if (!delivery.reassembled.equals(testBinary)) throw new Error('Reassembled binary does not match original upload byte-for-byte');
+    ok(`Binary integrity verified: ${delivery.reassembled.length} bytes, SHA-256=${delivery.finalHash.substring(0, 12)}...`);
+
+    // Verify Ed25519 signature verification worked (it would have thrown in handleFirmwareDelivery)
+    ok('All JWT signatures (manifest + chunks) verified with ops_public_key');
+
+    // Poll push status until it reaches 'verifying' (all chunks delivered, awaiting gateway confirmation)
+    step('Polling push status until verifying');
+    let verifyStatus = null;
+    for (let poll = 0; poll < 20; poll++) {
+      await delay(500);
+      const statusResp = await axios.get(
+        `${API_BASE}/firmware/push-status/${created.gatewayId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      verifyStatus = statusResp.data.data;
+      if (verifyStatus?.status === 'verifying' || verifyStatus?.status === 'complete') break;
+    }
+    if (!verifyStatus || (verifyStatus.status !== 'verifying' && verifyStatus.status !== 'complete')) {
+      throw new Error(`Expected push status 'verifying', got '${verifyStatus?.status}'`);
+    }
+    ok(`Push status after delivery: ${verifyStatus.status}, chunks: ${verifyStatus.chunks_sent}/${verifyStatus.chunks_total}`);
+
+    // Gateway sends FIRMWARE_UPDATE_STATUS to confirm successful application
+    step('Sending FIRMWARE_UPDATE_STATUS (success) from gateway');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      nonce: delivery.manifest.nonce,
+      status: 'success',
+      version: delivery.manifest.version,
+      target_type: delivery.manifest.target_type || 'gateway',
+    }));
+
+    // Poll push status until it reaches 'complete'
+    step('Polling push status until complete');
+    let finalStatus = null;
+    for (let poll = 0; poll < 20; poll++) {
+      await delay(500);
+      const statusResp = await axios.get(
+        `${API_BASE}/firmware/push-status/${created.gatewayId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      finalStatus = statusResp.data.data;
+      if (finalStatus?.status === 'complete') break;
+    }
+    if (!finalStatus || finalStatus.status !== 'complete') throw new Error(`Expected push status 'complete', got '${finalStatus?.status}'`);
+    ok(`Push status: ${finalStatus.status}, chunks: ${finalStatus.chunks_sent}/${finalStatus.chunks_total}`);
+
+    // Step 4: Check push history
+    step('Checking firmware push history');
+    const histResp = await axios.get(
+      `${API_BASE}/firmware/push-history/${created.gatewayId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const pushHistory = histResp.data.data || [];
+    if (pushHistory.length === 0) throw new Error('Expected at least 1 push history entry');
+    const completedEntry = pushHistory.find(h => h.status === 'complete');
+    if (!completedEntry) throw new Error('No completed push found in history');
+    ok(`Push history: ${pushHistory.length} entries (includes completed push)`);
+
+    // Step 5: Get firmware by ID
+    step('Fetching firmware by ID');
+    const getResp = await axios.get(`${API_BASE}/firmware/${firmwareId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (getResp.status !== 200) throw new Error(`Get firmware status expected 200 got ${getResp.status}`);
+    if (getResp.data.data?.id !== firmwareId) throw new Error('Firmware ID mismatch on GET');
+    if (getResp.data.data?.version !== testVersion) throw new Error('Firmware version mismatch on GET');
+    ok(`Firmware fetched by ID: version=${getResp.data.data.version}`);
+
+    // Step 6: RBAC - Facility admin can list but not upload
+    step('RBAC: Facility admin can list firmware');
+    if (!created.facilityAdminToken) throw new Error('Facility admin token unavailable for firmware RBAC test');
+    const facListResp = await axios.get(`${API_BASE}/firmware`, {
+      headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+    });
+    if (facListResp.status !== 200) throw new Error(`Facility admin list expected 200 got ${facListResp.status}`);
+    ok('Facility admin can list firmware');
+
+    step('RBAC: Facility admin cannot upload firmware');
+    try {
+      const facForm = new FormData();
+      facForm.append('file', crypto.randomBytes(256), { filename: 'test.bin', contentType: 'application/octet-stream' });
+      facForm.append('version', 'fac-admin-test');
+      await axios.post(`${API_BASE}/firmware/upload`, facForm, {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}`, ...facForm.getHeaders() },
+      });
+      throw new Error('Facility admin should not be allowed to upload firmware');
+    } catch (rbacErr) {
+      if (rbacErr?.response?.status !== 403) throw new Error(`Expected 403, got ${rbacErr?.response?.status}`);
+      ok('Facility admin correctly blocked from uploading firmware');
+    }
+
+    // Step 7: Delete gateway firmware (cleanup)
+    step('Deleting test gateway firmware');
+    const delResp = await axios.delete(`${API_BASE}/firmware/${firmwareId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (delResp.status !== 200) throw new Error(`Delete status expected 200 got ${delResp.status}`);
+    ok('Gateway firmware deleted');
+    firmwareId = null;
+
+    // =====================================================================
+    // Lock Firmware Target Type — verify protocol carries target_type: 'lock'
+    // =====================================================================
+    heading('Firmware OTA (Lock Target)');
+    let lockFirmwareId = null;
+
+    step('Uploading test lock firmware binary');
+    const lockBinary = crypto.randomBytes(256 * 1024); // 256KB (single chunk)
+    const lockVersion = `e2e-lock-${Date.now()}`;
+    const lockForm = new FormData();
+    lockForm.append('file', lockBinary, { filename: 'lock-firmware.bin', contentType: 'application/octet-stream' });
+    lockForm.append('version', lockVersion);
+    lockForm.append('target_type', 'lock');
+    lockForm.append('description', 'E2E test firmware (lock)');
+    const lockUploadResp = await axios.post(`${API_BASE}/firmware/upload`, lockForm, {
+      headers: { Authorization: `Bearer ${token}`, ...lockForm.getHeaders() },
+      maxContentLength: 100 * 1024 * 1024,
+    });
+    if (lockUploadResp.status !== 201) throw new Error(`Lock upload status expected 201 got ${lockUploadResp.status}`);
+    const lockFwData = lockUploadResp.data.data;
+    if (lockFwData.target_type !== 'lock') throw new Error(`Expected target_type=lock, got ${lockFwData.target_type}`);
+    if (lockFwData.storage_path !== undefined) throw new Error('storage_path should not be exposed in lock upload response');
+    lockFirmwareId = lockFwData.id;
+    ok(`Lock firmware uploaded: id=${lockFirmwareId} target_type=${lockFwData.target_type}`);
+
+    // Verify same version can coexist for different target types
+    step('Verifying version uniqueness is scoped by target_type');
+    const sameVerForm = new FormData();
+    sameVerForm.append('file', crypto.randomBytes(128), { filename: 'gw.bin', contentType: 'application/octet-stream' });
+    sameVerForm.append('version', lockVersion);
+    sameVerForm.append('target_type', 'gateway');
+    const sameVerResp = await axios.post(`${API_BASE}/firmware/upload`, sameVerForm, {
+      headers: { Authorization: `Bearer ${token}`, ...sameVerForm.getHeaders() },
+      maxContentLength: 100 * 1024 * 1024,
+    });
+    if (sameVerResp.status !== 201) throw new Error(`Same version different target_type should succeed, got ${sameVerResp.status}`);
+    ok(`Same version '${lockVersion}' accepted for gateway (different target_type)`);
+    // Clean up the gateway version immediately
+    await axios.delete(`${API_BASE}/firmware/${sameVerResp.data.data.id}`, { headers: { Authorization: `Bearer ${token}` } });
+
+    // Verify target_type filter on list endpoint
+    step('Verifying target_type filter on list endpoint');
+    const lockListResp = await axios.get(`${API_BASE}/firmware?target_type=lock`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const lockInList = (lockListResp.data.data || []).find(f => f.id === lockFirmwareId);
+    if (!lockInList) throw new Error('Lock firmware not found when filtering by target_type=lock');
+    const gwInLockList = (lockListResp.data.data || []).find(f => f.target_type === 'gateway');
+    if (gwInLockList) throw new Error('Gateway firmware should not appear when filtering by target_type=lock');
+    ok('target_type filter works correctly on list endpoint');
+
+    // Full OTA delivery for lock firmware
+    step('Starting lock firmware delivery listener');
+    const lockDeliveryPromise = handleFirmwareDelivery(ws, loginOpsPublicKey, 60000);
+
+    step('Initiating lock firmware push to gateway');
+    const lockPushResp = await axios.post(
+      `${API_BASE}/firmware/${lockFirmwareId}/push/${created.gatewayId}`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (lockPushResp.status !== 200) throw new Error(`Lock push status expected 200 got ${lockPushResp.status}`);
+    const lockPushId = lockPushResp.data.data?.id;
+    if (!lockPushId) throw new Error('Lock push initiated but no pushId returned');
+    ok(`Lock push initiated: pushId=${lockPushId}`);
+
+    step('Awaiting lock firmware delivery');
+    const lockDelivery = await lockDeliveryPromise;
+    ok(`Lock firmware delivered: ${lockDelivery.manifest.chunk_count} chunk(s) received and ACKed`);
+
+    // Verify lock manifest carries target_type: 'lock'
+    step('Verifying lock firmware manifest target_type');
+    if (lockDelivery.manifest.target_type !== 'lock') throw new Error(`Lock manifest target_type mismatch: expected lock, got ${lockDelivery.manifest.target_type}`);
+    if (lockDelivery.manifest.version !== lockVersion) throw new Error(`Lock manifest version mismatch: expected ${lockVersion}, got ${lockDelivery.manifest.version}`);
+    if (!lockDelivery.manifest.exp) throw new Error('Lock manifest JWT missing exp claim');
+    ok(`Lock manifest verified: target_type=${lockDelivery.manifest.target_type} version=${lockDelivery.manifest.version} exp=${lockDelivery.manifest.exp}`);
+
+    // Verify reassembled lock binary
+    step('Verifying lock firmware binary integrity');
+    if (lockDelivery.finalHash !== lockFwData.sha256_hash) throw new Error('Lock firmware SHA-256 mismatch');
+    if (!lockDelivery.reassembled.equals(lockBinary)) throw new Error('Lock firmware binary does not match original byte-for-byte');
+    ok('Lock firmware binary integrity verified');
+
+    // Poll lock push status until verifying
+    step('Polling lock push status until verifying');
+    let lockVerifyStatus = null;
+    for (let poll = 0; poll < 20; poll++) {
+      await delay(500);
+      const sResp = await axios.get(
+        `${API_BASE}/firmware/push-status/${created.gatewayId}?target_type=lock`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      lockVerifyStatus = sResp.data.data;
+      if (lockVerifyStatus?.status === 'verifying' || lockVerifyStatus?.status === 'complete') break;
+    }
+    if (!lockVerifyStatus || (lockVerifyStatus.status !== 'verifying' && lockVerifyStatus.status !== 'complete')) {
+      throw new Error(`Expected lock push status 'verifying', got '${lockVerifyStatus?.status}'`);
+    }
+    ok(`Lock push status after delivery: ${lockVerifyStatus.status}`);
+
+    // Gateway sends FIRMWARE_UPDATE_STATUS for lock firmware
+    step('Sending FIRMWARE_UPDATE_STATUS (success) from gateway for lock firmware');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      nonce: lockDelivery.manifest.nonce,
+      status: 'success',
+      version: lockDelivery.manifest.version,
+      target_type: 'lock',
+    }));
+
+    // Poll lock push status until complete
+    step('Polling lock push status until complete');
+    let lockFinalStatus = null;
+    for (let poll = 0; poll < 20; poll++) {
+      await delay(500);
+      const sResp = await axios.get(
+        `${API_BASE}/firmware/push-status/${created.gatewayId}?target_type=lock`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      lockFinalStatus = sResp.data.data;
+      if (lockFinalStatus?.status === 'complete') break;
+    }
+    if (!lockFinalStatus || lockFinalStatus.status !== 'complete') throw new Error(`Expected lock push status 'complete', got '${lockFinalStatus?.status}'`);
+    ok(`Lock push status: ${lockFinalStatus.status}`);
+
+    // Clean up lock firmware
+    step('Deleting lock test firmware');
+    await axios.delete(`${API_BASE}/firmware/${lockFirmwareId}`, { headers: { Authorization: `Bearer ${token}` } });
+    ok('Lock firmware deleted');
+    lockFirmwareId = null;
 
     // mark success; we'll print Result after cleanup
     success = true;

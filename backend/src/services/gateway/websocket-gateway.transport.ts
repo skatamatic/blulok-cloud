@@ -6,6 +6,7 @@ import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { ApiProxyService } from './api-proxy.service';
 import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
 
 type JWTPayload = {
   userId: string;
@@ -173,6 +174,10 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             ts: Date.now(),
             lastActivityAt: authed.lastActivityAt,
           });
+          // Cancel any active firmware pushes for this facility to avoid long ACK timeout waits
+          import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
+            FirmwareService.handleFacilityDisconnect(authed!.facilityId);
+          }).catch(() => {});
         }
       }
       try { ws.close(); } catch {}
@@ -269,7 +274,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         const now = Date.now();
         authed = { ws, user: decoded, facilityId, lastActivityAt: now };
         this.facilityToClient.set(facilityId, authed);
-        safeSend(ws, { type: 'AUTH_OK', facilityId });
+        safeSend(ws, { type: 'AUTH_OK', facilityId, ops_public_key: Ed25519Service.getOpsPublicKeyB64() });
         logger.info(`Gateway WS authenticated: facility=${facilityId} user=${decoded.userId} role=${decoded.role} remote=${remote}`);
         GatewayDebugService.getInstance().publish({
           kind: 'connection_opened',
@@ -307,6 +312,21 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           const errorBody = this.mergeTidIntoResponse(data, tid);
           logger.warn(`Gateway WS proxy error facility=${authed.facilityId} user=${authed.user.userId} method=${method} path=${path} status=${status}`);
           safeSend(ws, { type: 'PROXY_RESPONSE', id, status, body: errorBody });
+        }
+        return;
+      }
+
+      // Firmware messages from gateway
+      if (type === 'FIRMWARE_CHUNK_ACK' || type === 'FIRMWARE_UPDATE_STATUS') {
+        try {
+          const { FirmwareService } = await import('@/services/firmware/firmware.service');
+          if (type === 'FIRMWARE_CHUNK_ACK') {
+            await FirmwareService.handleChunkAck(authed.facilityId, msg);
+          } else {
+            await FirmwareService.handleUpdateStatus(authed.facilityId, msg);
+          }
+        } catch (err) {
+          logger.warn(`Gateway WS firmware message handling error type=${type} facility=${authed.facilityId}`, err);
         }
         return;
       }

@@ -17,8 +17,10 @@ import {
   PaintBrushIcon,
   CloudIcon,
   PresentationChartLineIcon,
-  CubeIcon
+  CubeIcon,
+  CpuChipIcon
 } from '@heroicons/react/24/outline';
+import FirmwareManagementTab from '@/components/DevTools/FirmwareManagementTab';
 
 interface OperationStatus {
   type: 'success' | 'error' | 'loading' | 'idle';
@@ -603,7 +605,7 @@ const UIDebugTab: React.FC = () => {
   );
 };
 
-type DevTabs = 'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms' | 'blufms-demo' | 'bludesign' | 'deployment';
+type DevTabs = 'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms' | 'blufms-demo' | 'bludesign' | 'firmware' | 'deployment';
 
 export default function DeveloperToolsPage() {
   const [activeTab, setActiveTab] = useState<DevTabs>('database');
@@ -1165,6 +1167,7 @@ export default function DeveloperToolsPage() {
                 ['ui-debug', PaintBrushIcon, 'UI Debug'],
                 ['blufms-demo', PresentationChartLineIcon, 'BluFMS Demo'],
                 ['bludesign', CubeIcon, 'BluDesign'],
+                ['firmware', CpuChipIcon, 'Firmware'],
                 ['deployment', DocumentTextIcon, 'Deployment']
               ] as const).map(([tab, Icon, label]) => (
                 <button
@@ -1569,6 +1572,10 @@ export default function DeveloperToolsPage() {
 
         {activeTab === 'bludesign' && (
           <BluDesignTab />
+        )}
+
+        {activeTab === 'firmware' && (
+          <FirmwareManagementTab />
         )}
 
         {activeTab === 'ui-debug' && (

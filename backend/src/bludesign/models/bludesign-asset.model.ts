@@ -35,6 +35,11 @@ export interface BluDesignAssetRow {
   updated_at: Date;
 }
 
+function safeParse(val: unknown): any {
+  if (!val) return undefined;
+  return typeof val === 'string' ? JSON.parse(val) : val;
+}
+
 export class BluDesignAssetModel extends BaseModel {
   protected static get tableName(): string {
     return 'bludesign_assets';
@@ -47,7 +52,7 @@ export class BluDesignAssetModel extends BaseModel {
     const geometry: AssetGeometry = {
       type: row.geometry_type,
       source: row.geometry_source ?? undefined,
-      primitiveSpec: row.primitive_spec ? JSON.parse(row.primitive_spec) : undefined,
+      primitiveSpec: safeParse(row.primitive_spec),
     };
 
     return {
@@ -57,10 +62,10 @@ export class BluDesignAssetModel extends BaseModel {
       version: row.version,
       category: row.category,
       geometry,
-      materials: row.materials ? JSON.parse(row.materials) : { slots: {} },
+      materials: safeParse(row.materials) ?? { slots: {} },
       isSmart: row.is_smart,
-      binding: row.binding_contract ? JSON.parse(row.binding_contract) : undefined,
-      metadata: JSON.parse(row.metadata),
+      binding: safeParse(row.binding_contract),
+      metadata: safeParse(row.metadata),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       createdBy: row.created_by ?? '',
@@ -130,7 +135,7 @@ export class BluDesignAssetModel extends BaseModel {
     userId: string,
     data: CreateAssetRequest
   ): Promise<BluDesignAsset> {
-    const row = await super.create({
+    const result = await super.create({
       project_id: projectId,
       name: data.name,
       version: '1.0.0',
@@ -145,9 +150,10 @@ export class BluDesignAssetModel extends BaseModel {
       binding_contract: data.binding ? JSON.stringify(data.binding) : null,
       metadata: JSON.stringify(data.metadata),
       created_by: userId,
-    }) as BluDesignAssetRow;
+    });
 
-    return this.toDomain(row);
+    // super.create() → this.findById() → toDomain(), so result is already a BluDesignAsset
+    return result as BluDesignAsset;
   }
 
   /**
@@ -189,8 +195,9 @@ export class BluDesignAssetModel extends BaseModel {
       return this.findById(id);
     }
 
-    const row = await super.updateById(id, updateData) as BluDesignAssetRow | undefined;
-    return row ? this.toDomain(row) : undefined;
+    // super.updateById() → this.findById() → toDomain(), so result is already a BluDesignAsset
+    const result = await super.updateById(id, updateData);
+    return result as BluDesignAsset | undefined;
   }
 
   /**

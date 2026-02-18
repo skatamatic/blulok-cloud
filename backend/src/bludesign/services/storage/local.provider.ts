@@ -1,23 +1,24 @@
 /**
- * Local Storage Provider
- * 
- * File-based storage provider for BluDesign assets and facilities.
- * Stores files in the local filesystem.
+ * Local Storage Provider (BluDesign Domain Layer)
+ *
+ * Thin domain adapter that delegates file I/O to LocalBaseStorage,
+ * adding BluDesign-specific path conventions, validation, and zip operations.
  */
 
-import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createReadStream, createWriteStream, existsSync } from 'fs';
-import { Readable, pipeline } from 'stream';
+import { existsSync } from 'fs';
+import { Readable } from 'stream';
 import { promisify } from 'util';
+import { pipeline } from 'stream';
 import archiver from 'archiver';
 import unzipper from 'unzipper';
 import {
   StorageProvider,
-  LocalProviderConfig,
   StorageError,
   StorageErrorCode,
+  LocalProviderConfig,
 } from './storage-provider.interface';
+import { LocalBaseStorage } from '@/services/storage/local-base.provider';
 import {
   BluDesignFacility,
   StorageProviderType,
@@ -27,56 +28,29 @@ const pipelineAsync = promisify(pipeline);
 
 export class LocalStorageProvider implements StorageProvider {
   readonly type = StorageProviderType.LOCAL;
-  private basePath: string;
+  private base: LocalBaseStorage;
   private maxFileSizeMb: number;
   private allowedExtensions: string[];
 
   constructor(config: LocalProviderConfig) {
-    this.basePath = config.basePath;
-    this.maxFileSizeMb = config.maxFileSizeMb ?? 100;
-    this.allowedExtensions = config.allowedExtensions ?? [
-      '.glb', '.gltf', '.fbx', '.png', '.jpg', '.jpeg', '.webp', '.json'
+    this.base = new LocalBaseStorage(config);
+    this.maxFileSizeMb = (config as any).maxFileSizeMb ?? 100;
+    this.allowedExtensions = (config as any).allowedExtensions ?? [
+      '.glb', '.gltf', '.fbx', '.png', '.jpg', '.jpeg', '.webp', '.json',
     ];
   }
 
+  // ── lifecycle ─────────────────────────────────────────────────────────────
+
   async initialize(): Promise<void> {
-    await fs.mkdir(this.basePath, { recursive: true });
+    await this.base.initialize();
   }
 
   async healthCheck(): Promise<boolean> {
-    try {
-      const testFile = path.join(this.basePath, '.healthcheck');
-      await fs.writeFile(testFile, 'ok');
-      await fs.unlink(testFile);
-      return true;
-    } catch {
-      return false;
-    }
+    return this.base.healthCheck();
   }
 
-  // ==========================================================================
-  // Path Helpers
-  // ==========================================================================
-
-  private getProjectPath(projectId: string): string {
-    return path.join(this.basePath, 'projects', projectId);
-  }
-
-  private getAssetPath(projectId: string, assetId: string): string {
-    return path.join(this.getProjectPath(projectId), 'assets', assetId);
-  }
-
-  private getFacilityPath(projectId: string, facilityId: string): string {
-    return path.join(this.getProjectPath(projectId), 'facilities', facilityId);
-  }
-
-  private getTexturePath(projectId: string, assetId: string): string {
-    return path.join(this.getAssetPath(projectId, assetId), 'textures');
-  }
-
-  private getGlobalAssetPath(modelId: string): string {
-    return path.join(this.basePath, 'global', 'models', modelId);
-  }
+  // ── validation ────────────────────────────────────────────────────────────
 
   private validateExtension(filename: string): void {
     const ext = path.extname(filename).toLowerCase();
@@ -84,7 +58,7 @@ export class LocalStorageProvider implements StorageProvider {
       throw new StorageError(
         `File extension ${ext} not allowed`,
         StorageErrorCode.INVALID_FILE,
-        { allowedExtensions: this.allowedExtensions }
+        { allowedExtensions: this.allowedExtensions },
       );
     }
   }
@@ -94,397 +68,187 @@ export class LocalStorageProvider implements StorageProvider {
     if (sizeMb > this.maxFileSizeMb) {
       throw new StorageError(
         `File size ${sizeMb.toFixed(2)}MB exceeds maximum ${this.maxFileSizeMb}MB`,
-        StorageErrorCode.QUOTA_EXCEEDED
+        StorageErrorCode.QUOTA_EXCEEDED,
       );
     }
   }
 
-  // ==========================================================================
-  // Asset Operations
-  // ==========================================================================
+  // ── path helpers ──────────────────────────────────────────────────────────
 
-  async uploadAssetFile(
-    projectId: string,
-    assetId: string,
-    filename: string,
-    data: Buffer,
-    _contentType: string
-  ): Promise<string> {
-    this.validateExtension(filename);
-    this.validateFileSize(data);
-
-    const assetPath = this.getAssetPath(projectId, assetId);
-    await fs.mkdir(assetPath, { recursive: true });
-
-    const filePath = path.join(assetPath, filename);
-    await fs.writeFile(filePath, data);
-
-    return filePath;
+  private assetPath(projectId: string, assetId: string, filename?: string): string {
+    return filename
+      ? `projects/${projectId}/assets/${assetId}/${filename}`
+      : `projects/${projectId}/assets/${assetId}`;
   }
 
-  async downloadAssetFile(
-    projectId: string,
-    assetId: string,
-    filename: string
-  ): Promise<Buffer> {
-    const filePath = path.join(this.getAssetPath(projectId, assetId), filename);
+  private texturePath(projectId: string, assetId: string, textureName?: string): string {
+    return textureName
+      ? `projects/${projectId}/assets/${assetId}/textures/${textureName}`
+      : `projects/${projectId}/assets/${assetId}/textures`;
+  }
 
-    try {
-      return await fs.readFile(filePath);
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        throw new StorageError(
-          `Asset file not found: ${filename}`,
-          StorageErrorCode.NOT_FOUND
-        );
-      }
-      throw err;
-    }
+  private facilityPath(projectId: string, facilityId: string): string {
+    return `projects/${projectId}/facilities/${facilityId}`;
+  }
+
+  private globalAssetPath(modelId: string, filename?: string): string {
+    return filename ? `global/models/${modelId}/${filename}` : `global/models/${modelId}`;
+  }
+
+  private projectPath(projectId: string): string {
+    return `projects/${projectId}`;
+  }
+
+  // ── Asset Operations ──────────────────────────────────────────────────────
+
+  async uploadAssetFile(projectId: string, assetId: string, filename: string, data: Buffer, contentType: string): Promise<string> {
+    this.validateExtension(filename);
+    this.validateFileSize(data);
+    return this.base.uploadFile(this.assetPath(projectId, assetId, filename), data, contentType);
+  }
+
+  async downloadAssetFile(projectId: string, assetId: string, filename: string): Promise<Buffer> {
+    return this.base.downloadFile(this.assetPath(projectId, assetId, filename));
   }
 
   async deleteAssetFiles(projectId: string, assetId: string): Promise<void> {
-    const assetPath = this.getAssetPath(projectId, assetId);
-    
-    try {
-      await fs.rm(assetPath, { recursive: true, force: true });
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        throw err;
-      }
-    }
+    await this.base.deleteDirectory(this.assetPath(projectId, assetId));
   }
 
   async listAssetFiles(projectId: string, assetId: string): Promise<string[]> {
-    const assetPath = this.getAssetPath(projectId, assetId);
-
-    try {
-      const entries = await fs.readdir(assetPath, { withFileTypes: true });
-      return entries
-        .filter(e => e.isFile())
-        .map(e => e.name);
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        return [];
-      }
-      throw err;
-    }
+    return this.base.listFiles(this.assetPath(projectId, assetId));
   }
 
-  // ==========================================================================
-  // Global Asset Operations
-  // ==========================================================================
+  // ── Global Asset Operations ───────────────────────────────────────────────
 
-  async uploadGlobalAsset(
-    modelId: string,
-    filename: string,
-    data: Buffer,
-    _contentType: string
-  ): Promise<string> {
+  async uploadGlobalAsset(modelId: string, filename: string, data: Buffer, contentType: string): Promise<string> {
     this.validateExtension(filename);
     this.validateFileSize(data);
-
-    const assetPath = this.getGlobalAssetPath(modelId);
-    await fs.mkdir(assetPath, { recursive: true });
-
-    const filePath = path.join(assetPath, filename);
-    await fs.writeFile(filePath, data);
-
-    return filePath;
+    return this.base.uploadFile(this.globalAssetPath(modelId, filename), data, contentType);
   }
 
-  async downloadGlobalAsset(
-    modelId: string,
-    filename: string
-  ): Promise<Buffer> {
-    const filePath = path.join(this.getGlobalAssetPath(modelId), filename);
-
-    try {
-      return await fs.readFile(filePath);
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        throw new StorageError(
-          `Global asset file not found: ${filename}`,
-          StorageErrorCode.NOT_FOUND
-        );
-      }
-      throw err;
-    }
+  async downloadGlobalAsset(modelId: string, filename: string): Promise<Buffer> {
+    return this.base.downloadFile(this.globalAssetPath(modelId, filename));
   }
 
   async deleteGlobalAsset(modelId: string): Promise<void> {
-    const assetPath = this.getGlobalAssetPath(modelId);
-    
-    try {
-      await fs.rm(assetPath, { recursive: true, force: true });
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        throw err;
-      }
-    }
+    await this.base.deleteDirectory(this.globalAssetPath(modelId));
   }
 
   async listGlobalAssetFiles(modelId: string): Promise<string[]> {
-    const assetPath = this.getGlobalAssetPath(modelId);
-
-    try {
-      const entries = await fs.readdir(assetPath, { withFileTypes: true });
-      return entries
-        .filter(e => e.isFile())
-        .map(e => e.name);
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        return [];
-      }
-      throw err;
-    }
+    return this.base.listFiles(this.globalAssetPath(modelId));
   }
 
-  // ==========================================================================
-  // Texture Operations
-  // ==========================================================================
+  // ── Texture Operations ────────────────────────────────────────────────────
 
-  async uploadTexture(
-    projectId: string,
-    assetId: string,
-    textureName: string,
-    data: Buffer,
-    _contentType: string
-  ): Promise<string> {
+  async uploadTexture(projectId: string, assetId: string, textureName: string, data: Buffer, contentType: string): Promise<string> {
     this.validateExtension(textureName);
     this.validateFileSize(data);
-
-    const texturePath = this.getTexturePath(projectId, assetId);
-    await fs.mkdir(texturePath, { recursive: true });
-
-    const filePath = path.join(texturePath, textureName);
-    await fs.writeFile(filePath, data);
-
-    return filePath;
+    return this.base.uploadFile(this.texturePath(projectId, assetId, textureName), data, contentType);
   }
 
-  async downloadTexture(
-    projectId: string,
-    assetId: string,
-    textureName: string
-  ): Promise<Buffer> {
-    const filePath = path.join(this.getTexturePath(projectId, assetId), textureName);
-
-    try {
-      return await fs.readFile(filePath);
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        throw new StorageError(
-          `Texture not found: ${textureName}`,
-          StorageErrorCode.NOT_FOUND
-        );
-      }
-      throw err;
-    }
+  async downloadTexture(projectId: string, assetId: string, textureName: string): Promise<Buffer> {
+    return this.base.downloadFile(this.texturePath(projectId, assetId, textureName));
   }
 
-  async deleteTexture(
-    projectId: string,
-    assetId: string,
-    textureName: string
-  ): Promise<void> {
-    const filePath = path.join(this.getTexturePath(projectId, assetId), textureName);
-
-    try {
-      await fs.unlink(filePath);
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        throw err;
-      }
-    }
+  async deleteTexture(projectId: string, assetId: string, textureName: string): Promise<void> {
+    await this.base.deleteFile(this.texturePath(projectId, assetId, textureName));
   }
 
-  // ==========================================================================
-  // Facility Operations
-  // ==========================================================================
+  // ── Facility Operations ───────────────────────────────────────────────────
 
-  async saveFacilityManifest(
-    projectId: string,
-    facilityId: string,
-    manifest: BluDesignFacility
-  ): Promise<void> {
-    const facilityPath = this.getFacilityPath(projectId, facilityId);
-    await fs.mkdir(facilityPath, { recursive: true });
-
-    const manifestPath = path.join(facilityPath, 'manifest.json');
-    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+  async saveFacilityManifest(projectId: string, facilityId: string, manifest: BluDesignFacility): Promise<void> {
+    const fp = `${this.facilityPath(projectId, facilityId)}/manifest.json`;
+    await this.base.uploadFile(fp, Buffer.from(JSON.stringify(manifest, null, 2)), 'application/json');
   }
 
-  async loadFacilityManifest(
-    projectId: string,
-    facilityId: string
-  ): Promise<BluDesignFacility> {
-    const manifestPath = path.join(
-      this.getFacilityPath(projectId, facilityId),
-      'manifest.json'
-    );
-
-    try {
-      const data = await fs.readFile(manifestPath, 'utf-8');
-      return JSON.parse(data) as BluDesignFacility;
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        throw new StorageError(
-          `Facility not found: ${facilityId}`,
-          StorageErrorCode.NOT_FOUND
-        );
-      }
-      throw err;
-    }
+  async loadFacilityManifest(projectId: string, facilityId: string): Promise<BluDesignFacility> {
+    const fp = `${this.facilityPath(projectId, facilityId)}/manifest.json`;
+    const buffer = await this.base.downloadFile(fp);
+    return JSON.parse(buffer.toString('utf-8')) as BluDesignFacility;
   }
 
   async deleteFacility(projectId: string, facilityId: string): Promise<void> {
-    const facilityPath = this.getFacilityPath(projectId, facilityId);
-
-    try {
-      await fs.rm(facilityPath, { recursive: true, force: true });
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        throw err;
-      }
-    }
+    await this.base.deleteDirectory(this.facilityPath(projectId, facilityId));
   }
 
   async listFacilities(projectId: string): Promise<string[]> {
-    const facilitiesPath = path.join(this.getProjectPath(projectId), 'facilities');
-
+    // List sub-directories under projects/{projectId}/facilities/
+    // The base.listFiles only returns files, so we need to read the directory entries
+    // We'll use a trick: list the facilities dir as if it's a prefix and filter for dirs
+    // Since we're on local FS, we delegate to a manual approach via the base path
+    const facilitiesDir = `${this.projectPath(projectId)}/facilities`;
     try {
-      const entries = await fs.readdir(facilitiesPath, { withFileTypes: true });
-      return entries
-        .filter(e => e.isDirectory())
-        .map(e => e.name);
+      const fs = await import('fs/promises');
+      const basePath = (this.base as any).basePath;
+      const absDir = require('path').resolve(basePath, facilitiesDir);
+      const entries = await fs.readdir(absDir, { withFileTypes: true });
+      return entries.filter(e => e.isDirectory()).map(e => e.name);
     } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        return [];
-      }
+      if (err.code === 'ENOENT') return [];
       throw err;
     }
   }
 
-  // ==========================================================================
-  // Project Operations
-  // ==========================================================================
+  // ── Project Operations ────────────────────────────────────────────────────
 
   async initializeProject(projectId: string): Promise<void> {
-    const projectPath = this.getProjectPath(projectId);
-    await fs.mkdir(path.join(projectPath, 'assets'), { recursive: true });
-    await fs.mkdir(path.join(projectPath, 'facilities'), { recursive: true });
-    
-    // Create project metadata file
-    const metadata = {
-      projectId,
-      createdAt: new Date().toISOString(),
-      version: '1.0',
-    };
-    await fs.writeFile(
-      path.join(projectPath, 'project.json'),
-      JSON.stringify(metadata, null, 2)
+    // Create project metadata
+    const metadata = { projectId, createdAt: new Date().toISOString(), version: '1.0' };
+    await this.base.uploadFile(
+      `${this.projectPath(projectId)}/project.json`,
+      Buffer.from(JSON.stringify(metadata, null, 2)),
+      'application/json',
     );
+    // Ensure asset and facility dirs exist by uploading/deleting a marker is overkill;
+    // the dirs will be created lazily on first use.
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    const projectPath = this.getProjectPath(projectId);
-
-    try {
-      await fs.rm(projectPath, { recursive: true, force: true });
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        throw err;
-      }
-    }
+    await this.base.deleteDirectory(this.projectPath(projectId));
   }
 
   async getProjectStorageUsage(projectId: string): Promise<number> {
-    const projectPath = this.getProjectPath(projectId);
-    return this.calculateDirectorySize(projectPath);
+    return this.base.getDirectorySize(this.projectPath(projectId));
   }
 
-  private async calculateDirectorySize(dirPath: string): Promise<number> {
-    let totalSize = 0;
-
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        if (entry.isDirectory()) {
-          totalSize += await this.calculateDirectorySize(fullPath);
-        } else if (entry.isFile()) {
-          const stats = await fs.stat(fullPath);
-          totalSize += stats.size;
-        }
-      }
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        throw err;
-      }
-    }
-
-    return totalSize;
-  }
-
-  // ==========================================================================
-  // Export/Import Operations
-  // ==========================================================================
+  // ── Export/Import ─────────────────────────────────────────────────────────
 
   async exportProjectAsZip(projectId: string): Promise<Readable> {
-    const projectPath = this.getProjectPath(projectId);
-
-    if (!existsSync(projectPath)) {
-      throw new StorageError(
-        `Project not found: ${projectId}`,
-        StorageErrorCode.NOT_FOUND
-      );
+    const basePath = (this.base as any).basePath;
+    const projectDir = require('path').resolve(basePath, this.projectPath(projectId));
+    if (!existsSync(projectDir)) {
+      throw new StorageError(`Project not found: ${projectId}`, StorageErrorCode.NOT_FOUND);
     }
-
     const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.directory(projectPath, false);
+    archive.directory(projectDir, false);
     archive.finalize();
-
     return archive;
   }
 
   async importProjectFromZip(projectId: string, zipStream: Readable): Promise<void> {
-    const projectPath = this.getProjectPath(projectId);
-    await fs.mkdir(projectPath, { recursive: true });
-
-    await pipelineAsync(
-      zipStream,
-      unzipper.Extract({ path: projectPath })
-    );
+    const basePath = (this.base as any).basePath;
+    const projectDir = require('path').resolve(basePath, this.projectPath(projectId));
+    const fs = await import('fs/promises');
+    await fs.mkdir(projectDir, { recursive: true });
+    await pipelineAsync(zipStream, unzipper.Extract({ path: projectDir }));
   }
 
-  async exportFacilityAsZip(
-    projectId: string,
-    facilityId: string,
-    includeAssets: boolean
-  ): Promise<Readable> {
-    const facilityPath = this.getFacilityPath(projectId, facilityId);
-
-    if (!existsSync(facilityPath)) {
-      throw new StorageError(
-        `Facility not found: ${facilityId}`,
-        StorageErrorCode.NOT_FOUND
-      );
+  async exportFacilityAsZip(projectId: string, facilityId: string, includeAssets: boolean): Promise<Readable> {
+    const basePath = (this.base as any).basePath;
+    const facilityDir = require('path').resolve(basePath, this.facilityPath(projectId, facilityId));
+    if (!existsSync(facilityDir)) {
+      throw new StorageError(`Facility not found: ${facilityId}`, StorageErrorCode.NOT_FOUND);
     }
-
     const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.directory(facilityDir, 'facility');
 
-    // Add facility manifest
-    archive.directory(facilityPath, 'facility');
-
-    // Optionally include referenced assets
     if (includeAssets) {
       const manifest = await this.loadFacilityManifest(projectId, facilityId);
-      
       for (const assetId of manifest.assetManifest) {
-        const assetPath = this.getAssetPath(projectId, assetId);
-        if (existsSync(assetPath)) {
-          archive.directory(assetPath, `assets/${assetId}`);
+        const assetDir = require('path').resolve(basePath, this.assetPath(projectId, assetId));
+        if (existsSync(assetDir)) {
+          archive.directory(assetDir, `assets/${assetId}`);
         }
       }
     }
@@ -493,33 +257,19 @@ export class LocalStorageProvider implements StorageProvider {
     return archive;
   }
 
-  // ==========================================================================
-  // URL Generation
-  // ==========================================================================
+  // ── URL Generation ────────────────────────────────────────────────────────
 
-  async getSignedUrl(
-    projectId: string,
-    filePath: string,
-    _expiresInSeconds: number
-  ): Promise<string> {
-    // For local storage, we just return the file path
-    // In a real app, you'd generate a temporary token-based URL
-    const fullPath = path.join(this.getProjectPath(projectId), filePath);
-    
-    if (!existsSync(fullPath)) {
-      throw new StorageError(
-        `File not found: ${filePath}`,
-        StorageErrorCode.NOT_FOUND
-      );
+  async getSignedUrl(projectId: string, filePath: string, _expiresInSeconds: number): Promise<string> {
+    const exists = await this.base.fileExists(`${this.projectPath(projectId)}/${filePath}`);
+    if (!exists) {
+      throw new StorageError(`File not found: ${filePath}`, StorageErrorCode.NOT_FOUND);
     }
-    
-    // Return a file:// URL for local development
+    const basePath = (this.base as any).basePath;
+    const fullPath = require('path').resolve(basePath, this.projectPath(projectId), filePath);
     return `file://${fullPath}`;
   }
 
-  getPublicUrl(projectId: string, filePath: string): string | null {
-    // Local storage doesn't have public URLs
+  getPublicUrl(_projectId: string, _filePath: string): string | null {
     return null;
   }
 }
-

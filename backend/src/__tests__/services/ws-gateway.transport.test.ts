@@ -313,6 +313,54 @@ describe('WebsocketGatewayTransport', () => {
       ws.close();
     });
   });
+
+  describe('Firmware Messages', () => {
+    it('AUTH_OK response includes ops_public_key', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      const authOk = await waitForMessage(ws);
+      expect(authOk.type).toBe('AUTH_OK');
+      expect(authOk).toHaveProperty('ops_public_key');
+      expect(typeof authOk.ops_public_key).toBe('string');
+      ws.close();
+    });
+
+    it('FIRMWARE_CHUNK_ACK is handled without error', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      ws.send(JSON.stringify({
+        type: 'FIRMWARE_CHUNK_ACK',
+        nonce: 'test-nonce',
+        chunkIndex: 0,
+        status: 'ok',
+      }));
+
+      // No error response expected; give the server a moment to process
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      ws.close();
+    });
+
+    it('FIRMWARE_UPDATE_STATUS is handled without error', async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      await waitForMessage(ws); // AUTH_OK
+
+      ws.send(JSON.stringify({
+        type: 'FIRMWARE_UPDATE_STATUS',
+        nonce: 'test-nonce',
+        status: 'installed',
+        message: 'Firmware installed successfully',
+      }));
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      ws.close();
+    });
+  });
 });
 
 

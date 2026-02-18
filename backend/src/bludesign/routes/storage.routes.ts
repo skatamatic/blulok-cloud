@@ -5,7 +5,7 @@
  */
 
 import { Router, Response } from 'express';
-import { authenticateToken } from '@/middleware/auth.middleware';
+import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { createStorageProvider, validateStorageConfig } from '../services/storage';
@@ -16,7 +16,9 @@ import { logger } from '@/utils/logger';
 const router = Router();
 
 // Apply authentication to all routes
-router.use(authenticateToken as any);
+router.use(authenticateToken);
+// All storage config routes require ADMIN or DEV_ADMIN
+router.use(requireAdmin);
 
 /**
  * GET /api/v1/bludesign/storage/gdrive/auth-url
@@ -170,46 +172,95 @@ router.post('/:provider/test', asyncHandler(async (req: AuthenticatedRequest, re
     return;
   }
 
+  // Validate configuration
+  const config = {
+    type: provider as StorageProviderType,
+    config: storageConfig,
+  };
+
+  const validationErrors = validateStorageConfig(config);
+  if (validationErrors.length > 0) {
+    res.status(400).json({
+      success: false,
+      message: 'Configuration validation failed',
+      errors: validationErrors,
+    });
+    return;
+  }
+
+  const steps: Array<{ step: string; status: 'passed' | 'failed'; detail?: string; durationMs?: number }> = [];
+
   try {
-    // Validate configuration
-    const config = {
-      type: provider as StorageProviderType,
-      config: storageConfig,
-    };
-
-    const validationErrors = validateStorageConfig(config);
-    if (validationErrors.length > 0) {
-      res.status(400).json({
-        success: false,
-        message: 'Configuration validation failed',
-        errors: validationErrors,
-      });
-      return;
-    }
-
-    // Create provider and test connection
+    // Step 1: Initialize
+    const t0 = Date.now();
     const storageProvider = createStorageProvider(config);
     await storageProvider.initialize();
-    
-    const isHealthy = await storageProvider.healthCheck();
+    steps.push({ step: 'initialize', status: 'passed', durationMs: Date.now() - t0 });
 
-    if (isHealthy) {
-      res.json({
-        success: true,
-        message: 'Storage provider connection successful',
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: 'Storage provider health check failed',
-      });
+    // Use a unique test file to avoid collisions
+    const testProjectId = `__test_${Date.now()}`;
+    const testAssetId = '__probe';
+    const testFilename = 'healthcheck.json';
+    const testPayload = Buffer.from(JSON.stringify({ ts: Date.now(), probe: true }));
+
+    // Step 2: Write
+    const t1 = Date.now();
+    try {
+      await storageProvider.uploadAssetFile(testProjectId, testAssetId, testFilename, testPayload, 'application/json');
+      steps.push({ step: 'write', status: 'passed', durationMs: Date.now() - t1 });
+    } catch (err: any) {
+      steps.push({ step: 'write', status: 'failed', detail: err.message, durationMs: Date.now() - t1 });
+      throw err;
     }
+
+    // Step 3: Read back and verify
+    const t2 = Date.now();
+    try {
+      const readBack = await storageProvider.downloadAssetFile(testProjectId, testAssetId, testFilename);
+      if (!readBack || readBack.length === 0) {
+        const msg = 'Read returned empty data';
+        steps.push({ step: 'read', status: 'failed', detail: msg, durationMs: Date.now() - t2 });
+        throw new Error(msg);
+      }
+      if (!readBack.equals(testPayload)) {
+        const msg = `Data mismatch: wrote ${testPayload.length} bytes, read ${readBack.length} bytes`;
+        steps.push({ step: 'read', status: 'failed', detail: msg, durationMs: Date.now() - t2 });
+        throw new Error(msg);
+      }
+      steps.push({ step: 'read', status: 'passed', durationMs: Date.now() - t2 });
+    } catch (err: any) {
+      if (!steps.find(s => s.step === 'read')) {
+        steps.push({ step: 'read', status: 'failed', detail: err.message, durationMs: Date.now() - t2 });
+      }
+      throw err;
+    }
+
+    // Step 4: Delete
+    const t3 = Date.now();
+    try {
+      await storageProvider.deleteAssetFiles(testProjectId, testAssetId);
+      // Also clean up the test project directory
+      await storageProvider.deleteProject(testProjectId);
+      steps.push({ step: 'delete', status: 'passed', durationMs: Date.now() - t3 });
+    } catch (err: any) {
+      steps.push({ step: 'delete', status: 'failed', detail: err.message, durationMs: Date.now() - t3 });
+      throw err;
+    }
+
+    res.json({
+      success: true,
+      message: 'All storage tests passed',
+      steps,
+    });
   } catch (error: any) {
-    logger.error(`Failed to test storage provider ${provider}:`, error);
+    logger.error(`Storage provider test failed for ${provider}:`, error);
+    const failedStep = steps.find(s => s.status === 'failed');
     res.status(500).json({
       success: false,
-      message: 'Failed to test storage provider',
-      error: error.message,
+      message: failedStep
+        ? `Test failed at "${failedStep.step}": ${failedStep.detail}`
+        : `Test failed: ${error.message}`,
+      steps,
     });
   }
 }));

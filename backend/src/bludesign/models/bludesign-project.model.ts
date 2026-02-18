@@ -39,8 +39,12 @@ export class BluDesignProjectModel extends BaseModel {
       description: row.description ?? undefined,
       ownerId: row.owner_id,
       storageProvider: row.storage_provider,
-      storageConfig: row.storage_config ? JSON.parse(row.storage_config) : undefined,
-      defaultBranding: row.default_branding ? JSON.parse(row.default_branding) : undefined,
+      storageConfig: row.storage_config
+        ? (typeof row.storage_config === 'string' ? JSON.parse(row.storage_config) : row.storage_config)
+        : undefined,
+      defaultBranding: row.default_branding
+        ? (typeof row.default_branding === 'string' ? JSON.parse(row.default_branding) : row.default_branding)
+        : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -71,16 +75,22 @@ export class BluDesignProjectModel extends BaseModel {
     ownerId: string,
     data: CreateProjectRequest
   ): Promise<BluDesignProject> {
-    const row = await super.create({
+    const raw = await super.create({
       name: data.name,
       description: data.description ?? null,
       owner_id: ownerId,
-      storage_provider: data.storageProvider ?? StorageProviderType.LOCAL,
-      storage_config: data.storageConfig ? JSON.stringify(data.storageConfig) : null,
+      storage_provider: data.storageProvider ?? StorageProviderType.GCS,
+      storage_config: data.storageConfig
+        ? JSON.stringify(data.storageConfig)
+        : JSON.stringify({
+            projectId: process.env.GCS_PROJECT_ID || 'BluLok-Cloud-Dev',
+            bucketName: process.env.GCS_BUCKET_NAME || 'blulok-develop',
+          }),
       default_branding: data.defaultBranding ? JSON.stringify(data.defaultBranding) : null,
-    }) as BluDesignProjectRow;
+    });
 
-    return this.toDomain(row);
+    // super.create() → this.findById() → toDomain(), so raw is already a BluDesignProject
+    return raw as BluDesignProject;
   }
 
   /**
@@ -102,8 +112,9 @@ export class BluDesignProjectModel extends BaseModel {
       return this.findById(id);
     }
     
-    const row = await super.updateById(id, updateData) as BluDesignProjectRow | undefined;
-    return row ? this.toDomain(row) : undefined;
+    // super.updateById() → this.findById() → toDomain(), so result is already a BluDesignProject
+    const result = await super.updateById(id, updateData);
+    return result as BluDesignProject | undefined;
   }
 
   /**

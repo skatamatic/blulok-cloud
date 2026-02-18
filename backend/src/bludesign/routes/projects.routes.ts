@@ -13,6 +13,11 @@ import { BluDesignProjectModel } from '../models/bludesign-project.model';
 import { StorageProviderType } from '../types/bludesign.types';
 import { createStorageProvider, validateStorageConfig } from '../services/storage';
 
+const DEFAULT_STORAGE_CONFIG = {
+  projectId: process.env.GCS_PROJECT_ID || 'BluLok-Cloud-Dev',
+  bucketName: process.env.GCS_BUCKET_NAME || 'blulok-develop',
+};
+
 const router = Router();
 
 // Validation schemas
@@ -130,7 +135,7 @@ router.post('/', asyncHandler(async (req: AuthenticatedRequest, res: Response) =
   try {
     const provider = createStorageProvider({
       type: project.storageProvider,
-      config: project.storageConfig || { basePath: './storage/bludesign' },
+      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
     });
     await provider.initialize();
     await provider.initializeProject(project.id);
@@ -207,7 +212,7 @@ router.delete('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Respon
   try {
     const provider = createStorageProvider({
       type: project.storageProvider,
-      config: project.storageConfig || { basePath: './storage/bludesign' },
+      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
     });
     await provider.deleteProject(id);
   } catch (storageError) {
@@ -244,7 +249,7 @@ router.get('/:id/storage-usage', asyncHandler(async (req: AuthenticatedRequest, 
   try {
     const provider = createStorageProvider({
       type: project.storageProvider,
-      config: project.storageConfig || { basePath: './storage/bludesign' },
+      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
     });
     const bytes = await provider.getProjectStorageUsage(id);
     
@@ -289,7 +294,7 @@ router.post('/:id/storage/test', asyncHandler(async (req: AuthenticatedRequest, 
     // Validate storage config
     const config = {
       type: project.storageProvider,
-      config: project.storageConfig || { basePath: './storage/bludesign' },
+      config: project.storageConfig || DEFAULT_STORAGE_CONFIG,
     };
     
     const validationErrors = validateStorageConfig(config);

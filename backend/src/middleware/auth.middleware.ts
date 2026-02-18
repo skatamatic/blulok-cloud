@@ -20,8 +20,8 @@ export const authenticateToken: RequestHandler = (req: AuthenticatedRequest, _re
   next();
 };
 
-export const requireRoles = (roles: UserRole[]) => {
-  return (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
+export const requireRoles = (roles: UserRole[]): RequestHandler => {
+  return ((req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       throw new AppError('Authentication required', 401);
     }
@@ -31,7 +31,7 @@ export const requireRoles = (roles: UserRole[]) => {
     }
 
     next();
-  };
+  }) as RequestHandler;
 };
 
 export const requireAdmin: RequestHandler = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {

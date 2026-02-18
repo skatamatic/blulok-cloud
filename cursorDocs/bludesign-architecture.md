@@ -27,78 +27,81 @@ Comprehensive type definitions:
 - Facility and project structures
 - Storage provider configurations
 
-### Storage Providers (`services/storage/`)
+### Shared Base Storage Layer (`services/storage/`)
 
-BluDesign uses a pluggable storage provider system that allows seamless switching between different storage backends without code changes. All providers implement the same interface, ensuring consistent behavior across storage types.
+BluDesign and Firmware storage share a common base layer (`backend/src/services/storage/`) that provides low-level file operations via a `BaseStorageProvider` interface. This avoids duplicating I/O logic across storage backends.
+
+#### `base-storage.interface.ts`
+Generic file-operation interface implemented by all backends:
+- `uploadFile(filePath, data, contentType?)` – write / overwrite
+- `downloadFile(filePath)` – read file
+- `deleteFile(filePath)` – delete single file (idempotent)
+- `fileExists(filePath)` – existence check
+- `listFiles(prefix)` – list file names under a directory
+- `deleteDirectory(dirPath)` – recursive delete
+- `getDirectorySize(dirPath)` – sum of file bytes
+- `initialize()` / `healthCheck()` – lifecycle
+
+#### Base Providers
+- **`local-base.provider.ts`** – Local filesystem with path-traversal protection (`resolveSafe()` rejects `../`)
+- **`gcs-base.provider.ts`** – Google Cloud Storage (bucket-based objects)
+- **`gdrive-base.provider.ts`** – Google Drive (folder chains mapped from logical paths) with all critical bug fixes baked in:
+  1. Query injection escaping (single-quotes in Drive API `q`)
+  2. Upsert semantics on upload (no duplicate files)
+  3. Bounded 429 retries with exponential backoff (max 5)
+  4. Single 401 token-refresh attempt (no infinite recursion)
+  5. Folder-level delete (Drive cascades to children)
+  6. Empty parent folder cleanup on file delete
+  7. `listFiles` returns names not Drive IDs
+  8. `setCredentials` always called with refreshToken in constructor
+
+#### `base-storage.factory.ts`
+- Creates and caches base providers from `{ type, config }` objects
+- Stable cache keys: no secrets (tokens/keys) in cache key
+- `validateBaseStorageConfig()` for config validation
+
+### BluDesign Storage Domain Layer (`bludesign/services/storage/`)
+
+BluDesign providers are thin adapters that delegate file I/O to the shared base, adding domain-specific path conventions, file validation, and zip operations.
 
 #### `storage-provider.interface.ts`
-Abstract interface for storage backends:
-- Asset file upload/download
-- Global asset operations
-- Texture management
-- Facility manifest storage
+High-level domain interface (unchanged for callers):
+- Asset / global asset / texture upload/download
+- Facility manifest save/load
 - Project initialization/cleanup
 - Zip export/import
-- Signed URL generation
-- Public URL generation (for public buckets)
+- Signed URL / public URL generation
 - Storage usage calculation
+- Extension and size validation on uploads
 
 #### `local.provider.ts`
-File-based storage implementation:
-- Stores files in local filesystem
-- Project directory structure: `projects/{projectId}/assets/{assetId}/`
-- Global assets: `global/models/{modelId}/`
-- Asset and texture file management
-- Zip export with archiver
-- Storage usage calculation
-- **Note**: Ephemeral in Cloud Run deployments - files are lost on container restart
+Delegates to `LocalBaseStorage`, adds:
+- BluDesign path conventions (`projects/{projectId}/assets/{assetId}/`)
+- Allowed extension / max size validation
+- Zip export/import with `archiver` / `unzipper`
 
 #### `gcs.provider.ts`
-Google Cloud Storage implementation:
-- Stores files in GCS buckets
-- Path structure: `projects/{projectId}/assets/{assetId}/filename`
-- Global assets: `global/models/{modelId}/filename`
-- Supports service account authentication (key file path or contents)
-- Signed URL generation for private buckets
-- Public URL generation for public buckets
-- Automatic bucket existence validation
-- **Configuration**:
-  - `bucketName` (required) - GCS bucket name
-  - `projectId` (required) - GCP project ID
-  - `keyFilePath` (optional) - Path to service account JSON key file
-  - `keyFileContents` (optional) - Service account JSON as string
-  - `publicBucket` (optional) - Whether bucket is public (default: false)
+Delegates to `GCSBaseStorage`, adds:
+- Path conventions, signed URL generation, public URL support
+- Extension/size validation on uploads
 
 #### `gdrive.provider.ts`
-Google Drive implementation:
-- Stores files in Google Drive folders
-- Folder structure: `{rootFolderId}/projects/{projectId}/assets/{assetId}/`
-- Global assets: `{rootFolderId}/global/models/{modelId}/`
-- OAuth2 authentication with automatic token refresh
-- Resumable uploads for large files (>5MB)
-- Rate limit handling with exponential backoff
-- **Configuration**:
-  - `clientId` (required) - OAuth2 client ID
-  - `clientSecret` (required) - OAuth2 client secret
-  - `rootFolderId` (required) - Google Drive folder ID
-  - `accessToken` (optional) - OAuth2 access token (auto-refreshed)
-  - `refreshToken` (required) - OAuth2 refresh token for token renewal
-- **OAuth Flow**: Use `/api/v1/bludesign/storage/gdrive/auth-url` to get authorization URL, then exchange code for tokens via `/api/v1/bludesign/storage/gdrive/callback`
+Delegates to `GDriveBaseStorage`, adds:
+- Path conventions, extension/size validation
+- Sequential zip import (prevents folder-creation races)
+- Recursive folder archive for zip export
 
 #### `storage.factory.ts`
-Provider factory and validation:
-- Creates provider instances from config
-- Validates storage configuration for all provider types
-- Provider caching for reuse
-- Default provider (local) for development
-- Supports: `LOCAL`, `GCS`, `GDRIVE`
+Domain factory:
+- Creates domain adapters wrapping base providers
+- Stable cache keys (no secrets)
+- `validateStorageConfig()` delegates to base validation
 
-#### `storage.routes.ts`
-Storage provider API routes:
-- `GET /api/v1/bludesign/storage/gdrive/auth-url` - Get OAuth2 authorization URL
-- `GET /api/v1/bludesign/storage/gdrive/callback` - Exchange OAuth code for tokens
-- `POST /api/v1/bludesign/storage/gdrive/refresh-tokens` - Manually refresh tokens
-- `POST /api/v1/bludesign/storage/:provider/test` - Test storage connection
+#### `storage.routes.ts` (RBAC: ADMIN or DEV_ADMIN required)
+- `GET .../gdrive/auth-url` – Get OAuth2 authorization URL
+- `GET .../gdrive/callback` – Exchange OAuth code for tokens
+- `POST .../gdrive/refresh-tokens` – Manually refresh tokens
+- `POST .../:provider/test` – Test storage connection
 
 ### Models (`models/`)
 
@@ -526,25 +529,36 @@ Engine emits events for React integration:
 
 ### Backend
 ```
-backend/src/bludesign/
+backend/src/services/storage/       # Shared base layer
+├── base-storage.interface.ts       # BaseStorageProvider + config types + errors
+├── local-base.provider.ts          # Local FS base (path traversal protection)
+├── gcs-base.provider.ts            # GCS base
+├── gdrive-base.provider.ts         # GDrive base (all bug fixes)
+├── base-storage.factory.ts         # Factory + validation + caching
+└── index.ts                        # Barrel exports
+
+backend/src/bludesign/              # BluDesign domain layer
 ├── types/
-│   └── bludesign.types.ts    # All type definitions
+│   └── bludesign.types.ts          # Re-exports StorageProviderType from base
 ├── models/
 │   ├── bludesign-project.model.ts
 │   ├── bludesign-asset.model.ts
 │   ├── bludesign-facility.model.ts
 │   └── index.ts
 ├── services/storage/
-│   ├── storage-provider.interface.ts
-│   ├── storage.factory.ts
-│   ├── local.provider.ts
+│   ├── storage-provider.interface.ts  # Domain interface + re-exports
+│   ├── storage.factory.ts             # Domain factory
+│   ├── local.provider.ts              # Delegates to LocalBaseStorage
+│   ├── gcs.provider.ts               # Delegates to GCSBaseStorage
+│   ├── gdrive.provider.ts            # Delegates to GDriveBaseStorage
 │   └── index.ts
 ├── routes/
 │   ├── projects.routes.ts
 │   ├── assets.routes.ts
 │   ├── facilities.routes.ts
+│   ├── storage.routes.ts             # RBAC: ADMIN / DEV_ADMIN
 │   └── index.ts
-└── index.ts                  # Module exports
+└── index.ts
 ```
 
 ### Frontend
@@ -875,8 +889,8 @@ When state updates arrive, the viewer:
 - [x] WebSocket state binding (viewer mode)
 - [x] Custom asset import (backend complete)
 - [ ] Texture/material editor
-- [ ] Google Cloud Storage provider
-- [ ] Google Drive provider
+- [x] Google Cloud Storage provider (via shared base layer)
+- [x] Google Drive provider (via shared base layer, all critical bugs fixed)
 - [x] Building skins (brick, glass, etc.)
 - [x] Decoration assets (trees, shrubs, planters)
 - [ ] GLB export for portable scenes

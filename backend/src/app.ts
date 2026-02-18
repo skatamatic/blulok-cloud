@@ -34,6 +34,8 @@ import { bluDesignRouter } from '@/bludesign';
 import { accessControlRouter } from '@/routes/access-control.routes';
 import { notificationsRouter } from '@/routes/notifications.routes';
 import { activityRouter } from '@/routes/activity.routes';
+import { firmwareRouter } from '@/routes/firmware.routes';
+import { systemStorageRouter } from '@/routes/system-storage.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -120,6 +122,12 @@ export function createApp(): Application {
   app.use('/api/v1/notifications', notificationsRouter);
   app.use('/api/v1/activity', activityRouter);
   
+  // Firmware OTA routes
+  app.use('/api/v1/firmware', firmwareRouter);
+  
+  // System storage config (admin)
+  app.use('/api/v1/admin/storage-config', systemStorageRouter);
+
   // BluDesign routes (isolated 3D facility design system)
   app.use('/api/v1/bludesign', bluDesignRouter);
 

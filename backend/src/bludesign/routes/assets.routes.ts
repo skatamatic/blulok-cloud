@@ -15,7 +15,7 @@ import { BluDesignAssetModel } from '../models/bludesign-asset.model';
 import { AssetCategory, GeometryType } from '../types/bludesign.types';
 import { createStorageProvider } from '../services/storage';
 
-const router = Router();
+const router = Router({ mergeParams: true });
 
 // Extend AuthenticatedRequest to include multer file
 interface MulterRequest extends AuthenticatedRequest {

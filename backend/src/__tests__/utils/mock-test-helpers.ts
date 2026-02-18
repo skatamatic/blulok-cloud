@@ -18,6 +18,7 @@ export interface MockTestData {
     maintenance: MockTestUser;
     otherTenant: MockTestUser;
     facility2Tenant: MockTestUser;
+    facility2Admin: MockTestUser;
   };
   facilities: {
     facility1: any;
@@ -43,6 +44,7 @@ export function createMockTestUsers(): {
   maintenance: MockTestUser;
   otherTenant: MockTestUser;
   facility2Tenant: MockTestUser;
+  facility2Admin: MockTestUser;
 } {
   // Create mock users without database calls
   const devAdminUser = {
@@ -130,6 +132,19 @@ export function createMockTestUsers(): {
     updated_at: new Date(),
   };
 
+  const facility2AdminUser = {
+    id: 'facility2-admin-1',
+    email: 'facility2admin@test.com',
+    password_hash: 'hashed-password',
+    first_name: 'Facility2',
+    last_name: 'Admin',
+    role: UserRole.FACILITY_ADMIN,
+    facilityIds: ['550e8400-e29b-41d4-a716-446655440002', 'facility-2'],
+    is_active: true,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+
   return {
     devAdmin: {
       id: devAdminUser.id,
@@ -176,6 +191,13 @@ export function createMockTestUsers(): {
       role: UserRole.TENANT,
       facilityIds: ['550e8400-e29b-41d4-a716-446655440002', 'facility-2'],
       token: AuthService.generateToken(facility2TenantUser, ['550e8400-e29b-41d4-a716-446655440002', 'facility-2']),
+    },
+    facility2Admin: {
+      id: facility2AdminUser.id,
+      email: facility2AdminUser.email,
+      role: UserRole.FACILITY_ADMIN,
+      facilityIds: ['550e8400-e29b-41d4-a716-446655440002', 'facility-2'],
+      token: AuthService.generateToken(facility2AdminUser, ['550e8400-e29b-41d4-a716-446655440002', 'facility-2']),
     },
   };
 }

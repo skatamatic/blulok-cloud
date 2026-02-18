@@ -1,15 +1,13 @@
 /**
- * Storage Factory
- * 
- * Creates and manages storage provider instances.
+ * BluDesign Storage Factory
+ *
+ * Creates domain-level StorageProvider instances that wrap the shared
+ * BaseStorageProvider implementations.
  */
 
 import {
   StorageProvider,
   StorageProviderConfig,
-  LocalProviderConfig,
-  GCSProviderConfig,
-  GDriveProviderConfig,
   StorageError,
   StorageErrorCode,
 } from './storage-provider.interface';
@@ -17,65 +15,79 @@ import { LocalStorageProvider } from './local.provider';
 import { GCSStorageProvider } from './gcs.provider';
 import { GDriveStorageProvider } from './gdrive.provider';
 import { StorageProviderType } from '../../types/bludesign.types';
+import {
+  LocalStorageConfig,
+  GCSStorageConfig,
+  GDriveStorageConfig,
+  validateBaseStorageConfig,
+} from '@/services/storage';
 
-// Provider cache for reuse
+// Provider cache for reuse (uses stable keys via the base factory)
 const providerCache = new Map<string, StorageProvider>();
 
+function buildCacheKey(config: StorageProviderConfig): string {
+  switch (config.type) {
+    case StorageProviderType.LOCAL: {
+      const c = config.config as unknown as LocalStorageConfig;
+      return `bd:local:${c.basePath}`;
+    }
+    case StorageProviderType.GCS: {
+      const c = config.config as unknown as GCSStorageConfig;
+      return `bd:gcs:${c.bucketName}:${c.projectId}`;
+    }
+    case StorageProviderType.GDRIVE: {
+      const c = config.config as unknown as GDriveStorageConfig;
+      return `bd:gdrive:${c.clientId}:${c.rootFolderId}`;
+    }
+    default:
+      return `bd:${config.type}:${JSON.stringify(config.config)}`;
+  }
+}
+
 /**
- * Create a storage provider instance
+ * Create a BluDesign storage provider instance
  */
 export function createStorageProvider(config: StorageProviderConfig): StorageProvider {
-  const cacheKey = `${config.type}:${JSON.stringify(config.config)}`;
-  
-  // Check cache first
+  const cacheKey = buildCacheKey(config);
   const cached = providerCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-  
+  if (cached) return cached;
+
   let provider: StorageProvider;
-  
+
   switch (config.type) {
     case StorageProviderType.LOCAL:
-      provider = new LocalStorageProvider(config.config as unknown as LocalProviderConfig);
+      provider = new LocalStorageProvider(config.config as unknown as LocalStorageConfig & { maxFileSizeMb?: number; allowedExtensions?: string[] });
       break;
-      
     case StorageProviderType.GCS:
-      provider = new GCSStorageProvider(config.config as unknown as GCSProviderConfig);
+      provider = new GCSStorageProvider(config.config as unknown as GCSStorageConfig);
       break;
-      
     case StorageProviderType.GDRIVE:
-      provider = new GDriveStorageProvider(config.config as unknown as GDriveProviderConfig);
+      provider = new GDriveStorageProvider(config.config as unknown as GDriveStorageConfig);
       break;
-      
     default:
       throw new StorageError(
         `Unknown storage provider type: ${config.type}`,
-        StorageErrorCode.CONFIGURATION_ERROR
+        StorageErrorCode.CONFIGURATION_ERROR,
       );
   }
-  
-  // Cache the provider
+
   providerCache.set(cacheKey, provider);
-  
   return provider;
 }
 
 /**
- * Get the default storage provider (local)
+ * Get the default storage provider (GCS with Application Default Credentials)
  */
 export function getDefaultStorageProvider(): StorageProvider {
-  const localConfig: LocalProviderConfig = {
-    basePath: process.env.BLUDESIGN_STORAGE_PATH || './storage/bludesign',
-    maxFileSizeMb: 100,
-    allowedExtensions: ['.glb', '.gltf', '.fbx', '.png', '.jpg', '.jpeg', '.webp'],
-  };
-  
   const config: StorageProviderConfig = {
-    type: StorageProviderType.LOCAL,
-    config: localConfig as unknown as Record<string, unknown>,
+    type: StorageProviderType.GCS,
+    config: {
+      projectId: process.env.GCS_PROJECT_ID || 'BluLok-Cloud-Dev',
+      bucketName: process.env.GCS_BUCKET_NAME || 'blulok-develop',
+      maxFileSizeMb: 100,
+      allowedExtensions: ['.glb', '.gltf', '.fbx', '.png', '.jpg', '.jpeg', '.webp'],
+    } as unknown as Record<string, unknown>,
   };
-  
   return createStorageProvider(config);
 }
 
@@ -90,46 +102,5 @@ export function clearProviderCache(): void {
  * Validate storage configuration
  */
 export function validateStorageConfig(config: StorageProviderConfig): string[] {
-  const errors: string[] = [];
-  
-  switch (config.type) {
-    case StorageProviderType.LOCAL: {
-      const localConfig = config.config as unknown as LocalProviderConfig;
-      if (!localConfig.basePath) {
-        errors.push('Local storage requires basePath');
-      }
-      break;
-    }
-    
-    case StorageProviderType.GCS: {
-      const gcsConfig = config.config as unknown as GCSProviderConfig;
-      if (!gcsConfig.bucketName) {
-        errors.push('GCS storage requires bucketName');
-      }
-      if (!gcsConfig.projectId) {
-        errors.push('GCS storage requires projectId');
-      }
-      break;
-    }
-    
-    case StorageProviderType.GDRIVE: {
-      const gdriveConfig = config.config as unknown as GDriveProviderConfig;
-      if (!gdriveConfig.clientId) {
-        errors.push('Google Drive storage requires clientId');
-      }
-      if (!gdriveConfig.clientSecret) {
-        errors.push('Google Drive storage requires clientSecret');
-      }
-      if (!gdriveConfig.rootFolderId) {
-        errors.push('Google Drive storage requires rootFolderId');
-      }
-      break;
-    }
-    
-    default:
-      errors.push(`Unknown storage provider type: ${config.type}`);
-  }
-  
-  return errors;
+  return validateBaseStorageConfig({ type: config.type, config: config.config });
 }
-

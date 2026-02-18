@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { loginLimiter } from '@/middleware/security-limits';
 import Joi from 'joi';
 import { AuthService } from '@/services/auth.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { LoginRequest, AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
@@ -140,7 +141,12 @@ router.post('/login', loginLimiter, asyncHandler(async (req: Request, res: Respo
         isDeviceRegistered = !!device;
       }
     } catch (_e) {}
-    res.status(statusCode).json({ ...result, isDeviceRegistered });
+    // Include the Ops public key so clients (gateways, apps) can verify signed payloads
+    let ops_public_key: string | undefined;
+    try {
+      ops_public_key = Ed25519Service.getOpsPublicKeyB64();
+    } catch (_e) {}
+    res.status(statusCode).json({ ...result, isDeviceRegistered, ops_public_key });
   } else {
     res.status(statusCode).json(result);
   }

@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../services/database.service';
 import { DeviceEventService } from '../services/device-event.service';
 
@@ -466,14 +467,16 @@ export class DeviceModel {
 
   async createAccessControlDevice(data: CreateAccessControlDeviceData): Promise<AccessControlDevice> {
     const knex = this.db.connection;
-    const [id] = await knex('access_control_devices').insert(data);
+    const id = uuidv4();
+    await knex('access_control_devices').insert({ id, ...data });
     const device = await knex('access_control_devices').where('id', id).first();
     return device as AccessControlDevice;
   }
 
   async createBluLokDevice(data: CreateBluLokDeviceData): Promise<BluLokDevice> {
     const knex = this.db.connection;
-    const [id] = await knex('blulok_devices').insert(data);
+    const id = uuidv4();
+    await knex('blulok_devices').insert({ id, ...data });
     const device = await knex('blulok_devices').where('id', id).first();
     return device as BluLokDevice;
   }

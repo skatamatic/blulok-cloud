@@ -44,6 +44,7 @@ import BluDesignViewPage from '@/pages/bludesign/BluDesignViewPage';
 import BluDesignBuildPage from '@/pages/bludesign/BluDesignBuildPage';
 import BluDesignAssetsPage from '@/pages/bludesign/BluDesignAssetsPage';
 import BluDesignConfigPage from '@/pages/bludesign/BluDesignConfigPage';
+import StorageConfigPage from '@/pages/StorageConfigPage';
 
 // Global FMS modals component
 function FMSModals() {
@@ -175,6 +176,14 @@ function App() {
                           <ProtectedRoute requireAdmin>
                             <DashboardLayout>
                               <NotificationSettingsPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/storage-config" element={
+                          <ProtectedRoute requireDevAdmin>
+                            <DashboardLayout>
+                              <StorageConfigPage />
                             </DashboardLayout>
                           </ProtectedRoute>
                         } />

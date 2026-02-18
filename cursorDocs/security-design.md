@@ -14,6 +14,7 @@ This document summarizes the new centralized trust model implemented in the back
 - Flow C (Fallback): App signs short-lived JWT with device private key; Gateway forwards to Cloud; Cloud verifies with stored device public key and issues Route Pass.
 - Flow D (Revocation): Cloud pushes signed Denylist Update Command to Gateway to target locks.
 - Flow E (Time Sync): Cloud issues signed Secure Time Sync Command; Gateway broadcasts periodically; locks reject older timestamps.
+- Flow F (Firmware OTA): Cloud signs firmware manifest and chunked binary data as EdDSA JWTs; Gateway verifies each JWT using the Ops public key received in AUTH_OK; Gateway reassembles binary, verifies SHA-256 integrity, verifies manufacturer signature, then distributes to lock hardware.
 
 ### Data Artifacts
 - Route Pass (JWT, Ed25519): `iss`, `sub`, `aud[]`, `iat`, `exp`, `jti`, `device_pubkey`.
@@ -24,7 +25,11 @@ This document summarizes the new centralized trust model implemented in the back
   - LOCK: `{ cmd_type:'LOCK', device_id: 'deviceId' }`
   - UNLOCK: `{ cmd_type:'UNLOCK', device_id: 'deviceId' }`
   - SECURE_TIME_SYNC: `{ cmd_type:'SECURE_TIME_SYNC', ts }`
+  - FIRMWARE_MANIFEST: `{ cmd_type:'FIRMWARE_MANIFEST', version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`
+  - FIRMWARE_CHUNK: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`
 - WebSocket command envelope: `{ type: 'COMMAND', jwt: 'eyJ...' }`
+- WebSocket firmware envelopes: `{ type: 'FIRMWARE_MANIFEST', jwt: 'eyJ...' }`, `{ type: 'FIRMWARE_CHUNK', jwt: 'eyJ...' }`
+- Gateway firmware responses: `{ type: 'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status:'ok'|'error' }`, `{ type: 'FIRMWARE_UPDATE_STATUS', nonce, status, message? }`
 
 #### Route Pass Audience Formats
 - Direct lock access: `lock:{lockId}`
@@ -44,13 +49,21 @@ This document summarizes the new centralized trust model implemented in the back
     - `POST /api/v1/internal/gateway/device-sync` (DEPRECATED) - Legacy combined endpoint, use `/devices/inventory` + `/devices/state`
   - Admin: `POST /api/v1/admin/ops-key-rotation/broadcast` (DEV_ADMIN only)
   - Dev Tools (DEV_ADMIN, non-production only): `POST /api/v1/admin/dev-tools/gateway-command` - sends DENYLIST_ADD, DENYLIST_REMOVE, LOCK, UNLOCK commands to gateway for testing
+  - Firmware OTA:
+    - `POST /api/v1/firmware/upload` - Upload firmware binary (DEV_ADMIN only, multer multipart)
+    - `GET /api/v1/firmware` - List active firmware (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
+    - `GET /api/v1/firmware/:id` - Get firmware details
+    - `DELETE /api/v1/firmware/:id` - Soft-delete firmware (DEV_ADMIN only)
+    - `POST /api/v1/firmware/:id/push/:gatewayId` - Initiate firmware push (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
+    - `GET /api/v1/firmware/push-status/:gatewayId` - Current push state for page hydration
+    - `POST /api/v1/firmware/push/:pushId/cancel` - Cancel in-progress push
 - Websocket Gateway at `/ws/gateway` (facility-scoped) for:
   - Secure command delivery (denylist add/remove, time sync) via unicast/broadcast
   - Full REST API proxying over WS using loopback HTTP with facility guard
   - Auth: JWT required; roles allowed: DEV_ADMIN, ADMIN, FACILITY_ADMIN; one facilityId per connection
   - Protocol (JSON frames):
-    - Client→Server: `{type:'AUTH', token, facilityId}`, `{type:'PROXY_REQUEST', id, method, path, headers?, query?, body?}`, `{type:'PONG'}`, `{type:'COMMAND_ACK', id, status, message?}`
-    - Server→Client: `{type:'AUTH_OK', facilityId}`, `{type:'PROXY_RESPONSE', id, status, headers?, body?}`, `{type:'PING'}`
+    - Client→Server: `{type:'AUTH', token, facilityId}`, `{type:'PROXY_REQUEST', id, method, path, headers?, query?, body?}`, `{type:'PONG'}`, `{type:'COMMAND_ACK', id, status, message?}`, `{type:'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status, message?}`, `{type:'FIRMWARE_UPDATE_STATUS', nonce, status, message?}`
+    - Server→Client: `{type:'AUTH_OK', facilityId, ops_public_key}`, `{type:'PROXY_RESPONSE', id, status, headers?, body?}`, `{type:'PING'}`, `{type:'FIRMWARE_MANIFEST', jwt}`, `{type:'FIRMWARE_CHUNK', jwt}`
   - Facility Guard: FACILITY_ADMIN requests must not target other facilities (path/body checked)
   - Proxy Security: server re-signs a short-lived passthrough JWT with same identity and injects `Authorization: Bearer <token>`
 - Login now returns `isDeviceRegistered` for the presented `X-App-Device-Id`.
@@ -79,6 +92,17 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 
 ### Legacy Cleanup
 - Legacy per-lock key distribution and queues are deprecated. A migration exists to drop `device_key_distributions`, `gateway_commands`, `gateway_command_attempts`, and `users.key_status` when ready to finalize removal.
+
+### Firmware OTA Security
+- Firmware binaries are uploaded by DEV_ADMIN via DevTools and stored with SHA-256 hash.
+- Before delivery, a manifest JWT is signed with the Ops Ed25519 key: `{ cmd_type:'FIRMWARE_MANIFEST', version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`.
+- Binary is split into 256KB raw chunks; each chunk is signed as a JWT: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`.
+- The `nonce` correlates manifest and chunks for replay protection.
+- Gateway verifies each JWT using the Ops public key received in `AUTH_OK`.
+- After reassembly, gateway verifies full SHA-256 against manifest, then verifies manufacturer signature on the binary.
+- Trust chain (no CA required): TLS secures transport → JWT auth verifies gateway identity → `AUTH_OK` delivers Ops public key → public key verifies all signed firmware payloads.
+- Push tasks run as background operations with state persisted in `firmware_pushes` table.
+- Progress broadcast via `firmware_push_progress` WebSocket subscription (facility-scoped RBAC).
 
 ### Implementation Notes
 - Abstractions:

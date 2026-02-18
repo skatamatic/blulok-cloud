@@ -1,452 +1,252 @@
 /**
- * Google Drive Storage Provider Tests
+ * GDrive Storage Provider (BluDesign Domain Layer) Tests
+ *
+ * Tests that the domain adapter delegates to GDriveBaseStorage
+ * with correct path conventions and applies validation rules.
+ * Low-level Drive API behavior is tested in gdrive-base.provider.test.ts.
  */
 
+import { StorageError, StorageErrorCode } from '@/services/storage/base-storage.interface';
+
+// Mock the base provider
+const mockBase = {
+  type: 'gdrive',
+  initialize: jest.fn().mockResolvedValue(undefined),
+  healthCheck: jest.fn().mockResolvedValue(true),
+  uploadFile: jest.fn().mockResolvedValue('path'),
+  downloadFile: jest.fn().mockResolvedValue(Buffer.from('content')),
+  deleteFile: jest.fn().mockResolvedValue(undefined),
+  fileExists: jest.fn().mockResolvedValue(true),
+  listFiles: jest.fn().mockResolvedValue(['file1.glb', 'file2.png']),
+  deleteDirectory: jest.fn().mockResolvedValue(undefined),
+  getDirectorySize: jest.fn().mockResolvedValue(1024),
+};
+
+jest.mock('@/services/storage/gdrive-base.provider', () => ({
+  GDriveBaseStorage: jest.fn((config: any) => {
+    // Replicate the base constructor validation so domain-layer tests can verify it propagates
+    if (!config.clientId) throw new StorageError('Google Drive client ID is required', StorageErrorCode.CONFIGURATION_ERROR);
+    if (!config.clientSecret) throw new StorageError('Google Drive client secret is required', StorageErrorCode.CONFIGURATION_ERROR);
+    if (!config.rootFolderId) throw new StorageError('Google Drive root folder ID is required', StorageErrorCode.CONFIGURATION_ERROR);
+    return mockBase;
+  }),
+}));
+
+jest.mock('@/utils/logger', () => ({
+  logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() },
+}));
+
 import { GDriveStorageProvider } from '@/bludesign/services/storage/gdrive.provider';
-import { StorageError, StorageErrorCode } from '@/bludesign/services/storage/storage-provider.interface';
-import { google } from 'googleapis';
 
-// Mock googleapis
-jest.mock('googleapis', () => {
-  const mockDrive = {
-    files: {
-      get: jest.fn(),
-      list: jest.fn(),
-      create: jest.fn(),
-      delete: jest.fn(),
-    },
-    permissions: {
-      create: jest.fn(),
-    },
-  };
-
-  // Create mutable credentials object
-  const credentials = {
-    access_token: 'mock-access-token',
-    refresh_token: 'mock-refresh-token',
-  };
-
-  const mockOAuth2Client = {
-    setCredentials: jest.fn().mockImplementation((creds) => {
-      Object.assign(credentials, creds);
-    }),
-    refreshAccessToken: jest.fn(),
-    generateAuthUrl: jest.fn(),
-    getToken: jest.fn(),
-    get credentials() {
-      return credentials;
-    },
-  };
-
-  return {
-    google: {
-      auth: {
-        OAuth2: jest.fn(() => mockOAuth2Client),
-      },
-      drive: jest.fn(() => mockDrive),
-    },
-    __mockDrive: mockDrive,
-    __mockOAuth2Client: mockOAuth2Client,
-  };
-});
-
-describe('GDriveStorageProvider', () => {
+describe('GDriveStorageProvider (BluDesign Domain Layer)', () => {
   let provider: GDriveStorageProvider;
-  let mockDrive: any;
-  let mockOAuth2Client: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
-    const googleModule = require('googleapis');
-    mockDrive = googleModule.__mockDrive;
-    mockOAuth2Client = googleModule.__mockOAuth2Client;
-    
-    // Default mock responses
-    mockDrive.files.get.mockResolvedValue({
-      data: {
-        id: 'file-id',
-        name: 'test-file',
-        mimeType: 'application/vnd.google-apps.folder',
-      },
-    });
-    
-    mockDrive.files.list.mockResolvedValue({
-      data: { files: [] },
-    });
-    
-    mockDrive.files.create.mockResolvedValue({
-      data: {
-        id: 'new-file-id',
-        name: 'new-file',
-        mimeType: 'application/octet-stream',
-        size: '1024',
-      },
-    });
-    
-    mockDrive.files.delete.mockResolvedValue({});
-    
-    mockOAuth2Client.refreshAccessToken.mockResolvedValue({
-      credentials: {
-        access_token: 'new-access-token',
-        refresh_token: 'refresh-token',
-      },
+    provider = new GDriveStorageProvider({
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+      rootFolderId: 'root-folder-id',
+      refreshToken: 'refresh-token',
+      accessToken: 'access-token',
     });
   });
 
-  describe('Initialization', () => {
-    it('should initialize with valid config', async () => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
+  describe('Constructor', () => {
+    it('should throw if client ID is missing', () => {
+      expect(() => new GDriveStorageProvider({
+        clientSecret: 'secret',
+        rootFolderId: 'root',
+      } as any)).toThrow(StorageError);
+    });
 
+    it('should throw if client secret is missing', () => {
+      expect(() => new GDriveStorageProvider({
+        clientId: 'id',
+        rootFolderId: 'root',
+      } as any)).toThrow(StorageError);
+    });
+
+    it('should throw if root folder ID is missing', () => {
+      expect(() => new GDriveStorageProvider({
+        clientId: 'id',
+        clientSecret: 'secret',
+      } as any)).toThrow(StorageError);
+    });
+  });
+
+  describe('Lifecycle', () => {
+    it('should delegate initialize to base', async () => {
       await provider.initialize();
-      expect(mockDrive.files.get).toHaveBeenCalledWith({
-        fileId: 'root-folder-id',
-        fields: 'id,name,mimeType',
-      });
+      expect(mockBase.initialize).toHaveBeenCalled();
     });
 
-    it('should throw error if client ID is missing', () => {
-      expect(() => {
-        new GDriveStorageProvider({
-          clientSecret: 'test-secret',
-          rootFolderId: 'root-id',
-        } as any);
-      }).toThrow(StorageError);
-    });
-
-    it('should throw error if client secret is missing', () => {
-      expect(() => {
-        new GDriveStorageProvider({
-          clientId: 'test-id',
-          rootFolderId: 'root-id',
-        } as any);
-      }).toThrow(StorageError);
-    });
-
-    it('should throw error if root folder ID is missing', () => {
-      expect(() => {
-        new GDriveStorageProvider({
-          clientId: 'test-id',
-          clientSecret: 'test-secret',
-        } as any);
-      }).toThrow(StorageError);
-    });
-
-    it('should throw error if root folder does not exist', async () => {
-      mockDrive.files.get.mockRejectedValue({ code: 404 });
-      
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'invalid-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
-
-      await expect(provider.initialize()).rejects.toThrow(StorageError);
-    });
-  });
-
-  describe('Health Check', () => {
-    it('should return true if root folder is accessible', async () => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
-
-      const isHealthy = await provider.healthCheck();
-      expect(isHealthy).toBe(true);
-    });
-
-    it('should return false if root folder is not accessible', async () => {
-      mockDrive.files.get.mockRejectedValue({ code: 403 });
-      
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
-
-      const isHealthy = await provider.healthCheck();
-      expect(isHealthy).toBe(false);
-    });
-  });
-
-  describe('Token Management', () => {
-    it('should refresh access token when expired', async () => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
-
-      // Simulate expired token
-      mockDrive.files.get.mockRejectedValueOnce({ code: 401 });
-      mockDrive.files.get.mockResolvedValueOnce({
-        data: {
-          id: 'root-folder-id',
-          name: 'Root',
-          mimeType: 'application/vnd.google-apps.folder',
-        },
-      });
-
-      await provider.initialize();
-      
-      expect(mockOAuth2Client.refreshAccessToken).toHaveBeenCalled();
-    });
-
-    it('should throw error if refresh token is missing', async () => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-      });
-
-      mockDrive.files.get.mockRejectedValue({ code: 401 });
-
-      await expect(provider.initialize()).rejects.toThrow(StorageError);
+    it('should delegate healthCheck to base', async () => {
+      const result = await provider.healthCheck();
+      expect(result).toBe(true);
+      expect(mockBase.healthCheck).toHaveBeenCalled();
     });
   });
 
   describe('Asset Operations', () => {
-    beforeEach(() => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
-    });
-
-    it('should upload asset file', async () => {
-      const data = Buffer.from('test content');
-      const result = await provider.uploadAssetFile(
-        'project-1',
-        'asset-1',
-        'model.glb',
-        data,
-        'model/gltf-binary'
+    it('should upload asset file with correct path', async () => {
+      await provider.uploadAssetFile('proj-1', 'asset-1', 'model.glb', Buffer.from('data'), 'model/gltf-binary');
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'projects/proj-1/assets/asset-1/model.glb',
+        expect.any(Buffer),
+        'model/gltf-binary',
       );
-
-      expect(result).toBe('new-file-id');
-      expect(mockDrive.files.create).toHaveBeenCalled();
     });
 
-    it('should download asset file', async () => {
-      mockDrive.files.list.mockResolvedValue({
-        data: {
-          files: [{ id: 'file-id', name: 'model.glb' }],
-        },
-      });
-      
-      mockDrive.files.get.mockResolvedValue({
-        data: Buffer.from('test content'),
-      });
-
-      const buffer = await provider.downloadAssetFile('project-1', 'asset-1', 'model.glb');
-      
-      expect(buffer).toBeDefined();
+    it('should download asset file with correct path', async () => {
+      await provider.downloadAssetFile('proj-1', 'asset-1', 'model.glb');
+      expect(mockBase.downloadFile).toHaveBeenCalledWith(
+        'projects/proj-1/assets/asset-1/model.glb',
+      );
     });
 
-    it('should throw error if file not found on download', async () => {
-      mockDrive.files.list.mockResolvedValue({
-        data: { files: [] },
-      });
-
-      await expect(
-        provider.downloadAssetFile('project-1', 'asset-1', 'model.glb')
-      ).rejects.toThrow(StorageError);
+    it('should delete asset files with correct path', async () => {
+      await provider.deleteAssetFiles('proj-1', 'asset-1');
+      expect(mockBase.deleteDirectory).toHaveBeenCalledWith(
+        'projects/proj-1/assets/asset-1',
+      );
     });
 
-    it('should delete asset files', async () => {
-      mockDrive.files.list.mockResolvedValue({
-        data: {
-          files: [{ id: 'file-id', name: 'model.glb' }],
-        },
-      });
-      
-      await provider.deleteAssetFiles('project-1', 'asset-1');
-      
-      expect(mockDrive.files.delete).toHaveBeenCalledWith({ fileId: 'file-id' });
-    });
-
-    it('should list asset files', async () => {
-      mockDrive.files.list.mockResolvedValue({
-        data: {
-          files: [
-            { id: 'file-1', name: 'model.glb' },
-            { id: 'file-2', name: 'texture.png' },
-          ],
-        },
-      });
-
-      const files = await provider.listAssetFiles('project-1', 'asset-1');
-      
-      expect(files).toEqual(['model.glb', 'texture.png']);
+    it('should list asset files with correct path', async () => {
+      const files = await provider.listAssetFiles('proj-1', 'asset-1');
+      expect(mockBase.listFiles).toHaveBeenCalledWith('projects/proj-1/assets/asset-1');
+      expect(files).toEqual(['file1.glb', 'file2.png']);
     });
   });
 
-  describe('Rate Limiting', () => {
-    beforeEach(() => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-      });
+  describe('Global Asset Operations', () => {
+    it('should upload global asset with correct path', async () => {
+      await provider.uploadGlobalAsset('model-1', 'model.glb', Buffer.from('data'), 'model/gltf-binary');
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'global/models/model-1/model.glb',
+        expect.any(Buffer),
+        'model/gltf-binary',
+      );
     });
 
-    it('should retry on rate limit error', async () => {
-      // Mock all the folder resolution calls first (getProjectFolder, getAssetFolder)
-      // These happen before the actual listFiles call
-      mockDrive.files.list
-        // Folder resolution calls (projects, project-1, assets, asset-1)
-        .mockResolvedValueOnce({ data: { files: [] } }) // projects folder check
-        .mockResolvedValueOnce({ data: { files: [] } }) // project-1 folder check
-        .mockResolvedValueOnce({ data: { files: [] } }) // assets folder check
-        .mockResolvedValueOnce({ data: { files: [] } }) // asset-1 folder check
-        // Now the actual listFiles call that should retry on rate limit
-        .mockRejectedValueOnce({ code: 429 }) // First attempt fails with rate limit
-        .mockResolvedValueOnce({ // Retry succeeds
-          data: { files: [] },
-        });
+    it('should delete global asset with correct path', async () => {
+      await provider.deleteGlobalAsset('model-1');
+      expect(mockBase.deleteDirectory).toHaveBeenCalledWith('global/models/model-1');
+    });
+  });
 
-      const files = await provider.listAssetFiles('project-1', 'asset-1');
-      
-      expect(files).toEqual([]);
-      // Should be called 6 times: 4 for folder resolution + 2 for the retry
-      expect(mockDrive.files.list).toHaveBeenCalledTimes(6);
+  describe('Texture Operations', () => {
+    it('should upload texture with correct path', async () => {
+      await provider.uploadTexture('proj-1', 'asset-1', 'diffuse.png', Buffer.from('data'), 'image/png');
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'projects/proj-1/assets/asset-1/textures/diffuse.png',
+        expect.any(Buffer),
+        'image/png',
+      );
+    });
+
+    it('should delete texture with correct path', async () => {
+      await provider.deleteTexture('proj-1', 'asset-1', 'diffuse.png');
+      expect(mockBase.deleteFile).toHaveBeenCalledWith(
+        'projects/proj-1/assets/asset-1/textures/diffuse.png',
+      );
     });
   });
 
   describe('Facility Operations', () => {
-    beforeEach(() => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
+    it('should save facility manifest with correct path', async () => {
+      const manifest = { id: 'fac-1', name: 'Test', assetManifest: [] } as any;
+      await provider.saveFacilityManifest('proj-1', 'fac-1', manifest);
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'projects/proj-1/facilities/fac-1/manifest.json',
+        expect.any(Buffer),
+        'application/json',
+      );
     });
 
-    it('should save facility manifest', async () => {
-      const manifest = {
-        id: 'facility-1',
-        name: 'Test Facility',
-        assetManifest: [],
-      } as any;
-
-      await provider.saveFacilityManifest('project-1', 'facility-1', manifest);
-      
-      expect(mockDrive.files.create).toHaveBeenCalled();
+    it('should load facility manifest with correct path', async () => {
+      mockBase.downloadFile.mockResolvedValueOnce(
+        Buffer.from(JSON.stringify({ id: 'fac-1', name: 'Test', assetManifest: [] })),
+      );
+      const manifest = await provider.loadFacilityManifest('proj-1', 'fac-1');
+      expect(mockBase.downloadFile).toHaveBeenCalledWith(
+        'projects/proj-1/facilities/fac-1/manifest.json',
+      );
+      expect(manifest.id).toBe('fac-1');
     });
 
-    it('should load facility manifest', async () => {
-      mockDrive.files.list.mockResolvedValue({
-        data: {
-          files: [{ id: 'manifest-id', name: 'manifest.json' }],
-        },
-      });
-      
-      const manifestJson = JSON.stringify({
-        id: 'facility-1',
-        name: 'Test Facility',
-        assetManifest: [],
-      });
-      
-      mockDrive.files.get.mockResolvedValue({
-        data: Buffer.from(manifestJson),
-      });
-
-      const manifest = await provider.loadFacilityManifest('project-1', 'facility-1');
-      
-      expect(manifest.id).toBe('facility-1');
+    it('should delete facility with correct path', async () => {
+      await provider.deleteFacility('proj-1', 'fac-1');
+      expect(mockBase.deleteDirectory).toHaveBeenCalledWith(
+        'projects/proj-1/facilities/fac-1',
+      );
     });
   });
 
   describe('Project Operations', () => {
-    beforeEach(() => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
-    });
-
     it('should initialize project', async () => {
-      await provider.initializeProject('project-1');
-      
-      expect(mockDrive.files.create).toHaveBeenCalled();
+      await provider.initializeProject('proj-1');
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'projects/proj-1/project.json',
+        expect.any(Buffer),
+        'application/json',
+      );
     });
 
-    it('should delete project', async () => {
-      mockDrive.files.list.mockResolvedValue({
-        data: {
-          files: [
-            { id: 'file-1', name: 'file1', mimeType: 'text/plain' },
-            { id: 'folder-1', name: 'folder1', mimeType: 'application/vnd.google-apps.folder' },
-          ],
-        },
-      });
-      
-      // Mock nested folder listing
-      mockDrive.files.list
-        .mockResolvedValueOnce({
-          data: {
-            files: [
-              { id: 'file-1', name: 'file1', mimeType: 'text/plain' },
-              { id: 'folder-1', name: 'folder1', mimeType: 'application/vnd.google-apps.folder' },
-            ],
-          },
-        })
-        .mockResolvedValueOnce({
-          data: { files: [] },
-        });
+    it('should delete project with correct path', async () => {
+      await provider.deleteProject('proj-1');
+      expect(mockBase.deleteDirectory).toHaveBeenCalledWith('projects/proj-1');
+    });
 
-      await provider.deleteProject('project-1');
-      
-      expect(mockDrive.files.delete).toHaveBeenCalled();
+    it('should get project storage usage', async () => {
+      const size = await provider.getProjectStorageUsage('proj-1');
+      expect(mockBase.getDirectorySize).toHaveBeenCalledWith('projects/proj-1');
+      expect(size).toBe(1024);
     });
   });
 
-  describe('Error Handling', () => {
-    beforeEach(() => {
-      provider = new GDriveStorageProvider({
-        clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
-        rootFolderId: 'root-folder-id',
-        refreshToken: 'refresh-token',
-        accessToken: 'test-access-token', // Provide accessToken so credentials are set
-      });
+  describe('File Validation', () => {
+    it('should reject upload with disallowed extension', async () => {
+      await expect(
+        provider.uploadAssetFile('proj-1', 'asset-1', 'virus.exe', Buffer.from('data'), 'application/octet-stream'),
+      ).rejects.toThrow(StorageError);
     });
 
-    it('should handle permission denied errors', async () => {
-      mockDrive.files.get.mockRejectedValue({ code: 403 });
-
-      await expect(provider.initialize()).rejects.toThrow();
+    it('should reject upload exceeding max file size', async () => {
+      const largeBuffer = Buffer.alloc(101 * 1024 * 1024); // 101 MB
+      await expect(
+        provider.uploadAssetFile('proj-1', 'asset-1', 'model.glb', largeBuffer, 'model/gltf-binary'),
+      ).rejects.toThrow(StorageError);
     });
 
-    it('should handle folder not found errors', async () => {
-      mockDrive.files.get.mockRejectedValue({ code: 404 });
+    it('should accept upload with allowed extension and reasonable size', async () => {
+      await provider.uploadAssetFile('proj-1', 'asset-1', 'model.glb', Buffer.from('ok'), 'model/gltf-binary');
+      expect(mockBase.uploadFile).toHaveBeenCalled();
+    });
 
-      await expect(provider.initialize()).rejects.toThrow(StorageError);
+    it('should validate texture extensions', async () => {
+      await expect(
+        provider.uploadTexture('proj-1', 'asset-1', 'readme.txt', Buffer.from('data'), 'text/plain'),
+      ).rejects.toThrow(StorageError);
+    });
+
+    it('should validate global asset extensions', async () => {
+      await expect(
+        provider.uploadGlobalAsset('model-1', 'script.sh', Buffer.from('data'), 'text/plain'),
+      ).rejects.toThrow(StorageError);
+    });
+  });
+
+  describe('URL Generation', () => {
+    it('should check file exists before generating URL', async () => {
+      mockBase.fileExists.mockResolvedValueOnce(false);
+      await expect(
+        provider.getSignedUrl('proj-1', 'assets/a1/model.glb', 3600),
+      ).rejects.toThrow(StorageError);
+    });
+
+    it('should return null for getPublicUrl', () => {
+      expect(provider.getPublicUrl('proj-1', 'file.glb')).toBeNull();
     });
   });
 });

@@ -319,13 +319,16 @@ describe('GCSStorageProvider', () => {
       await provider.saveFacilityManifest('project-1', 'facility-1', manifest);
       
       expect(mockFile.save).toHaveBeenCalledWith(
-        expect.stringContaining('"id": "facility-1"'), // JSON stringified manifest data (with space after colon)
+        expect.any(Buffer),
         expect.objectContaining({
           metadata: expect.objectContaining({
             contentType: 'application/json',
           }),
         })
       );
+      // Verify the buffer contains the manifest JSON
+      const savedBuffer = mockFile.save.mock.calls[0][0];
+      expect(savedBuffer.toString()).toContain('"id": "facility-1"');
     });
 
     it('should load facility manifest', async () => {
@@ -348,7 +351,7 @@ describe('GCSStorageProvider', () => {
       await provider.deleteFacility('project-1', 'facility-1');
       
       expect(mockBucket.getFiles).toHaveBeenCalledWith({
-        prefix: 'projects/project-1/facilities/facility-1',
+        prefix: 'projects/project-1/facilities/facility-1/',
       });
     });
 
@@ -378,13 +381,16 @@ describe('GCSStorageProvider', () => {
       await provider.initializeProject('project-1');
       
       expect(mockFile.save).toHaveBeenCalledWith(
-        expect.stringContaining('"projectId": "project-1"'), // JSON stringified metadata (note: space after colon)
+        expect.any(Buffer),
         expect.objectContaining({
           metadata: expect.objectContaining({
             contentType: 'application/json',
           }),
         })
       );
+      // Verify the buffer contains the metadata JSON
+      const savedBuffer = mockFile.save.mock.calls[0][0];
+      expect(savedBuffer.toString()).toContain('"projectId": "project-1"');
     });
 
     it('should delete project', async () => {

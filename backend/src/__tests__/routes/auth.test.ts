@@ -30,6 +30,10 @@ describe('Auth Routes', () => {
       expect(response.body).toHaveProperty('user');
       expect(response.body.user.email).toBe('tenant@test.com');
       expect(response.body.user).not.toHaveProperty('password');
+      // Ops public key should be present for client-side verification
+      expect(response.body).toHaveProperty('ops_public_key');
+      expect(typeof response.body.ops_public_key).toBe('string');
+      expect(response.body.ops_public_key.length).toBeGreaterThan(0);
     });
 
     it('should return 401 for invalid email', async () => {

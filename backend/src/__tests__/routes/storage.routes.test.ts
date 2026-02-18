@@ -20,7 +20,7 @@ describe('Storage Routes', () => {
     it('should return OAuth URL with valid credentials', async () => {
       const res = await request(app)
         .get('/api/v1/bludesign/storage/gdrive/auth-url')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .query({
           clientId: 'test-client-id',
           clientSecret: 'test-client-secret',
@@ -36,7 +36,7 @@ describe('Storage Routes', () => {
     it('should return 400 if clientId is missing', async () => {
       const res = await request(app)
         .get('/api/v1/bludesign/storage/gdrive/auth-url')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .query({
           clientSecret: 'test-client-secret',
         });
@@ -61,7 +61,7 @@ describe('Storage Routes', () => {
     it('should return 400 if code is missing', async () => {
       const res = await request(app)
         .get('/api/v1/bludesign/storage/gdrive/callback')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .query({
           clientId: 'test-client-id',
           clientSecret: 'test-client-secret',
@@ -87,7 +87,7 @@ describe('Storage Routes', () => {
     it('should return 400 if refreshToken is missing', async () => {
       const res = await request(app)
         .post('/api/v1/bludesign/storage/gdrive/refresh-tokens')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send({
           clientId: 'test-client-id',
           clientSecret: 'test-client-secret',
@@ -113,21 +113,21 @@ describe('Storage Routes', () => {
     it('should test local storage provider', async () => {
       const res = await request(app)
         .post('/api/v1/bludesign/storage/local/test')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send({
           storageConfig: {
             basePath: './test-storage',
           },
         });
 
-      // Should succeed or fail based on filesystem permissions
-      expect([200, 500]).toContain(res.status);
+      // Should succeed (200) or fail with provider error (500) based on filesystem permissions
+      expect(res.status === 200 || res.status === 500).toBe(true);
     });
 
     it('should return 400 for invalid provider', async () => {
       const res = await request(app)
         .post('/api/v1/bludesign/storage/invalid/test')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send({
           storageConfig: {},
         });
@@ -138,7 +138,7 @@ describe('Storage Routes', () => {
     it('should return 400 if storageConfig is missing', async () => {
       const res = await request(app)
         .post('/api/v1/bludesign/storage/local/test')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send({});
 
       expect(res.status).toBe(400);
@@ -147,7 +147,7 @@ describe('Storage Routes', () => {
     it('should validate GCS config', async () => {
       const res = await request(app)
         .post('/api/v1/bludesign/storage/gcs/test')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send({
           storageConfig: {
             bucketName: 'test-bucket',
@@ -155,15 +155,13 @@ describe('Storage Routes', () => {
           },
         });
 
-      // Config validation should pass (200) or fail with validation error (400) or provider error (500)
-      // The mock allows the bucket check to pass, so it might return 200
-      expect([200, 400, 500]).toContain(res.status);
+      expect(res.status === 200 || res.status === 400 || res.status === 500).toBe(true);
     });
 
     it('should validate Google Drive config', async () => {
       const res = await request(app)
         .post('/api/v1/bludesign/storage/gdrive/test')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send({
           storageConfig: {
             clientId: 'test-client-id',
@@ -172,9 +170,7 @@ describe('Storage Routes', () => {
           },
         });
 
-      // Config validation should pass (200) or fail with validation error (400) or provider error (500)
-      // The mock allows the folder check to pass, so it might return 200
-      expect([200, 400, 500]).toContain(res.status);
+      expect(res.status === 200 || res.status === 400 || res.status === 500).toBe(true);
     });
 
     it('should require authentication', async () => {
@@ -187,6 +183,15 @@ describe('Storage Routes', () => {
         });
 
       expect(res.status).toBe(401);
+    });
+
+    it('should return 403 for non-admin users', async () => {
+      const res = await request(app)
+        .post('/api/v1/bludesign/storage/local/test')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ storageConfig: { basePath: './test-storage' } });
+
+      expect(res.status).toBe(403);
     });
   });
 });

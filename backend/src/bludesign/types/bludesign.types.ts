@@ -60,11 +60,9 @@ export enum DeviceState {
   OFFLINE = 'offline',
 }
 
-export enum StorageProviderType {
-  LOCAL = 'local',
-  GCS = 'gcs',
-  GDRIVE = 'gdrive',
-}
+// Import from the shared base storage layer and re-export so existing imports keep working
+import { StorageProviderType } from '@/services/storage/base-storage.interface';
+export { StorageProviderType };
 
 export enum Orientation {
   NORTH = 0,
