@@ -345,6 +345,7 @@ export class FirmwareService {
       const manifestPayload = {
         cmd_type: 'FIRMWARE_MANIFEST',
         target_type: firmware.target_type,
+        filename: firmware.filename,
         version: firmware.version,
         sha256: firmware.sha256_hash,
         size: firmware.size_bytes,

@@ -454,7 +454,12 @@ if (VERBOSE) {
 async function login(attempt = 1) {
   try {
     const res = await axios.post(`${API_BASE}/auth/login`, { email: EMAIL, password: PASSWORD });
-    return { token: res.data.token, ops_public_key: res.data.ops_public_key };
+    return {
+      token: res.data.token,
+      ops_public_key: res.data.ops_public_key,
+      ops_public_key_jwk: res.data.ops_public_key_jwk,
+      ops_public_key_pem: res.data.ops_public_key_pem,
+    };
   } catch (err) {
     if (err?.response?.status === 429 && attempt < 6) {
       const waitMs = 750 * attempt * attempt;
@@ -899,6 +904,8 @@ function handleFirmwareDelivery(ws, opsKeyB64, timeoutMs = 60000) {
           if (payload.cmd_type !== 'FIRMWARE_MANIFEST') throw new Error(`Expected cmd_type FIRMWARE_MANIFEST, got ${payload.cmd_type}`);
           if (!payload.sha256 || !payload.version || !payload.nonce) throw new Error('Manifest missing required fields (sha256, version, nonce)');
           if (typeof payload.chunk_count !== 'number' || payload.chunk_count < 1) throw new Error(`Invalid chunk_count: ${payload.chunk_count}`);
+          if (!payload.target_type) throw new Error('Manifest missing target_type');
+          if (!payload.filename) throw new Error('Manifest missing filename');
           manifest = payload;
           expectedChunks = payload.chunk_count;
           if (VERBOSE) console.log(`[FW] Manifest verified: version=${payload.version} chunks=${expectedChunks} sha256=${payload.sha256.substring(0, 12)}...`);
@@ -987,6 +994,8 @@ async function run() {
   const loginResult = await login();
   const token = loginResult.token;
   const loginOpsPublicKey = loginResult.ops_public_key;
+  const loginOpsPublicKeyJwk = loginResult.ops_public_key_jwk;
+  const loginOpsPublicKeyPem = loginResult.ops_public_key_pem;
   const devAdminProfile = await fetchAuthProfile(token);
   if (!devAdminProfile?.id) throw new Error('Failed to fetch auth profile or profile missing id');
   step('Verifying user details endpoint');
@@ -1059,11 +1068,27 @@ async function run() {
   // ---- Ops Public Key Distribution Tests ----
   heading('Ops Public Key Distribution');
 
-  // Verify ops_public_key in HTTP login response
-  step('Verifying ops_public_key in HTTP login response');
+  // Verify ops_public_key (raw base64url) in HTTP login response
+  step('Verifying ops_public_key (base64url) in HTTP login response');
   if (!loginOpsPublicKey) throw new Error('ops_public_key missing from HTTP login response');
   if (typeof loginOpsPublicKey !== 'string' || loginOpsPublicKey.length === 0) throw new Error('ops_public_key should be a non-empty string');
   ok(`HTTP login includes ops_public_key (${loginOpsPublicKey.substring(0, 16)}...)`);
+
+  // Verify ops_public_key_jwk in HTTP login response
+  step('Verifying ops_public_key_jwk in HTTP login response');
+  if (!loginOpsPublicKeyJwk) throw new Error('ops_public_key_jwk missing from HTTP login response');
+  if (loginOpsPublicKeyJwk.kty !== 'OKP') throw new Error(`JWK kty should be OKP, got ${loginOpsPublicKeyJwk.kty}`);
+  if (loginOpsPublicKeyJwk.crv !== 'Ed25519') throw new Error(`JWK crv should be Ed25519, got ${loginOpsPublicKeyJwk.crv}`);
+  if (loginOpsPublicKeyJwk.x !== loginOpsPublicKey) throw new Error('JWK x does not match ops_public_key');
+  if (loginOpsPublicKeyJwk.d) throw new Error('JWK must not contain private key material (d)');
+  ok(`HTTP login includes ops_public_key_jwk (kty=${loginOpsPublicKeyJwk.kty}, crv=${loginOpsPublicKeyJwk.crv})`);
+
+  // Verify ops_public_key_pem in HTTP login response
+  step('Verifying ops_public_key_pem in HTTP login response');
+  if (!loginOpsPublicKeyPem) throw new Error('ops_public_key_pem missing from HTTP login response');
+  if (!loginOpsPublicKeyPem.includes('-----BEGIN PUBLIC KEY-----')) throw new Error('PEM missing BEGIN header');
+  if (!loginOpsPublicKeyPem.includes('-----END PUBLIC KEY-----')) throw new Error('PEM missing END footer');
+  ok('HTTP login includes ops_public_key_pem (SPKI PEM)');
 
   // Verify ops_public_key in gateway WS AUTH_OK
   step('Verifying ops_public_key in gateway WS AUTH_OK');
@@ -1072,13 +1097,29 @@ async function run() {
   if (typeof authOkKey !== 'string' || authOkKey.length === 0) throw new Error('AUTH_OK ops_public_key should be a non-empty string');
   ok(`Gateway AUTH_OK includes ops_public_key (${authOkKey.substring(0, 16)}...)`);
 
-  // Verify both keys match (same server key)
-  step('Verifying ops_public_key is consistent across login and AUTH_OK');
-  if (loginOpsPublicKey !== authOkKey) throw new Error(`ops_public_key mismatch: login=${loginOpsPublicKey} vs AUTH_OK=${authOkKey}`);
-  ok('ops_public_key consistent across HTTP login and gateway AUTH_OK');
+  // Verify JWK and PEM in gateway WS AUTH_OK
+  step('Verifying ops_public_key_jwk in gateway WS AUTH_OK');
+  const authOkJwk = ws._authOkData?.ops_public_key_jwk;
+  if (!authOkJwk) throw new Error('ops_public_key_jwk missing from gateway AUTH_OK');
+  if (authOkJwk.kty !== 'OKP' || authOkJwk.crv !== 'Ed25519') throw new Error('AUTH_OK JWK has wrong kty/crv');
+  if (authOkJwk.x !== authOkKey) throw new Error('AUTH_OK JWK x does not match ops_public_key');
+  ok('Gateway AUTH_OK includes ops_public_key_jwk');
 
-  // Verify ops_public_key in WS proxy login
-  step('Verifying ops_public_key in WS proxy login');
+  step('Verifying ops_public_key_pem in gateway WS AUTH_OK');
+  const authOkPem = ws._authOkData?.ops_public_key_pem;
+  if (!authOkPem) throw new Error('ops_public_key_pem missing from gateway AUTH_OK');
+  if (!authOkPem.includes('-----BEGIN PUBLIC KEY-----')) throw new Error('AUTH_OK PEM missing BEGIN header');
+  ok('Gateway AUTH_OK includes ops_public_key_pem');
+
+  // Verify all formats match across login and AUTH_OK
+  step('Verifying ops keys are consistent across login and AUTH_OK');
+  if (loginOpsPublicKey !== authOkKey) throw new Error(`ops_public_key mismatch: login=${loginOpsPublicKey} vs AUTH_OK=${authOkKey}`);
+  if (loginOpsPublicKeyJwk.x !== authOkJwk.x) throw new Error('JWK x mismatch between login and AUTH_OK');
+  if (loginOpsPublicKeyPem !== authOkPem) throw new Error('PEM mismatch between login and AUTH_OK');
+  ok('All ops key formats consistent across HTTP login and gateway AUTH_OK');
+
+  // Verify ops keys in WS proxy login
+  step('Verifying ops keys in WS proxy login');
   const proxyLoginId = 'req-proxy-login';
   ws.send(JSON.stringify({
     type: 'PROXY_REQUEST',
@@ -1092,7 +1133,11 @@ async function run() {
   const proxyOpsKey = proxyLoginResp.body?.ops_public_key;
   if (!proxyOpsKey) throw new Error('ops_public_key missing from WS proxy login response');
   if (proxyOpsKey !== loginOpsPublicKey) throw new Error(`Proxy ops_public_key mismatch: ${proxyOpsKey} vs ${loginOpsPublicKey}`);
-  ok('WS proxy login includes matching ops_public_key');
+  const proxyOpsJwk = proxyLoginResp.body?.ops_public_key_jwk;
+  if (!proxyOpsJwk || proxyOpsJwk.x !== loginOpsPublicKey) throw new Error('Proxy ops_public_key_jwk mismatch');
+  const proxyOpsPem = proxyLoginResp.body?.ops_public_key_pem;
+  if (!proxyOpsPem || proxyOpsPem !== loginOpsPublicKeyPem) throw new Error('Proxy ops_public_key_pem mismatch');
+  ok('WS proxy login includes all matching ops key formats');
 
   step('Checking gateway connection status via admin endpoint');
   const gatewayStatus = await axios.get(`${API_BASE}/gateways/status/${facilityId}`, {
@@ -1272,7 +1317,7 @@ async function run() {
       { serial: `GW-E2E-${Date.now()}-3`, firmwareVersion: '3A0-001', online: true, locked: true, batteryLevel: 3300 },
     ];
     const reqSync1 = 'req-internal-sync-1';
-    ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqSync1, method: 'POST', path: `/internal/gateway/device-sync`, body: { devices: initialDevices, facility_id: facilityId } }));
+    ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqSync1, method: 'POST', path: `/internal/gateway/device-sync`, body: { tid: 'sync-1', devices: initialDevices, facility_id: facilityId } }));
     const respSync1 = await waitForProxyResponse(ws, reqSync1);
     if (respSync1.status !== 200 || !respSync1.body?.success) throw new Error(`Device sync (add) failed: ${respSync1.status}`);
     if (respSync1.body?.data?.gateway_id) {
@@ -1441,6 +1486,7 @@ async function run() {
       path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
+        tid: 1,
         devices: [
           { lock_id: remainingSerial }, // Keep original device!
           // New format with all state fields included in inventory
@@ -1489,6 +1535,7 @@ async function run() {
       path: `/internal/gateway/devices/state`,
       body: {
         facility_id: facilityId,
+        tid: 2,
         updates: [
           // New format matching gateway payload
           { 

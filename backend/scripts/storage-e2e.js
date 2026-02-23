@@ -379,6 +379,131 @@ async function testErrorCases(token) {
 }
 
 // ============================================================================
+// Part 4: Facility save/load via storage bucket
+// ============================================================================
+
+async function testFacilityStorage(token) {
+  section('Facility Save / Load / Delete (via storage bucket)');
+
+  const facilityName = `E2E-Facility-${Date.now()}`;
+  const facilityData = {
+    name: facilityName,
+    version: '1.0.0',
+    camera: { mode: 'isometric', isometricAngle: 45, position: { x: 0, y: 10, z: 0 }, target: { x: 0, y: 0, z: 0 }, zoom: 1 },
+    placedObjects: [
+      { id: 'obj-e2e-1', assetId: 'asset-1', position: { x: 1, z: 2 }, orientation: 0 },
+      { id: 'obj-e2e-2', assetId: 'asset-2', position: { x: 3, z: 4 }, orientation: 90 },
+    ],
+    buildings: [],
+    activeFloor: 0,
+    activeSkins: {},
+    gridSize: 10,
+    showGrid: true,
+  };
+
+  // 1. Save a new facility
+  let facilityId;
+  try {
+    const saveRes = await axios.post(`${API_BASE}/bludesign/facilities`, {
+      name: facilityName,
+      data: facilityData,
+      thumbnail: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    }, { headers: authHeaders(token) });
+
+    assert(saveRes.status === 201 || saveRes.status === 200, `Save facility (status ${saveRes.status})`);
+    facilityId = saveRes.data?.id;
+    assert(!!facilityId, `Got facility ID: ${facilityId}`);
+    verbose(`Facility ID: ${facilityId}`);
+  } catch (err) {
+    fail(`Save facility: ${err.response?.status || err.message}`);
+    failed++;
+    verbose(JSON.stringify(err.response?.data));
+    return;
+  }
+
+  // 2. Load it back and verify data round-trips
+  try {
+    const loadRes = await axios.get(`${API_BASE}/bludesign/facilities/${facilityId}`, {
+      headers: authHeaders(token),
+    });
+    assert(loadRes.status === 200, 'Load facility');
+    assert(loadRes.data?.name === facilityName, `Name matches: ${loadRes.data?.name}`);
+
+    const loaded = loadRes.data?.data;
+    assert(!!loaded, 'Response contains data object');
+    assert(loaded?.version === '1.0.0', 'Version matches');
+    assert(Array.isArray(loaded?.placedObjects) && loaded.placedObjects.length === 2, `placedObjects count = ${loaded?.placedObjects?.length}`);
+    assert(loaded?.gridSize === 10, 'gridSize matches');
+    assert(loaded?.camera?.mode === 'isometric', 'Camera mode matches');
+    verbose(`Loaded data keys: ${Object.keys(loaded || {}).join(', ')}`);
+  } catch (err) {
+    fail(`Load facility: ${err.response?.status || err.message}`);
+    failed++;
+    verbose(JSON.stringify(err.response?.data));
+  }
+
+  // 3. Update the facility with modified data
+  const updatedData = { ...facilityData, gridSize: 20, placedObjects: [...facilityData.placedObjects, { id: 'obj-e2e-3', assetId: 'asset-3', position: { x: 5, z: 6 }, orientation: 180 }] };
+  try {
+    const updateRes = await axios.put(`${API_BASE}/bludesign/facilities/${facilityId}`, {
+      data: updatedData,
+    }, { headers: authHeaders(token) });
+    assert(updateRes.status === 200, 'Update facility');
+  } catch (err) {
+    fail(`Update facility: ${err.response?.status || err.message}`);
+    failed++;
+  }
+
+  // 4. Reload and verify update persisted
+  try {
+    const reloadRes = await axios.get(`${API_BASE}/bludesign/facilities/${facilityId}`, {
+      headers: authHeaders(token),
+    });
+    const reloaded = reloadRes.data?.data;
+    assert(reloaded?.gridSize === 20, `Updated gridSize = ${reloaded?.gridSize}`);
+    assert(reloaded?.placedObjects?.length === 3, `Updated placedObjects count = ${reloaded?.placedObjects?.length}`);
+  } catch (err) {
+    fail(`Reload facility: ${err.response?.status || err.message}`);
+    failed++;
+  }
+
+  // 5. Verify it appears in the list
+  try {
+    const listRes = await axios.get(`${API_BASE}/bludesign/facilities`, {
+      headers: authHeaders(token),
+    });
+    assert(listRes.status === 200, 'List facilities');
+    const found = (listRes.data || []).some((f) => f.id === facilityId);
+    assert(found, 'Saved facility appears in list');
+  } catch (err) {
+    fail(`List facilities: ${err.response?.status || err.message}`);
+    failed++;
+  }
+
+  // 6. Delete the facility
+  try {
+    const delRes = await axios.delete(`${API_BASE}/bludesign/facilities/${facilityId}`, {
+      headers: authHeaders(token),
+    });
+    assert(delRes.status === 200 || delRes.status === 204, 'Delete facility');
+  } catch (err) {
+    fail(`Delete facility: ${err.response?.status || err.message}`);
+    failed++;
+  }
+
+  // 7. Verify it's gone
+  try {
+    await axios.get(`${API_BASE}/bludesign/facilities/${facilityId}`, {
+      headers: authHeaders(token),
+    });
+    fail('Deleted facility should return 404');
+    failed++;
+  } catch (err) {
+    assert(err.response?.status === 404, 'Deleted facility returns 404');
+  }
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -406,6 +531,9 @@ async function main() {
 
     // Part 3: Error handling
     await testErrorCases(token);
+
+    // Part 4: Facility save/load via storage bucket
+    await testFacilityStorage(token);
   } catch (err) {
     console.log(C.red(`\n✗ Unhandled error: ${err.message}`));
     if (err.response) {

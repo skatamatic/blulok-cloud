@@ -22,6 +22,9 @@ import { logger } from '@/utils/logger';
 
 const router = Router();
 
+// Gateway proxy injects a `tid` (transaction ID) for request/response correlation
+const tidField = Joi.alternatives().try(Joi.number(), Joi.string()).optional();
+
 const requireFacilityAdmin: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   const role = req.user?.role;
   if (role !== UserRole.FACILITY_ADMIN && role !== UserRole.ADMIN && role !== UserRole.DEV_ADMIN) {
@@ -38,7 +41,7 @@ router.get('/time-sync', authenticateToken, requireFacilityAdmin, asyncHandler(a
 }));
 
 // POST /api/v1/internal/gateway/request-time-sync
-const startupSchema = Joi.object({ lock_id: Joi.string().required() });
+const startupSchema = Joi.object({ lock_id: Joi.string().required(), tid: tidField });
 router.post('/request-time-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = startupSchema.validate(req.body);
   if (error) {
@@ -50,7 +53,7 @@ router.post('/request-time-sync', authenticateToken, requireFacilityAdmin, async
 }));
 
 // POST /api/v1/internal/gateway/fallback-pass
-const fallbackSchema = Joi.object({ fallbackJwt: Joi.string().required() });
+const fallbackSchema = Joi.object({ fallbackJwt: Joi.string().required(), tid: tidField });
 router.post('/fallback-pass', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = fallbackSchema.validate(req.body);
   if (error) {
@@ -64,7 +67,7 @@ router.post('/fallback-pass', authenticateToken, requireFacilityAdmin, asyncHand
 // POST /api/v1/internal/gateway/device-sync
 // Simulate a gateway device inventory sync (used by inbound WS test app)
 const deviceSyncSchema = Joi.object({
-  // Optional facility_id to support direct HTTP testing; for WS proxy the X-Gateway-Facility-Id header will be present
+  tid: tidField,
   facility_id: Joi.string().optional(),
   devices: Joi.array().items(
     Joi.object({
@@ -164,6 +167,7 @@ router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandle
 // Sync device inventory - add new devices, remove missing ones
 // Now also supports updating state fields in the same call
 const inventorySyncSchema = Joi.object({
+  tid: tidField,
   facility_id: Joi.string().optional(),
   devices: Joi.array().items(
     Joi.object({
@@ -225,6 +229,7 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
 // Update device state with partial data
 // Matches gateway payload format with all state fields
 const stateUpdateSchema = Joi.object({
+  tid: tidField,
   facility_id: Joi.string().optional(),
   updates: Joi.array().items(
     Joi.object({

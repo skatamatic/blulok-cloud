@@ -2,6 +2,7 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
 import { AuthService } from '@/services/auth.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
 
 describe('Auth Routes', () => {
   let app: any;
@@ -30,10 +31,23 @@ describe('Auth Routes', () => {
       expect(response.body).toHaveProperty('user');
       expect(response.body.user.email).toBe('tenant@test.com');
       expect(response.body.user).not.toHaveProperty('password');
-      // Ops public key should be present for client-side verification
+      // Ops public key — raw base64url (compact, for constrained devices)
       expect(response.body).toHaveProperty('ops_public_key');
       expect(typeof response.body.ops_public_key).toBe('string');
       expect(response.body.ops_public_key.length).toBeGreaterThan(0);
+      expect(response.body.ops_public_key).toBe(Ed25519Service.getOpsPublicKeyB64());
+
+      // Ops public key — JWK (self-describing, includes kty/crv/x)
+      expect(response.body).toHaveProperty('ops_public_key_jwk');
+      const jwk = response.body.ops_public_key_jwk;
+      expect(jwk.kty).toBe('OKP');
+      expect(jwk.crv).toBe('Ed25519');
+      expect(jwk.x).toBe(response.body.ops_public_key);
+
+      // Ops public key — PEM (SPKI, universally supported)
+      expect(response.body).toHaveProperty('ops_public_key_pem');
+      expect(response.body.ops_public_key_pem).toContain('-----BEGIN PUBLIC KEY-----');
+      expect(response.body.ops_public_key_pem).toContain('-----END PUBLIC KEY-----');
     });
 
     it('should return 401 for invalid email', async () => {

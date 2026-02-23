@@ -331,7 +331,7 @@ describe('FirmwareService', () => {
     const mockBinary = Buffer.alloc(binSize, 0xAB);
     const mockBinarySha256 = crypto.createHash('sha256').update(mockBinary).digest('hex');
     const mockPush = { id: 'push-1', firmware_id: 'fw-1', gateway_id: 'gw-1', facility_id: 'fac-1', target_type: 'gateway' as const };
-    const mockFirmware = { id: 'fw-1', version: '2.0.0', target_type: 'gateway' as const, sha256_hash: mockBinarySha256, size_bytes: binSize, storage_path: '/p', compatible_models: [] };
+    const mockFirmware = { id: 'fw-1', version: '2.0.0', target_type: 'gateway' as const, filename: 'fw-2.0.0.bin', sha256_hash: mockBinarySha256, size_bytes: binSize, storage_path: '/p', compatible_models: [] };
 
     let ackSpy: jest.SpyInstance;
     let broadcastSpy: jest.SpyInstance;
@@ -358,12 +358,13 @@ describe('FirmwareService', () => {
       expect(mockPushModel.updateChunksTotal).toHaveBeenCalledWith('push-1', 3);
     });
 
-    it('signs manifest JWT with correct payload including target_type', async () => {
+    it('signs manifest JWT with correct payload including target_type and filename', async () => {
       await FirmwareService.executePush('push-1');
       const payload = (Ed25519Service.signCommandJwt as jest.Mock).mock.calls[0][0];
       expect(payload.cmd_type).toBe('FIRMWARE_MANIFEST');
       expect(payload.version).toBe('2.0.0');
       expect(payload.target_type).toBe('gateway');
+      expect(payload.filename).toBe('fw-2.0.0.bin');
       expect(payload.sha256).toBe(mockBinarySha256);
       expect(payload.chunk_count).toBe(3);
       expect(payload.nonce).toBeDefined();

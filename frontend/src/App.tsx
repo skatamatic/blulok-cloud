@@ -26,7 +26,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import UserManagementPage from '@/pages/UserManagementPage';
 import UserDetailsPage from '@/pages/UserDetailsPage';
 import SettingsPage from '@/pages/SettingsPage';
-import NotificationSettingsPage from '@/pages/NotificationSettingsPage';
+
 import FacilitiesPage from '@/pages/FacilitiesPage';
 import FacilityDetailsPage from '@/pages/FacilityDetailsPage';
 import EditFacilityPage from '@/pages/EditFacilityPage';
@@ -44,7 +44,7 @@ import BluDesignViewPage from '@/pages/bludesign/BluDesignViewPage';
 import BluDesignBuildPage from '@/pages/bludesign/BluDesignBuildPage';
 import BluDesignAssetsPage from '@/pages/bludesign/BluDesignAssetsPage';
 import BluDesignConfigPage from '@/pages/bludesign/BluDesignConfigPage';
-import StorageConfigPage from '@/pages/StorageConfigPage';
+
 
 // Global FMS modals component
 function FMSModals() {
@@ -172,21 +172,9 @@ function App() {
                           </ProtectedRoute>
                         } />
 
-                        <Route path="/notification-settings" element={
-                          <ProtectedRoute requireAdmin>
-                            <DashboardLayout>
-                              <NotificationSettingsPage />
-                            </DashboardLayout>
-                          </ProtectedRoute>
-                        } />
-
-                        <Route path="/storage-config" element={
-                          <ProtectedRoute requireDevAdmin>
-                            <DashboardLayout>
-                              <StorageConfigPage />
-                            </DashboardLayout>
-                          </ProtectedRoute>
-                        } />
+                        {/* Redirect old routes to unified settings page */}
+                        <Route path="/notification-settings" element={<Navigate to="/settings?tab=notifications" replace />} />
+                        <Route path="/storage-config" element={<Navigate to="/settings?tab=storage" replace />} />
 
                         {/* Facility routes */}
                         <Route path="/facilities" element={

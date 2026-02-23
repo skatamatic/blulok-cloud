@@ -8,18 +8,20 @@ import {
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 
-type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node';
+type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
 
 const TARGET_TYPE_LABELS: Record<FirmwareTargetType, string> = {
   gateway: 'Gateway',
   lock: 'Lock',
   friend_node: 'Friend Node',
+  access_control: 'Access Control',
 };
 
 const TARGET_TYPE_COLORS: Record<FirmwareTargetType, string> = {
   gateway: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
   lock: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
   friend_node: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  access_control: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
 };
 
 interface FirmwareImage {
@@ -79,13 +81,7 @@ export default function FirmwareManagementTab() {
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const file = files[0];
-    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-    if (!['.bin', '.hex', '.fw', '.img'].includes(ext)) {
-      addToast({ type: 'error', title: `Invalid file type '${ext}'. Allowed: .bin, .hex, .fw, .img` });
-      return;
-    }
-    setSelectedFile(file);
+    setSelectedFile(files[0]);
     setShowUploadForm(true);
   };
 
@@ -164,12 +160,11 @@ export default function FirmwareManagementTab() {
               Drag and drop a firmware file here, or click to browse
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-              Supported formats: .bin, .hex, .fw, .img (max 50MB)
+              Any file type accepted (max 50MB)
             </p>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".bin,.hex,.fw,.img"
               onChange={(e) => handleFileSelect(e.target.files)}
               className="hidden"
             />
@@ -190,7 +185,7 @@ export default function FirmwareManagementTab() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Device *</label>
               <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden w-fit">
-                {(['gateway', 'lock', 'friend_node'] as FirmwareTargetType[]).map((tt) => (
+                {(['gateway', 'lock', 'friend_node', 'access_control'] as FirmwareTargetType[]).map((tt) => (
                   <button
                     key={tt}
                     type="button"
@@ -287,7 +282,7 @@ export default function FirmwareManagementTab() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Firmware Catalog</h3>
           <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
-            {(['all', 'gateway', 'lock', 'friend_node'] as const).map((tt) => (
+            {(['all', 'gateway', 'lock', 'friend_node', 'access_control'] as const).map((tt) => (
               <button
                 key={tt}
                 onClick={() => setFilterTargetType(tt)}

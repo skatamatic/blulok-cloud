@@ -7,8 +7,9 @@ import { v4 as uuidv4 } from 'uuid';
  * - gateway: applied to the gateway itself
  * - lock: broadcast to all BluLok locks on the gateway's BLE network
  * - friend_node: broadcast to all friend nodes (BLE mesh relays)
+ * - access_control: applied to access control devices
  */
-export type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node';
+export type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
 
 /**
  * Firmware Image Entity Interface

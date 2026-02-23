@@ -1,19 +1,23 @@
 /**
  * Facility Service
- * 
- * Manages user facility data (save/load).
+ *
+ * Manages user facility metadata in the DB and delegates scene data
+ * (camera, placed objects, buildings, etc.) to the storage bucket via
+ * FacilityStorageAdapter.
  */
 
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
+import { FacilityStorageAdapter } from './facility-storage.adapter';
 
 export interface FacilityData {
   name: string;
   version: string;
-  camera: any;
-  placedObjects: any[];
+  camera: unknown;
+  placedObjects: unknown[];
   gridSize: number;
   showGrid: boolean;
+  [key: string]: unknown;
 }
 
 export interface Facility {
@@ -37,11 +41,12 @@ export interface FacilitySummary {
 }
 
 export class FacilityService {
-  constructor(private db: Knex) {}
+  private storage: FacilityStorageAdapter;
 
-  /**
-   * Get all facilities for a user
-   */
+  constructor(private db: Knex, storage?: FacilityStorageAdapter) {
+    this.storage = storage ?? new FacilityStorageAdapter();
+  }
+
   async getUserFacilities(userId: string): Promise<FacilitySummary[]> {
     const facilities = await this.db('bludesign_user_facilities')
       .where({ user_id: userId })
@@ -58,41 +63,40 @@ export class FacilityService {
     }));
   }
 
-  /**
-   * Get a specific facility
-   */
   async getFacility(id: string, userId: string): Promise<Facility | null> {
-    const facility = await this.db('bludesign_user_facilities')
+    const row = await this.db('bludesign_user_facilities')
       .where({ id, user_id: userId })
       .first();
 
-    if (!facility) return null;
+    if (!row) return null;
 
-    // Parse JSON data field
+    const data = await this.storage.loadData(userId, id);
+
     return {
-      ...facility,
-      data: typeof facility.data === 'string' ? JSON.parse(facility.data) : facility.data,
+      id: row.id,
+      user_id: row.user_id,
+      name: row.name,
+      data,
+      thumbnail: row.thumbnail,
+      last_opened: row.last_opened,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
     };
   }
 
-  /**
-   * Save a new facility
-   */
   async saveFacility(
     userId: string,
     name: string,
     data: FacilityData,
-    thumbnail?: string
+    thumbnail?: string,
   ): Promise<Facility> {
     const id = uuidv4();
     const now = new Date();
 
-    // Stringify the data object for storage
     const dbRecord = {
       id,
       user_id: userId,
       name,
-      data: JSON.stringify(data),
       thumbnail: thumbnail || null,
       last_opened: now,
       created_at: now,
@@ -100,8 +104,8 @@ export class FacilityService {
     };
 
     await this.db('bludesign_user_facilities').insert(dbRecord);
+    await this.storage.saveData(userId, id, data);
 
-    // Return the facility with parsed data
     return {
       id,
       user_id: userId,
@@ -111,20 +115,16 @@ export class FacilityService {
       last_opened: now,
       created_at: now,
       updated_at: now,
-    } as Facility;
+    };
   }
 
-  /**
-   * Update an existing facility
-   */
   async updateFacility(
     id: string,
     userId: string,
     data: FacilityData,
-    thumbnail?: string
+    thumbnail?: string,
   ): Promise<void> {
-    const updates: any = {
-      data: JSON.stringify(data), // Stringify for storage
+    const updates: Record<string, unknown> = {
       updated_at: new Date(),
     };
 
@@ -135,39 +135,41 @@ export class FacilityService {
     await this.db('bludesign_user_facilities')
       .where({ id, user_id: userId })
       .update(updates);
+
+    await this.storage.saveData(userId, id, data);
   }
 
-  /**
-   * Delete a facility
-   */
   async deleteFacility(id: string, userId: string): Promise<void> {
     await this.db('bludesign_user_facilities')
       .where({ id, user_id: userId })
       .delete();
+
+    await this.storage.deleteData(userId, id);
   }
 
-  /**
-   * Get the last opened facility for a user
-   */
   async getLastOpened(userId: string): Promise<Facility | null> {
-    const facility = await this.db('bludesign_user_facilities')
+    const row = await this.db('bludesign_user_facilities')
       .where({ user_id: userId })
       .whereNotNull('last_opened')
       .orderBy('last_opened', 'desc')
       .first();
 
-    if (!facility) return null;
+    if (!row) return null;
 
-    // Parse JSON data field
+    const data = await this.storage.loadData(userId, row.id);
+
     return {
-      ...facility,
-      data: typeof facility.data === 'string' ? JSON.parse(facility.data) : facility.data,
+      id: row.id,
+      user_id: row.user_id,
+      name: row.name,
+      data,
+      thumbnail: row.thumbnail,
+      last_opened: row.last_opened,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
     };
   }
 
-  /**
-   * Update last opened timestamp
-   */
   async updateLastOpened(id: string, userId: string): Promise<void> {
     await this.db('bludesign_user_facilities')
       .where({ id, user_id: userId })
@@ -176,6 +178,3 @@ export class FacilityService {
       });
   }
 }
-
-
-

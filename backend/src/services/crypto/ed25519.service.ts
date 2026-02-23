@@ -11,7 +11,7 @@
  * - Verification uses Ops public key; locks store this to verify packets locally.
  * - In test, if env keys are not provided, a throwaway test keypair is generated to keep tests deterministic.
  */
-import { importJWK, SignJWT, jwtVerify, JWK, CompactSign, KeyLike, generateKeyPair, exportJWK } from 'jose';
+import { importJWK, SignJWT, jwtVerify, JWK, CompactSign, KeyLike, generateKeyPair, exportJWK, exportSPKI } from 'jose';
 import { config } from '@/config/environment';
 
 export class Ed25519Service {
@@ -24,12 +24,29 @@ export class Ed25519Service {
   }
 
   /**
-   * Get the Ops public key as a raw base64url string.
-   * Used by AUTH_OK to distribute the public key to gateways for payload verification.
+   * Get the Ops public key as a raw base64url string (the `x` coordinate).
+   * Compact form suitable for constrained environments.
    */
   public static getOpsPublicKeyB64(): string {
     if (this.testGenerated?.x) return this.testGenerated.x;
     return String(config.security.opsPublicKeyB64 || '');
+  }
+
+  /**
+   * Get the Ops public key as a full JWK object.
+   * Self-describing format that includes key type and curve metadata.
+   */
+  public static getOpsPublicKeyJwk(): { kty: string; crv: string; x: string } {
+    return { kty: 'OKP', crv: 'Ed25519', x: this.getOpsPublicKeyB64() };
+  }
+
+  /**
+   * Get the Ops public key as a PEM (SPKI) string.
+   * Universally supported by OpenSSL, Node.js crypto, and most JWT libraries.
+   */
+  public static async getOpsPublicKeyPem(): Promise<string> {
+    const pubKey = await this.getOpsPublicKey();
+    return (await exportSPKI(pubKey)).trim();
   }
 
 	private static async getOpsPrivateKey(): Promise<KeyLike> {

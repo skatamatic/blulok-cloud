@@ -97,7 +97,7 @@ async function assertFacilityAccess(
 // Upload firmware binary (DEV_ADMIN only)
 // ============================================================================
 
-const VALID_TARGET_TYPES = ['gateway', 'lock', 'friend_node'];
+const VALID_TARGET_TYPES = ['gateway', 'lock', 'friend_node', 'access_control'];
 
 const uploadSchema = Joi.object({
   version: Joi.string().max(64).required(),

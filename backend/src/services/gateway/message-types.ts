@@ -7,6 +7,9 @@ export type AuthMessage = {
 export type AuthOkMessage = {
   type: 'AUTH_OK';
   facilityId: string;
+  ops_public_key?: string;
+  ops_public_key_jwk?: { kty: string; crv: string; x: string };
+  ops_public_key_pem?: string;
 };
 
 export type ErrorMessage = {

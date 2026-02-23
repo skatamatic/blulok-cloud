@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import NotificationSettingsPage from '@/pages/NotificationSettingsPage';
+import NotificationSettingsPage from '@/pages/settings/NotificationsSettingsTab';
 
 // Mock ToastContext to capture toasts
 const addToastMock = jest.fn();

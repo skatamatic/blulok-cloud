@@ -13,18 +13,20 @@ import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 
-type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node';
+type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
 
 const TARGET_TYPE_LABELS: Record<FirmwareTargetType, string> = {
   gateway: 'Gateway',
   lock: 'Lock',
   friend_node: 'Friend Node',
+  access_control: 'Access Control',
 };
 
 const TARGET_TYPE_COLORS: Record<FirmwareTargetType, string> = {
   gateway: 'text-blue-600 dark:text-blue-400',
   lock: 'text-emerald-600 dark:text-emerald-400',
   friend_node: 'text-purple-600 dark:text-purple-400',
+  access_control: 'text-amber-600 dark:text-amber-400',
 };
 
 interface FirmwareImage {
@@ -256,7 +258,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
     <div className="space-y-6">
       {/* Target Type Tabs */}
       <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden w-fit">
-        {(['gateway', 'lock', 'friend_node'] as FirmwareTargetType[]).map((tt) => (
+        {(['gateway', 'lock', 'friend_node', 'access_control'] as FirmwareTargetType[]).map((tt) => (
           <button
             key={tt}
             onClick={() => { setSelectedTargetType(tt); setConfirmPushId(null); }}

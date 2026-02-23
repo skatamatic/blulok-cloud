@@ -141,12 +141,17 @@ router.post('/login', loginLimiter, asyncHandler(async (req: Request, res: Respo
         isDeviceRegistered = !!device;
       }
     } catch (_e) {}
-    // Include the Ops public key so clients (gateways, apps) can verify signed payloads
+    // Include the Ops public key in multiple formats so clients can use whichever suits their platform.
+    // PEM export is async and may trigger key initialisation, so it must run before the sync accessors.
     let ops_public_key: string | undefined;
+    let ops_public_key_jwk: { kty: string; crv: string; x: string } | undefined;
+    let ops_public_key_pem: string | undefined;
     try {
+      ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem();
       ops_public_key = Ed25519Service.getOpsPublicKeyB64();
+      ops_public_key_jwk = Ed25519Service.getOpsPublicKeyJwk();
     } catch (_e) {}
-    res.status(statusCode).json({ ...result, isDeviceRegistered, ops_public_key });
+    res.status(statusCode).json({ ...result, isDeviceRegistered, ops_public_key, ops_public_key_jwk, ops_public_key_pem });
   } else {
     res.status(statusCode).json(result);
   }

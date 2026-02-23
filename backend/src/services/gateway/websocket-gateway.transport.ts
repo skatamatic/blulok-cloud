@@ -274,7 +274,15 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         const now = Date.now();
         authed = { ws, user: decoded, facilityId, lastActivityAt: now };
         this.facilityToClient.set(facilityId, authed);
-        safeSend(ws, { type: 'AUTH_OK', facilityId, ops_public_key: Ed25519Service.getOpsPublicKeyB64() });
+        let ops_public_key_pem: string | undefined;
+        try { ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem(); } catch {}
+        safeSend(ws, {
+          type: 'AUTH_OK',
+          facilityId,
+          ops_public_key: Ed25519Service.getOpsPublicKeyB64(),
+          ops_public_key_jwk: Ed25519Service.getOpsPublicKeyJwk(),
+          ops_public_key_pem,
+        });
         logger.info(`Gateway WS authenticated: facility=${facilityId} user=${decoded.userId} role=${decoded.role} remote=${remote}`);
         GatewayDebugService.getInstance().publish({
           kind: 'connection_opened',

@@ -396,6 +396,66 @@ describe('Internal Gateway Routes', () => {
     });
   });
 
+  describe('tid (transaction ID) support for gateway proxy correlation', () => {
+    it('accepts tid on request-time-sync', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/request-time-sync')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ lock_id: 'lock-1', tid: 42 })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('accepts tid as string on request-time-sync', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/request-time-sync')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ lock_id: 'lock-1', tid: 'tx-abc' })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('accepts tid on fallback-pass', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/fallback-pass')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ fallbackJwt: 'fake-jwt', tid: 7 });
+      // Will fail on JWT verification (400/500), but NOT on "tid is not allowed"
+      expect(res.body.message).not.toContain('"tid" is not allowed');
+    });
+
+    it('accepts tid on device-sync', async () => {
+      syncGatewayDevicesMock.mockClear();
+      updateDeviceStatusesMock.mockClear();
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/device-sync')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ facility_id: 'fac-1', tid: 3, devices: [{ serial: 'DEV-1' }] })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('accepts tid on devices/inventory', async () => {
+      syncDeviceInventoryMock.mockClear();
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ facility_id: 'fac-1', tid: 5, devices: [{ lock_id: 'lock-1' }] })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('accepts tid on devices/state', async () => {
+      updateDeviceStatesMock.mockClear();
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ facility_id: 'fac-1', tid: 'tx-99', updates: [{ lock_id: 'lock-1', online: true }] })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+
   describe('Deprecated device-sync endpoint', () => {
     it('returns X-Deprecated header', async () => {
       syncGatewayDevicesMock.mockClear();

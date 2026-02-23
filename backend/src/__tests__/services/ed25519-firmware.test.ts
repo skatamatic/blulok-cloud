@@ -1,7 +1,8 @@
 /**
  * Ed25519Service Firmware Extension Tests
  *
- * Tests the getOpsPublicKeyB64 method and firmware JWT signing/verification.
+ * Tests the getOpsPublicKeyB64, getOpsPublicKeyJwk, getOpsPublicKeyPem
+ * methods and firmware JWT signing/verification.
  */
 
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
@@ -14,7 +15,6 @@ describe('Ed25519Service - Firmware Extensions', () => {
     });
 
     it('should return a non-empty string in test mode (auto-generated key)', async () => {
-      // Force key generation by calling signCommandJwt first
       await Ed25519Service.signCommandJwt({ cmd_type: 'TEST' });
       const key = Ed25519Service.getOpsPublicKeyB64();
       expect(key.length).toBeGreaterThan(0);
@@ -24,6 +24,42 @@ describe('Ed25519Service - Firmware Extensions', () => {
       const key1 = Ed25519Service.getOpsPublicKeyB64();
       const key2 = Ed25519Service.getOpsPublicKeyB64();
       expect(key1).toBe(key2);
+    });
+  });
+
+  describe('getOpsPublicKeyJwk', () => {
+    it('should return a valid Ed25519 JWK with kty, crv, and x', async () => {
+      await Ed25519Service.signCommandJwt({ cmd_type: 'TEST' });
+      const jwk = Ed25519Service.getOpsPublicKeyJwk();
+      expect(jwk.kty).toBe('OKP');
+      expect(jwk.crv).toBe('Ed25519');
+      expect(typeof jwk.x).toBe('string');
+      expect(jwk.x.length).toBeGreaterThan(0);
+    });
+
+    it('should have x matching getOpsPublicKeyB64', () => {
+      const jwk = Ed25519Service.getOpsPublicKeyJwk();
+      expect(jwk.x).toBe(Ed25519Service.getOpsPublicKeyB64());
+    });
+
+    it('should not include private key material (d)', () => {
+      const jwk = Ed25519Service.getOpsPublicKeyJwk();
+      expect(jwk).not.toHaveProperty('d');
+    });
+  });
+
+  describe('getOpsPublicKeyPem', () => {
+    it('should return a valid SPKI PEM string', async () => {
+      await Ed25519Service.signCommandJwt({ cmd_type: 'TEST' });
+      const pem = await Ed25519Service.getOpsPublicKeyPem();
+      expect(pem).toContain('-----BEGIN PUBLIC KEY-----');
+      expect(pem).toContain('-----END PUBLIC KEY-----');
+    });
+
+    it('should return consistent PEM across calls', async () => {
+      const pem1 = await Ed25519Service.getOpsPublicKeyPem();
+      const pem2 = await Ed25519Service.getOpsPublicKeyPem();
+      expect(pem1).toBe(pem2);
     });
   });
 
@@ -55,6 +91,26 @@ describe('Ed25519Service - Firmware Extensions', () => {
       expect(payload.cmd_type).toBe('FIRMWARE_MANIFEST');
       expect(payload.version).toBe('2.0.0');
       expect(payload.iss).toBe('BluCloud:Root');
+    });
+
+    it('should include filename and target_type when provided', async () => {
+      const jwt = await Ed25519Service.signCommandJwt({
+        cmd_type: 'FIRMWARE_MANIFEST',
+        target_type: 'access_control',
+        filename: 'ac-fw-1.0.0.bin',
+        version: '1.0.0',
+        sha256: 'def456',
+        size: 2048,
+        chunk_count: 1,
+        chunk_size: 262144,
+        nonce: 'nonce-123',
+        compatible_models: [],
+      });
+
+      const payload = await Ed25519Service.verifyJwt(jwt);
+      expect(payload.target_type).toBe('access_control');
+      expect(payload.filename).toBe('ac-fw-1.0.0.bin');
+      expect(payload.version).toBe('1.0.0');
     });
 
     it('should use optional ttlSeconds for exp claim (default 1800)', async () => {

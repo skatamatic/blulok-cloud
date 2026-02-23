@@ -20,7 +20,6 @@ import {
   KeyIcon,
   ClockIcon,
   CodeBracketIcon,
-  DevicePhoneMobileIcon,
   PresentationChartLineIcon,
   CloudIcon,
   MapIcon,
@@ -28,7 +27,6 @@ import {
   PhotoIcon,
   PencilSquareIcon,
   EyeIcon,
-  CircleStackIcon,
 } from '@heroicons/react/24/outline';
 
 interface NavItem {
@@ -58,8 +56,6 @@ const bluLokNavigation: NavItem[] = [
     requireAdmin: true,
     children: [
       { name: 'System Settings', href: '/settings', icon: Cog6ToothIcon },
-      { name: 'Notification Settings', href: '/notification-settings', icon: DevicePhoneMobileIcon },
-      { name: 'Storage', href: '/storage-config', icon: CircleStackIcon, roles: [UserRole.DEV_ADMIN] },
     ]
   },
 ];
