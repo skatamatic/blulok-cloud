@@ -10,6 +10,8 @@ import { DatabaseService } from '@/services/database.service';
 import { UserDeviceModel } from '@/models/user-device.model';
 import { FirstTimeUserService } from '@/services/first-time-user.service';
 import { logger } from '@/utils/logger';
+import { AppEntryAccessService } from '@/services/passes/app-entry-access.service';
+import { AccessCodeService } from '@/services/access-code.service';
 
 /**
  * User Management Routes
@@ -366,6 +368,7 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
 
   // Get user devices (only for dev admins)
   let userDevices: any[] = [];
+  let accessControlDevices: any[] = [];
   const isDevAdmin = AuthService.isAdmin(req.user!.role) && req.user!.role === UserRole.DEV_ADMIN;
   if (isDevAdmin) {
     const userDeviceModel = new UserDeviceModel();
@@ -411,6 +414,91 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
     }
   }
 
+  const targetRole = user.role as UserRole;
+  const targetFacilityIds = facilityIds.map((facilityId) => String(facilityId));
+  try {
+    const appEntryDeviceIds = await AppEntryAccessService.resolveDeviceIds(db, {
+      userId: id,
+      userRole: targetRole,
+      facilityIds: targetFacilityIds,
+    });
+
+    const appCodes = await AccessCodeService.getInstance().getAppCodesForUser(
+      id,
+      targetRole,
+      targetFacilityIds,
+    );
+    const codesByDeviceId = new Map<string, Array<{
+      code: string;
+      valid_from: Date;
+      valid_until: Date;
+      schedule_id?: string | null;
+      schedule_name?: string | null;
+    }>>();
+    appCodes.forEach((pairing) => {
+      const list = codesByDeviceId.get(pairing.device_id) || [];
+      list.push({
+        code: pairing.code,
+        valid_from: pairing.valid_from,
+        valid_until: pairing.valid_until,
+        schedule_id: pairing.schedule_id ?? null,
+        schedule_name: pairing.schedule_name ?? null,
+      });
+      codesByDeviceId.set(pairing.device_id, list);
+    });
+
+    if (appEntryDeviceIds.length > 0) {
+      const rows = await db('access_control_devices as d')
+        .select(
+          'd.id',
+          'd.name',
+          'd.device_type',
+          'd.location_description',
+          'd.access_methods',
+          'g.facility_id',
+        )
+        .join('gateways as g', 'g.id', 'd.gateway_id')
+        .whereIn('d.id', appEntryDeviceIds)
+        .orderBy('d.name', 'asc');
+
+      accessControlDevices = rows.map((row) => {
+        const rawMethods = row.access_methods;
+        let accessMethods: string[] = [];
+        if (Array.isArray(rawMethods)) {
+          accessMethods = rawMethods.map((entry) => String(entry));
+        } else if (typeof rawMethods === 'string') {
+          try {
+            const parsed = JSON.parse(rawMethods) as unknown;
+            if (Array.isArray(parsed)) {
+              accessMethods = parsed.map((entry) => String(entry));
+            }
+          } catch {
+            accessMethods = [];
+          }
+        }
+        return {
+          id: String(row.id),
+          facility_id: String(row.facility_id),
+          name: String(row.name),
+          device_type: row.device_type,
+          location_description: row.location_description ?? null,
+          access_methods: accessMethods,
+          codes: (codesByDeviceId.get(String(row.id)) || []).sort((left, right) => {
+            const leftSchedule = String(left.schedule_id ?? '');
+            const rightSchedule = String(right.schedule_id ?? '');
+            if (leftSchedule !== rightSchedule) return leftSchedule.localeCompare(rightSchedule);
+            return String(left.code).localeCompare(String(right.code));
+          }),
+        };
+      });
+    }
+  } catch (error) {
+    logger.warn('Failed to load access-control entitlements for user details', {
+      userId: id,
+      error: (error as Error)?.message || error,
+    });
+  }
+
   res.json({
     success: true,
     user: {
@@ -424,7 +512,8 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
       createdAt: user.created_at,
       updatedAt: user.updated_at,
       facilities: facilitiesWithUnits,
-      devices: userDevices
+      devices: userDevices,
+      accessControlDevices: accessControlDevices,
     }
   });
 }));

@@ -87,6 +87,7 @@ CREATE TABLE access_control_devices (
   device_type ENUM('gate', 'elevator', 'door') NOT NULL,
   location_description VARCHAR(255),
   relay_channel INTEGER NOT NULL,
+  access_methods JSON NOT NULL, -- ['app' | 'keypad' | 'fob'], default ['app']
   status ENUM('online', 'offline', 'error', 'maintenance') DEFAULT 'offline',
   is_locked BOOLEAN DEFAULT TRUE,
   last_activity TIMESTAMP,
@@ -101,8 +102,82 @@ CREATE TABLE access_control_devices (
 **Key Features**:
 - **Device Types**: Gates, elevators, doors with specific UI treatment
 - **Relay Mapping**: Each device maps to a specific relay channel
+- **Configurable Access Methods**: Per-device support for app, keypad, and fob access (any combination)
 - **Lock State**: Current locked/unlocked status
 - **Activity Tracking**: Last activity timestamps for auditing
+
+### 3.1 Device Groups (Generic Grouping Primitive)
+
+**Purpose**: Generic grouping of access control devices for reusable abstractions (first use: access-code group scopes; future use: access zones).
+
+**Schema**:
+```sql
+CREATE TABLE device_groups (
+  id UUID PRIMARY KEY,
+  facility_id UUID NOT NULL REFERENCES facilities(id),
+  group_type ENUM('zone', 'access_code') NOT NULL DEFAULT 'zone',
+  is_global_shared BOOLEAN NOT NULL DEFAULT FALSE,
+  access_code_current_code VARCHAR(8) NULL,
+  access_code_current_valid_from TIMESTAMP NULL,
+  access_code_current_valid_until TIMESTAMP NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT NULL,
+  settings JSON NULL,
+  metadata JSON NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
+);
+
+CREATE TABLE device_group_members (
+  id UUID PRIMARY KEY,
+  group_id UUID NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+  device_id UUID NOT NULL REFERENCES access_control_devices(id) ON DELETE CASCADE,
+  created_at TIMESTAMP,
+  UNIQUE(group_id, device_id)
+);
+```
+
+### 3.2 Access Code Configs and Codes
+
+**Purpose**: Facility-level policy for keypad code lifecycle and scoped active codes. Group-scoped code is authoritative for devices in access-code groups.
+
+**Schema**:
+```sql
+CREATE TABLE access_code_configs (
+  id UUID PRIMARY KEY,
+  facility_id UUID NOT NULL REFERENCES facilities(id),
+  is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  digit_count INTEGER NOT NULL DEFAULT 6, -- 3..8
+  rotation_interval_hours INTEGER NOT NULL DEFAULT 24,
+  rotation_hour INTEGER NOT NULL DEFAULT 0,
+  rotation_minute INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP,
+  UNIQUE(facility_id)
+);
+
+CREATE TABLE access_codes (
+  id UUID PRIMARY KEY,
+  facility_id UUID NOT NULL REFERENCES facilities(id),
+  scope_type ENUM('device_group', 'device') NOT NULL,
+  scope_id UUID NULL,
+  schedule_id UUID NULL REFERENCES schedules(id),
+  code VARCHAR(8) NOT NULL,
+  valid_from TIMESTAMP NOT NULL,
+  valid_until TIMESTAMP NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  generated_by ENUM('system', 'admin') NOT NULL DEFAULT 'system',
+  set_by_user_id UUID NULL REFERENCES users(id),
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
+);
+```
+
+**Behavioral rules**:
+- Devices in active `access_code` groups must remain synchronized to that group's current code.
+- Device-scoped overrides are rejected when the target device is already in an active access-code group.
+- App-facing access code results return only devices the caller can access (global shared group or tenant-scoped group membership).
 
 ### 4. Units
 
@@ -292,6 +367,26 @@ Unit (1) ←→ (N) Unit Assignments (N) ←→ (1) Tenant (User)
 User → Unit Assignment → BluLok Device → Gateway → Cloud Platform
 ```
 
+### Keypad Access Code Resolution
+```
+AccessControlDevice (keypad-enabled)
+  -> resolve active code by precedence:
+     device_group scope > device scope
+  -> schedule contexts:
+     one active code per schedule_id (plus optional unscheduled default)
+```
+
+### Access Code Scope Semantics
+
+- **Device Group Code**: Authoritative code scoped to a reusable device group (highest precedence when device is grouped).
+- **Device Code**: Device-level scope used only when device is not in an active access-code group.
+- **Schedule Scope**: Optional `schedule_id` on each active code, enabling multiple concurrent codes per device/group for different schedule windows.
+
+Scope rules:
+- `scope_type = device_group` -> `scope_id` must reference a `device_groups.id` in the same facility.
+- `scope_type = device` -> `scope_id` must reference an `access_control_devices.id` in the same facility.
+- `schedule_id` (when present) must reference a schedule in the same facility.
+
 ## Business Rules
 
 ### Access Control
@@ -324,9 +419,40 @@ User → Unit Assignment → BluLok Device → Gateway → Cloud Platform
 - `GET /api/v1/devices` - List all devices with hierarchy
 - `GET /api/v1/devices/facility/:id/hierarchy` - Get facility device tree
 - `POST /api/v1/devices/access-control` - Create access control device
+- `PUT /api/v1/devices/access-control/:id` - Update access control device (including `access_methods`)
 - `POST /api/v1/devices/blulok` - Create BluLok device
 - `PUT /api/v1/devices/:type/:id/status` - Update device status
 - `PUT /api/v1/devices/blulok/:id/lock` - Control lock status
+
+### Device Groups
+- `POST /api/v1/device-groups` - Create group
+- `GET /api/v1/device-groups?facility_id=...` - List groups for facility
+- `GET /api/v1/device-groups/:id` - Get group + members
+- `PUT /api/v1/device-groups/:id` - Update group
+- `DELETE /api/v1/device-groups/:id` - Delete group
+- `POST /api/v1/device-groups/:id/members` - Add device to group
+- `DELETE /api/v1/device-groups/:id/members/:deviceId` - Remove device from group
+
+### Access Codes
+- `GET /api/v1/access-codes/my` - User-resolved device/code pairings
+- `GET /api/v1/access-codes/app/my` - App-facing filtered pairings with schedule metadata
+- `GET /api/v1/access-codes/config/:facilityId` - Read facility policy
+- `PUT /api/v1/access-codes/config/:facilityId` - Update facility policy
+- `GET /api/v1/access-codes?facility_id=...&schedule_id=...` - List active scoped codes, optionally filtered by schedule context
+- `GET /api/v1/access-codes/effective?facility_id=...&schedule_id=...` - Resolved effective codes, optionally schedule-filtered
+- `POST /api/v1/access-codes/rotate` - Force random rotation
+- `PUT /api/v1/access-codes/manual/set` - Set manual scoped code (supports `schedule_id` for `device_group` scope)
+- `POST /api/v1/access-codes/push/:facilityId` - Push ACCESS_CODE_UPDATE to gateway
+- `GET /api/v1/internal/gateway/access-codes` - Gateway polling endpoint for resolved device/relay mappings
+
+### ACCESS_CODE_UPDATE payload contract
+
+Gateway command entries now include schedule context:
+- `device_id`, `relay_channel`, `code`, `valid_from`, `valid_until`
+- `schedule_id`, `schedule_name`
+- `time_windows[]` (`day_of_week`, `start_time`, `end_time`)
+
+Receivers should treat missing schedule metadata as always-valid legacy behavior.
 
 ### Units
 - `GET /api/v1/units` - List units with assignments

@@ -71,7 +71,7 @@ describe('Ed25519Service - Firmware Extensions', () => {
         sha256: 'abc123',
         size: 1024,
         chunk_count: 4,
-        chunk_size: 256 * 1024,
+        chunk_size: 128 * 1024,
         nonce: 'test-nonce',
         compatible_models: ['BLK-100'],
       });
@@ -102,7 +102,7 @@ describe('Ed25519Service - Firmware Extensions', () => {
         sha256: 'def456',
         size: 2048,
         chunk_count: 1,
-        chunk_size: 262144,
+        chunk_size: 131072,
         nonce: 'nonce-123',
         compatible_models: [],
       });

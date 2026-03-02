@@ -117,6 +117,8 @@ export const WIDGET_TYPES = {
   'lock-status': 'lock-status',
   /** Shared access key management overview */
   'shared-keys': 'shared-keys',
+  /** Daily keypad access code viewer and refresh */
+  'daily-access-codes': 'daily-access-codes',
   /** Overall system health and status dashboard */
   'system-status': 'system-status',
 
@@ -268,6 +270,16 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     allowMultiple: false,
     category: 'status',
     requiredPermissions: ['tenant', 'admin', 'facility_admin']
+  },
+  'daily-access-codes': {
+    type: 'daily-access-codes',
+    name: 'Daily Access Codes',
+    description: 'View and refresh active keypad access codes',
+    defaultSize: 'medium',
+    availableSizes: ['small', 'medium', 'medium-tall', 'large'],
+    allowMultiple: false,
+    category: 'status',
+    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin']
   },
   'system-status': {
     type: 'system-status',

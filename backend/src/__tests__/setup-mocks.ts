@@ -2018,4 +2018,21 @@ afterEach(() => {
   jest.clearAllMocks();
 });
 
+afterAll(async () => {
+  // Ensure singleton background timers/connections never leak across suites.
+  try {
+    const { WebSocketService } = await import('../services/websocket.service');
+    WebSocketService.getInstance().destroy();
+  } catch {
+    // ignore cleanup failures in tests
+  }
+
+  try {
+    const { GatewayService } = await import('../services/gateway/gateway.service');
+    await GatewayService.getInstance().shutdown();
+  } catch {
+    // ignore cleanup failures in tests
+  }
+});
+
 export { resetMocks };

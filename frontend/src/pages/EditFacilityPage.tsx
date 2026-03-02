@@ -11,6 +11,7 @@ import {
 import { apiService } from '@/services/api.service';
 import { Facility } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBackNavigation } from '@/hooks/useBackNavigation';
 
 const statusOptions = [
   { value: 'active', label: 'Active' },
@@ -22,6 +23,7 @@ export default function EditFacilityPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const handleBack = useBackNavigation(id ? `/facilities/${id}` : '/facilities');
   
   const [facility, setFacility] = useState<Facility | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,7 +179,7 @@ export default function EditFacilityPage() {
         </p>
         <div className="mt-6">
           <button
-            onClick={() => navigate('/facilities')}
+            onClick={handleBack}
             className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
             <ArrowLeftIcon className="h-4 w-4 mr-2" />
@@ -194,7 +196,7 @@ export default function EditFacilityPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
           <button
-            onClick={() => navigate(`/facilities/${facility.id}`)}
+            onClick={handleBack}
             className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
             <ArrowLeftIcon className="h-4 w-4 mr-2" />
@@ -455,7 +457,7 @@ export default function EditFacilityPage() {
         <div className="flex items-center justify-end space-x-3 pt-6 border-t border-gray-200 dark:border-gray-700">
           <button
             type="button"
-            onClick={() => navigate(`/facilities/${facility.id}`)}
+            onClick={handleBack}
             className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
             Cancel

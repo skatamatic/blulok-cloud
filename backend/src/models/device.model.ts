@@ -62,6 +62,8 @@ export interface AccessControlDevice {
   last_activity?: Date;
   /** Device-specific configuration settings */
   device_settings?: Record<string, any>;
+  /** Enabled access methods for the device */
+  access_methods?: AccessMethod[];
   /** Additional metadata for extensibility */
   metadata?: Record<string, any>;
   /** Automatic record creation timestamp */
@@ -69,6 +71,8 @@ export interface AccessControlDevice {
   /** Automatic record update timestamp */
   updated_at: Date;
 }
+
+export type AccessMethod = 'app' | 'keypad' | 'fob';
 
 /**
  * BluLok Device Interface
@@ -187,6 +191,18 @@ export interface CreateAccessControlDeviceData {
   location_description?: string;
   relay_channel: number;
   device_settings?: Record<string, any>;
+  access_methods?: AccessMethod[];
+  metadata?: Record<string, any>;
+}
+
+export interface UpdateAccessControlDeviceData {
+  name?: string;
+  location_description?: string;
+  relay_channel?: number;
+  status?: 'online' | 'offline' | 'error' | 'maintenance';
+  is_locked?: boolean;
+  device_settings?: Record<string, any>;
+  access_methods?: AccessMethod[];
   metadata?: Record<string, any>;
 }
 
@@ -296,7 +312,13 @@ export class DeviceModel {
       query = query.offset(filters.offset);
     }
 
-    return await query;
+    const rows = await query;
+    return rows.map((row) => ({
+      ...row,
+      device_settings: this.safeParseJson(row.device_settings),
+      access_methods: this.safeParseJson(row.access_methods) || ['app'],
+      metadata: this.safeParseJson(row.metadata),
+    }));
   }
 
   async findBluLokDevices(filters: DeviceFilters = {}): Promise<DeviceWithContext[]> {
@@ -436,7 +458,13 @@ export class DeviceModel {
   async findAccessControlDeviceById(id: string): Promise<AccessControlDevice | null> {
     const knex = this.db.connection;
     const device = await knex('access_control_devices').where('id', id).first();
-    return device || null;
+    if (!device) return null;
+    return {
+      ...device,
+      device_settings: this.safeParseJson(device.device_settings),
+      access_methods: this.safeParseJson(device.access_methods) || ['app'],
+      metadata: this.safeParseJson(device.metadata),
+    };
   }
 
   /**
@@ -453,7 +481,13 @@ export class DeviceModel {
       .leftJoin('gateways', 'access_control_devices.gateway_id', 'gateways.id')
       .where('access_control_devices.id', id)
       .first();
-    return result || null;
+    if (!result) return null;
+    return {
+      ...result,
+      device_settings: this.safeParseJson(result.device_settings),
+      access_methods: this.safeParseJson(result.access_methods) || ['app'],
+      metadata: this.safeParseJson(result.metadata),
+    };
   }
 
   /**
@@ -468,9 +502,37 @@ export class DeviceModel {
   async createAccessControlDevice(data: CreateAccessControlDeviceData): Promise<AccessControlDevice> {
     const knex = this.db.connection;
     const id = uuidv4();
-    await knex('access_control_devices').insert({ id, ...data });
+    await knex('access_control_devices').insert({
+      id,
+      ...data,
+      device_settings: data.device_settings ? JSON.stringify(data.device_settings) : undefined,
+      access_methods: data.access_methods ? JSON.stringify(data.access_methods) : JSON.stringify(['app']),
+      metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
+    });
     const device = await knex('access_control_devices').where('id', id).first();
-    return device as AccessControlDevice;
+    return {
+      ...(device as AccessControlDevice),
+      device_settings: this.safeParseJson(device.device_settings),
+      access_methods: this.safeParseJson(device.access_methods) || ['app'],
+      metadata: this.safeParseJson(device.metadata),
+    };
+  }
+
+  async updateAccessControlDevice(deviceId: string, data: UpdateAccessControlDeviceData): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+    const updatePayload: Record<string, unknown> = { updated_at: new Date() };
+
+    if (data.name !== undefined) updatePayload.name = data.name;
+    if (data.location_description !== undefined) updatePayload.location_description = data.location_description;
+    if (data.relay_channel !== undefined) updatePayload.relay_channel = data.relay_channel;
+    if (data.status !== undefined) updatePayload.status = data.status;
+    if (data.is_locked !== undefined) updatePayload.is_locked = data.is_locked;
+    if (data.device_settings !== undefined) updatePayload.device_settings = JSON.stringify(data.device_settings);
+    if (data.access_methods !== undefined) updatePayload.access_methods = JSON.stringify(data.access_methods);
+    if (data.metadata !== undefined) updatePayload.metadata = JSON.stringify(data.metadata);
+
+    await knex('access_control_devices').where('id', deviceId).update(updatePayload);
+    return this.findAccessControlDeviceById(deviceId);
   }
 
   async createBluLokDevice(data: CreateBluLokDeviceData): Promise<BluLokDevice> {

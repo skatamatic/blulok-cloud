@@ -54,8 +54,94 @@ export interface AccessControlDevice {
   last_activity?: string;
   device_settings?: Record<string, any>;
   metadata?: Record<string, any>;
+  access_methods?: AccessMethod[];
   created_at: string;
   updated_at: string;
+}
+
+export type AccessMethod = 'app' | 'keypad' | 'fob';
+
+export interface DeviceGroup {
+  id: string;
+  facility_id: string;
+  group_type: 'zone' | 'access_code';
+  is_global_shared: boolean;
+  access_code_current_code?: string | null;
+  access_code_current_valid_from?: string | null;
+  access_code_current_valid_until?: string | null;
+  name: string;
+  description?: string | null;
+  settings?: Record<string, any> | null;
+  metadata?: Record<string, any> | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccessCodeConfig {
+  id?: string;
+  facility_id: string;
+  is_enabled: boolean;
+  digit_count: number;
+  rotation_interval_hours: number;
+  rotation_hour: number;
+  rotation_minute: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AccessCodeGroupConfig {
+  is_enabled: boolean;
+  digit_count: number;
+  rotation_interval_hours: number;
+  rotation_hour: number;
+  rotation_minute: number;
+}
+
+export interface AccessCode {
+  id: string;
+  facility_id: string;
+  scope_type: 'device_group' | 'device';
+  scope_id?: string | null;
+  schedule_id?: string | null;
+  schedule_name?: string | null;
+  code: string;
+  valid_from: string;
+  valid_until: string;
+  is_active: boolean;
+  generated_by: 'system' | 'admin';
+  set_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EffectiveAccessCode {
+  device_id: string;
+  device_name: string;
+  device_type: 'gate' | 'elevator' | 'door';
+  location_description: string | null;
+  relay_channel: number;
+  code: string;
+  valid_from?: string;
+  valid_until: string;
+  schedule_id?: string | null;
+  schedule_name?: string | null;
+  schedule_time_windows?: Array<{ day_of_week: number; start_time: string; end_time: string }>;
+  source_scope_type: 'device_group' | 'device';
+  source_scope_id: string | null;
+  source_scope_name: string;
+}
+
+export interface UserAccessCode {
+  device_id: string;
+  device_name: string;
+  device_type: 'gate' | 'elevator' | 'door';
+  location_description: string | null;
+  code: string;
+  valid_until: string;
+  schedule_id?: string | null;
+  schedule_name?: string | null;
+  schedule_time_windows?: Array<{ day_of_week: number; start_time: string; end_time: string }>;
 }
 
 export interface BluLokDevice {

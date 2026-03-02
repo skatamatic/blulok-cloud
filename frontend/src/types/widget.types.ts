@@ -40,6 +40,7 @@ export const WIDGET_TYPES = {
   'unlocked-units': 'unlocked-units',
   'lock-status': 'lock-status',
   'shared-keys': 'shared-keys',
+  'daily-access-codes': 'daily-access-codes',
   'system-status': 'system-status',
   
   // System widgets
@@ -180,6 +181,16 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     allowMultiple: false,
     category: 'status',
     requiredPermissions: ['tenant', 'admin', 'facility_admin']
+  },
+  'daily-access-codes': {
+    type: 'daily-access-codes',
+    name: 'Daily Access Codes',
+    description: 'View and refresh active keypad access codes',
+    defaultSize: 'medium',
+    availableSizes: ['small', 'medium', 'medium-tall', 'large'],
+    allowMultiple: false,
+    category: 'status',
+    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin']
   },
   'system-status': {
     type: 'system-status',

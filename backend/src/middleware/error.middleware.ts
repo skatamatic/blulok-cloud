@@ -109,6 +109,17 @@ export class ValidationError extends AppError {
 }
 
 /**
+ * Conflict Error (409)
+ *
+ * Thrown when a request conflicts with current resource state constraints.
+ */
+export class ConflictError extends AppError {
+  constructor(message: string = 'Conflict') {
+    super(message, 409);
+  }
+}
+
+/**
  * Unauthorized Error (401)
  * 
  * Thrown when authentication is required but not provided.

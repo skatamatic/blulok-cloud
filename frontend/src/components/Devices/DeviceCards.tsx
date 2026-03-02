@@ -1,7 +1,9 @@
-import { MouseEvent, useState } from 'react';
+import { MouseEvent, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AccessControlDevice, BluLokDevice } from '@/types/facility.types';
+import { apiService } from '@/services/api.service';
+import { useToast } from '@/contexts/ToastContext';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -20,13 +22,53 @@ const statusIcons = {
   low_battery: ExclamationTriangleIcon
 };
 
-export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice }: {
+export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, canManageAccessMethods, onAccessMethodsUpdated, groupNames = [] }: {
   device: AccessControlDevice;
   onViewFacility?: () => void;
   onViewDevice?: () => void;
+  canManageAccessMethods?: boolean;
+  onAccessMethodsUpdated?: () => Promise<void> | void;
+  groupNames?: string[];
 }) {
   const navigate = useNavigate();
+  const { addToast } = useToast();
   const StatusIcon = (statusIcons as any)[device.status] || CheckCircleIcon;
+  const [isEditingMethods, setIsEditingMethods] = useState(false);
+  const [isSavingMethods, setIsSavingMethods] = useState(false);
+  const [localAccessMethods, setLocalAccessMethods] = useState<Array<'app' | 'keypad' | 'fob'>>(
+    (device.access_methods && device.access_methods.length > 0 ? device.access_methods : ['app']) as Array<'app' | 'keypad' | 'fob'>,
+  );
+
+  const accessMethods = useMemo(
+    () => (localAccessMethods.length > 0 ? localAccessMethods : ['app']),
+    [localAccessMethods],
+  );
+
+  const toggleMethod = (method: 'app' | 'keypad' | 'fob') => {
+    setLocalAccessMethods((prev) => {
+      const next = prev.includes(method)
+        ? prev.filter((m) => m !== method)
+        : [...prev, method];
+      return (next.length > 0 ? next : ['app']) as Array<'app' | 'keypad' | 'fob'>;
+    });
+  };
+
+  const saveMethods = async (): Promise<boolean> => {
+    try {
+      setIsSavingMethods(true);
+      await apiService.updateAccessControlDevice(device.id, { access_methods: accessMethods });
+      setIsEditingMethods(false);
+      addToast({ type: 'success', title: 'Access methods updated' });
+      return true;
+    } catch (error) {
+      console.error('Failed to update access methods:', error);
+      addToast({ type: 'error', title: 'Failed to update access methods' });
+      return false;
+    } finally {
+      setIsSavingMethods(false);
+    }
+  };
+
   return (
     <div
       id={`device-${device.id}`}
@@ -54,6 +96,89 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice }
       {device.location_description && (
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{device.location_description}</p>
       )}
+
+      <div className="mb-4 space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {accessMethods.map((method) => (
+          <span
+            key={method}
+            className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-1 text-xs font-medium text-primary-700 dark:text-primary-300 capitalize"
+          >
+            {method}
+          </span>
+          ))}
+        </div>
+        {groupNames && groupNames.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Groups:</span>
+            {groupNames.map((groupName) => (
+              <span
+                key={groupName}
+                className="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300"
+              >
+                {groupName}
+              </span>
+            ))}
+          </div>
+        )}
+        {canManageAccessMethods && (
+          <div className="flex flex-wrap items-center gap-2">
+            {!isEditingMethods ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setIsEditingMethods(true);
+                }}
+                className="inline-flex items-center rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300"
+              >
+                Edit Methods
+              </button>
+            ) : (
+              <>
+                {(['app', 'keypad', 'fob'] as const).map((method) => (
+                  <label
+                    key={method}
+                    onClick={(event) => event.stopPropagation()}
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs text-gray-700 dark:text-gray-300"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={accessMethods.includes(method)}
+                      onChange={() => toggleMethod(method)}
+                    />
+                    <span className="capitalize">{method}</span>
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    saveMethods().then((ok) => {
+                      if (ok) onAccessMethodsUpdated?.();
+                    });
+                  }}
+                  disabled={isSavingMethods}
+                  className="inline-flex items-center rounded-lg bg-primary-600 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {isSavingMethods ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setLocalAccessMethods((device.access_methods && device.access_methods.length > 0 ? device.access_methods : ['app']) as Array<'app' | 'keypad' | 'fob'>);
+                    setIsEditingMethods(false);
+                  }}
+                  className="inline-flex items-center rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between text-sm">

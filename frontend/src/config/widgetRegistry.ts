@@ -69,6 +69,10 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
     ...SHARED_WIDGET_REGISTRY['shared-keys'],
     icon: KeyIcon
   },
+  'daily-access-codes': {
+    ...SHARED_WIDGET_REGISTRY['daily-access-codes'],
+    icon: KeyIcon
+  },
   'system-status': {
     ...SHARED_WIDGET_REGISTRY['system-status'],
     icon: CpuChipIcon

@@ -20,6 +20,7 @@ import { AccessHistoryWidget } from '@/components/Widget/AccessHistoryWidget';
 import { SharedKeysWidget } from '@/components/Widget/SharedKeysWidget';
 import { LockStatusWidget } from '@/components/Widget/LockStatusWidget';
 import { FacilityViewerWidget } from '@/components/Widget/FacilityViewerWidget';
+import { DailyAccessCodesWidget } from '@/components/Widget/DailyAccessCodesWidget';
 import { WidgetSize } from '@/types/widget.types';
 import { WidgetInstance } from '@/types/widget-management.types';
 import { getWidgetType } from '@/config/widgetRegistry';
@@ -54,6 +55,7 @@ export default function DashboardPage() {
         { id: 'notifications', type: 'notifications', title: 'Notifications', size: 'medium' },
         { id: 'lock-status', type: 'lock-status', title: 'Lock Status', size: 'large' },
         { id: 'shared-keys', type: 'shared-keys', title: 'Shared Keys Overview', size: 'medium' },
+        { id: 'daily-access-codes', type: 'daily-access-codes', title: 'Daily Access Codes', size: 'medium' },
       ];
     } else {
       // Admin/Staff widgets
@@ -66,6 +68,7 @@ export default function DashboardPage() {
         { id: 'activity-monitor', type: 'activity-monitor', title: 'Activity Monitor', size: 'large' },
         { id: 'unlocked-units', type: 'unlocked-units', title: 'Unlocked Units', size: 'medium' },
         { id: 'battery-status', type: 'battery-status', title: 'Battery Status', size: 'medium' },
+        { id: 'daily-access-codes', type: 'daily-access-codes', title: 'Daily Access Codes', size: 'medium' },
       ];
     }
   });
@@ -322,6 +325,7 @@ export default function DashboardPage() {
         { i: 'activity-monitor', x: 3, y: 2, w: 6, h: 3 },
         { i: 'unlocked-units', x: 9, y: 2, w: 3, h: 2 },
         { i: 'battery-status', x: 9, y: 4, w: 3, h: 3 },
+        { i: 'daily-access-codes', x: 3, y: 5, w: 3, h: 2 },
       ],
       md: [
         { i: 'facilities', x: 0, y: 0, w: 5, h: 2 },
@@ -332,6 +336,7 @@ export default function DashboardPage() {
         { i: 'activity-monitor', x: 5, y: 4, w: 5, h: 4 },
         { i: 'unlocked-units', x: 0, y: 8, w: 5, h: 2 },
         { i: 'battery-status', x: 5, y: 8, w: 5, h: 2 },
+        { i: 'daily-access-codes', x: 0, y: 10, w: 10, h: 2 },
       ],
       sm: [
         { i: 'facilities', x: 0, y: 0, w: 6, h: 2 },
@@ -342,6 +347,7 @@ export default function DashboardPage() {
         { i: 'activity-monitor', x: 0, y: 12, w: 6, h: 3 },
         { i: 'unlocked-units', x: 0, y: 15, w: 6, h: 2 },
         { i: 'battery-status', x: 0, y: 17, w: 6, h: 2 },
+        { i: 'daily-access-codes', x: 0, y: 19, w: 6, h: 2 },
       ]
     };
     
@@ -962,6 +968,14 @@ export default function DashboardPage() {
       case 'lock-status':
         return (
           <LockStatusWidget
+            currentSize={widget.size as WidgetSize}
+            onSizeChange={(size) => handleWidgetGridSizeChange(widget.id, sizeToGrid(size))}
+            onRemove={isTenant ? undefined : () => removeWidget(widget.id)}
+          />
+        );
+      case 'daily-access-codes':
+        return (
+          <DailyAccessCodesWidget
             currentSize={widget.size as WidgetSize}
             onSizeChange={(size) => handleWidgetGridSizeChange(widget.id, sizeToGrid(size))}
             onRemove={isTenant ? undefined : () => removeWidget(widget.id)}

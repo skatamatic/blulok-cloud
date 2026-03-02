@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { getApiBaseUrl } from './appConfig';
 import { LoginCredentials, LoginResponse } from '@/types/auth.types';
+import { AccessCode, AccessCodeConfig, AccessCodeGroupConfig, DeviceGroup, EffectiveAccessCode, UserAccessCode } from '@/types/facility.types';
 
 // Safe access to import.meta for Jest compatibility
 const API_BASE_URL = getApiBaseUrl();
@@ -434,6 +435,11 @@ class ApiService {
     return response.data;
   }
 
+  async getAccessControlDevice(id: string) {
+    const response = await this.api.get(`/devices/access-control/${id}`);
+    return response.data;
+  }
+
   async getFacilityDeviceHierarchy(facilityId: string) {
     const response = await this.api.get(`/devices/facility/${facilityId}/hierarchy`);
     return response.data;
@@ -468,6 +474,11 @@ class ApiService {
 
   async createAccessControlDevice(data: any) {
     const response = await this.api.post('/devices/access-control', data);
+    return response.data;
+  }
+
+  async updateAccessControlDevice(id: string, data: any) {
+    const response = await this.api.put(`/devices/access-control/${id}`, data);
     return response.data;
   }
 
@@ -544,6 +555,182 @@ class ApiService {
   async getMyUnits() {
     const response = await this.api.get('/units/my');
     return response.data;
+  }
+
+  // Device Groups
+  async getDeviceGroups(facilityId: string, groupType?: 'zone' | 'access_code') {
+    const response = await this.api.get('/device-groups', {
+      params: {
+        facility_id: facilityId,
+        group_type: groupType,
+      },
+    });
+    return response.data as { success: boolean; data: DeviceGroup[] };
+  }
+
+  async createDeviceGroup(payload: {
+    facility_id: string;
+    group_type?: 'zone' | 'access_code';
+    is_global_shared?: boolean;
+    name: string;
+    description?: string;
+    settings?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  }) {
+    const response = await this.api.post('/device-groups', payload);
+    return response.data as { success: boolean; data: DeviceGroup };
+  }
+
+  async updateDeviceGroup(groupId: string, payload: {
+    group_type?: 'zone' | 'access_code';
+    is_global_shared?: boolean;
+    name?: string;
+    description?: string;
+    settings?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+    is_active?: boolean;
+  }) {
+    const response = await this.api.put(`/device-groups/${groupId}`, payload);
+    return response.data as { success: boolean; data: DeviceGroup };
+  }
+
+  async getDeviceGroup(groupId: string) {
+    const response = await this.api.get(`/device-groups/${groupId}`);
+    return response.data as {
+      success: boolean;
+      data: DeviceGroup & {
+        members?: Array<{
+          id: string;
+          group_id: string;
+          device_id: string;
+          device_type?: 'access_control' | 'blulok';
+          source_unit_id?: string | null;
+        }>;
+      };
+    };
+  }
+
+  async deleteDeviceGroup(groupId: string) {
+    const response = await this.api.delete(`/device-groups/${groupId}`);
+    return response.data as { success: boolean };
+  }
+
+  async addDeviceGroupMember(
+    groupId: string,
+    payload: {
+      deviceId?: string;
+      unitId?: string;
+      deviceType: 'access_control' | 'blulok';
+    },
+  ) {
+    const response = await this.api.post(`/device-groups/${groupId}/members`, {
+      device_id: payload.deviceId,
+      unit_id: payload.unitId,
+      device_type: payload.deviceType,
+    });
+    return response.data;
+  }
+
+  async removeDeviceGroupMember(groupId: string, deviceId: string, deviceType?: 'access_control' | 'blulok') {
+    const response = await this.api.delete(`/device-groups/${groupId}/members/${deviceId}`, {
+      params: deviceType ? { device_type: deviceType } : undefined,
+    });
+    return response.data;
+  }
+
+  // Access Codes
+  async getAccessCodeConfig(facilityId: string) {
+    const response = await this.api.get(`/access-codes/config/${facilityId}`);
+    return response.data as { success: boolean; data: AccessCodeConfig };
+  }
+
+  async updateAccessCodeConfig(facilityId: string, payload: Partial<AccessCodeConfig>) {
+    const response = await this.api.put(`/access-codes/config/${facilityId}`, payload);
+    return response.data as { success: boolean; data: AccessCodeConfig };
+  }
+
+  async getAccessCodePushState(facilityId: string) {
+    const response = await this.api.get(`/access-codes/push-state/${facilityId}`);
+    return response.data as {
+      success: boolean;
+      data: {
+        facility_id: string;
+        status: 'pending' | 'active' | 'error';
+        last_error: string | null;
+        last_nonce: string | null;
+        updated_at: string;
+      };
+    };
+  }
+
+  async getAccessCodeGroupConfig(groupId: string) {
+    const response = await this.api.get(`/access-codes/groups/${groupId}/config`);
+    return response.data as { success: boolean; data: AccessCodeGroupConfig };
+  }
+
+  async updateAccessCodeGroupConfig(groupId: string, payload: Partial<AccessCodeGroupConfig>) {
+    const response = await this.api.put(`/access-codes/groups/${groupId}/config`, payload);
+    return response.data as { success: boolean; data: AccessCodeGroupConfig };
+  }
+
+  async getAccessCodes(facilityId: string, scheduleId?: string | null) {
+    const response = await this.api.get('/access-codes', {
+      params: {
+        facility_id: facilityId,
+        schedule_id: scheduleId === undefined ? undefined : scheduleId,
+      },
+    });
+    return response.data as { success: boolean; data: AccessCode[] };
+  }
+
+  async getEffectiveAccessCodes(facilityId: string, scheduleId?: string | null) {
+    const response = await this.api.get('/access-codes/effective', {
+      params: {
+        facility_id: facilityId,
+        schedule_id: scheduleId === undefined ? undefined : scheduleId,
+      },
+    });
+    return response.data as { success: boolean; data: EffectiveAccessCode[] };
+  }
+
+  async rotateAccessCodes(payload: {
+    facility_id: string;
+    scope_type?: 'device_group' | 'device';
+    scope_id?: string | null;
+    schedule_id?: string | null;
+  }) {
+    const response = await this.api.post('/access-codes/rotate', payload);
+    return response.data;
+  }
+
+  async setManualAccessCode(payload: {
+    facility_id: string;
+    scope_type: 'device_group' | 'device';
+    scope_id?: string | null;
+    code: string;
+    schedule_id?: string | null;
+  }) {
+    const response = await this.api.put('/access-codes/manual/set', payload);
+    return response.data;
+  }
+
+  async pushAccessCodesToGateway(facilityId: string) {
+    const response = await this.api.post(`/access-codes/push/${facilityId}`, {});
+    return response.data;
+  }
+
+  async getMyAccessCodes(facilityId?: string) {
+    const response = await this.api.get('/access-codes/my', {
+      params: facilityId ? { facility_id: facilityId } : undefined,
+    });
+    return response.data as { success: boolean; data: UserAccessCode[] };
+  }
+
+  async getAppAccessCodes(facilityId?: string) {
+    const response = await this.api.get('/access-codes/app/my', {
+      params: facilityId ? { facility_id: facilityId } : undefined,
+    });
+    return response.data as { success: boolean; data: UserAccessCode[] };
   }
 
 
@@ -789,6 +976,15 @@ class ApiService {
 
   async cancelFirmwarePush(pushId: string) {
     const response = await this.api.post(`/firmware/push/${pushId}/cancel`);
+    return response.data;
+  }
+
+  async getFirmwarePushEvents(pushId: string, limit = 50, offset = 0, eventType?: string) {
+    const params: Record<string, string> = {};
+    if (limit !== 50) params.limit = String(limit);
+    if (offset > 0) params.offset = String(offset);
+    if (eventType) params.event_type = eventType;
+    const response = await this.api.get(`/firmware/push/${pushId}/events`, { params });
     return response.data;
   }
 

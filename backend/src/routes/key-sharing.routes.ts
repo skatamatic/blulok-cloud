@@ -458,7 +458,9 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
       id,
       {
         access_level: req.body.access_level,
-        expires_at: req.body.expires_at ? new Date(req.body.expires_at) : null,
+        expires_at: req.body.expires_at === undefined
+          ? undefined
+          : (req.body.expires_at ? new Date(req.body.expires_at) : null),
         notes: req.body.notes,
         access_restrictions: req.body.access_restrictions,
         is_active: req.body.is_active,

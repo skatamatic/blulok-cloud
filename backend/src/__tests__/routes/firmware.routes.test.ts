@@ -56,6 +56,31 @@ jest.mock('@/services/firmware/firmware.service', () => ({
   },
 }));
 
+// Mock FirmwarePushEventModel — provides event log and device statuses for enhanced push-status
+// Container accessed lazily so jest.mock hoisting doesn't cause ReferenceErrors
+const pushEventMocks = {
+  findByPushId: jest.fn().mockResolvedValue([
+    { id: 'evt-1', push_id: 'push-1', event_type: 'progress', progress_percent: 50, phase: 'distributing', message: 'Distributing to devices', reported_at: new Date(), created_at: new Date() },
+  ]),
+  getDeviceStatuses: jest.fn().mockResolvedValue([
+    { device_id: 'lock-1', status: 'complete', reported_at: new Date() },
+    { device_id: 'lock-2', status: 'downloading', progress_percent: 30, reported_at: new Date() },
+  ]),
+  findByPushIdAndType: jest.fn().mockResolvedValue([]),
+  countByPushId: jest.fn().mockResolvedValue(5),
+};
+
+jest.mock('@/models/firmware-push-event.model', () => ({
+  FirmwarePushEventModel: jest.fn().mockImplementation(() => ({
+    findByPushId: (...args: any[]) => pushEventMocks.findByPushId(...args),
+    findByPushIdAndType: (...args: any[]) => pushEventMocks.findByPushIdAndType(...args),
+    getDeviceStatuses: (...args: any[]) => pushEventMocks.getDeviceStatuses(...args),
+    countByPushId: (...args: any[]) => pushEventMocks.countByPushId(...args),
+    create: jest.fn(),
+    createMany: jest.fn(),
+  })),
+}));
+
 // Mock GatewayModel for push route
 jest.mock('@/models/gateway.model', () => ({
   GatewayModel: jest.fn().mockImplementation(() => ({
@@ -372,13 +397,16 @@ describe('Firmware Routes', () => {
   // =========================================================================
 
   describe('GET /api/v1/firmware/push-status/:gatewayId', () => {
-    it('should return push status', async () => {
+    it('should return push status with key fields', async () => {
       const response = await request(app)
         .get('/api/v1/firmware/push-status/gw-1')
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expect(response.status).toBe(200);
+      expect(response.body.data.id).toBe('push-1');
       expect(response.body.data.status).toBe('transferring');
+      expect(response.body.data.chunks_total).toBe(10);
+      expect(response.body.data.chunks_sent).toBe(5);
     });
 
     it('should pass target_type query to getPushStatus', async () => {
@@ -388,6 +416,109 @@ describe('Firmware Routes', () => {
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expect(FirmwareService.getPushStatus).toHaveBeenCalledWith('gw-1', 'gateway');
+    });
+
+    it('should include recent_events and device_statuses with correct content', async () => {
+      const response = await request(app)
+        .get('/api/v1/firmware/push-status/gw-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.recent_events).toHaveLength(1);
+      expect(response.body.data.recent_events[0].event_type).toBe('progress');
+      expect(response.body.data.recent_events[0].progress_percent).toBe(50);
+      expect(response.body.data.recent_events[0].phase).toBe('distributing');
+      expect(response.body.data.device_statuses).toHaveLength(2);
+      expect(response.body.data.device_statuses[0].device_id).toBe('lock-1');
+      expect(response.body.data.device_statuses[0].status).toBe('complete');
+      expect(response.body.data.device_statuses[1].device_id).toBe('lock-2');
+      expect(response.body.data.device_statuses[1].progress_percent).toBe(30);
+      expect(pushEventMocks.findByPushId).toHaveBeenCalledWith('push-1', 20);
+      expect(pushEventMocks.getDeviceStatuses).toHaveBeenCalledWith('push-1');
+    });
+
+    it('should omit events when include_events=false', async () => {
+      const response = await request(app)
+        .get('/api/v1/firmware/push-status/gw-1?include_events=false')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).not.toHaveProperty('recent_events');
+      expect(response.body.data).not.toHaveProperty('device_statuses');
+    });
+  });
+
+  // =========================================================================
+  // Push Events
+  // =========================================================================
+
+  describe('GET /api/v1/firmware/push/:pushId/events', () => {
+    it('should return paginated events with response shape', async () => {
+      const response = await request(app)
+        .get('/api/v1/firmware/push/push-1/events')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toHaveProperty('events');
+      expect(response.body.data).toHaveProperty('device_statuses');
+      expect(response.body.data).toHaveProperty('total');
+      expect(response.body.data.total).toBe(5);
+      expect(response.body.data).toHaveProperty('limit');
+      expect(response.body.data).toHaveProperty('offset');
+      expect(response.body.data.limit).toBe(50);
+      expect(response.body.data.offset).toBe(0);
+    });
+
+    it('should filter events by event_type', async () => {
+      await request(app)
+        .get('/api/v1/firmware/push/push-1/events?event_type=error')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(pushEventMocks.findByPushIdAndType).toHaveBeenCalledWith('push-1', 'error', 50, 0);
+    });
+
+    it('should support limit and offset and return them in response', async () => {
+      const response = await request(app)
+        .get('/api/v1/firmware/push/push-1/events?limit=10&offset=5')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(pushEventMocks.findByPushId).toHaveBeenCalledWith('push-1', 10, 5);
+      expect(response.body.data.limit).toBe(10);
+      expect(response.body.data.offset).toBe(5);
+    });
+
+    it('should clamp limit to 200 max', async () => {
+      await request(app)
+        .get('/api/v1/firmware/push/push-1/events?limit=999')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(pushEventMocks.findByPushId).toHaveBeenCalledWith('push-1', 200, 0);
+    });
+
+    it('should return 404 for non-existent push', async () => {
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      (FirmwareService.getPushById as jest.Mock).mockResolvedValueOnce(null);
+      const response = await request(app)
+        .get('/api/v1/firmware/push/bad-push/events')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(response.status).toBe(404);
+    });
+
+    it('should enforce RBAC for FACILITY_ADMIN', async () => {
+      const response = await request(app)
+        .get('/api/v1/firmware/push/push-1/events')
+        .set('Authorization', `Bearer ${testData.users.facility2Admin.token}`);
+
+      expect(response.status).toBe(403);
+    });
+
+    it('should reject TENANT', async () => {
+      const response = await request(app)
+        .get('/api/v1/firmware/push/push-1/events')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`);
+
+      expectForbidden(response);
     });
   });
 

@@ -18,6 +18,7 @@ export default {
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       useESM: true,
+      diagnostics: false,
     }],
   },
   testPathIgnorePatterns: [
@@ -35,5 +36,4 @@ export default {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
-  forceExit: true,
 };

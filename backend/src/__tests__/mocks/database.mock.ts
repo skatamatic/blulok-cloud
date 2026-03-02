@@ -60,9 +60,15 @@ const createMockQueryBuilder = () => {
     avg: jest.fn().mockReturnThis(),
     avgDistinct: jest.fn().mockReturnThis(),
     first: jest.fn().mockResolvedValue(undefined),
-    then: jest.fn().mockResolvedValue([]),
-    catch: jest.fn().mockResolvedValue([]),
-    finally: jest.fn().mockResolvedValue([]),
+    then: jest.fn((onFulfilled?: (value: any[]) => any, onRejected?: (reason: any) => any) => (
+      Promise.resolve([]).then(onFulfilled, onRejected)
+    )),
+    catch: jest.fn((onRejected?: (reason: any) => any) => (
+      Promise.resolve([]).catch(onRejected)
+    )),
+    finally: jest.fn((onFinally?: () => void) => (
+      Promise.resolve([]).finally(onFinally)
+    )),
     clone: jest.fn(() => createMockQueryBuilder()),
     raw: jest.fn().mockResolvedValue([{ '1': 1 }]),
     fn: {

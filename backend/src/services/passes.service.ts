@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import type { SerializedSchedule } from '@/services/schedules/schedule-serialization.service';
 
 /**
  * Route Pass Claims Interface
@@ -39,14 +40,7 @@ export interface RoutePassClaims {
    * Schedule data for time-based access control
    * Maps facility IDs to their schedule time windows
    */
-  schedule?: {
-    facility_id: string;
-    time_windows: Array<{
-      day_of_week: number; // 0=Sunday, 6=Saturday
-      start_time: string;  // "HH:MM:SS"
-      end_time: string;    // "HH:MM:SS"
-    }>;
-  };
+  schedule?: SerializedSchedule;
 }
 
 /**
@@ -89,14 +83,7 @@ export class PassesService {
     userId: string;
     devicePublicKey: string;
     audiences: string[];
-    schedule?: {
-      facility_id: string;
-      time_windows: Array<{
-        day_of_week: number;
-        start_time: string;
-        end_time: string;
-      }>;
-    };
+    schedule?: SerializedSchedule;
   }): Promise<string> {
     const claims: RoutePassClaims = {
       iss: 'BluCloud:Root',

@@ -17,10 +17,12 @@ import {
   CloudIcon,
   ExclamationTriangleIcon,
   FunnelIcon,
-  ClockIcon
+  ClockIcon,
+  KeyIcon,
+  RectangleGroupIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { Facility, DeviceHierarchy, BluLokDevice, Unit, DeviceFilters, UnitFilters } from '@/types/facility.types';
+import { Facility, DeviceHierarchy, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
@@ -28,13 +30,16 @@ import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
-import { FacilitySchedulesTab } from '@/components/Schedules/FacilitySchedulesTab';
-import { UserSchedulesTab } from '@/components/Schedules/UserSchedulesTab';
+import { SchedulesHubTab } from '@/components/Schedules/SchedulesHubTab';
+import { AccessCodeManagementTab } from '@/components/AccessCodes/AccessCodeManagementTab';
+import { MyAccessCodes } from '@/components/AccessCodes/MyAccessCodes';
+import { DeviceGroupManager } from '@/components/AccessCodes/DeviceGroupManager';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { withReturnPath } from '@/hooks/useBackNavigation';
 
 const DEVICES_PAGE_LIMIT = 30;
 const UNITS_PAGE_LIMIT = 20;
@@ -79,11 +84,11 @@ export default function FacilityDetailsPage() {
   const [loading, setLoading] = useState(true);
   
   // Get initial tab from URL query parameter or location state
-  const getInitialTab = (): 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules' => {
+  const getInitialTab = (): 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes' => {
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
-    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'user-schedules'].includes(tabParam)) {
-      return tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules';
+    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'device-groups', 'access-codes'].includes(tabParam)) {
+      return tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes';
     }
     if ((location.state as any)?.tab) {
       return (location.state as any).tab;
@@ -91,7 +96,7 @@ export default function FacilityDetailsPage() {
     return 'overview';
   };
   
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules'>(getInitialTab());
+  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes'>(getInitialTab());
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
@@ -126,6 +131,8 @@ export default function FacilityDetailsPage() {
   const [facilityUnitsPageData, setFacilityUnitsPageData] = useState<Unit[]>([]);
   const [unitLoading, setUnitLoading] = useState(false);
   const [unitsInitialLoad, setUnitsInitialLoad] = useState(true);
+  const [deviceGroups, setDeviceGroups] = useState<DeviceGroup[]>([]);
+  const [groupNamesByDeviceId, setGroupNamesByDeviceId] = useState<Record<string, string[]>>({});
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
@@ -172,8 +179,8 @@ export default function FacilityDetailsPage() {
   useEffect(() => {
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
-    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'user-schedules'].includes(tabParam)) {
-      setActiveTab(tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'user-schedules');
+    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'device-groups', 'access-codes'].includes(tabParam)) {
+      setActiveTab(tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes');
     } else if (!tabParam && facility) {
       // If no tab in URL and facility is loaded, add default tab to URL
       urlParams.set('tab', 'overview');
@@ -342,6 +349,32 @@ export default function FacilityDetailsPage() {
     }
   }, [facility?.id, unitFilters, facilityUnitsPageNumber]);
 
+  const loadDeviceGroups = useCallback(async () => {
+    if (!facility?.id || !canManage) return;
+
+    try {
+      const groupsResponse = await apiService.getDeviceGroups(facility.id);
+      const groups = groupsResponse.data || [];
+      setDeviceGroups(groups);
+
+      const groupDetails = await Promise.all(groups.map((group) => apiService.getDeviceGroup(group.id)));
+      const mapped: Record<string, string[]> = {};
+      groupDetails.forEach((detail) => {
+        const group = detail.data;
+        const groupName = group.name;
+        (group.members || []).forEach((member) => {
+          mapped[member.device_id] = [...(mapped[member.device_id] || []), groupName];
+        });
+      });
+
+      setGroupNamesByDeviceId(mapped);
+    } catch (error) {
+      console.error('Failed to load device groups:', error);
+      setDeviceGroups([]);
+      setGroupNamesByDeviceId({});
+    }
+  }, [facility?.id, canManage]);
+
   // Keep refs updated for WebSocket callbacks
   useEffect(() => {
     loadDevicesRef.current = loadFacilityDevices;
@@ -355,6 +388,12 @@ export default function FacilityDetailsPage() {
     if (activeTab !== 'devices') return;
     loadFacilityDevices();
   }, [activeTab, loadFacilityDevices]);
+
+  useEffect(() => {
+    if (!facility?.id || !canManage) return;
+    if (!['devices', 'device-groups', 'access-codes'].includes(activeTab)) return;
+    loadDeviceGroups();
+  }, [activeTab, facility?.id, canManage, loadDeviceGroups]);
 
   useEffect(() => {
     if (activeTab !== 'units') return;
@@ -478,7 +517,9 @@ export default function FacilityDetailsPage() {
         onClick={() => {
           // Preserve current tab in URL when navigating to unit
           const currentTab = activeTab || 'overview';
-          navigate(`/units/${unit.id}`, { state: { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` } });
+          navigate(`/units/${unit.id}`, {
+            state: withReturnPath(location, { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` }),
+          });
         }}
       >
         {/* Header */}
@@ -616,9 +657,10 @@ export default function FacilityDetailsPage() {
             ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
             { key: 'units', label: 'Units', icon: HomeIcon },
             { key: 'schedules', label: 'Schedules', icon: ClockIcon },
-            ...(!isTenant && canManage ? [{ key: 'user-schedules', label: 'User Schedules', icon: UserIcon }] : []),
+            { key: 'access-codes', label: 'Access Codes', icon: KeyIcon },
+            ...(!isTenant && canManage ? [{ key: 'device-groups', label: 'Device Groups', icon: RectangleGroupIcon }] : []),
             ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
-            ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : [])
+            ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : []),
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -857,18 +899,27 @@ export default function FacilityDetailsPage() {
                     device={device as BluLokDevice}
                     canManage={canManage}
                     onToggleLock={() => handleLockToggle(device as BluLokDevice)}
-                    onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'facility', facilityId: facility.id } })}
+                    onViewDevice={() => navigate(`/devices/${device.id}`, {
+                      state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
+                    })}
                     onViewUnit={device.unit_id ? () => {
                       // Preserve current tab in URL when navigating to unit
                       const currentTab = activeTab || 'overview';
-                      navigate(`/units/${device.unit_id}`, { state: { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` } });
+                      navigate(`/units/${device.unit_id}`, {
+                        state: withReturnPath(location, { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` }),
+                      });
                     } : undefined}
                   />
                 ) : (
                   <ACDeviceCardShared
                     key={device.id}
                     device={device}
-                    onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'facility', facilityId: facility.id } })}
+                    onViewDevice={() => navigate(`/devices/${device.id}`, {
+                      state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
+                    })}
+                    canManageAccessMethods={canManage}
+                    onAccessMethodsUpdated={loadFacilityDevices}
+                    groupNames={groupNamesByDeviceId[device.id] || []}
                   />
                 )
               )}
@@ -1091,16 +1142,22 @@ export default function FacilityDetailsPage() {
 
       {/* Schedules Tab */}
       {activeTab === 'schedules' && facility && (
-        <FacilitySchedulesTab
+        <SchedulesHubTab
           facilityId={facility.id}
           userId={authState.user?.id}
+          canManageUserSchedules={!isTenant && canManage}
         />
       )}
 
-      {/* User Schedules Tab */}
-      {activeTab === 'user-schedules' && facility && (
-        <UserSchedulesTab
+      {activeTab === 'device-groups' && facility && (
+        <DeviceGroupManager
           facilityId={facility.id}
+          devices={[
+            ...((deviceHierarchy?.accessControlDevices || []).map((d: any) => ({ ...d, device_category: 'access_control' }))),
+            ...((deviceHierarchy?.blulokDevices || []).map((d: any) => ({ ...d, device_category: 'blulok' }))),
+          ] as any}
+          groups={deviceGroups}
+          onGroupsChanged={loadDeviceGroups}
         />
       )}
 
@@ -1112,6 +1169,17 @@ export default function FacilityDetailsPage() {
           isDevMode={localStorage.getItem('fms-simulated-enabled') === 'true'}
           canEditFMS={canEditFMS}
         />
+      )}
+
+      {activeTab === 'access-codes' && facility && (
+        (isTenant || !canManage) ? (
+          <MyAccessCodes facilityId={facility.id} />
+        ) : (
+          <AccessCodeManagementTab
+            facilityId={facility.id}
+            devices={(deviceHierarchy?.accessControlDevices || []) as any}
+          />
+        )
       )}
 
       {/* Add Device Modal */}

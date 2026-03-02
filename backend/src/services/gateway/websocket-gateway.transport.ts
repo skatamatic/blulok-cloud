@@ -325,16 +325,28 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       }
 
       // Firmware messages from gateway
-      if (type === 'FIRMWARE_CHUNK_ACK' || type === 'FIRMWARE_UPDATE_STATUS') {
+      if (type === 'FIRMWARE_CHUNK_ACK' || type === 'FIRMWARE_UPDATE_STATUS' || type === 'FIRMWARE_PROGRESS') {
         try {
           const { FirmwareService } = await import('@/services/firmware/firmware.service');
           if (type === 'FIRMWARE_CHUNK_ACK') {
             await FirmwareService.handleChunkAck(authed.facilityId, msg);
-          } else {
+          } else if (type === 'FIRMWARE_UPDATE_STATUS') {
             await FirmwareService.handleUpdateStatus(authed.facilityId, msg);
+          } else {
+            await FirmwareService.handleProgress(authed.facilityId, msg);
           }
         } catch (err) {
           logger.warn(`Gateway WS firmware message handling error type=${type} facility=${authed.facilityId}`, err);
+        }
+        return;
+      }
+
+      if (type === 'ACCESS_CODE_UPDATE_ACK') {
+        try {
+          const { AccessCodeService } = await import('@/services/access-code.service');
+          AccessCodeService.getInstance().handleGatewayAccessCodeUpdateAck(authed.facilityId, msg);
+        } catch (err) {
+          logger.warn(`Gateway WS ACCESS_CODE_UPDATE_ACK handling error facility=${authed.facilityId}`, err);
         }
         return;
       }

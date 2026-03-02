@@ -6,7 +6,7 @@ import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { UserRole } from '@/types/auth.types';
 import { UserFacilityScheduleModel } from '@/models/user-facility-schedule.model';
-import { ScheduleModel } from '@/models/schedule.model';
+import { serializeScheduleForTransport, type SerializedSchedule } from '@/services/schedules/schedule-serialization.service';
 
 export class RoutePassError extends Error {
   public status: number;
@@ -20,6 +20,7 @@ export interface RequestUserContext {
   userId: string;
   role: UserRole;
   facilityIds?: string[];
+  facilityId?: string;
 }
 
 export class RoutePassOrchestrator {
@@ -54,10 +55,36 @@ export class RoutePassOrchestrator {
       throw new RoutePassError('No registered device key', 409);
     }
 
-    // Ensure facilityIds for facility admin
+    // Ensure facilityIds for scoped roles
     let facilityIds = ctx.facilityIds;
     if (ctx.role === UserRole.FACILITY_ADMIN && (!facilityIds || facilityIds.length === 0)) {
       facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
+    }
+
+    if (
+      (ctx.role === UserRole.TENANT || ctx.role === UserRole.MAINTENANCE)
+      && (!facilityIds || facilityIds.length === 0)
+    ) {
+      facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
+    }
+
+    let requestedFacilityId: string | undefined;
+    if (ctx.facilityId) {
+      if (ctx.role === UserRole.ADMIN || ctx.role === UserRole.DEV_ADMIN) {
+        const facility = await db('facilities')
+          .select('id')
+          .where('id', ctx.facilityId)
+          .first();
+        if (!facility) {
+          throw new RoutePassError('Requested facility was not found', 404);
+        }
+      } else {
+        if (!facilityIds?.includes(ctx.facilityId)) {
+          throw new RoutePassError('Access denied to requested facility', 403);
+        }
+      }
+      requestedFacilityId = ctx.facilityId;
+      facilityIds = [requestedFacilityId];
     }
 
     // Resolve audiences
@@ -65,18 +92,12 @@ export class RoutePassOrchestrator {
       userId,
       userRole: ctx.role,
       facilityIds,
+      facilityId: requestedFacilityId,
     });
 
     // Fetch user's schedule for the first facility they have access to
     // For shared keys, we'll inherit from primary tenant (handled below)
-    let schedule: {
-      facility_id: string;
-      time_windows: Array<{
-        day_of_week: number;
-        start_time: string;
-        end_time: string;
-      }>;
-    } | undefined;
+    let schedule: SerializedSchedule | undefined;
 
     // Get facility IDs if not already available
     let effectiveFacilityIds = facilityIds;
@@ -86,23 +107,19 @@ export class RoutePassOrchestrator {
       }
     }
 
-    // Get schedule for first facility (if user has facility access)
-    if (effectiveFacilityIds && effectiveFacilityIds.length > 0) {
-      const firstFacilityId = effectiveFacilityIds[0];
+    // Resolve schedule for requested facility first; otherwise use first accessible facility.
+    const scheduleFacilityId = requestedFacilityId || (effectiveFacilityIds && effectiveFacilityIds.length > 0 ? effectiveFacilityIds[0] : undefined);
+    if (scheduleFacilityId) {
       const userSchedule = await UserFacilityScheduleModel.getUserScheduleForFacilityWithDetails(
         userId,
-        firstFacilityId
+        scheduleFacilityId
       );
 
       if (userSchedule && userSchedule.schedule.time_windows.length > 0) {
-        schedule = {
-          facility_id: firstFacilityId,
-          time_windows: userSchedule.schedule.time_windows.map(tw => ({
-            day_of_week: tw.day_of_week,
-            start_time: tw.start_time,
-            end_time: tw.end_time,
-          })),
-        };
+        schedule = serializeScheduleForTransport({
+          facilityId: scheduleFacilityId,
+          timeWindows: userSchedule.schedule.time_windows,
+        });
       }
     }
 
@@ -120,36 +137,33 @@ export class RoutePassOrchestrator {
 
     // If we have shared keys and no schedule yet, try to get schedule from primary tenant
     if (sharedKeyPrimaryTenantIds.size > 0 && !schedule) {
-      // Get facility ID from one of the shared locks
       const sharedAudience = audiences.find(aud => aud.startsWith('shared_key:'));
       if (sharedAudience) {
         const parts = sharedAudience.split(':');
         const primaryTenantId = parts[1];
         const lockId = parts[2];
+        let sharedFacilityId = requestedFacilityId;
 
-        // Get facility ID from lock
-        const lockRow = await db('blulok_devices as bd')
-          .join('units as u', 'bd.unit_id', 'u.id')
-          .where('bd.id', lockId)
-          .select('u.facility_id')
-          .first();
+        if (!sharedFacilityId) {
+          const lockRow = await db('blulok_devices as bd')
+            .join('units as u', 'bd.unit_id', 'u.id')
+            .where('bd.id', lockId)
+            .select('u.facility_id')
+            .first();
+          sharedFacilityId = lockRow?.facility_id as string | undefined;
+        }
 
-        if (lockRow?.facility_id) {
-          const facilityId = lockRow.facility_id as string;
+        if (sharedFacilityId) {
           const primaryTenantSchedule = await UserFacilityScheduleModel.getUserScheduleForFacilityWithDetails(
             primaryTenantId,
-            facilityId
+            sharedFacilityId
           );
 
           if (primaryTenantSchedule && primaryTenantSchedule.schedule.time_windows.length > 0) {
-            schedule = {
-              facility_id: facilityId,
-              time_windows: primaryTenantSchedule.schedule.time_windows.map(tw => ({
-                day_of_week: tw.day_of_week,
-                start_time: tw.start_time,
-                end_time: tw.end_time,
-              })),
-            };
+            schedule = serializeScheduleForTransport({
+              facilityId: sharedFacilityId,
+              timeWindows: primaryTenantSchedule.schedule.time_windows,
+            });
           }
         }
       }

@@ -10,6 +10,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
+import { useBackNavigation } from '@/hooks/useBackNavigation';
 
 const statusColors = {
   available: 'bg-green-500 border-green-600',
@@ -27,6 +28,7 @@ const lockStatusColors = {
 export default function SimpleSiteMapPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const handleBack = useBackNavigation('/units');
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,7 +83,7 @@ export default function SimpleSiteMapPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <button
-              onClick={() => navigate('/units')}
+              onClick={handleBack}
               className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
             >
               <ArrowLeftIcon className="h-5 w-5" />

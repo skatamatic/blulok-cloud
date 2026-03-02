@@ -119,7 +119,7 @@ JWT payload fields:
 | `sha256`           | string | SHA-256 hex hash of the full binary        |
 | `size`             | number | Binary size in bytes                       |
 | `chunk_count`      | number | Total number of chunks                     |
-| `chunk_size`       | number | Chunk size in bytes (256KB)                |
+| `chunk_size`       | number | Chunk size in bytes (128KB)                |
 | `nonce`            | string | UUID for replay protection + ACK correlation |
 | `compatible_models`| array  | Compatible device models (optional)        |
 | `iss`              | string | `BluCloud:Root`                            |
@@ -221,9 +221,9 @@ Before initiating a push, the system verifies:
 
 ## Chunk Size
 
-- **CHUNK_SIZE_BYTES = 256KB** raw data
-- Base64 encoding yields ~341KB, well within the 512KB WebSocket frame limit
-- A 1MB firmware binary produces 4 chunks
+- **CHUNK_SIZE_BYTES = 128KB** raw data
+- Base64 encoding yields ~171KB, well within the 512KB WebSocket frame limit
+- A 1MB firmware binary produces 8 chunks
 
 ## Gateway Disconnect Handling
 

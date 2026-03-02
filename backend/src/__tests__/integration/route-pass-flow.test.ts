@@ -13,10 +13,15 @@ const createMockDbConnection = (userDeviceRow: any, lockRows: any[]) => {
   return jest.fn((table: string) => {
     const qb: any = {
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
       whereIn: jest.fn().mockReturnThis(),
       whereNull: jest.fn().mockReturnThis(),
+      whereRaw: jest.fn().mockReturnThis(),
+      andWhereRaw: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
       join: jest.fn().mockReturnThis(),
       leftJoin: jest.fn().mockReturnThis(),
       first: jest.fn(),

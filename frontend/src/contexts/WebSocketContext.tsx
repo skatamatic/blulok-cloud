@@ -117,7 +117,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     // Get stored metadata for this subscription
     const meta = subscriptionMeta.current.get(subscriptionId);
     if (!meta) {
-      console.warn('🔌 WebSocketContext: Unknown subscription ID:', subscriptionId);
+      // Idempotent unsubscribe: route transitions and strict-mode effects can call cleanup twice.
+      console.debug('🔌 WebSocketContext: Ignoring unknown subscription ID:', subscriptionId);
       return;
     }
 

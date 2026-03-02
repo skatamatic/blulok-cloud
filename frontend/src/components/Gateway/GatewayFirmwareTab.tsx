@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ArrowUpTrayIcon,
   CheckCircleIcon,
@@ -8,55 +8,30 @@ import {
   ArrowPathIcon,
   StopIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
+  CpuChipIcon,
+  ExclamationCircleIcon,
+  SignalIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
-
-type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
-
-const TARGET_TYPE_LABELS: Record<FirmwareTargetType, string> = {
-  gateway: 'Gateway',
-  lock: 'Lock',
-  friend_node: 'Friend Node',
-  access_control: 'Access Control',
-};
-
-const TARGET_TYPE_COLORS: Record<FirmwareTargetType, string> = {
-  gateway: 'text-blue-600 dark:text-blue-400',
-  lock: 'text-emerald-600 dark:text-emerald-400',
-  friend_node: 'text-purple-600 dark:text-purple-400',
-  access_control: 'text-amber-600 dark:text-amber-400',
-};
-
-interface FirmwareImage {
-  id: string;
-  version: string;
-  target_type: FirmwareTargetType;
-  filename: string;
-  sha256_hash: string;
-  size_bytes: number;
-  description?: string;
-  compatible_models?: string[];
-  minimum_version?: string;
-  created_at: string;
-}
-
-interface FirmwarePush {
-  id: string;
-  firmware_id: string;
-  gateway_id: string;
-  facility_id: string;
-  target_type: FirmwareTargetType;
-  status: 'pending' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
-  chunks_total: number | null;
-  chunks_sent: number;
-  error_message?: string;
-  initiated_by: string;
-  started_at?: string;
-  completed_at?: string;
-  created_at: string;
-}
+import {
+  FirmwareTargetType,
+  FirmwareImage,
+  FirmwarePush,
+  FirmwarePushWithEvents,
+  FirmwarePushProgress,
+  FirmwarePushEvent,
+  FirmwareDeviceStatus,
+  TARGET_TYPE_LABELS,
+  TARGET_TYPE_COLORS,
+  TERMINAL_STATUSES,
+  PHASE_ORDER,
+  PHASE_LABELS,
+  STEP_LABELS,
+  DEVICE_STATUS_CONFIG,
+} from '@/types/firmware.types';
 
 interface GatewayFirmwareTabProps {
   gatewayId: string;
@@ -72,22 +47,19 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
 
   const [selectedTargetType, setSelectedTargetType] = useState<FirmwareTargetType>('gateway');
   const [firmware, setFirmware] = useState<FirmwareImage[]>([]);
-  const [activePush, setActivePush] = useState<FirmwarePush | null>(null);
+  const [activePush, setActivePush] = useState<FirmwarePushWithEvents | null>(null);
   const [pushHistory, setPushHistory] = useState<FirmwarePush[]>([]);
   const [loading, setLoading] = useState(true);
   const [pushing, setPushing] = useState(false);
   const [confirmPushId, setConfirmPushId] = useState<string | null>(null);
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [eventsExpanded, setEventsExpanded] = useState(false);
 
-  // Progress state from WS subscription
-  const [liveProgress, setLiveProgress] = useState<{
-    step: string;
-    percent: number;
-    chunksTotal?: number;
-    chunksSent?: number;
-    message?: string;
-  } | null>(null);
+  const [liveProgress, setLiveProgress] = useState<FirmwarePushProgress | null>(null);
+  const [liveDevices, setLiveDevices] = useState<FirmwareDeviceStatus[]>([]);
+  const [liveEvents, setLiveEvents] = useState<FirmwarePushEvent[]>([]);
+  const [liveError, setLiveError] = useState<{ code?: string; message: string; severity?: 'warning' | 'critical' } | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -98,23 +70,37 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
         apiService.getFirmwarePushHistory(gatewayId, selectedTargetType, HISTORY_PAGE_SIZE),
       ]);
       setFirmware(fwRes.data || []);
-      setActivePush(pushStatusRes.data || null);
+
+      const pushData = pushStatusRes.data as FirmwarePushWithEvents | null;
+      setActivePush(pushData || null);
 
       const histData = pushHistoryRes.data || [];
       setPushHistory(histData);
       setHistoryHasMore(histData.length >= HISTORY_PAGE_SIZE);
 
-      // Hydrate live progress from active push (handles browser reload)
-      if (pushStatusRes.data && !['complete', 'failed', 'cancelled'].includes(pushStatusRes.data.status)) {
-        const p = pushStatusRes.data as FirmwarePush;
+      if (pushData && !TERMINAL_STATUSES.includes(pushData.status)) {
         setLiveProgress({
-          step: p.status,
-          percent: p.chunks_total ? Math.round((p.chunks_sent / p.chunks_total) * 100) : 0,
-          chunksTotal: p.chunks_total || undefined,
-          chunksSent: p.chunks_sent,
+          pushId: pushData.id,
+          firmwareId: pushData.firmware_id,
+          gatewayId: pushData.gateway_id,
+          facilityId: pushData.facility_id,
+          targetType: pushData.target_type,
+          step: pushData.status,
+          percent: pushData.progress_percent || (pushData.chunks_total ? Math.round((pushData.chunks_sent / pushData.chunks_total) * 100) : 0),
+          chunksTotal: pushData.chunks_total || undefined,
+          chunksSent: pushData.chunks_sent,
+          phase: pushData.phase,
+          devicesTotal: pushData.devices_total,
+          devicesComplete: pushData.devices_complete,
+          devicesFailed: pushData.devices_failed,
         });
+        setLiveDevices(pushData.device_statuses || []);
+        setLiveEvents(pushData.recent_events || []);
       } else {
         setLiveProgress(null);
+        setLiveDevices([]);
+        setLiveEvents([]);
+        setLiveError(null);
       }
     } catch {
       addToast({ type: 'error', title: 'Failed to load firmware data' });
@@ -127,31 +113,55 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
     loadData();
   }, [loadData]);
 
-  // Subscribe to firmware push progress -- filters by gatewayId AND selectedTargetType
+  const terminalRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     const subId = ws.subscribe(
       'firmware_push_progress',
-      (data: any) => {
+      (data: FirmwarePushProgress) => {
         if (data.gatewayId !== gatewayId) return;
-        // Filter by target type to prevent cross-type progress bleed during concurrent pushes
         if (data.targetType && data.targetType !== selectedTargetType) return;
 
-        setLiveProgress({
-          step: data.step,
-          percent: data.percent,
-          chunksTotal: data.chunksTotal,
-          chunksSent: data.chunksSent,
-          message: data.message,
-        });
+        setLiveProgress(data);
 
-        if (['complete', 'failed', 'cancelled'].includes(data.step)) {
-          setTimeout(() => loadData(), 500);
+        if (data.devices?.length) {
+          setLiveDevices(data.devices);
+        }
+
+        setLiveError(data.error ?? null);
+
+        if (data.message || data.phase || data.error) {
+          const severity = data.error?.severity;
+          const typedSeverity: 'warning' | 'critical' | undefined =
+            severity === 'warning' || severity === 'critical' ? severity : undefined;
+
+          setLiveEvents((prev) => {
+            const newEvent: FirmwarePushEvent = {
+              id: `live-${Date.now()}`,
+              push_id: data.pushId,
+              event_type: data.error ? 'error' : 'progress',
+              progress_percent: data.percent,
+              phase: data.phase,
+              error_message: data.error?.message,
+              error_severity: typedSeverity,
+              message: data.message || data.error?.message,
+              reported_at: data.timestamp || new Date().toISOString(),
+              created_at: new Date().toISOString(),
+            };
+            return [newEvent, ...prev].slice(0, 50);
+          });
+        }
+
+        const isTerminal = (TERMINAL_STATUSES as readonly string[]).includes(data.step);
+        if (isTerminal) {
+          terminalRefreshTimer.current = setTimeout(() => loadData(), 500);
         }
       },
     );
 
     return () => {
       if (subId) ws.unsubscribe(subId);
+      if (terminalRefreshTimer.current) clearTimeout(terminalRefreshTimer.current);
     };
   }, [ws, gatewayId, selectedTargetType, loadData]);
 
@@ -161,7 +171,10 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
       setPushing(true);
       const res = await apiService.pushFirmware(firmwareId, gatewayId);
       setActivePush(res.data);
-      setLiveProgress({ step: 'pending', percent: 0 });
+      setLiveProgress({ pushId: res.data.id, firmwareId, gatewayId, facilityId: res.data.facility_id, targetType: selectedTargetType, step: 'pending', percent: 0 });
+      setLiveDevices([]);
+      setLiveEvents([]);
+      setLiveError(null);
       addToast({ type: 'success', title: 'Firmware push initiated' });
     } catch (err: any) {
       addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to initiate push' });
@@ -190,7 +203,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
         pushHistory.length,
       );
       const more = res.data || [];
-      setPushHistory(prev => [...prev, ...more]);
+      setPushHistory((prev) => [...prev, ...more]);
       setHistoryHasMore(more.length >= HISTORY_PAGE_SIZE);
     } catch {
       addToast({ type: 'error', title: 'Failed to load more history' });
@@ -199,12 +212,11 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
     }
   };
 
-  const isActiveTransfer = activePush && !['complete', 'failed', 'cancelled'].includes(activePush.status);
+  const isActiveTransfer = activePush && !TERMINAL_STATUSES.includes(activePush.status);
 
-  // Resolve firmware version for push (from current list or from push data)
   const getActivePushVersion = (): string | null => {
     if (!activePush) return null;
-    const fw = firmware.find(f => f.id === activePush.firmware_id);
+    const fw = firmware.find((f) => f.id === activePush.firmware_id);
     return fw ? fw.version : null;
   };
 
@@ -212,16 +224,6 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  };
-
-  const stepLabels: Record<string, string> = {
-    pending: 'Preparing...',
-    manifest_sent: 'Sending manifest...',
-    transferring: 'Transferring chunks...',
-    verifying: 'Verifying...',
-    complete: 'Complete',
-    failed: 'Failed',
-    cancelled: 'Cancelled',
   };
 
   const statusIcon = (status: string) => {
@@ -233,19 +235,21 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
     }
   };
 
-  // Loading skeleton
+  const currentPhase = liveProgress?.phase || (liveProgress?.step === 'transferring' ? 'transferring' : undefined);
+  const effectivePercent = liveProgress?.percent || 0;
+
   if (loading) {
     return (
       <div className="space-y-6">
         <div className="flex gap-0 w-fit">
-          {[1, 2, 3].map(i => (
+          {[1, 2, 3].map((i) => (
             <div key={i} className="h-10 w-24 bg-gray-200 dark:bg-gray-700 animate-pulse first:rounded-l-lg last:rounded-r-lg" />
           ))}
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
           <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-4" />
           <div className="space-y-3">
-            {[1, 2, 3].map(i => (
+            {[1, 2, 3].map((i) => (
               <div key={i} className="h-16 bg-gray-100 dark:bg-gray-700/50 rounded-lg animate-pulse" />
             ))}
           </div>
@@ -298,19 +302,17 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
       </div>
 
       {/* Active Push Progress */}
-      {(isActiveTransfer || (liveProgress && !['complete', 'failed', 'cancelled'].includes(liveProgress.step))) && (
-        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 p-6">
-          <div className="flex items-center justify-between mb-3">
+      {(isActiveTransfer || (liveProgress && !(TERMINAL_STATUSES as readonly string[]).includes(liveProgress.step))) && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-800 overflow-hidden">
+          {/* Header */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 px-6 py-4 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-blue-800 dark:text-blue-300 uppercase tracking-wide">
                 Firmware Update In Progress
               </h3>
-              {/* Show version and target type context */}
               <div className="flex items-center gap-2 mt-1">
                 {getActivePushVersion() && (
-                  <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
-                    v{getActivePushVersion()}
-                  </span>
+                  <span className="text-xs font-medium text-blue-700 dark:text-blue-300">v{getActivePushVersion()}</span>
                 )}
                 {activePush?.target_type && (
                   <span className={`text-xs font-medium ${TARGET_TYPE_COLORS[activePush.target_type]}`}>
@@ -328,36 +330,185 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
             </button>
           </div>
 
-          <div className="mb-2">
-            <span className="text-sm text-blue-700 dark:text-blue-300">
-              {stepLabels[liveProgress?.step || activePush?.status || 'pending']}
-            </span>
-            {liveProgress?.chunksTotal && (
-              <span className="text-xs text-blue-600 dark:text-blue-400 ml-2">
-                ({liveProgress.chunksSent || 0}/{liveProgress.chunksTotal} chunks)
-              </span>
+          <div className="px-6 py-5 space-y-5">
+            {/* Error Banner */}
+            {liveError && (
+              <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                liveError.severity === 'critical'
+                  ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                  : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+              }`}>
+                <ExclamationCircleIcon className={`h-5 w-5 flex-shrink-0 mt-0.5 ${
+                  liveError.severity === 'critical' ? 'text-red-500' : 'text-amber-500'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-medium ${
+                    liveError.severity === 'critical' ? 'text-red-800 dark:text-red-300' : 'text-amber-800 dark:text-amber-300'
+                  }`}>
+                    {liveError.severity === 'critical' ? 'Critical Error' : 'Warning'}
+                    {liveError.code && <span className="ml-2 font-mono text-xs opacity-70">({liveError.code})</span>}
+                  </p>
+                  <p className={`text-xs mt-0.5 ${
+                    liveError.severity === 'critical' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'
+                  }`}>
+                    {liveError.message}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Phase Stepper */}
+            {currentPhase && (
+              <div className="flex items-center gap-1">
+                {PHASE_ORDER.map((phase, idx) => {
+                  const phaseIdx = (PHASE_ORDER as readonly string[]).indexOf(currentPhase);
+                  const isComplete = idx < phaseIdx || (currentPhase === 'complete' && idx <= phaseIdx);
+                  const isCurrent = idx === phaseIdx && currentPhase !== 'complete';
+                  return (
+                    <div key={phase} className="flex items-center gap-1 flex-1">
+                      <div className="flex flex-col items-center flex-1">
+                        <div className={`w-full h-1.5 rounded-full transition-colors duration-300 ${
+                          isComplete ? 'bg-green-500 dark:bg-green-400' :
+                          isCurrent ? 'bg-blue-500 dark:bg-blue-400' :
+                          'bg-gray-200 dark:bg-gray-700'
+                        }`} />
+                        <span className={`text-[10px] mt-1 font-medium transition-colors ${
+                          isComplete ? 'text-green-600 dark:text-green-400' :
+                          isCurrent ? 'text-blue-600 dark:text-blue-400' :
+                          'text-gray-400 dark:text-gray-600'
+                        }`}>
+                          {PHASE_LABELS[phase] || phase}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Step Label + Progress */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {STEP_LABELS[liveProgress?.phase || liveProgress?.step || activePush?.status || 'pending'] || liveProgress?.step || 'Preparing...'}
+                </span>
+                <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                  {liveProgress?.chunksTotal != null && (
+                    <span>{liveProgress.chunksSent || 0}/{liveProgress.chunksTotal} chunks</span>
+                  )}
+                  <span className="font-semibold text-sm text-blue-600 dark:text-blue-400">{effectivePercent}%</span>
+                </div>
+              </div>
+
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-400 dark:to-blue-500 h-3 rounded-full transition-all duration-300 ease-out relative"
+                  style={{ width: `${Math.max(effectivePercent, 2)}%` }}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse" />
+                </div>
+              </div>
+
+              {liveProgress?.message && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{liveProgress.message}</p>
+              )}
+            </div>
+
+            {/* Device Counts Summary */}
+            {(liveProgress?.devicesTotal != null && liveProgress.devicesTotal > 0) && (
+              <div className="flex items-center gap-4 pt-1">
+                <div className="flex items-center gap-1.5">
+                  <CpuChipIcon className="h-4 w-4 text-gray-400" />
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    {liveProgress.devicesTotal} device{liveProgress.devicesTotal !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                {(liveProgress.devicesComplete ?? 0) > 0 && (
+                  <div className="flex items-center gap-1">
+                    <CheckCircleIcon className="h-3.5 w-3.5 text-green-500" />
+                    <span className="text-xs text-green-600 dark:text-green-400">{liveProgress.devicesComplete}</span>
+                  </div>
+                )}
+                {(liveProgress.devicesFailed ?? 0) > 0 && (
+                  <div className="flex items-center gap-1">
+                    <XCircleIcon className="h-3.5 w-3.5 text-red-500" />
+                    <span className="text-xs text-red-600 dark:text-red-400">{liveProgress.devicesFailed}</span>
+                  </div>
+                )}
+                {liveProgress.devicesTotal - (liveProgress.devicesComplete ?? 0) - (liveProgress.devicesFailed ?? 0) > 0 && (
+                  <div className="flex items-center gap-1">
+                    <ArrowPathIcon className="h-3.5 w-3.5 text-blue-500 animate-spin" />
+                    <span className="text-xs text-blue-600 dark:text-blue-400">
+                      {liveProgress.devicesTotal - (liveProgress.devicesComplete ?? 0) - (liveProgress.devicesFailed ?? 0)} in progress
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Per-Device Status Grid */}
+            {liveDevices.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Device Status</h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {liveDevices.map((device) => {
+                    const cfg = DEVICE_STATUS_CONFIG[device.status] || DEVICE_STATUS_CONFIG.pending;
+                    return (
+                      <div key={device.device_id} className={`${cfg.bg} rounded-lg p-2.5 border border-gray-200/50 dark:border-gray-700/50`}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <SignalIcon className={`h-3.5 w-3.5 ${cfg.color}`} />
+                          <span className="text-xs font-medium text-gray-900 dark:text-white truncate" title={device.device_id}>
+                            {device.device_id}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[10px] font-medium ${cfg.color}`}>{cfg.label}</span>
+                          {device.progress_percent != null && device.status !== 'complete' && device.status !== 'failed' && (
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400">{device.progress_percent}%</span>
+                          )}
+                        </div>
+                        {device.error && (
+                          <p className="text-[10px] text-red-500 dark:text-red-400 mt-1 truncate" title={device.error}>{device.error}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Event Timeline */}
+            {liveEvents.length > 0 && (
+              <div>
+                <button
+                  onClick={() => setEventsExpanded(!eventsExpanded)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                >
+                  {eventsExpanded ? <ChevronUpIcon className="h-3.5 w-3.5" /> : <ChevronDownIcon className="h-3.5 w-3.5" />}
+                  Event Log ({liveEvents.length})
+                </button>
+                {eventsExpanded && (
+                  <div className="mt-2 max-h-48 overflow-y-auto space-y-1 pr-1">
+                    {liveEvents.map((evt) => (
+                      <div key={evt.id} className="flex items-start gap-2 py-1.5 text-xs">
+                        <span className="text-gray-400 dark:text-gray-500 whitespace-nowrap flex-shrink-0 tabular-nums">
+                          {new Date(evt.reported_at || evt.created_at).toLocaleTimeString()}
+                        </span>
+                        <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full mt-1.5 ${
+                          evt.event_type === 'error' ? 'bg-red-500' :
+                          evt.event_type === 'device_status' ? 'bg-blue-500' :
+                          'bg-gray-400'
+                        }`} />
+                        <span className="text-gray-700 dark:text-gray-300 min-w-0">
+                          {evt.message || evt.error_message || `${evt.phase || evt.event_type} ${evt.progress_percent != null ? `(${evt.progress_percent}%)` : ''}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
-
-          {/* Progress bar with pulse animation */}
-          <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-3 overflow-hidden">
-            <div
-              className="bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-400 dark:to-blue-500 h-3 rounded-full transition-all duration-300 ease-out relative"
-              style={{ width: `${Math.max(liveProgress?.percent || 0, 2)}%` }}
-            >
-              {/* Animated shimmer overlay */}
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-pulse" />
-            </div>
-          </div>
-          <div className="text-right mt-1">
-            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-              {liveProgress?.percent || 0}%
-            </span>
-          </div>
-
-          {liveProgress?.message && (
-            <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">{liveProgress.message}</p>
-          )}
         </div>
       )}
 
@@ -455,7 +606,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
           <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">Push History</h3>
           <div className="space-y-2">
             {pushHistory.map((p) => {
-              const fw = firmware.find(f => f.id === p.firmware_id);
+              const fw = firmware.find((f) => f.id === p.firmware_id);
               return (
                 <div key={p.id} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
                   {statusIcon(p.status)}
@@ -474,6 +625,17 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
+                      {p.progress_percent > 0 && (
+                        <span className="text-xs text-gray-500 dark:text-gray-400">{p.progress_percent}%</span>
+                      )}
+                      {p.phase && (
+                        <span className="text-xs text-gray-400 dark:text-gray-500">{PHASE_LABELS[p.phase] || p.phase}</span>
+                      )}
+                      {p.devices_total != null && p.devices_total > 0 && (
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
+                          {p.devices_complete}/{p.devices_total} devices
+                        </span>
+                      )}
                       {p.chunks_total ? (
                         <span className="text-xs text-gray-500 dark:text-gray-400">
                           {p.chunks_sent}/{p.chunks_total} chunks
@@ -497,7 +659,6 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
             })}
           </div>
 
-          {/* Load More */}
           {historyHasMore && (
             <div className="mt-4 text-center">
               <button

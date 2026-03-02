@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
@@ -28,6 +28,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
+import { withReturnPath } from '@/hooks/useBackNavigation';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -62,6 +63,7 @@ interface DevicesPageProps {
 export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = {}) {
   const ws = useWebSocket();
   const navigate = useNavigate();
+  const location = useLocation();
   const { authState } = useAuth();
   const { addToast } = useToast();
   const { selectedFacilityId } = useGlobalFacility();
@@ -462,14 +464,18 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
               <BluLokDeviceCardShared
                 key={`blulok-${device.id}`}
                 device={device as BluLokDevice & { device_category: string }}
-                onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'devices' } })}
-                onViewUnit={((device as any).unit_id) ? () => navigate(`/units/${(device as any).unit_id}`) : undefined}
+                onViewDevice={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
+                onViewUnit={((device as any).unit_id)
+                  ? () => navigate(`/units/${(device as any).unit_id}`, { state: withReturnPath(location, { from: 'devices' }) })
+                  : undefined}
               />
             ) : (
               <ACDeviceCardShared
                 key={`access-${device.id}`}
                 device={device as AccessControlDevice & { device_category: string }}
-                onViewDevice={() => navigate(`/devices/${device.id}`, { state: { from: 'devices' } })}
+                onViewDevice={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
+                canManageAccessMethods={canManage}
+                onAccessMethodsUpdated={loadDevices}
                 onViewFacility={() => {
                   const gatewayId = (device as any).gateway_id;
                   const facilityIndex = devices.findIndex(d => (d as any).gateway_id === gatewayId);

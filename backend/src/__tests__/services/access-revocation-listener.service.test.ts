@@ -22,10 +22,17 @@ jest.mock('@/models/denylist-entry.model', () => ({
   DenylistEntryModel: jest.fn().mockImplementation(() => ({
     create: jest.fn().mockResolvedValue({}),
     bulkCreate: jest.fn().mockResolvedValue(undefined),
-    findByUnitsAndUser: jest.fn().mockResolvedValue([]),
+    findByUser: jest.fn().mockResolvedValue([]),
     remove: jest.fn().mockResolvedValue(true),
     bulkRemove: jest.fn().mockResolvedValue(1),
   })),
+}));
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getBluLokDeviceIdsForUnits: jest.fn().mockResolvedValue(['dev-123']),
+    getAccessControlDeviceIdsForUnits: jest.fn().mockResolvedValue([]),
+    getDeviceFacilityIds: jest.fn().mockResolvedValue(new Map([['dev-123', 'fac-1']])),
+  },
 }));
 
 const mockHandlers: any = {};
@@ -84,7 +91,7 @@ describe('AccessRevocationListenerService', () => {
     mockDenylistModel = {
       create: jest.fn().mockResolvedValue({}),
       bulkCreate: jest.fn().mockResolvedValue(undefined),
-      findByUnitsAndUser: jest.fn().mockResolvedValue([]),
+      findByUser: jest.fn().mockResolvedValue([]),
       remove: jest.fn().mockResolvedValue(true),
       bulkRemove: jest.fn().mockResolvedValue(1),
     } as any;
@@ -123,6 +130,10 @@ describe('AccessRevocationListenerService', () => {
     });
 
     it('skips denylist if no devices found for unit', async () => {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getBluLokDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce([]);
+      (AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce([]);
+
       mockDb.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
           return {
@@ -220,7 +231,7 @@ describe('AccessRevocationListenerService', () => {
         },
       ];
 
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue(mockEntries);
+      mockDenylistModel.findByUser.mockResolvedValue(mockEntries);
       mockDenylistModel.bulkRemove.mockClear();
 
       // Mock for both initial device query AND batch facility lookup
@@ -265,7 +276,7 @@ describe('AccessRevocationListenerService', () => {
     });
 
     it('does nothing if no denylist entries exist', async () => {
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue([]);
+      mockDenylistModel.findByUser.mockResolvedValue([]);
 
       mockDb.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
@@ -315,7 +326,7 @@ describe('AccessRevocationListenerService', () => {
         },
       ];
 
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue(mockEntries);
+      mockDenylistModel.findByUser.mockResolvedValue(mockEntries);
       mockDenylistModel.bulkRemove.mockClear();
 
       // Mock for both initial device query AND batch facility lookup
@@ -359,6 +370,65 @@ describe('AccessRevocationListenerService', () => {
       // But should not send gateway command
       const { DenylistService } = await import('@/services/denylist.service');
       expect(DenylistService.buildDenylistRemove).not.toHaveBeenCalled();
+    });
+
+    it('sends DENYLIST_REMOVE only for non-expired entry devices', async () => {
+      (AccessRevocationListenerService as any).instance = undefined;
+
+      const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
+      (DenylistOptimizationService.shouldSkipDenylistRemove as jest.Mock).mockImplementation(
+        (entry: any) => entry?.id === 'entry-expired',
+      );
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getBluLokDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce(['dev-123', 'dev-456']);
+      (AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce([]);
+      (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValueOnce(
+        new Map([
+          ['dev-123', 'fac-1'],
+          ['dev-456', 'fac-1'],
+        ]),
+      );
+
+      mockDenylistModel.findByUser.mockResolvedValue([
+        {
+          id: 'entry-active',
+          device_id: 'dev-123',
+          user_id: 'user-1',
+          expires_at: new Date(Date.now() + 3600_000),
+          created_at: new Date(),
+          updated_at: new Date(),
+          created_by: 'admin-1',
+          source: 'unit_unassignment' as const,
+        },
+        {
+          id: 'entry-expired',
+          device_id: 'dev-456',
+          user_id: 'user-1',
+          expires_at: new Date(Date.now() - 3600_000),
+          created_at: new Date(),
+          updated_at: new Date(),
+          created_by: 'admin-1',
+          source: 'unit_unassignment' as const,
+        },
+      ]);
+
+      const { DatabaseService } = await import('@/services/database.service');
+      (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+        connection: mockDb,
+      });
+
+      AccessRevocationListenerService.getInstance();
+      await mockHandlers.assigned({
+        tenantId: 'user-1',
+        unitId: 'unit-1',
+        facilityId: 'fac-1',
+      });
+
+      const { DenylistService } = await import('@/services/denylist.service');
+      expect(DenylistService.buildDenylistRemove).toHaveBeenCalledWith(
+        [{ sub: 'user-1', exp: 0 }],
+        ['dev-123'],
+      );
     });
   });
 });

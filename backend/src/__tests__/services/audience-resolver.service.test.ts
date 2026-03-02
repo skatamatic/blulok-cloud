@@ -1,6 +1,7 @@
 import { AudienceResolver } from '@/services/passes/audience-resolver.service';
 import { DatabaseService } from '@/services/database.service';
 import { UserRole } from '@/types/auth.types';
+import { AppEntryAccessService } from '@/services/passes/app-entry-access.service';
 
 jest.mock('@/services/database.service');
 
@@ -11,6 +12,7 @@ describe('AudienceResolver', () => {
       select: jest.fn().mockReturnThis(),
       join: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
       whereIn: jest.fn().mockReturnThis(),
       whereNull: jest.fn().mockReturnThis(),
       orWhere: jest.fn().mockReturnThis(),
@@ -29,9 +31,20 @@ describe('AudienceResolver', () => {
     const { db, qb } = makeKnex();
     qb.select.mockResolvedValue([{ id: 'l1' }, { id: 'l2' }]);
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
+    jest.spyOn(AppEntryAccessService, 'resolveDeviceIds').mockResolvedValue([]);
 
     const aud = await AudienceResolver.resolve(db as any, { userId: 'u1', userRole: UserRole.ADMIN });
     expect(aud).toEqual(['lock:l1', 'lock:l2']);
+  });
+
+  it('includes app-entry access_control:* audiences', async () => {
+    const { db, qb } = makeKnex();
+    qb.select.mockResolvedValue([{ id: 'l1' }]);
+    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
+    jest.spyOn(AppEntryAccessService, 'resolveDeviceIds').mockResolvedValue(['ac-1', 'ac-2']);
+
+    const aud = await AudienceResolver.resolve(db as any, { userId: 'u1', userRole: UserRole.ADMIN });
+    expect(aud).toEqual(expect.arrayContaining(['lock:l1', 'access_control:ac-1', 'access_control:ac-2']));
   });
 
   it('returns mixed audiences for TENANT (assigned + shared)', async () => {
@@ -49,6 +62,8 @@ describe('AudienceResolver', () => {
 
     const aud = await AudienceResolver.resolve(db as any, { userId: 'tenant-1', userRole: UserRole.TENANT });
     expect(aud).toEqual(expect.arrayContaining(['lock:lock-assigned', 'shared_key:owner-1:lock-shared']));
+    expect(qb.where).toHaveBeenCalledWith('ua.tenant_id', 'tenant-1');
+    expect(qb.where).toHaveBeenCalledWith(expect.any(Function));
   });
 });
 

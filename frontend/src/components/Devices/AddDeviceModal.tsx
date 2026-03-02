@@ -12,6 +12,7 @@ import {
 import { Modal } from '@/components/Modal/Modal';
 import { apiService } from '@/services/api.service';
 import { Facility, Unit } from '@/types/facility.types';
+import axios from 'axios';
 
 interface CreateAccessControlDeviceData {
   gateway_id: string;
@@ -19,6 +20,7 @@ interface CreateAccessControlDeviceData {
   device_type: 'gate' | 'elevator' | 'door';
   location_description: string;
   relay_channel: number;
+  access_methods: Array<'app' | 'keypad' | 'fob'>;
   device_settings?: Record<string, any>;
 }
 
@@ -53,6 +55,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     device_type: 'gate',
     location_description: '',
     relay_channel: 1,
+    access_methods: ['app'],
     device_settings: {}
   });
 
@@ -73,11 +76,16 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
   useEffect(() => {
     if (isOpen) {
       loadFacilities();
-      if (selectedFacility) {
-        loadUnits(selectedFacility);
-      }
+      if (selectedFacility) loadUnits(selectedFacility);
     }
   }, [isOpen, selectedFacility]);
+
+  useEffect(() => {
+    if (!isOpen || !facilityId) return;
+    setSelectedFacility(facilityId);
+    resolveGatewayIdForFacility(facilityId).catch(() => undefined);
+    loadUnits(facilityId).catch(() => undefined);
+  }, [isOpen, facilityId]);
 
   const loadFacilities = async () => {
     try {
@@ -97,6 +105,27 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     }
   };
 
+  const resolveGatewayIdForFacility = async (facilityIdValue: string) => {
+    try {
+      const response = await apiService.getGateways({ facility_id: facilityIdValue, limit: 1, offset: 0 });
+      const gatewayId = response?.gateways?.[0]?.id;
+      if (!gatewayId) {
+        setErrors((prev) => ({ ...prev, gateway_id: 'No gateway found for this facility' }));
+        return;
+      }
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.gateway_id;
+        return next;
+      });
+      setAccessControlData((prev) => ({ ...prev, gateway_id: gatewayId }));
+      setBluLokData((prev) => ({ ...prev, gateway_id: gatewayId }));
+    } catch (error) {
+      console.error('Failed to resolve gateway for facility:', error);
+      setErrors((prev) => ({ ...prev, gateway_id: 'Failed to resolve gateway for selected facility' }));
+    }
+  };
+
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
@@ -107,11 +136,14 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       if (!accessControlData.name.trim()) {
         newErrors.name = 'Device name is required';
       }
+      if (!accessControlData.location_description.trim()) {
+        newErrors.location_description = 'Location description is required';
+      }
       if (!accessControlData.device_type) {
         newErrors.device_type = 'Device type is required';
       }
-      if (!accessControlData.relay_channel || accessControlData.relay_channel < 1) {
-        newErrors.relay_channel = 'Relay channel must be 1 or greater';
+      if (!accessControlData.relay_channel || accessControlData.relay_channel < 1 || accessControlData.relay_channel > 8) {
+        newErrors.relay_channel = 'Relay channel must be between 1 and 8';
       }
     } else {
       if (!bluLokData.gateway_id) {
@@ -131,16 +163,9 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
 
   const handleFacilityChange = async (facilityId: string) => {
     setSelectedFacility(facilityId);
-    
-    // For now, we'll use the facility ID as the gateway ID
-    // In a real implementation, you'd fetch the actual gateway for this facility
-    if (selectedDeviceType === 'access_control') {
-      setAccessControlData(prev => ({ ...prev, gateway_id: facilityId }));
-    } else {
-      setBluLokData(prev => ({ ...prev, gateway_id: facilityId }));
-    }
 
     if (facilityId) {
+      await resolveGatewayIdForFacility(facilityId);
       await loadUnits(facilityId);
     }
   };
@@ -150,9 +175,21 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
 
     try {
       setLoading(true);
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.submit;
+        return next;
+      });
       
       if (selectedDeviceType === 'access_control') {
-        await apiService.createAccessControlDevice(accessControlData);
+        await apiService.createAccessControlDevice({
+          gateway_id: accessControlData.gateway_id,
+          name: accessControlData.name.trim(),
+          device_type: accessControlData.device_type,
+          location_description: accessControlData.location_description.trim(),
+          relay_channel: accessControlData.relay_channel,
+          access_methods: accessControlData.access_methods,
+        });
       } else {
         await apiService.createBluLokDevice(bluLokData);
       }
@@ -161,7 +198,10 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       handleClose();
     } catch (error) {
       console.error('Failed to create device:', error);
-      setErrors({ submit: 'Failed to create device. Please try again.' });
+      const apiMessage = axios.isAxiosError(error)
+        ? (error.response?.data?.message || error.response?.data?.error)
+        : undefined;
+      setErrors({ submit: apiMessage || 'Failed to create device. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -174,6 +214,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       device_type: 'gate',
       location_description: '',
       relay_channel: 1,
+      access_methods: ['app'],
       device_settings: {}
     });
     setBluLokData({
@@ -357,6 +398,37 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                 </div>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Access Methods
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {(['app', 'keypad', 'fob'] as const).map((method) => {
+                    const checked = accessControlData.access_methods.includes(method);
+                    return (
+                      <label key={method} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setAccessControlData((prev) => {
+                              const nextMethods = e.target.checked
+                                ? Array.from(new Set([...prev.access_methods, method]))
+                                : prev.access_methods.filter((m) => m !== method);
+                              return {
+                                ...prev,
+                                access_methods: nextMethods.length > 0 ? nextMethods : ['app'],
+                              };
+                            });
+                          }}
+                        />
+                        <span className="capitalize">{method}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -365,7 +437,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                   <input
                     type="number"
                     min="1"
-                    max="16"
+                    max="8"
                     value={accessControlData.relay_channel}
                     onChange={(e) => setAccessControlData(prev => ({ ...prev, relay_channel: parseInt(e.target.value) || 1 }))}
                     className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 ${
@@ -381,15 +453,20 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Location Description
+                  Location Description *
                 </label>
                 <input
                   type="text"
                   value={accessControlData.location_description}
                   onChange={(e) => setAccessControlData(prev => ({ ...prev, location_description: e.target.value }))}
-                  className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 ${
+                    errors.location_description
+                      ? 'border-red-300 dark:border-red-600'
+                      : 'border-gray-300 dark:border-gray-600'
+                  } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
                   placeholder="e.g. Building A entrance, Parking gate"
                 />
+                {errors.location_description && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.location_description}</p>}
               </div>
             </div>
           ) : (

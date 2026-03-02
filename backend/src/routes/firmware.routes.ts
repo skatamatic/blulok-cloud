@@ -19,8 +19,13 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { FirmwareService } from '@/services/firmware/firmware.service';
+import { FirmwareTargetType } from '@/models/firmware.model';
+import { FirmwarePushEventType } from '@/models/firmware-push-event.model';
 import { GatewayModel } from '@/models/gateway.model';
+import { FirmwarePushEventModel } from '@/models/firmware-push-event.model';
 import { logger } from '@/utils/logger';
+
+const pushEventModel = new FirmwarePushEventModel();
 
 const router = Router();
 const gatewayModel = new GatewayModel();
@@ -97,7 +102,7 @@ async function assertFacilityAccess(
 // Upload firmware binary (DEV_ADMIN only)
 // ============================================================================
 
-const VALID_TARGET_TYPES = ['gateway', 'lock', 'friend_node', 'access_control'];
+const VALID_TARGET_TYPES: readonly FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'access_control'];
 
 const uploadSchema = Joi.object({
   version: Joi.string().max(64).required(),
@@ -168,7 +173,7 @@ router.get(
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const targetType = req.query.target_type as string | undefined;
-    const validTarget = targetType && VALID_TARGET_TYPES.includes(targetType) ? targetType as any : undefined;
+    const validTarget = targetType && VALID_TARGET_TYPES.includes(targetType as FirmwareTargetType) ? targetType as FirmwareTargetType : undefined;
     const firmware = await FirmwareService.listFirmware(validTarget);
     res.json({ success: true, data: firmware.map(sanitizeFirmwareImage) });
   }),
@@ -187,9 +192,28 @@ router.get(
     if (!facilityId) return;
 
     const targetType = req.query.target_type as string | undefined;
-    const validTarget = targetType && VALID_TARGET_TYPES.includes(targetType) ? targetType as any : undefined;
+    const validTarget = targetType && VALID_TARGET_TYPES.includes(targetType as FirmwareTargetType) ? targetType as FirmwareTargetType : undefined;
+    const includeEvents = req.query.include_events !== 'false';
     const push = await FirmwareService.getPushStatus(req.params.gatewayId, validTarget);
-    res.json({ success: true, data: push });
+
+    if (!push || !includeEvents) {
+      res.json({ success: true, data: push });
+      return;
+    }
+
+    const [recentEvents, deviceStatuses] = await Promise.all([
+      pushEventModel.findByPushId(push.id, 20),
+      pushEventModel.getDeviceStatuses(push.id),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        ...push,
+        recent_events: recentEvents,
+        device_statuses: deviceStatuses,
+      },
+    });
   }),
 );
 
@@ -206,7 +230,7 @@ router.get(
     if (!facilityId) return;
 
     const targetType = req.query.target_type as string | undefined;
-    const validTarget = targetType && VALID_TARGET_TYPES.includes(targetType) ? targetType as any : undefined;
+    const validTarget = targetType && VALID_TARGET_TYPES.includes(targetType as FirmwareTargetType) ? targetType as FirmwareTargetType : undefined;
     const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const pushes = await FirmwareService.getPushHistory(req.params.gatewayId, validTarget, limit, offset);
@@ -242,6 +266,52 @@ router.post(
       }
       throw err;
     }
+  }),
+);
+
+// ============================================================================
+// Get push event log (paginated)
+// ============================================================================
+
+router.get(
+  '/push/:pushId/events',
+  authenticateToken,
+  requireAdminOrFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const push = await FirmwareService.getPushById(req.params.pushId);
+    if (!push) {
+      res.status(404).json({ success: false, message: 'Push not found' });
+      return;
+    }
+
+    const facilityId = await assertFacilityAccess(req, res, push.gateway_id);
+    if (!facilityId) return;
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
+    const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+    const eventType = req.query.event_type as string | undefined;
+    const validEventTypes = ['progress', 'device_status', 'error', 'info'];
+
+    let events;
+    if (eventType && validEventTypes.includes(eventType)) {
+      events = await pushEventModel.findByPushIdAndType(req.params.pushId, eventType as FirmwarePushEventType, limit, offset);
+    } else {
+      events = await pushEventModel.findByPushId(req.params.pushId, limit, offset);
+    }
+
+    const total = await pushEventModel.countByPushId(req.params.pushId);
+    const deviceStatuses = await pushEventModel.getDeviceStatuses(req.params.pushId);
+
+    res.json({
+      success: true,
+      data: {
+        events,
+        device_statuses: deviceStatuses,
+        total,
+        limit,
+        offset,
+      },
+    });
   }),
 );
 

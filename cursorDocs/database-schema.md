@@ -358,6 +358,94 @@ CREATE TABLE activity_logs (
 - Rich context with metadata support
 - IP address logging for security audits
 
+### Access Code & Device Group Tables
+
+```sql
+CREATE TABLE device_groups (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  facility_id VARCHAR(36) NOT NULL,
+  group_type ENUM('zone', 'access_code') NOT NULL DEFAULT 'zone',
+  is_global_shared BOOLEAN NOT NULL DEFAULT false,
+  access_code_current_code VARCHAR(8) NULL,
+  access_code_current_valid_from DATETIME NULL,
+  access_code_current_valid_until DATETIME NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  settings JSON,
+  metadata JSON,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  INDEX idx_device_groups_facility_id (facility_id),
+  INDEX idx_device_groups_facility_type_global_active (facility_id, group_type, is_global_shared, is_active),
+  INDEX idx_device_groups_access_code_current_state (facility_id, group_type, is_active, access_code_current_valid_until)
+);
+
+CREATE TABLE device_group_members (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  group_id VARCHAR(36) NOT NULL,
+  device_id VARCHAR(36) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (group_id) REFERENCES device_groups(id) ON DELETE CASCADE,
+  FOREIGN KEY (device_id) REFERENCES access_control_devices(id) ON DELETE CASCADE,
+  UNIQUE KEY uniq_device_group_member (group_id, device_id),
+  INDEX idx_device_group_members_device (device_id)
+);
+
+CREATE TABLE access_code_configs (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  facility_id VARCHAR(36) NOT NULL,
+  is_enabled BOOLEAN NOT NULL DEFAULT false,
+  digit_count INT NOT NULL DEFAULT 6,
+  rotation_interval_hours INT NOT NULL DEFAULT 24,
+  rotation_hour INT NOT NULL DEFAULT 0,
+  rotation_minute INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  UNIQUE KEY uniq_access_code_config_facility (facility_id)
+);
+
+CREATE TABLE access_codes (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  facility_id VARCHAR(36) NOT NULL,
+  scope_type ENUM('device_group', 'device') NOT NULL,
+  scope_id VARCHAR(36) NULL,
+  schedule_id VARCHAR(36) NULL,
+  code VARCHAR(8) NOT NULL,
+  valid_from DATETIME NOT NULL,
+  valid_until DATETIME NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  generated_by ENUM('system', 'admin') NOT NULL DEFAULT 'system',
+  set_by_user_id VARCHAR(36) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL,
+  FOREIGN KEY (set_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_access_codes_active_lookup (facility_id, scope_type, is_active, valid_until),
+  INDEX idx_access_codes_scope (scope_type, scope_id),
+  INDEX idx_access_codes_scope_schedule_active_valid (facility_id, scope_type, scope_id, schedule_id, is_active, valid_until)
+);
+```
+
+**Access-code invariants**:
+- Group code is first-class group state (`device_groups.access_code_current_*`) and is updated whenever a group-scoped code is created/rotated/manual-set.
+- Access-control devices in an active `access_code` group cannot receive device-scoped manual overrides.
+- Effective resolution always prefers active group-scoped code(s) for grouped devices to keep members code-synchronized.
+- Schedule-scoped and unscheduled codes can coexist for the same group/device scope; active uniqueness is enforced per `(facility_id, scope_type, scope_id, schedule_id)`.
+- User-facing access-code retrieval filters by the caller's assigned `user_facility_schedules.schedule_id` (with unscheduled fallback for backward compatibility).
+
+**Access-control extension**:
+
+```sql
+ALTER TABLE access_control_devices
+  ADD COLUMN access_methods JSON NOT NULL;
+```
+
+`access_methods` stores allowed methods per access control device (`app`, `keypad`, `fob`), enabling feature-based hardware behavior and RBAC-scoped UI management.
+
 ## Migration Best Practices
 
 ### Writing Idempotent Migrations

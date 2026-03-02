@@ -36,6 +36,7 @@ const STALE_USER_EMAIL_PREFIXES = [
   'e2e-primary-',
   'e2e-share',
 ];
+let accessCodeAckMode = 'accept'; // accept | reject | ignore
 
 function authHeaders(token) {
   return { Authorization: `Bearer ${token}` };
@@ -324,6 +325,25 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId) {
       const msg = JSON.parse(data.toString());
       gatewayWsEvents.push(msg);
       if (msg?.type === 'PING') ws.send(JSON.stringify({ type: 'PONG' }));
+      const cmd = normalizeCmd(msg);
+      if (cmd?.cmd_type === 'ACCESS_CODE_UPDATE' && cmd?.nonce) {
+        if (accessCodeAckMode === 'accept') {
+          ws.send(JSON.stringify({
+            type: 'ACCESS_CODE_UPDATE_ACK',
+            nonce: cmd.nonce,
+            status: 'accepted',
+            accepted: true,
+          }));
+        } else if (accessCodeAckMode === 'reject') {
+          ws.send(JSON.stringify({
+            type: 'ACCESS_CODE_UPDATE_ACK',
+            nonce: cmd.nonce,
+            status: 'rejected',
+            accepted: false,
+            message: 'e2e-forced-reject',
+          }));
+        }
+      }
     } catch {}
   });
   const authMsg = { type: 'AUTH', token, facilityId };
@@ -1032,6 +1052,16 @@ async function run() {
   let share1Token = null;
   let share2Token = null;
   let primaryToken = null;
+  let accessCodeOriginalConfig = null;
+  let accessCodeConfigModified = false;
+  let accessCodeConfigFacilityId = null;
+  let unitLinkedSwapGroupId = null;
+  let accessCodeGroupId = null;
+  let globalSharedAccessCodeGroupId = null;
+  let demotedGlobalSharedAccessCodeGroupId = null;
+  let privateAccessCodeGroupId = null;
+  const platformAdmin = { id: null, token: null, email: null };
+  let selectedAccessCodeScheduleId = null;
 
   heading('Environment');
   info(`Using facility=${facilityId}`);
@@ -1053,9 +1083,66 @@ async function run() {
   created.facilityAdminId = facilityAdmin.id;
   created.facilityAdminToken = facilityAdmin.token;
   ok('Facility admin ready');
-  // Remember original FMS config if present to restore after test
+
+  step('Provisioning platform admin for app-code role coverage');
+  const platformAdminEmail = `admin-${Date.now()}@test.com`;
+  const platformAdminPassword = 'TestUser123!';
+  platformAdmin.id = await createUser(token, platformAdminEmail, 'admin');
+  platformAdmin.email = platformAdminEmail;
+  created.users.push(platformAdmin.id);
+  const platformAdminLogin = await axios.post(`${API_BASE}/auth/login`, {
+    email: platformAdminEmail,
+    password: platformAdminPassword,
+  });
+  platformAdmin.token = platformAdminLogin.data?.token;
+  if (!platformAdmin.token) throw new Error('Platform admin login failed');
+  ok('Platform admin ready');
+  // Remember original configs to restore after test
   let existingConfig = null;
   let mockFmsServer = null;
+  let originalFirmwareStorageConfig = null;
+  let firmwareStorageConfigOverridden = false;
+  let canRestoreFirmwareStorageConfig = false;
+
+  heading('Firmware Storage');
+  step('Forcing firmware storage to local provider for deterministic offline E2E');
+  const currentStorageResp = await axios.get(`${API_BASE}/admin/storage-config`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const currentStorageConfig = currentStorageResp.data?.config;
+  if (!currentStorageConfig?.providerType || !currentStorageConfig?.providerConfig) {
+    throw new Error('Unable to read current firmware storage config');
+  }
+
+  originalFirmwareStorageConfig = {
+    providerType: currentStorageConfig.providerType,
+    providerConfig: currentStorageConfig.providerConfig,
+  };
+
+  const hasRedactedSecrets = (value) => {
+    if (value === '***') return true;
+    if (Array.isArray(value)) return value.some((item) => hasRedactedSecrets(item));
+    if (value && typeof value === 'object') {
+      return Object.values(value).some((item) => hasRedactedSecrets(item));
+    }
+    return false;
+  };
+
+  canRestoreFirmwareStorageConfig = !hasRedactedSecrets(currentStorageConfig.providerConfig);
+  if (!canRestoreFirmwareStorageConfig) {
+    warn('Current firmware storage config contains redacted secrets; post-run restore will be skipped');
+  }
+
+  await axios.put(`${API_BASE}/admin/storage-config`, {
+    providerType: 'local',
+    providerConfig: {
+      basePath: './test-storage',
+    },
+  }, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  firmwareStorageConfigOverridden = true;
+  ok('Firmware storage configured to local test path');
 
   // Connect dev-notifications WebSocket for observing invites/OTPs
   notificationsWs = await connectNotificationsWs(token);
@@ -1625,6 +1712,27 @@ async function run() {
 
     // Test device removal when assigned to unit
     step('Testing device removal when assigned to unit');
+    step('Creating unit-linked device group member for swap-follow validation');
+    const unitLinkedGroupCreate = await axios.post(
+      `${API_BASE}/device-groups`,
+      {
+        facility_id: facilityId,
+        name: `E2E Unit-Linked Swap Group ${Date.now()}`,
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    unitLinkedSwapGroupId = unitLinkedGroupCreate.data?.data?.id;
+    if (!unitLinkedSwapGroupId) throw new Error('Failed to create unit-linked swap validation group');
+    await axios.post(
+      `${API_BASE}/device-groups/${unitLinkedSwapGroupId}/members`,
+      {
+        unit_id: unitId,
+        device_type: 'blulok',
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    ok(`Unit-linked group member created for unit ${unitId}`);
+
     // First, assign one of the inventory devices to a unit (will replace the original device)
     let testDeviceId = null;
     let originalDeviceWasReplaced = false;
@@ -1641,6 +1749,19 @@ async function run() {
     await assignDeviceToUnit(token, testDeviceId, unitId);
     originalDeviceWasReplaced = true;
     ok(`Assigned test device ${testDeviceId} to unit ${unitId} (replaced original device)`);
+    if (unitLinkedSwapGroupId) {
+      const linkedGroupAfterSwap = await axios.get(
+        `${API_BASE}/device-groups/${unitLinkedSwapGroupId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const linkedMembers = linkedGroupAfterSwap.data?.data?.members || [];
+      const linkedMember = linkedMembers.find((member) => member.source_unit_id === unitId);
+      if (!linkedMember) throw new Error('Expected a unit-linked group member after swap');
+      if (linkedMember.device_id !== testDeviceId) {
+        throw new Error(`Expected unit-linked member to follow swapped device ${testDeviceId}, got ${linkedMember.device_id}`);
+      }
+      ok('Unit-linked group member correctly followed swapped-in device');
+    }
 
     // Verify unit still has the device
     if (testDeviceId) {
@@ -1701,7 +1822,29 @@ async function run() {
         step('Re-assigning original device back to unit');
         await assignDeviceToUnit(token, deviceId, unitId);
         ok(`Re-assigned original device ${deviceId} back to unit ${unitId}`);
+        if (unitLinkedSwapGroupId) {
+          const linkedGroupAfterRestore = await axios.get(
+            `${API_BASE}/device-groups/${unitLinkedSwapGroupId}`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          const linkedMembers = linkedGroupAfterRestore.data?.data?.members || [];
+          const linkedMember = linkedMembers.find((member) => member.source_unit_id === unitId);
+          if (!linkedMember) throw new Error('Expected unit-linked group member after restoring original device');
+          if (linkedMember.device_id !== deviceId) {
+            throw new Error(`Expected unit-linked member to follow restored device ${deviceId}, got ${linkedMember.device_id}`);
+          }
+          ok('Unit-linked group member correctly followed restored device');
+        }
       }
+    }
+
+    if (unitLinkedSwapGroupId) {
+      step('Deleting unit-linked swap validation group');
+      await axios.delete(`${API_BASE}/device-groups/${unitLinkedSwapGroupId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      unitLinkedSwapGroupId = null;
+      ok('Unit-linked swap validation group deleted');
     }
 
     // Clean up remaining inventory test devices
@@ -3672,8 +3815,8 @@ async function run() {
     if (delivery.manifest.target_type !== 'gateway') throw new Error(`Manifest target_type mismatch: expected gateway, got ${delivery.manifest.target_type}`);
     if (delivery.manifest.version !== testVersion) throw new Error(`Manifest version mismatch: expected ${testVersion}, got ${delivery.manifest.version}`);
     if (delivery.manifest.size !== 512 * 1024) throw new Error(`Manifest size mismatch: expected ${512 * 1024}, got ${delivery.manifest.size}`);
-    if (delivery.manifest.chunk_count !== Math.ceil((512 * 1024) / (256 * 1024))) throw new Error(`Manifest chunk_count mismatch: expected 2, got ${delivery.manifest.chunk_count}`);
-    if (delivery.manifest.chunk_size !== 256 * 1024) throw new Error(`Manifest chunk_size mismatch: expected ${256 * 1024}, got ${delivery.manifest.chunk_size}`);
+    if (delivery.manifest.chunk_count !== Math.ceil((512 * 1024) / (128 * 1024))) throw new Error(`Manifest chunk_count mismatch: expected 4, got ${delivery.manifest.chunk_count}`);
+    if (delivery.manifest.chunk_size !== 128 * 1024) throw new Error(`Manifest chunk_size mismatch: expected ${128 * 1024}, got ${delivery.manifest.chunk_size}`);
     if (!delivery.manifest.exp) throw new Error('Manifest JWT missing exp claim');
     if (delivery.manifest.exp <= delivery.manifest.iat) throw new Error('Manifest JWT exp must be after iat');
     ok(`Manifest verified: target_type=${delivery.manifest.target_type} version=${delivery.manifest.version} size=${delivery.manifest.size} chunks=${delivery.manifest.chunk_count} exp=${delivery.manifest.exp}`);
@@ -3704,6 +3847,82 @@ async function run() {
       throw new Error(`Expected push status 'verifying', got '${verifyStatus?.status}'`);
     }
     ok(`Push status after delivery: ${verifyStatus.status}, chunks: ${verifyStatus.chunks_sent}/${verifyStatus.chunks_total}`);
+
+    // FIRMWARE_PROGRESS — gateway sends optional progress updates
+    step('Sending FIRMWARE_PROGRESS (distributing, 50%)');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_PROGRESS',
+      nonce: delivery.manifest.nonce,
+      target_type: delivery.manifest.target_type || 'gateway',
+      progress_percent: 50,
+      phase: 'distributing',
+      message: 'Distributing firmware to lock nodes',
+      devices: [
+        { device_id: 'lock-e2e-1', status: 'downloading', progress_percent: 50 },
+        { device_id: 'lock-e2e-2', status: 'pending' },
+      ],
+    }));
+    await delay(500);
+
+    step('Sending FIRMWARE_PROGRESS (installing, 80%)');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_PROGRESS',
+      nonce: delivery.manifest.nonce,
+      target_type: delivery.manifest.target_type || 'gateway',
+      progress_percent: 80,
+      phase: 'installing',
+      message: 'Installing on lock nodes',
+      devices: [
+        { device_id: 'lock-e2e-1', status: 'installing', progress_percent: 90 },
+        { device_id: 'lock-e2e-2', status: 'downloading', progress_percent: 30 },
+      ],
+    }));
+    await delay(500);
+
+    step('Sending FIRMWARE_PROGRESS (complete, 100%)');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_PROGRESS',
+      nonce: delivery.manifest.nonce,
+      target_type: delivery.manifest.target_type || 'gateway',
+      progress_percent: 100,
+      phase: 'verifying',
+      message: 'All locks updated, verifying...',
+      devices: [
+        { device_id: 'lock-e2e-1', status: 'complete' },
+        { device_id: 'lock-e2e-2', status: 'complete' },
+      ],
+    }));
+    await delay(500);
+
+    // Verify push-status now includes progress info and events
+    step('Verifying push-status includes progress data and events');
+    const progressStatusResp = await axios.get(
+      `${API_BASE}/firmware/push-status/${created.gatewayId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const progressData = progressStatusResp.data.data;
+    if (progressData.progress_percent === undefined) throw new Error('push-status missing progress_percent field');
+    if (progressData.progress_percent < 50) throw new Error(`Expected progress_percent >= 50, got ${progressData.progress_percent}`);
+    ok(`Push status includes progress: ${progressData.progress_percent}%, phase=${progressData.phase || 'N/A'}`);
+
+    if (progressData.recent_events) {
+      ok(`Push status includes ${progressData.recent_events.length} recent event(s)`);
+    }
+    if (progressData.device_statuses) {
+      ok(`Push status includes ${progressData.device_statuses.length} device status(es)`);
+    }
+
+    // Verify events endpoint
+    step('Verifying push events endpoint');
+    const eventsResp = await axios.get(
+      `${API_BASE}/firmware/push/${pushId}/events`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (eventsResp.status !== 200) throw new Error(`Push events expected 200 got ${eventsResp.status}`);
+    const eventsData = eventsResp.data.data;
+    if (!eventsData.events || !Array.isArray(eventsData.events)) throw new Error('Events endpoint missing events array');
+    if (eventsData.total < 3) throw new Error(`Expected at least 3 events, got ${eventsData.total}`);
+    ok(`Push events: ${eventsData.total} total, ${eventsData.events.length} returned, ${eventsData.device_statuses?.length || 0} device statuses`);
 
     // Gateway sends FIRMWARE_UPDATE_STATUS to confirm successful application
     step('Sending FIRMWARE_UPDATE_STATUS (success) from gateway');
@@ -3791,7 +4010,7 @@ async function run() {
     let lockFirmwareId = null;
 
     step('Uploading test lock firmware binary');
-    const lockBinary = crypto.randomBytes(256 * 1024); // 256KB (single chunk)
+    const lockBinary = crypto.randomBytes(128 * 1024); // 128KB (single chunk)
     const lockVersion = `e2e-lock-${Date.now()}`;
     const lockForm = new FormData();
     lockForm.append('file', lockBinary, { filename: 'lock-firmware.bin', contentType: 'application/octet-stream' });
@@ -3915,12 +4134,1094 @@ async function run() {
     ok('Lock firmware deleted');
     lockFirmwareId = null;
 
+    // =====================================================================
+    // Access Codes & Device Groups E2E
+    // =====================================================================
+    heading('Access Codes & Device Groups');
+
+    if (!created.facilityId) throw new Error('Facility ID missing for access code tests');
+    if (!created.facilityAdminToken) throw new Error('Facility admin token missing for access code tests');
+    if (!Array.isArray(created.accessControlDeviceIds) || created.accessControlDeviceIds.length < 2) {
+      throw new Error('Need at least two access control devices for access code tests');
+    }
+
+    const keypadDeviceA = created.accessControlDeviceIds[0];
+    const keypadDeviceB = created.accessControlDeviceIds[1];
+    const keypadDeviceC = created.accessControlDeviceIds[2] || null;
+
+    step('Enabling keypad access methods on two access control devices');
+    await axios.put(
+      `${API_BASE}/devices/access-control/${keypadDeviceA}`,
+      { access_methods: ['app', 'keypad'] },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    await axios.put(
+      `${API_BASE}/devices/access-control/${keypadDeviceB}`,
+      { access_methods: ['app', 'keypad'] },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    if (keypadDeviceC) {
+      await axios.put(
+        `${API_BASE}/devices/access-control/${keypadDeviceC}`,
+        { access_methods: ['app', 'keypad'] },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+    }
+    ok('Keypad methods enabled on target devices');
+
+    step('Creating a device group and assigning two access-control devices');
+    const groupCreateResp = await axios.post(
+      `${API_BASE}/device-groups`,
+      {
+        facility_id: created.facilityId,
+        group_type: 'access_code',
+        name: `E2E Device Group ${Date.now()}`,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    accessCodeGroupId = groupCreateResp.data?.data?.id;
+    if (!accessCodeGroupId) throw new Error('Device group creation did not return id');
+    await axios.post(
+      `${API_BASE}/device-groups/${accessCodeGroupId}/members`,
+      { device_id: keypadDeviceA, device_type: 'access_control' },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    await axios.post(
+      `${API_BASE}/device-groups/${accessCodeGroupId}/members`,
+      { device_id: keypadDeviceB, device_type: 'access_control' },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    if (created.deviceId) {
+      await axios.post(
+        `${API_BASE}/device-groups/${accessCodeGroupId}/members`,
+        { device_id: created.deviceId, device_type: 'blulok' },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+    }
+    ok(`Created access-code group ${accessCodeGroupId} and assigned devices ${keypadDeviceA}, ${keypadDeviceB}${created.deviceId ? `, ${created.deviceId} (blulok)` : ''}`);
+
+    step('Validating group membership supports mixed device types');
+    const groupDetailsResp = await axios.get(
+      `${API_BASE}/device-groups/${accessCodeGroupId}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const groupMembers = groupDetailsResp.data?.data?.members || [];
+    const acMembers = groupMembers.filter((member) => member.device_type === 'access_control').map((member) => member.device_id);
+    if (!acMembers.includes(keypadDeviceA) || !acMembers.includes(keypadDeviceB)) {
+      throw new Error('Expected both keypad access-control devices in group membership');
+    }
+    if (created.deviceId) {
+      const hasBlulok = groupMembers.some((member) => member.device_id === created.deviceId && member.device_type === 'blulok');
+      if (!hasBlulok) throw new Error('Expected blulok device member in mixed group membership');
+    }
+    ok('Mixed device-type group membership validated');
+
+    const appEntryZoneGroupResp = await axios.post(
+      `${API_BASE}/device-groups`,
+      {
+        facility_id: created.facilityId,
+        group_type: 'zone',
+        name: `E2E App Entry Zone ${Date.now()}`,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const appEntryZoneGroupId = appEntryZoneGroupResp.data?.data?.id;
+    if (!appEntryZoneGroupId) throw new Error('App-entry zone group creation did not return id');
+    await axios.post(
+      `${API_BASE}/device-groups/${appEntryZoneGroupId}/members`,
+      { device_id: keypadDeviceA, device_type: 'access_control' },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    if (created.deviceId) {
+      await axios.post(
+        `${API_BASE}/device-groups/${appEntryZoneGroupId}/members`,
+        { device_id: created.deviceId, device_type: 'blulok' },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+    }
+
+    if (created.primaryAppDevId && primaryToken) {
+      step('Verifying facility-scoped route pass includes app-entry audience for zone-linked access control');
+      const passResp = await axios.post(
+        `${API_BASE}/passes/request`,
+        { facility_id: created.facilityId },
+        { headers: { Authorization: `Bearer ${primaryToken}`, 'X-App-Device-Id': created.primaryAppDevId } },
+      );
+      const passToken = passResp.data?.routePass;
+      if (!passToken) throw new Error('Expected facility-scoped route pass token for app-entry audience validation');
+      const parts = passToken.split('.');
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+      if (!Array.isArray(payload.aud)) throw new Error('Expected route pass audiences array for app-entry validation');
+      const hasAppAudience = payload.aud.some((aud) => aud === `access_control:${keypadDeviceA}` || aud === `access_control:${keypadDeviceB}`);
+      if (!hasAppAudience) {
+        throw new Error('Expected route pass to include at least one access_control:* audience for zone-linked app entry');
+      }
+      ok('Facility-scoped route pass includes app-entry access_control audience');
+    }
+
+    const getEffectiveCodesMap = async () => {
+      const effectiveResp = await axios.get(
+        `${API_BASE}/access-codes/effective`,
+        {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+          params: { facility_id: created.facilityId },
+        },
+      );
+      const rows = effectiveResp.data?.data || [];
+      return new Map(rows.map((row) => [row.device_id, row]));
+    };
+
+    const normalizeCodeRowsForDevice = (cmd, deviceId) => {
+      if (!cmd || !Array.isArray(cmd.codes)) return [];
+      const rows = [];
+      cmd.codes
+        .filter((entry) => entry.device_id === deviceId)
+        .forEach((entry) => {
+          if (Array.isArray(entry.valid_codes) && entry.valid_codes.length > 0) {
+            entry.valid_codes.forEach((validCode) => {
+              rows.push({
+                ...validCode,
+                device_id: deviceId,
+              });
+            });
+          } else {
+            rows.push({
+              device_id: deviceId,
+              code: entry.code,
+              schedule_id: entry.schedule_id || null,
+              schedule: entry.schedule || null,
+            });
+          }
+        });
+      return rows;
+    };
+
+    step('Setting group-scoped code and asserting gateway fan-out to all keypad members');
+    const manualGroupCode = '333333';
+    const expectManualGroup = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
+        Array.isArray(cmd.codes) &&
+        normalizeCodeRowsForDevice(cmd, keypadDeviceA).some((entry) => entry.code === manualGroupCode) &&
+        normalizeCodeRowsForDevice(cmd, keypadDeviceB).some((entry) => entry.code === manualGroupCode),
+      15000,
+    );
+    await axios.put(
+      `${API_BASE}/access-codes/manual/set`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device_group',
+        scope_id: accessCodeGroupId,
+        code: manualGroupCode,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    await expectManualGroup;
+    const effectiveAfterGroup = await getEffectiveCodesMap();
+    const groupEffectiveA = effectiveAfterGroup.get(keypadDeviceA);
+    const groupEffectiveB = effectiveAfterGroup.get(keypadDeviceB);
+    if (!groupEffectiveA || groupEffectiveA.source_scope_type !== 'device_group' || groupEffectiveA.code !== manualGroupCode) {
+      throw new Error('Expected keypadDeviceA effective code to resolve from device_group after group set');
+    }
+    if (!groupEffectiveB || groupEffectiveB.source_scope_type !== 'device_group' || groupEffectiveB.code !== manualGroupCode) {
+      throw new Error('Expected keypadDeviceB effective code to resolve from device_group after group set');
+    }
+    ok('Group-scoped code fan-out and effective resolution validated');
+
+    if (keypadDeviceC) {
+      step('Adding new access-control member auto-syncs to current group code');
+      const expectNewMemberSync = waitForCommand(
+        ws,
+        (cmd) =>
+          cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
+          Array.isArray(cmd.codes) &&
+          normalizeCodeRowsForDevice(cmd, keypadDeviceC).some((entry) => entry.code === manualGroupCode),
+        15000,
+      );
+      await axios.post(
+        `${API_BASE}/device-groups/${accessCodeGroupId}/members`,
+        { device_id: keypadDeviceC, device_type: 'access_control' },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      await expectNewMemberSync;
+      const effectiveAfterMemberAdd = await getEffectiveCodesMap();
+      const newMemberEffective = effectiveAfterMemberAdd.get(keypadDeviceC);
+      if (!newMemberEffective || newMemberEffective.source_scope_type !== 'device_group' || newMemberEffective.code !== manualGroupCode) {
+        throw new Error('Expected newly-added access-control member to inherit current group code immediately');
+      }
+      ok('New member inherited current group code on add');
+
+      await axios.delete(
+        `${API_BASE}/device-groups/${accessCodeGroupId}/members/${keypadDeviceC}`,
+        {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+          params: { device_type: 'access_control' },
+        },
+      );
+    }
+
+    step('Blocking device-scoped overrides for grouped devices');
+    const deviceOverrideResp = await axios.put(
+      `${API_BASE}/access-codes/manual/set`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device',
+        scope_id: keypadDeviceA,
+        code: '111111',
+      },
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        validateStatus: () => true,
+      },
+    );
+    if (deviceOverrideResp.status !== 400) {
+      throw new Error(`Expected grouped-device manual override to be rejected with 400, got ${deviceOverrideResp.status}`);
+    }
+    if (!String(deviceOverrideResp.data?.message || '').includes('set the group code')) {
+      throw new Error('Expected grouped-device override rejection message to instruct using group code');
+    }
+    ok('Grouped-device direct override is correctly blocked');
+
+    step('Validating multi-group membership dispatches all valid codes per device');
+    const secondaryGroupResp = await axios.post(
+      `${API_BASE}/device-groups`,
+      {
+        facility_id: created.facilityId,
+        group_type: 'access_code',
+        name: `E2E Secondary Group ${Date.now()}`,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const secondaryGroupId = secondaryGroupResp.data?.data?.id;
+    if (!secondaryGroupId) throw new Error('Secondary access-code group creation did not return id');
+    await axios.post(
+      `${API_BASE}/device-groups/${secondaryGroupId}/members`,
+      { device_id: keypadDeviceA, device_type: 'access_control' },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    if (created.deviceId) {
+      await axios.post(
+        `${API_BASE}/device-groups/${secondaryGroupId}/members`,
+        { device_id: created.deviceId, device_type: 'blulok' },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+    }
+    const secondaryCode = '222222';
+    const expectSecondaryGroupCode = waitForCommand(
+      ws,
+      (cmd) => {
+        if (cmd.cmd_type !== 'ACCESS_CODE_UPDATE' || !Array.isArray(cmd.codes)) return false;
+        const codeRows = normalizeCodeRowsForDevice(cmd, keypadDeviceA);
+        const seenCodes = new Set(codeRows.map((entry) => entry.code));
+        return seenCodes.has(manualGroupCode) && seenCodes.has(secondaryCode);
+      },
+      15000,
+    );
+    await axios.put(
+      `${API_BASE}/access-codes/manual/set`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device_group',
+        scope_id: secondaryGroupId,
+        code: secondaryCode,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const multiGroupCmd = await expectSecondaryGroupCode;
+    const multiGroupRows = normalizeCodeRowsForDevice(multiGroupCmd, keypadDeviceA);
+    if (multiGroupRows.length < 2) {
+      throw new Error('Expected multi-group device payload to include multiple valid_codes entries');
+    }
+    ok('Multi-group device received aggregated valid code payload entries');
+
+    step('Creating active schedules for all-schedule rotation coverage');
+    const rotationScheduleDayResp = await axios.post(
+      `${API_BASE}/facilities/${created.facilityId}/schedules`,
+      {
+        name: `E2E Access Day ${Date.now()}`,
+        schedule_type: 'custom',
+        is_active: true,
+        time_windows: [
+          { day_of_week: 1, start_time: '08:00:00', end_time: '17:00:00' },
+          { day_of_week: 2, start_time: '08:00:00', end_time: '17:00:00' },
+        ],
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const rotationScheduleNightResp = await axios.post(
+      `${API_BASE}/facilities/${created.facilityId}/schedules`,
+      {
+        name: `E2E Access Night ${Date.now()}`,
+        schedule_type: 'custom',
+        is_active: true,
+        time_windows: [
+          { day_of_week: 1, start_time: '17:00:00', end_time: '23:59:59' },
+          { day_of_week: 2, start_time: '17:00:00', end_time: '23:59:59' },
+        ],
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const rotationScheduleIds = [
+      rotationScheduleDayResp.data?.schedule?.id,
+      rotationScheduleNightResp.data?.schedule?.id,
+    ].filter(Boolean);
+    if (rotationScheduleIds.length < 2) {
+      throw new Error('Expected two active schedules for all-schedule rotation coverage');
+    }
+
+    step('Rotating group scope and validating in-sync group member updates across all schedules');
+    const expectScopedRotate = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
+        Array.isArray(cmd.codes) &&
+        cmd.codes.some((entry) => entry.device_id === keypadDeviceA) &&
+        cmd.codes.some((entry) => entry.device_id === keypadDeviceB),
+      12000,
+    );
+    await axios.post(
+      `${API_BASE}/access-codes/rotate`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device_group',
+        scope_id: accessCodeGroupId,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const scopedRotateCmd = await expectScopedRotate;
+    const scopedRotateEntriesA = normalizeCodeRowsForDevice(scopedRotateCmd, keypadDeviceA);
+    const scopedRotateEntriesB = normalizeCodeRowsForDevice(scopedRotateCmd, keypadDeviceB);
+    const scopedScheduleSetA = new Set(scopedRotateEntriesA.map((entry) => entry.schedule_id || null));
+    const scopedScheduleSetB = new Set(scopedRotateEntriesB.map((entry) => entry.schedule_id || null));
+    const expectedScheduleContexts = new Set([null, ...rotationScheduleIds]);
+    if (
+      scopedRotateEntriesA.length < expectedScheduleContexts.size ||
+      !Array.from(expectedScheduleContexts).every((scheduleId) => scopedScheduleSetA.has(scheduleId))
+    ) {
+      throw new Error('Expected group rotate command to include a valid 6-digit code for keypadDeviceA');
+    }
+    if (
+      scopedRotateEntriesB.length < expectedScheduleContexts.size ||
+      !Array.from(expectedScheduleContexts).every((scheduleId) => scopedScheduleSetB.has(scheduleId))
+    ) {
+      throw new Error('Expected group rotate command to include schedule contexts for keypadDeviceB');
+    }
+    for (const scheduleId of expectedScheduleContexts) {
+      const entryA = scopedRotateEntriesA.find((entry) => (entry.schedule_id || null) === scheduleId);
+      const entryB = scopedRotateEntriesB.find((entry) => (entry.schedule_id || null) === scheduleId);
+      if (!entryA || !/^[0-9]{6}$/.test(String(entryA.code || ''))) {
+        throw new Error(`Expected keypadDeviceA to receive a valid 6-digit code for schedule context ${scheduleId || 'always-on'}`);
+      }
+      if (!entryB || !/^[0-9]{6}$/.test(String(entryB.code || ''))) {
+        throw new Error(`Expected keypadDeviceB to receive a valid 6-digit code for schedule context ${scheduleId || 'always-on'}`);
+      }
+      if (scheduleId) {
+        if (!entryA.schedule || entryA.schedule.facility_id !== created.facilityId || !Array.isArray(entryA.schedule.time_windows)) {
+          throw new Error(`Expected scheduled context ${scheduleId} to include serialized schedule object for keypadDeviceA`);
+        }
+      } else if (entryA.schedule !== null && entryA.schedule !== undefined) {
+        throw new Error('Expected always-on context to omit schedule payload');
+      }
+    }
+    const effectiveAfterScopedRotate = await getEffectiveCodesMap();
+    const scopedEffectiveA = effectiveAfterScopedRotate.get(keypadDeviceA);
+    const scopedEffectiveB = effectiveAfterScopedRotate.get(keypadDeviceB);
+    if (!scopedEffectiveA || scopedEffectiveA.source_scope_type !== 'device_group') {
+      throw new Error('Expected keypadDeviceA to resolve from device_group after group rotate');
+    }
+    if (!scopedEffectiveB || scopedEffectiveB.source_scope_type !== 'device_group') {
+      throw new Error('Expected keypadDeviceB to resolve from device_group after group rotate');
+    }
+    ok('Scoped rotate endpoint validated for group scope across all schedule contexts');
+
+    const originalConfigResp = await axios.get(
+      `${API_BASE}/access-codes/config/${created.facilityId}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const originalConfig = originalConfigResp.data?.data || null;
+    accessCodeOriginalConfig = originalConfig;
+    accessCodeConfigFacilityId = created.facilityId;
+
+    step('Configuring recurring rotation schedule to trigger in ~3 seconds');
+    const nowForSchedule = new Date();
+    const scheduleConfiguredAt = Date.now();
+    await axios.put(
+      `${API_BASE}/access-codes/groups/${accessCodeGroupId}/config`,
+      {
+        is_enabled: true,
+        digit_count: 6,
+        rotation_interval_hours: 3 / 3600, // 3 seconds
+        rotation_hour: nowForSchedule.getHours(),
+        rotation_minute: nowForSchedule.getMinutes(),
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    await axios.put(
+      `${API_BASE}/access-codes/config/${created.facilityId}`,
+      {
+        is_enabled: true,
+        digit_count: 6,
+        rotation_interval_hours: 3 / 3600, // 3 seconds
+        rotation_hour: nowForSchedule.getHours(),
+        rotation_minute: nowForSchedule.getMinutes(),
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    accessCodeConfigModified = true;
+    const expectedRotatedContexts = new Set([null, ...rotationScheduleIds]);
+    const expectScheduledRotation = waitForCommand(
+      ws,
+      (cmd) => {
+        if (cmd.cmd_type !== 'ACCESS_CODE_UPDATE' || !Array.isArray(cmd.codes)) return false;
+        const entriesA = normalizeCodeRowsForDevice(cmd, keypadDeviceA);
+        const scheduleSetA = new Set(entriesA.map((entry) => entry.schedule_id || null));
+        return Array.from(expectedRotatedContexts).every((scheduleId) => scheduleSetA.has(scheduleId));
+      },
+      12000,
+    );
+    const scheduledRotationCmd = await expectScheduledRotation;
+    for (const scheduleId of expectedRotatedContexts) {
+      const entryA = normalizeCodeRowsForDevice(scheduledRotationCmd, keypadDeviceA).find(
+        (entry) => (entry.schedule_id || null) === scheduleId,
+      );
+      const entryB = normalizeCodeRowsForDevice(scheduledRotationCmd, keypadDeviceB).find(
+        (entry) => (entry.schedule_id || null) === scheduleId,
+      );
+      if (!entryA || !entryB) {
+        throw new Error(`Expected scheduled rotation command to include both grouped devices for context ${scheduleId || 'always-on'}`);
+      }
+      if (scheduleId) {
+        if (!entryA.schedule || entryA.schedule.facility_id !== created.facilityId || !Array.isArray(entryA.schedule.time_windows)) {
+          throw new Error(`Expected scheduled rotation context ${scheduleId} to include serialized schedule for keypadDeviceA`);
+        }
+      }
+    }
+    let groupRotated = false;
+    for (let i = 0; i < 8; i += 1) {
+      const activeCodesResp = await axios.get(
+        `${API_BASE}/access-codes`,
+        {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+          params: { facility_id: created.facilityId },
+        },
+      );
+      const activeCodes = activeCodesResp.data?.data || [];
+      const freshGroupCodes = activeCodes.filter((entry) =>
+        entry.scope_type === 'device_group' &&
+        entry.scope_id === accessCodeGroupId &&
+        new Date(entry.created_at).getTime() >= scheduleConfiguredAt
+      );
+      const rotatedContextSet = new Set(freshGroupCodes.map((entry) => entry.schedule_id || null));
+      if (Array.from(expectedRotatedContexts).every((scheduleId) => rotatedContextSet.has(scheduleId))) {
+        groupRotated = true;
+        break;
+      }
+      await delay(1000);
+    }
+    if (!groupRotated) {
+      throw new Error('Expected scheduled rotation to create fresh device-group scope codes for all schedule contexts');
+    }
+    const effectiveAfterSchedule = await getEffectiveCodesMap();
+    const scheduleEffectiveA = effectiveAfterSchedule.get(keypadDeviceA);
+    const scheduleEffectiveB = effectiveAfterSchedule.get(keypadDeviceB);
+    if (!scheduleEffectiveA || scheduleEffectiveA.source_scope_type !== 'device_group') {
+      throw new Error('Expected keypadDeviceA to remain group-scoped after schedule rotation');
+    }
+    if (!scheduleEffectiveB || scheduleEffectiveB.source_scope_type !== 'device_group') {
+      throw new Error('Expected keypadDeviceB to remain group-scoped after schedule rotation');
+    }
+    ok('Recurring rotation schedule triggered, group scope rotated, and gateway ACCESS_CODE_UPDATE observed');
+
+    step('Reverting access code schedule configuration');
+    await axios.put(
+      `${API_BASE}/access-codes/config/${created.facilityId}`,
+      {
+        is_enabled: originalConfig?.is_enabled ?? false,
+        digit_count: originalConfig?.digit_count ?? 6,
+        rotation_interval_hours: originalConfig?.rotation_interval_hours ?? 24,
+        rotation_hour: originalConfig?.rotation_hour ?? 0,
+        rotation_minute: originalConfig?.rotation_minute ?? 0,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    accessCodeConfigModified = false;
+    ok('Access code schedule reverted');
+
+    step('Creating global shared access-code group and validating uniqueness + exclusivity conflicts');
+    const globalGroupResp = await axios.post(
+      `${API_BASE}/device-groups`,
+      {
+        facility_id: created.facilityId,
+        group_type: 'access_code',
+        is_global_shared: true,
+        name: `E2E Global Access Group ${Date.now()}`,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    globalSharedAccessCodeGroupId = globalGroupResp.data?.data?.id;
+    if (!globalSharedAccessCodeGroupId) throw new Error('Global shared group creation did not return id');
+
+    const firstGlobalSharedAccessCodeGroupId = globalSharedAccessCodeGroupId;
+    const secondGlobalResp = await axios.post(
+      `${API_BASE}/device-groups`,
+      {
+        facility_id: created.facilityId,
+        group_type: 'access_code',
+        is_global_shared: true,
+        name: `E2E Duplicate Global Group ${Date.now()}`,
+      },
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        validateStatus: () => true,
+      },
+    );
+    if (![200, 201].includes(secondGlobalResp.status)) {
+      throw new Error(`Expected second global shared group create to succeed, got ${secondGlobalResp.status}`);
+    }
+    const promotedGlobalSharedGroupId = secondGlobalResp.data?.data?.id;
+    if (!promotedGlobalSharedGroupId) {
+      throw new Error('Second global shared group create did not return id');
+    }
+    const [firstGlobalGroupStateResp, promotedGlobalGroupStateResp] = await Promise.all([
+      axios.get(`${API_BASE}/device-groups/${firstGlobalSharedAccessCodeGroupId}`, {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+      }),
+      axios.get(`${API_BASE}/device-groups/${promotedGlobalSharedGroupId}`, {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+      }),
+    ]);
+    const firstGroupState = firstGlobalGroupStateResp.data?.data;
+    const promotedGroupState = promotedGlobalGroupStateResp.data?.data;
+    if (firstGroupState?.is_global_shared !== false) {
+      throw new Error('Expected previous global shared group to be auto-demoted');
+    }
+    if (promotedGroupState?.is_global_shared !== true) {
+      throw new Error('Expected second created global shared group to be promoted');
+    }
+    demotedGlobalSharedAccessCodeGroupId = firstGlobalSharedAccessCodeGroupId;
+    globalSharedAccessCodeGroupId = promotedGlobalSharedGroupId;
+
+    const membershipConflictResp = await axios.post(
+      `${API_BASE}/device-groups/${globalSharedAccessCodeGroupId}/members`,
+      { device_id: keypadDeviceA, device_type: 'access_control' },
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        validateStatus: () => true,
+      },
+    );
+    if (![200, 201].includes(membershipConflictResp.status)) {
+      throw new Error(`Expected multi-group access-control membership to be allowed, got ${membershipConflictResp.status}`);
+    }
+    ok('Access-control device membership across multiple access-code groups is allowed');
+
+    await axios.delete(
+      `${API_BASE}/device-groups/${accessCodeGroupId}/members/${keypadDeviceB}`,
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        params: { device_type: 'access_control' },
+      },
+    );
+    await axios.post(
+      `${API_BASE}/device-groups/${globalSharedAccessCodeGroupId}/members`,
+      { device_id: keypadDeviceB, device_type: 'access_control' },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+
+    const globalGroupCode = '222222';
+    const expectGlobalGroupSet = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
+        Array.isArray(cmd.codes) &&
+        normalizeCodeRowsForDevice(cmd, keypadDeviceB).some((entry) => entry.code === globalGroupCode),
+      15000,
+    );
+    await axios.put(
+      `${API_BASE}/access-codes/manual/set`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device_group',
+        scope_id: globalSharedAccessCodeGroupId,
+        code: globalGroupCode,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    await expectGlobalGroupSet;
+    ok('Global shared uniqueness + exclusivity conflict behavior validated and global membership configured');
+
+    step('Configuring schedule-scoped access code and validating tenant schedule resolution');
+    const accessCodeSchedulesResp = await axios.get(
+      `${API_BASE}/facilities/${created.facilityId}/schedules`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const facilitySchedules = accessCodeSchedulesResp.data?.schedules || [];
+    const selectedSchedule = facilitySchedules.find((schedule) => schedule.is_active) || facilitySchedules[0];
+    if (selectedSchedule && primaryToken && created.primaryTenantId) {
+      selectedAccessCodeScheduleId = selectedSchedule.id;
+      await axios.put(
+        `${API_BASE}/users/${created.primaryTenantId}/facilities/${created.facilityId}/schedule`,
+        { scheduleId: selectedSchedule.id },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+
+      const scheduledGroupCode = '121212';
+      const expectScheduleScopedSet = waitForCommand(
+        ws,
+        (cmd) =>
+          cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
+          Array.isArray(cmd.codes) &&
+          normalizeCodeRowsForDevice(cmd, keypadDeviceB).some(
+            (entry) =>
+              entry.code === scheduledGroupCode &&
+              entry.schedule_id === selectedSchedule.id &&
+              entry.schedule &&
+              entry.schedule.facility_id === created.facilityId &&
+              Array.isArray(entry.schedule.time_windows),
+          ),
+        15000,
+      );
+      await axios.put(
+        `${API_BASE}/access-codes/manual/set`,
+        {
+          facility_id: created.facilityId,
+          scope_type: 'device_group',
+          scope_id: globalSharedAccessCodeGroupId,
+          schedule_id: selectedSchedule.id,
+          code: scheduledGroupCode,
+        },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      await expectScheduleScopedSet;
+
+      const tenantScheduledAppCodesResp = await axios.get(
+        `${API_BASE}/access-codes/app/my`,
+        {
+          headers: { Authorization: `Bearer ${primaryToken}` },
+          params: { facility_id: created.facilityId },
+        },
+      );
+      const tenantScheduledAppCodes = tenantScheduledAppCodesResp.data?.data || [];
+      const scheduledEntry = tenantScheduledAppCodes.find((entry) => entry.device_id === keypadDeviceB && entry.schedule_id === selectedSchedule.id);
+      if (!scheduledEntry || scheduledEntry.code !== scheduledGroupCode) {
+        throw new Error('Expected tenant /access-codes/app/my to resolve schedule-scoped group code for assigned schedule');
+      }
+      ok('Schedule-scoped code payload and tenant schedule resolution validated');
+    } else {
+      ok('Skipped schedule-scoped access-code E2E branch (missing schedule or primary tenant context)');
+    }
+
+    if (keypadDeviceC) {
+      step('Creating private access-code group for tenant visibility negative case');
+      const privateGroupResp = await axios.post(
+        `${API_BASE}/device-groups`,
+        {
+          facility_id: created.facilityId,
+          group_type: 'access_code',
+          is_global_shared: false,
+          name: `E2E Private Access Group ${Date.now()}`,
+        },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      privateAccessCodeGroupId = privateGroupResp.data?.data?.id;
+      if (!privateAccessCodeGroupId) throw new Error('Private access-code group creation did not return id');
+      await axios.post(
+        `${API_BASE}/device-groups/${privateAccessCodeGroupId}/members`,
+        { device_id: keypadDeviceC, device_type: 'access_control' },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      const expectPrivateGroupSet = waitForCommand(
+        ws,
+        (cmd) =>
+          cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
+          Array.isArray(cmd.codes) &&
+          normalizeCodeRowsForDevice(cmd, keypadDeviceC).some((entry) => entry.code === '444444'),
+        15000,
+      );
+      await axios.put(
+        `${API_BASE}/access-codes/manual/set`,
+        {
+          facility_id: created.facilityId,
+          scope_type: 'device_group',
+          scope_id: privateAccessCodeGroupId,
+          code: '444444',
+        },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      await expectPrivateGroupSet;
+      ok('Private access-code group configured for tenant-visibility negative test');
+    }
+
+    step('Verifying tenant/facility-accessible access code pairings endpoint');
+    const myCodesResp = await axios.get(
+      `${API_BASE}/access-codes/my`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const myCodes = myCodesResp.data?.data || [];
+    if (!Array.isArray(myCodes) || myCodes.length === 0) {
+      throw new Error('Expected /access-codes/my to return at least one device/code pairing');
+    }
+    ok(`/access-codes/my returned ${myCodes.length} pairing(s)`);
+    const myCodesFacilityScopedResp = await axios.get(
+      `${API_BASE}/access-codes/my`,
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        params: { facility_id: created.facilityId },
+      },
+    );
+    const myCodesFacilityScoped = myCodesFacilityScopedResp.data?.data || [];
+    if (!Array.isArray(myCodesFacilityScoped) || myCodesFacilityScoped.length === 0) {
+      throw new Error('Expected /access-codes/my?facility_id=... to return at least one pairing');
+    }
+    if (primaryToken) {
+      const tenantMyCodesResp = await axios.get(
+        `${API_BASE}/access-codes/my`,
+        {
+          headers: { Authorization: `Bearer ${primaryToken}` },
+          params: { facility_id: created.facilityId },
+        },
+      );
+      const tenantMyCodes = tenantMyCodesResp.data?.data || [];
+      if (!Array.isArray(tenantMyCodes) || tenantMyCodes.length === 0) {
+        throw new Error('Expected tenant /access-codes/my to return at least one pairing in assigned facility');
+      }
+      ok(`Tenant /access-codes/my returned ${tenantMyCodes.length} pairing(s)`);
+    }
+
+    step('Verifying app-facing access code endpoint role/filter behavior');
+    const appMyFacilityAdminResp = await axios.get(
+      `${API_BASE}/access-codes/app/my`,
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        params: { facility_id: created.facilityId },
+      },
+    );
+    const appFacilityAdminCodes = appMyFacilityAdminResp.data?.data || [];
+    if (!Array.isArray(appFacilityAdminCodes) || appFacilityAdminCodes.length < 2) {
+      throw new Error('Expected facility_admin /access-codes/app/my to return both keypad devices in facility');
+    }
+
+    const appMyDevAdminResp = await axios.get(
+      `${API_BASE}/access-codes/app/my`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { facility_id: created.facilityId },
+      },
+    );
+    const appDevAdminCodes = appMyDevAdminResp.data?.data || [];
+    if (!Array.isArray(appDevAdminCodes) || appDevAdminCodes.length < 2) {
+      throw new Error('Expected dev_admin /access-codes/app/my to return all keypad devices in facility');
+    }
+
+    const appMyAdminResp = await axios.get(
+      `${API_BASE}/access-codes/app/my`,
+      {
+        headers: { Authorization: `Bearer ${platformAdmin.token}` },
+        params: { facility_id: created.facilityId },
+      },
+    );
+    const appAdminCodes = appMyAdminResp.data?.data || [];
+    if (!Array.isArray(appAdminCodes) || appAdminCodes.length < 2) {
+      throw new Error('Expected admin /access-codes/app/my to return all keypad devices in facility');
+    }
+
+    if (primaryToken) {
+      const tenantAppCodesResp = await axios.get(
+        `${API_BASE}/access-codes/app/my`,
+        {
+          headers: { Authorization: `Bearer ${primaryToken}` },
+          params: { facility_id: created.facilityId },
+        },
+      );
+      const tenantAppCodes = tenantAppCodesResp.data?.data || [];
+      if (!Array.isArray(tenantAppCodes) || tenantAppCodes.length === 0) {
+        throw new Error('Expected tenant /access-codes/app/my to return at least one visible keypad pairing');
+      }
+      for (const entry of tenantAppCodes) {
+        if (!entry.device_id || !entry.device_name || !entry.code) {
+          throw new Error('Tenant /access-codes/app/my returned entry missing device_id/device_name/code');
+        }
+        if (!entry.schedule_id) {
+          throw new Error('Tenant /access-codes/app/my should not return always-on access code entries');
+        }
+      }
+      const tenantIds = new Set(tenantAppCodes.map((entry) => entry.device_id));
+      if (!tenantIds.has(keypadDeviceB)) {
+        throw new Error('Expected tenant /access-codes/app/my to include globally shared keypad device');
+      }
+      if (!tenantIds.has(keypadDeviceA)) {
+        throw new Error('Expected tenant /access-codes/app/my to include multi-zone keypad when tenant has at least one linked zone');
+      }
+      if (keypadDeviceC && tenantIds.has(keypadDeviceC)) {
+        throw new Error('Tenant /access-codes/app/my should not include private-group keypad device');
+      }
+      ok(`App endpoint role/filter checks passed (facility_admin=${appFacilityAdminCodes.length}, admin=${appAdminCodes.length}, dev_admin=${appDevAdminCodes.length}, tenant=${tenantAppCodes.length})`);
+    } else {
+      ok(`App endpoint role/filter checks passed (facility_admin=${appFacilityAdminCodes.length}, admin=${appAdminCodes.length}, dev_admin=${appDevAdminCodes.length})`);
+    }
+
+    if (share1Token && share1Id) {
+      step('Verifying any tenant with an active unit assignment gets default/global access-code group devices');
+      const extraUnit = await createUnit(token, created.facilityId, `E2E-EXTRA-${Date.now()}`);
+      if (!extraUnit?.id) throw new Error('Failed to create extra unit for tenant access-code visibility coverage');
+      await assignTenantToUnit(token, extraUnit.id, share1Id, false);
+      if (selectedAccessCodeScheduleId) {
+        await axios.put(
+          `${API_BASE}/users/${share1Id}/facilities/${created.facilityId}/schedule`,
+          { scheduleId: selectedAccessCodeScheduleId },
+          { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+        );
+      }
+      const tenantWithUnitResp = await axios.get(
+        `${API_BASE}/access-codes/app/my`,
+        {
+          headers: { Authorization: `Bearer ${share1Token}` },
+          params: { facility_id: created.facilityId },
+        },
+      );
+      const tenantWithUnitCodes = tenantWithUnitResp.data?.data || [];
+      const tenantWithUnitDeviceIds = new Set(tenantWithUnitCodes.map((entry) => entry.device_id));
+      if (!tenantWithUnitDeviceIds.has(keypadDeviceB)) {
+        throw new Error('Expected tenant with any active unit assignment to receive default/global access-code group device');
+      }
+      if (tenantWithUnitCodes.some((entry) => !entry.schedule_id)) {
+        throw new Error('Tenant with unit assignment should only receive schedule-scoped access-code entries');
+      }
+      ok('Tenant with active unit assignment sees default/global access-code group device');
+    }
+
+    if (keypadDeviceA) {
+      step('Verifying tenant with no unit/key-share zone access cannot see zone-linked access control devices');
+      const noZoneEmail = `tenant-no-zone-${Date.now()}@test.com`;
+      const noZonePassword = 'TestUser123!';
+      const noZoneUserId = await createUser(token, noZoneEmail, 'tenant');
+      created.users.push(noZoneUserId);
+      const noZoneLogin = await axios.post(`${API_BASE}/auth/login`, {
+        email: noZoneEmail,
+        password: noZonePassword,
+      });
+      const noZoneToken = noZoneLogin.data?.token;
+      if (!noZoneToken) throw new Error('No-zone tenant login failed');
+      const noZoneAppCodesResp = await axios.get(
+        `${API_BASE}/access-codes/app/my`,
+        { headers: { Authorization: `Bearer ${noZoneToken}` } },
+      );
+      const noZoneDeviceIds = new Set((noZoneAppCodesResp.data?.data || []).map((entry) => entry.device_id));
+      if (noZoneDeviceIds.has(keypadDeviceA)) {
+        throw new Error('Tenant with no unit/key-share in any zone should not receive zone-linked access control device');
+      }
+      ok('Tenant with no zone access does not receive zone-linked access control device');
+    }
+
+    if (primaryToken) {
+      step('Validating tenant is forbidden from access-code management endpoints');
+      const tenantManageResp = await axios.put(
+        `${API_BASE}/access-codes/config/${created.facilityId}`,
+        { is_enabled: false },
+        {
+          headers: { Authorization: `Bearer ${primaryToken}` },
+          validateStatus: () => true,
+        },
+      );
+      if (tenantManageResp.status !== 403) {
+        throw new Error(`Expected tenant access-code config update to be forbidden (403), got ${tenantManageResp.status}`);
+      }
+      ok('Tenant management access correctly forbidden for access-code config update');
+    }
+
+    step('Verifying internal gateway poll endpoint for access codes');
+    const gatewayPollResp = await axios.get(
+      `${API_BASE}/internal/gateway/access-codes`,
+      {
+        headers: {
+          Authorization: `Bearer ${created.facilityAdminToken}`,
+          'X-Gateway-Facility-Id': created.facilityId,
+        },
+      },
+    );
+    const pollCodes = gatewayPollResp.data?.data?.codes || [];
+    if (!Array.isArray(pollCodes) || pollCodes.length === 0) {
+      throw new Error('Expected internal gateway poll endpoint to return resolved codes');
+    }
+    ok(`Internal gateway poll returned ${pollCodes.length} device code mapping(s)`);
+
+    step('Pushing access code update command to gateway');
+    await axios.post(
+      `${API_BASE}/access-codes/push/${created.facilityId}`,
+      {},
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    ok('Access code push command dispatched');
+
+    step('Validating access-code push failure handling when gateway rejects ACK');
+    accessCodeAckMode = 'reject';
+    const rejectPushResp = await axios.post(
+      `${API_BASE}/access-codes/push/${created.facilityId}`,
+      {},
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        validateStatus: () => true,
+      },
+    );
+    if (rejectPushResp.status < 500) {
+      throw new Error(`Expected rejected ACK push to fail with 5xx, got ${rejectPushResp.status}`);
+    }
+    const rejectedStateResp = await axios.get(
+      `${API_BASE}/access-codes/push-state/${created.facilityId}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const rejectedState = rejectedStateResp.data?.data;
+    if (rejectedState?.status !== 'error') {
+      throw new Error(`Expected push state=error after rejected ACK, got ${rejectedState?.status}`);
+    }
+    ok('Rejected ACK path returns 5xx and updates push state to error');
+
+    step('Validating access-code push failure handling when ACK times out');
+    accessCodeAckMode = 'ignore';
+    const timeoutPushResp = await axios.post(
+      `${API_BASE}/access-codes/push/${created.facilityId}`,
+      {},
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        validateStatus: () => true,
+      },
+    );
+    if (timeoutPushResp.status < 500) {
+      throw new Error(`Expected ACK timeout push to fail with 5xx, got ${timeoutPushResp.status}`);
+    }
+    const timeoutStateResp = await axios.get(
+      `${API_BASE}/access-codes/push-state/${created.facilityId}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const timeoutState = timeoutStateResp.data?.data;
+    if (timeoutState?.status !== 'error') {
+      throw new Error(`Expected push state=error after timeout ACK, got ${timeoutState?.status}`);
+    }
+    ok('ACK timeout path returns 5xx and updates push state to error');
+
+    accessCodeAckMode = 'accept';
+
+    step('Deleting temporary access-code groups');
+    if (demotedGlobalSharedAccessCodeGroupId) {
+      await axios.delete(
+        `${API_BASE}/device-groups/${demotedGlobalSharedAccessCodeGroupId}`,
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      demotedGlobalSharedAccessCodeGroupId = null;
+    }
+    if (globalSharedAccessCodeGroupId) {
+      await axios.delete(
+        `${API_BASE}/device-groups/${globalSharedAccessCodeGroupId}`,
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      globalSharedAccessCodeGroupId = null;
+    }
+    if (privateAccessCodeGroupId) {
+      await axios.delete(
+        `${API_BASE}/device-groups/${privateAccessCodeGroupId}`,
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      privateAccessCodeGroupId = null;
+    }
+    if (accessCodeGroupId) {
+      await axios.delete(
+        `${API_BASE}/device-groups/${accessCodeGroupId}`,
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      accessCodeGroupId = null;
+    }
+    ok('Temporary access-code groups deleted');
+
     // mark success; we'll print Result after cleanup
     success = true;
   } finally {
     // Cleanup (best-effort)
     heading('Cleaning up');
+    accessCodeAckMode = 'accept';
+    let cleanupFailed = false;
+    const cleanupErrors = [];
     try {
+      if (accessCodeConfigModified && accessCodeConfigFacilityId && created.facilityAdminToken) {
+        step('Restoring access code configuration');
+        try {
+          await axios.put(
+            `${API_BASE}/access-codes/config/${accessCodeConfigFacilityId}`,
+            {
+              is_enabled: accessCodeOriginalConfig?.is_enabled ?? false,
+              digit_count: accessCodeOriginalConfig?.digit_count ?? 6,
+              rotation_interval_hours: accessCodeOriginalConfig?.rotation_interval_hours ?? 24,
+              rotation_hour: accessCodeOriginalConfig?.rotation_hour ?? 0,
+              rotation_minute: accessCodeOriginalConfig?.rotation_minute ?? 0,
+            },
+            { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+          );
+          accessCodeConfigModified = false;
+          ok('Access code configuration restored');
+        } catch (err) {
+          cleanupFailed = true;
+          cleanupErrors.push(`Failed to restore access code configuration: ${err?.response?.data || err?.message || err}`);
+        }
+      }
+
+      if (unitLinkedSwapGroupId) {
+        step('Deleting unit-linked swap validation group');
+        await axios.delete(`${API_BASE}/device-groups/${unitLinkedSwapGroupId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+        unitLinkedSwapGroupId = null;
+        ok('Unit-linked swap validation group deleted');
+      }
+
+      if (globalSharedAccessCodeGroupId) {
+        step('Deleting global shared access-code group');
+        await axios.delete(`${API_BASE}/device-groups/${globalSharedAccessCodeGroupId}`, {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken || token}` },
+        }).catch(() => {});
+        globalSharedAccessCodeGroupId = null;
+        ok('Global shared access-code group deleted');
+      }
+
+      if (demotedGlobalSharedAccessCodeGroupId) {
+        step('Deleting demoted global shared access-code group');
+        await axios.delete(`${API_BASE}/device-groups/${demotedGlobalSharedAccessCodeGroupId}`, {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken || token}` },
+        }).catch(() => {});
+        demotedGlobalSharedAccessCodeGroupId = null;
+        ok('Demoted global shared access-code group deleted');
+      }
+
+      if (privateAccessCodeGroupId) {
+        step('Deleting private access-code group');
+        await axios.delete(`${API_BASE}/device-groups/${privateAccessCodeGroupId}`, {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken || token}` },
+        }).catch(() => {});
+        privateAccessCodeGroupId = null;
+        ok('Private access-code group deleted');
+      }
+
+      if (accessCodeGroupId) {
+        step('Deleting temporary access-code group');
+        await axios.delete(`${API_BASE}/device-groups/${accessCodeGroupId}`, {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken || token}` },
+        }).catch(() => {});
+        accessCodeGroupId = null;
+        ok('Temporary access-code group deleted');
+      }
+
+      // Restore firmware storage config if we changed it for this run
+      if (firmwareStorageConfigOverridden && originalFirmwareStorageConfig) {
+        if (canRestoreFirmwareStorageConfig) {
+          step('Restoring original firmware storage config');
+          await axios.put(`${API_BASE}/admin/storage-config`, {
+            providerType: originalFirmwareStorageConfig.providerType,
+            providerConfig: originalFirmwareStorageConfig.providerConfig,
+          }, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+          ok('Original firmware storage config restored');
+        } else {
+          warn('Skipped firmware storage config restore (original config had redacted secrets)');
+        }
+      }
+
       // Restore FMS config if we modified an existing one
       if (existingConfig?.id) {
         step('Restoring original FMS config');
@@ -3973,15 +5274,26 @@ async function run() {
       const uniqueUserIds = Array.from(new Set(created.users));
       for (const userId of uniqueUserIds) {
         step(`Hard deleting user ${userId}`);
-        await axios.delete(`${API_BASE}/admin/users/${userId}/hard`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
-        ok(`Hard deleted user ${userId}`);
+        try {
+          await axios.delete(`${API_BASE}/admin/users/${userId}/hard`, { headers: { Authorization: `Bearer ${token}` } });
+          ok(`Hard deleted user ${userId}`);
+        } catch (err) {
+          cleanupFailed = true;
+          cleanupErrors.push(`Failed to hard delete user ${userId}: ${err?.response?.data || err?.message || err}`);
+        }
       }
       if (created.facilityId) {
         step(`Hard deleting test facility ${created.facilityId}`);
-        await axios.delete(`${API_BASE}/admin/facilities/${created.facilityId}/hard`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
-        ok(`Hard deleted facility ${created.facilityId}`);
+        try {
+          await axios.delete(`${API_BASE}/admin/facilities/${created.facilityId}/hard`, { headers: { Authorization: `Bearer ${token}` } });
+          ok(`Hard deleted facility ${created.facilityId}`);
+        } catch (err) {
+          cleanupFailed = true;
+          cleanupErrors.push(`Failed to hard delete facility ${created.facilityId}: ${err?.response?.data || err?.message || err}`);
+        }
       }
     } catch (e) {
+      cleanupFailed = true;
       console.error(C.red(`Cleanup encountered errors: ${e?.response?.data || e?.message || e}`));
     } finally {
       try { ws.close(1000, 'e2e_cleanup'); } catch {}
@@ -3994,6 +5306,10 @@ async function run() {
         await setNotificationsTestMode(token, false);
         notificationsTestModeEnabled = false;
       }
+    }
+
+    if (cleanupFailed) {
+      throw new Error(`Cleanup encountered errors:\n${cleanupErrors.join('\n')}`);
     }
 
     if (success) {

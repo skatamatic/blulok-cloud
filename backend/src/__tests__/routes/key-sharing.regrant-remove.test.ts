@@ -12,6 +12,13 @@ jest.mock('@/services/denylist-optimization.service', () => ({
     shouldSkipDenylistRemove: jest.fn().mockReturnValue(false),
   },
 }));
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getBluLokDeviceIdsForUnits: jest.fn().mockResolvedValue(['device-1']),
+    getAccessControlDeviceIdsForUnits: jest.fn().mockResolvedValue([]),
+    getDeviceFacilityIds: jest.fn().mockResolvedValue(new Map([['device-1', 'facility-1']])),
+  },
+}));
 
 import request from 'supertest';
 import { createIntegrationTestApp } from '@/__tests__/utils/integration-test-server';
@@ -19,6 +26,7 @@ import { DatabaseService } from '@/services/database.service';
 import { DenylistEntryModel } from '@/models/denylist-entry.model';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { DenylistService } from '@/services/denylist.service';
+import { DenylistOptimizationService } from '@/services/denylist-optimization.service';
 
 describe('Key Sharing Re-grant triggers denylist removal', () => {
   let app: any;
@@ -51,7 +59,32 @@ describe('Key Sharing Re-grant triggers denylist removal', () => {
 
     mockKnex = jest.fn((table: string) => {
       if (table === 'key_sharing') return keySharingTable();
+      if (table === 'blulok_devices') {
+        return {
+          whereIn: jest.fn().mockReturnThis(),
+          select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
+        };
+      }
+      if (table === 'device_group_members as zone_access') {
+        return {
+          distinct: jest.fn().mockReturnThis(),
+          join: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          whereIn: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          then: (resolve: (rows: any[]) => any) => Promise.resolve([]).then(resolve),
+          catch: () => undefined,
+        };
+      }
       if (table === 'blulok_devices as bd') return devicesJoinUnits();
+      if (table === 'access_control_devices as acd') {
+        return {
+          whereIn: jest.fn().mockReturnThis(),
+          join: jest.fn().mockReturnThis(),
+          select: jest.fn().mockResolvedValue([]),
+        };
+      }
       return {
         where: jest.fn().mockReturnThis(),
         whereIn: jest.fn().mockReturnThis(),
@@ -64,7 +97,7 @@ describe('Key Sharing Re-grant triggers denylist removal', () => {
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: mockKnex });
 
     mockDenylistModel = {
-      findByUnitsAndUser: jest.fn().mockResolvedValue([
+      findByUser: jest.fn().mockResolvedValue([
         { id: 'e1', device_id: 'device-1', user_id: 'invitee-1', expires_at: new Date(Date.now() + 3600_000) } as any,
       ]),
       remove: jest.fn().mockResolvedValue(true),
@@ -90,12 +123,33 @@ describe('Key Sharing Re-grant triggers denylist removal', () => {
       .expect(200);
 
     expect(res.body.success).toBe(true);
-    expect(mockDenylistModel.findByUnitsAndUser).toHaveBeenCalledWith(['unit-1'], 'invitee-1');
+    expect(mockDenylistModel.findByUser).toHaveBeenCalledWith('invitee-1');
     expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
     // Now expects JWT string instead of object
     expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('facility-1', expect.stringContaining('.'));
     // Now uses bulkRemove instead of remove for efficiency
     expect(mockDenylistModel.bulkRemove).toHaveBeenCalledWith(['device-1'], 'invitee-1');
+  });
+
+  it('targets only non-expired denylist entries in DENYLIST_REMOVE command', async () => {
+    mockDenylistModel.findByUser.mockResolvedValue([
+      { id: 'e1', device_id: 'device-1', user_id: 'invitee-1', expires_at: new Date(Date.now() + 3600_000) } as any,
+      { id: 'e2', device_id: 'device-2', user_id: 'invitee-1', expires_at: new Date(Date.now() - 3600_000) } as any,
+    ]);
+    (DenylistOptimizationService.shouldSkipDenylistRemove as jest.Mock).mockImplementation(
+      (entry: any) => entry?.id === 'e2',
+    );
+
+    await request(app)
+      .put('/api/v1/key-sharing/share-1')
+      .set('Authorization', 'Bearer mock-jwt-token')
+      .send({ is_active: true })
+      .expect(200);
+
+    expect(DenylistService.buildDenylistRemove).toHaveBeenCalledWith(
+      [{ sub: 'invitee-1', exp: 0 }],
+      ['device-1'],
+    );
   });
 });
 

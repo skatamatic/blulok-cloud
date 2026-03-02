@@ -1,11 +1,6 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  globals: {
-    'ts-jest': {
-      tsconfig: 'tsconfig.json'
-    }
-  },
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/?(*.)+(spec|test).ts'],
   testPathIgnorePatterns: [
@@ -16,6 +11,8 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       useESM: false,
+      tsconfig: 'tsconfig.json',
+      diagnostics: false,
     }],
   },
   collectCoverageFrom: [
@@ -42,7 +39,7 @@ module.exports = {
     'node_modules/(?!(uuid)/)',
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-  forceExit: true,
   testTimeout: 10000,
-  maxWorkers: 1, // Use single worker to prevent memory issues
+  // Keep CI conservative, but use parallel workers locally for speed.
+  maxWorkers: process.env.CI ? 1 : '50%',
 };

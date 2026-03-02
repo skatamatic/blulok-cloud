@@ -11,10 +11,12 @@ import { DenylistService } from '@/services/denylist.service';
 import { AccessRevocationListenerService } from '@/services/access-revocation-listener.service';
 import { DatabaseService } from '@/services/database.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
 
 jest.mock('@/services/database.service');
 jest.mock('@/services/gateway/gateway-events.service');
 jest.mock('@/models/denylist-entry.model');
+jest.mock('@/services/access-control-zone-access.service');
 jest.mock('@/config/environment', () => ({
   config: {
     security: {
@@ -86,12 +88,16 @@ describe('Denylist Flow Integration', () => {
     mockDenylistModel = {
       create: jest.fn().mockResolvedValue({ id: 'entry-1' }),
       bulkCreate: jest.fn().mockResolvedValue(undefined),
-      findByUnitsAndUser: jest.fn().mockResolvedValue([]),
+      findByUser: jest.fn().mockResolvedValue([]),
       findByDevice: jest.fn().mockResolvedValue([]),
       remove: jest.fn().mockResolvedValue(true),
       bulkRemove: jest.fn().mockResolvedValue(1),
       pruneExpired: jest.fn().mockResolvedValue(0),
     } as any;
+    (AccessControlZoneAccessService.getBluLokDeviceIdsForUnits as jest.Mock).mockResolvedValue(['device-1']);
+    (AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits as jest.Mock).mockResolvedValue([]);
+    (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValue(new Map([['device-1', 'facility-1']]));
+
 
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
 
@@ -154,7 +160,7 @@ describe('Denylist Flow Integration', () => {
       });
 
       // Mock denylist entries to return
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue([
+      mockDenylistModel.findByUser.mockResolvedValue([
         {
           id: 'entry-1',
           device_id: 'device-1',
@@ -168,7 +174,7 @@ describe('Denylist Flow Integration', () => {
       ]);
 
       // Clear call counts but keep implementations
-      mockDenylistModel.findByUnitsAndUser.mockClear();
+      mockDenylistModel.findByUser.mockClear();
       mockDenylistModel.bulkRemove.mockClear();
       mockGatewayEvents.unicastToFacility.mockClear();
 
@@ -185,7 +191,7 @@ describe('Denylist Flow Integration', () => {
       await new Promise(resolve => setImmediate(resolve));
       
       // Verify that the re-assignment triggered denylist removal
-      expect(mockDenylistModel.findByUnitsAndUser).toHaveBeenCalledWith(['unit-1'], 'user-1');
+      expect(mockDenylistModel.findByUser).toHaveBeenCalledWith('user-1');
       expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
       // Now uses bulkRemove for efficiency
       expect(mockDenylistModel.bulkRemove).toHaveBeenCalled();

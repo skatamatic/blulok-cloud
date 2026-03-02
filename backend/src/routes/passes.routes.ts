@@ -22,15 +22,28 @@ import { RoutePassOrchestrator, RoutePassError } from '@/services/passes/route-p
 const router = Router();
 
 // Rate limit pass requests
+const requestSchema = Joi.object({
+  facility_id: Joi.string().uuid().optional(),
+});
 
 // POST /api/v1/passes/request
 router.post('/request', authenticateToken, passRequestLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const facilityIdCandidate = req.query.facility_id ?? req.body?.facility_id;
+  const { error, value } = requestSchema.validate({
+    facility_id: facilityIdCandidate ? String(facilityIdCandidate) : undefined,
+  });
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
   const rawHeader = req.header('X-App-Device-Id');
   try {
     const routePass = await RoutePassOrchestrator.issueForUser({
       userId: req.user!.userId,
       role: req.user!.role,
       facilityIds: req.user!.facilityIds as string[] | undefined,
+      facilityId: value.facility_id,
     }, rawHeader);
 
     res.json({ success: true, routePass });

@@ -28,13 +28,15 @@ const mockSubscribe = jest.fn().mockImplementation((_type: string, handler: (dat
 });
 const mockUnsubscribe = jest.fn();
 
+const stableWsValue = {
+  subscribe: mockSubscribe,
+  unsubscribe: mockUnsubscribe,
+  isConnected: true,
+};
+
 jest.mock('@/contexts/WebSocketContext', () => ({
   ...jest.requireActual('@/contexts/WebSocketContext'),
-  useWebSocket: () => ({
-    subscribe: mockSubscribe,
-    unsubscribe: mockUnsubscribe,
-    isConnected: true,
-  }),
+  useWebSocket: () => stableWsValue,
   WebSocketProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
@@ -64,6 +66,9 @@ const mkPush = (overrides: Partial<any> = {}) => ({
   status: 'complete',
   chunks_total: 2,
   chunks_sent: 2,
+  progress_percent: 0,
+  devices_complete: 0,
+  devices_failed: 0,
   initiated_by: 'user-1',
   created_at: '2026-01-02T00:00:00Z',
   ...overrides,
@@ -367,7 +372,7 @@ describe('GatewayFirmwareTab', () => {
       });
 
       expect(screen.getByText('50%')).toBeInTheDocument();
-      expect(screen.getByText('(1/2 chunks)')).toBeInTheDocument();
+      expect(screen.getByText('1/2 chunks')).toBeInTheDocument();
     });
 
     it('ignores WS messages with wrong gatewayId', async () => {
@@ -418,7 +423,6 @@ describe('GatewayFirmwareTab', () => {
     });
 
     it('refreshes data when terminal WS event received', async () => {
-      jest.useFakeTimers();
       setupDefaultMocks({
         pushStatus: mkPush({ status: 'transferring', chunks_sent: 1 }),
       });
@@ -428,9 +432,13 @@ describe('GatewayFirmwareTab', () => {
         expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
       });
 
-      jest.clearAllMocks();
+      // Reset only the API mocks so we can detect the re-fetch
+      mockApi.listFirmware.mockClear();
+      mockApi.getFirmwarePushStatus.mockClear();
+      mockApi.getFirmwarePushHistory.mockClear();
       setupDefaultMocks({ pushStatus: mkPush({ status: 'complete' }) });
 
+      // Send a terminal WS event which triggers setTimeout(loadData, 500)
       act(() => {
         wsMessageHandler?.({
           gatewayId: GATEWAY_ID,
@@ -440,16 +448,11 @@ describe('GatewayFirmwareTab', () => {
         });
       });
 
-      // Advance past the 500ms delay
-      act(() => {
-        jest.advanceTimersByTime(600);
-      });
-
-      await waitFor(() => {
-        expect(mockApi.getFirmwarePushStatus).toHaveBeenCalled();
-      });
-
-      jest.useRealTimers();
+      // Wait for the 500ms setTimeout + the async loadData to complete
+      await waitFor(
+        () => expect(mockApi.getFirmwarePushStatus).toHaveBeenCalled(),
+        { timeout: 3000 },
+      );
     });
   });
 
@@ -469,7 +472,7 @@ describe('GatewayFirmwareTab', () => {
       await waitFor(() => {
         expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
         expect(screen.getByText('50%')).toBeInTheDocument();
-        expect(screen.getByText('(2/4 chunks)')).toBeInTheDocument();
+        expect(screen.getByText('2/4 chunks')).toBeInTheDocument();
       });
     });
 

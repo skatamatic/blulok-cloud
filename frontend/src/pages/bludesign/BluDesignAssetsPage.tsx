@@ -26,6 +26,7 @@ import { AssetRegistry } from '@/components/bludesign/assets/AssetRegistry';
 import { ThumbnailGenerator } from '@/components/bludesign/utils/ThumbnailGenerator';
 import { AssetMetadata, AssetCategory } from '@/components/bludesign/core/types';
 import { SkinManager } from '@/components/bludesign/core/SkinManager';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 
 // Convert AssetMetadata to AssetDefinition for the editor
 const assetMetadataToDefinition = (asset: AssetMetadata, isBuiltIn: boolean = false): AssetDefinition => {
@@ -86,6 +87,7 @@ export default function BluDesignAssetsPage() {
   const [skinManager] = useState(() => new SkinManager());
   const [showLockerWizard, setShowLockerWizard] = useState(false);
   const [editingAsset, setEditingAsset] = useState<AssetDefinition | null>(null);
+  const [pendingDeleteAsset, setPendingDeleteAsset] = useState<AssetMetadata | null>(null);
 
   // Load built-in assets from registry
   useEffect(() => {
@@ -291,9 +293,13 @@ export default function BluDesignAssetsPage() {
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to delete "${asset.name}"? This action cannot be undone.`)) {
-      return;
-    }
+    setPendingDeleteAsset(asset);
+  }, [isBuiltInAsset]);
+
+  const confirmDeleteAsset = useCallback(async () => {
+    const asset = pendingDeleteAsset;
+    if (!asset) return;
+    setPendingDeleteAsset(null);
 
     try {
       await AssetService.deleteAssetDefinition(asset.id);
@@ -323,7 +329,7 @@ export default function BluDesignAssetsPage() {
       console.error('Failed to delete asset:', error);
       alert('Failed to delete asset. Please try again.');
     }
-  }, [isBuiltInAsset, selectedAsset]);
+  }, [pendingDeleteAsset, selectedAsset]);
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
@@ -812,6 +818,17 @@ export default function BluDesignAssetsPage() {
           />
         )}
       </AnimatePresence>
+      <ConfirmDialog
+        isOpen={Boolean(pendingDeleteAsset)}
+        title="Delete Asset"
+        message={pendingDeleteAsset
+          ? `Delete "${pendingDeleteAsset.name}"? This action cannot be undone.`
+          : ''}
+        confirmLabel="Delete Asset"
+        confirmTone="danger"
+        onCancel={() => setPendingDeleteAsset(null)}
+        onConfirm={() => { confirmDeleteAsset().catch(() => undefined); }}
+      />
     </div>
   );
 }

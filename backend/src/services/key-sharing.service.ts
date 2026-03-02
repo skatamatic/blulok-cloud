@@ -11,6 +11,7 @@ import { GatewayEventsService } from '@/services/gateway/gateway-events.service'
 import { config } from '@/config/environment';
 import { UserRole } from '@/types/auth.types';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
 
 export class KeySharingService {
   private static instance: KeySharingService;
@@ -22,6 +23,14 @@ export class KeySharingService {
       KeySharingService.instance = new KeySharingService();
     }
     return KeySharingService.instance;
+  }
+
+  private async getEntitledDeviceIdsForUnit(unitId: string): Promise<string[]> {
+    const [bluLokDeviceIds, accessControlDeviceIds] = await Promise.all([
+      AccessControlZoneAccessService.getBluLokDeviceIdsForUnits([unitId]),
+      AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits([unitId]),
+    ]);
+    return Array.from(new Set([...bluLokDeviceIds, ...accessControlDeviceIds]));
   }
 
   /**
@@ -161,25 +170,36 @@ export class KeySharingService {
         const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
 
         const denylistModel = new DenylistEntryModel();
-        // Find entries on devices of this unit for this invitee
-        const entries = await denylistModel.findByUnitsAndUser([unitId], invitee.id);
-        if (entries.length > 0) {
-          // Facility for routing
-          const unit = await this.db('units').where('id', unitId).first('facility_id');
-          if (unit) {
-            // Which entries still require a command?
-            const entriesToProcess = entries.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e));
-            const deviceIds = entries.map(e => e.device_id);
+        const unitDeviceIds = await this.getEntitledDeviceIdsForUnit(unitId);
+        if (unitDeviceIds.length > 0) {
+          const entries = (await denylistModel.findByUser(invitee.id))
+            .filter((entry) => unitDeviceIds.includes(entry.device_id));
+          if (entries.length > 0) {
+          const entriesToProcess = entries.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e));
+          const deviceIds = entries.map(e => e.device_id);
+          const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
 
-            // Bulk remove DB entries (single query instead of N queries)
-            await denylistModel.bulkRemove(deviceIds, invitee.id);
+          // Bulk remove DB entries (single query instead of N queries)
+          await denylistModel.bulkRemove(deviceIds, invitee.id);
 
-            // Send command only if any non-expired entries remained
-            if (entriesToProcess.length > 0) {
-              const jwt = await DenylistService.buildDenylistRemove([{ sub: invitee.id, exp: 0 }], deviceIds);
-              GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, jwt);
+          if (entriesToProcess.length > 0) {
+            const deviceIdsToProcess = new Set(entriesToProcess.map((entry) => entry.device_id));
+            const byFacility = new Map<string, string[]>();
+            deviceIds.forEach((deviceId) => {
+              if (!deviceIdsToProcess.has(deviceId)) return;
+              const facilityId = deviceFacilityMap.get(deviceId);
+              if (!facilityId) return;
+              const list = byFacility.get(facilityId) || [];
+              list.push(deviceId);
+              byFacility.set(facilityId, list);
+            });
+
+            for (const [facilityId, targetDeviceIds] of byFacility.entries()) {
+              const jwt = await DenylistService.buildDenylistRemove([{ sub: invitee.id, exp: 0 }], targetDeviceIds);
+              GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
             }
           }
+        }
         }
       }
     } catch (e) {
@@ -322,7 +342,9 @@ export class KeySharingService {
     }
 
     const updateData: any = {};
-    if (dto.access_level !== undefined) updateData.access_level = dto.access_level;
+    if (dto.access_level !== undefined) {
+      updateData.access_level = dto.access_level === 'permanent' ? 'limited' : dto.access_level;
+    }
     if (dto.expires_at !== undefined) updateData.expires_at = dto.expires_at ? new Date(dto.expires_at) : null;
     if (dto.notes !== undefined) updateData.notes = dto.notes;
     if (dto.access_restrictions !== undefined) updateData.access_restrictions = dto.access_restrictions;
@@ -347,29 +369,31 @@ export class KeySharingService {
 
       if (becameActive && unexpired) {
         const denylistModel = new DenylistEntryModel();
-        const entries = await denylistModel.findByUnitsAndUser([existingSharing.unit_id], existingSharing.shared_with_user_id);
+        const unitDeviceIds = await this.getEntitledDeviceIdsForUnit(existingSharing.unit_id);
+        const entries = (await denylistModel.findByUser(existingSharing.shared_with_user_id))
+          .filter((entry) => unitDeviceIds.includes(entry.device_id));
         if (entries.length > 0) {
           const deviceIds = Array.from(new Set(entries.map(e => e.device_id)));
-          const deviceFacilityRows = await this.db('blulok_devices as bd')
-            .join('units as u', 'bd.unit_id', 'u.id')
-            .whereIn('bd.id', deviceIds)
-            .select('bd.id as device_id', 'u.facility_id');
+          const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
 
           // Bulk remove all entries (single query instead of N queries)
           await denylistModel.bulkRemove(deviceIds, existingSharing.shared_with_user_id);
 
           const facilityToDeviceIds = new Map<string, string[]>();
-          for (const row of deviceFacilityRows) {
-            const list = facilityToDeviceIds.get(row.facility_id) || [];
-            list.push(row.device_id);
-            facilityToDeviceIds.set(row.facility_id, list);
+          for (const deviceId of deviceIds) {
+            const facilityId = deviceFacilityMap.get(deviceId);
+            if (!facilityId) continue;
+            const list = facilityToDeviceIds.get(facilityId) || [];
+            list.push(deviceId);
+            facilityToDeviceIds.set(facilityId, list);
           }
 
           for (const [facilityId, targetDeviceIds] of facilityToDeviceIds.entries()) {
             const entriesForFacility = entries.filter(e => targetDeviceIds.includes(e.device_id));
             const entriesToProcess = entriesForFacility.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e as any));
             if (entriesToProcess.length > 0) {
-              const jwt = await DenylistService.buildDenylistRemove([{ sub: existingSharing.shared_with_user_id, exp: 0 }], targetDeviceIds);
+              const filteredDeviceIds = Array.from(new Set(entriesToProcess.map((entry) => entry.device_id)));
+              const jwt = await DenylistService.buildDenylistRemove([{ sub: existingSharing.shared_with_user_id, exp: 0 }], filteredDeviceIds);
               GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
             }
           }
@@ -401,43 +425,50 @@ export class KeySharingService {
     const success = await this.keySharings.revokeSharing(id);
     if (!success) return false;
 
-    // Denylist invitee for this unit's devices (fire-and-forget)
-    (async () => {
-      try {
-        const devices = await this.db('blulok_devices').where({ unit_id: existingSharing.unit_id }).select('id');
-        const deviceIds = devices.map((d: any) => d.id);
-        if (deviceIds.length === 0) return;
+    try {
+      const deviceIds = await this.getEntitledDeviceIdsForUnit(existingSharing.unit_id);
+      if (deviceIds.length === 0) return true;
 
-        const unit = await this.db('units').where('id', existingSharing.unit_id).first('facility_id');
-        if (!unit) return;
+      const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
 
-        const now = new Date();
-        const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
-        const expiresAt = new Date(now.getTime() + ttlMs);
-        const exp = Math.floor(expiresAt.getTime() / 1000);
-        const denylistModel = new DenylistEntryModel();
+      const now = new Date();
+      const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
+      const expiresAt = new Date(now.getTime() + ttlMs);
+      const exp = Math.floor(expiresAt.getTime() / 1000);
+      const denylistModel = new DenylistEntryModel();
 
-        // Bulk create denylist entries (single query instead of N queries)
-        await denylistModel.bulkCreate(deviceIds.map(deviceId => ({
-          device_id: deviceId,
-          user_id: existingSharing.shared_with_user_id,
-          expires_at: expiresAt,
-          source: 'key_sharing_revocation' as const,
-          created_by: performedBy,
-        })));
+      // Bulk create denylist entries (single query instead of N queries)
+      await denylistModel.bulkCreate(deviceIds.map(deviceId => ({
+        device_id: deviceId,
+        user_id: existingSharing.shared_with_user_id,
+        expires_at: expiresAt,
+        source: 'key_sharing_revocation' as const,
+        created_by: performedBy,
+      })));
 
-        const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(existingSharing.shared_with_user_id);
-        if (!shouldSkip) {
-          const jwt = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], deviceIds);
-          logger.info(`Sending DENYLIST_ADD for revoked share user=${existingSharing.shared_with_user_id} devices=${deviceIds.length} facility=${unit.facility_id}`);
-          GatewayEventsService.getInstance().unicastToFacility(unit.facility_id, jwt);
-        } else {
-          logger.info(`Skipping DENYLIST_ADD after share revocation user=${existingSharing.shared_with_user_id} (no active route pass)`);
+      const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(existingSharing.shared_with_user_id);
+      if (!shouldSkip) {
+        const byFacility = new Map<string, string[]>();
+        deviceIds.forEach((deviceId) => {
+          const facilityId = deviceFacilityMap.get(deviceId);
+          if (!facilityId) return;
+          const list = byFacility.get(facilityId) || [];
+          list.push(deviceId);
+          byFacility.set(facilityId, list);
+        });
+
+        for (const [facilityId, targetDeviceIds] of byFacility.entries()) {
+          const jwt = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], targetDeviceIds);
+          logger.info(`Sending DENYLIST_ADD for revoked share user=${existingSharing.shared_with_user_id} devices=${targetDeviceIds.length} facility=${facilityId}`);
+          GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
         }
-      } catch (error) {
-        logger.error('Failed to push denylist on key sharing revocation:', error);
+      } else {
+        logger.info(`Skipping DENYLIST_ADD after share revocation user=${existingSharing.shared_with_user_id} (no active route pass)`);
       }
-    })().catch(() => {});
+    } catch (error) {
+      logger.error('Failed to push denylist on key sharing revocation:', error);
+      throw new Error('Failed to enforce share revocation denylist');
+    }
 
     return true;
   }

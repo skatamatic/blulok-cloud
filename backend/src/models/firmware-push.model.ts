@@ -31,6 +31,11 @@ export interface FirmwarePush {
   status: FirmwarePushStatus;
   chunks_total: number | null;
   chunks_sent: number;
+  progress_percent: number;
+  phase?: string;
+  devices_total?: number;
+  devices_complete: number;
+  devices_failed: number;
   error_message?: string;
   initiated_by: string;
   started_at?: Date;
@@ -125,7 +130,7 @@ export class FirmwarePushModel {
 
   async updateStatus(id: string, status: FirmwarePushStatus, errorMessage?: string): Promise<void> {
     const knex = this.db.connection;
-    const update: Record<string, any> = {
+    const update: Record<string, unknown> = {
       status,
       updated_at: new Date(),
     };
@@ -182,5 +187,52 @@ export class FirmwarePushModel {
       .where('target_type', targetType)
       .orderBy('created_at', 'desc')
       .limit(1);
+  }
+
+  async updateProgressPercent(id: string, percent: number, phase?: string): Promise<void> {
+    const knex = this.db.connection;
+    const clamped = Number.isFinite(percent) ? Math.min(100, Math.max(0, Math.round(percent))) : 0;
+    const update: Record<string, unknown> = {
+      progress_percent: clamped,
+      updated_at: new Date(),
+    };
+    if (phase !== undefined) {
+      update.phase = phase;
+    }
+    await knex('firmware_pushes').where('id', id).update(update);
+  }
+
+  async updateDeviceCounts(id: string, total: number | null, complete: number, failed: number): Promise<void> {
+    const knex = this.db.connection;
+    await knex('firmware_pushes').where('id', id).update({
+      devices_total: total,
+      devices_complete: complete,
+      devices_failed: failed,
+      updated_at: new Date(),
+    });
+  }
+
+  /**
+   * Find active (non-terminal) pushes scoped to a list of facility IDs.
+   * Used to hydrate subscription initial data.
+   */
+  async findActiveByFacilities(facilityIds: string[]): Promise<FirmwarePush[]> {
+    if (facilityIds.length === 0) return [];
+    const knex = this.db.connection;
+    return await knex('firmware_pushes')
+      .whereIn('facility_id', facilityIds)
+      .whereNotIn('status', TERMINAL_STATUSES)
+      .orderBy('created_at', 'desc');
+  }
+
+  /**
+   * Find all active (non-terminal) pushes system-wide.
+   * Used for admin subscription hydration.
+   */
+  async findAllActive(): Promise<FirmwarePush[]> {
+    const knex = this.db.connection;
+    return await knex('firmware_pushes')
+      .whereNotIn('status', TERMINAL_STATUSES)
+      .orderBy('created_at', 'desc');
   }
 }

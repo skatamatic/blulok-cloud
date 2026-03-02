@@ -476,12 +476,20 @@ export class WebSocketService {
 
   public destroy(): void {
     this.stopHeartbeat();
+    for (const ws of this.clients.keys()) {
+      try {
+        ws.close();
+      } catch {
+        // best-effort teardown for tests/runtime shutdown
+      }
+    }
     if (this.wss) {
       this.wss.close();
       this.wss = null;
     }
     this.clients.clear();
     this.subscriptions.clear();
+    WebSocketService.instance = undefined as any;
     logger.info('🔌 WebSocket service destroyed');
   }
 }

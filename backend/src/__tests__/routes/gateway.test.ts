@@ -10,6 +10,10 @@ jest.mock('@/models/device.model', () => ({
     findById: jest.fn().mockResolvedValue(null),
     createBluLokDevice: jest.fn().mockResolvedValue({ id: 'device-1' }),
     findByGatewayId: jest.fn().mockResolvedValue([]),
+    findBluLokDevices: jest.fn().mockResolvedValue([]),
+    findAccessControlDevices: jest.fn().mockResolvedValue([]),
+    updateStatus: jest.fn().mockResolvedValue(undefined),
+    updateLockStatus: jest.fn().mockResolvedValue(undefined),
   }))
 }));
 
@@ -18,11 +22,23 @@ describe('Gateway Routes', () => {
   let testData: any;
 
   beforeAll(() => {
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
     app = createApp();
   });
 
   beforeEach(() => {
     testData = createMockTestData();
+  });
+
+  afterAll(async () => {
+    try {
+      const { GatewayService } = await import('@/services/gateway/gateway.service');
+      await GatewayService.getInstance().shutdown();
+    } catch {
+      // Best-effort cleanup for test speed/stability.
+    }
+    jest.restoreAllMocks();
   });
 
   describe('Authentication Requirements', () => {

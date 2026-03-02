@@ -24,7 +24,7 @@ export class ApiProxyService {
     const { user, connectionFacilityId, method, path, headers, query, body } = params;
 
     // Enforce facility scope for FACILITY_ADMIN
-    FacilityGuardService.ensureWithinScope(user.role, connectionFacilityId, path, body);
+    FacilityGuardService.ensureWithinScope(user.role, connectionFacilityId, path, body, query);
 
     const baseUrl = (process.env.GATEWAY_PROXY_BASE_URL || `http://127.0.0.1:${config.port}/api/v1`).replace(/\/+$/, '');
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -17,9 +17,12 @@ import {
   SignalIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
+import { EffectiveAccessCode } from '@/types/facility.types';
+import { useBackNavigation } from '@/hooks/useBackNavigation';
 
 interface DeviceDetails {
   id: string;
+  name?: string;
   device_serial: string;
   /** Gateway-provided serial number (optional, separate from device_serial) */
   serial?: string;
@@ -66,6 +69,7 @@ interface DenylistEntry {
 }
 
 type TabType = 'overview' | 'denylist' | 'diagnostics';
+type DeviceCategory = 'blulok' | 'access_control';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -94,16 +98,19 @@ const sourceLabels = {
 export default function DeviceDetailsPage() {
   const { deviceId } = useParams<{ deviceId: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
   const { addToast } = useToast();
   const { authState } = useAuth();
   const ws = useWebSocket();
+  const handleBack = useBackNavigation('/devices');
   const [device, setDevice] = useState<DeviceDetails | null>(null);
   const [denylistEntries, setDenylistEntries] = useState<DenylistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingDenylist, setLoadingDenylist] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+  const [deviceCategory, setDeviceCategory] = useState<DeviceCategory | null>(null);
+  const [effectiveAccessCode, setEffectiveAccessCode] = useState<EffectiveAccessCode | null>(null);
+  const [deviceGroupNames, setDeviceGroupNames] = useState<string[]>([]);
 
   // Handle tab from URL query parameter
   useEffect(() => {
@@ -117,11 +124,59 @@ export default function DeviceDetailsPage() {
   useEffect(() => {
     if (deviceId) {
       loadDeviceDetails();
-      if (activeTab === 'denylist') {
+      if (activeTab === 'denylist' && deviceCategory === 'blulok') {
         loadDenylist();
       }
     }
-  }, [deviceId, activeTab]);
+  }, [deviceId, activeTab, deviceCategory]);
+
+  useEffect(() => {
+    if (deviceCategory === 'access_control' && activeTab === 'denylist') {
+      setActiveTab('overview');
+    }
+  }, [deviceCategory, activeTab]);
+
+  useEffect(() => {
+    const loadDeviceGroups = async () => {
+      if (!device?.facility_id || !device?.id) {
+        setDeviceGroupNames([]);
+        return;
+      }
+
+      try {
+        const groupsResponse = await apiService.getDeviceGroups(device.facility_id);
+        const groups = groupsResponse.data || [];
+        const details = await Promise.all(groups.map((group) => apiService.getDeviceGroup(group.id)));
+        const names = details
+          .filter((detail) => (detail.data.members || []).some((member) => member.device_id === device.id))
+          .map((detail) => detail.data.name);
+        setDeviceGroupNames(names);
+      } catch (loadError) {
+        console.error('Failed to load device groups:', loadError);
+        setDeviceGroupNames([]);
+      }
+    };
+
+    loadDeviceGroups().catch(() => undefined);
+  }, [device?.facility_id, device?.id]);
+
+  useEffect(() => {
+    const loadEffectiveCode = async () => {
+      if (!device?.facility_id || !device?.id || deviceCategory !== 'access_control') {
+        setEffectiveAccessCode(null);
+        return;
+      }
+      try {
+        const response = await apiService.getEffectiveAccessCodes(device.facility_id);
+        const match = (response.data || []).find((entry: EffectiveAccessCode) => entry.device_id === device.id) || null;
+        setEffectiveAccessCode(match);
+      } catch (error) {
+        console.error('Failed to load effective access code for device:', error);
+        setEffectiveAccessCode(null);
+      }
+    };
+    loadEffectiveCode().catch(() => undefined);
+  }, [device?.facility_id, device?.id, deviceCategory]);
 
   // Subscribe to device status updates for live telemetry
   const handleDeviceStatusUpdate = useCallback((data: any) => {
@@ -181,25 +236,62 @@ export default function DeviceDetailsPage() {
       setLoading(true);
       setError(null);
       
-      // Load single device details directly to avoid backend filter issues
-      const response = await apiService.getBluLokDevice(deviceId);
-      if (!response?.device) {
-        setError('Device not found');
-        return;
+      // First try BluLok details, then fallback to access-control details.
+      try {
+        const response = await apiService.getBluLokDevice(deviceId);
+        if (!response?.device) {
+          setError('Device not found');
+          return;
+        }
+        // Normalize temperature to ensure it's a number
+        const normalizedDevice = {
+          ...response.device,
+          temperature: response.device.temperature !== undefined && response.device.temperature !== null
+            ? (() => {
+                const temp = typeof response.device.temperature === 'number'
+                  ? response.device.temperature
+                  : Number(response.device.temperature);
+                return isNaN(temp) ? undefined : temp;
+              })()
+            : undefined,
+        };
+        setDeviceCategory('blulok');
+        setDevice(normalizedDevice);
+      } catch (blulokError: any) {
+        if (blulokError?.response?.status !== 404) {
+          throw blulokError;
+        }
+
+        const response = await apiService.getAccessControlDevice(deviceId);
+        if (!response?.device) {
+          setError('Device not found');
+          return;
+        }
+
+        const mappedAccessControl: DeviceDetails = {
+          id: response.device.id,
+          name: response.device.name,
+          device_serial: response.device.name || response.device.id,
+          facility_id: response.device.facility_id,
+          facility_name: response.device.facility_name || String(response.device.facility_id),
+          lock_status: response.device.is_locked ? 'locked' : 'unlocked',
+          device_status: response.device.status || 'offline',
+          last_activity: response.device.last_activity,
+          firmware_version: response.device.firmware_version,
+          unit_id: undefined,
+          unit_number: undefined,
+          battery_level: undefined,
+          signal_strength: undefined,
+          temperature: undefined,
+          error_code: null,
+          error_message: null,
+          primary_tenant: undefined,
+          last_seen: undefined,
+        };
+        setDeviceCategory('access_control');
+        setDenylistEntries([]);
+        setDevice(mappedAccessControl);
       }
-      // Normalize temperature to ensure it's a number
-      const device = {
-        ...response.device,
-        temperature: response.device.temperature !== undefined && response.device.temperature !== null
-          ? (() => {
-              const temp = typeof response.device.temperature === 'number' 
-                ? response.device.temperature 
-                : Number(response.device.temperature);
-              return isNaN(temp) ? undefined : temp;
-            })()
-          : undefined,
-      };
-      setDevice(device);
     } catch (error: any) {
       console.error('Failed to load device details:', error);
       setError(error?.response?.data?.message || 'Failed to load device details');
@@ -214,7 +306,7 @@ export default function DeviceDetailsPage() {
   };
 
   const loadDenylist = async () => {
-    if (!deviceId) return;
+    if (!deviceId || deviceCategory !== 'blulok') return;
 
     try {
       setLoadingDenylist(true);
@@ -272,17 +364,6 @@ export default function DeviceDetailsPage() {
     return '< 1 hour';
   };
 
-  const backTarget = (() => {
-    const state = (location.state as any) || {};
-    if (state.from === 'facility' && state.facilityId) {
-      return `/facilities/${state.facilityId}`;
-    }
-    if (state.from === 'devices') {
-      return '/devices';
-    }
-    return '/devices';
-  })();
-
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
 
   if (loading) {
@@ -297,7 +378,7 @@ export default function DeviceDetailsPage() {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <button
-          onClick={() => navigate(backTarget)}
+          onClick={handleBack}
           className="mb-4 inline-flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
         >
           <ArrowLeftIcon className="h-4 w-4 mr-2" />
@@ -319,7 +400,7 @@ export default function DeviceDetailsPage() {
       {/* Header */}
       <div className="mb-6">
         <button
-          onClick={() => navigate(backTarget)}
+          onClick={handleBack}
           className="mb-4 inline-flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
         >
           <ArrowLeftIcon className="h-4 w-4 mr-2" />
@@ -336,7 +417,7 @@ export default function DeviceDetailsPage() {
               {device.unit_number && ` • Unit ${device.unit_number}`}
             </p>
           </div>
-          {canManage && (
+          {canManage && deviceCategory === 'blulok' && (
             <div>
               <button
                 onClick={async () => {
@@ -407,21 +488,23 @@ export default function DeviceDetailsPage() {
           >
             Overview
           </button>
-          <button
-            onClick={() => handleTabChange('denylist')}
-            className={`${
-              activeTab === 'denylist'
-                ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-            } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-          >
-            Denylist
-            {denylistEntries.length > 0 && (
-              <span className="ml-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
-                {denylistEntries.length}
-              </span>
-            )}
-          </button>
+          {deviceCategory === 'blulok' && (
+            <button
+              onClick={() => handleTabChange('denylist')}
+              className={`${
+                activeTab === 'denylist'
+                  ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
+            >
+              Denylist
+              {denylistEntries.length > 0 && (
+                <span className="ml-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
+                  {denylistEntries.length}
+                </span>
+              )}
+            </button>
+          )}
           <button
             onClick={() => handleTabChange('diagnostics')}
             className={`${
@@ -460,6 +543,40 @@ export default function DeviceDetailsPage() {
                 </button>
               )}
             </div>
+            <div>
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Device Groups</p>
+              {deviceGroupNames.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {deviceGroupNames.map((groupName) => (
+                    <span
+                      key={groupName}
+                      className="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300"
+                    >
+                      {groupName}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  This device is not currently assigned to a group.
+                </p>
+              )}
+            </div>
+            {deviceCategory === 'access_control' && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Current Effective Access Code</p>
+                {effectiveAccessCode ? (
+                  <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 px-3 py-2">
+                    <div className="font-mono tracking-widest text-base text-gray-900 dark:text-white">{effectiveAccessCode.code}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Source: {effectiveAccessCode.source_scope_name} • Valid until {new Date(effectiveAccessCode.valid_until).toLocaleString()}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">No effective code assigned to this device.</p>
+                )}
+              </div>
+            )}
             {/* Device Status */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <div>

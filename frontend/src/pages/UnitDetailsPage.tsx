@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { apiService } from '@/services/api.service';
@@ -26,6 +26,7 @@ import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline';
+import { useBackNavigation } from '@/hooks/useBackNavigation';
 
 interface UnitDetails {
   id: string;
@@ -109,15 +110,19 @@ const deviceStatusIcons = {
 
 export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
-  const navigate = useNavigate();
-  const location = useLocation();
   const { authState } = useAuth();
   const { subscribe, unsubscribe } = useWebSocket();
+  const handleBack = useBackNavigation('/units');
   const [unit, setUnit] = useState<UnitDetails | null>(null);
+  const [boundDeviceGroupNames, setBoundDeviceGroupNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'tenant' | 'device'>('overview');
   const [showShareModal, setShowShareModal] = useState(false);
+  const canManageUnits = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const canChangePrimaryTenant = canManageUnits; // Only admins can change primary tenant
+  const isPrimaryTenant = unit?.primary_tenant?.id === authState.user?.id;
+  const canManageSharedAccess = canManageUnits || isPrimaryTenant; // Admins or primary tenant can manage shared access
 
   // Handle tab from URL query parameter
   useEffect(() => {
@@ -128,6 +133,30 @@ export default function UnitDetailsPage() {
     }
   }, []);
   const [assigningTenant, setAssigningTenant] = useState(false);
+
+  useEffect(() => {
+    const loadBoundDeviceGroups = async () => {
+      if (!canManageUnits || !unit?.facility_id || !unit.blulok_device?.id) {
+        setBoundDeviceGroupNames([]);
+        return;
+      }
+
+      try {
+        const groupsResponse = await apiService.getDeviceGroups(unit.facility_id);
+        const groups = groupsResponse.data || [];
+        const details = await Promise.all(groups.map((group) => apiService.getDeviceGroup(group.id)));
+        const names = details
+          .filter((detail) => (detail.data.members || []).some((member) => member.device_id === unit.blulok_device?.id))
+          .map((detail) => detail.data.name);
+        setBoundDeviceGroupNames(names);
+      } catch (loadError) {
+        console.error('Failed to load bound device groups:', loadError);
+        setBoundDeviceGroupNames([]);
+      }
+    };
+
+    loadBoundDeviceGroups().catch(() => undefined);
+  }, [canManageUnits, unit?.facility_id, unit?.blulok_device?.id]);
   const [removingTenant, setRemovingTenant] = useState<string | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedPrimaryTenant, setSelectedPrimaryTenant] = useState<string>('');
@@ -135,11 +164,6 @@ export default function UnitDetailsPage() {
   const [showPrimaryTenantChange, setShowPrimaryTenantChange] = useState(false);
   const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
   const [updatingLock, setUpdatingLock] = useState(false);
-
-  const canManageUnits = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
-  const canChangePrimaryTenant = canManageUnits; // Only admins can change primary tenant
-  const isPrimaryTenant = unit?.primary_tenant?.id === authState.user?.id;
-  const canManageSharedAccess = canManageUnits || isPrimaryTenant; // Admins or primary tenant can manage shared access
 
   useEffect(() => {
     if (unitId) {
@@ -245,20 +269,6 @@ export default function UnitDetailsPage() {
       alert(errorMessage); // Replace with toast notification in production
     } finally {
       setRemovingTenant(null);
-    }
-  };
-
-  const handleBack = () => {
-    // Check if we have return path from location state
-    const returnPath = (location.state as any)?.returnPath;
-    if (returnPath) {
-      navigate(returnPath);
-    } else if (unit?.facility_id) {
-      // Fallback to facility details page with units tab
-      navigate(`/facilities/${unit.facility_id}?tab=units`);
-    } else {
-      // Final fallback to dashboard
-      navigate('/dashboard');
     }
   };
 
@@ -830,6 +840,26 @@ export default function UnitDetailsPage() {
                         </span>
                       </div>
                     )}
+
+                    <div className="mb-4">
+                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Device Groups</p>
+                      {boundDeviceGroupNames.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {boundDeviceGroupNames.map((groupName) => (
+                            <span
+                              key={groupName}
+                              className="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300"
+                            >
+                              {groupName}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          This bound device is not in any group.
+                        </p>
+                      )}
+                    </div>
 
                     <div className="space-y-3">
                       <div className="flex items-center justify-between text-sm">

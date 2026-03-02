@@ -35,6 +35,7 @@ import { SaveDialog } from './ui/dialogs/SaveDialog';
 import { LoadDialog } from './ui/dialogs/LoadDialog';
 import { PreferencesDialog } from './ui/dialogs/PreferencesDialog';
 import { ThemeMissingDialog } from './ui/dialogs/ThemeMissingDialog';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { PerformanceMonitor } from './ui/PerformanceMonitor';
 import { RenderingSettingsManager } from './core/RenderingSettingsManager';
 import { EditorPreferences, loadPreferences } from './core/Preferences';
@@ -330,6 +331,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [showThemeMissingDialog, setShowThemeMissingDialog] = useState(false);
   const [missingThemeId, setMissingThemeId] = useState<string | null>(null);
+  const [showNewFacilityConfirm, setShowNewFacilityConfirm] = useState(false);
   
   // Progress overlay state for time-consuming operations
   const [progressState, setProgressState] = useState<ProgressState | null>(null);
@@ -545,12 +547,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   }, [state?.selection?.selectedIds, engine]);
 
   // Save/Load handlers (defined before keyboard shortcuts)
-  const handleNew = useCallback(() => {
-    if (hasUnsavedChanges) {
-      if (!window.confirm('You have unsaved changes. Create new facility anyway?')) {
-        return;
-      }
-    }
+  const executeNewFacility = useCallback(() => {
     if (engine) {
       engine.clearScene();
     }
@@ -558,7 +555,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setCurrentFacilityId(null);
     setHasUnsavedChanges(false);
     addToast({ type: 'info', title: 'New Facility', message: 'Started a new facility.' });
-  }, [engine, hasUnsavedChanges]);
+  }, [engine, addToast]);
+
+  const handleNew = useCallback(() => {
+    if (hasUnsavedChanges) {
+      setShowNewFacilityConfirm(true);
+      return;
+    }
+    executeNewFacility();
+  }, [hasUnsavedChanges, executeNewFacility]);
 
   const handleSaveAs = useCallback(() => {
     setShowSaveDialog(true);
@@ -1982,6 +1987,18 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         onClose={() => {
           setShowThemeMissingDialog(false);
           setMissingThemeId(null);
+        }}
+      />
+      <ConfirmDialog
+        isOpen={showNewFacilityConfirm}
+        title="Discard Unsaved Changes?"
+        message="You have unsaved changes. Create a new facility anyway?"
+        confirmLabel="Create New"
+        confirmTone="danger"
+        onCancel={() => setShowNewFacilityConfirm(false)}
+        onConfirm={() => {
+          setShowNewFacilityConfirm(false);
+          executeNewFacility();
         }}
       />
 

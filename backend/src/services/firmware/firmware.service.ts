@@ -10,14 +10,15 @@ import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { FirmwareModel, FirmwareImage, CreateFirmwareImageData, FirmwareTargetType } from '@/models/firmware.model';
 import { FirmwarePushModel, FirmwarePush, FirmwarePushStatus } from '@/models/firmware-push.model';
+import { FirmwarePushEventModel, CreateFirmwarePushEventData } from '@/models/firmware-push-event.model';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { GatewayModel } from '@/models/gateway.model';
-import { getFirmwareStorageProviderSync, validateFirmwareFile } from './firmware-storage.factory';
+import { getFirmwareStorageProvider, validateFirmwareFile } from './firmware-storage.factory';
 import { logger } from '@/utils/logger';
 
-/** 256KB raw chunk size — base64 encoding yields ~341KB, well within 512KB WS limit */
-const CHUNK_SIZE_BYTES = 256 * 1024;
+/** 128KB raw chunk size — base64 encoding yields ~171KB, well within 512KB WS limit */
+const CHUNK_SIZE_BYTES = 128 * 1024;
 const MAX_CHUNK_RETRIES = 3;
 /** ACK timeout per chunk in milliseconds */
 const CHUNK_ACK_TIMEOUT_MS = 30_000;
@@ -41,6 +42,7 @@ export const _testActivePushes = activePushes;
 export class FirmwareService {
   private static firmwareModel = new FirmwareModel();
   private static pushModel = new FirmwarePushModel();
+  private static pushEventModel = new FirmwarePushEventModel();
   private static gatewayModel = new GatewayModel();
 
   // =========================================================================
@@ -73,7 +75,7 @@ export class FirmwareService {
     const sha256Hash = crypto.createHash('sha256').update(file.buffer).digest('hex');
 
     // Store binary
-    const storage = getFirmwareStorageProviderSync();
+    const storage = await getFirmwareStorageProvider();
     await storage.initialize();
     const firmwareId = uuidv4();
     const storagePath = await storage.upload(firmwareId, file.originalname, file.buffer);
@@ -129,7 +131,7 @@ export class FirmwareService {
     const deleted = await this.firmwareModel.softDelete(id);
     if (deleted && firmware.storage_path) {
       try {
-        const storage = getFirmwareStorageProviderSync();
+        const storage = await getFirmwareStorageProvider();
         await storage.initialize();
         await storage.remove(firmware.storage_path);
         logger.info(`Firmware binary removed from storage: ${firmware.storage_path}`);
@@ -323,7 +325,7 @@ export class FirmwareService {
 
     try {
       // Read binary from storage
-      const storage = getFirmwareStorageProviderSync();
+      const storage = await getFirmwareStorageProvider();
       await storage.initialize();
       const binary = await storage.download(firmware.storage_path);
 
@@ -579,6 +581,152 @@ export class FirmwareService {
   }
 
   // =========================================================================
+  // Gateway Progress Reports (called by WS transport)
+  // =========================================================================
+
+  /**
+   * Handle an inbound FIRMWARE_PROGRESS from the gateway.
+   * Persists events and updates aggregate push state.
+   * This message is entirely optional — gateways that don't send it
+   * still work via FIRMWARE_CHUNK_ACK / FIRMWARE_UPDATE_STATUS.
+   */
+  static async handleProgress(facilityId: string, msg: any): Promise<void> {
+    const { nonce, progress_percent, phase, message: gwMessage, devices, error: gwError, target_type: targetType } = msg;
+
+    if (typeof nonce !== 'string' || nonce.length === 0 || nonce.length > 128) {
+      logger.warn(`FIRMWARE_PROGRESS: invalid nonce facility=${facilityId}`);
+      return;
+    }
+
+    // Find the push by nonce + facilityId (in-memory), then fall back to DB
+    let matchedPush: FirmwarePush | null = null;
+    for (const [pushId, pushState] of activePushes.entries()) {
+      if (pushState.nonce === nonce && pushState.facilityId === facilityId) {
+        matchedPush = await this.pushModel.findById(pushId);
+        break;
+      }
+    }
+    if (!matchedPush && targetType) {
+      const pushes = await this.pushModel.findByFacilityAndTargetType(facilityId, targetType);
+      matchedPush = pushes[0] || null;
+    }
+    if (!matchedPush) {
+      logger.warn(`FIRMWARE_PROGRESS: no matching push for facility=${facilityId} nonce=${nonce}`);
+      return;
+    }
+
+    // Skip progress on terminal pushes to prevent stale/duplicate updates
+    const TERMINAL: FirmwarePushStatus[] = ['complete', 'failed', 'cancelled'];
+    if (TERMINAL.includes(matchedPush.status)) {
+      logger.info(`FIRMWARE_PROGRESS ignored for terminal push pushId=${matchedPush.id} status=${matchedPush.status}`);
+      return;
+    }
+
+    logger.info(`FIRMWARE_PROGRESS received pushId=${matchedPush.id} percent=${progress_percent} phase=${phase} devices=${devices?.length ?? 0}`);
+
+    const now = new Date();
+    const events: CreateFirmwarePushEventData[] = [];
+
+    // Progress event
+    const clampedPercent = Number.isFinite(Number(progress_percent))
+      ? Math.min(100, Math.max(0, Math.round(Number(progress_percent))))
+      : 0;
+    const sanitizedPhase = typeof phase === 'string' ? phase : undefined;
+
+    if (progress_percent !== undefined) {
+      events.push({
+        push_id: matchedPush.id,
+        event_type: 'progress',
+        progress_percent: clampedPercent,
+        phase: sanitizedPhase,
+        message: typeof gwMessage === 'string' ? gwMessage : undefined,
+        reported_at: now,
+      });
+      await this.pushModel.updateProgressPercent(matchedPush.id, clampedPercent, sanitizedPhase);
+    }
+
+    // Device status events
+    let computedDevicesTotal = matchedPush.devices_total ?? undefined;
+    let computedDevicesComplete = matchedPush.devices_complete;
+    let computedDevicesFailed = matchedPush.devices_failed;
+
+    if (Array.isArray(devices) && devices.length > 0) {
+      computedDevicesComplete = 0;
+      computedDevicesFailed = 0;
+      for (const dev of devices) {
+        if (!dev?.device_id || typeof dev.device_id !== 'string') continue;
+        events.push({
+          push_id: matchedPush.id,
+          event_type: 'device_status',
+          device_id: dev.device_id,
+          device_status: typeof dev.status === 'string' ? dev.status : 'pending',
+          progress_percent: typeof dev.progress_percent === 'number' ? dev.progress_percent : undefined,
+          error_message: typeof dev.error === 'string' ? dev.error : undefined,
+          reported_at: now,
+        });
+        if (dev.status === 'complete') computedDevicesComplete++;
+        if (dev.status === 'failed') computedDevicesFailed++;
+      }
+      computedDevicesTotal = devices.length;
+      await this.pushModel.updateDeviceCounts(matchedPush.id, computedDevicesTotal, computedDevicesComplete, computedDevicesFailed);
+    }
+
+    // Error event
+    if (gwError && typeof gwError === 'object' && typeof gwError.message === 'string') {
+      events.push({
+        push_id: matchedPush.id,
+        event_type: 'error',
+        error_code: typeof gwError.code === 'string' ? gwError.code : undefined,
+        error_message: gwError.message,
+        error_severity: (gwError.severity === 'warning' || gwError.severity === 'critical') ? gwError.severity : 'warning',
+        message: typeof gwMessage === 'string' ? gwMessage : undefined,
+        reported_at: now,
+      });
+
+      // Critical errors auto-fail the push
+      if (gwError.severity === 'critical') {
+        await this.pushModel.updateStatus(matchedPush.id, 'failed', gwError.message);
+      }
+    }
+
+    // Info event (message without progress/error/devices)
+    if (events.length === 0 && typeof gwMessage === 'string') {
+      events.push({
+        push_id: matchedPush.id,
+        event_type: 'info',
+        message: gwMessage,
+        reported_at: now,
+      });
+    }
+
+    // Persist all events
+    if (events.length > 0) {
+      await this.pushEventModel.createMany(events);
+    }
+
+    // Determine the effective step: if a critical error auto-failed the push, use 'failed'
+    const effectiveStep: FirmwarePushStatus | 'manifest_sent' =
+      (gwError?.severity === 'critical') ? 'failed' : matchedPush.status;
+
+    this.broadcastProgress(
+      matchedPush,
+      effectiveStep,
+      progress_percent !== undefined ? clampedPercent : matchedPush.progress_percent,
+      matchedPush.chunks_total ?? undefined,
+      matchedPush.chunks_sent,
+      typeof gwMessage === 'string' ? gwMessage : undefined,
+      {
+        phase: sanitizedPhase || matchedPush.phase,
+        devicesTotal: computedDevicesTotal,
+        devicesComplete: computedDevicesComplete,
+        devicesFailed: computedDevicesFailed,
+        devices: Array.isArray(devices) ? devices : undefined,
+        error: gwError,
+      },
+    );
+  }
+
+  // =========================================================================
   // Disconnect Handling
   // =========================================================================
 
@@ -622,11 +770,19 @@ export class FirmwareService {
    */
   private static broadcastProgress(
     push: FirmwarePush,
-    step: string,
+    step: FirmwarePushStatus | 'manifest_sent',
     percent: number,
     chunksTotal?: number,
     chunksSent?: number,
     message?: string,
+    extra?: {
+      phase?: string;
+      devicesTotal?: number;
+      devicesComplete?: number;
+      devicesFailed?: number;
+      devices?: Array<{ device_id: string; status: string; progress_percent?: number; error?: string }>;
+      error?: { code?: string; message: string; severity?: string };
+    },
   ): void {
     try {
       const { WebSocketService } = require('../websocket.service');
@@ -645,11 +801,17 @@ export class FirmwareService {
         gatewayId: push.gateway_id,
         facilityId: push.facility_id,
         targetType: push.target_type,
-        step: step as any,
+        step,
         percent,
         chunksTotal,
         chunksSent,
         message,
+        phase: extra?.phase,
+        devicesTotal: extra?.devicesTotal,
+        devicesComplete: extra?.devicesComplete,
+        devicesFailed: extra?.devicesFailed,
+        devices: extra?.devices,
+        error: extra?.error,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {

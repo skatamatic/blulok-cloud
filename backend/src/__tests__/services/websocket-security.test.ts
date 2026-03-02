@@ -77,7 +77,11 @@ describe('WebSocket Security Tests', () => {
   } as any);
 
   beforeEach(() => {
-    // Reset the singleton instance
+    // Reset singleton safely to avoid leaking heartbeat intervals across tests.
+    const existing = (WebSocketService as any).instance;
+    if (existing && typeof existing.destroy === 'function') {
+      existing.destroy();
+    }
     (WebSocketService as any).instance = undefined;
     wsService = WebSocketService.getInstance();
     
@@ -96,6 +100,8 @@ describe('WebSocket Security Tests', () => {
   });
 
   afterEach(() => {
+    wsService.destroy();
+    (WebSocketService as any).instance = undefined;
     jest.clearAllMocks();
   });
 

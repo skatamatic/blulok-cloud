@@ -1,3 +1,8 @@
+import type {
+  SerializedSchedule,
+  SerializedScheduleTimeWindow,
+} from '@/services/schedules/schedule-serialization.service';
+
 export type AuthMessage = {
   type: 'AUTH';
   token: string;
@@ -64,6 +69,45 @@ export type FirmwareChunkMessage = {
   jwt: string;
 };
 
+export type AccessCodeUpdateMessage = {
+  type: 'ACCESS_CODE_UPDATE';
+  jwt: string;
+};
+
+export type AccessCodeUpdateAckMessage = {
+  type: 'ACCESS_CODE_UPDATE_ACK';
+  nonce: string;
+  status?: 'ok' | 'accepted' | 'error';
+  accepted?: boolean;
+  message?: string;
+};
+
+export type AccessCodeScheduleWindow = SerializedScheduleTimeWindow;
+
+export type AccessCodeUpdateValidCodeEntry = {
+  code: string;
+  valid_from?: string;
+  valid_until: string;
+  schedule_id?: string | null;
+  schedule?: SerializedSchedule | null;
+  schedule_name?: string | null;
+  time_windows?: AccessCodeScheduleWindow[];
+};
+
+export type AccessCodeUpdateCodeEntry = {
+  device_id: string;
+  relay_channel: number;
+  valid_codes: AccessCodeUpdateValidCodeEntry[];
+  // Legacy compatibility fields - mirrors the first valid entry when present.
+  code?: string;
+  valid_from?: string;
+  valid_until?: string;
+  schedule_id?: string | null;
+  schedule?: SerializedSchedule | null;
+  schedule_name?: string | null;
+  time_windows?: AccessCodeScheduleWindow[];
+};
+
 // Firmware OTA Messages (Gateway -> Cloud)
 export type FirmwareChunkAckMessage = {
   type: 'FIRMWARE_CHUNK_ACK';
@@ -80,8 +124,38 @@ export type FirmwareUpdateStatusMessage = {
   message?: string;
 };
 
-export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage | FirmwareChunkAckMessage | FirmwareUpdateStatusMessage;
-export type GatewayOutboundMessage = AuthOkMessage | ErrorMessage | PingMessage | ProxyResponseMessage | CommandMessage | FirmwareManifestMessage | FirmwareChunkMessage;
+export type FirmwareProgressDeviceReport = {
+  device_id: string;
+  status: 'pending' | 'downloading' | 'installing' | 'complete' | 'failed' | 'skipped';
+  progress_percent?: number;
+  error?: string;
+};
+
+export type FirmwareProgressMessage = {
+  type: 'FIRMWARE_PROGRESS';
+  nonce: string;
+  target_type?: string;
+  progress_percent?: number;
+  phase?: string;
+  message?: string;
+  devices?: FirmwareProgressDeviceReport[];
+  error?: {
+    code: string;
+    message: string;
+    severity: 'warning' | 'critical';
+  };
+};
+
+export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage | FirmwareChunkAckMessage | FirmwareUpdateStatusMessage | FirmwareProgressMessage | AccessCodeUpdateAckMessage;
+export type GatewayOutboundMessage =
+  | AuthOkMessage
+  | ErrorMessage
+  | PingMessage
+  | ProxyResponseMessage
+  | CommandMessage
+  | FirmwareManifestMessage
+  | FirmwareChunkMessage
+  | AccessCodeUpdateMessage;
 
 // Minimal runtime guards (no zod dependency)
 export function isAuthMessage(m: any): m is AuthMessage {
@@ -90,6 +164,9 @@ export function isAuthMessage(m: any): m is AuthMessage {
 export function isPong(m: any): m is PongMessage { return m && m.type === 'PONG'; }
 export function isProxyRequest(m: any): m is ProxyRequestMessage {
   return m && m.type === 'PROXY_REQUEST' && typeof m.id === 'string' && typeof m.method === 'string' && typeof m.path === 'string';
+}
+export function isFirmwareProgress(m: any): m is FirmwareProgressMessage {
+  return m && m.type === 'FIRMWARE_PROGRESS' && typeof m.nonce === 'string';
 }
 
 

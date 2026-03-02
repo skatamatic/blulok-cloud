@@ -1,6 +1,8 @@
 import { WebSocket } from 'ws';
 import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
+import { FirmwarePushModel } from '@/models/firmware-push.model';
+import { FirmwarePushEventModel } from '@/models/firmware-push-event.model';
 
 /**
  * Firmware Push Progress Payload Interface
@@ -9,28 +11,38 @@ import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription
  * push operations from cloud to gateway.
  */
 export interface FirmwarePushProgressPayload {
-  /** Push task identifier */
   pushId: string;
-  /** Firmware image identifier */
   firmwareId: string;
-  /** Target gateway identifier */
   gatewayId: string;
-  /** Target facility identifier */
   facilityId: string;
-  /** Firmware target type (gateway, lock, friend_node) — distinguishes concurrent pushes */
   targetType?: string;
-  /** Current push step */
-  step: 'pending' | 'manifest_sent' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
-  /** Progress percentage (0-100) */
+  step: 'pending' | 'manifest_sent' | 'transferring' | 'distributing' | 'installing' | 'verifying' | 'complete' | 'failed' | 'cancelled';
   percent: number;
-  /** Total number of chunks */
   chunksTotal?: number;
-  /** Number of chunks sent so far */
   chunksSent?: number;
-  /** Optional human-readable status message */
   message?: string;
-  /** Optional timestamp override */
   timestamp?: string;
+  /** Gateway-reported phase (distributing, installing, verifying, etc.) */
+  phase?: string;
+  /** Total devices targeted by this push */
+  devicesTotal?: number;
+  /** Devices that have completed the update */
+  devicesComplete?: number;
+  /** Devices that failed the update */
+  devicesFailed?: number;
+  /** Per-device status details (when gateway reports them) */
+  devices?: Array<{
+    device_id: string;
+    status: string;
+    progress_percent?: number;
+    error?: string;
+  }>;
+  /** Error details (when gateway reports them) */
+  error?: {
+    code?: string;
+    message: string;
+    severity?: string;
+  };
 }
 
 /**
@@ -47,6 +59,15 @@ export interface FirmwarePushProgressPayload {
  * - Other roles: Access denied
  */
 export class FirmwarePushSubscriptionManager extends BaseSubscriptionManager {
+  private pushModel: FirmwarePushModel;
+  private pushEventModel: FirmwarePushEventModel;
+
+  constructor() {
+    super();
+    this.pushModel = new FirmwarePushModel();
+    this.pushEventModel = new FirmwarePushEventModel();
+  }
+
   getSubscriptionType(): string {
     return 'firmware_push_progress';
   }
@@ -55,13 +76,48 @@ export class FirmwarePushSubscriptionManager extends BaseSubscriptionManager {
     return [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(userRole);
   }
 
-  protected async sendInitialData(ws: WebSocket, subscriptionId: string, _client: SubscriptionClient): Promise<void> {
-    this.sendMessage(ws, {
-      type: 'firmware_push_progress_update',
-      subscriptionId,
-      data: { status: 'ready' },
-      timestamp: new Date().toISOString(),
-    } as any);
+  protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {
+    try {
+      // Load active pushes scoped by role
+      let activePushes;
+      if (client.userRole === UserRole.FACILITY_ADMIN) {
+        activePushes = await this.pushModel.findActiveByFacilities(client.facilityIds || []);
+      } else {
+        activePushes = await this.pushModel.findAllActive();
+      }
+
+      // For each active push, load recent events and device statuses
+      const pushSnapshots = await Promise.all(
+        activePushes.map(async (push) => {
+          const [recentEvents, deviceStatuses] = await Promise.all([
+            this.pushEventModel.findByPushId(push.id, 20),
+            this.pushEventModel.getDeviceStatuses(push.id),
+          ]);
+          return {
+            push,
+            recentEvents,
+            deviceStatuses,
+          };
+        }),
+      );
+
+      const message = JSON.stringify({
+        type: 'firmware_push_progress_update',
+        subscriptionId,
+        data: { status: 'ready', activePushes: pushSnapshots },
+        timestamp: new Date().toISOString(),
+      });
+      ws.send(message);
+    } catch (error) {
+      this.logger.error('[FirmwarePush] Error sending initial data', { error });
+      const fallback = JSON.stringify({
+        type: 'firmware_push_progress_update',
+        subscriptionId,
+        data: { status: 'ready', activePushes: [] },
+        timestamp: new Date().toISOString(),
+      });
+      ws.send(fallback);
+    }
   }
 
   /**

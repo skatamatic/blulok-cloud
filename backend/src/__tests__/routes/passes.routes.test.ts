@@ -17,6 +17,11 @@ jest.mock('@/models/user-facility-association.model', () => ({
     getUserFacilityIds: jest.fn().mockResolvedValue([]),
   },
 }));
+jest.mock('@/services/passes/app-entry-access.service', () => ({
+  AppEntryAccessService: {
+    resolveDeviceIds: jest.fn().mockResolvedValue([]),
+  },
+}));
 
 // Mock DatabaseService before any imports that might use it
 const createMockDbConnection = (userDevices: any, lockRows: any[]) => {
@@ -300,6 +305,18 @@ describe('Passes Routes', () => {
   });
 
   describe('Error cases', () => {
+    it('returns 400 when facility_id is invalid', async () => {
+      (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+        connection: createMockDbConnection({ public_key: 'cHVibGlj' }, [{ id: 'lock-1' }]),
+      });
+
+      const res = await request(app)
+        .post('/api/v1/passes/request?facility_id=not-a-uuid')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .expect(400);
+      expect(res.body.success).toBe(false);
+    });
+
     it('returns 409 when no device is registered', async () => {
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({
         connection: createMockDbConnection(null, []),

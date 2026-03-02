@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
@@ -24,6 +24,7 @@ import { apiService } from '@/services/api.service';
 import { Unit, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
+import { withReturnPath } from '@/hooks/useBackNavigation';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -45,6 +46,7 @@ const statusIcons = {
 
 export default function UnitsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { authState } = useAuth();
   const { subscribe, unsubscribe } = useWebSocket();
   const { selectedFacilityId } = useGlobalFacility();
@@ -265,7 +267,7 @@ export default function UnitsPage() {
       <div 
         id={generateHighlightId('unit', unit.id)}
         className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-md hover:bg-gray-50 dark:hover:bg-gray-700/30"
-        onClick={() => navigate(`/units/${unit.id}`)}
+        onClick={() => navigate(`/units/${unit.id}`, { state: withReturnPath(location) })}
       >
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center">
@@ -385,7 +387,7 @@ export default function UnitsPage() {
       <tr 
         id={generateHighlightId('unit', unit.id)}
         className="transition-colors duration-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50"
-        onClick={() => navigate(`/units/${unit.id}`)}
+        onClick={() => navigate(`/units/${unit.id}`, { state: withReturnPath(location) })}
       >
         <td className="px-6 py-4 whitespace-nowrap">
           <div className="flex items-center">
@@ -445,7 +447,7 @@ export default function UnitsPage() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/units/${unit.id}`);
+                navigate(`/units/${unit.id}`, { state: withReturnPath(location) });
               }}
               className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
             >

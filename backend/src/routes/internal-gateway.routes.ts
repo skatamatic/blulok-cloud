@@ -17,7 +17,9 @@ import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
 import { DeviceSyncService, GatewayDeviceData, DeviceInventoryItem, DeviceStateUpdate } from '@/services/device-sync.service';
+import { AccessCodeService } from '@/services/access-code.service';
 import { GatewayModel } from '@/models/gateway.model';
+import { AuthService } from '@/services/auth.service';
 import { logger } from '@/utils/logger';
 
 const router = Router();
@@ -33,6 +35,45 @@ const requireFacilityAdmin: RequestHandler = (req: AuthenticatedRequest, res: Re
   }
   next();
 }
+
+const assertFacilityAccess = async (req: AuthenticatedRequest, res: Response, facilityId: string): Promise<boolean> => {
+  const user = req.user!;
+  const hasAccess = await AuthService.canAccessFacility(user.userId, user.role, facilityId);
+  if (!hasAccess) {
+    res.status(403).json({ success: false, message: 'Access denied to this facility' });
+    return false;
+  }
+  return true;
+};
+
+const resolveScopedFacilityId = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  requestedFacilityId: string | undefined,
+): Promise<string | null> => {
+  const user = req.user!;
+  const headerFacilityId = String(req.headers['x-gateway-facility-id'] || '') || undefined;
+  const bodyOrQueryFacilityId = requestedFacilityId || undefined;
+
+  if (user.role === UserRole.FACILITY_ADMIN) {
+    if (headerFacilityId && bodyOrQueryFacilityId && bodyOrQueryFacilityId !== headerFacilityId) {
+      res.status(403).json({ success: false, message: 'facility_id cannot override gateway facility scope' });
+      return null;
+    }
+  }
+
+  const facilityId = String(bodyOrQueryFacilityId || headerFacilityId || '');
+  if (!facilityId) {
+    res.status(400).json({ success: false, message: 'Missing facility_id (body/query or X-Gateway-Facility-Id header)' });
+    return null;
+  }
+
+  if (!await assertFacilityAccess(req, res, facilityId)) {
+    return null;
+  }
+
+  return facilityId;
+};
 
 // GET /api/v1/internal/gateway/time-sync
 router.get('/time-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -103,13 +144,8 @@ router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandle
     return;
   }
 
-  // Resolve facility and gateway
-  const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
-  const facilityId = value.facility_id || facilityIdHeader;
-  if (!facilityId) {
-    res.status(400).json({ success: false, message: 'Missing facility_id (body or X-Gateway-Facility-Id header)' });
-    return;
-  }
+  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
+  if (!facilityId) return;
 
   const gatewayModel = new GatewayModel();
   const gateway = await gatewayModel.findByFacilityId(facilityId);
@@ -196,13 +232,8 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
     return;
   }
 
-  // Resolve facility and gateway
-  const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
-  const facilityId = value.facility_id || facilityIdHeader;
-  if (!facilityId) {
-    res.status(400).json({ success: false, message: 'Missing facility_id (body or X-Gateway-Facility-Id header)' });
-    return;
-  }
+  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
+  if (!facilityId) return;
 
   const gatewayModel = new GatewayModel();
   const gateway = await gatewayModel.findByFacilityId(facilityId);
@@ -263,13 +294,8 @@ router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHand
     return;
   }
 
-  // Resolve facility and gateway
-  const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
-  const facilityId = value.facility_id || facilityIdHeader;
-  if (!facilityId) {
-    res.status(400).json({ success: false, message: 'Missing facility_id (body or X-Gateway-Facility-Id header)' });
-    return;
-  }
+  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
+  if (!facilityId) return;
 
   const gatewayModel = new GatewayModel();
   const gateway = await gatewayModel.findByFacilityId(facilityId);
@@ -286,6 +312,56 @@ router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHand
     success: true,
     message: 'State updates applied',
     data: result
+  });
+}));
+
+// GET /api/v1/internal/gateway/access-codes
+// Poll active access codes resolved to device/relay mappings for this facility.
+router.get('/access-codes', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+  const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
+  const requestedFacilityId = req.query.facility_id ? String(req.query.facility_id) : undefined;
+  let facilityId = '';
+
+  if (user.role === UserRole.FACILITY_ADMIN) {
+    if (facilityIdHeader && requestedFacilityId && requestedFacilityId !== facilityIdHeader) {
+      res.status(403).json({ success: false, message: 'facility_id query cannot override gateway facility scope' });
+      return;
+    }
+    facilityId = String(facilityIdHeader || requestedFacilityId || '');
+    if (facilityId && !user.facilityIds?.includes(facilityId)) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return;
+    }
+  } else {
+    facilityId = String(requestedFacilityId || facilityIdHeader || '');
+  }
+
+  if (!facilityId) {
+    res.status(400).json({ success: false, message: 'Missing facility_id (query or X-Gateway-Facility-Id header)' });
+    return;
+  }
+
+  const gatewayModel = new GatewayModel();
+  const gateway = await gatewayModel.findByFacilityId(facilityId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
+    return;
+  }
+
+  const codes = await AccessCodeService.getInstance().getGatewayPollPayload(facilityId);
+  res.json({
+    success: true,
+    data: {
+      gateway_id: gateway.id,
+      facility_id: facilityId,
+      codes: codes.map((entry) => ({
+        device_id: entry.device_id,
+        relay_channel: entry.relay_channel,
+        code: entry.code,
+        valid_until: entry.valid_until instanceof Date ? entry.valid_until.toISOString() : entry.valid_until,
+      })),
+    },
   });
 }));
 

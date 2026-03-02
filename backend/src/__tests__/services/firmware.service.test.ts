@@ -7,6 +7,7 @@
 
 jest.mock('@/models/firmware.model');
 jest.mock('@/models/firmware-push.model');
+jest.mock('@/models/firmware-push-event.model');
 jest.mock('@/models/gateway.model');
 jest.mock('@/services/crypto/ed25519.service');
 jest.mock('@/services/gateway/gateway-events.service');
@@ -17,7 +18,7 @@ import * as crypto from 'crypto';
 import { FirmwareService, _testActivePushes } from '@/services/firmware/firmware.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
-import { getFirmwareStorageProviderSync, validateFirmwareFile } from '@/services/firmware/firmware-storage.factory';
+import { getFirmwareStorageProvider, validateFirmwareFile } from '@/services/firmware/firmware-storage.factory';
 
 // Shared mock objects wired directly into FirmwareService's static fields
 const mockFirmwareModel = {
@@ -40,6 +41,18 @@ const mockPushModel = {
   updateProgress: jest.fn().mockResolvedValue(undefined),
   updateChunksTotal: jest.fn().mockResolvedValue(undefined),
   atomicCancel: jest.fn().mockResolvedValue(true),
+  updateProgressPercent: jest.fn().mockResolvedValue(undefined),
+  updateDeviceCounts: jest.fn().mockResolvedValue(undefined),
+  findActiveByFacilities: jest.fn().mockResolvedValue([]),
+  findAllActive: jest.fn().mockResolvedValue([]),
+};
+
+const mockPushEventModel = {
+  create: jest.fn().mockResolvedValue({}),
+  createMany: jest.fn().mockResolvedValue(undefined),
+  findByPushId: jest.fn().mockResolvedValue([]),
+  getDeviceStatuses: jest.fn().mockResolvedValue([]),
+  countByPushId: jest.fn().mockResolvedValue(0),
 };
 
 const mockGatewayModel = { findById: jest.fn() };
@@ -57,8 +70,9 @@ const mockUnicast = jest.fn();
 function wireAllMocks() {
   (FirmwareService as any).firmwareModel = mockFirmwareModel;
   (FirmwareService as any).pushModel = mockPushModel;
+  (FirmwareService as any).pushEventModel = mockPushEventModel;
   (FirmwareService as any).gatewayModel = mockGatewayModel;
-  (getFirmwareStorageProviderSync as jest.Mock).mockReturnValue(mockStorageProvider);
+  (getFirmwareStorageProvider as jest.Mock).mockResolvedValue(mockStorageProvider);
   (Ed25519Service.signCommandJwt as jest.Mock).mockResolvedValue('signed-jwt');
   (GatewayEventsService.getInstance as jest.Mock).mockReturnValue({
     unicastToFacility: mockUnicast,
@@ -325,7 +339,7 @@ describe('FirmwareService', () => {
   // executePush — chunking, signing, progress
   // =========================================================================
   describe('executePush', () => {
-    const CHUNK = 256 * 1024;
+    const CHUNK = 128 * 1024;
     // Small binary: 2 full chunks + partial = 3 chunks; hash must match firmware.sha256_hash
     const binSize = CHUNK * 2 + 100;
     const mockBinary = Buffer.alloc(binSize, 0xAB);
@@ -547,6 +561,290 @@ describe('FirmwareService', () => {
     it('rejects messages with missing status', async () => {
       await FirmwareService.handleUpdateStatus('fac-1', { target_type: 'gateway' });
       expect(mockPushModel.findByFacilityAndTargetType).not.toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // handleProgress
+  // =========================================================================
+
+  describe('handleProgress', () => {
+    const mockPush = {
+      id: 'push-1', firmware_id: 'fw-1', gateway_id: 'gw-1', facility_id: 'fac-1',
+      status: 'transferring', target_type: 'gateway', chunks_total: 10, chunks_sent: 5,
+      progress_percent: 50, phase: null, devices_total: null, devices_complete: 0, devices_failed: 0,
+    };
+
+    beforeEach(() => {
+      _testActivePushes.clear();
+      _testActivePushes.set('push-1', {
+        nonce: 'progress-nonce',
+        facilityId: 'fac-1',
+        cancel: false,
+        chunkAckResolvers: new Map(),
+      });
+      mockPushModel.findById.mockResolvedValue(mockPush);
+    });
+
+    it('rejects messages with invalid nonce', async () => {
+      await FirmwareService.handleProgress('fac-1', { nonce: '', progress_percent: 50 });
+      expect(mockPushEventModel.createMany).not.toHaveBeenCalled();
+    });
+
+    it('creates progress event and updates push aggregate', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: 75,
+        phase: 'distributing',
+        message: 'Distributing to locks',
+      });
+
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 75, 'distributing');
+      expect(mockPushEventModel.createMany).toHaveBeenCalled();
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(1);
+      expect(events[0].event_type).toBe('progress');
+      expect(events[0].progress_percent).toBe(75);
+      expect(events[0].phase).toBe('distributing');
+    });
+
+    it('creates device_status events and updates device counts', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        devices: [
+          { device_id: 'lock-1', status: 'complete' },
+          { device_id: 'lock-2', status: 'downloading', progress_percent: 40 },
+          { device_id: 'lock-3', status: 'failed', error: 'CRC mismatch' },
+        ],
+      });
+
+      expect(mockPushModel.updateDeviceCounts).toHaveBeenCalledWith('push-1', 3, 1, 1);
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(3);
+      expect(events.every((e: any) => e.event_type === 'device_status')).toBe(true);
+    });
+
+    it('creates error event for warning severity', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        error: { code: 'TIMEOUT', message: 'Lock-2 timed out', severity: 'warning' },
+      });
+
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(1);
+      expect(events[0].event_type).toBe('error');
+      expect(events[0].error_severity).toBe('warning');
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
+    });
+
+    it('auto-fails push on critical error', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        error: { code: 'FATAL', message: 'Flash memory corrupt', severity: 'critical' },
+      });
+
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'failed', 'Flash memory corrupt');
+    });
+
+    it('creates info event for message-only progress', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        message: 'Rebooting gateway...',
+      });
+
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(1);
+      expect(events[0].event_type).toBe('info');
+      expect(events[0].message).toBe('Rebooting gateway...');
+    });
+
+    it('falls back to target_type lookup when nonce not in memory', async () => {
+      _testActivePushes.clear();
+      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mockPush]);
+
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'unknown-nonce',
+        target_type: 'gateway',
+        progress_percent: 80,
+      });
+
+      expect(mockPushModel.findByFacilityAndTargetType).toHaveBeenCalledWith('fac-1', 'gateway');
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 80, undefined);
+    });
+
+    it('does not throw when no matching push found', async () => {
+      _testActivePushes.clear();
+      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([]);
+
+      await expect(
+        FirmwareService.handleProgress('fac-1', { nonce: 'unknown', target_type: 'gateway', progress_percent: 50 }),
+      ).resolves.not.toThrow();
+    });
+
+    it('skips progress for terminal push (complete)', async () => {
+      mockPushModel.findById.mockResolvedValue({ ...mockPush, status: 'complete' });
+
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: 50,
+      });
+
+      expect(mockPushEventModel.createMany).not.toHaveBeenCalled();
+      expect(mockPushModel.updateProgressPercent).not.toHaveBeenCalled();
+    });
+
+    it('skips progress for terminal push (failed)', async () => {
+      mockPushModel.findById.mockResolvedValue({ ...mockPush, status: 'failed' });
+
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: 80,
+      });
+
+      expect(mockPushEventModel.createMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-string nonce types', async () => {
+      await FirmwareService.handleProgress('fac-1', { nonce: 123, progress_percent: 50 });
+      expect(mockPushEventModel.createMany).not.toHaveBeenCalled();
+
+      await FirmwareService.handleProgress('fac-1', { nonce: null, progress_percent: 50 });
+      expect(mockPushEventModel.createMany).not.toHaveBeenCalled();
+    });
+
+    it('clamps out-of-range progress_percent', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: 150,
+      });
+
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 100, undefined);
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events[0].progress_percent).toBe(100);
+    });
+
+    it('clamps negative progress_percent to 0', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: -10,
+      });
+
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 0, undefined);
+    });
+
+    it('treats NaN progress_percent as 0', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: 'not-a-number',
+      });
+
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 0, undefined);
+    });
+
+    it('sanitizes non-string phase to undefined', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: 50,
+        phase: 123,
+      });
+
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 50, undefined);
+    });
+
+    it('creates device_status events with correct per-device fields', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        devices: [
+          { device_id: 'lock-1', status: 'complete' },
+          { device_id: 'lock-2', status: 'downloading', progress_percent: 40 },
+          { device_id: 'lock-3', status: 'failed', error: 'CRC mismatch' },
+        ],
+      });
+
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events[0].device_id).toBe('lock-1');
+      expect(events[0].device_status).toBe('complete');
+      expect(events[1].device_id).toBe('lock-2');
+      expect(events[1].progress_percent).toBe(40);
+      expect(events[2].device_id).toBe('lock-3');
+      expect(events[2].error_message).toBe('CRC mismatch');
+    });
+
+    it('skips invalid device entries (missing device_id)', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        devices: [
+          { device_id: 'lock-1', status: 'complete' },
+          { status: 'downloading' },
+          { device_id: '', status: 'pending' },
+          { device_id: 123, status: 'pending' },
+        ],
+      });
+
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(1);
+      expect(events[0].device_id).toBe('lock-1');
+    });
+
+    it('does not call updateDeviceCounts for empty devices array', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        devices: [],
+      });
+
+      expect(mockPushModel.updateDeviceCounts).not.toHaveBeenCalled();
+    });
+
+    it('creates error event with full field assertions', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        error: { code: 'TIMEOUT', message: 'Lock-2 timed out', severity: 'warning' },
+        message: 'Retrying...',
+      });
+
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(1);
+      expect(events[0].push_id).toBe('push-1');
+      expect(events[0].event_type).toBe('error');
+      expect(events[0].error_code).toBe('TIMEOUT');
+      expect(events[0].error_message).toBe('Lock-2 timed out');
+      expect(events[0].error_severity).toBe('warning');
+      expect(events[0].message).toBe('Retrying...');
+    });
+
+    it('handles combined payload with progress, devices, and message', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        progress_percent: 60,
+        phase: 'distributing',
+        message: 'Distributing...',
+        devices: [
+          { device_id: 'lock-1', status: 'downloading', progress_percent: 50 },
+          { device_id: 'lock-2', status: 'complete' },
+        ],
+      });
+
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 60, 'distributing');
+      expect(mockPushModel.updateDeviceCounts).toHaveBeenCalledWith('push-1', 2, 1, 0);
+
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(3);
+      expect(events[0].event_type).toBe('progress');
+      expect(events[1].event_type).toBe('device_status');
+      expect(events[2].event_type).toBe('device_status');
+    });
+
+    it('auto-fails push on critical error and creates error event', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        error: { code: 'FATAL', message: 'Flash memory corrupt', severity: 'critical' },
+      });
+
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'failed', 'Flash memory corrupt');
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(1);
+      expect(events[0].event_type).toBe('error');
+      expect(events[0].error_severity).toBe('critical');
     });
   });
 });

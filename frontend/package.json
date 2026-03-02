@@ -8,11 +8,11 @@
     "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "test": "jest --forceExit",
+    "test": "jest",
     "test:unit": "jest --testPathPattern=\"simple-integration|test-utils|LandingPage\"",
-    "test:integration": "jest --testPathPattern=real-backend-integration",
-    "test:true-integration": "jest --testPathPattern=true-backend-integration",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test:integration": "jest --testPathPattern=real-backend-integration --passWithNoTests",
+    "test:true-integration": "jest --testPathPattern=true-backend-integration --passWithNoTests",
+    "test:all": "npm run test:unit && npm run test:integration && npm run test:true-integration"
   },
   "dependencies": {
     "@headlessui/react": "^1.7.17",

@@ -20,6 +20,7 @@ import {
   LinkIcon,
   TicketIcon
 } from '@heroicons/react/24/outline';
+import { useBackNavigation } from '@/hooks/useBackNavigation';
 
 interface UserDetails {
   id: string;
@@ -33,6 +34,7 @@ interface UserDetails {
   updatedAt: string;
   facilities: Facility[];
   devices: UserDevice[];
+  accessControlDevices?: UserAccessControlDevice[];
 }
 
 interface Facility {
@@ -79,11 +81,39 @@ interface LockInfo {
   key_status: string;
 }
 
+interface UserAccessControlCode {
+  code: string;
+  valid_from: string;
+  valid_until: string;
+  schedule_id?: string | null;
+  schedule_name?: string | null;
+}
+
+interface UserAccessControlDevice {
+  id: string;
+  facility_id: string;
+  name: string;
+  device_type: 'gate' | 'elevator' | 'door';
+  location_description?: string | null;
+  access_methods?: string[];
+  codes?: UserAccessControlCode[];
+}
+
+interface RoutePassHistoryEntry {
+  id: string;
+  issuedAt: string;
+  expiresAt: string;
+  deviceId: string | null;
+  audiences: string[];
+  isExpired: boolean;
+}
+
 type TabType = 'summary' | 'facilities' | 'devices' | 'invites' | 'route-passes' | 'edit';
 
 export default function UserDetailsPage() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
+  const handleBack = useBackNavigation('/users');
   const { authState, canManageUsers } = useAuth();
   const { addToast } = useToast();
 
@@ -114,7 +144,7 @@ export default function UserDetailsPage() {
   const canDeleteDevices = authState.user?.role === UserRole.DEV_ADMIN;
   const canViewRoutePasses = authState.user?.role === UserRole.DEV_ADMIN;
 
-  const [routePassHistory, setRoutePassHistory] = useState<any[]>([]);
+  const [routePassHistory, setRoutePassHistory] = useState<RoutePassHistoryEntry[]>([]);
   const [routePassLoading, setRoutePassLoading] = useState(false);
   const [routePassPagination, setRoutePassPagination] = useState({
     total: 0,
@@ -147,7 +177,15 @@ export default function UserDetailsPage() {
     if (userId && activeTab === 'route-passes' && canViewRoutePasses) {
       loadRoutePassHistory();
     }
-  }, [userId, activeTab, routePassFilters]);
+  }, [
+    userId,
+    activeTab,
+    canViewRoutePasses,
+    routePassFilters.startDate,
+    routePassFilters.endDate,
+    routePassPagination.limit,
+    routePassPagination.offset,
+  ]);
 
   const loadRoutePassHistory = async () => {
     if (!userId) return;
@@ -162,7 +200,23 @@ export default function UserDetailsPage() {
       
       const response = await apiService.getUserRoutePassHistory(userId, filters);
       if (response.success) {
-        setRoutePassHistory(response.data || []);
+        const normalized = ((response.data || []) as any[]).map((entry) => {
+          const issuedAt = String(entry.issuedAt || entry.issued_at || '');
+          const expiresAt = String(entry.expiresAt || entry.expires_at || '');
+          const audiences = Array.isArray(entry.audiences) ? entry.audiences : [];
+          const isExpired = typeof entry.isExpired === 'boolean'
+            ? entry.isExpired
+            : (expiresAt ? new Date(expiresAt).getTime() <= Date.now() : true);
+          return {
+            id: String(entry.id || `${issuedAt}-${expiresAt}`),
+            issuedAt,
+            expiresAt,
+            deviceId: entry.deviceId || entry.device_id || null,
+            audiences,
+            isExpired,
+          } as RoutePassHistoryEntry;
+        });
+        setRoutePassHistory(normalized);
         setRoutePassPagination(response.pagination || {
           total: 0,
           limit: 50,
@@ -420,7 +474,7 @@ export default function UserDetailsPage() {
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{error}</p>
               <div className="mt-6">
                 <button
-                  onClick={() => navigate('/users')}
+                  onClick={handleBack}
                   className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
                 >
                   <ArrowLeftIcon className="mr-2 h-4 w-4" />
@@ -440,7 +494,7 @@ export default function UserDetailsPage() {
         {/* Header */}
         <div className="mb-6">
           <button
-            onClick={() => navigate('/users')}
+            onClick={handleBack}
             className="inline-flex items-center text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors mb-4"
           >
             <ArrowLeftIcon className="mr-2 h-4 w-4" />
@@ -708,6 +762,8 @@ export default function UserDetailsPage() {
                   {userDetails.facilities.map((facility) => {
                     const facilityId = facility.facility_id || facility.id;
                     const facilityName = facility.facility_name || facility.name;
+                    const facilityAccessControlDevices = (userDetails.accessControlDevices || [])
+                      .filter((device) => device.facility_id === facilityId);
                     return (
                       <div key={facilityId} className="bg-white dark:bg-gray-800 rounded-lg shadow">
                         <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
@@ -802,6 +858,61 @@ export default function UserDetailsPage() {
                               ))}
                             </div>
                           )}
+
+                          <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                            <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-4">
+                              Access Control Devices ({facilityAccessControlDevices.length})
+                            </h4>
+                            {facilityAccessControlDevices.length === 0 ? (
+                              <p className="text-sm text-gray-500 dark:text-gray-400">
+                                No app-entry access control devices for this facility.
+                              </p>
+                            ) : (
+                              <div className="space-y-3">
+                                {facilityAccessControlDevices.map((device) => (
+                                  <div key={device.id} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-sm font-medium text-gray-900 dark:text-white">{device.name}</p>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                                          {device.device_type}{device.location_description ? ` • ${device.location_description}` : ''}
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {(device.access_methods || []).map((method) => (
+                                          <span
+                                            key={`${device.id}-${method}`}
+                                            className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 uppercase"
+                                          >
+                                            {method}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    {device.codes && device.codes.length > 0 && (
+                                      <div className="mt-3 space-y-2">
+                                        {device.codes.map((codeEntry) => (
+                                          <div
+                                            key={`${device.id}-${codeEntry.code}-${codeEntry.schedule_id || 'default'}`}
+                                            className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md px-3 py-2"
+                                          >
+                                            <div className="flex items-center justify-between gap-3">
+                                              <span className="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">
+                                                {codeEntry.code}
+                                              </span>
+                                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                                                {codeEntry.schedule_name || 'Always'}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -1157,7 +1268,7 @@ export default function UserDetailsPage() {
                               {new Date(pass.expiresAt).toLocaleString()}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                              {pass.deviceId}
+                              {pass.deviceId || '-'}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                               {Array.isArray(pass.audiences) ? pass.audiences.length : 0} locks

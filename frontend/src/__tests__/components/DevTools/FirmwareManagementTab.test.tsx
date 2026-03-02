@@ -195,7 +195,7 @@ describe('FirmwareManagementTab', () => {
       expect(screen.getByPlaceholderText('e.g. 2.1.0')).toBeInTheDocument();
     });
 
-    it('rejects invalid file extensions', async () => {
+    it('accepts non-bin file extensions for upload metadata entry', async () => {
       setupMocks();
       render(<FirmwareManagementTab />);
 
@@ -204,8 +204,9 @@ describe('FirmwareManagementTab', () => {
       Object.defineProperty(input, 'files', { value: [file] });
       fireEvent.change(input);
 
-      expect(mockAddToast).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'error', title: expect.stringContaining('.exe') }),
+      expect(screen.getByText('malware.exe')).toBeInTheDocument();
+      expect(mockAddToast).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error' }),
       );
     });
 

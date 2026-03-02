@@ -88,7 +88,7 @@ export interface StateUpdateResult {
 }
 
 // Re-export DeviceStateUpdate for convenience
-export { DeviceStateUpdate };
+export type { DeviceStateUpdate };
 
 /**
  * Utility function to map device status from API format to locked boolean.

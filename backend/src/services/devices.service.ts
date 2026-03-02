@@ -1,5 +1,6 @@
 import { UserRole } from '@/types/auth.types';
 import { DeviceModel, BluLokDevice } from '@/models/device.model';
+import { DeviceGroupModel } from '@/models/device-group.model';
 import { UnitModel } from '@/models/unit.model';
 import { DeviceEventService } from './device-event.service';
 import { DatabaseService } from './database.service';
@@ -34,11 +35,13 @@ export class DevicesService {
   private static instance: DevicesService;
   private deviceModel: DeviceModel;
   private unitModel: UnitModel;
+  private deviceGroupModel: DeviceGroupModel;
   private eventService: DeviceEventService;
 
   private constructor() {
     this.deviceModel = new DeviceModel();
     this.unitModel = new UnitModel();
+    this.deviceGroupModel = new DeviceGroupModel();
     this.eventService = DeviceEventService.getInstance();
   }
 
@@ -135,6 +138,8 @@ export class DevicesService {
 
       // Assign the device to the unit
       await this.deviceModel.assignDeviceToUnit(deviceId, unitId);
+      // Keep unit-linked group memberships attached to the unit's current lock.
+      await this.deviceGroupModel.syncUnitLinkedMembers(unitId, deviceId);
 
       // Emit assignment event
       this.eventService.emitDeviceAssigned({
@@ -150,7 +155,8 @@ export class DevicesService {
       logger.info(`Device ${deviceId} assigned to unit ${unitId} by ${options.performedBy}`, {
         source: options.source || 'api',
         facilityId: unit.facility_id,
-        oldDeviceId
+        oldDeviceId,
+        syncedGroupMembersToUnit: unitId,
       });
     } catch (error) {
       logger.error('Error assigning device to unit:', error);

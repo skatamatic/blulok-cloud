@@ -6,6 +6,7 @@ import { DatabaseService } from '@/services/database.service';
 import { DenylistEntryModel } from '@/models/denylist-entry.model';
 import { DenylistOptimizationService } from '@/services/denylist-optimization.service';
 import { config } from '@/config/environment';
+import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
 
 /**
  * Access Revocation Listener Service
@@ -53,9 +54,11 @@ export class AccessRevocationListenerService {
     this.events.onTenantUnassigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        // Fetch device ids for this unit (targeting specific locks)
-        const devices = await knex('blulok_devices').where({ unit_id: event.unitId }).select('id');
-        const deviceIds = devices.map((d: any) => d.id);
+        const [bluLokDeviceIds, accessControlDeviceIds] = await Promise.all([
+          AccessControlZoneAccessService.getBluLokDeviceIdsForUnits([event.unitId]),
+          AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits([event.unitId]),
+        ]);
+        const deviceIds = Array.from(new Set([...bluLokDeviceIds, ...accessControlDeviceIds]));
 
         if (deviceIds.length === 0) {
           logger.info(`No devices found for unit ${event.unitId}, skipping denylist update`);
@@ -101,37 +104,38 @@ export class AccessRevocationListenerService {
     this.events.onTenantAssigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        // Fetch device ids for this unit
-        const devices = await knex('blulok_devices').where({ unit_id: event.unitId }).select('id');
-        const deviceIds = devices.map((d: any) => d.id);
+        const [bluLokDeviceIds, accessControlDeviceIds] = await Promise.all([
+          AccessControlZoneAccessService.getBluLokDeviceIdsForUnits([event.unitId]),
+          AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits([event.unitId]),
+        ]);
+        const deviceIds = Array.from(new Set([...bluLokDeviceIds, ...accessControlDeviceIds]));
 
         if (deviceIds.length === 0) {
           return;
         }
 
         // Check if user has denylist entries for any of these devices
-        const entries = await this.denylistModel.findByUnitsAndUser([event.unitId], event.tenantId);
+        const userEntries = await this.denylistModel.findByUser(event.tenantId);
+        const entries = userEntries.filter((entry) => deviceIds.includes(entry.device_id));
 
         if (entries.length === 0) {
           // No denylist entries to remove
           return;
         }
 
-        // Batch fetch facility for all devices at once (single query instead of N queries)
+        // Batch fetch facility for all devices at once (single query set instead of N queries)
         const entryDeviceIds = entries.map(e => e.device_id);
-        const deviceFacilityRows = await knex('blulok_devices')
-          .join('units', 'blulok_devices.unit_id', 'units.id')
-          .whereIn('blulok_devices.id', entryDeviceIds)
-          .select('blulok_devices.id as device_id', 'units.facility_id');
+        const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(entryDeviceIds);
 
         // Group devices by facility
         const facilityMap = new Map<string, string[]>();
-        for (const row of deviceFacilityRows) {
-          const facilityId = row.facility_id;
+        for (const deviceId of entryDeviceIds) {
+          const facilityId = deviceFacilityMap.get(deviceId);
+          if (!facilityId) continue;
           if (!facilityMap.has(facilityId)) {
             facilityMap.set(facilityId, []);
           }
-          facilityMap.get(facilityId)!.push(row.device_id);
+          facilityMap.get(facilityId)!.push(deviceId);
         }
 
         // Bulk remove from DB (single DELETE query instead of N queries)
@@ -146,14 +150,15 @@ export class AccessRevocationListenerService {
 
             // Only send command if there are non-expired entries
             if (entriesToProcess.length > 0) {
+              const filteredDeviceIds = Array.from(new Set(entriesToProcess.map((entry) => entry.device_id)));
               const jwt = await DenylistService.buildDenylistRemove(
                 [{ sub: event.tenantId, exp: 0 }], // exp not needed for remove
-                targetDeviceIds
+                filteredDeviceIds
               );
               GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
 
-              logger.info(`Removed user ${event.tenantId} from denylist for ${targetDeviceIds.length} device(s) in facility ${facilityId}`, {
-                deviceIds: targetDeviceIds,
+              logger.info(`Removed user ${event.tenantId} from denylist for ${filteredDeviceIds.length} device(s) in facility ${facilityId}`, {
+                deviceIds: filteredDeviceIds,
               });
             } else {
               logger.info(`Skipped DENYLIST_REMOVE for user ${event.tenantId} on ${targetDeviceIds.length} device(s) - entries already expired, removed from DB only`, {

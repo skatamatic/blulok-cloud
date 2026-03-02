@@ -64,6 +64,7 @@ import { AuthService } from '../services/auth.service';
 import { asyncHandler } from '../middleware/error.middleware';
 import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/database.service';
+import { AccessCodeService } from '@/services/access-code.service';
 import { validate } from '@/middleware/validator.middleware';
 
 const router = Router();
@@ -76,7 +77,19 @@ const accessControlDeviceSchema = Joi.object({
   device_type: Joi.string().valid('door', 'gate', 'elevator').required(),
   location_description: Joi.string().required(),
   relay_channel: Joi.number().integer().min(1).max(8).required(),
+  access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
 });
+
+const updateAccessControlDeviceSchema = Joi.object({
+  name: Joi.string().optional(),
+  location_description: Joi.string().optional(),
+  relay_channel: Joi.number().integer().min(1).max(8).optional(),
+  status: Joi.string().valid('online', 'offline', 'error', 'maintenance').optional(),
+  is_locked: Joi.boolean().optional(),
+  device_settings: Joi.object().optional(),
+  metadata: Joi.object().optional(),
+  access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
+}).min(1);
 
 const bluLokDeviceSchema = Joi.object({
   gateway_id: Joi.string().required(),
@@ -243,6 +256,42 @@ router.get('/blulok/:id', asyncHandler(async (req: AuthenticatedRequest, res: Re
   }
 }));
 
+// GET /api/devices/access-control/:id - Get single access control device by id
+router.get('/access-control/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const user = req.user!;
+
+    const device = await deviceModel.findAccessControlDeviceWithGateway(String(id));
+    if (!device) {
+      res.status(404).json({ success: false, message: 'Device not found' });
+      return;
+    }
+
+    if (AuthService.isFacilityScoped(user.role) && !user.facilityIds?.includes(device.facility_id)) {
+      res.status(403).json({ success: false, message: 'Access denied to this device' });
+      return;
+    }
+
+    const knex = DatabaseService.getInstance().connection;
+    const facility = await knex('facilities')
+      .where('id', device.facility_id)
+      .select('name')
+      .first();
+
+    res.json({
+      success: true,
+      device: {
+        ...device,
+        facility_name: facility?.name ?? String(device.facility_id),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching access control device:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch device' });
+  }
+}));
+
 // GET /api/devices/facility/:facilityId/hierarchy - Get facility device hierarchy
 router.get('/facility/:facilityId/hierarchy', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -301,6 +350,16 @@ router.post('/access-control', requireAdminOrFacilityAdmin, asyncHandler(async (
     };
 
     const device = await deviceModel.createAccessControlDevice(sanitizedValue);
+    // Push effective codes after creating a new access-control device so gateways
+    // immediately receive any applicable scope/device mappings.
+    try {
+      const gateway = await deviceModel.findGatewayById(String(device.gateway_id));
+      if (gateway?.facility_id) {
+        await AccessCodeService.getInstance().pushCodesToGateway(String(gateway.facility_id));
+      }
+    } catch (pushError) {
+      logger.warn('Failed to push access codes after access-control device creation', { pushError });
+    }
     
     res.status(201).json({ success: true, device });
   } catch (error) {
@@ -340,6 +399,40 @@ router.post('/blulok', requireAdminOrFacilityAdmin, asyncHandler(async (req: Aut
     logger.error('Error creating BluLok device:', error);
     res.status(500).json({ success: false, message: 'Failed to create BluLok device' });
   }
+}));
+
+// PUT /api/devices/access-control/:id - Update access control device settings
+router.put('/access-control/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+  const { id } = req.params;
+  const { error, value } = updateAccessControlDeviceSchema.validate(req.body);
+  if (error) {
+    res.status(400).json({
+      success: false,
+      message: error.details[0]?.message || 'Validation error',
+      error: error.details[0]?.message || 'Validation error',
+    });
+    return;
+  }
+
+  const existing = await deviceModel.findAccessControlDeviceWithGateway(String(id));
+  if (!existing) {
+    res.status(404).json({ success: false, message: 'Device not found' });
+    return;
+  }
+
+  if (AuthService.isFacilityScoped(user.role) && !user.facilityIds?.includes(existing.facility_id)) {
+    res.status(403).json({ success: false, message: 'Access denied to this facility' });
+    return;
+  }
+
+  const updatePayload = {
+    ...value,
+    name: value.name ? sanitizeHtml(value.name) : undefined,
+    location_description: value.location_description ? sanitizeHtml(value.location_description) : undefined,
+  };
+  const updated = await deviceModel.updateAccessControlDevice(String(id), updatePayload);
+  res.json({ success: true, device: updated });
 }));
 
 // PUT /api/devices/:deviceType/:id/status - Update device status

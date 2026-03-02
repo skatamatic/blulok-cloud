@@ -94,6 +94,10 @@ async function bootstrap(): Promise<void> {
     const { RoutePassPruningService } = await import('@/services/route-pass-pruning.service');
     RoutePassPruningService.getInstance().start();
 
+    // Initialize access code scheduler (periodic rotation checks)
+    const { AccessCodeSchedulerService } = await import('@/services/access-code-scheduler.service');
+    AccessCodeSchedulerService.getInstance().start();
+
     // Legacy command worker removed (key distribution queues deprecated)
 
     // Graceful shutdown
@@ -107,6 +111,8 @@ async function bootstrap(): Promise<void> {
       DataPruningService.getInstance().stop();
       const { RoutePassPruningService } = require('@/services/route-pass-pruning.service');
       RoutePassPruningService.getInstance().stop();
+      const { AccessCodeSchedulerService } = require('@/services/access-code-scheduler.service');
+      AccessCodeSchedulerService.getInstance().stop();
       
       // Destroy logger interceptor
       loggerInterceptor.destroy();

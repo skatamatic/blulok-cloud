@@ -23,6 +23,7 @@ import {
   resetPreferences,
   getDefaultPreferences,
 } from '../../core/Preferences';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 
 interface PreferencesDialogProps {
   isOpen: boolean;
@@ -41,6 +42,7 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
   const [prefs, setPrefs] = useState<EditorPreferences>(loadPreferences);
   const [hasChanges, setHasChanges] = useState(false);
   const [activeTab, setActiveTab] = useState<'ghosting' | 'grid' | 'performance' | 'rendering'>('ghosting');
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   
   // Load prefs when dialog opens
   useEffect(() => {
@@ -73,12 +75,15 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
   }, [prefs, onPreferencesChange, onClose]);
   
   const handleReset = useCallback(() => {
-    if (window.confirm('Reset all preferences to defaults?')) {
-      const defaults = resetPreferences();
-      setPrefs(defaults);
-      setHasChanges(true);
-      onPreferencesChange?.(defaults);
-    }
+    setShowResetConfirm(true);
+  }, []);
+
+  const confirmReset = useCallback(() => {
+    setShowResetConfirm(false);
+    const defaults = resetPreferences();
+    setPrefs(defaults);
+    setHasChanges(true);
+    onPreferencesChange?.(defaults);
   }, [onPreferencesChange]);
   
   const handleApply = useCallback(() => {
@@ -92,6 +97,7 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
   const defaults = getDefaultPreferences();
 
   return (
+    <>
     <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className={`
         w-full max-w-lg mx-4 rounded-xl shadow-2xl overflow-hidden
@@ -448,6 +454,15 @@ export const PreferencesDialog: React.FC<PreferencesDialogProps> = ({
         </div>
       </div>
     </div>
+      <ConfirmDialog
+        isOpen={showResetConfirm}
+        title="Reset Preferences"
+        message="Reset all preferences to defaults?"
+        confirmLabel="Reset"
+        onCancel={() => setShowResetConfirm(false)}
+        onConfirm={confirmReset}
+      />
+    </>
   );
 };
 

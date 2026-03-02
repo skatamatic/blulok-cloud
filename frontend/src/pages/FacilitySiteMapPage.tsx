@@ -18,6 +18,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
+import { useBackNavigation } from '@/hooks/useBackNavigation';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -61,6 +62,7 @@ interface FacilityLayout {
 export default function FacilitySiteMapPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const handleBack = useBackNavigation('/units');
   // const stageRef = useRef<any>(null);
   
   const [layout, setLayout] = useState<FacilityLayout>({
@@ -274,7 +276,7 @@ export default function FacilitySiteMapPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <button
-              onClick={() => navigate('/units')}
+              onClick={handleBack}
               className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
             >
               <ArrowLeftIcon className="h-5 w-5" />
@@ -421,7 +423,7 @@ export default function FacilitySiteMapPage() {
                   For now, use the grid and table views in the Units page.
                 </p>
                 <button
-                  onClick={() => navigate('/units')}
+                  onClick={handleBack}
                   className="inline-flex items-center px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   <ArrowLeftIcon className="h-4 w-4 mr-2" />

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   HomeIcon,
   UserIcon,
@@ -69,6 +69,18 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [step, setStep] = useState<'unit' | 'tenant'>('unit');
+  const isMountedRef = useRef(true);
+  const isOpenRef = useRef(isOpen);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -82,8 +94,10 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
   const loadFacilities = async () => {
     try {
       const response = await apiService.getFacilities();
+      if (!isMountedRef.current || !isOpenRef.current) return;
       setFacilities(response.facilities || []);
     } catch (error) {
+      if (!isMountedRef.current || !isOpenRef.current) return;
       console.error('Failed to load facilities:', error);
     }
   };
@@ -93,8 +107,10 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
       const response = await apiService.getUsers({ 
         role: 'tenant'
       });
+      if (!isMountedRef.current || !isOpenRef.current) return;
       setTenants(response.users || []);
     } catch (error) {
+      if (!isMountedRef.current || !isOpenRef.current) return;
       console.error('Failed to load tenants:', error);
     }
   };

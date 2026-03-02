@@ -15,6 +15,7 @@ This document summarizes the new centralized trust model implemented in the back
 - Flow D (Revocation): Cloud pushes signed Denylist Update Command to Gateway to target locks.
 - Flow E (Time Sync): Cloud issues signed Secure Time Sync Command; Gateway broadcasts periodically; locks reject older timestamps.
 - Flow F (Firmware OTA): Cloud signs firmware manifest and chunked binary data as EdDSA JWTs; Gateway verifies each JWT using the Ops public key received in AUTH_OK; Gateway reassembles binary, verifies SHA-256 integrity, verifies manufacturer signature, then distributes to lock hardware.
+- Flow G (Keypad Access Codes): Cloud resolves active keypad access codes per relay target, signs `ACCESS_CODE_UPDATE` command JWT, and unicasts to the facility gateway; gateway can also poll the same resolved code mappings via internal route.
 
 ### Data Artifacts
 - Route Pass (JWT, Ed25519): `iss`, `sub`, `aud[]`, `iat`, `exp`, `jti`, `device_pubkey`.
@@ -27,8 +28,10 @@ This document summarizes the new centralized trust model implemented in the back
   - SECURE_TIME_SYNC: `{ cmd_type:'SECURE_TIME_SYNC', ts }`
   - FIRMWARE_MANIFEST: `{ cmd_type:'FIRMWARE_MANIFEST', version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`
   - FIRMWARE_CHUNK: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`
+  - ACCESS_CODE_UPDATE: `{ cmd_type:'ACCESS_CODE_UPDATE', facility_id, nonce, codes:[{ device_id, relay_channel, code, valid_until }] }`
 - WebSocket command envelope: `{ type: 'COMMAND', jwt: 'eyJ...' }`
 - WebSocket firmware envelopes: `{ type: 'FIRMWARE_MANIFEST', jwt: 'eyJ...' }`, `{ type: 'FIRMWARE_CHUNK', jwt: 'eyJ...' }`
+- WebSocket access-code envelope: `{ type: 'ACCESS_CODE_UPDATE', jwt: 'eyJ...' }`
 - Gateway firmware responses: `{ type: 'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status:'ok'|'error' }`, `{ type: 'FIRMWARE_UPDATE_STATUS', nonce, status, message? }`
 
 #### Route Pass Audience Formats
@@ -47,6 +50,7 @@ This document summarizes the new centralized trust model implemented in the back
     - `POST /api/v1/internal/gateway/devices/inventory` - Sync device inventory (add/remove devices via delta)
     - `POST /api/v1/internal/gateway/devices/state` - Partial device state updates (battery, lock state, signal, etc.)
     - `POST /api/v1/internal/gateway/device-sync` (DEPRECATED) - Legacy combined endpoint, use `/devices/inventory` + `/devices/state`
+    - `GET /api/v1/internal/gateway/access-codes` - Poll resolved active keypad codes for facility devices
   - Admin: `POST /api/v1/admin/ops-key-rotation/broadcast` (DEV_ADMIN only)
   - Dev Tools (DEV_ADMIN, non-production only): `POST /api/v1/admin/dev-tools/gateway-command` - sends DENYLIST_ADD, DENYLIST_REMOVE, LOCK, UNLOCK commands to gateway for testing
   - Firmware OTA:
@@ -57,13 +61,22 @@ This document summarizes the new centralized trust model implemented in the back
     - `POST /api/v1/firmware/:id/push/:gatewayId` - Initiate firmware push (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
     - `GET /api/v1/firmware/push-status/:gatewayId` - Current push state for page hydration
     - `POST /api/v1/firmware/push/:pushId/cancel` - Cancel in-progress push
+  - Access Codes & Groups:
+    - `GET /api/v1/access-codes/my` - User-specific device/code pairings (facility-scoped RBAC)
+    - `GET/PUT /api/v1/access-codes/config/:facilityId` - Access-code policy management (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
+    - `GET /api/v1/access-codes?facility_id=...` - Active scoped codes by facility
+    - `GET /api/v1/access-codes/effective?facility_id=...` - Effective per-device resolved codes + source scope metadata for admin UX
+    - `POST /api/v1/access-codes/rotate` - Forced random rotation
+    - `PUT /api/v1/access-codes/manual/set` - Manual code set for scope
+    - `POST /api/v1/access-codes/push/:facilityId` - Push signed ACCESS_CODE_UPDATE command to gateway
+    - `POST/GET/PUT/DELETE /api/v1/device-groups...` - Generic device group management
 - Websocket Gateway at `/ws/gateway` (facility-scoped) for:
   - Secure command delivery (denylist add/remove, time sync) via unicast/broadcast
   - Full REST API proxying over WS using loopback HTTP with facility guard
   - Auth: JWT required; roles allowed: DEV_ADMIN, ADMIN, FACILITY_ADMIN; one facilityId per connection
   - Protocol (JSON frames):
     - Client→Server: `{type:'AUTH', token, facilityId}`, `{type:'PROXY_REQUEST', id, method, path, headers?, query?, body?}`, `{type:'PONG'}`, `{type:'COMMAND_ACK', id, status, message?}`, `{type:'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status, message?}`, `{type:'FIRMWARE_UPDATE_STATUS', nonce, status, message?}`
-    - Server→Client: `{type:'AUTH_OK', facilityId, ops_public_key}`, `{type:'PROXY_RESPONSE', id, status, headers?, body?}`, `{type:'PING'}`, `{type:'FIRMWARE_MANIFEST', jwt}`, `{type:'FIRMWARE_CHUNK', jwt}`
+    - Server→Client: `{type:'AUTH_OK', facilityId, ops_public_key}`, `{type:'PROXY_RESPONSE', id, status, headers?, body?}`, `{type:'PING'}`, `{type:'FIRMWARE_MANIFEST', jwt}`, `{type:'FIRMWARE_CHUNK', jwt}`, `{type:'ACCESS_CODE_UPDATE', jwt}`
   - Facility Guard: FACILITY_ADMIN requests must not target other facilities (path/body checked)
   - Proxy Security: server re-signs a short-lived passthrough JWT with same identity and injects `Authorization: Bearer <token>`
 - Login now returns `isDeviceRegistered` for the presented `X-App-Device-Id`.
@@ -103,6 +116,13 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 - Trust chain (no CA required): TLS secures transport → JWT auth verifies gateway identity → `AUTH_OK` delivers Ops public key → public key verifies all signed firmware payloads.
 - Push tasks run as background operations with state persisted in `firmware_pushes` table.
 - Progress broadcast via `firmware_push_progress` WebSocket subscription (facility-scoped RBAC).
+
+### Access Code Resolution Determinism
+- Effective keypad code precedence is deterministic and enforced as:
+  - `device` scope override
+  - then `device_group` scope override (stable group selection order)
+  - then `facility` scope fallback
+- For duplicate active rows in a given scope target, newest active row is used.
 
 ### Implementation Notes
 - Abstractions:

@@ -99,7 +99,11 @@ class WebSocketService implements IWebSocketService {
           // Heartbeat received, no action needed
           break;
         case 'error':
-          console.error('WebSocket error:', message.error);
+          if (typeof message.error === 'string' && message.error.includes('Subscription not found')) {
+            console.debug('WebSocket subscription cleanup notice:', message.error);
+          } else {
+            console.error('WebSocket error:', message.error);
+          }
           break;
         case 'diagnostics':
           this.handleDiagnosticsMessage(message);
@@ -124,6 +128,9 @@ class WebSocketService implements IWebSocketService {
           break;
         case 'fms_sync_progress_update':
           this.handleFMSSyncProgressUpdate(message);
+          break;
+        case 'firmware_push_progress_update':
+          this.handleFirmwarePushProgressUpdate(message);
           break;
         case 'device_status_update':
           this.handleDeviceStatusUpdate(message);
@@ -199,6 +206,13 @@ class WebSocketService implements IWebSocketService {
 
   private handleFMSSyncProgressUpdate(message: any): void {
     const handlers = this.messageHandlers.get('fms_sync_progress');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleFirmwarePushProgressUpdate(message: any): void {
+    const handlers = this.messageHandlers.get('firmware_push_progress');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }

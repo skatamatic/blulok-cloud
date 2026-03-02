@@ -208,7 +208,7 @@ describe('DeviceDetailsPage', () => {
     });
   });
 
-  it('navigates back to devices list', async () => {
+  it('navigates back to previous page (or fallback)', async () => {
     const mockNavigate = jest.fn();
     jest.spyOn(require('react-router-dom'), 'useNavigate').mockReturnValue(mockNavigate);
 
@@ -225,7 +225,7 @@ describe('DeviceDetailsPage', () => {
     });
 
     fireEvent.click(screen.getByText('Back'));
-    expect(mockNavigate).toHaveBeenCalledWith('/devices');
+    expect(mockNavigate).toHaveBeenCalledWith(-1);
   });
 
   it('reloads device details on lock command failure', async () => {

@@ -36,6 +36,8 @@ import { notificationsRouter } from '@/routes/notifications.routes';
 import { activityRouter } from '@/routes/activity.routes';
 import { firmwareRouter } from '@/routes/firmware.routes';
 import { systemStorageRouter } from '@/routes/system-storage.routes';
+import { deviceGroupsRouter } from '@/routes/device-groups.routes';
+import { accessCodesRouter } from '@/routes/access-codes.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -124,6 +126,8 @@ export function createApp(): Application {
   
   // Firmware OTA routes
   app.use('/api/v1/firmware', firmwareRouter);
+  app.use('/api/v1/device-groups', deviceGroupsRouter);
+  app.use('/api/v1/access-codes', accessCodesRouter);
   
   // System storage config (admin)
   app.use('/api/v1/admin/storage-config', systemStorageRouter);

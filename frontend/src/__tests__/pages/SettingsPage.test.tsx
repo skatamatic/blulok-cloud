@@ -40,6 +40,7 @@ describe('SettingsPage', () => {
           role: UserRole.DEV_ADMIN,
         },
       },
+      hasRole: (roles: UserRole[]) => roles.includes(UserRole.DEV_ADMIN),
     } as any);
 
     mockUseTheme.mockReturnValue({

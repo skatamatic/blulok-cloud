@@ -3,6 +3,7 @@ import { createApp } from '@/app';
 import { createMockTestData } from '@/__tests__/utils/mock-test-helpers';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { TimeSyncJwtPayload } from '@/types/gateway.types';
+import { AuthService } from '@/services/auth.service';
 
 // Avoid DB persistence during time-sync in route tests
 jest.mock('@/services/database.service', () => ({
@@ -65,10 +66,18 @@ const { syncGatewayDevicesMock, updateDeviceStatusesMock, syncDeviceInventoryMoc
 
 describe('Internal Gateway Routes', () => {
   let app: any;
+  let accessSpy: jest.SpyInstance;
   const testData = createMockTestData();
 
   beforeAll(() => {
+    accessSpy = jest.spyOn(AuthService, 'canAccessFacility').mockImplementation(async (_userId, _userRole, facilityId) => {
+      return facilityId === 'facility-1' || facilityId === '550e8400-e29b-41d4-a716-446655440001';
+    });
     app = createApp();
+  });
+
+  afterAll(() => {
+    accessSpy.mockRestore();
   });
 
   it('GET /api/v1/internal/gateway/time-sync requires Facility Admin', async () => {
@@ -143,13 +152,38 @@ describe('Internal Gateway Routes', () => {
       .post('/api/v1/internal/gateway/device-sync')
       .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
       .send({
-        facility_id: 'fac-1',
+        facility_id: 'facility-1',
         devices: [{ batteryLevel: 10 }],
       });
 
     expect(resNoIds.status).toBe(400);
     expect(resNoIds.body.success).toBe(false);
     expect(String(resNoIds.body.message || '')).toContain('serial');
+  });
+
+  it('POST /api/v1/internal/gateway/device-sync enforces facility scope for facility admins', async () => {
+    const crossFacility = await request(app)
+      .post('/api/v1/internal/gateway/device-sync')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .send({
+        facility_id: 'facility-2',
+        devices: [{ serial: 'DEV-1' }],
+      });
+
+    expect(crossFacility.status).toBe(403);
+    expect(crossFacility.body.success).toBe(false);
+
+    const headerOverride = await request(app)
+      .post('/api/v1/internal/gateway/device-sync')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .set('X-Gateway-Facility-Id', 'facility-1')
+      .send({
+        facility_id: 'facility-2',
+        devices: [{ serial: 'DEV-1' }],
+      });
+
+    expect(headerOverride.status).toBe(403);
+    expect(headerOverride.body.success).toBe(false);
   });
 
   it('POST /api/v1/internal/gateway/device-sync normalizes payload and forwards to DeviceSyncService', async () => {
@@ -177,7 +211,7 @@ describe('Internal Gateway Routes', () => {
       .post('/api/v1/internal/gateway/device-sync')
       .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
       .send({
-        facility_id: 'fac-1',
+        facility_id: 'facility-1',
         devices: [devicePayload],
       });
 
@@ -243,7 +277,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/devices/inventory')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           devices: [{ lock_number: 123 }], // Missing lock_id
         });
 
@@ -256,7 +290,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/devices/inventory')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           devices: [
             { lock_id: 'lock-1', lock_number: 101, firmware_version: '1.0.0' },
             { lock_id: 'lock-2', lock_number: 102 },
@@ -269,6 +303,19 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.data.added).toBe(1);
       expect(res.body.data.unchanged).toBe(2);
       expect(syncDeviceInventoryMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('enforces facility scope for inventory sync', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-2',
+          devices: [{ lock_id: 'lock-1' }],
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
     });
   });
 
@@ -300,7 +347,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           updates: [{ lock_id: 'lock-1', lock_state: 'INVALID' }],
         });
 
@@ -314,7 +361,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           updates: [{ lock_id: 'lock-1', battery_level: 3423, battery_unit: 'mV' }],
         });
 
@@ -328,7 +375,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           updates: [
             { lock_id: 'lock-1', battery_level: 85 },
             { lock_id: 'lock-2', lock_state: 'LOCKED', online: true },
@@ -347,7 +394,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           updates: [
             {
               lock_id: 'lock-1',
@@ -374,7 +421,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           updates: [
             {
               lock_id: 'lock-1',
@@ -393,6 +440,19 @@ describe('Internal Gateway Routes', () => {
       // Verify serial is passed to the service
       const [gatewayId, updates] = updateDeviceStatesMock.mock.calls[0];
       expect(updates[0].serial).toBe('LOCK-ABC-105');
+    });
+
+    it('enforces facility scope for state updates', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-2',
+          updates: [{ lock_id: 'lock-1', online: true }],
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
     });
   });
 
@@ -430,7 +490,7 @@ describe('Internal Gateway Routes', () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/device-sync')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ facility_id: 'fac-1', tid: 3, devices: [{ serial: 'DEV-1' }] })
+        .send({ facility_id: 'facility-1', tid: 3, devices: [{ serial: 'DEV-1' }] })
         .expect(200);
       expect(res.body.success).toBe(true);
     });
@@ -440,7 +500,7 @@ describe('Internal Gateway Routes', () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/inventory')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ facility_id: 'fac-1', tid: 5, devices: [{ lock_id: 'lock-1' }] })
+        .send({ facility_id: 'facility-1', tid: 5, devices: [{ lock_id: 'lock-1' }] })
         .expect(200);
       expect(res.body.success).toBe(true);
     });
@@ -450,7 +510,7 @@ describe('Internal Gateway Routes', () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ facility_id: 'fac-1', tid: 'tx-99', updates: [{ lock_id: 'lock-1', online: true }] })
+        .send({ facility_id: 'facility-1', tid: 'tx-99', updates: [{ lock_id: 'lock-1', online: true }] })
         .expect(200);
       expect(res.body.success).toBe(true);
     });
@@ -465,7 +525,7 @@ describe('Internal Gateway Routes', () => {
         .post('/api/v1/internal/gateway/device-sync')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
-          facility_id: 'fac-1',
+          facility_id: 'facility-1',
           devices: [{ serial: 'DEV-1' }],
         });
 

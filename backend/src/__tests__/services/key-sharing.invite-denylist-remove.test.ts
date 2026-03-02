@@ -12,6 +12,13 @@ jest.mock('@/services/denylist-optimization.service', () => ({
     shouldSkipDenylistRemove: jest.fn().mockReturnValue(false),
   },
 }));
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getBluLokDeviceIdsForUnits: jest.fn().mockResolvedValue(['device-1']),
+    getAccessControlDeviceIdsForUnits: jest.fn().mockResolvedValue([]),
+    getDeviceFacilityIds: jest.fn().mockResolvedValue(new Map([['device-1', 'facility-1']])),
+  },
+}));
 const sendInviteMock = jest.fn();
 jest.mock('@/services/first-time-user.service', () => ({
   FirstTimeUserService: {
@@ -55,6 +62,38 @@ describe('KeySharingService.inviteByPhone - denylist removal on re-grant', () =>
           select: jest.fn(),
         };
       }
+      if (table === 'blulok_devices') {
+        return {
+          whereIn: jest.fn().mockReturnThis(),
+          select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
+        };
+      }
+      if (table === 'device_group_members as zone_access') {
+        return {
+          distinct: jest.fn().mockReturnThis(),
+          join: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          whereIn: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          then: (resolve: (rows: any[]) => any) => Promise.resolve([]).then(resolve),
+          catch: () => undefined,
+        };
+      }
+      if (table === 'blulok_devices as bd') {
+        return {
+          join: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          whereIn: jest.fn().mockResolvedValue([{ device_id: 'device-1', facility_id: 'facility-1' }]),
+        };
+      }
+      if (table === 'access_control_devices as acd') {
+        return {
+          join: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          whereIn: jest.fn().mockResolvedValue([]),
+        };
+      }
       return { where: jest.fn().mockReturnThis(), first: jest.fn(), select: jest.fn() };
     });
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: mockKnex });
@@ -63,10 +102,10 @@ describe('KeySharingService.inviteByPhone - denylist removal on re-grant', () =>
     (UserModel.findByPhone as any) = jest.fn().mockResolvedValue({ id: 'invitee-1', phone_number: '+15551234567' });
 
     mockDenylistModel = {
-      findByUnitsAndUser: jest.fn().mockResolvedValue([
+      findByUser: jest.fn().mockResolvedValue([
         { id: 'e1', device_id: 'device-1', user_id: 'invitee-1', expires_at: new Date(Date.now() + 3600_000) } as any,
       ]),
-      remove: jest.fn().mockResolvedValue(true),
+      bulkRemove: jest.fn().mockResolvedValue(1),
     } as any;
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
 
@@ -89,7 +128,7 @@ describe('KeySharingService.inviteByPhone - denylist removal on re-grant', () =>
     });
 
     expect(res.shareId).toBeDefined();
-    expect(mockDenylistModel.findByUnitsAndUser).toHaveBeenCalledWith(['unit-1'], 'invitee-1');
+    expect(mockDenylistModel.findByUser).toHaveBeenCalledWith('invitee-1');
     // Unicast is best-effort and depends on optimization checks; calling DB cleanup is sufficient here
   });
 });

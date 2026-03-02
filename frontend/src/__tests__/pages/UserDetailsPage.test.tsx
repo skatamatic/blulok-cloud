@@ -106,6 +106,25 @@ const mockUserDetails = {
       ],
     },
   ],
+  accessControlDevices: [
+    {
+      id: 'ac-1',
+      facility_id: 'facility-1',
+      name: 'Front Gate',
+      device_type: 'gate',
+      location_description: 'Main entrance',
+      access_methods: ['app', 'keypad'],
+      codes: [
+        {
+          code: '111111',
+          valid_from: '2026-01-01T00:00:00.000Z',
+          valid_until: '2026-02-01T00:00:00.000Z',
+          schedule_id: null,
+          schedule_name: null,
+        },
+      ],
+    },
+  ],
 };
 
 const mockAuthState = {
@@ -229,7 +248,7 @@ describe('UserDetailsPage', () => {
       });
 
       fireEvent.click(screen.getByText('Back to Users'));
-      expect(mockNavigate).toHaveBeenCalledWith('/users');
+      expect(mockNavigate).toHaveBeenCalledWith('/users', { replace: true });
     });
   });
 
@@ -276,6 +295,101 @@ describe('UserDetailsPage', () => {
 
       expect(screen.getByText('John\'s iPhone')).toBeInTheDocument();
       expect(screen.getByText('Associated Locks (1)')).toBeInTheDocument();
+    });
+  });
+
+  describe('Route Passes Tab', () => {
+    it('derives route pass status from expiry when isExpired is absent', async () => {
+      const now = Date.now();
+      mockApiService.getUserRoutePassHistory = jest.fn().mockResolvedValue({
+        success: true,
+        data: [
+          {
+            id: 'pass-expired',
+            issued_at: new Date(now - 7200_000).toISOString(),
+            expires_at: new Date(now - 1000).toISOString(),
+            device_id: 'device-1',
+            audiences: ['lock:1'],
+          },
+          {
+            id: 'pass-active',
+            issued_at: new Date(now - 3600_000).toISOString(),
+            expires_at: new Date(now + 3600_000).toISOString(),
+            device_id: 'device-2',
+            audiences: ['lock:2'],
+          },
+        ],
+        pagination: { total: 2, limit: 50, offset: 0, hasMore: false },
+      });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('Route Passes')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Route Passes'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Expired')).toBeInTheDocument();
+        expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
+      });
+    });
+
+    it('reloads route pass history when pagination offset changes', async () => {
+      mockApiService.getUserRoutePassHistory = jest.fn()
+        .mockResolvedValueOnce({
+          success: true,
+          data: [
+            {
+              id: 'pass-1',
+              issuedAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+              deviceId: 'device-1',
+              audiences: ['lock:1'],
+              isExpired: false,
+            },
+          ],
+          pagination: { total: 60, limit: 50, offset: 0, hasMore: true },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: [
+            {
+              id: 'pass-2',
+              issuedAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+              deviceId: 'device-2',
+              audiences: ['lock:2'],
+              isExpired: false,
+            },
+          ],
+          pagination: { total: 60, limit: 50, offset: 50, hasMore: false },
+        });
+
+      renderUserDetailsPage();
+      await waitFor(() => {
+        expect(screen.getByText('Route Passes')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Route Passes'));
+
+      await waitFor(() => {
+        expect(mockApiService.getUserRoutePassHistory).toHaveBeenCalledWith('test-user-id', expect.objectContaining({
+          limit: 50,
+          offset: 0,
+        }));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+      await waitFor(() => {
+        expect(mockApiService.getUserRoutePassHistory).toHaveBeenCalledWith('test-user-id', expect.objectContaining({
+          limit: 50,
+          offset: 50,
+        }));
+      });
     });
   });
 
@@ -326,6 +440,14 @@ describe('UserDetailsPage', () => {
 
     it('should show primary unit badge', async () => {
       expect(screen.getByText('Primary')).toBeInTheDocument();
+    });
+
+    it('renders access-control entitlement methods and codes', async () => {
+      expect(screen.getByText('Access Control Devices (1)')).toBeInTheDocument();
+      expect(screen.getByText('Front Gate')).toBeInTheDocument();
+      expect(screen.getByText('app')).toBeInTheDocument();
+      expect(screen.getByText('keypad')).toBeInTheDocument();
+      expect(screen.getByText('111111')).toBeInTheDocument();
     });
   });
 
