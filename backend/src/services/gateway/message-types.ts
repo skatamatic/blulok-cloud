@@ -77,7 +77,6 @@ export type AccessCodeUpdateMessage = {
 export type AccessCodeUpdateAckMessage = {
   type: 'ACCESS_CODE_UPDATE_ACK';
   nonce: string;
-  status?: 'ok' | 'accepted' | 'error';
   accepted?: boolean;
   message?: string;
 };
@@ -98,14 +97,6 @@ export type AccessCodeUpdateCodeEntry = {
   device_id: string;
   relay_channel: number;
   valid_codes: AccessCodeUpdateValidCodeEntry[];
-  // Legacy compatibility fields - mirrors the first valid entry when present.
-  code?: string;
-  valid_from?: string;
-  valid_until?: string;
-  schedule_id?: string | null;
-  schedule?: SerializedSchedule | null;
-  schedule_name?: string | null;
-  time_windows?: AccessCodeScheduleWindow[];
 };
 
 // Firmware OTA Messages (Gateway -> Cloud)

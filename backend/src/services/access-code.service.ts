@@ -50,14 +50,6 @@ type GatewayDeviceCodeEntry = {
   device_id: string;
   relay_channel: number;
   valid_codes: GatewayValidCodeEntry[];
-  // Backward-compatible top-level fields mirror the first valid code.
-  code?: string;
-  valid_from?: string;
-  valid_until?: string;
-  schedule_id?: string | null;
-  schedule?: SerializedSchedule | null;
-  schedule_name?: string | null;
-  time_windows?: ScheduleWindowPayload[];
 };
 
 export interface EffectiveFacilityAccessCode {
@@ -152,7 +144,7 @@ export class AccessCodeService {
 
   public handleGatewayAccessCodeUpdateAck(
     facilityId: string,
-    ack: { nonce?: string; status?: string; accepted?: boolean; message?: string },
+    ack: { nonce?: string; accepted?: boolean; message?: string },
   ): void {
     const nonce = String(ack?.nonce || '');
     if (!nonce) return;
@@ -160,9 +152,7 @@ export class AccessCodeService {
     if (!pending || pending.facilityId !== facilityId) return;
     clearTimeout(pending.timer);
     this.pendingPushAcksByNonce.delete(nonce);
-    const normalizedStatus = String(ack?.status || '').toLowerCase();
-    const accepted = ack?.accepted === true || normalizedStatus === 'ok' || normalizedStatus === 'accepted' || normalizedStatus === 'success';
-    if (accepted) {
+    if (ack?.accepted === true) {
       this.setPushState(facilityId, 'active', null, nonce);
       pending.resolve();
       return;
@@ -1214,14 +1204,6 @@ export class AccessCodeService {
           relay_channel: entry.relay_channel,
           valid_codes: [validCode],
         };
-        // Backward compatibility for gateways still expecting flat fields.
-        nextEntry.code = validCode.code;
-        nextEntry.valid_from = validCode.valid_from;
-        nextEntry.valid_until = validCode.valid_until;
-        nextEntry.schedule_id = validCode.schedule_id;
-        nextEntry.schedule = validCode.schedule;
-        nextEntry.schedule_name = validCode.schedule_name;
-        nextEntry.time_windows = validCode.time_windows;
         codesByDevice.set(entry.device_id, nextEntry);
         return;
       }

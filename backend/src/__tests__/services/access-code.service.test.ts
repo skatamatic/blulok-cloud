@@ -779,7 +779,6 @@ describe('AccessCodeService', () => {
     });
     service.handleGatewayAccessCodeUpdateAck('fac-1', {
       nonce,
-      status: 'rejected',
       accepted: false,
       message: 'Gateway rejected access code update',
     });

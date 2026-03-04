@@ -331,14 +331,12 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId) {
           ws.send(JSON.stringify({
             type: 'ACCESS_CODE_UPDATE_ACK',
             nonce: cmd.nonce,
-            status: 'accepted',
             accepted: true,
           }));
         } else if (accessCodeAckMode === 'reject') {
           ws.send(JSON.stringify({
             type: 'ACCESS_CODE_UPDATE_ACK',
             nonce: cmd.nonce,
-            status: 'rejected',
             accepted: false,
             message: 'e2e-forced-reject',
           }));
@@ -4277,23 +4275,32 @@ async function run() {
       cmd.codes
         .filter((entry) => entry.device_id === deviceId)
         .forEach((entry) => {
-          if (Array.isArray(entry.valid_codes) && entry.valid_codes.length > 0) {
-            entry.valid_codes.forEach((validCode) => {
-              rows.push({
-                ...validCode,
-                device_id: deviceId,
-              });
-            });
-          } else {
+          if (!Array.isArray(entry.valid_codes) || entry.valid_codes.length === 0) return;
+          entry.valid_codes.forEach((validCode) => {
             rows.push({
+              ...validCode,
               device_id: deviceId,
-              code: entry.code,
-              schedule_id: entry.schedule_id || null,
-              schedule: entry.schedule || null,
             });
-          }
+          });
         });
       return rows;
+    };
+
+    const assertNoLegacyTopLevelCodeFields = (cmd) => {
+      if (!cmd || !Array.isArray(cmd.codes)) return;
+      cmd.codes.forEach((entry) => {
+        if (
+          Object.prototype.hasOwnProperty.call(entry, 'code')
+          || Object.prototype.hasOwnProperty.call(entry, 'valid_from')
+          || Object.prototype.hasOwnProperty.call(entry, 'valid_until')
+          || Object.prototype.hasOwnProperty.call(entry, 'schedule_id')
+          || Object.prototype.hasOwnProperty.call(entry, 'schedule')
+          || Object.prototype.hasOwnProperty.call(entry, 'schedule_name')
+          || Object.prototype.hasOwnProperty.call(entry, 'time_windows')
+        ) {
+          throw new Error('ACCESS_CODE_UPDATE should not include legacy top-level code fields');
+        }
+      });
     };
 
     step('Setting group-scoped code and asserting gateway fan-out to all keypad members');
@@ -4317,7 +4324,8 @@ async function run() {
       },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
-    await expectManualGroup;
+    const manualGroupCmd = await expectManualGroup;
+    assertNoLegacyTopLevelCodeFields(manualGroupCmd);
     const effectiveAfterGroup = await getEffectiveCodesMap();
     const groupEffectiveA = effectiveAfterGroup.get(keypadDeviceA);
     const groupEffectiveB = effectiveAfterGroup.get(keypadDeviceB);
