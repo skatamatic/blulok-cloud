@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { websocketService } from '@/services/websocket.service';
 import { websocketDebugService } from '@/services/websocket-debug.service';
 
@@ -146,11 +146,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, []);
 
-  const value: WebSocketContextType = {
+  const value: WebSocketContextType = useMemo(() => ({
     subscribe,
     unsubscribe,
-    isConnected
-  };
+    isConnected,
+  }), [subscribe, unsubscribe, isConnected]);
 
   return (
     <WebSocketContext.Provider value={value}>

@@ -87,8 +87,7 @@ export class SubscriptionRegistry {
       return false;
     }
 
-    await manager.handleSubscription(ws, message, client);
-    return true;
+    return manager.handleSubscription(ws, message, client);
   }
 
   public handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): void {

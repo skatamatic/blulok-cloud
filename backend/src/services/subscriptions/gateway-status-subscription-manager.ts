@@ -38,6 +38,12 @@ import { GatewayModel, Gateway } from '@/models/gateway.model';
  */
 export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   private gatewayModel: GatewayModel;
+  private cachedAllGateways: Gateway[] | null = null;
+  private cacheLoadedAtMs = 0;
+  private allGatewaysInFlight: Promise<Gateway[]> | null = null;
+  private dbBackoffUntilMs = 0;
+  private readonly CACHE_TTL_MS = 5000;
+  private readonly DB_BACKOFF_MS = 30_000;
 
   constructor() {
     super();
@@ -65,6 +71,9 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
+      if (this.isPoolAcquireTimeout(error)) {
+        this.dbBackoffUntilMs = Date.now() + this.DB_BACKOFF_MS;
+      }
       this.logger.error('Error sending initial gateway status data:', error);
       this.sendError(ws, 'Failed to load gateway status');
     }
@@ -119,12 +128,15 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
         });
       }
     } catch (error) {
+      if (this.isPoolAcquireTimeout(error)) {
+        this.dbBackoffUntilMs = Date.now() + this.DB_BACKOFF_MS;
+      }
       this.logger.error('Error broadcasting gateway status update:', error);
     }
   }
 
   private async getScopedGateways(client: SubscriptionClient, facilityIdFilter?: string, gatewayIdFilter?: string): Promise<Gateway[]> {
-    const all = await this.gatewayModel.findAll();
+    const all = await this.getAllGatewaysCached();
 
     // Admin roles can see all
     if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
@@ -134,6 +146,31 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
     // Other roles limited to facilityIds
     const allowedFacilities = client.facilityIds || [];
     return all.filter(g => allowedFacilities.includes(g.facility_id) && (!facilityIdFilter || g.facility_id === facilityIdFilter) && (!gatewayIdFilter || g.id === gatewayIdFilter));
+  }
+
+  private async getAllGatewaysCached(): Promise<Gateway[]> {
+    const now = Date.now();
+    if (this.cachedAllGateways && now - this.cacheLoadedAtMs < this.CACHE_TTL_MS) {
+      return this.cachedAllGateways;
+    }
+    if (now < this.dbBackoffUntilMs) {
+      return this.cachedAllGateways || [];
+    }
+    if (this.allGatewaysInFlight) {
+      return this.allGatewaysInFlight;
+    }
+
+    this.allGatewaysInFlight = this.gatewayModel.findAll()
+      .then((rows) => {
+        this.cachedAllGateways = rows;
+        this.cacheLoadedAtMs = Date.now();
+        return rows;
+      })
+      .finally(() => {
+        this.allGatewaysInFlight = null;
+      });
+
+    return this.allGatewaysInFlight;
   }
 
   private toPayload(gateways: Gateway[], updatedGatewayId?: string) {

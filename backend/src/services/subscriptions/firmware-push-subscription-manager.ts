@@ -76,35 +76,45 @@ export class FirmwarePushSubscriptionManager extends BaseSubscriptionManager {
     return [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(userRole);
   }
 
+  protected getInitialDataScopeKey(client: SubscriptionClient): string {
+    const facilities = (client.facilityIds || []).slice().sort().join(',');
+    return `${this.getSubscriptionType()}:${client.userRole}:${facilities}`;
+  }
+
+  private async getInitialSnapshot(client: SubscriptionClient): Promise<any> {
+    return this.loadInitialData(
+      this.getInitialDataScopeKey(client),
+      async () => {
+        let activePushes;
+        if (client.userRole === UserRole.FACILITY_ADMIN) {
+          activePushes = await this.pushModel.findActiveByFacilities(client.facilityIds || []);
+        } else {
+          activePushes = await this.pushModel.findAllActive();
+        }
+
+        const pushSnapshots = await Promise.all(
+          activePushes.map(async (push) => {
+            const [recentEvents, deviceStatuses] = await Promise.all([
+              this.pushEventModel.findByPushId(push.id, 20),
+              this.pushEventModel.getDeviceStatuses(push.id),
+            ]);
+            return { push, recentEvents, deviceStatuses };
+          }),
+        );
+        return { status: 'ready', activePushes: pushSnapshots };
+      },
+      { status: 'ready', activePushes: [] },
+    );
+  }
+
   protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {
     try {
-      // Load active pushes scoped by role
-      let activePushes;
-      if (client.userRole === UserRole.FACILITY_ADMIN) {
-        activePushes = await this.pushModel.findActiveByFacilities(client.facilityIds || []);
-      } else {
-        activePushes = await this.pushModel.findAllActive();
-      }
-
-      // For each active push, load recent events and device statuses
-      const pushSnapshots = await Promise.all(
-        activePushes.map(async (push) => {
-          const [recentEvents, deviceStatuses] = await Promise.all([
-            this.pushEventModel.findByPushId(push.id, 20),
-            this.pushEventModel.getDeviceStatuses(push.id),
-          ]);
-          return {
-            push,
-            recentEvents,
-            deviceStatuses,
-          };
-        }),
-      );
-
       const message = JSON.stringify({
         type: 'firmware_push_progress_update',
         subscriptionId,
-        data: { status: 'ready', activePushes: pushSnapshots },
+        // Avoid DB-heavy initial hydration here: firmware UI already fetches
+        // list/status/history through REST and only needs WS for live deltas.
+        data: { status: 'ready' },
         timestamp: new Date().toISOString(),
       });
       ws.send(message);

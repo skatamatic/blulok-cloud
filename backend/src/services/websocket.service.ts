@@ -96,7 +96,7 @@ export interface WebSocketMessage {
 export class WebSocketService {
   private static instance: WebSocketService;
   private wss: WebSocketServer | null = null;
-  private clients: Map<WebSocket, { userId: string; userRole: UserRole; subscriptions: Map<string, Subscription> }> = new Map();
+  private clients: Map<WebSocket, { userId: string; userRole: UserRole; subscriptions: Map<string, Subscription>; pendingSubscriptionKeys: Set<string> }> = new Map();
   private subscriptions: Map<string, Subscription> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private subscriptionRegistry: SubscriptionRegistry;
@@ -162,6 +162,7 @@ export class WebSocketService {
         userId: decoded.userId,
         userRole: decoded.role as UserRole,
         subscriptions: new Map<string, Subscription>(),
+        pendingSubscriptionKeys: new Set<string>(),
         facilityIds, // Include facility IDs for RBAC enforcement in subscriptions
       };
 
@@ -230,8 +231,9 @@ export class WebSocketService {
       return;
     }
 
+    const subscriptionKey = this.makeSubscriptionKey(message.subscriptionType, message.data);
     const existing = (Array.from(client.subscriptions.values()) as Subscription[]).find((sub) =>
-      sub.type === message.subscriptionType && JSON.stringify(sub.filters ?? null) === JSON.stringify(message.data ?? null),
+      this.makeSubscriptionKey(sub.type, sub.filters) === subscriptionKey,
     );
     if (existing) {
       this.sendMessage(ws, {
@@ -244,7 +246,18 @@ export class WebSocketService {
       return;
     }
 
+    if (client.pendingSubscriptionKeys.has(subscriptionKey)) {
+      this.sendMessage(ws, {
+        type: 'subscription',
+        subscriptionType: message.subscriptionType,
+        data: { message: 'Subscription request already in progress' },
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
     const subscriptionId = message.subscriptionId || `${message.subscriptionType}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    client.pendingSubscriptionKeys.add(subscriptionKey);
     
     // Create subscription record
     const subscription: Subscription = {
@@ -258,22 +271,27 @@ export class WebSocketService {
     };
 
     // Use subscription registry for all subscription types
-    const subscriptionSuccess = await this.subscriptionRegistry.handleSubscription(ws, message, client);
+    try {
+      const managerMessage = { ...message, subscriptionId };
+      const subscriptionSuccess = await this.subscriptionRegistry.handleSubscription(ws, managerMessage, client);
 
-    if (subscriptionSuccess) {
-      // Store subscription only if it was successful
-      client.subscriptions.set(subscriptionId, subscription);
-      this.subscriptions.set(subscriptionId, subscription);
+      if (subscriptionSuccess) {
+        // Store subscription only if it was successful
+        client.subscriptions.set(subscriptionId, subscription);
+        this.subscriptions.set(subscriptionId, subscription);
 
-      this.sendMessage(ws, {
-        type: 'subscription',
-        subscriptionId,
-        subscriptionType: message.subscriptionType,
-        data: { message: 'Subscription created successfully' },
-        timestamp: new Date().toISOString()
-      });
+        this.sendMessage(ws, {
+          type: 'subscription',
+          subscriptionId,
+          subscriptionType: message.subscriptionType,
+          data: { message: 'Subscription created successfully' },
+          timestamp: new Date().toISOString()
+        });
 
-      logger.info(`📡 Subscription created: ${subscriptionId} (${message.subscriptionType})`);
+        logger.info(`📡 Subscription created: ${subscriptionId} (${message.subscriptionType})`);
+      }
+    } finally {
+      client.pendingSubscriptionKeys.delete(subscriptionKey);
     }
   }
 
@@ -399,6 +417,12 @@ export class WebSocketService {
       error,
       timestamp: new Date().toISOString()
     });
+  }
+
+  private makeSubscriptionKey(type?: string, filters?: Record<string, any>): string {
+    const normalizedType = type || 'unknown';
+    const normalizedFilters = filters ? JSON.stringify(filters) : '';
+    return `${normalizedType}:${normalizedFilters}`;
   }
 
   // Public methods for broadcasting updates

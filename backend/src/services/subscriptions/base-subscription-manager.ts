@@ -110,6 +110,24 @@ export abstract class BaseSubscriptionManager implements SubscriptionManager {
   protected clientContext: Map<string, SubscriptionClient> = new Map();
 
   protected logger = require('@/utils/logger').logger;
+  private initialDataCache = new Map<string, { value: unknown; loadedAtMs: number }>();
+  private initialDataInFlight = new Map<string, Promise<unknown>>();
+  private initialDataCooldownUntil = new Map<string, number>();
+  private static globalInitialDataInFlight = 0;
+  private static globalInitialDataWaiters: Array<() => void> = [];
+
+  private readonly INITIAL_DATA_TTL_MS = Math.max(
+    1000,
+    Number(process.env.WS_INITIAL_DATA_TTL_MS || 5000),
+  );
+  private readonly INITIAL_DATA_COOLDOWN_MS = Math.max(
+    5000,
+    Number(process.env.WS_INITIAL_DATA_COOLDOWN_MS || 30000),
+  );
+  private readonly INITIAL_DATA_MAX_CONCURRENCY = Math.max(
+    1,
+    Number(process.env.WS_INITIAL_DATA_MAX_CONCURRENCY || 3),
+  );
 
   /**
    * Returns the subscription type this manager handles.
@@ -138,7 +156,7 @@ export abstract class BaseSubscriptionManager implements SubscriptionManager {
     // Add to watchers
     this.addWatcher(subscriptionId, ws, client);
 
-    // Send initial data
+    // Send initial data (manager-specific; may be DB-backed)
     await this.sendInitialData(ws, subscriptionId, client);
 
     this.logger.info(`📡 ${this.getSubscriptionType()} subscription created: ${subscriptionId} for user ${client.userId}`);
@@ -199,6 +217,82 @@ export abstract class BaseSubscriptionManager implements SubscriptionManager {
       error,
       timestamp: new Date().toISOString()
     });
+  }
+
+  protected getInitialDataScopeKey(client: SubscriptionClient): string {
+    const facilities = (client.facilityIds || []).slice().sort().join(',');
+    return `${this.getSubscriptionType()}:${client.userId}:${client.userRole}:${facilities}`;
+  }
+
+  protected isPoolAcquireTimeout(error: unknown): boolean {
+    const maybeError = error as any;
+    const name = typeof maybeError?.name === 'string' ? maybeError.name : '';
+    const message = typeof maybeError?.message === 'string' ? maybeError.message : '';
+    return name === 'KnexTimeoutError' || /Timeout acquiring a connection/i.test(message);
+  }
+
+  protected async loadInitialData<T>(
+    scopeKey: string,
+    loader: () => Promise<T>,
+    fallback: T,
+  ): Promise<T> {
+    const now = Date.now();
+    const cached = this.initialDataCache.get(scopeKey);
+    if (cached && now - cached.loadedAtMs < this.INITIAL_DATA_TTL_MS) {
+      return cached.value as T;
+    }
+
+    const cooldownUntil = this.initialDataCooldownUntil.get(scopeKey) || 0;
+    if (now < cooldownUntil) {
+      return (cached?.value as T) || fallback;
+    }
+
+    const inFlight = this.initialDataInFlight.get(scopeKey);
+    if (inFlight) {
+      return inFlight as Promise<T>;
+    }
+
+    const promise = (async () => {
+      await this.acquireInitialDataSlot();
+      try {
+        const value = await loader();
+        this.initialDataCache.set(scopeKey, { value, loadedAtMs: Date.now() });
+        return value;
+      } catch (error) {
+        if (this.isPoolAcquireTimeout(error)) {
+          this.initialDataCooldownUntil.set(scopeKey, Date.now() + this.INITIAL_DATA_COOLDOWN_MS);
+          this.logger.warn(
+            `[${this.getSubscriptionType()}] DB pool timeout during initial load (scope=${scopeKey}); cooling down for ${this.INITIAL_DATA_COOLDOWN_MS}ms`,
+          );
+          return (cached?.value as T) || fallback;
+        }
+        throw error;
+      } finally {
+        this.releaseInitialDataSlot();
+      }
+    })().finally(() => {
+      this.initialDataInFlight.delete(scopeKey);
+    });
+
+    this.initialDataInFlight.set(scopeKey, promise);
+    return promise;
+  }
+
+  private async acquireInitialDataSlot(): Promise<void> {
+    if (BaseSubscriptionManager.globalInitialDataInFlight < this.INITIAL_DATA_MAX_CONCURRENCY) {
+      BaseSubscriptionManager.globalInitialDataInFlight += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      BaseSubscriptionManager.globalInitialDataWaiters.push(resolve);
+    });
+    BaseSubscriptionManager.globalInitialDataInFlight += 1;
+  }
+
+  private releaseInitialDataSlot(): void {
+    BaseSubscriptionManager.globalInitialDataInFlight = Math.max(0, BaseSubscriptionManager.globalInitialDataInFlight - 1);
+    const next = BaseSubscriptionManager.globalInitialDataWaiters.shift();
+    if (next) next();
   }
 
   protected abstract sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void>;

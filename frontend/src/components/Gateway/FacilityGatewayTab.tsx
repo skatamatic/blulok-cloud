@@ -174,6 +174,11 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   };
 
   useEffect(() => {
+    const shouldMonitorGatewayStatus = activeTab === 'overview' || activeTab === 'sync' || activeTab === 'devtools';
+    if (!shouldMonitorGatewayStatus) {
+      return;
+    }
+
     let timer: any;
     const poll = async () => {
       try {
@@ -186,7 +191,7 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
     poll();
     timer = setInterval(poll, 5000);
     return () => { if (timer) clearInterval(timer); };
-  }, [facilityId]);
+  }, [facilityId, activeTab]);
 
   // Subscribe to gateway debug WS stream (DEV admin only)
   useEffect(() => {
@@ -273,7 +278,8 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
 
   // Subscribe to realtime gateway status updates for local state only
   useEffect(() => {
-    if (!ws) return;
+    const shouldSubscribeGatewayStatus = activeTab === 'overview' || activeTab === 'sync' || activeTab === 'devtools';
+    if (!ws || !shouldSubscribeGatewayStatus) return;
 
     const subscriptionId = ws.subscribe(
       'gateway_status',
@@ -294,7 +300,7 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
     return () => {
       if (subscriptionId) ws.unsubscribe(subscriptionId);
     };
-  }, [ws]);
+  }, [ws, activeTab]);
 
   const handleManualSync = async () => {
     if (!gateway) return;

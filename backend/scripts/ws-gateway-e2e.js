@@ -2277,6 +2277,112 @@ async function run() {
     }
     ok('Units subscription tests complete');
 
+    // WebSocket flood/churn resilience checks to catch regressions that can
+    // overload subscription setup or destabilize the backend event loop.
+    heading('WebSocket Flood Resilience');
+    step('Running rapid UI WebSocket connect/disconnect churn');
+    const churnClientCount = 20;
+    await Promise.all(Array.from({ length: churnClientCount }, () => new Promise((resolve, reject) => {
+      const churnWs = new WebSocket(`${UI_WS_URL}?token=${token}`);
+      const timeout = setTimeout(() => {
+        try { churnWs.terminate(); } catch {}
+        reject(new Error('WS churn client open timeout'));
+      }, 4000);
+      churnWs.once('open', () => {
+        clearTimeout(timeout);
+        churnWs.close();
+        resolve();
+      });
+      churnWs.once('error', (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    })));
+    ok(`Churned ${churnClientCount} connect/disconnect clients`);
+
+    step('Opening flood clients and bursting duplicate subscriptions');
+    const floodClientCount = 8;
+    const burstPerClient = 24;
+    const floodClients = [];
+    let floodSubscriptionResponses = 0;
+    const floodErrors = [];
+
+    for (let i = 0; i < floodClientCount; i++) {
+      const floodWs = new WebSocket(`${UI_WS_URL}?token=${token}`);
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(`Flood client ${i} open timeout`)), 4000);
+        floodWs.once('open', () => {
+          clearTimeout(timeout);
+          resolve(null);
+        });
+        floodWs.once('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+      floodWs.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg?.type === 'subscription') {
+            floodSubscriptionResponses += 1;
+          } else if (msg?.type === 'error') {
+            floodErrors.push(msg.error || 'unknown ws error');
+          }
+        } catch {
+          // Ignore parse errors from unrelated messages in this stress phase.
+        }
+      });
+      floodClients.push(floodWs);
+    }
+
+    for (let i = 0; i < floodClients.length; i++) {
+      const floodWs = floodClients[i];
+      for (let j = 0; j < burstPerClient; j++) {
+        const useGatewayStatus = j % 2 === 0;
+        floodWs.send(JSON.stringify({
+          type: 'subscription',
+          subscriptionType: useGatewayStatus ? 'gateway_status' : 'firmware_push_progress',
+          // Keep scope stable so backend dedupe/pending guards are exercised.
+          data: { facility_id: facilityId, gateway_id: created.gatewayId },
+        }));
+      }
+    }
+
+    await delay(1200);
+
+    if (floodErrors.length > 0) {
+      throw new Error(`Flood subscriptions produced WS errors: ${floodErrors.slice(0, 3).join(' | ')}`);
+    }
+    if (floodSubscriptionResponses < floodClientCount) {
+      throw new Error(`Expected at least ${floodClientCount} subscription responses, got ${floodSubscriptionResponses}`);
+    }
+    ok(`Flood burst handled with ${floodSubscriptionResponses} subscription response(s) and no WS errors`);
+
+    step('Verifying API responsiveness immediately after subscription flood');
+    const postFloodChecks = await Promise.all([
+      axios.get(`${API_BASE}/facilities`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { limit: 1 },
+      }),
+      axios.get(`${API_BASE}/gateways/status/${facilityId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      axios.get(`${API_BASE}/firmware/push-status/${created.gatewayId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { target_type: 'friend_node' },
+      }),
+    ]);
+    if (postFloodChecks.some((resp) => resp.status >= 500)) {
+      throw new Error(`API degraded after flood: statuses=${postFloodChecks.map((resp) => resp.status).join(',')}`);
+    }
+    ok('Backend remained responsive after WS flood burst');
+
+    for (const floodWs of floodClients) {
+      if (floodWs.readyState === WebSocket.OPEN || floodWs.readyState === WebSocket.CONNECTING) {
+        floodWs.close();
+      }
+    }
+
     // Skip legacy outbound gateway sync (not applicable for inbound model)
 
     // Users resolved via FMS sync
@@ -5285,6 +5391,266 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     ok('Access code push command dispatched');
+
+    heading('Mixed Chaos Stress (Firmware Progress + Subscription Spam + Access-Code Push)');
+    step('Preparing active firmware push for high-rate progress updates');
+    const stressCrypto = require('crypto');
+    const StressFormData = require('form-data');
+    const stressFirmwareBinary = stressCrypto.randomBytes(96 * 1024); // single-chunk payload
+    const stressFirmwareVersion = `e2e-chaos-${Date.now()}`;
+    const stressFormData = new StressFormData();
+    stressFormData.append('file', stressFirmwareBinary, { filename: 'chaos-firmware.bin', contentType: 'application/octet-stream' });
+    stressFormData.append('version', stressFirmwareVersion);
+    stressFormData.append('target_type', 'gateway');
+    stressFormData.append('description', 'E2E mixed chaos stress firmware');
+    const stressUploadResp = await axios.post(`${API_BASE}/firmware/upload`, stressFormData, {
+      headers: { Authorization: `Bearer ${token}`, ...stressFormData.getHeaders() },
+      maxContentLength: 100 * 1024 * 1024,
+    });
+    const stressFirmwareId = stressUploadResp.data?.data?.id;
+    if (!stressFirmwareId) throw new Error('Failed to upload stress firmware');
+
+    const stressDeliveryPromise = handleFirmwareDelivery(ws, loginOpsPublicKey, 60000);
+    const stressPushResp = await axios.post(
+      `${API_BASE}/firmware/${stressFirmwareId}/push/${created.gatewayId}`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const stressPushId = stressPushResp.data?.data?.id;
+    if (!stressPushId) throw new Error('Failed to create stress firmware push');
+    const stressDelivery = await stressDeliveryPromise;
+    if (!stressDelivery?.manifest?.nonce) throw new Error('Stress firmware delivery missing nonce');
+    ok(`Stress firmware push ready: pushId=${stressPushId}`);
+
+    step('Opening UI clients and spamming firmware_push_progress subscriptions');
+    const chaosClientCount = 6;
+    const chaosSubBurstPerClient = 20;
+    const chaosClients = [];
+    const chaosWsErrors = [];
+    let chaosSubscriptionResponses = 0;
+
+    for (let i = 0; i < chaosClientCount; i++) {
+      const client = new WebSocket(`${UI_WS_URL}?token=${token}`);
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(`Chaos WS client ${i} open timeout`)), 4000);
+        client.once('open', () => {
+          clearTimeout(timeout);
+          resolve(null);
+        });
+        client.once('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+      client.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg?.type === 'subscription') {
+            chaosSubscriptionResponses += 1;
+          } else if (msg?.type === 'error') {
+            chaosWsErrors.push(msg.error || 'unknown ws error');
+          }
+        } catch {
+          // ignore parse failures from non-test messages
+        }
+      });
+      chaosClients.push(client);
+    }
+
+    for (const client of chaosClients) {
+      for (let j = 0; j < chaosSubBurstPerClient; j++) {
+        client.send(JSON.stringify({
+          type: 'subscription',
+          subscriptionType: 'firmware_push_progress',
+          data: { facility_id: created.facilityId, gateway_id: created.gatewayId, target_type: 'gateway' },
+        }));
+      }
+    }
+
+    step('Running concurrent chaos spam against firmware progress + access-code pushes');
+    const firmwareProgressSpamCount = 120;
+    const accessCodePushSpamCount = 14;
+
+    const progressSpamPromise = (async () => {
+      for (let i = 0; i < firmwareProgressSpamCount; i++) {
+        ws.send(JSON.stringify({
+          type: 'FIRMWARE_PROGRESS',
+          nonce: stressDelivery.manifest.nonce,
+          target_type: 'gateway',
+          progress_percent: Math.min(99, 1 + (i % 99)),
+          phase: i % 3 === 0 ? 'distributing' : (i % 3 === 1 ? 'installing' : 'verifying'),
+          message: `chaos-progress-${i}`,
+          devices: [
+            {
+              device_id: `chaos-device-${i % 4}`,
+              status: i % 5 === 0 ? 'installing' : 'downloading',
+              progress_percent: Math.min(100, (i * 7) % 101),
+            },
+          ],
+        }));
+        if (i % 10 === 0) {
+          await delay(15);
+        }
+      }
+    })();
+
+    const accessCodePushSpamPromise = (async () => {
+      const responses = await Promise.all(
+        Array.from({ length: accessCodePushSpamCount }, () =>
+          axios.post(
+            `${API_BASE}/access-codes/push/${created.facilityId}`,
+            {},
+            {
+              headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+              validateStatus: () => true,
+            },
+          ),
+        ),
+      );
+      const serverErrors = responses.filter((resp) => resp.status >= 500);
+      if (serverErrors.length > 0) {
+        throw new Error(`Access-code push spam produced ${serverErrors.length} server errors`);
+      }
+      return responses.length;
+    })();
+
+    const [, accessPushCount] = await Promise.all([progressSpamPromise, accessCodePushSpamPromise]);
+    await delay(1000);
+
+    if (chaosWsErrors.length > 0) {
+      throw new Error(`Chaos subscription spam produced WS errors: ${chaosWsErrors.slice(0, 3).join(' | ')}`);
+    }
+    if (chaosSubscriptionResponses < chaosClientCount) {
+      throw new Error(`Expected at least ${chaosClientCount} chaos subscription responses, got ${chaosSubscriptionResponses}`);
+    }
+    ok(`Chaos spam complete: ${firmwareProgressSpamCount} progress updates, ${accessPushCount} access-code pushes, ${chaosSubscriptionResponses} subscription responses`);
+
+    step('Running sustained mixed chaos soak (always-on)');
+    const chaosSoakDurationMs = 12000;
+    const chaosSoakStart = Date.now();
+    let soakProgressCount = 0;
+    let soakSubscriptionCount = 0;
+    let soakAccessPushCount = 0;
+
+    const soakProgressTask = (async () => {
+      while (Date.now() - chaosSoakStart < chaosSoakDurationMs) {
+        ws.send(JSON.stringify({
+          type: 'FIRMWARE_PROGRESS',
+          nonce: stressDelivery.manifest.nonce,
+          target_type: 'gateway',
+          progress_percent: Math.min(99, 1 + (soakProgressCount % 99)),
+          phase: soakProgressCount % 2 === 0 ? 'installing' : 'verifying',
+          message: `chaos-soak-progress-${soakProgressCount}`,
+          devices: [
+            {
+              device_id: `chaos-soak-device-${soakProgressCount % 3}`,
+              status: 'installing',
+              progress_percent: Math.min(100, (soakProgressCount * 9) % 101),
+            },
+          ],
+        }));
+        soakProgressCount += 1;
+        await delay(20);
+      }
+    })();
+
+    const soakSubscriptionTask = (async () => {
+      let clientIndex = 0;
+      while (Date.now() - chaosSoakStart < chaosSoakDurationMs) {
+        const client = chaosClients[clientIndex % chaosClients.length];
+        if (client && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            type: 'subscription',
+            subscriptionType: 'firmware_push_progress',
+            data: { facility_id: created.facilityId, gateway_id: created.gatewayId, target_type: 'gateway' },
+          }));
+          soakSubscriptionCount += 1;
+        }
+        clientIndex += 1;
+        await delay(40);
+      }
+    })();
+
+    const soakAccessPushTask = (async () => {
+      while (Date.now() - chaosSoakStart < chaosSoakDurationMs) {
+        const resp = await axios.post(
+          `${API_BASE}/access-codes/push/${created.facilityId}`,
+          {},
+          {
+            headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+            validateStatus: () => true,
+          },
+        );
+        if (resp.status >= 500) {
+          throw new Error(`Access-code push soak produced server error status=${resp.status}`);
+        }
+        soakAccessPushCount += 1;
+        await delay(350);
+      }
+    })();
+
+    await Promise.all([soakProgressTask, soakSubscriptionTask, soakAccessPushTask]);
+    await delay(500);
+
+    if (chaosWsErrors.length > 0) {
+      throw new Error(`Chaos soak produced WS errors: ${chaosWsErrors.slice(0, 3).join(' | ')}`);
+    }
+    ok(`Chaos soak complete (${chaosSoakDurationMs}ms): ${soakProgressCount} progress, ${soakSubscriptionCount} subscription bursts, ${soakAccessPushCount} access-code pushes`);
+
+    step('Completing stress firmware push and validating backend responsiveness');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      nonce: stressDelivery.manifest.nonce,
+      status: 'success',
+      version: stressDelivery.manifest.version,
+      target_type: 'gateway',
+    }));
+
+    let stressFinalStatus = null;
+    for (let poll = 0; poll < 20; poll++) {
+      await delay(500);
+      const stressStatusResp = await axios.get(
+        `${API_BASE}/firmware/push-status/${created.gatewayId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { target_type: 'gateway' },
+        },
+      );
+      stressFinalStatus = stressStatusResp.data?.data;
+      if (stressFinalStatus?.id === stressPushId && stressFinalStatus?.status === 'complete') {
+        break;
+      }
+    }
+    if (!stressFinalStatus || stressFinalStatus.id !== stressPushId || stressFinalStatus.status !== 'complete') {
+      throw new Error(`Expected stress push ${stressPushId} to complete, got id=${stressFinalStatus?.id} status=${stressFinalStatus?.status}`);
+    }
+
+    const postChaosChecks = await Promise.all([
+      axios.get(`${API_BASE}/facilities`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { limit: 1 },
+      }),
+      axios.get(`${API_BASE}/gateways/status/${created.facilityId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      axios.get(`${API_BASE}/access-codes/push-state/${created.facilityId}`, {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+      }),
+    ]);
+    if (postChaosChecks.some((resp) => resp.status >= 500)) {
+      throw new Error(`Backend degraded after mixed chaos stress: statuses=${postChaosChecks.map((resp) => resp.status).join(',')}`);
+    }
+    ok('Mixed chaos stress passed without backend degradation');
+
+    for (const client of chaosClients) {
+      if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
+        client.close();
+      }
+    }
+
+    step('Deleting mixed-chaos stress firmware');
+    await axios.delete(`${API_BASE}/firmware/${stressFirmwareId}`, { headers: { Authorization: `Bearer ${token}` } });
+    ok('Mixed-chaos stress firmware deleted');
 
     step('Validating access-code push failure handling when gateway rejects ACK');
     accessCodeAckMode = 'reject';
