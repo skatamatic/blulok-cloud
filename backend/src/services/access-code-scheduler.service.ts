@@ -6,9 +6,15 @@ export class AccessCodeSchedulerService {
   private static instance: AccessCodeSchedulerService;
   private accessCodes = AccessCodeService.getInstance();
   private intervalId: NodeJS.Timeout | null = null;
+  private runInProgress = false;
+  private nextRunNotBeforeMs = 0;
   private readonly CHECK_INTERVAL_MS = Math.max(
     250,
     Number(process.env.ACCESS_CODE_SCHEDULER_INTERVAL_MS || 1000),
+  );
+  private readonly POOL_TIMEOUT_BACKOFF_MS = Math.max(
+    this.CHECK_INTERVAL_MS,
+    Number(process.env.ACCESS_CODE_SCHEDULER_POOL_BACKOFF_MS || 30_000),
   );
   private lastRunByGroup = new Map<string, number>();
   private retryAtByGroup = new Map<string, number>();
@@ -29,13 +35,9 @@ export class AccessCodeSchedulerService {
       return;
     }
 
-    this.run().catch((error) => logger.error('Initial access code scheduler run failed (non-fatal):', error));
+    this.runSafe('Initial access code scheduler run failed (non-fatal):');
     this.intervalId = setInterval(async () => {
-      try {
-        await this.run();
-      } catch (error) {
-        logger.error('Scheduled access code rotation failed (non-fatal):', error);
-      }
+      await this.runSafe('Scheduled access code rotation failed (non-fatal):');
     }, this.CHECK_INTERVAL_MS);
     logger.info('AccessCodeSchedulerService started');
   }
@@ -69,6 +71,40 @@ export class AccessCodeSchedulerService {
     const pushErrorCtor: any = AccessCodePushDeliveryError;
     const byCtor = typeof pushErrorCtor === 'function' ? error instanceof pushErrorCtor : false;
     return byCtor || (error as any)?.name === 'AccessCodePushDeliveryError';
+  }
+
+  private isPoolAcquireTimeout(error: unknown): boolean {
+    const maybeError = error as any;
+    const name = typeof maybeError?.name === 'string' ? maybeError.name : '';
+    const message = typeof maybeError?.message === 'string' ? maybeError.message : '';
+    return name === 'KnexTimeoutError' || /Timeout acquiring a connection/i.test(message);
+  }
+
+  private async runSafe(errorPrefix: string): Promise<void> {
+    const nowMs = Date.now();
+    if (nowMs < this.nextRunNotBeforeMs) {
+      return;
+    }
+    if (this.runInProgress) {
+      return;
+    }
+
+    this.runInProgress = true;
+    try {
+      await this.run();
+      this.nextRunNotBeforeMs = 0;
+    } catch (error) {
+      if (this.isPoolAcquireTimeout(error)) {
+        this.nextRunNotBeforeMs = Date.now() + this.POOL_TIMEOUT_BACKOFF_MS;
+        logger.error(
+          `${errorPrefix} ${String((error as any)?.message || error)}; backing off scheduler for ${this.POOL_TIMEOUT_BACKOFF_MS}ms`,
+        );
+        return;
+      }
+      logger.error(errorPrefix, error);
+    } finally {
+      this.runInProgress = false;
+    }
   }
 
   private async run(): Promise<void> {
