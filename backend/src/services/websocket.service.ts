@@ -230,7 +230,21 @@ export class WebSocketService {
       return;
     }
 
-    const subscriptionId = message.subscriptionId || `${message.subscriptionType}-${Date.now()}`;
+    const existing = (Array.from(client.subscriptions.values()) as Subscription[]).find((sub) =>
+      sub.type === message.subscriptionType && JSON.stringify(sub.filters ?? null) === JSON.stringify(message.data ?? null),
+    );
+    if (existing) {
+      this.sendMessage(ws, {
+        type: 'subscription',
+        subscriptionId: existing.id,
+        subscriptionType: message.subscriptionType,
+        data: { message: 'Subscription already exists' },
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const subscriptionId = message.subscriptionId || `${message.subscriptionType}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     
     // Create subscription record
     const subscription: Subscription = {

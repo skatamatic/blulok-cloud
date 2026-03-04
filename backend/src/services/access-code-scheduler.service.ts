@@ -109,6 +109,8 @@ export class AccessCodeSchedulerService {
 
   private async run(): Promise<void> {
     const now = new Date();
+    const nowMs = now.getTime();
+    const facilityOnlineCache = new Map<string, boolean>();
     const groups = await this.db('device_groups')
       .select('id', 'facility_id')
       .where('group_type', 'access_code')
@@ -145,6 +147,20 @@ export class AccessCodeSchedulerService {
       );
       const shouldRetry = this.shouldRetryPush(groupId, now.getTime());
       if (!due && !shouldRetry) continue;
+
+      let gatewayOnline = facilityOnlineCache.get(facilityId);
+      if (gatewayOnline === undefined) {
+        gatewayOnline = this.accessCodes.isGatewayOnline(facilityId);
+        facilityOnlineCache.set(facilityId, gatewayOnline);
+      }
+      if (!gatewayOnline) {
+        const retryAt = nowMs + 60_000;
+        this.retryAtByGroup.set(groupId, retryAt);
+        logger.info(
+          `Skipping access code rotation for group=${groupId} facility=${facilityId}; gateway offline, next retry at ${new Date(retryAt).toISOString()}`,
+        );
+        continue;
+      }
 
       try {
         await this.accessCodes.forceRotate(facilityId, 'device_group', groupId);

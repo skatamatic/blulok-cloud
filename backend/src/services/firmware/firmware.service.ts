@@ -38,6 +38,7 @@ interface ActivePush {
 const activePushes = new Map<string, ActivePush>();
 const resumeInFlightPushes = new Set<string>();
 const resumeFacilityRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const resumeFacilityRunsInFlight = new Set<string>();
 
 /** Exposed for unit tests only — allows tests to set up handleChunkAck state. */
 export const _testActivePushes = activePushes;
@@ -328,6 +329,14 @@ export class FirmwareService {
     activePushes.set(pushId, pushState);
 
     try {
+      if (!this.isFacilityGatewayOnline(push.facility_id)) {
+        const offlineMsg = 'Gateway offline before firmware push start';
+        await this.pushModel.updateStatus(pushId, 'failed', offlineMsg);
+        this.broadcastProgress(push, 'failed', 0, undefined, undefined, offlineMsg);
+        logger.warn(`executePush: ${offlineMsg} pushId=${pushId} facility=${push.facility_id}`);
+        return;
+      }
+
       // Read binary from storage
       const storage = await getFirmwareStorageProvider();
       await storage.initialize();
@@ -371,6 +380,13 @@ export class FirmwareService {
           logger.info(`Firmware push cancelled during manifest delivery pushId=${pushId}`);
           return;
         }
+        if (!this.isFacilityGatewayOnline(push.facility_id)) {
+          const offlineMsg = 'Gateway went offline during manifest delivery';
+          await this.pushModel.updateStatus(pushId, 'failed', offlineMsg);
+          this.broadcastProgress(push, 'failed', 0, totalChunks, 0, offlineMsg);
+          logger.warn(`executePush: ${offlineMsg} pushId=${pushId} facility=${push.facility_id}`);
+          return;
+        }
 
         GatewayEventsService.getInstance().unicastToFacility(push.facility_id, {
           type: 'FIRMWARE_MANIFEST',
@@ -412,6 +428,13 @@ export class FirmwareService {
         let acked = false;
         for (let attempt = 0; attempt < MAX_CHUNK_RETRIES && !acked; attempt++) {
           if (pushState.cancel) return;
+          if (!this.isFacilityGatewayOnline(push.facility_id)) {
+            const offlineMsg = `Gateway went offline before chunk ${i} delivery`;
+            await this.pushModel.updateStatus(pushId, 'failed', offlineMsg);
+            this.broadcastProgress(push, 'failed', 0, totalChunks, i, offlineMsg);
+            logger.warn(`executePush: ${offlineMsg} pushId=${pushId} facility=${push.facility_id}`);
+            return;
+          }
 
           GatewayEventsService.getInstance().unicastToFacility(push.facility_id, {
             type: 'FIRMWARE_CHUNK',
@@ -842,6 +865,26 @@ export class FirmwareService {
    * left as-is and await gateway status updates.
    */
   static async resumePendingForFacility(facilityId: string): Promise<void> {
+    if (resumeFacilityRunsInFlight.has(facilityId)) {
+      return;
+    }
+    resumeFacilityRunsInFlight.add(facilityId);
+
+    try {
+      if (!this.isFacilityGatewayOnline(facilityId)) {
+        const existingRetry = resumeFacilityRetryTimers.get(facilityId);
+        if (!existingRetry) {
+          const timer = setTimeout(() => {
+            resumeFacilityRetryTimers.delete(facilityId);
+            this.resumePendingForFacility(facilityId).catch((err) => {
+              logger.warn(`Deferred firmware resume failed for facility=${facilityId}`, err);
+            });
+          }, 5000);
+          resumeFacilityRetryTimers.set(facilityId, timer);
+        }
+        return;
+      }
+
     const existingRetry = resumeFacilityRetryTimers.get(facilityId);
     if (existingRetry) {
       clearTimeout(existingRetry);
@@ -889,6 +932,9 @@ export class FirmwareService {
       }, 1000);
       resumeFacilityRetryTimers.set(facilityId, timer);
     }
+    } finally {
+      resumeFacilityRunsInFlight.delete(facilityId);
+    }
   }
 
   // =========================================================================
@@ -910,6 +956,11 @@ export class FirmwareService {
         reject: (err: Error) => { clearTimeout(timer); reject(err); },
       });
     });
+  }
+
+  private static isFacilityGatewayOnline(facilityId: string): boolean {
+    const status = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+    return status.connected;
   }
 
   /**

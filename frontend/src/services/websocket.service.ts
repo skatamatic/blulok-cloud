@@ -7,6 +7,7 @@ class WebSocketService implements IWebSocketService {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private subscriptions: Map<string, any> = new Map();
   private subscriptionIds: Map<string, string> = new Map();
@@ -19,10 +20,9 @@ class WebSocketService implements IWebSocketService {
   }
 
   private connect(): void {
-    // Close existing connection if any
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    // Do not open a duplicate connection when one is already healthy/connecting.
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
     }
 
     try {
@@ -34,12 +34,13 @@ class WebSocketService implements IWebSocketService {
 
       const wsUrl = `${getWsBaseUrl()}/ws?token=${token}`;
 
-      this.ws = new WebSocket(wsUrl);
+      const socket = new WebSocket(wsUrl);
+      this.ws = socket;
 
-      this.ws.onopen = this.handleOpen.bind(this);
-      this.ws.onmessage = this.handleMessage.bind(this);
-      this.ws.onclose = this.handleClose.bind(this);
-      this.ws.onerror = this.handleError.bind(this);
+      socket.onopen = (event) => this.handleOpen(event, socket);
+      socket.onmessage = this.handleMessage.bind(this);
+      socket.onclose = (event) => this.handleClose(event, socket);
+      socket.onerror = (error) => this.handleError(error, socket);
 
     } catch (error) {
       console.error('WebSocket connection error:', error);
@@ -47,9 +48,15 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  private handleOpen(): void {
+  private handleOpen(_event: Event, socket: WebSocket): void {
+    // Ignore stale socket callbacks after a newer socket has been created.
+    if (socket !== this.ws) return;
     this.isConnected = true;
     this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.startHeartbeat();
 
     // Notify connection handlers
@@ -232,10 +239,13 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  private handleClose(event: CloseEvent): void {
+  private handleClose(event: CloseEvent, socket: WebSocket): void {
+    // Ignore stale socket callbacks after a newer socket has been created.
+    if (socket !== this.ws) return;
     console.log('❌ WebSocket closed:', { code: event.code, reason: event.reason, wasClean: event.wasClean });
     this.isConnected = false;
     this.stopHeartbeat();
+    this.ws = null;
 
     // Clear subscription state on disconnect so we can resubscribe properly on reconnect
     // Note: We keep the subscriptions Map so we know what to resubscribe to, but clear the IDs
@@ -256,16 +266,21 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  private handleError(error: Event): void {
+  private handleError(error: Event, socket: WebSocket): void {
+    if (socket !== this.ws) return;
     console.error('❌ WebSocket error:', error);
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectTimer) {
+      return;
+    }
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
       
-      setTimeout(() => {
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
         this.connect();
       }, delay);
     } else {
@@ -420,6 +435,10 @@ class WebSocketService implements IWebSocketService {
   public retryConnectionIfNeeded(): void {
     const token = localStorage.getItem('authToken');
     if (token && !this.isWebSocketConnected()) {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
       this.reconnectAttempts = 0; // Reset retry attempts
       this.connect();
     }
@@ -427,6 +446,10 @@ class WebSocketService implements IWebSocketService {
 
   public disconnect(): void {
     this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       this.ws.close(1000, 'Client disconnect');
       this.ws = null;

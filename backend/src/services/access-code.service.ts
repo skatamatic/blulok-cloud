@@ -142,6 +142,11 @@ export class AccessCodeService {
     return this.setPushState(facilityId, 'active', null, null);
   }
 
+  public isGatewayOnline(facilityId: string): boolean {
+    const connection = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+    return connection.connected;
+  }
+
   public handleGatewayAccessCodeUpdateAck(
     facilityId: string,
     ack: { nonce?: string; accepted?: boolean; message?: string },
@@ -1177,8 +1182,7 @@ export class AccessCodeService {
     const payload = await this.getGatewayPollPayload(facilityId);
     const scheduleMetaById = await this.getScheduleMetaMap(payload.map((entry) => entry.schedule_id));
     const nonce = crypto.randomUUID();
-    const connection = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
-    if (!connection.connected) {
+    if (!this.isGatewayOnline(facilityId)) {
       const message = 'gateway is offline; cannot push access codes';
       this.setPushState(facilityId, 'error', message, null);
       throw new AccessCodePushDeliveryError(message);
