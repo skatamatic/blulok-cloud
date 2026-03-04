@@ -988,6 +988,137 @@ function handleFirmwareDelivery(ws, opsKeyB64, timeoutMs = 60000) {
   });
 }
 
+/**
+ * Force an abrupt gateway WS disconnect mid-OTA after acknowledging
+ * the first firmware chunk.
+ */
+function disconnectDuringFirmwareDelivery(ws, opsKeyB64, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting to disconnect during firmware delivery after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    let manifest = null;
+    let disconnected = false;
+
+    const onMsg = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === 'FIRMWARE_MANIFEST' && msg.jwt) {
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type === 'FIRMWARE_MANIFEST') {
+            manifest = payload;
+          }
+          return;
+        }
+
+        if (msg.type === 'FIRMWARE_CHUNK' && msg.jwt && !disconnected) {
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type !== 'FIRMWARE_CHUNK') return;
+
+          ws.send(JSON.stringify({
+            type: 'FIRMWARE_CHUNK_ACK',
+            nonce: payload.nonce,
+            chunkIndex: payload.chunk_index,
+            status: 'ok',
+          }));
+
+          disconnected = true;
+          try { ws.terminate(); } catch {}
+          cleanup();
+          resolve({
+            nonce: payload.nonce,
+            firstChunkIndex: payload.chunk_index,
+            target_type: payload.target_type || manifest?.target_type,
+            version: manifest?.version,
+          });
+        }
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+
+    const onErr = (err) => { cleanup(); reject(err); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeListener('message', onMsg);
+      ws.removeListener('error', onErr);
+    };
+
+    ws.on('message', onMsg);
+    ws.on('error', onErr);
+  });
+}
+
+/**
+ * After reconnect, ACK resumed firmware chunks until all chunks are delivered.
+ * This helper is tolerant of seeing chunks before manifest due to reconnect races.
+ */
+function handleResumedFirmwareDelivery(ws, opsKeyB64, timeoutMs = 90000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Resumed firmware delivery timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    let manifest = null;
+    let nonce = null;
+    const chunkIndexes = new Set();
+
+    const onMsg = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === 'FIRMWARE_MANIFEST' && msg.jwt) {
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type !== 'FIRMWARE_MANIFEST') return;
+          manifest = payload;
+          nonce = payload.nonce || nonce;
+          return;
+        }
+
+        if (msg.type === 'FIRMWARE_CHUNK' && msg.jwt) {
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type !== 'FIRMWARE_CHUNK') return;
+          nonce = payload.nonce || nonce;
+          chunkIndexes.add(payload.chunk_index);
+          ws.send(JSON.stringify({
+            type: 'FIRMWARE_CHUNK_ACK',
+            nonce: payload.nonce,
+            chunkIndex: payload.chunk_index,
+            status: 'ok',
+          }));
+
+          if (manifest && Number.isInteger(manifest.chunk_count) && chunkIndexes.size >= manifest.chunk_count) {
+            cleanup();
+            resolve({
+              nonce,
+              manifest,
+              chunkCount: chunkIndexes.size,
+            });
+          }
+        }
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+
+    const onErr = (err) => { cleanup(); reject(err); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeListener('message', onMsg);
+      ws.removeListener('error', onErr);
+    };
+
+    ws.on('message', onMsg);
+    ws.on('error', onErr);
+  });
+}
+
 function waitForProxyResponse(ws, id, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { cleanup(); reject(new Error(`Timed out waiting for PROXY_RESPONSE id=${id}`)); }, timeoutMs);
@@ -3892,6 +4023,24 @@ async function run() {
     }));
     await delay(500);
 
+    // Compatibility check: Tulsi payload format (no nonce + camelCase device fields)
+    step('Sending FIRMWARE_PROGRESS in Tulsi async format (camelCase, no nonce)');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_PROGRESS',
+      progress_percent: 100,
+      phase: 'flashing_ble_mcu',
+      message: 'Sending blocks to downstream lock',
+      devices: [
+        {
+          deviceId: '468c1af93ae9a967f9aeb5d3a107d60dc643048d29b5f5fc4b81ad8eac0f638d',
+          progressPercent: 100,
+          status: 'complete',
+          error: null,
+        },
+      ],
+    }));
+    await delay(500);
+
     // Verify push-status now includes progress info and events
     step('Verifying push-status includes progress data and events');
     const progressStatusResp = await axios.get(
@@ -3902,6 +4051,9 @@ async function run() {
     if (progressData.progress_percent === undefined) throw new Error('push-status missing progress_percent field');
     if (progressData.progress_percent < 50) throw new Error(`Expected progress_percent >= 50, got ${progressData.progress_percent}`);
     ok(`Push status includes progress: ${progressData.progress_percent}%, phase=${progressData.phase || 'N/A'}`);
+    if (progressData.phase !== 'flashing_ble_mcu' && progressData.phase !== 'verifying') {
+      throw new Error(`Expected phase to include Tulsi update, got ${progressData.phase}`);
+    }
 
     if (progressData.recent_events) {
       ok(`Push status includes ${progressData.recent_events.length} recent event(s)`);
@@ -3922,14 +4074,28 @@ async function run() {
     if (eventsData.total < 3) throw new Error(`Expected at least 3 events, got ${eventsData.total}`);
     ok(`Push events: ${eventsData.total} total, ${eventsData.events.length} returned, ${eventsData.device_statuses?.length || 0} device statuses`);
 
-    // Gateway sends FIRMWARE_UPDATE_STATUS to confirm successful application
-    step('Sending FIRMWARE_UPDATE_STATUS (success) from gateway');
+    // Gateway sends staged FIRMWARE_UPDATE_STATUS updates (without target_type)
+    // to verify server-side nonce/facility fallback and status mapping.
+    step('Sending FIRMWARE_UPDATE_STATUS lifecycle (verifying → applying → success) from gateway');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      nonce: delivery.manifest.nonce,
+      status: 'verifying',
+      version: delivery.manifest.version,
+    }));
+    await delay(60);
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      nonce: delivery.manifest.nonce,
+      status: 'applying',
+      version: delivery.manifest.version,
+    }));
+    await delay(60);
     ws.send(JSON.stringify({
       type: 'FIRMWARE_UPDATE_STATUS',
       nonce: delivery.manifest.nonce,
       status: 'success',
       version: delivery.manifest.version,
-      target_type: delivery.manifest.target_type || 'gateway',
     }));
 
     // Poll push status until it reaches 'complete'
@@ -3992,7 +4158,66 @@ async function run() {
       ok('Facility admin correctly blocked from uploading firmware');
     }
 
-    // Step 7: Delete gateway firmware (cleanup)
+    // Step 7: Resilience — abrupt WS disconnect during transfer and auto-resume on reconnect
+    step('Testing OTA resume after abrupt gateway disconnect');
+    const disconnectPromise = disconnectDuringFirmwareDelivery(ws, loginOpsPublicKey, 30000);
+    const resumePushResp = await axios.post(
+      `${API_BASE}/firmware/${firmwareId}/push/${created.gatewayId}`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (resumePushResp.status !== 200) throw new Error(`Resume push status expected 200 got ${resumePushResp.status}`);
+    const resumePushId = resumePushResp.data.data?.id;
+    if (!resumePushId) throw new Error('Resume push initiated but no pushId returned');
+
+    const disconnectInfo = await disconnectPromise;
+    ok(`Gateway socket terminated after chunk ${disconnectInfo.firstChunkIndex} for pushId=${resumePushId}`);
+
+    step('Reconnecting gateway websocket after abrupt disconnect');
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    ok('Gateway re-authenticated after abrupt disconnect');
+
+    step('Awaiting resumed firmware chunk delivery and ACKing resumed chunks');
+    const resumedDelivery = await handleResumedFirmwareDelivery(ws, loginOpsPublicKey, 90000);
+    if (!resumedDelivery?.nonce) throw new Error('Resumed delivery did not expose nonce');
+    ok(`Resumed delivery completed with ${resumedDelivery.chunkCount} chunk(s) ACKed`);
+
+    step('Sending completion status for resumed OTA push');
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      nonce: resumedDelivery.nonce,
+      status: 'success',
+      version: resumedDelivery.manifest?.version || testVersion,
+      target_type: resumedDelivery.manifest?.target_type || 'gateway',
+    }));
+    // Fallback completion signal using target_type correlation in case nonce handling is delayed.
+    await delay(80);
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      status: 'success',
+      version: resumedDelivery.manifest?.version || testVersion,
+      target_type: resumedDelivery.manifest?.target_type || 'gateway',
+    }));
+
+    step('Polling resumed push status until complete');
+    let resumedStatus = null;
+    for (let poll = 0; poll < 30; poll++) {
+      await delay(500);
+      const statusResp = await axios.get(
+        `${API_BASE}/firmware/push-status/${created.gatewayId}?target_type=gateway`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      resumedStatus = statusResp.data?.data || null;
+      if (resumedStatus?.id === resumePushId && resumedStatus?.status === 'complete') {
+        break;
+      }
+    }
+    if (!resumedStatus || resumedStatus.id !== resumePushId || resumedStatus.status !== 'complete') {
+      throw new Error(`Expected resumed push ${resumePushId} to reach complete status, got id=${resumedStatus?.id} status=${resumedStatus?.status}`);
+    }
+    ok(`Resumed push ${resumePushId} reached complete after reconnect`);
+
+    // Step 8: Delete gateway firmware (cleanup)
     step('Deleting test gateway firmware');
     const delResp = await axios.delete(`${API_BASE}/firmware/${firmwareId}`, {
       headers: { Authorization: `Bearer ${token}` },

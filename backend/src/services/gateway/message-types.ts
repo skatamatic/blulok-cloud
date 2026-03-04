@@ -110,22 +110,28 @@ export type FirmwareChunkAckMessage = {
 
 export type FirmwareUpdateStatusMessage = {
   type: 'FIRMWARE_UPDATE_STATUS';
-  nonce: string;
+  nonce?: string;
   status: string;
+  version?: string;
+  target_type?: 'gateway' | 'lock' | 'friend_node' | 'access_control';
+  error?: string;
   message?: string;
 };
 
 export type FirmwareProgressDeviceReport = {
-  device_id: string;
+  device_id?: string;
+  deviceId?: string;
   status: 'pending' | 'downloading' | 'installing' | 'complete' | 'failed' | 'skipped';
   progress_percent?: number;
+  progressPercent?: number;
   error?: string;
 };
 
 export type FirmwareProgressMessage = {
   type: 'FIRMWARE_PROGRESS';
-  nonce: string;
+  nonce?: string;
   target_type?: string;
+  targetType?: string;
   progress_percent?: number;
   phase?: string;
   message?: string;

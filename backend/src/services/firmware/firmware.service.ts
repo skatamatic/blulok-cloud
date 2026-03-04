@@ -22,6 +22,7 @@ const CHUNK_SIZE_BYTES = 128 * 1024;
 const MAX_CHUNK_RETRIES = 3;
 /** ACK timeout per chunk in milliseconds */
 const CHUNK_ACK_TIMEOUT_MS = 30_000;
+const VALID_TARGET_TYPES: FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'access_control'];
 
 /**
  * In-memory state for active push tasks.
@@ -35,9 +36,12 @@ interface ActivePush {
 }
 
 const activePushes = new Map<string, ActivePush>();
+const resumeInFlightPushes = new Set<string>();
+const resumeFacilityRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Exposed for unit tests only — allows tests to set up handleChunkAck state. */
 export const _testActivePushes = activePushes;
+export const _testResumeInFlightPushes = resumeInFlightPushes;
 
 export class FirmwareService {
   private static firmwareModel = new FirmwareModel();
@@ -510,9 +514,10 @@ export class FirmwareService {
    */
   static async handleUpdateStatus(facilityId: string, msg: any): Promise<void> {
     const { nonce, status: gwStatus, version, error: gwError, target_type: targetType } = msg;
+    const normalizedStatus = typeof gwStatus === 'string' ? gwStatus.trim().toLowerCase() : '';
 
     // Schema validation: enforce field types and limits
-    if (typeof gwStatus !== 'string' || gwStatus.length === 0 || gwStatus.length > 64) {
+    if (!normalizedStatus || normalizedStatus.length > 64) {
       logger.warn(`FIRMWARE_UPDATE_STATUS: invalid status (type=${typeof gwStatus}) facility=${facilityId}`);
       return;
     }
@@ -548,7 +553,45 @@ export class FirmwareService {
       }
     }
 
-    // Fall back to DB lookup: most recent push for this facility's gateway with matching target_type
+    // Fall back to DB lookup: most recent active push for this facility.
+    // This handles gateways that only send nonce+status (no target_type).
+    if (!matchedPush) {
+      let candidates = await this.pushModel.findActiveByFacilities([facilityId]);
+      if (targetType) {
+        candidates = candidates.filter((entry) => entry.target_type === targetType);
+      }
+      if (version) {
+        const withFirmware = await Promise.all(
+          candidates.map(async (entry) => ({
+            push: entry,
+            firmware: await this.firmwareModel.findById(entry.firmware_id),
+          })),
+        );
+        const versionMatched = withFirmware
+          .filter((entry) => entry.firmware?.version === version)
+          .map((entry) => entry.push);
+        if (versionMatched.length > 0) {
+          candidates = versionMatched;
+        } else if (candidates.length > 1) {
+          logger.warn(
+            `FIRMWARE_UPDATE_STATUS: ambiguous active pushes for facility=${facilityId} version=${version} without target_type/nonce; ignoring to avoid mis-correlation`,
+          );
+          return;
+        }
+      }
+      if (!version && !targetType && !nonce && candidates.length > 1) {
+        logger.warn(
+          `FIRMWARE_UPDATE_STATUS: ambiguous active pushes for facility=${facilityId} without nonce/target_type; ignoring to avoid mis-correlation`,
+        );
+        return;
+      }
+      if (candidates.length > 0) {
+        matchedPush = candidates[0];
+      }
+    }
+
+    // Final fallback for idempotent late/duplicate status updates:
+    // look up the latest push by target_type when provided.
     if (!matchedPush && targetType) {
       const pushes = await this.pushModel.findByFacilityAndTargetType(facilityId, targetType);
       matchedPush = pushes[0] || null;
@@ -560,19 +603,19 @@ export class FirmwareService {
     }
 
     // Map gateway status to push status
-    if (gwStatus === 'success' || gwStatus === 'applied') {
+    if (normalizedStatus === 'success' || normalizedStatus === 'applied') {
       // Gateway confirmed firmware applied successfully — update if not already complete
       if (matchedPush.status !== 'complete') {
         await this.pushModel.updateStatus(matchedPush.id, 'complete');
         this.broadcastProgress(matchedPush, 'complete', 100);
         logger.info(`Firmware update confirmed by gateway pushId=${matchedPush.id} version=${version}`);
       }
-    } else if (gwStatus === 'failed' || gwStatus === 'error') {
+    } else if (normalizedStatus === 'failed' || normalizedStatus === 'error') {
       const errorMsg = gwError || `Gateway reported firmware update failure: ${gwStatus}`;
       await this.pushModel.updateStatus(matchedPush.id, 'failed', errorMsg);
       this.broadcastProgress(matchedPush, 'failed', 0, undefined, undefined, errorMsg);
       logger.error(`Firmware update failed on gateway pushId=${matchedPush.id}: ${errorMsg}`);
-    } else if (gwStatus === 'verifying') {
+    } else if (normalizedStatus === 'verifying' || normalizedStatus === 'applying') {
       await this.pushModel.updateStatus(matchedPush.id, 'verifying');
       this.broadcastProgress(matchedPush, 'verifying', 100);
     } else {
@@ -591,27 +634,69 @@ export class FirmwareService {
    * still work via FIRMWARE_CHUNK_ACK / FIRMWARE_UPDATE_STATUS.
    */
   static async handleProgress(facilityId: string, msg: any): Promise<void> {
-    const { nonce, progress_percent, phase, message: gwMessage, devices, error: gwError, target_type: targetType } = msg;
+    const {
+      nonce,
+      progress_percent,
+      phase,
+      message: gwMessage,
+      devices,
+      error: gwError,
+      target_type: rawTargetType,
+      targetType: rawTargetTypeCamel,
+    } = msg;
+    const targetTypeCandidate = typeof rawTargetType === 'string'
+      ? rawTargetType
+      : (typeof rawTargetTypeCamel === 'string' ? rawTargetTypeCamel : undefined);
+    const targetType = (targetTypeCandidate && VALID_TARGET_TYPES.includes(targetTypeCandidate as FirmwareTargetType))
+      ? (targetTypeCandidate as FirmwareTargetType)
+      : undefined;
+    const normalizedNonce = (typeof nonce === 'string' && nonce.length > 0) ? nonce : undefined;
 
-    if (typeof nonce !== 'string' || nonce.length === 0 || nonce.length > 128) {
+    if (nonce !== undefined && (typeof nonce !== 'string' || nonce.length > 128)) {
       logger.warn(`FIRMWARE_PROGRESS: invalid nonce facility=${facilityId}`);
       return;
     }
 
-    // Find the push by nonce + facilityId (in-memory), then fall back to DB
+    const normalizedDevices = Array.isArray(devices)
+      ? devices.map((dev: any) => ({
+        ...dev,
+        device_id: typeof dev?.device_id === 'string' ? dev.device_id : dev?.deviceId,
+        progress_percent: typeof dev?.progress_percent === 'number' ? dev.progress_percent : dev?.progressPercent,
+      }))
+      : [];
+
+    // Find the push by nonce + facilityId (in-memory), then fall back to DB.
+    // Some gateways emit async progress without nonce.
     let matchedPush: FirmwarePush | null = null;
-    for (const [pushId, pushState] of activePushes.entries()) {
-      if (pushState.nonce === nonce && pushState.facilityId === facilityId) {
-        matchedPush = await this.pushModel.findById(pushId);
-        break;
+    if (normalizedNonce) {
+      for (const [pushId, pushState] of activePushes.entries()) {
+        if (pushState.nonce === normalizedNonce && pushState.facilityId === facilityId) {
+          matchedPush = await this.pushModel.findById(pushId);
+          break;
+        }
       }
     }
+
+    if (!matchedPush) {
+      let candidates = await this.pushModel.findActiveByFacilities([facilityId]);
+      if (targetType) {
+        candidates = candidates.filter((entry) => entry.target_type === targetType);
+      }
+      if (!normalizedNonce && candidates.length > 1) {
+        logger.warn(`FIRMWARE_PROGRESS: ambiguous active pushes for facility=${facilityId} without nonce; ignoring`);
+        return;
+      }
+      if (candidates.length > 0) {
+        matchedPush = candidates[0];
+      }
+    }
+
     if (!matchedPush && targetType) {
       const pushes = await this.pushModel.findByFacilityAndTargetType(facilityId, targetType);
       matchedPush = pushes[0] || null;
     }
     if (!matchedPush) {
-      logger.warn(`FIRMWARE_PROGRESS: no matching push for facility=${facilityId} nonce=${nonce}`);
+      logger.warn(`FIRMWARE_PROGRESS: no matching push for facility=${facilityId} nonce=${normalizedNonce}`);
       return;
     }
 
@@ -622,7 +707,7 @@ export class FirmwareService {
       return;
     }
 
-    logger.info(`FIRMWARE_PROGRESS received pushId=${matchedPush.id} percent=${progress_percent} phase=${phase} devices=${devices?.length ?? 0}`);
+    logger.info(`FIRMWARE_PROGRESS received pushId=${matchedPush.id} percent=${progress_percent} phase=${phase} devices=${normalizedDevices.length}`);
 
     const now = new Date();
     const events: CreateFirmwarePushEventData[] = [];
@@ -650,10 +735,10 @@ export class FirmwareService {
     let computedDevicesComplete = matchedPush.devices_complete;
     let computedDevicesFailed = matchedPush.devices_failed;
 
-    if (Array.isArray(devices) && devices.length > 0) {
+    if (normalizedDevices.length > 0) {
       computedDevicesComplete = 0;
       computedDevicesFailed = 0;
-      for (const dev of devices) {
+      for (const dev of normalizedDevices) {
         if (!dev?.device_id || typeof dev.device_id !== 'string') continue;
         events.push({
           push_id: matchedPush.id,
@@ -667,7 +752,7 @@ export class FirmwareService {
         if (dev.status === 'complete') computedDevicesComplete++;
         if (dev.status === 'failed') computedDevicesFailed++;
       }
-      computedDevicesTotal = devices.length;
+      computedDevicesTotal = normalizedDevices.length;
       await this.pushModel.updateDeviceCounts(matchedPush.id, computedDevicesTotal, computedDevicesComplete, computedDevicesFailed);
     }
 
@@ -720,7 +805,7 @@ export class FirmwareService {
         devicesTotal: computedDevicesTotal,
         devicesComplete: computedDevicesComplete,
         devicesFailed: computedDevicesFailed,
-        devices: Array.isArray(devices) ? devices : undefined,
+        devices: normalizedDevices.length > 0 ? normalizedDevices : undefined,
         error: gwError,
       },
     );
@@ -739,8 +824,70 @@ export class FirmwareService {
     for (const [pushId, pushState] of activePushes.entries()) {
       if (pushState.facilityId === facilityId && !pushState.cancel) {
         pushState.cancel = true;
+        // Unblock any in-flight ACK waits immediately so reconnect can resume quickly.
+        for (const resolver of pushState.chunkAckResolvers.values()) {
+          try {
+            resolver.reject(new Error('Gateway disconnected during firmware push'));
+          } catch {}
+        }
+        pushState.chunkAckResolvers.clear();
         logger.info(`Firmware push cancelled due to gateway disconnect pushId=${pushId} facility=${facilityId}`);
       }
+    }
+  }
+
+  /**
+   * Resume non-terminal firmware pushes for a facility after gateway reconnect.
+   * Only pushes in pending/transferring are re-executed. Verifying pushes are
+   * left as-is and await gateway status updates.
+   */
+  static async resumePendingForFacility(facilityId: string): Promise<void> {
+    const existingRetry = resumeFacilityRetryTimers.get(facilityId);
+    if (existingRetry) {
+      clearTimeout(existingRetry);
+      resumeFacilityRetryTimers.delete(facilityId);
+    }
+
+    const candidates = await this.pushModel.findActiveByFacilities([facilityId]);
+    let shouldRetry = false;
+    for (const push of candidates) {
+      if (push.status !== 'pending' && push.status !== 'transferring') {
+        continue;
+      }
+      if (activePushes.has(push.id)) {
+        // A prior execution is still unwinding after disconnect; retry shortly.
+        shouldRetry = true;
+        continue;
+      }
+      if (resumeInFlightPushes.has(push.id)) {
+        continue;
+      }
+      resumeInFlightPushes.add(push.id);
+      logger.info(`Resuming firmware push after reconnect pushId=${push.id} facility=${facilityId} status=${push.status}`);
+      this.executePush(push.id).catch(async err => {
+        logger.error(`Resumed firmware push failed pushId=${push.id}:`, err);
+        try {
+          const current = await this.pushModel.findById(push.id);
+          if (current && !['complete', 'failed', 'cancelled'].includes(current.status)) {
+            await this.pushModel.updateStatus(push.id, 'failed', `Resume failed: ${String(err?.message || err)}`);
+            this.broadcastProgress(push, 'failed', 0, undefined, undefined, 'Push resume failed');
+          }
+        } catch (cleanupErr) {
+          logger.error(`Failed to mark resumed push as failed pushId=${push.id}:`, cleanupErr);
+        }
+      }).finally(() => {
+        resumeInFlightPushes.delete(push.id);
+      });
+    }
+
+    if (shouldRetry && !resumeFacilityRetryTimers.has(facilityId)) {
+      const timer = setTimeout(() => {
+        resumeFacilityRetryTimers.delete(facilityId);
+        this.resumePendingForFacility(facilityId).catch((err) => {
+          logger.warn(`Deferred firmware resume failed for facility=${facilityId}`, err);
+        });
+      }, 1000);
+      resumeFacilityRetryTimers.set(facilityId, timer);
     }
   }
 

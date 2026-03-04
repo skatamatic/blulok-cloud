@@ -292,6 +292,12 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           lastActivityAt: now,
           remote,
         });
+        // On reconnect, resume any interrupted OTA transfers for this facility.
+        import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
+          FirmwareService.resumePendingForFacility(facilityId).catch((err) => {
+            logger.warn(`Failed to resume firmware pushes for facility=${facilityId}`, err);
+          });
+        }).catch(() => {});
         return;
       }
 
@@ -356,7 +362,18 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       safeSend(ws, { type: 'ERROR', code: 'UNKNOWN_TYPE', message: `Unknown type ${typeField}` });
     });
 
-    ws.on('close', closeAndCleanup);
+    ws.on('close', (code, reasonBuffer) => {
+      const reason = (() => {
+        try {
+          if (!reasonBuffer) return '';
+          return reasonBuffer.toString('utf8');
+        } catch {
+          return '';
+        }
+      })();
+      logger.warn(`Gateway WS close event code=${code} reason=${reason || '<empty>'}`);
+      closeAndCleanup();
+    });
     ws.on('error', (err) => {
       logger.warn('Gateway WS error:', err);
       closeAndCleanup();

@@ -41,6 +41,13 @@ interface GatewayFirmwareTabProps {
 
 const HISTORY_PAGE_SIZE = 10;
 
+const toReadableLabel = (value: string): string =>
+  value
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
 export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, gatewayModel }: GatewayFirmwareTabProps) {
   const { addToast } = useToast();
   const ws = useWebSocket();
@@ -236,6 +243,9 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
   };
 
   const currentPhase = liveProgress?.phase || (liveProgress?.step === 'transferring' ? 'transferring' : undefined);
+  const phaseIdx = currentPhase ? (PHASE_ORDER as readonly string[]).indexOf(currentPhase) : -1;
+  const hasKnownPhase = phaseIdx >= 0;
+  const phaseLabel = currentPhase ? (PHASE_LABELS[currentPhase] || toReadableLabel(currentPhase)) : undefined;
   const effectivePercent = liveProgress?.percent || 0;
 
   if (loading) {
@@ -331,6 +341,14 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
           </div>
 
           <div className="px-6 py-5 space-y-5">
+            {/* Live update stream status */}
+            {!ws.isConnected && (
+              <div className="flex items-center gap-2 p-2.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs">
+                <ClockIcon className="h-4 w-4" />
+                <span>Live WebSocket updates are temporarily disconnected. The page will resubscribe automatically when connection returns.</span>
+              </div>
+            )}
+
             {/* Error Banner */}
             {liveError && (
               <div className={`flex items-start gap-3 p-3 rounded-lg border ${
@@ -358,10 +376,9 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
             )}
 
             {/* Phase Stepper */}
-            {currentPhase && (
+            {currentPhase && hasKnownPhase && (
               <div className="flex items-center gap-1">
                 {PHASE_ORDER.map((phase, idx) => {
-                  const phaseIdx = (PHASE_ORDER as readonly string[]).indexOf(currentPhase);
                   const isComplete = idx < phaseIdx || (currentPhase === 'complete' && idx <= phaseIdx);
                   const isCurrent = idx === phaseIdx && currentPhase !== 'complete';
                   return (
@@ -386,11 +403,22 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
               </div>
             )}
 
+            {/* Custom phase badge for non-standard gateway phases */}
+            {currentPhase && !hasKnownPhase && (
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 text-xs font-medium">
+                <span>Phase:</span>
+                <span>{phaseLabel}</span>
+              </div>
+            )}
+
             {/* Step Label + Progress */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {STEP_LABELS[liveProgress?.phase || liveProgress?.step || activePush?.status || 'pending'] || liveProgress?.step || 'Preparing...'}
+                  {STEP_LABELS[liveProgress?.phase || liveProgress?.step || activePush?.status || 'pending']
+                    || (liveProgress?.phase ? phaseLabel : undefined)
+                    || liveProgress?.step
+                    || 'Preparing...'}
                 </span>
                 <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
                   {liveProgress?.chunksTotal != null && (
