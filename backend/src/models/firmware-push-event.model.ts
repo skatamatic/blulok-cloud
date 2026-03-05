@@ -121,18 +121,40 @@ export class FirmwarePushEventModel {
 
   /**
    * Get the latest status per device_id for a push.
-   * Uses a subquery to find the most recent device_status event per device.
+   * Uses a windowed ranking query so each device contributes exactly one row.
+   * This avoids duplicate rows when multiple events share the same created_at second.
    */
   async getDeviceStatuses(pushId: string): Promise<FirmwareDeviceStatusSummary[]> {
     const knex = this.db.connection;
-    const rows = await knex('firmware_push_events as e1')
-      .select('e1.device_id', 'e1.device_status as status', 'e1.progress_percent', 'e1.error_message as error', 'e1.reported_at')
-      .where('e1.push_id', pushId)
-      .where('e1.event_type', 'device_status')
-      .whereNotNull('e1.device_id')
-      .whereRaw('e1.created_at = (SELECT MAX(e2.created_at) FROM firmware_push_events e2 WHERE e2.push_id = e1.push_id AND e2.device_id = e1.device_id AND e2.event_type = ?)', ['device_status'])
-      .orderBy('e1.device_id');
-    return rows;
+
+    const ranked = knex('firmware_push_events')
+      .select(
+        'device_id',
+        knex.raw('device_status as status'),
+        'progress_percent',
+        knex.raw('error_message as error'),
+        'reported_at',
+        knex.raw(
+          'ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY reported_at DESC, created_at DESC, id DESC) AS rn',
+        ),
+      )
+      .where('push_id', pushId)
+      .where('event_type', 'device_status')
+      .whereNotNull('device_id')
+      .as('ranked');
+
+    const rows = await knex(ranked)
+      .select(
+        'device_id',
+        'status',
+        'progress_percent',
+        'error',
+        'reported_at',
+      )
+      .where('rn', 1)
+      .orderBy('device_id');
+
+    return rows as FirmwareDeviceStatusSummary[];
   }
 
   async countByPushId(pushId: string): Promise<number> {

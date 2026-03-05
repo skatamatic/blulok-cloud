@@ -48,6 +48,16 @@ const toReadableLabel = (value: string): string =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
 
+const normalizeLiveDevices = (devices?: FirmwareDeviceStatus[]): FirmwareDeviceStatus[] => {
+  if (!Array.isArray(devices) || devices.length === 0) return [];
+  const byDeviceId = new Map<string, FirmwareDeviceStatus>();
+  for (const device of devices) {
+    if (!device?.device_id) continue;
+    byDeviceId.set(device.device_id, device);
+  }
+  return Array.from(byDeviceId.values());
+};
+
 export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, gatewayModel }: GatewayFirmwareTabProps) {
   const { addToast } = useToast();
   const ws = useWebSocket();
@@ -73,7 +83,8 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
       setLoading(true);
       const [fwRes, pushStatusRes, pushHistoryRes] = await Promise.all([
         apiService.listFirmware(selectedTargetType),
-        apiService.getFirmwarePushStatus(gatewayId, selectedTargetType),
+        // Keep initial load lightweight; live progress arrives via websocket updates.
+        apiService.getFirmwarePushStatus(gatewayId, selectedTargetType, false),
         apiService.getFirmwarePushHistory(gatewayId, selectedTargetType, HISTORY_PAGE_SIZE),
       ]);
       setFirmware(fwRes.data || []);
@@ -101,7 +112,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
           devicesComplete: pushData.devices_complete,
           devicesFailed: pushData.devices_failed,
         });
-        setLiveDevices(pushData.device_statuses || []);
+        setLiveDevices(normalizeLiveDevices(pushData.device_statuses || []));
         setLiveEvents(pushData.recent_events || []);
       } else {
         setLiveProgress(null);
@@ -132,7 +143,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
         setLiveProgress(data);
 
         if (data.devices?.length) {
-          setLiveDevices(data.devices);
+          setLiveDevices(normalizeLiveDevices(data.devices));
         }
 
         setLiveError(data.error ?? null);
@@ -247,6 +258,15 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
   const hasKnownPhase = phaseIdx >= 0;
   const phaseLabel = currentPhase ? (PHASE_LABELS[currentPhase] || toReadableLabel(currentPhase)) : undefined;
   const effectivePercent = liveProgress?.percent || 0;
+  const fallbackDevicesTotal = liveDevices.length;
+  const summaryDevicesTotal = (liveProgress?.devicesTotal != null && liveProgress.devicesTotal > 0)
+    ? liveProgress.devicesTotal
+    : fallbackDevicesTotal;
+  const derivedDevicesComplete = liveDevices.filter((d) => d.status === 'complete').length;
+  const derivedDevicesFailed = liveDevices.filter((d) => d.status === 'failed').length;
+  const summaryDevicesComplete = liveProgress?.devicesComplete ?? derivedDevicesComplete;
+  const summaryDevicesFailed = liveProgress?.devicesFailed ?? derivedDevicesFailed;
+  const summaryDevicesInProgress = Math.max(summaryDevicesTotal - summaryDevicesComplete - summaryDevicesFailed, 0);
 
   if (loading) {
     return (
@@ -443,31 +463,31 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
             </div>
 
             {/* Device Counts Summary */}
-            {(liveProgress?.devicesTotal != null && liveProgress.devicesTotal > 0) && (
+            {summaryDevicesTotal > 0 && (
               <div className="flex items-center gap-4 pt-1">
                 <div className="flex items-center gap-1.5">
                   <CpuChipIcon className="h-4 w-4 text-gray-400" />
                   <span className="text-xs text-gray-500 dark:text-gray-400">
-                    {liveProgress.devicesTotal} device{liveProgress.devicesTotal !== 1 ? 's' : ''}
+                    {summaryDevicesTotal} device{summaryDevicesTotal !== 1 ? 's' : ''}
                   </span>
                 </div>
-                {(liveProgress.devicesComplete ?? 0) > 0 && (
+                {summaryDevicesComplete > 0 && (
                   <div className="flex items-center gap-1">
                     <CheckCircleIcon className="h-3.5 w-3.5 text-green-500" />
-                    <span className="text-xs text-green-600 dark:text-green-400">{liveProgress.devicesComplete}</span>
+                    <span className="text-xs text-green-600 dark:text-green-400">{summaryDevicesComplete}</span>
                   </div>
                 )}
-                {(liveProgress.devicesFailed ?? 0) > 0 && (
+                {summaryDevicesFailed > 0 && (
                   <div className="flex items-center gap-1">
                     <XCircleIcon className="h-3.5 w-3.5 text-red-500" />
-                    <span className="text-xs text-red-600 dark:text-red-400">{liveProgress.devicesFailed}</span>
+                    <span className="text-xs text-red-600 dark:text-red-400">{summaryDevicesFailed}</span>
                   </div>
                 )}
-                {liveProgress.devicesTotal - (liveProgress.devicesComplete ?? 0) - (liveProgress.devicesFailed ?? 0) > 0 && (
+                {summaryDevicesInProgress > 0 && (
                   <div className="flex items-center gap-1">
                     <ArrowPathIcon className="h-3.5 w-3.5 text-blue-500 animate-spin" />
                     <span className="text-xs text-blue-600 dark:text-blue-400">
-                      {liveProgress.devicesTotal - (liveProgress.devicesComplete ?? 0) - (liveProgress.devicesFailed ?? 0)} in progress
+                      {summaryDevicesInProgress} in progress
                     </span>
                   </div>
                 )}

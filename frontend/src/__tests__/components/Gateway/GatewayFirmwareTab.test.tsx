@@ -187,7 +187,7 @@ describe('GatewayFirmwareTab', () => {
         expect(screen.getByText('Available Firmware')).toBeInTheDocument();
       });
       expect(mockApi.listFirmware).toHaveBeenCalledWith('gateway');
-      expect(mockApi.getFirmwarePushStatus).toHaveBeenCalledWith(GATEWAY_ID, 'gateway');
+      expect(mockApi.getFirmwarePushStatus).toHaveBeenCalledWith(GATEWAY_ID, 'gateway', false);
       expect(mockApi.getFirmwarePushHistory).toHaveBeenCalledWith(GATEWAY_ID, 'gateway', 10);
     });
 
@@ -204,7 +204,7 @@ describe('GatewayFirmwareTab', () => {
 
       await waitFor(() => {
         expect(mockApi.listFirmware).toHaveBeenCalledWith('lock');
-        expect(mockApi.getFirmwarePushStatus).toHaveBeenCalledWith(GATEWAY_ID, 'lock');
+        expect(mockApi.getFirmwarePushStatus).toHaveBeenCalledWith(GATEWAY_ID, 'lock', false);
       });
     });
 
@@ -453,6 +453,36 @@ describe('GatewayFirmwareTab', () => {
         () => expect(mockApi.getFirmwarePushStatus).toHaveBeenCalled(),
         { timeout: 3000 },
       );
+    });
+
+    it('deduplicates repeated device IDs in live WS payload', async () => {
+      setupDefaultMocks({
+        pushStatus: mkPush({ status: 'transferring', chunks_sent: 0 }),
+      });
+      renderTab();
+
+      await waitFor(() => {
+        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+      });
+
+      act(() => {
+        wsMessageHandler?.({
+          gatewayId: GATEWAY_ID,
+          targetType: 'gateway',
+          step: 'verifying',
+          percent: 99,
+          devicesTotal: 1,
+          devices: [
+            { device_id: 'dup-device', status: 'pending', progress_percent: 88 },
+            { device_id: 'dup-device', status: 'pending', progress_percent: 94 },
+            { device_id: 'dup-device', status: 'pending', progress_percent: 97 },
+          ],
+        });
+      });
+
+      expect(screen.getByText('1 device')).toBeInTheDocument();
+      expect(screen.getAllByTitle('dup-device')).toHaveLength(1);
+      expect(screen.getByText('97%')).toBeInTheDocument();
     });
   });
 

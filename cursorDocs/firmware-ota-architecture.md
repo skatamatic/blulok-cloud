@@ -94,6 +94,17 @@ Tracks the state of each push operation.
 
 **Index:** `(gateway_id, target_type, status)` — supports the active-push lookup scoped by target type.
 
+### `firmware_push_events`
+
+Append-only event stream used for progress timelines and per-device status snapshots.
+
+- Existing indexes:
+  - `(push_id, created_at)` for event timeline paging
+  - `(push_id, event_type)` for filtered event reads
+- Latest-per-device optimization index:
+  - `(push_id, event_type, device_id, created_at)` to accelerate "latest status per device" lookups used by push status hydration.
+  - `(push_id, event_type, device_id, reported_at, created_at)` to support deterministic "latest per device" ranking (`reported_at DESC, created_at DESC`) without duplicate rows.
+
 ## WebSocket Message Protocol
 
 All firmware messages flow over the existing gateway WebSocket connection (`/ws/gateway`). Each message payload is a signed Ed25519 JWT with expiration.
@@ -182,6 +193,11 @@ Sent from gateway to cloud to report final update outcome.
 - `success` / `applied` → push status `complete`
 - `failed` / `error` → push status `failed` with error message
 - `verifying` → push status `verifying`
+
+## Push Status API Hydration
+
+- `GET /firmware/push-status/:gatewayId` supports `include_events=false` to return only the aggregate push record.
+- Firmware tab initial load should use this lightweight mode to avoid expensive event-table hydration on first paint.
 
 ## Push Lifecycle States
 

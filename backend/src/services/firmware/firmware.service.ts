@@ -680,13 +680,25 @@ export class FirmwareService {
       return;
     }
 
-    const normalizedDevices = Array.isArray(devices)
-      ? devices.map((dev: any) => ({
-        ...dev,
-        device_id: typeof dev?.device_id === 'string' ? dev.device_id : dev?.deviceId,
-        progress_percent: typeof dev?.progress_percent === 'number' ? dev.progress_percent : dev?.progressPercent,
-      }))
-      : [];
+    const normalizedDevices = (() => {
+      if (!Array.isArray(devices)) return [] as Array<{ device_id: string; status: string; progress_percent?: number; error?: string }>;
+      const byDeviceId = new Map<string, { device_id: string; status: string; progress_percent?: number; error?: string }>();
+      for (const dev of devices) {
+        const rawDeviceId = typeof dev?.device_id === 'string' ? dev.device_id : dev?.deviceId;
+        if (!rawDeviceId || typeof rawDeviceId !== 'string') continue;
+        const normalized = {
+          device_id: rawDeviceId,
+          status: typeof dev?.status === 'string' ? dev.status : 'pending',
+          progress_percent: typeof dev?.progress_percent === 'number'
+            ? dev.progress_percent
+            : (typeof dev?.progressPercent === 'number' ? dev.progressPercent : undefined),
+          error: typeof dev?.error === 'string' ? dev.error : undefined,
+        };
+        // Last report for a device in this payload wins.
+        byDeviceId.set(rawDeviceId, normalized);
+      }
+      return Array.from(byDeviceId.values());
+    })();
 
     // Find the push by nonce + facilityId (in-memory), then fall back to DB.
     // Some gateways emit async progress without nonce.
@@ -762,7 +774,6 @@ export class FirmwareService {
       computedDevicesComplete = 0;
       computedDevicesFailed = 0;
       for (const dev of normalizedDevices) {
-        if (!dev?.device_id || typeof dev.device_id !== 'string') continue;
         events.push({
           push_id: matchedPush.id,
           event_type: 'device_status',

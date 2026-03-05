@@ -958,9 +958,10 @@ class ApiService {
     return response.data;
   }
 
-  async getFirmwarePushStatus(gatewayId: string, targetType?: string) {
+  async getFirmwarePushStatus(gatewayId: string, targetType?: string, includeEvents = true) {
     const params: Record<string, string> = {};
     if (targetType) params.target_type = targetType;
+    if (!includeEvents) params.include_events = 'false';
     const response = await this.api.get(`/firmware/push-status/${gatewayId}`, { params });
     return response.data;
   }

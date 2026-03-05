@@ -661,6 +661,24 @@ describe('FirmwareService', () => {
       expect(events.every((e: any) => e.event_type === 'device_status')).toBe(true);
     });
 
+    it('deduplicates duplicate device reports in a single payload', async () => {
+      await FirmwareService.handleProgress('fac-1', {
+        nonce: 'progress-nonce',
+        devices: [
+          { device_id: 'lock-1', status: 'pending', progress_percent: 20 },
+          { device_id: 'lock-1', status: 'downloading', progress_percent: 55 },
+          { device_id: 'lock-1', status: 'complete', progress_percent: 100 },
+        ],
+      });
+
+      expect(mockPushModel.updateDeviceCounts).toHaveBeenCalledWith('push-1', 1, 1, 0);
+      const events = mockPushEventModel.createMany.mock.calls[0][0];
+      expect(events).toHaveLength(1);
+      expect(events[0].device_id).toBe('lock-1');
+      expect(events[0].device_status).toBe('complete');
+      expect(events[0].progress_percent).toBe(100);
+    });
+
     it('creates error event for warning severity', async () => {
       await FirmwareService.handleProgress('fac-1', {
         nonce: 'progress-nonce',
