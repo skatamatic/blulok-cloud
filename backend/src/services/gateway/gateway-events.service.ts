@@ -50,6 +50,14 @@ class NoopTransport implements GatewayTransport {
 export class GatewayEventsService {
   private static instance: GatewayEventsService;
   private transport: GatewayTransport;
+  private unbindTransportConnectionListener?: () => void;
+  private connectionListeners = new Set<(event: {
+    facilityId: string;
+    connected: boolean;
+    timestamp: number;
+    reason?: string;
+    lastActivityAt?: number;
+  }) => void>();
 
   public static getInstance(): GatewayEventsService {
     if (!this.instance) this.instance = new GatewayEventsService();
@@ -59,11 +67,42 @@ export class GatewayEventsService {
   private constructor() {
     // Default to WebSocket transport; tests may replace with mocks or Noop
     this.transport = new WebsocketGatewayTransport();
+    this.bindTransportConnectionListener();
   }
 
   // Allow tests/bootstrappers to override transport if needed
   public setTransport(transport: GatewayTransport): void {
     this.transport = transport || new NoopTransport();
+    this.bindTransportConnectionListener();
+  }
+
+  private bindTransportConnectionListener(): void {
+    if (this.unbindTransportConnectionListener) {
+      this.unbindTransportConnectionListener();
+      this.unbindTransportConnectionListener = undefined;
+    }
+
+    const maybeTransport = this.transport as any;
+    if (typeof maybeTransport.setConnectionChangeListener === 'function') {
+      const unbind = maybeTransport.setConnectionChangeListener((event: {
+        facilityId: string;
+        connected: boolean;
+        timestamp: number;
+        reason?: string;
+        lastActivityAt?: number;
+      }) => {
+        this.connectionListeners.forEach((listener) => {
+          try {
+            listener(event);
+          } catch (error) {
+            logger.warn('Gateway connection listener callback failed', error);
+          }
+        });
+      });
+      if (typeof unbind === 'function') {
+        this.unbindTransportConnectionListener = unbind;
+      }
+    }
   }
 
   public initialize(server: HTTPServer): void {
@@ -120,11 +159,36 @@ export class GatewayEventsService {
     return { connected: false };
   }
 
+  public getConnectedFacilityIds(): string[] {
+    const maybeTransport = this.transport as any;
+    if (typeof maybeTransport.getConnectedFacilityIds === 'function') {
+      return maybeTransport.getConnectedFacilityIds() as string[];
+    }
+    return [];
+  }
+
+  public onFacilityConnectionChange(listener: (event: {
+    facilityId: string;
+    connected: boolean;
+    timestamp: number;
+    reason?: string;
+    lastActivityAt?: number;
+  }) => void): () => void {
+    this.connectionListeners.add(listener);
+    return () => {
+      this.connectionListeners.delete(listener);
+    };
+  }
+
   /**
    * Shutdown the gateway events service and cleanup resources.
    * Stops heartbeat timers and closes all connections.
    */
   public shutdown(): void {
+    if (this.unbindTransportConnectionListener) {
+      this.unbindTransportConnectionListener();
+      this.unbindTransportConnectionListener = undefined;
+    }
     if (this.transport && typeof this.transport.shutdown === 'function') {
       this.transport.shutdown();
     }

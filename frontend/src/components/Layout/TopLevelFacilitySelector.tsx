@@ -5,7 +5,7 @@ import { useSidebar } from '@/contexts/SidebarContext';
 
 export const TopLevelFacilitySelector: React.FC = () => {
   const { isCollapsed } = useSidebar();
-  const { facilities, selectedFacilityId, selectedFacility, setSelectedFacilityId, hasMultipleFacilities, isAllFacilitiesSelected, isLoading } = useGlobalFacility();
+  const { facilities, selectedFacilityId, selectedFacility, setSelectedFacilityId, isAllFacilitiesSelected, isLoading } = useGlobalFacility();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -82,47 +82,7 @@ export const TopLevelFacilitySelector: React.FC = () => {
     return null;
   }
 
-  // Single facility - show read-only display
-  if (!hasMultipleFacilities && selectedFacility) {
-    if (isCollapsed) {
-      return (
-        <div className="flex items-center justify-center">
-          {selectedFacility.branding_image && selectedFacility.image_mime_type ? (
-            <img
-              src={`data:${selectedFacility.image_mime_type};base64,${selectedFacility.branding_image}`}
-              alt={selectedFacility.name}
-              className="h-8 w-8 rounded object-contain bg-white dark:bg-gray-100 p-0.5 flex-shrink-0 border border-gray-200 dark:border-gray-600"
-              title={selectedFacility.name}
-            />
-          ) : (
-            <div className="h-8 w-8 rounded bg-primary-100 dark:bg-primary-900/20 flex items-center justify-center flex-shrink-0" title={selectedFacility.name}>
-              <BuildingOfficeIcon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-            </div>
-          )}
-        </div>
-      );
-    }
-    return (
-      <div className="flex items-center space-x-2 px-2 py-2 rounded-md bg-primary-100 dark:bg-primary-900/20">
-        {selectedFacility.branding_image && selectedFacility.image_mime_type ? (
-          <img
-            src={`data:${selectedFacility.image_mime_type};base64,${selectedFacility.branding_image}`}
-            alt={selectedFacility.name}
-            className="h-5 w-5 rounded object-contain bg-white dark:bg-gray-100 p-0.5 flex-shrink-0"
-          />
-        ) : (
-          <div className="h-5 w-5 rounded bg-primary-200 dark:bg-primary-800/30 flex items-center justify-center flex-shrink-0">
-            <BuildingOfficeIcon className="h-3.5 w-3.5 text-primary-700 dark:text-primary-300" />
-          </div>
-        )}
-        <span className="text-sm font-medium text-primary-900 dark:text-primary-100 truncate">
-          {selectedFacility.name}
-        </span>
-      </div>
-    );
-  }
-
-  // Multiple facilities - show dropdown selector
+  // Always show a dropdown selector so "All Facilities" can be chosen in single-facility installs.
   if (isCollapsed) {
     return (
       <div className="relative">

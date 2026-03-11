@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
@@ -45,14 +45,17 @@ export default function UserManagementPage() {
   const [roleFilter, setRoleFilter] = useState('');
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const { selectedFacilityId } = useGlobalFacility();
+  const { selectedFacilityId, isLoading: isFacilityLoading } = useGlobalFacility();
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-
-  useEffect(() => {
-    fetchUsers(currentPage);
-  }, []);
+  const latestRequestIdRef = useRef(0);
+  const hasInitializedRef = useRef(false);
 
   const fetchUsers = useCallback(async (page: number, isInitialLoad = false) => {
+    if (isFacilityLoading) {
+      return;
+    }
+
+    const requestId = ++latestRequestIdRef.current;
     try {
       if (isInitialLoad) {
         setLoading(true);
@@ -73,6 +76,9 @@ export default function UserManagementPage() {
         offset,
       });
       if (response.success) {
+        if (requestId !== latestRequestIdRef.current) {
+          return;
+        }
         setUsers(response.users);
         setTotal(response.total || 0);
         setTotalPages(Math.ceil((response.total || 0) / limit));
@@ -81,30 +87,49 @@ export default function UserManagementPage() {
         setError('Failed to fetch users');
       }
     } catch (err) {
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
       setError('Error fetching users');
     } finally {
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
       if (isInitialLoad) {
         setLoading(false);
       } else {
         setSearchLoading(false);
       }
     }
-  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder]);
+  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, isFacilityLoading]);
 
   // Initial load
   useEffect(() => {
+    if (isFacilityLoading) {
+      return;
+    }
+    if (hasInitializedRef.current) {
+      return;
+    }
+    hasInitializedRef.current = true;
     fetchUsers(currentPage, true);
-  }, []);
+  }, [currentPage, fetchUsers, isFacilityLoading]);
 
   // Debounced fetch for search/filter changes
   useEffect(() => {
+    if (isFacilityLoading) {
+      return;
+    }
+    if (!hasInitializedRef.current) {
+      return;
+    }
     const timer = setTimeout(() => {
       setCurrentPage(1); // Reset to first page when filters change
       fetchUsers(1, false);
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder]);
+  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, fetchUsers, isFacilityLoading]);
 
 
   // Handle highlighting when page loads

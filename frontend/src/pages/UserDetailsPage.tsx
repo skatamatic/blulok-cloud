@@ -113,9 +113,11 @@ type TabType = 'summary' | 'facilities' | 'devices' | 'invites' | 'route-passes'
 export default function UserDetailsPage() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
-  const handleBack = useBackNavigation('/users');
   const { authState, canManageUsers } = useAuth();
   const { addToast } = useToast();
+  const canManageUsersScope = canManageUsers();
+  const backPath = canManageUsersScope ? '/users' : '/dashboard';
+  const handleBack = useBackNavigation(backPath);
 
   const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -164,14 +166,14 @@ export default function UserDetailsPage() {
   }, [userId]);
 
   useEffect(() => {
-    if (userDetails && canManageUsers()) {
+    if (userDetails && canManageUsersScope) {
       loadFacilities();
       // Set current user's facilities (use facility_id if available, otherwise id)
       const currentFacilityIds = userDetails.facilities.map(f => f.facility_id || f.id);
       setSelectedFacilityIds(currentFacilityIds);
       setInitialFacilityIds(currentFacilityIds);
     }
-  }, [userDetails]);
+  }, [userDetails, canManageUsersScope]);
 
   useEffect(() => {
     if (userId && activeTab === 'route-passes' && canViewRoutePasses) {
@@ -359,6 +361,14 @@ export default function UserDetailsPage() {
     );
   };
 
+  const handleAllFacilitiesToggle = () => {
+    if (selectedFacilityIds.length === facilities.length) {
+      setSelectedFacilityIds([]);
+      return;
+    }
+    setSelectedFacilityIds(facilities.map((facility) => facility.id));
+  };
+
   const handleSaveEdit = async () => {
     if (!userDetails) return;
 
@@ -478,7 +488,7 @@ export default function UserDetailsPage() {
                   className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
                 >
                   <ArrowLeftIcon className="mr-2 h-4 w-4" />
-                  Back to Users
+                  {canManageUsersScope ? 'Back to Users' : 'Back to Dashboard'}
                 </button>
               </div>
             </div>
@@ -498,7 +508,7 @@ export default function UserDetailsPage() {
             className="inline-flex items-center text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors mb-4"
           >
             <ArrowLeftIcon className="mr-2 h-4 w-4" />
-            Back to Users
+            {canManageUsersScope ? 'Back to Users' : 'Back to Dashboard'}
           </button>
             <div className="flex items-center justify-between">
             <div>
@@ -518,7 +528,7 @@ export default function UserDetailsPage() {
               }`}>
                 {userDetails.isActive ? 'Active' : 'Inactive'}
               </span>
-              {canManageUsers() && (
+              {canManageUsersScope && (
                 <>
                   <button
                     onClick={() => {
@@ -589,7 +599,7 @@ export default function UserDetailsPage() {
                   Devices ({userDetails.devices.length})
                 </button>
               )}
-              {canManageUsers() && (
+              {canManageUsersScope && (
                 <button
                   onClick={() => setActiveTab('invites')}
                   className={`py-2 px-1 border-b-2 font-medium text-sm ${
@@ -673,7 +683,7 @@ export default function UserDetailsPage() {
           {/* Facilities Tab */}
           {activeTab === 'facilities' && (
             <div className="space-y-6">
-              {canManageUsers() && (userDetails.role === UserRole.ADMIN || userDetails.role === UserRole.DEV_ADMIN) ? (
+              {canManageUsersScope && (userDetails.role === UserRole.ADMIN || userDetails.role === UserRole.DEV_ADMIN) ? (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 text-center">
                   <div className="text-gray-500 dark:text-gray-400 mb-2">
                     <BuildingOfficeIcon className="mx-auto h-12 w-12" />
@@ -685,7 +695,7 @@ export default function UserDetailsPage() {
                     This user has {userDetails.role === UserRole.DEV_ADMIN ? 'development admin' : 'global admin'} privileges and can access all facilities automatically.
                   </p>
                 </div>
-              ) : canManageUsers() ? (
+              ) : canManageUsersScope ? (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
                   <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Manage Facility Access</h2>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
@@ -694,7 +704,24 @@ export default function UserDetailsPage() {
 
                   <div className="space-y-3 max-h-96 overflow-y-auto mb-6">
                     {facilities.length > 0 ? (
-                      facilities.map((facility) => {
+                      <>
+                        <label className="flex items-start space-x-3 p-3 rounded-lg border border-primary-200 dark:border-primary-700 bg-primary-50/70 dark:bg-primary-900/20 hover:bg-primary-100/70 dark:hover:bg-primary-900/30 cursor-pointer transition-colors duration-200">
+                          <input
+                            type="checkbox"
+                            checked={selectedFacilityIds.length === facilities.length}
+                            onChange={handleAllFacilitiesToggle}
+                            className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded"
+                          />
+                          <div className="flex-1">
+                            <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                              All Facilities
+                            </div>
+                            <div className="text-sm text-gray-600 dark:text-gray-400">
+                              Grant this user access to every facility in the system.
+                            </div>
+                          </div>
+                        </label>
+                        {facilities.map((facility) => {
                         const isChecked = selectedFacilityIds.includes(facility.id);
                         return (
                           <label
@@ -719,7 +746,8 @@ export default function UserDetailsPage() {
                           </div>
                         </label>
                         );
-                      })
+                        })}
+                      </>
                     ) : (
                       <div className="text-center py-8">
                         <BuildingOfficeIcon className="mx-auto h-12 w-12 text-gray-400" />
@@ -919,7 +947,7 @@ export default function UserDetailsPage() {
                   })}
                 </div>
               )}
-              {userDetails.facilities.length === 0 && !canManageUsers() && (
+              {userDetails.facilities.length === 0 && !canManageUsersScope && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 text-center">
                   <BuildingOfficeIcon className="mx-auto h-12 w-12 text-gray-400" />
                   <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No Facilities Assigned</h3>
@@ -932,7 +960,7 @@ export default function UserDetailsPage() {
           )}
 
           {/* Edit Tab */}
-          {activeTab === 'edit' && canManageUsers() && (
+          {activeTab === 'edit' && canManageUsersScope && (
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
               <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-6">Edit User</h2>
               <div className="space-y-6">
@@ -1109,7 +1137,7 @@ export default function UserDetailsPage() {
           )}
 
           {/* Invites & OTP Tab (Admin/Facility Admin/Dev Admin Only) */}
-          {activeTab === 'invites' && canManageUsers() && (
+          {activeTab === 'invites' && canManageUsersScope && (
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
               <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-6">Invites & OTP Management</h2>
 

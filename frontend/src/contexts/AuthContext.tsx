@@ -152,7 +152,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const canManageUsers = (): boolean => {
     return authState.user ? 
-      [UserRole.ADMIN, UserRole.DEV_ADMIN].includes(authState.user.role) : false;
+      [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(authState.user.role) : false;
   };
 
   const contextValue: AuthContextType = {

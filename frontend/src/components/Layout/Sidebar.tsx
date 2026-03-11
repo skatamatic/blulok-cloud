@@ -56,6 +56,7 @@ const bluLokNavigation: NavItem[] = [
     requireAdmin: true,
     children: [
       { name: 'System Settings', href: '/settings', icon: Cog6ToothIcon },
+      { name: 'Add Facility', href: '/settings/add-facility', icon: BuildingStorefrontIcon },
     ]
   },
 ];

@@ -201,6 +201,17 @@ describe('Users Routes', () => {
       expect(response.body).toHaveProperty('user');
     });
 
+    it('should allow maintenance users to view their own profile', async () => {
+      const response = await request(app)
+        .get(`/api/v1/users/${testData.users.maintenance.id}`)
+        .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('user');
+      expect(response.body.user.id).toBe(testData.users.maintenance.id);
+    });
+
     it('should return 404 for non-existent user', async () => {
       const response = await request(app)
         .get('/api/v1/users/non-existent-id')
@@ -669,6 +680,17 @@ describe('Users Routes', () => {
       getInstanceSpy?.mockRestore();
       userModelSpy?.mockRestore();
       listDevicesSpy?.mockRestore();
+    });
+
+    it('should allow maintenance users to view their own detailed profile', async () => {
+      const response = await request(app)
+        .get(`/api/v1/users/${testData.users.maintenance.id}/details`)
+        .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.user).toBeDefined();
+      expect(response.body.user.id).toBe(testData.users.maintenance.id);
     });
 
     it('should return detailed user information for DEV_ADMIN', async () => {

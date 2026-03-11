@@ -1,5 +1,6 @@
 import { DatabaseService } from '@/services/database.service';
 import { AccessCodePushDeliveryError, AccessCodeService } from '@/services/access-code.service';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { logger } from '@/utils/logger';
 
 export class AccessCodeSchedulerService {
@@ -16,8 +17,19 @@ export class AccessCodeSchedulerService {
     this.CHECK_INTERVAL_MS,
     Number(process.env.ACCESS_CODE_SCHEDULER_POOL_BACKOFF_MS || 30_000),
   );
+  private readonly RETRY_BACKOFF_BASE_MS = Math.max(
+    this.CHECK_INTERVAL_MS,
+    Number(process.env.ACCESS_CODE_SCHEDULER_RETRY_BASE_MS || 1_000),
+  );
+  private readonly RETRY_BACKOFF_MAX_MS = Math.max(
+    this.RETRY_BACKOFF_BASE_MS,
+    Number(process.env.ACCESS_CODE_SCHEDULER_RETRY_MAX_MS || 60_000),
+  );
   private lastRunByGroup = new Map<string, number>();
   private retryAtByGroup = new Map<string, number>();
+  private retryFailureCountByGroup = new Map<string, number>();
+  private onlineFacilityIds = new Set<string>();
+  private connectionChangeUnsubscribe?: () => void;
 
   // Resolve DB lazily to avoid construction-time dependency on DB initialization order
   private get db() {
@@ -30,23 +42,64 @@ export class AccessCodeSchedulerService {
   }
 
   public start(): void {
-    if (this.intervalId) {
+    if (this.connectionChangeUnsubscribe) {
       logger.warn('AccessCodeSchedulerService is already started');
       return;
     }
+    const gatewayEvents = GatewayEventsService.getInstance();
+    this.onlineFacilityIds = new Set(gatewayEvents.getConnectedFacilityIds());
+    this.connectionChangeUnsubscribe = gatewayEvents.onFacilityConnectionChange((event) => {
+      if (event.connected) {
+        this.onlineFacilityIds.add(event.facilityId);
+      } else {
+        this.onlineFacilityIds.delete(event.facilityId);
+      }
+      this.syncRunLoopState();
 
-    this.runSafe('Initial access code scheduler run failed (non-fatal):');
-    this.intervalId = setInterval(async () => {
-      await this.runSafe('Scheduled access code rotation failed (non-fatal):');
-    }, this.CHECK_INTERVAL_MS);
+      // Run immediately on online transitions to catch overdue rotations.
+      if (event.connected) {
+        this.runSafe('Connection-triggered access code rotation failed (non-fatal):');
+      }
+    });
+
+    // Startup probe to avoid missing rotations if a connection event was missed
+    // before listener registration. This one-shot run can discover online facilities
+    // via direct gateway status checks and activate the periodic loop.
+    this.runSafe('Startup access code scheduler check failed (non-fatal):');
+    this.syncRunLoopState();
     logger.info('AccessCodeSchedulerService started');
   }
 
   public stop(): void {
+    this.stopRunLoop();
+    if (this.connectionChangeUnsubscribe) {
+      this.connectionChangeUnsubscribe();
+      this.connectionChangeUnsubscribe = undefined;
+    }
+    this.onlineFacilityIds.clear();
+    logger.info('AccessCodeSchedulerService stopped');
+  }
+
+  private startRunLoop(): void {
+    if (this.intervalId) return;
+    this.runSafe('Initial access code scheduler run failed (non-fatal):');
+    this.intervalId = setInterval(async () => {
+      await this.runSafe('Scheduled access code rotation failed (non-fatal):');
+    }, this.CHECK_INTERVAL_MS);
+  }
+
+  private stopRunLoop(): void {
     if (!this.intervalId) return;
     clearInterval(this.intervalId);
     this.intervalId = null;
-    logger.info('AccessCodeSchedulerService stopped');
+  }
+
+  private syncRunLoopState(): void {
+    if (this.onlineFacilityIds.size > 0) {
+      this.startRunLoop();
+      return;
+    }
+    this.stopRunLoop();
   }
 
   private shouldRotate(
@@ -65,6 +118,27 @@ export class AccessCodeSchedulerService {
   private shouldRetryPush(groupId: string, nowMs: number): boolean {
     const retryAt = this.retryAtByGroup.get(groupId);
     return retryAt !== undefined && nowMs >= retryAt;
+  }
+
+  private getRetryAt(groupId: string): number | undefined {
+    return this.retryAtByGroup.get(groupId);
+  }
+
+  private clearRetryState(groupId: string): void {
+    this.retryAtByGroup.delete(groupId);
+    this.retryFailureCountByGroup.delete(groupId);
+  }
+
+  private scheduleRetry(groupId: string, nowMs: number): number {
+    const failures = (this.retryFailureCountByGroup.get(groupId) || 0) + 1;
+    this.retryFailureCountByGroup.set(groupId, failures);
+    const delay = Math.min(
+      this.RETRY_BACKOFF_MAX_MS,
+      this.RETRY_BACKOFF_BASE_MS * Math.pow(2, Math.max(0, failures - 1)),
+    );
+    const retryAt = nowMs + delay;
+    this.retryAtByGroup.set(groupId, retryAt);
+    return retryAt;
   }
 
   private isPushDeliveryError(error: unknown): boolean {
@@ -111,6 +185,7 @@ export class AccessCodeSchedulerService {
     const now = new Date();
     const nowMs = now.getTime();
     const facilityOnlineCache = new Map<string, boolean>();
+    let discoveredOnlineFacility = false;
     const groups = await this.db('device_groups')
       .select('id', 'facility_id')
       .where('group_type', 'access_code')
@@ -147,37 +222,48 @@ export class AccessCodeSchedulerService {
       );
       const shouldRetry = this.shouldRetryPush(groupId, now.getTime());
       if (!due && !shouldRetry) continue;
-
+      const hasTrackedOnlineFacilities = this.onlineFacilityIds.size > 0;
       let gatewayOnline = facilityOnlineCache.get(facilityId);
       if (gatewayOnline === undefined) {
-        gatewayOnline = this.accessCodes.isGatewayOnline(facilityId);
+        gatewayOnline = hasTrackedOnlineFacilities
+          ? this.onlineFacilityIds.has(facilityId)
+          : this.accessCodes.isGatewayOnline(facilityId);
         facilityOnlineCache.set(facilityId, gatewayOnline);
+        if (!hasTrackedOnlineFacilities && gatewayOnline) {
+          this.onlineFacilityIds.add(facilityId);
+          discoveredOnlineFacility = true;
+        }
       }
+
+      const retryAt = this.getRetryAt(groupId);
+      if (retryAt !== undefined && nowMs < retryAt) {
+        continue;
+      }
+
       if (!gatewayOnline) {
-        const retryAt = nowMs + 60_000;
-        this.retryAtByGroup.set(groupId, retryAt);
-        logger.info(
-          `Skipping access code rotation for group=${groupId} facility=${facilityId}; gateway offline, next retry at ${new Date(retryAt).toISOString()}`,
-        );
+        this.clearRetryState(groupId);
         continue;
       }
 
       try {
         await this.accessCodes.forceRotate(facilityId, 'device_group', groupId);
         this.lastRunByGroup.set(groupId, now.getTime());
-        this.retryAtByGroup.delete(groupId);
+        this.clearRetryState(groupId);
         logger.info(`Access code rotation completed for group=${groupId} facility=${facilityId}`);
       } catch (error) {
         if (this.isPushDeliveryError(error)) {
-          const retryAt = now.getTime() + 60_000;
-          this.retryAtByGroup.set(groupId, retryAt);
+          const nextRetryAt = this.scheduleRetry(groupId, nowMs);
           logger.warn(
-            `Access code push delivery failed for group=${groupId} facility=${facilityId}; retrying at ${new Date(retryAt).toISOString()}`,
+            `Access code push delivery failed for group=${groupId} facility=${facilityId}; retrying at ${new Date(nextRetryAt).toISOString()}`,
           );
           continue;
         }
         throw error;
       }
+    }
+
+    if (discoveredOnlineFacility) {
+      this.syncRunLoopState();
     }
   }
 }

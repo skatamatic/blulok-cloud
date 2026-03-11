@@ -26,6 +26,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import UserManagementPage from '@/pages/UserManagementPage';
 import UserDetailsPage from '@/pages/UserDetailsPage';
 import SettingsPage from '@/pages/SettingsPage';
+import AddFacilityPage from '@/pages/AddFacilityPage';
 
 import FacilitiesPage from '@/pages/FacilitiesPage';
 import FacilityDetailsPage from '@/pages/FacilityDetailsPage';
@@ -157,7 +158,7 @@ function App() {
                         } />
 
                         <Route path="/users/:userId/details" element={
-                          <ProtectedRoute requireUserManagement>
+                          <ProtectedRoute>
                             <DashboardLayout>
                               <UserDetailsPage />
                             </DashboardLayout>
@@ -168,6 +169,14 @@ function App() {
                           <ProtectedRoute requireAdmin>
                             <DashboardLayout>
                               <SettingsPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/settings/add-facility" element={
+                          <ProtectedRoute requireAdmin>
+                            <DashboardLayout>
+                              <AddFacilityPage />
                             </DashboardLayout>
                           </ProtectedRoute>
                         } />

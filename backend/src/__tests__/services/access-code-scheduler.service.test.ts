@@ -178,6 +178,8 @@ describe('AccessCodeSchedulerService', () => {
     const retryAt = scheduler.retryAtByGroup.get('grp-1');
     expect(typeof retryAt).toBe('number');
     expect(retryAt).toBeGreaterThan(Date.now());
+    const firstDelay = retryAt - Date.now();
+    expect(firstDelay).toBeLessThanOrEqual(60_000);
   });
 
   it('runSafe skips when a previous run is still in progress', async () => {
@@ -204,7 +206,7 @@ describe('AccessCodeSchedulerService', () => {
     expect(runSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('skips rotations and schedules retry when gateway is offline', async () => {
+  it('skips rotations while gateway is offline without scheduling retry spam', async () => {
     const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
     const groupsQuery = {
       select: jest.fn().mockReturnThis(),
@@ -238,7 +240,87 @@ describe('AccessCodeSchedulerService', () => {
     await scheduler.run();
 
     expect(forceRotate).not.toHaveBeenCalled();
-    expect(typeof scheduler.retryAtByGroup.get('grp-1')).toBe('number');
+    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
+  });
+
+  it('continues to skip offline rotations on repeated ticks', async () => {
+    const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
+    const groupsQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockResolvedValue(groupRows),
+    };
+    const latestCodeQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({
+        created_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      }),
+    };
+    dbMock.mockImplementation((table: string) => {
+      if (table === 'device_groups') return groupsQuery;
+      if (table === 'access_codes') return latestCodeQuery;
+      throw new Error(`Unexpected table ${table}`);
+    });
+    getGroupConfig.mockResolvedValue({
+      is_enabled: true,
+      digit_count: 6,
+      rotation_interval_hours: 24,
+      rotation_hour: 0,
+      rotation_minute: 0,
+    });
+    isGatewayOnline.mockReturnValue(false);
+
+    const scheduler = AccessCodeSchedulerService.getInstance() as any;
+    await scheduler.run();
+
+    await scheduler.run();
+    expect(forceRotate).not.toHaveBeenCalled();
+    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
+  });
+
+  it('retries immediately when gateway comes back online', async () => {
+    const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
+    const groupsQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockResolvedValue(groupRows),
+    };
+    const latestCodeQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({
+        created_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      }),
+    };
+    dbMock.mockImplementation((table: string) => {
+      if (table === 'device_groups') return groupsQuery;
+      if (table === 'access_codes') return latestCodeQuery;
+      throw new Error(`Unexpected table ${table}`);
+    });
+    getGroupConfig.mockResolvedValue({
+      is_enabled: true,
+      digit_count: 6,
+      rotation_interval_hours: 24,
+      rotation_hour: 0,
+      rotation_minute: 0,
+    });
+    forceRotate.mockResolvedValue(undefined);
+
+    const scheduler = AccessCodeSchedulerService.getInstance() as any;
+    isGatewayOnline.mockReturnValue(false);
+    await scheduler.run();
+    expect(forceRotate).not.toHaveBeenCalled();
+    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
+
+    isGatewayOnline.mockReturnValue(true);
+    await scheduler.run();
+    expect(forceRotate).toHaveBeenCalledWith('fac-1', 'device_group', 'grp-1');
+    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
   });
 });
 

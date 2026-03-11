@@ -71,6 +71,32 @@ describe('Access Codes Routes', () => {
     expectSuccess(response);
   });
 
+  it('includes device_type for each entry on /my', async () => {
+    mockGetCodesForUser.mockResolvedValueOnce([
+      {
+        device_id: 'dev-1',
+        device_name: 'Front Gate',
+        device_type: 'gate',
+        location_description: 'Main entrance',
+        code: '123456',
+        valid_from: '2026-03-09T00:00:00.000Z',
+        valid_until: '2026-03-10T00:00:00.000Z',
+      },
+    ]);
+
+    const response = await request(app)
+      .get('/api/v1/access-codes/my')
+      .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+      .expect(200);
+
+    expectSuccess(response);
+    expect(Array.isArray(response.body.data)).toBe(true);
+    expect(response.body.data[0]).toEqual(expect.objectContaining({
+      device_id: 'dev-1',
+      device_type: 'gate',
+    }));
+  });
+
   it('allows tenant on /app/my and forwards to app-scope service method', async () => {
     const response = await request(app)
       .get('/api/v1/access-codes/app/my')
@@ -78,6 +104,32 @@ describe('Access Codes Routes', () => {
       .expect(200);
     expectSuccess(response);
     expect(mockGetAppCodesForUser).toHaveBeenCalled();
+  });
+
+  it('includes device_type for each entry on /app/my', async () => {
+    mockGetAppCodesForUser.mockResolvedValueOnce([
+      {
+        device_id: 'dev-2',
+        device_name: 'Elevator 1',
+        device_type: 'elevator',
+        location_description: 'Lobby',
+        code: '654321',
+        valid_from: '2026-03-09T00:00:00.000Z',
+        valid_until: '2026-03-10T00:00:00.000Z',
+      },
+    ]);
+
+    const response = await request(app)
+      .get('/api/v1/access-codes/app/my')
+      .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+      .expect(200);
+
+    expectSuccess(response);
+    expect(Array.isArray(response.body.data)).toBe(true);
+    expect(response.body.data[0]).toEqual(expect.objectContaining({
+      device_id: 'dev-2',
+      device_type: 'elevator',
+    }));
   });
 
   it('forbids unsupported role on /app/my', async () => {

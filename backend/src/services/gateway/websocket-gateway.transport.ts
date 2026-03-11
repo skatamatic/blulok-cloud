@@ -44,6 +44,13 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   private readonly pingIntervalMs = (Number(process.env.GATEWAY_PING_INTERVAL_SEC) || 10) * 1000;
   private readonly inactivityTimeoutMs = (Number(process.env.GATEWAY_PONG_TIMEOUT_SEC) || 20) * 1000;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private connectionChangeListener?: (event: {
+    facilityId: string;
+    connected: boolean;
+    timestamp: number;
+    reason?: string;
+    lastActivityAt?: number;
+  }) => void;
 
   public initialize(server: HTTPServer): void {
     if (this.wss) return;
@@ -126,6 +133,45 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     }
   }
 
+  public setConnectionChangeListener(listener: (event: {
+    facilityId: string;
+    connected: boolean;
+    timestamp: number;
+    reason?: string;
+    lastActivityAt?: number;
+  }) => void): () => void {
+    this.connectionChangeListener = listener;
+    return () => {
+      if (this.connectionChangeListener === listener) {
+        this.connectionChangeListener = undefined;
+      }
+    };
+  }
+
+  public getConnectedFacilityIds(): string[] {
+    return Array.from(this.facilityToClient.keys());
+  }
+
+  private notifyConnectionChange(
+    facilityId: string,
+    connected: boolean,
+    reason?: string,
+    lastActivityAt?: number,
+  ): void {
+    if (!this.connectionChangeListener) return;
+    try {
+      this.connectionChangeListener({
+        facilityId,
+        connected,
+        reason,
+        lastActivityAt,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      logger.warn('Gateway WS connection change listener failed', error);
+    }
+  }
+
   /**
    * Safely extract tid (transaction ID) from request body.
    * Preserves type (number or string) from request.
@@ -161,11 +207,12 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   private bindConnection(ws: RemoteWebSocket): void {
     let authed: AuthedClient | null = null;
 
-    const closeAndCleanup = () => {
+    const closeAndCleanup = (reason = 'socket_closed') => {
       if (authed) {
         const current = this.facilityToClient.get(authed.facilityId);
         if (current?.ws === ws) {
           this.facilityToClient.delete(authed.facilityId);
+          this.notifyConnectionChange(authed.facilityId, false, reason, authed.lastActivityAt);
           logger.info(`Gateway disconnected for facility ${authed.facilityId} (user=${authed.user.userId})`);
           GatewayDebugService.getInstance().publish({
             kind: 'connection_closed',
@@ -274,6 +321,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         const now = Date.now();
         authed = { ws, user: decoded, facilityId, lastActivityAt: now };
         this.facilityToClient.set(facilityId, authed);
+        this.notifyConnectionChange(facilityId, true, 'auth_ok', now);
         let ops_public_key_pem: string | undefined;
         try { ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem(); } catch {}
         safeSend(ws, {
@@ -372,11 +420,11 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         }
       })();
       logger.warn(`Gateway WS close event code=${code} reason=${reason || '<empty>'}`);
-      closeAndCleanup();
+      closeAndCleanup('close_event');
     });
     ws.on('error', (err) => {
       logger.warn('Gateway WS error:', err);
-      closeAndCleanup();
+      closeAndCleanup('socket_error');
     });
   }
 
@@ -394,6 +442,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           logger.warn(`Gateway heartbeat inactivity timeout, closing facility ${facilityId}`);
           try { client.ws.close(4001, 'heartbeat timeout'); } catch {}
           this.facilityToClient.delete(facilityId);
+          this.notifyConnectionChange(facilityId, false, 'heartbeat_timeout', client.lastActivityAt);
           GatewayDebugService.getInstance().publish({
             kind: 'heartbeat_timeout',
             facilityId,

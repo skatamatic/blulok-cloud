@@ -33,10 +33,11 @@
  */
 
 import { Router, Response } from 'express';
+import Joi from 'joi';
 import { FacilityModel, Facility } from '../models/facility.model';
 // import { GatewayModel } from '../models/gateway.model';
 import { DeviceModel } from '../models/device.model';
-import { authenticateToken, requireAdmin, requireRoles } from '../middleware/auth.middleware';
+import { authenticateToken, requireRoles } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '../services/database.service';
@@ -45,6 +46,34 @@ const router = Router();
 const facilityModel = new FacilityModel();
 // Removed unused gatewayModel
 const deviceModel = new DeviceModel();
+
+const createFacilitySchema = Joi.object({
+  name: Joi.string().trim().min(1).max(255).required(),
+  description: Joi.string().allow('').max(2000).optional(),
+  address: Joi.string().trim().min(1).max(500).required(),
+  latitude: Joi.number().min(-90).max(90).optional(),
+  longitude: Joi.number().min(-180).max(180).optional(),
+  branding_image: Joi.string().allow('').optional(),
+  image_mime_type: Joi.string().allow('').max(100).optional(),
+  contact_email: Joi.string().email().allow('').optional(),
+  contact_phone: Joi.string().allow('').max(50).optional(),
+  status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
+  metadata: Joi.object().optional(),
+});
+
+const updateFacilitySchema = Joi.object({
+  name: Joi.string().trim().min(1).max(255).optional(),
+  description: Joi.string().allow('').max(2000).optional(),
+  address: Joi.string().trim().min(1).max(500).optional(),
+  latitude: Joi.number().min(-90).max(90).optional(),
+  longitude: Joi.number().min(-180).max(180).optional(),
+  branding_image: Joi.string().allow('').optional(),
+  image_mime_type: Joi.string().allow('').max(100).optional(),
+  contact_email: Joi.string().email().allow('').optional(),
+  contact_phone: Joi.string().allow('').max(50).optional(),
+  status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
+  metadata: Joi.object().optional(),
+}).min(1);
 
 /**
  * Get linked BluDesign facility ID for a BluLok facility
@@ -204,10 +233,20 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
   }
 });
 
-// POST /api/facilities - Create new facility (Admin only)
-router.post('/', requireAdmin, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// POST /api/facilities - Create new facility (Admin/Dev Admin only)
+router.post('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const facilityData = req.body;
+    const { error, value } = createFacilitySchema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true,
+      allowUnknown: true,
+    });
+    if (error) {
+      res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+      return;
+    }
+
+    const facilityData = value;
     const facility = await facilityModel.create(facilityData);
     
     res.status(201).json({ success: true, facility });
@@ -234,7 +273,17 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
       return;
     }
 
-    const facilityData = req.body;
+    const { error, value } = updateFacilitySchema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true,
+      allowUnknown: true,
+    });
+    if (error) {
+      res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+      return;
+    }
+
+    const facilityData = value;
     const facility = await facilityModel.update(String(id), facilityData);
     
     if (!facility) {

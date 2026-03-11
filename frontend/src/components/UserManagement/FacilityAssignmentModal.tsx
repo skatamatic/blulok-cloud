@@ -81,6 +81,14 @@ export const FacilityAssignmentModal: React.FC<FacilityAssignmentModalProps> = (
     );
   };
 
+  const handleAllFacilitiesToggle = () => {
+    if (selectedFacilityIds.length === facilities.length) {
+      setSelectedFacilityIds([]);
+      return;
+    }
+    setSelectedFacilityIds(facilities.map((facility) => facility.id));
+  };
+
   const isGlobalRole = user?.role === UserRole.ADMIN || user?.role === UserRole.DEV_ADMIN;
 
   return (
@@ -140,29 +148,45 @@ export const FacilityAssignmentModal: React.FC<FacilityAssignmentModalProps> = (
                   ))}
                 </div>
               ) : facilities.length > 0 ? (
-                facilities.map((facility) => (
-                <label
-                  key={facility.id}
-                  className="flex items-start space-x-3 p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors duration-200"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFacilityIds.includes(facility.id)}
-                    onChange={() => handleFacilityToggle(facility.id)}
-                    className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded"
-                  />
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">
-                      {facility.name}
-                    </div>
-                    {facility.description && (
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        {facility.description}
+                <>
+                  <label className="flex items-start space-x-3 p-3 rounded-lg border border-primary-200 dark:border-primary-700 bg-primary-50/70 dark:bg-primary-900/20 hover:bg-primary-100/70 dark:hover:bg-primary-900/30 cursor-pointer transition-colors duration-200">
+                    <input
+                      type="checkbox"
+                      checked={selectedFacilityIds.length === facilities.length}
+                      onChange={handleAllFacilitiesToggle}
+                      className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-semibold text-gray-900 dark:text-white">All Facilities</div>
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        Grant this user access to every facility in the system.
                       </div>
-                    )}
-                  </div>
-                </label>
-              ))
+                    </div>
+                  </label>
+                  {facilities.map((facility) => (
+                    <label
+                      key={facility.id}
+                      className="flex items-start space-x-3 p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors duration-200"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedFacilityIds.includes(facility.id)}
+                        onChange={() => handleFacilityToggle(facility.id)}
+                        className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded"
+                      />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          {facility.name}
+                        </div>
+                        {facility.description && (
+                          <div className="text-sm text-gray-500 dark:text-gray-400">
+                            {facility.description}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </>
               ) : (
                 <div className="text-center py-8">
                   <div className="text-gray-400 mb-2">

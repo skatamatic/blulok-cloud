@@ -85,9 +85,13 @@ export const GlobalFacilityProvider: React.FC<GlobalFacilityProviderProps> = ({ 
           setSelectedFacilityIdState(null);
           localStorage.removeItem(STORAGE_KEY);
         } else if (userFacilities.length === 1) {
-          // Single facility - auto-select it (ignore persisted value)
-          setSelectedFacilityIdState(userFacilities[0].id);
-          localStorage.setItem(STORAGE_KEY, userFacilities[0].id);
+          // Preserve explicit "All Facilities" selection even in single-facility environments.
+          if (persistedId === ALL_FACILITIES_ID) {
+            setSelectedFacilityIdState(ALL_FACILITIES_ID);
+          } else {
+            setSelectedFacilityIdState(userFacilities[0].id);
+            localStorage.setItem(STORAGE_KEY, userFacilities[0].id);
+          }
         } else {
           // Multiple facilities
           if (persistedId === ALL_FACILITIES_ID) {

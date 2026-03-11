@@ -112,6 +112,9 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
     } else {
       // Filter to only users associated with managed facilities
       filteredUsers = filteredUsers.filter(user => {
+        if (AuthService.canAccessAllFacilities(user.role as UserRole)) {
+          return true;
+        }
         if (!user.facility_ids) return false;
         const userFacilityIds = user.facility_ids.split(',').map((id: string) => id.trim());
         // Check if any of the user's facilities match the admin's managed facilities
@@ -140,6 +143,10 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   // Apply facility filter
   if (facility) {
     filteredUsers = filteredUsers.filter(user => {
+      // Global admin roles are intentionally visible in all facility scopes.
+      if (AuthService.canAccessAllFacilities(user.role as UserRole)) {
+        return true;
+      }
       // Handle users with no facility associations (facility_ids is null)
       if (!user.facility_ids) {
         return false;
