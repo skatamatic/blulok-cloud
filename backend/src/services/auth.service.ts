@@ -119,7 +119,8 @@ export class AuthService {
           if (appDeviceId) {
             const { UserDeviceModel } = await import('@/models/user-device.model');
             const udm = new UserDeviceModel();
-            const existing = await udm.findByUserAndAppDeviceId(user.id, appDeviceId);
+            // Revoked devices should re-register and regenerate keys.
+            const existing = await udm.findActiveByUserAndAppDeviceId(user.id, appDeviceId);
             if (!existing) {
               keyGenerationRequired = true;
             }

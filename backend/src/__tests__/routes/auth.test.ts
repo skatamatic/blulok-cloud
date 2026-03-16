@@ -29,6 +29,33 @@ describe('Auth Routes', () => {
       expect(response.body.user).not.toHaveProperty('password');
     });
 
+    it('should include key_generation_required when login indicates re-registration is needed', async () => {
+      jest.spyOn(AuthService, 'login').mockResolvedValueOnce({
+        success: true,
+        message: 'Login successful',
+        token: 'mock-jwt-token',
+        user: {
+          id: 'tenant-1',
+          email: 'tenant@test.com',
+          firstName: 'Test',
+          lastName: 'Tenant',
+          role: 'tenant' as any,
+        },
+        key_generation_required: true,
+      } as any);
+
+      const response = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: 'tenant@test.com',
+          password: 'password123',
+        })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.key_generation_required).toBe(true);
+    });
+
     it('should return 401 for invalid email', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')

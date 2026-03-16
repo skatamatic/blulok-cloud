@@ -491,11 +491,32 @@ describe('Units Routes', () => {
       expectNotFound(response);
     });
 
-    it('should return 403 for TENANT', async () => {
+    it('should allow primary tenant to grant shared access', async () => {
       const response = await request(app)
         .post('/api/v1/units/unit-1/assign')
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .send(assignData)
+        .send({ ...assignData, is_primary: false })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.message).toMatch(/granted.*shared access/i);
+    });
+
+    it('should return 403 when tenant tries to assign a primary tenant', async () => {
+      const response = await request(app)
+        .post('/api/v1/units/unit-1/assign')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ ...assignData, is_primary: true })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 403 when tenant without unit access attempts shared assignment', async () => {
+      const response = await request(app)
+        .post('/api/v1/units/unit-2/assign')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ ...assignData, is_primary: false })
         .expect(403);
 
       expectForbidden(response);
@@ -591,7 +612,17 @@ describe('Units Routes', () => {
       expectNotFound(response);
     });
 
-    it('should return 403 for TENANT', async () => {
+    it('should allow primary tenant to remove shared access', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.otherTenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.message).toContain('removed');
+    });
+
+    it('should return 403 when tenant attempts to remove a primary assignment', async () => {
       const response = await request(app)
         .delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.tenant.id}`)
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)

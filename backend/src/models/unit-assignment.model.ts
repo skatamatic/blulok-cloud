@@ -59,6 +59,15 @@ export interface UnitAssignment {
   updated_at: Date;
 }
 
+export interface PrimaryAssignmentMutationResult {
+  removedPrimaryAssignments: Array<{
+    tenant_id: string;
+    access_type: UnitAssignment['access_type'];
+  }>;
+  assigned: 'created' | 'promoted' | 'unchanged';
+  assignedAccessType: UnitAssignment['access_type'];
+}
+
 export class UnitAssignmentModel {
   private db;
 
@@ -300,6 +309,86 @@ export class UnitAssignmentModel {
       return parseInt(count?.count as string || '0') > 0;
     } catch (error) {
       logger.error('Error checking assignment existence:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Atomically converge a unit to a single primary tenant.
+   * Removes other primary assignments, then promotes or creates the target assignment.
+   */
+  async assignPrimaryAtomically(data: {
+    unit_id: string;
+    tenant_id: string;
+    access_type?: UnitAssignment['access_type'];
+    expires_at?: Date;
+    notes?: string;
+  }): Promise<PrimaryAssignmentMutationResult> {
+    try {
+      return await this.db.transaction(async (trx: any) => {
+        const assignments: UnitAssignment[] = await trx('unit_assignments')
+          .where({ unit_id: data.unit_id });
+
+        const existing = assignments.find((assignment) => assignment.tenant_id === data.tenant_id);
+        const primaryAssignmentsToReplace = assignments.filter(
+          (assignment) => assignment.is_primary && assignment.tenant_id !== data.tenant_id
+        );
+
+        if (primaryAssignmentsToReplace.length > 0) {
+          await trx('unit_assignments')
+            .where({ unit_id: data.unit_id })
+            .whereIn('tenant_id', primaryAssignmentsToReplace.map((assignment) => assignment.tenant_id))
+            .del();
+        }
+
+        let assigned: PrimaryAssignmentMutationResult['assigned'] = 'unchanged';
+        let assignedAccessType: UnitAssignment['access_type'] = existing?.access_type || data.access_type || 'full';
+
+        if (existing) {
+          if (!existing.is_primary) {
+            const updateData: any = {
+              is_primary: true,
+              access_type: data.access_type || existing.access_type,
+              notes: data.notes ?? existing.notes ?? null,
+              updated_at: this.db.fn.now(),
+            };
+            await trx('unit_assignments')
+              .where({ id: existing.id })
+              .update(updateData);
+            assigned = 'promoted';
+            assignedAccessType = data.access_type || existing.access_type;
+          }
+        } else {
+          const id = randomUUID();
+          const insertData: any = {
+            id,
+            unit_id: data.unit_id,
+            tenant_id: data.tenant_id,
+            access_type: data.access_type || 'full',
+            is_primary: true,
+            notes: data.notes ?? null,
+            created_at: this.db.fn.now(),
+            updated_at: this.db.fn.now(),
+          };
+          if (data.expires_at) {
+            insertData.expires_at = data.expires_at;
+          }
+          await trx('unit_assignments').insert(insertData);
+          assigned = 'created';
+          assignedAccessType = data.access_type || 'full';
+        }
+
+        return {
+          removedPrimaryAssignments: primaryAssignmentsToReplace.map((assignment) => ({
+            tenant_id: assignment.tenant_id,
+            access_type: assignment.access_type,
+          })),
+          assigned,
+          assignedAccessType,
+        };
+      });
+    } catch (error) {
+      logger.error('Error atomically assigning primary tenant:', error);
       throw error;
     }
   }

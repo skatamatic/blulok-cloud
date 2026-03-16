@@ -370,8 +370,8 @@ router.put('/:unitId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRol
   }
 }));
 
-// POST /units/:unitId/assign - Assign tenant to unit (Admin, Dev Admin, Facility Admin only)
-router.post('/:unitId/assign', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// POST /units/:unitId/assign - Assign tenant to unit (Admin/Dev Admin/Facility Admin, or primary tenant for shared access)
+router.post('/:unitId/assign', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN, UserRole.TENANT]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { unitId } = req.params;
     const { tenant_id, access_type = 'full', expires_at, notes } = req.body;
@@ -413,10 +413,42 @@ router.post('/:unitId/assign', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN,
     }
 
     const isPrimary = req.body.is_primary ?? false;
+    const canManageUnits = [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(userRole as UserRole);
+
+    if (!canManageUnits) {
+      const hasAccess = await unitsService.hasUserAccessToUnit(unit.id, userId, userRole);
+      if (!hasAccess) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this unit'
+        });
+        return;
+      }
+
+      const actingAssignment = await new UnitAssignmentModel().findByUnitAndTenant(unit.id, userId);
+      const isPrimaryTenantOfUnit = !!actingAssignment?.is_primary;
+
+      if (!isPrimaryTenantOfUnit) {
+        res.status(403).json({
+          success: false,
+          message: 'Only admins or the primary tenant can manage unit access'
+        });
+        return;
+      }
+
+      // Tenant self-management is shared-access only.
+      if (isPrimary) {
+        res.status(403).json({
+          success: false,
+          message: 'Primary tenant cannot change the primary assignment. Only facility administrators can do this.'
+        });
+        return;
+      }
+    }
 
     // For facility admins, verify they manage this facility
     if (userRole === UserRole.FACILITY_ADMIN) {
-      const hasAccess = await unitsService.hasUserAccessToUnit(unitId, userId, userRole);
+      const hasAccess = await unitsService.hasUserAccessToUnit(unit.id, userId, userRole);
       if (!hasAccess) {
         res.status(403).json({
           success: false,
@@ -461,8 +493,8 @@ router.post('/:unitId/assign', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN,
   }
 }));
 
-// DELETE /units/:unitId/assign/:tenantId - Remove tenant from unit (Admin, Dev Admin, Facility Admin only)
-router.delete('/:unitId/assign/:tenantId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// DELETE /units/:unitId/assign/:tenantId - Remove tenant from unit (Admin/Dev Admin/Facility Admin, or primary tenant for shared access)
+router.delete('/:unitId/assign/:tenantId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN, UserRole.TENANT]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { unitId, tenantId } = req.params;
     const userId = req.user!.userId;
@@ -513,9 +545,41 @@ router.delete('/:unitId/assign/:tenantId', requireRoles([UserRole.ADMIN, UserRol
       return;
     }
 
+    const canManageUnits = [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(userRole as UserRole);
+    if (!canManageUnits) {
+      const hasAccess = await unitsService.hasUserAccessToUnit(unit.id, userId, userRole);
+      if (!hasAccess) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this unit'
+        });
+        return;
+      }
+
+      const actingAssignment = await unitAssignmentModel.findByUnitAndTenant(unit.id, userId);
+      const isPrimaryTenantOfUnit = !!actingAssignment?.is_primary;
+
+      if (!isPrimaryTenantOfUnit) {
+        res.status(403).json({
+          success: false,
+          message: 'Only admins or the primary tenant can manage unit access'
+        });
+        return;
+      }
+
+      // Tenant self-management is shared-access only.
+      if (assignment.is_primary) {
+        res.status(403).json({
+          success: false,
+          message: 'Cannot remove the primary tenant. Only facility administrators can do this.'
+        });
+        return;
+      }
+    }
+
     // For facility admins, verify they manage this facility
     if (userRole === UserRole.FACILITY_ADMIN) {
-      const hasAccess = await unitsService.hasUserAccessToUnit(unitId, userId, userRole);
+      const hasAccess = await unitsService.hasUserAccessToUnit(unit.id, userId, userRole);
       if (!hasAccess) {
         res.status(403).json({
           success: false,

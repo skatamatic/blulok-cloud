@@ -121,7 +121,8 @@ export default function UnitDetailsPage() {
   const [showShareModal, setShowShareModal] = useState(false);
   const canManageUnits = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canChangePrimaryTenant = canManageUnits; // Only admins can change primary tenant
-  const canManageSharedAccess = canManageUnits; // Manual shared access management is admin-scoped
+  const isPrimaryTenant = unit?.primary_tenant?.id === authState.user?.id;
+  const canManageSharedAccess = canManageUnits || isPrimaryTenant; // Primary tenant can manage shared access
 
   // Handle tab from URL query parameter
   useEffect(() => {

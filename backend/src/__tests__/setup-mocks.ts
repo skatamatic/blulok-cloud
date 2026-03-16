@@ -673,8 +673,28 @@ jest.mock('../models/unit-assignment.model', () => ({
     findById: jest.fn().mockResolvedValue(null),
     findByUnitId: jest.fn().mockResolvedValue([]),
     findByTenantId: jest.fn().mockResolvedValue([]),
-    findByUnitAndTenant: jest.fn().mockImplementation((unitId: string, tenantId: string) => 
-      Promise.resolve({
+    findByUnitAndTenant: jest.fn().mockImplementation((unitId: string, tenantId: string) => {
+      const unit1Ids = new Set(['unit-1', '550e8400-e29b-41d4-a716-446655440011']);
+      const unit2Ids = new Set(['unit-2', '550e8400-e29b-41d4-a716-446655440012']);
+
+      const isTenant1PrimaryOnUnit1 = unit1Ids.has(unitId) && tenantId === 'tenant-1';
+      const isTenant2PrimaryOnUnit2 = unit2Ids.has(unitId) && tenantId === 'tenant-2';
+      const isSharedOnUnit1 = unit1Ids.has(unitId) && tenantId === 'other-tenant-1';
+
+      if (isTenant1PrimaryOnUnit1 || isTenant2PrimaryOnUnit2 || isSharedOnUnit1) {
+        return Promise.resolve({
+          id: 'assignment-existing',
+          unit_id: unitId,
+          tenant_id: tenantId,
+          access_type: 'full',
+          is_primary: isTenant1PrimaryOnUnit1 || isTenant2PrimaryOnUnit2,
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
+
+      // Preserve permissive defaults for broad test compatibility.
+      return Promise.resolve({
         id: 'assignment-existing',
         unit_id: unitId,
         tenant_id: tenantId,
@@ -682,9 +702,14 @@ jest.mock('../models/unit-assignment.model', () => ({
         is_primary: false,
         created_at: new Date(),
         updated_at: new Date(),
-      })
-    ),
+      });
+    }),
     update: jest.fn().mockResolvedValue(null),
+    assignPrimaryAtomically: jest.fn().mockResolvedValue({
+      removedPrimaryAssignments: [],
+      assigned: 'created',
+      assignedAccessType: 'full',
+    }),
     delete: jest.fn().mockResolvedValue(true),
     deleteByUnitAndTenant: jest.fn().mockResolvedValue(true),
     deleteByTenantId: jest.fn().mockResolvedValue(0),

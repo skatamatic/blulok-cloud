@@ -102,6 +102,7 @@ describe('AuthService', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Account is deactivated. Please contact administrator.');
     });
+
   });
 
   describe('generateToken', () => {

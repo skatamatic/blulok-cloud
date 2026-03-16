@@ -178,19 +178,17 @@ export class UnitsService {
         throw new Error('Unit not found');
       }
 
-      // Check if assignment already exists
-      const existing = await this.unitAssignmentModel.findByUnitAndTenant(unitId, tenantId);
-
       // Explicit primary assignment should always converge to a single primary tenant.
       if (options.isPrimary === true) {
-        const assignments = await this.unitAssignmentModel.findByUnitId(unitId);
-        const primaryAssignmentsToReplace = assignments.filter(
-          (assignment) => assignment.is_primary && assignment.tenant_id !== tenantId
-        );
+        const primaryMutation = await this.unitAssignmentModel.assignPrimaryAtomically({
+          unit_id: unitId,
+          tenant_id: tenantId,
+          access_type: options.accessType as any,
+          expires_at: options.expiresAt,
+          notes: options.notes,
+        });
 
-        for (const primaryAssignment of primaryAssignmentsToReplace) {
-          await this.unitAssignmentModel.deleteByUnitAndTenant(unitId, primaryAssignment.tenant_id);
-
+        for (const removedPrimary of primaryMutation.removedPrimaryAssignments) {
           const unassignMetadata: any = {
             source: options.source || 'api',
             performedBy: options.performedBy,
@@ -200,8 +198,8 @@ export class UnitsService {
           this.eventService.emitTenantUnassigned({
             unitId,
             facilityId: unit.facility_id,
-            tenantId: primaryAssignment.tenant_id,
-            accessType: primaryAssignment.access_type,
+            tenantId: removedPrimary.tenant_id,
+            accessType: removedPrimary.access_type,
             metadata: unassignMetadata,
           });
 
@@ -209,33 +207,19 @@ export class UnitsService {
             unitId,
             unit.facility_id,
             unit.unit_number,
-            primaryAssignment.tenant_id,
+            removedPrimary.tenant_id,
             options.performedBy,
             options.source || 'api'
           ).catch(err => logger.error('Failed to log primary replacement side effects:', err));
         }
 
-        if (existing) {
-          if (!existing.is_primary) {
-            await this.unitAssignmentModel.update(existing.id, {
-              is_primary: true,
-              access_type: options.accessType || existing.access_type,
-              notes: options.notes || existing.notes,
-            });
-          } else {
-            logger.warn(`Primary assignment already exists for tenant ${tenantId} on unit ${unitId}`);
-          }
-        } else {
-          const assignmentData: any = {
-            unit_id: unitId,
-            tenant_id: tenantId,
-            access_type: options.accessType || 'full',
-            is_primary: true,
-          };
-          if (options.expiresAt) assignmentData.expires_at = options.expiresAt;
-          if (options.notes) assignmentData.notes = options.notes;
-
-          await this.unitAssignmentModel.create(assignmentData);
+        if (primaryMutation.assigned === 'unchanged') {
+          logger.info(`Primary tenant assignment is already current for unit ${unitId}`, {
+            tenantId,
+            source: options.source || 'api',
+            replacedPrimaryCount: primaryMutation.removedPrimaryAssignments.length,
+          });
+          return;
         }
 
         const eventMetadata: any = {
@@ -248,14 +232,14 @@ export class UnitsService {
           unitId,
           facilityId: unit.facility_id,
           tenantId,
-          accessType: options.accessType || 'full',
+          accessType: primaryMutation.assignedAccessType,
           metadata: eventMetadata,
         });
 
         logger.info(`Primary tenant ${tenantId} set for unit ${unitId} by ${options.performedBy}`, {
           source: options.source || 'api',
           facilityId: unit.facility_id,
-          replacedPrimaryCount: primaryAssignmentsToReplace.length,
+          replacedPrimaryCount: primaryMutation.removedPrimaryAssignments.length,
         });
 
         this.logAssignmentSideEffects(
@@ -266,6 +250,8 @@ export class UnitsService {
         return;
       }
 
+      // Check if assignment already exists
+      const existing = await this.unitAssignmentModel.findByUnitAndTenant(unitId, tenantId);
       if (existing) {
         logger.warn(`Assignment already exists for tenant ${tenantId} to unit ${unitId}`);
         return;

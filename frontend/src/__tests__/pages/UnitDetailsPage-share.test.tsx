@@ -76,6 +76,14 @@ const tenantUser = {
   role: 'tenant',
 };
 
+const nonPrimaryTenantUser = {
+  id: 'tenant-other',
+  email: 'othertenant@example.com',
+  firstName: 'Other',
+  lastName: 'Tenant',
+  role: 'tenant',
+};
+
 const baseUnit = {
   id: 'unit-1',
   unit_number: 'A-101',
@@ -142,10 +150,33 @@ describe('UnitDetailsPage shared access', () => {
     });
   });
 
-  it('hides shared access management controls for tenant users', async () => {
+  it('shows shared access controls for the primary tenant', async () => {
     mockUseAuth.mockReturnValue({
       authState: {
         user: tenantUser,
+        isAuthenticated: true,
+      },
+    });
+    mockApiService.getUnitDetails.mockResolvedValue({ unit: baseUnit } as any);
+
+    render(
+      <MemoryRouter initialEntries={['/units/unit-1']}>
+        <UnitDetailsPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
+    expect(screen.getByRole('button', { name: /add shared access/i })).toBeInTheDocument();
+  });
+
+  it('hides shared access controls for non-primary tenants', async () => {
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: nonPrimaryTenantUser,
         isAuthenticated: true,
       },
     });
