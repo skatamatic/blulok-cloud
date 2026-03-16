@@ -119,9 +119,6 @@ describe('BatterySubscriptionManager', () => {
       await (manager as any).sendInitialData(mockWs, 'test-subscription', mockClient);
 
       expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN);
-      expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN, { 
-        battery_threshold: 20 
-      });
 
       expect(mockWs.send).toHaveBeenCalledWith(
         expect.stringContaining('"type":"battery_status_update"')
@@ -209,15 +206,9 @@ describe('BatterySubscriptionManager', () => {
 
       await manager.broadcastUpdate();
 
-      expect(mockUnitsService.getUnits).toHaveBeenCalledTimes(4); // 2 calls per user
+      expect(mockUnitsService.getUnits).toHaveBeenCalledTimes(2); // 1 call per user (computed threshold in-memory)
       expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN);
-      expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN, { 
-        battery_threshold: 20 
-      });
       expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-2', UserRole.FACILITY_ADMIN);
-      expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-2', UserRole.FACILITY_ADMIN, { 
-        battery_threshold: 20 
-      });
     });
 
     it('should handle missing client context gracefully', async () => {

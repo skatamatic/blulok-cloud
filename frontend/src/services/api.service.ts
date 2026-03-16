@@ -313,6 +313,16 @@ class ApiService {
     return response.data;
   }
 
+  async reassignGateway(id: string, targetFacilityId: string) {
+    const response = await this.api.patch(`/gateways/${id}/reassign`, { targetFacilityId });
+    return response.data;
+  }
+
+  async getGatewayReassignmentCandidates(facilityId: string) {
+    const response = await this.api.get(`/gateways/reassignment-candidates/${facilityId}`);
+    return response.data as { success: boolean; gateways: any[] };
+  }
+
   async updateGatewayStatus(id: string, status: string) {
     const response = await this.api.put(`/gateways/${id}/status`, { status });
     return response.data;

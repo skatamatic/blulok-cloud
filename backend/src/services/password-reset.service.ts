@@ -79,7 +79,7 @@ export class PasswordResetService {
     await this.db('password_reset_tokens')
       .where('user_id', user.id)
       .whereNull('used_at')
-      .update({ used_at: this.db.fn.now() });
+      .update({ used_at: this.db.raw('UTC_TIMESTAMP()') });
 
     // Generate new token
     const token = this.generateToken();
@@ -89,7 +89,7 @@ export class PasswordResetService {
     await this.db('password_reset_tokens').insert({
       user_id: user.id,
       token,
-      expires_at: expiresAt,
+      expires_at: this.db.raw('DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)', [TOKEN_EXPIRY_MINUTES]),
     });
 
     // Get notification config to determine delivery method
@@ -195,7 +195,7 @@ export class PasswordResetService {
     // Mark token as used
     await this.db('password_reset_tokens')
       .where('id', resetToken.id)
-      .update({ used_at: this.db.fn.now() });
+      .update({ used_at: this.db.raw('UTC_TIMESTAMP()') });
 
     // Hash new password and update user
     const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
@@ -204,7 +204,7 @@ export class PasswordResetService {
       .update({ 
         password_hash: passwordHash, 
         requires_password_reset: false,
-        updated_at: this.db.fn.now() 
+        updated_at: this.db.raw('UTC_TIMESTAMP()') 
       });
 
     logger.info(`Password reset successful for user ${user.id}`);

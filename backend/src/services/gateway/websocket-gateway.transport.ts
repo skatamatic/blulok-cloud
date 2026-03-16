@@ -223,7 +223,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           });
           // Cancel any active firmware pushes for this facility to avoid long ACK timeout waits
           import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
-            FirmwareService.handleFacilityDisconnect(authed!.facilityId);
+            void FirmwareService.handleFacilityDisconnect(authed!.facilityId);
           }).catch(() => {});
         }
       }

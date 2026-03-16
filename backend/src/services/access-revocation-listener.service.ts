@@ -40,13 +40,13 @@ export class AccessRevocationListenerService {
   }
 
   /**
-   * Calculate expiration time based on route pass TTL.
+   * Calculate expiration epoch based on route pass TTL.
    * Denylist entries should only last as long as the last-issued route pass is valid.
    */
-  private getExpirationDate(): Date {
-    const now = new Date();
-    const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
-    return new Date(now.getTime() + ttlMs);
+  private getExpirationEpochSeconds(): number {
+    const now = Math.floor(Date.now() / 1000);
+    const ttlSeconds = (config.security.routePassTtlHours || 24) * 60 * 60;
+    return now + ttlSeconds;
   }
 
   private registerHandlers(): void {
@@ -66,7 +66,7 @@ export class AccessRevocationListenerService {
         }
 
         // Calculate expiration based on route pass TTL
-        const expiresAt = this.getExpirationDate();
+        const exp = this.getExpirationEpochSeconds();
         const createdBy = event.metadata?.performedBy || 'system';
         const source = event.metadata?.source === 'fms_sync' ? 'fms_sync' : 'unit_unassignment';
 
@@ -74,7 +74,7 @@ export class AccessRevocationListenerService {
         await this.denylistModel.bulkCreate(deviceIds.map(deviceId => ({
           device_id: deviceId,
           user_id: event.tenantId,
-          expires_at: expiresAt,
+          expires_at: knex.raw('FROM_UNIXTIME(?)', [exp]),
           source,
           created_by: createdBy,
         })));
@@ -87,13 +87,12 @@ export class AccessRevocationListenerService {
         }
 
         // Send denylist command to devices
-        const exp = Math.floor(expiresAt.getTime() / 1000);
         const jwt = await DenylistService.buildDenylistAdd([{ sub: event.tenantId, exp }], deviceIds);
         GatewayEventsService.getInstance().unicastToFacility(event.facilityId, jwt);
 
         logger.info(`Pushed denylist update for user ${event.tenantId} to ${deviceIds.length} device(s) in facility ${event.facilityId}`, {
           deviceIds,
-          expiresAt: expiresAt.toISOString(),
+          expiresAt: new Date(exp * 1000).toISOString(),
         });
       } catch (error) {
         logger.error('Failed to push denylist on unassignment:', error);

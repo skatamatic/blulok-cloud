@@ -460,6 +460,27 @@ describe('Units Routes', () => {
       expect(response.body.message).toMatch(/assigned|granted.*access/i);
     });
 
+    it('should allow admin to assign primary tenant manually', async () => {
+      const response = await request(app)
+        .post(`/api/v1/units/${testData.units.unit1.id}/assign`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ ...assignData, is_primary: true })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.message).toMatch(/assigned as primary/i);
+    });
+
+    it('should return 403 for FACILITY_ADMIN without facility scope access', async () => {
+      const response = await request(app)
+        .post(`/api/v1/units/${testData.units.unit2.id}/assign`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send(assignData)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
     it('should return 404 for non-existent unit', async () => {
       const response = await request(app)
         .post('/api/v1/units/non-existent-id/assign')
@@ -550,6 +571,15 @@ describe('Units Routes', () => {
       expect(response.body).toHaveProperty('data');
       expect(response.body.data).toHaveProperty('unit_id', testData.units.unit1.id);
       expect(response.body.data).toHaveProperty('tenant_id', testData.users.tenant.id);
+    });
+
+    it('should return 403 for FACILITY_ADMIN without facility scope access', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/units/${testData.units.unit2.id}/assign/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
     });
 
     it('should return 404 for non-existent unit', async () => {

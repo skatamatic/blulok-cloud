@@ -10,6 +10,7 @@ const envSchema = Joi.object({
     .valid('development', 'production', 'test')
     .default('development'),
   PORT: Joi.number().port().default(3000),
+  TRUST_PROXY_DEPTH: Joi.number().integer().min(0).default(0),
   
   // Database configuration
   DB_HOST: Joi.string().default('localhost'),
@@ -20,7 +21,7 @@ const envSchema = Joi.object({
   
   // Security
   JWT_SECRET: Joi.string().min(32).required(),
-  JWT_EXPIRES_IN: Joi.string().default('24h'),
+  JWT_EXPIRES_IN: Joi.string().default('30d'),
   // Operations/Root keys (Ed25519)
   OPS_ED25519_PRIVATE_KEY_B64: Joi.string().when('NODE_ENV', { is: 'test', then: Joi.string().default('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), otherwise: Joi.string().required() }),
   OPS_ED25519_PUBLIC_KEY_B64: Joi.string().when('NODE_ENV', { is: 'test', then: Joi.string().default('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), otherwise: Joi.string().required() }),
@@ -35,7 +36,6 @@ const envSchema = Joi.object({
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'debug')
     .default('info'),
-  TRUST_PROXY_DEPTH: Joi.number().integer().min(0).default(0),
 }).unknown();
 
 const { error, value: envVars } = envSchema.validate(process.env);
@@ -47,6 +47,9 @@ if (error) {
 export interface Config {
   nodeEnv: string;
   port: number;
+  server: {
+    trustProxyDepth: number;
+  };
   database: {
     host: string;
     port: number;
@@ -60,9 +63,6 @@ export interface Config {
   };
   corsOrigins: string[];
   logLevel: string;
-  server: {
-    trustProxyDepth: number;
-  };
   security: {
     opsPrivateKeyB64: string;
     opsPublicKeyB64: string;
@@ -75,6 +75,9 @@ export interface Config {
 export const config: Config = {
   nodeEnv: envVars.NODE_ENV,
   port: envVars.PORT,
+  server: {
+    trustProxyDepth: envVars.TRUST_PROXY_DEPTH,
+  },
   database: {
     host: envVars.DB_HOST,
     port: envVars.DB_PORT,
@@ -88,9 +91,6 @@ export const config: Config = {
   },
   corsOrigins: envVars.CORS_ORIGINS.split(',').map((origin: string) => origin.trim()),
   logLevel: envVars.LOG_LEVEL,
-  server: {
-    trustProxyDepth: envVars.TRUST_PROXY_DEPTH,
-  },
   security: {
     opsPrivateKeyB64: envVars.OPS_ED25519_PRIVATE_KEY_B64,
     opsPublicKeyB64: envVars.OPS_ED25519_PUBLIC_KEY_B64,

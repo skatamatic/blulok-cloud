@@ -45,8 +45,18 @@ A secure cloud platform for managing BluLok storage facility locking systems, pr
    ```
 
 4. Set up environment variables:
-   - Copy `.env.example` to `.env` in root, backend, and frontend directories
-   - Update database credentials and API keys as needed
+   - Backend: copy `backend/env.example` to `backend/.env`
+   - Frontend: copy `frontend/.env.example` to `frontend/.env`
+   - Generate local security secrets:
+     ```bash
+     cd backend
+     npm run gen:dev-secrets
+     ```
+     Then paste generated values into `backend/.env` for:
+     - `JWT_SECRET`
+     - `OPS_ED25519_PRIVATE_KEY_B64`
+     - `OPS_ED25519_PUBLIC_KEY_B64`
+     - `ROOT_ED25519_PUBLIC_KEY_B64`
 
 ### Running Locally
 
@@ -81,25 +91,61 @@ A secure cloud platform for managing BluLok storage facility locking systems, pr
    - Runs on `http://localhost:5173`
    - Proxies API calls to backend
 
-#### Docker Development
+#### Docker MySQL (recommended for local backend/frontend dev)
 
-For full stack with database:
+Use Docker only for MySQL, then run backend/frontend directly on your machine.
 
-1. Start services:
+1. Start local MySQL container:
    ```bash
-   docker-compose -f docker-compose.dev.yml up -d
+   npm run dev:mysql:up
+   ```
+   On Windows PowerShell you can bootstrap env files + MySQL in one step:
+   ```powershell
+   .\scripts\setup-local-dev.ps1
+   ```
+   If `3306` is already in use:
+   ```powershell
+   $env:MYSQL_HOST_PORT=3307
+   npm run dev:mysql:up
+   ```
+   Then set `DB_PORT=3307` in `backend/.env`.
+
+2. Initialize backend schema/data:
+   ```bash
+   cd backend
+   npm run migrate
+   npm run seed
    ```
 
-2. Run backend and frontend in separate terminals:
+3. Start backend:
    ```bash
-   # Terminal 1 - Backend
    cd backend
    npm run dev
-   
-   # Terminal 2 - Frontend  
+   ```
+
+4. Start frontend:
+   ```bash
    cd frontend
    npm run dev
    ```
+
+5. Stop MySQL when done:
+   ```bash
+   npm run dev:mysql:down
+   ```
+
+You can tail MySQL logs with:
+```bash
+npm run dev:mysql:logs
+```
+
+#### Docker Full Stack
+
+If you want backend/frontend also containerized:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
 
 ### Testing
 
@@ -214,21 +260,24 @@ blulok-cloud/
 
 #### Environment Variables
 
-**Backend (.env)**:
+**Backend (`backend/.env`)**:
 ```
 DB_HOST=localhost
 DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=yourpassword
+DB_USER=blulok_user
+DB_PASSWORD=blulok_password
 DB_NAME=blulok_dev
-JWT_SECRET=your_jwt_secret
+JWT_SECRET=<generated secure value>
+OPS_ED25519_PRIVATE_KEY_B64=<generated secure value>
+OPS_ED25519_PUBLIC_KEY_B64=<generated secure value>
+ROOT_ED25519_PUBLIC_KEY_B64=<generated secure value>
 PORT=3000
 ```
 
-**Frontend (.env)**:
+**Frontend (`frontend/.env`)**:
 ```
-VITE_API_URL=http://localhost:3000/api/v1
-VITE_WS_URL=ws://localhost:3000/ws
+VITE_API_URL=http://localhost:3000
+VITE_WS_URL=ws://localhost:3000
 ```
 
 #### Common Issues

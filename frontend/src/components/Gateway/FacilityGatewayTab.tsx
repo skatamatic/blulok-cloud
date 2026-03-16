@@ -23,7 +23,7 @@ import { UserRole } from '@/types/auth.types';
 
 interface Gateway {
   id: string;
-  facility_id: string;
+  facility_id: string | null;
   name: string;
   model?: string;
   firmware_version?: string;
@@ -65,7 +65,7 @@ interface FacilityGatewayTabProps {
   canManageGateway: boolean;
 }
 
-function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProps) {
+function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: FacilityGatewayTabProps) {
   const { addToast } = useToast();
   const ws = useWebSocket();
 
@@ -107,7 +107,13 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   });
   const [rotationSubmitting, setRotationSubmitting] = useState(false);
   const { authState } = useAuth();
-  const isDevAdmin = authState.user?.role === UserRole.DEV_ADMIN;
+  const userRole = authState.user?.role;
+  const isDevAdmin = userRole === UserRole.DEV_ADMIN;
+  const canReassignGateway = canManageGateway && (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN);
+  const [candidateGateways, setCandidateGateways] = useState<Gateway[]>([]);
+  const [selectedCandidateGatewayId, setSelectedCandidateGatewayId] = useState('');
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [reassigningGateway, setReassigningGateway] = useState(false);
 
   // Inbound WS status (gateway connects to cloud)
   const [wsStatus, setWsStatus] = useState<{ connected: boolean; lastPongAt?: number } | null>(null);
@@ -267,6 +273,8 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
           poll_frequency_ms: gw.poll_frequency_ms || 30000,
           ignore_ssl_cert: gw.ignore_ssl_cert || false
         });
+      } else {
+        setGateway(null);
       }
     } catch (error) {
       console.error('Failed to load gateway:', error);
@@ -274,6 +282,107 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadReassignmentCandidates = useCallback(async () => {
+    if (!canReassignGateway) {
+      setCandidateGateways([]);
+      return;
+    }
+
+    try {
+      setLoadingCandidates(true);
+      const response = await apiService.getGatewayReassignmentCandidates(facilityId);
+      setCandidateGateways(response.gateways || []);
+      setSelectedCandidateGatewayId('');
+    } catch (error) {
+      console.error('Failed to load gateway reassignment candidates:', error);
+      addToast({ type: 'error', title: 'Failed to load available gateways' });
+    } finally {
+      setLoadingCandidates(false);
+    }
+  }, [addToast, canReassignGateway, facilityId]);
+
+  useEffect(() => {
+    if (activeTab !== 'overview') {
+      return;
+    }
+    loadReassignmentCandidates();
+  }, [activeTab, loadReassignmentCandidates]);
+
+  const handleGatewayReassignment = async () => {
+    if (!selectedCandidateGatewayId) {
+      return;
+    }
+
+    const confirmAssignment = window.confirm(
+      gateway
+        ? 'Replace this facility gateway with the selected unassigned online gateway? The current gateway will be moved to the unassigned pool.'
+        : 'Assign the selected unassigned online gateway to this facility?'
+    );
+    if (!confirmAssignment) {
+      return;
+    }
+
+    try {
+      setReassigningGateway(true);
+      await apiService.reassignGateway(selectedCandidateGatewayId, facilityId);
+      addToast({ type: 'success', title: gateway ? 'Gateway replaced successfully' : 'Gateway assigned successfully' });
+      await Promise.all([loadGateway(), loadReassignmentCandidates()]);
+    } catch (error: any) {
+      const message = error?.response?.data?.message || (gateway ? 'Failed to replace gateway' : 'Failed to assign gateway');
+      addToast({ type: 'error', title: message });
+    } finally {
+      setReassigningGateway(false);
+    }
+  };
+
+  const renderGatewayAssignmentCard = () => {
+    if (!canReassignGateway) {
+      return null;
+    }
+
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+          {gateway ? 'Replace Gateway' : 'Assign Gateway'}
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          {gateway
+            ? 'Choose an unassigned online gateway to replace the current facility gateway.'
+            : 'Choose an unassigned online gateway and assign it to this facility.'}
+        </p>
+        {gateway && (
+          <div className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
+            Current gateway: <span className="font-medium text-gray-900 dark:text-white">{gateway.name}</span>
+          </div>
+        )}
+        <div className="flex flex-col md:flex-row md:items-center gap-3">
+          <select
+            value={selectedCandidateGatewayId}
+            onChange={(e) => setSelectedCandidateGatewayId(e.target.value)}
+            disabled={loadingCandidates || reassigningGateway}
+            className="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          >
+            <option value="">
+              {loadingCandidates ? 'Loading available gateways...' : 'Select an unassigned online gateway'}
+            </option>
+            {candidateGateways.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.name} ({candidate.id})
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleGatewayReassignment}
+            disabled={!selectedCandidateGatewayId || loadingCandidates || reassigningGateway}
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {reassigningGateway ? (gateway ? 'Replacing...' : 'Assigning...') : (gateway ? 'Replace Gateway' : 'Assign Gateway')}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   // Subscribe to realtime gateway status updates for local state only
@@ -421,13 +530,16 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
   const renderOverviewTab = () => {
     if (!gateway) {
       return (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="text-center py-8">
-            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
-              This facility doesn't have a gateway configured yet.
-            </p>
+        <div className="space-y-6">
+          {renderGatewayAssignmentCard()}
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <div className="text-center py-8">
+              <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">
+                This facility doesn't have a gateway configured yet.
+              </p>
+            </div>
           </div>
         </div>
       );
@@ -435,6 +547,7 @@ function FacilityGatewayTab({ facilityId, facilityName }: FacilityGatewayTabProp
 
     return (
       <div className="space-y-6">
+        {renderGatewayAssignmentCard()}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Inbound Gateway Connection</h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">

@@ -208,9 +208,6 @@ export class FirstTimeUserService {
   }): Promise<void> {
     const invite = await this.invites.findActiveInviteByToken(params.token);
     if (!invite) throw new Error('Invalid or expired invite token');
-    
-    const valid = await this.verifyOtp({ token: params.token, otp: params.otp });
-    if (!valid) throw new Error('Invalid OTP');
 
     const user = await UserModel.findById(invite.user_id) as User | undefined;
     if (!user) throw new Error('User not found for invite');
@@ -240,6 +237,11 @@ export class FirstTimeUserService {
       }
       updates.last_name = lastName;
     }
+
+    // Verify OTP only after profile requirements are satisfied so
+    // validation failures do not consume one-time codes.
+    const valid = await this.verifyOtp({ token: params.token, otp: params.otp });
+    if (!valid) throw new Error('Invalid OTP');
 
     // Optional: update email if user doesn't have one and caller provides it
     if (!user.email && params.email) {

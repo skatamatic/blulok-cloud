@@ -100,8 +100,6 @@ export class RoutePassIssuanceModel {
     expiresAt: Date;
   }): Promise<RoutePassIssuanceLog> {
     const id = randomUUID();
-    const now = new Date();
-
     const [entry] = await this.db('route_pass_issuance_log')
       .insert({
         id,
@@ -111,8 +109,8 @@ export class RoutePassIssuanceModel {
         jti: params.jti,
         issued_at: params.issuedAt,
         expires_at: params.expiresAt,
-        created_at: now,
-        updated_at: now,
+        created_at: this.db.raw('UTC_TIMESTAMP()'),
+        updated_at: this.db.raw('UTC_TIMESTAMP()'),
       })
       .returning('*');
 
@@ -158,8 +156,7 @@ export class RoutePassIssuanceModel {
       return true;
     }
 
-    const now = new Date();
-    return lastPass.expires_at < now;
+    return lastPass.expires_at.getTime() <= Date.now();
   }
 
   /**

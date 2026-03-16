@@ -374,6 +374,9 @@ describe('FirstTimeUserService', () => {
       newPassword: 'NewStrong!23',
       firstName: 'Jane',
     })).rejects.toThrow(/Last name is required/);
+
+    // OTP should not be consumed when profile validation fails
+    expect(mockOtps.verifyOtp).not.toHaveBeenCalled();
   });
 
   test('setPassword succeeds when profile is complete', async () => {

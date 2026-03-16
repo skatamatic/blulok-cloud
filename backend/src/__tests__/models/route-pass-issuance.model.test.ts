@@ -30,6 +30,7 @@ describe('RoutePassIssuanceModel', () => {
     mockKnex = jest.fn((table: string) => {
       return mockQueryBuilder;
     });
+    mockKnex.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: mockKnex,
@@ -95,8 +96,8 @@ describe('RoutePassIssuanceModel', () => {
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
-        created_at: expect.any(Date),
-        updated_at: expect.any(Date),
+        created_at: expect.anything(),
+        updated_at: expect.anything(),
       });
       expect(result.audiences).toEqual(['lock:lock-1', 'lock:lock-2']);
     });

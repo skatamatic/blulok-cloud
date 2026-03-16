@@ -935,9 +935,9 @@ router.post('/:id/activate', requireUserManagement, asyncHandler(async (req: Aut
         .where('primary_tenant_id', id)
         .where('is_active', false)
         .where(function(this: any) {
-          this.whereNull('expires_at').orWhere('expires_at', '>', knex.fn.now());
+          this.whereNull('expires_at').orWhere('expires_at', '>', knex.raw('UTC_TIMESTAMP()'));
         })
-        .update({ is_active: true, updated_at: knex.fn.now() });
+        .update({ is_active: true, updated_at: knex.raw('UTC_TIMESTAMP()') });
     } catch (err) {
       logger.error(`Failed to reactivate shares on activation for user ${id}:`, err);
     }

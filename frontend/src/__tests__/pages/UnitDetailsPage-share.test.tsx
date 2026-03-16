@@ -1,8 +1,196 @@
-// Share Key integration is covered by component tests.
-// This placeholder ensures the suite remains valid.
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import UnitDetailsPage from '@/pages/UnitDetailsPage';
+import { apiService } from '@/services/api.service';
+import { useAuth } from '@/contexts/AuthContext';
 
-describe('UnitDetailsPage share placeholder', () => {
-  it('runs a placeholder test', () => {
-    expect(true).toBe(true);
+jest.mock('@/services/api.service', () => ({
+  apiService: {
+    getUnitDetails: jest.fn(),
+    assignTenantToUnit: jest.fn(),
+    removeTenantFromUnit: jest.fn(),
+    getDeviceGroups: jest.fn(),
+    getDeviceGroup: jest.fn(),
+    updateLockStatus: jest.fn(),
+  },
+}));
+
+jest.mock('@/contexts/AuthContext', () => ({
+  ...jest.requireActual('@/contexts/AuthContext'),
+  useAuth: jest.fn(),
+}));
+
+jest.mock('@/contexts/WebSocketContext', () => ({
+  ...jest.requireActual('@/contexts/WebSocketContext'),
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => 'sub-id'),
+    unsubscribe: jest.fn(),
+  }),
+}));
+
+jest.mock('@/hooks/useBackNavigation', () => ({
+  useBackNavigation: () => jest.fn(),
+}));
+
+jest.mock('@/components/Common/UserFilter', () => ({
+  UserFilter: ({ onChange }: { onChange: (id: string) => void }) => (
+    <button type="button" onClick={() => onChange('tenant-2')}>
+      Mock Select Tenant
+    </button>
+  ),
+}));
+
+jest.mock('@/components/Units/EditUnitModal', () => ({
+  EditUnitModal: () => null,
+}));
+
+jest.mock('@/components/Devices/DeviceAssignmentModal', () => ({
+  DeviceAssignmentModal: () => null,
+}));
+
+jest.mock('@/components/Units/ShareKeyModal', () => ({
+  ShareKeyModal: () => null,
+}));
+
+jest.mock('react-router-dom', () => ({
+  ...jest.requireActual('react-router-dom'),
+  useParams: () => ({ unitId: 'unit-1' }),
+}));
+
+const mockApiService = apiService as jest.Mocked<typeof apiService>;
+const mockUseAuth = useAuth as jest.Mock;
+
+const adminUser = {
+  id: 'admin-1',
+  email: 'admin@example.com',
+  firstName: 'Admin',
+  lastName: 'User',
+  role: 'admin',
+};
+
+const tenantUser = {
+  id: 'tenant-primary',
+  email: 'tenant@example.com',
+  firstName: 'Primary',
+  lastName: 'Tenant',
+  role: 'tenant',
+};
+
+const baseUnit = {
+  id: 'unit-1',
+  unit_number: 'A-101',
+  unit_type: 'storage',
+  status: 'occupied',
+  facility_id: 'facility-1',
+  facility_name: 'Main Facility',
+  facility_address: '123 Main St',
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  primary_tenant: {
+    id: 'tenant-primary',
+    first_name: 'Primary',
+    last_name: 'Tenant',
+    email: 'tenant@example.com',
+  },
+  shared_tenants: [],
+};
+
+const unitWithoutPrimary = {
+  ...baseUnit,
+  primary_tenant: undefined,
+};
+
+describe('UnitDetailsPage shared access', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockApiService.assignTenantToUnit.mockResolvedValue({ success: true } as any);
+    mockApiService.removeTenantFromUnit.mockResolvedValue({ success: true } as any);
+    mockApiService.getDeviceGroups.mockResolvedValue({ data: [] } as any);
+    mockApiService.getDeviceGroup.mockResolvedValue({ data: { members: [] } } as any);
+  });
+
+  it('keeps add flow visible after selecting tenant and submits assignment', async () => {
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: adminUser,
+        isAuthenticated: true,
+      },
+    });
+    mockApiService.getUnitDetails.mockResolvedValue({ unit: baseUnit } as any);
+
+    render(
+      <MemoryRouter initialEntries={['/units/unit-1']}>
+        <UnitDetailsPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
+    fireEvent.click(screen.getByRole('button', { name: /add shared access/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mock Select Tenant' }));
+
+    // Regression check: action should remain visible after tenant selection.
+    expect(screen.getByRole('button', { name: /add access/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /add access/i }));
+
+    await waitFor(() => {
+      expect(mockApiService.assignTenantToUnit).toHaveBeenCalledWith('unit-1', 'tenant-2', false);
+    });
+  });
+
+  it('hides shared access management controls for tenant users', async () => {
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: tenantUser,
+        isAuthenticated: true,
+      },
+    });
+    mockApiService.getUnitDetails.mockResolvedValue({ unit: baseUnit } as any);
+
+    render(
+      <MemoryRouter initialEntries={['/units/unit-1']}>
+        <UnitDetailsPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
+    expect(screen.queryByRole('button', { name: /add shared access/i })).not.toBeInTheDocument();
+  });
+
+  it('allows admin to assign a primary tenant from unit details', async () => {
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: adminUser,
+        isAuthenticated: true,
+      },
+    });
+    mockApiService.getUnitDetails.mockResolvedValue({ unit: unitWithoutPrimary } as any);
+
+    render(
+      <MemoryRouter initialEntries={['/units/unit-1']}>
+        <UnitDetailsPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
+    fireEvent.click(screen.getByRole('button', { name: /assign primary/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mock Select Tenant' }));
+    fireEvent.click(screen.getByRole('button', { name: /apply change/i }));
+
+    await waitFor(() => {
+      expect(mockApiService.assignTenantToUnit).toHaveBeenCalledWith('unit-1', 'tenant-2', true);
+    });
   });
 });

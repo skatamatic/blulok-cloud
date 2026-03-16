@@ -163,13 +163,13 @@ CREATE TABLE user_facility_associations (
    }
    ```
 
-4. **JWT Token**: Contains user ID, email, role, and expires in 24 hours
+4. **JWT Token**: Contains user ID, email, role, and expires in 30 days
 
 ### Token Management
 
 - **Storage**: Client stores JWT in localStorage
 - **Header**: Sent as `Authorization: Bearer <token>`
-- **Expiration**: 24 hours (configurable)
+- **Expiration**: 30 days (configurable via `JWT_EXPIRES_IN`)
 - **Refresh**: Manual re-login required (future: refresh tokens)
 
 ## Authorization & Page Access
@@ -243,7 +243,7 @@ useAuth().canManageUsers()              # Check user management access
 
 - **Algorithm**: HS256 (HMAC with SHA-256)
 - **Secret**: 64-character random string (environment variable)
-- **Expiration**: 24 hours maximum
+- **Expiration**: 30 days (default)
 - **Validation**: Signature and expiration checked on every request
 
 ### Session Management
@@ -282,53 +282,6 @@ useAuth().canManageUsers()              # Check user management access
 | GET | `/api/v1/auth/profile` | Authenticated | Get user profile |
 | GET | `/api/v1/auth/verify-token` | Authenticated | Verify token validity |
 | POST | `/api/v1/auth/change-password` | Authenticated | Change password |
-
-### Password Reset Endpoints (Deeplink + Token Flow)
-
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| POST | `/api/v1/auth/forgot-password/request` | Public (rate-limited) | Request password reset - sends deeplink with token via configured channel |
-| POST | `/api/v1/auth/forgot-password/verify` | Public | Verify password reset token is valid |
-| POST | `/api/v1/auth/forgot-password/reset` | Public (rate-limited) | Reset password using token |
-
-#### Password Reset Flow (Deeplink + Token - mirrors invite flow)
-
-1. **Request Reset**: User submits email or phone number
-   ```json
-   POST /api/v1/auth/forgot-password/request
-   { "email": "user@example.com" }
-   // OR
-   { "phone": "+15551234567" }
-   ```
-   Response includes `expiresAt` and `deliveryMethod` (sms or email).
-   A deeplink containing a secure reset token is sent via SMS or email (e.g., `blulok://reset-password?token=abc123...`).
-
-2. **Verify Token** (optional, for UX): Frontend verifies token before showing password form
-   ```json
-   POST /api/v1/auth/forgot-password/verify
-   { "token": "abc123..." }
-   ```
-   Response includes `success: true` and optionally the user's email for display.
-
-3. **Reset Password**: User submits token + new password
-   ```json
-   POST /api/v1/auth/forgot-password/reset
-   { 
-     "token": "abc123...",
-     "newPassword": "NewPassword123!" 
-   }
-   ```
-   Token is single-use and expires after 30 minutes (configurable via `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES`).
-
-#### Database Table: `password_reset_tokens`
-- `id`: UUID primary key
-- `user_id`: Reference to user
-- `token`: Unique ~32-character base64url token (24 bytes = 192 bits of entropy)
-- `expires_at`: Token expiration timestamp
-- `used_at`: When token was used (prevents reuse)
-- `created_at`: Creation timestamp
-
-**Token Security**: 24 bytes provides 2^192 possible tokens, which is cryptographically secure for a time-limited (30-minute) reset token while keeping SMS messages concise.
 
 ### User Management Endpoints
 
@@ -398,7 +351,7 @@ npm run db:setup            # Full setup: init + migrate + seed
 ### Token Security
 
 1. **Secret Rotation**: JWT secret should be rotated periodically
-2. **Short Expiration**: 24-hour maximum token lifetime
+2. **Token Expiration**: 30-day default token lifetime
 3. **Secure Storage**: Tokens stored in httpOnly cookies (recommended) or localStorage
 4. **Blacklisting**: Consider implementing token blacklisting for logout
 
@@ -407,11 +360,12 @@ npm run db:setup            # Full setup: init + migrate + seed
 ### Planned Security Improvements
 
 1. **Refresh Tokens**: Implement refresh token rotation
-2. **Multi-Factor Authentication**: TOTP support (SMS OTP already implemented for invites)
+2. **Multi-Factor Authentication**: SMS/TOTP support
 3. **Session Management**: Server-side session tracking
-4. **Account Lockout**: Temporary lockout after failed attempts
-5. **Audit Trail**: Comprehensive activity logging
-6. **Device Registration**: Trusted device management
+4. **Password Reset**: Secure password reset flow
+5. **Account Lockout**: Temporary lockout after failed attempts
+6. **Audit Trail**: Comprehensive activity logging
+7. **Device Registration**: Trusted device management
 
 ### Scalability Considerations
 

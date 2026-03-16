@@ -420,12 +420,16 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
   });
 
   try {
+    const toUtcIso = (unixSeconds: unknown): string | null => {
+      if (typeof unixSeconds !== 'number' || !Number.isFinite(unixSeconds)) return null;
+      return new Date(unixSeconds * 1000).toISOString();
+    };
+
     switch (command) {
       case 'DENYLIST_ADD': {
         // Default expiration: 1 year from now
-        const exp = expirationSeconds 
-          ? Math.floor(Date.now() / 1000) + expirationSeconds 
-          : Math.floor(Date.now() / 1000) + 86400 * 365;
+        const now = Math.floor(Date.now() / 1000);
+        const exp = expirationSeconds ? now + expirationSeconds : now + 86400 * 365;
         // Log values before creating entries
         logger.info(`[DEBUG] DENYLIST_ADD - Before creating entries:`, {
           userId,
@@ -455,7 +459,12 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
             payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
             logger.info(`[DEBUG] DENYLIST_ADD - Decoded JWT payload:`, {
               cmd_type: payload.cmd_type,
+              iat: payload.iat,
+              iat_utc: toUtcIso(payload.iat),
+              exp: payload.exp,
+              exp_utc: toUtcIso(payload.exp),
               denylist_add: payload.denylist_add,
+              denylist_add_exp_utc: toUtcIso(payload.denylist_add?.[0]?.exp),
               target: payload.target,
               denylist_add_sub: payload.denylist_add?.[0]?.sub,
               denylist_add_sub_type: typeof payload.denylist_add?.[0]?.sub,
@@ -521,7 +530,12 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
             payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
             logger.info(`[DEBUG] DENYLIST_REMOVE - Decoded JWT payload:`, {
               cmd_type: payload.cmd_type,
+              iat: payload.iat,
+              iat_utc: toUtcIso(payload.iat),
+              exp: payload.exp,
+              exp_utc: toUtcIso(payload.exp),
               denylist_remove: payload.denylist_remove,
+              denylist_remove_exp_utc: toUtcIso(payload.denylist_remove?.[0]?.exp),
               target: payload.target,
               denylist_remove_sub: payload.denylist_remove?.[0]?.sub,
               denylist_remove_sub_type: typeof payload.denylist_remove?.[0]?.sub,

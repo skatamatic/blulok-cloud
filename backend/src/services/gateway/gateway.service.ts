@@ -56,7 +56,7 @@ export class GatewayService extends EventEmitter {
    */
   public async initializeAllGateways(): Promise<void> {
     try {
-      const gateways = await this.gatewayModel.findAll();
+      const gateways = (await this.gatewayModel.findAll()).filter((gateway) => !!gateway.facility_id);
 
       // Parallelize gateway initialization (instead of sequential for/await)
       // This dramatically reduces startup time when there are many gateways
@@ -88,6 +88,10 @@ export class GatewayService extends EventEmitter {
    */
   public async initializeGateway(gatewayConfig: Gateway): Promise<IGateway> {
     try {
+      if (!gatewayConfig.facility_id) {
+        throw new Error(`Gateway ${gatewayConfig.id} is unassigned and cannot be initialized`);
+      }
+
       // Create gateway instance
       const gateway = GatewayFactory.createFromConfig({
         id: gatewayConfig.id,

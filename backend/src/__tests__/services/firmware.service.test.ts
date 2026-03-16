@@ -36,11 +36,13 @@ const mockPushModel = {
   findLatestByGateway: jest.fn(),
   findByGatewayId: jest.fn(),
   findByFacilityAndTargetType: jest.fn(),
+  createIfNoActiveByGatewayTarget: jest.fn(),
   create: jest.fn(),
   updateStatus: jest.fn().mockResolvedValue(undefined),
   updateProgress: jest.fn().mockResolvedValue(undefined),
   updateChunksTotal: jest.fn().mockResolvedValue(undefined),
   atomicCancel: jest.fn().mockResolvedValue(true),
+  atomicFailIfActive: jest.fn().mockResolvedValue(true),
   updateProgressPercent: jest.fn().mockResolvedValue(undefined),
   updateDeviceCounts: jest.fn().mockResolvedValue(undefined),
   findActiveByFacilities: jest.fn().mockResolvedValue([]),
@@ -83,6 +85,7 @@ function wireAllMocks() {
 beforeEach(() => {
   jest.clearAllMocks();
   wireAllMocks();
+  _testActivePushes.clear();
   _testResumeInFlightPushes.clear();
 });
 
@@ -200,8 +203,10 @@ describe('FirmwareService', () => {
     beforeEach(() => {
       mockFirmwareModel.findById.mockResolvedValue({ id: 'fw-1', is_active: true, target_type: 'gateway' });
       mockGatewayModel.findById.mockResolvedValue({ id: 'gw-1', facility_id: 'fac-1' });
-      mockPushModel.findActiveByGateway.mockResolvedValue(null);
-      mockPushModel.create.mockResolvedValue({ id: 'push-1', status: 'pending', target_type: 'gateway' });
+      mockPushModel.createIfNoActiveByGatewayTarget.mockResolvedValue({
+        push: { id: 'push-1', status: 'pending', target_type: 'gateway' },
+        existingPush: null,
+      });
       // Prevent real background task
       executeSpy = jest.spyOn(FirmwareService, 'executePush').mockResolvedValue(undefined);
     });
@@ -213,8 +218,11 @@ describe('FirmwareService', () => {
     it('creates push record and spawns task', async () => {
       const push = await FirmwareService.initiatePush('fw-1', 'gw-1', 'fac-1', 'u1');
       expect(push.id).toBe('push-1');
-      expect(mockPushModel.findActiveByGateway).toHaveBeenCalledWith('gw-1', 'gateway');
-      expect(mockPushModel.create).toHaveBeenCalledWith(expect.objectContaining({ firmware_id: 'fw-1', gateway_id: 'gw-1', target_type: 'gateway' }));
+      expect(mockPushModel.createIfNoActiveByGatewayTarget).toHaveBeenCalledWith(expect.objectContaining({
+        firmware_id: 'fw-1',
+        gateway_id: 'gw-1',
+        target_type: 'gateway',
+      }));
     });
 
     it('rejects missing firmware', async () => {
@@ -241,15 +249,24 @@ describe('FirmwareService', () => {
     });
 
     it('rejects gateway with active push', async () => {
-      mockPushModel.findActiveByGateway.mockResolvedValue({ id: 'old', status: 'transferring', target_type: 'gateway' });
+      mockPushModel.createIfNoActiveByGatewayTarget.mockResolvedValue({
+        push: null,
+        existingPush: { id: 'old', status: 'transferring', target_type: 'gateway' },
+      });
       await expect(FirmwareService.initiatePush('fw-1', 'gw-1', 'fac-1', 'u1')).rejects.toThrow('already has an active');
     });
 
     it('active push check is scoped by target_type (lock push does not block gateway push)', async () => {
       mockFirmwareModel.findById.mockResolvedValue({ id: 'fw-1', is_active: true, target_type: 'gateway' });
-      mockPushModel.findActiveByGateway.mockResolvedValue(null); // no active gateway push
+      mockPushModel.createIfNoActiveByGatewayTarget.mockResolvedValue({
+        push: { id: 'push-1', status: 'pending', target_type: 'gateway' },
+        existingPush: null,
+      }); // no active gateway push
       const push = await FirmwareService.initiatePush('fw-1', 'gw-1', 'fac-1', 'u1');
-      expect(mockPushModel.findActiveByGateway).toHaveBeenCalledWith('gw-1', 'gateway');
+      expect(mockPushModel.createIfNoActiveByGatewayTarget).toHaveBeenCalledWith(expect.objectContaining({
+        gateway_id: 'gw-1',
+        target_type: 'gateway',
+      }));
       expect(push.id).toBe('push-1');
     });
   });
@@ -507,64 +524,58 @@ describe('FirmwareService', () => {
       broadcastSpy.mockRestore();
     });
 
+    function registerActivePush(pushId = 'push-1', nonce = 'nonce-1', facilityId = 'fac-1') {
+      _testActivePushes.set(pushId, {
+        cancel: false,
+        nonce,
+        facilityId,
+        chunkAckResolvers: new Map(),
+      });
+    }
+
     it('updates push to complete when gateway reports success', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush()]);
-      await FirmwareService.handleUpdateStatus('fac-1', { nonce: 'any', status: 'success', target_type: 'gateway' });
+      registerActivePush();
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
+      await FirmwareService.handleUpdateStatus('fac-1', { nonce: 'nonce-1', status: 'success', target_type: 'gateway' });
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
     });
 
-    it('updates push to complete when gateway reports applied', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush()]);
-      await FirmwareService.handleUpdateStatus('fac-1', { status: 'applied', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
-    });
-
-    it('does not re-update an already complete push', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush({ status: 'complete' })]);
+    it('ignores terminal statuses without nonce to avoid mis-correlation', async () => {
+      mockPushModel.findActiveByFacilities.mockResolvedValue([mkVerifyingPush()]);
       await FirmwareService.handleUpdateStatus('fac-1', { status: 'success', target_type: 'gateway' });
       expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
     });
 
+    it('does not re-update an already complete push', async () => {
+      registerActivePush();
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'complete' }));
+      await FirmwareService.handleUpdateStatus('fac-1', { nonce: 'nonce-1', status: 'success', target_type: 'gateway' });
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
+    });
+
     it('updates push to failed when gateway reports failed', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush()]);
-      await FirmwareService.handleUpdateStatus('fac-1', { status: 'failed', error: 'CRC mismatch', target_type: 'gateway' });
+      registerActivePush();
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
+      await FirmwareService.handleUpdateStatus('fac-1', { nonce: 'nonce-1', status: 'failed', error: 'CRC mismatch', target_type: 'gateway' });
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'failed', 'CRC mismatch');
     });
 
-    it('updates push to failed when gateway reports error', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush()]);
-      await FirmwareService.handleUpdateStatus('fac-1', { status: 'error', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'failed', expect.stringContaining('firmware update failure'));
-    });
-
     it('updates push to verifying when gateway reports verifying', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush({ status: 'transferring' })]);
+      mockPushModel.findActiveByFacilities.mockResolvedValue([mkVerifyingPush({ status: 'transferring' })]);
       await FirmwareService.handleUpdateStatus('fac-1', { status: 'verifying', target_type: 'gateway' });
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'verifying');
     });
 
     it('maps applying gateway status to verifying', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush({ status: 'transferring' })]);
+      mockPushModel.findActiveByFacilities.mockResolvedValue([mkVerifyingPush({ status: 'transferring' })]);
       await FirmwareService.handleUpdateStatus('fac-1', { status: 'applying', target_type: 'gateway' });
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'verifying');
     });
 
     it('logs warning for unknown status and does not update', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([mkVerifyingPush()]);
+      mockPushModel.findActiveByFacilities.mockResolvedValue([mkVerifyingPush()]);
       await FirmwareService.handleUpdateStatus('fac-1', { status: 'rebooting', target_type: 'gateway' });
       expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
-    });
-
-    it('does not throw when no matching push found', async () => {
-      mockPushModel.findByFacilityAndTargetType.mockResolvedValue([]);
-      await expect(FirmwareService.handleUpdateStatus('fac-1', { status: 'success', target_type: 'gateway' })).resolves.not.toThrow();
-    });
-
-    it('falls back to active facility push when target_type is omitted', async () => {
-      mockPushModel.findActiveByFacilities.mockResolvedValue([mkVerifyingPush()]);
-      await FirmwareService.handleUpdateStatus('fac-1', { nonce: 'unknown', status: 'success', version: '2.0.0' });
-      expect(mockPushModel.findActiveByFacilities).toHaveBeenCalledWith(['fac-1']);
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
     });
 
     it('ignores update when active push selection is ambiguous without nonce/target_type', async () => {
@@ -572,32 +583,18 @@ describe('FirmwareService', () => {
         mkVerifyingPush({ id: 'push-a', target_type: 'gateway' }),
         mkVerifyingPush({ id: 'push-b', target_type: 'lock' }),
       ]);
-      await FirmwareService.handleUpdateStatus('fac-1', { status: 'success' });
-      expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
-    });
-
-    it('ignores update when version does not disambiguate multiple active pushes', async () => {
-      mockPushModel.findActiveByFacilities.mockResolvedValue([
-        mkVerifyingPush({ id: 'push-a', target_type: 'gateway', firmware_id: 'fw-a' }),
-        mkVerifyingPush({ id: 'push-b', target_type: 'lock', firmware_id: 'fw-b' }),
-      ]);
-      mockFirmwareModel.findById.mockImplementation(async (id: string) => {
-        if (id === 'fw-a') return { id: 'fw-a', version: '1.0.0' };
-        if (id === 'fw-b') return { id: 'fw-b', version: '2.0.0' };
-        return null;
-      });
-      await FirmwareService.handleUpdateStatus('fac-1', { status: 'success', version: '9.9.9' });
+      await FirmwareService.handleUpdateStatus('fac-1', { status: 'verifying' });
       expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
     });
 
     it('rejects messages with invalid status type', async () => {
       await FirmwareService.handleUpdateStatus('fac-1', { status: 123, target_type: 'gateway' });
-      expect(mockPushModel.findByFacilityAndTargetType).not.toHaveBeenCalled();
+      expect(mockPushModel.findActiveByFacilities).not.toHaveBeenCalled();
     });
 
     it('rejects messages with missing status', async () => {
       await FirmwareService.handleUpdateStatus('fac-1', { target_type: 'gateway' });
-      expect(mockPushModel.findByFacilityAndTargetType).not.toHaveBeenCalled();
+      expect(mockPushModel.findActiveByFacilities).not.toHaveBeenCalled();
     });
   });
 
@@ -954,6 +951,53 @@ describe('FirmwareService', () => {
       expect(events).toHaveLength(1);
       expect(events[0].event_type).toBe('error');
       expect(events[0].error_severity).toBe('critical');
+    });
+  });
+
+  describe('handleFacilityDisconnect', () => {
+    let broadcastSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      broadcastSpy.mockRestore();
+    });
+
+    it('marks active facility pushes failed and clears pending ACK resolvers', async () => {
+      const rejectSpy = jest.fn();
+      _testActivePushes.set('push-1', {
+        cancel: false,
+        nonce: 'n-1',
+        facilityId: 'fac-1',
+        chunkAckResolvers: new Map([
+          [0, { resolve: jest.fn(), reject: rejectSpy }],
+        ]),
+      });
+      mockPushModel.findById.mockResolvedValue({
+        id: 'push-1',
+        firmware_id: 'fw-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        target_type: 'gateway',
+        progress_percent: 25,
+        chunks_total: 10,
+        chunks_sent: 2,
+      });
+
+      await FirmwareService.handleFacilityDisconnect('fac-1');
+
+      expect(mockPushModel.atomicFailIfActive).toHaveBeenCalledWith('push-1', expect.stringContaining('disconnected'));
+      expect(rejectSpy).toHaveBeenCalled();
+      expect(broadcastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'push-1' }),
+        'failed',
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+        expect.stringContaining('disconnected'),
+      );
     });
   });
 

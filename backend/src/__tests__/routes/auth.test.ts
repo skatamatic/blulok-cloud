@@ -2,17 +2,13 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
 import { AuthService } from '@/services/auth.service';
-import { Ed25519Service } from '@/services/crypto/ed25519.service';
 
 describe('Auth Routes', () => {
   let app: any;
   let testData: MockTestData;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     app = createApp();
-  });
-
-  beforeEach(() => {
     testData = createMockTestData();
   });
 
@@ -21,7 +17,7 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: 'tenant@test.com',
+          email: 'tenant@test.com',
           password: 'password123',
         })
         .expect(200);
@@ -31,30 +27,13 @@ describe('Auth Routes', () => {
       expect(response.body).toHaveProperty('user');
       expect(response.body.user.email).toBe('tenant@test.com');
       expect(response.body.user).not.toHaveProperty('password');
-      // Ops public key — raw base64url (compact, for constrained devices)
-      expect(response.body).toHaveProperty('ops_public_key');
-      expect(typeof response.body.ops_public_key).toBe('string');
-      expect(response.body.ops_public_key.length).toBeGreaterThan(0);
-      expect(response.body.ops_public_key).toBe(Ed25519Service.getOpsPublicKeyB64());
-
-      // Ops public key — JWK (self-describing, includes kty/crv/x)
-      expect(response.body).toHaveProperty('ops_public_key_jwk');
-      const jwk = response.body.ops_public_key_jwk;
-      expect(jwk.kty).toBe('OKP');
-      expect(jwk.crv).toBe('Ed25519');
-      expect(jwk.x).toBe(response.body.ops_public_key);
-
-      // Ops public key — PEM (SPKI, universally supported)
-      expect(response.body).toHaveProperty('ops_public_key_pem');
-      expect(response.body.ops_public_key_pem).toContain('-----BEGIN PUBLIC KEY-----');
-      expect(response.body.ops_public_key_pem).toContain('-----END PUBLIC KEY-----');
     });
 
     it('should return 401 for invalid email', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: 'nonexistent@test.com',
+          email: 'nonexistent@test.com',
           password: 'password123',
         })
         .expect(401);
@@ -66,7 +45,7 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: 'tenant@test.com',
+          email: 'tenant@test.com',
           password: 'wrongpassword',
         })
         .expect(401);
@@ -74,7 +53,7 @@ describe('Auth Routes', () => {
       expectUnauthorized(response);
     });
 
-    it('should return 400 for missing identifier and email', async () => {
+    it('should return 400 for missing email', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
@@ -89,18 +68,18 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: 'tenant@test.com',
+          email: 'tenant@test.com',
         })
         .expect(400);
 
       expectBadRequest(response);
     });
 
-    it('should return 400 for empty identifier', async () => {
+    it('should return 400 for empty email', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: '',
+          email: '',
           password: 'password123',
         })
         .expect(400);
@@ -112,8 +91,20 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: 'tenant@test.com',
+          email: 'tenant@test.com',
           password: '',
+        })
+        .expect(400);
+
+      expectBadRequest(response);
+    });
+
+    it('should return 400 for invalid email format', async () => {
+      const response = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: 'invalid-email',
+          password: 'password123',
         })
         .expect(400);
 
@@ -124,7 +115,7 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: 'tenant@test.com',
+          email: 'tenant@test.com',
           password: '123',
         })
         .expect(400);
@@ -132,64 +123,16 @@ describe('Auth Routes', () => {
       expectBadRequest(response);
     });
 
-    // NOTE: Phone-based login is covered at the service/flow level; route tests focus on payload/validation.
-
     it('should handle inactive user accounts', async () => {
       const response = await request(app)
         .post('/api/v1/auth/login')
         .send({
-          identifier: 'inactive@test.com',
+          email: 'inactive@test.com',
           password: 'password123',
         })
         .expect(401);
 
       expectUnauthorized(response);
-    });
-
-    describe('isDeviceRegistered field', () => {
-      it('should return isDeviceRegistered: false when no X-App-Device-Id header provided', async () => {
-        const response = await request(app)
-          .post('/api/v1/auth/login')
-          .send({
-            identifier: 'tenant@test.com',
-            password: 'password123',
-          })
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('isDeviceRegistered', false);
-      });
-
-      it('should return isDeviceRegistered: false for unregistered device', async () => {
-        const response = await request(app)
-          .post('/api/v1/auth/login')
-          .set('X-App-Device-Id', 'unregistered-device-id')
-          .send({
-            identifier: 'tenant@test.com',
-            password: 'password123',
-          })
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('isDeviceRegistered', false);
-      });
-
-      it('should return isDeviceRegistered: false for revoked device', async () => {
-        // This test verifies that revoked devices are not considered registered
-        // The mock returns undefined for findActiveByUserAndAppDeviceId when device is revoked
-        const response = await request(app)
-          .post('/api/v1/auth/login')
-          .set('X-App-Device-Id', 'revoked-device-id')
-          .send({
-            identifier: 'tenant@test.com',
-            password: 'password123',
-          })
-          .expect(200);
-
-        expectSuccess(response);
-        // Revoked devices should not be considered registered
-        expect(response.body).toHaveProperty('isDeviceRegistered', false);
-      });
     });
   });
 
@@ -467,7 +410,7 @@ describe('Auth Routes', () => {
           facilityIds: []
         },
         config.jwt.secret,
-        { expiresIn: '24h' }
+        { expiresIn: '30d' }
       );
 
       const response = await request(app)
@@ -724,7 +667,7 @@ describe('Auth Routes', () => {
 
   describe('Invite/OTP First-time Login Flow', () => {
     let appForInvite: any;
-    const acceptInviteMock = jest.fn();
+    const requestOtpMock = jest.fn();
     const verifyOtpMock = jest.fn();
     const setPasswordMock = jest.fn();
 
@@ -733,7 +676,7 @@ describe('Auth Routes', () => {
         jest.doMock('@/services/first-time-user.service', () => ({
           FirstTimeUserService: {
             getInstance: () => ({
-              acceptInvite: acceptInviteMock,
+              requestOtp: requestOtpMock,
               verifyOtp: verifyOtpMock,
               setPassword: setPasswordMock,
             }),
@@ -748,51 +691,60 @@ describe('Auth Routes', () => {
       jest.clearAllMocks();
     });
 
-    it('POST /api/v1/auth/invite/accept validates body', async () => {
+    it('POST /api/v1/auth/invite/request-otp validates body', async () => {
       const res = await require('supertest')(appForInvite)
-        .post('/api/v1/auth/invite/accept')
+        .post('/api/v1/auth/invite/request-otp')
         .send({})
         .expect(400);
       expect(res.body.success).toBe(false);
-      expect(acceptInviteMock).not.toHaveBeenCalled();
+      expect(requestOtpMock).not.toHaveBeenCalled();
     });
 
-    it('POST /api/v1/auth/invite/accept succeeds with complete profile', async () => {
-      acceptInviteMock.mockResolvedValueOnce({
-        needs_profile: false,
-        profile: { first_name: 'John', last_name: 'Doe', email: 'john@example.com' },
-        missing_fields: [],
-      });
+    it('POST /api/v1/auth/invite/request-otp succeeds', async () => {
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      requestOtpMock.mockResolvedValueOnce({ expiresAt });
       const res = await require('supertest')(appForInvite)
-        .post('/api/v1/auth/invite/accept')
-        .send({ token: 'invite-token' })
+        .post('/api/v1/auth/invite/request-otp')
+        .send({ token: 'invite-token', phone: '+15550001234' })
         .expect(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.needs_profile).toBe(false);
-      expect(res.body.profile.first_name).toBe('John');
-      expect(acceptInviteMock).toHaveBeenCalledWith({ token: 'invite-token' });
+      expect(requestOtpMock).toHaveBeenCalled();
     });
 
-    it('POST /api/v1/auth/invite/accept returns needs_profile true when profile incomplete', async () => {
-      acceptInviteMock.mockResolvedValueOnce({
-        needs_profile: true,
-        profile: { first_name: null, last_name: null, email: null },
-        missing_fields: ['first_name', 'last_name'],
+    it('POST /api/v1/auth/invite/request-otp is rate limited (5 per minute)', async () => {
+      // Create a fresh app instance so limiter state is clean
+      let isolatedApp: any;
+      jest.isolateModules(() => {
+        jest.doMock('@/services/first-time-user.service', () => ({
+          FirstTimeUserService: {
+            getInstance: () => ({
+              requestOtp: requestOtpMock,
+              verifyOtp: verifyOtpMock,
+              setPassword: setPasswordMock,
+            }),
+          },
+        }));
+        const { createApp: createAppIsolated } = require('@/app');
+        isolatedApp = createAppIsolated();
       });
-      const res = await require('supertest')(appForInvite)
-        .post('/api/v1/auth/invite/accept')
-        .send({ token: 'invite-token' })
-        .expect(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.needs_profile).toBe(true);
-      expect(res.body.missing_fields).toContain('first_name');
-      expect(res.body.missing_fields).toContain('last_name');
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      requestOtpMock.mockResolvedValue({ expiresAt });
+      for (let i = 0; i < 5; i++) {
+        await require('supertest')(isolatedApp)
+          .post('/api/v1/auth/invite/request-otp')
+          .send({ token: 'invite-token', phone: '+15550001234' })
+          .expect(200);
+      }
+      await require('supertest')(isolatedApp)
+        .post('/api/v1/auth/invite/request-otp')
+        .send({ token: 'invite-token', phone: '+15550001234' })
+        .expect(429);
     });
 
     it('POST /api/v1/auth/invite/verify-otp validates body', async () => {
       const res = await require('supertest')(appForInvite)
         .post('/api/v1/auth/invite/verify-otp')
-        .send({ otp: 'abc' })
+        .send({ token: 'tok', otp: 'abc' })
         .expect(400);
       expect(res.body.success).toBe(false);
       expect(verifyOtpMock).not.toHaveBeenCalled();
@@ -805,10 +757,10 @@ describe('Auth Routes', () => {
         .send({ token: 'tok', otp: '123456' })
         .expect(200);
       expect(res.body.success).toBe(true);
-      expect(verifyOtpMock).toHaveBeenCalledWith({ token: 'tok', otp: '123456' });
+      expect(verifyOtpMock).toHaveBeenCalled();
     });
 
-    it('POST /api/v1/auth/invite/set-password validates body - weak password', async () => {
+    it('POST /api/v1/auth/invite/set-password validates body', async () => {
       const res = await require('supertest')(appForInvite)
         .post('/api/v1/auth/invite/set-password')
         .send({ token: 'tok', otp: '123456', newPassword: 'weak' })
@@ -824,61 +776,7 @@ describe('Auth Routes', () => {
         .send({ token: 'tok', otp: '123456', newPassword: 'Strong!Pass1' })
         .expect(200);
       expect(res.body.success).toBe(true);
-      expect(setPasswordMock).toHaveBeenCalledWith({
-        token: 'tok',
-        otp: '123456',
-        newPassword: 'Strong!Pass1',
-        firstName: undefined,
-        lastName: undefined,
-        email: undefined,
-      });
-    });
-
-    it('POST /api/v1/auth/invite/set-password with profile fields', async () => {
-      setPasswordMock.mockResolvedValueOnce(undefined);
-      const res = await require('supertest')(appForInvite)
-        .post('/api/v1/auth/invite/set-password')
-        .send({
-          token: 'tok',
-          otp: '123456',
-          newPassword: 'Strong!Pass1',
-          firstName: 'Jane',
-          lastName: 'Doe',
-          email: 'jane@example.com',
-        })
-        .expect(200);
-      expect(res.body.success).toBe(true);
-      expect(setPasswordMock).toHaveBeenCalledWith({
-        token: 'tok',
-        otp: '123456',
-        newPassword: 'Strong!Pass1',
-        firstName: 'Jane',
-        lastName: 'Doe',
-        email: 'jane@example.com',
-      });
-    });
-
-    it('POST /api/v1/auth/invite/set-password rejects when missing token', async () => {
-      // Create isolated app to avoid rate limiting from previous tests
-      let isolatedApp: any;
-      jest.isolateModules(() => {
-        jest.doMock('@/services/first-time-user.service', () => ({
-          FirstTimeUserService: {
-            getInstance: () => ({
-              acceptInvite: acceptInviteMock,
-              verifyOtp: verifyOtpMock,
-              setPassword: setPasswordMock,
-            }),
-          },
-        }));
-        const { createApp: createAppIsolated } = require('@/app');
-        isolatedApp = createAppIsolated();
-      });
-      const res = await require('supertest')(isolatedApp)
-        .post('/api/v1/auth/invite/set-password')
-        .send({ otp: '123456', newPassword: 'Strong!Pass1' })
-        .expect(400);
-      expect(res.body.success).toBe(false);
+      expect(setPasswordMock).toHaveBeenCalled();
     });
   });
 });

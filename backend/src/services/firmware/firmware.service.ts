@@ -22,6 +22,7 @@ const CHUNK_SIZE_BYTES = 128 * 1024;
 const MAX_CHUNK_RETRIES = 3;
 /** ACK timeout per chunk in milliseconds */
 const CHUNK_ACK_TIMEOUT_MS = 30_000;
+const VERIFY_TIMEOUT_MS = (Number(process.env.FIRMWARE_VERIFY_TIMEOUT_SEC) || 900) * 1000;
 const VALID_TARGET_TYPES: FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'access_control'];
 
 /**
@@ -36,6 +37,8 @@ interface ActivePush {
 }
 
 const activePushes = new Map<string, ActivePush>();
+const verifyingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+const nonceToPush = new Map<string, { pushId: string; facilityId: string; expiresAt: number }>();
 const resumeInFlightPushes = new Set<string>();
 const resumeFacilityRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const resumeFacilityRunsInFlight = new Set<string>();
@@ -202,12 +205,6 @@ export class FirmwareService {
       logger.warn(`Could not verify gateway connectivity for facility=${facilityId}: ${err.message}`);
     }
 
-    // Reject if gateway already has an active push for this target type
-    const existingPush = await this.pushModel.findActiveByGateway(gatewayId, targetType);
-    if (existingPush) {
-      throw new Error(`Gateway already has an active ${targetType} firmware push (id=${existingPush.id}, status=${existingPush.status})`);
-    }
-
     // Warn if compatible_models doesn't match gateway model (non-blocking)
     if (firmware.compatible_models && firmware.compatible_models.length > 0 && gateway.model) {
       if (!firmware.compatible_models.includes(gateway.model)) {
@@ -215,14 +212,19 @@ export class FirmwareService {
       }
     }
 
-    // Create push record with target_type denormalized from firmware image
-    const push = await this.pushModel.create({
+    // Create push record atomically with active-push check.
+    const creation = await this.pushModel.createIfNoActiveByGatewayTarget({
       firmware_id: firmwareId,
       gateway_id: gatewayId,
       facility_id: facilityId,
       target_type: targetType,
       initiated_by: userId,
     });
+    if (!creation.push) {
+      const existing = creation.existingPush;
+      throw new Error(`Gateway already has an active ${targetType} firmware push (id=${existing?.id}, status=${existing?.status})`);
+    }
+    const push = creation.push;
 
     // Spawn background task (detached from HTTP response)
     this.executePush(push.id).catch(async err => {
@@ -280,6 +282,7 @@ export class FirmwareService {
     if (active) {
       active.cancel = true;
     }
+    this.clearVerifyingTimeout(pushId);
 
     this.broadcastProgress(push, 'cancelled', 0);
   }
@@ -327,6 +330,7 @@ export class FirmwareService {
       chunkAckResolvers: new Map(),
     };
     activePushes.set(pushId, pushState);
+    this.registerNonceMapping(nonce, pushId, push.facility_id);
 
     try {
       if (!this.isFacilityGatewayOnline(push.facility_id)) {
@@ -465,6 +469,7 @@ export class FirmwareService {
       // For gateway target: gateway applies directly; for lock/friend_node: BLE relay needed.
       // Final 'complete' status is set by handleUpdateStatus when the gateway reports success.
       await this.pushModel.updateStatus(pushId, 'verifying');
+      this.scheduleVerifyingTimeout(push, nonce);
       this.broadcastProgress(push, 'verifying', 100, totalChunks, totalChunks);
       logger.info(`Firmware push delivered, awaiting verification pushId=${pushId} firmware=${firmware.version} target=${firmware.target_type}`);
     } catch (err) {
@@ -574,10 +579,27 @@ export class FirmwareService {
           break;
         }
       }
+      if (!matchedPush) {
+        const nonceMatch = this.resolvePushByNonce(nonce, facilityId);
+        if (nonceMatch) {
+          matchedPush = await this.pushModel.findById(nonceMatch);
+        }
+      }
     }
 
-    // Fall back to DB lookup: most recent active push for this facility.
-    // This handles gateways that only send nonce+status (no target_type).
+    const isTerminalSignal =
+      normalizedStatus === 'success' ||
+      normalizedStatus === 'applied' ||
+      normalizedStatus === 'failed' ||
+      normalizedStatus === 'error';
+
+    // For terminal updates, require nonce correlation to avoid mutating the wrong push.
+    if (isTerminalSignal && !nonce) {
+      logger.warn(`FIRMWARE_UPDATE_STATUS: ignoring terminal status without nonce facility=${facilityId} status=${normalizedStatus}`);
+      return;
+    }
+
+    // Fall back to DB lookup for non-terminal statuses only.
     if (!matchedPush) {
       let candidates = await this.pushModel.findActiveByFacilities([facilityId]);
       if (targetType) {
@@ -613,13 +635,6 @@ export class FirmwareService {
       }
     }
 
-    // Final fallback for idempotent late/duplicate status updates:
-    // look up the latest push by target_type when provided.
-    if (!matchedPush && targetType) {
-      const pushes = await this.pushModel.findByFacilityAndTargetType(facilityId, targetType);
-      matchedPush = pushes[0] || null;
-    }
-
     if (!matchedPush) {
       logger.warn(`FIRMWARE_UPDATE_STATUS: no matching push found for facility=${facilityId} nonce=${nonce} target=${targetType}`);
       return;
@@ -630,16 +645,19 @@ export class FirmwareService {
       // Gateway confirmed firmware applied successfully — update if not already complete
       if (matchedPush.status !== 'complete') {
         await this.pushModel.updateStatus(matchedPush.id, 'complete');
+        this.clearVerifyingTimeout(matchedPush.id);
         this.broadcastProgress(matchedPush, 'complete', 100);
         logger.info(`Firmware update confirmed by gateway pushId=${matchedPush.id} version=${version}`);
       }
     } else if (normalizedStatus === 'failed' || normalizedStatus === 'error') {
       const errorMsg = gwError || `Gateway reported firmware update failure: ${gwStatus}`;
       await this.pushModel.updateStatus(matchedPush.id, 'failed', errorMsg);
+      this.clearVerifyingTimeout(matchedPush.id);
       this.broadcastProgress(matchedPush, 'failed', 0, undefined, undefined, errorMsg);
       logger.error(`Firmware update failed on gateway pushId=${matchedPush.id}: ${errorMsg}`);
     } else if (normalizedStatus === 'verifying' || normalizedStatus === 'applying') {
       await this.pushModel.updateStatus(matchedPush.id, 'verifying');
+      this.scheduleVerifyingTimeout(matchedPush, nonce);
       this.broadcastProgress(matchedPush, 'verifying', 100);
     } else {
       logger.warn(`FIRMWARE_UPDATE_STATUS: unknown status '${gwStatus}' from facility=${facilityId}`);
@@ -854,7 +872,7 @@ export class FirmwareService {
    * pushes for the disconnected facility so they fail immediately instead
    * of waiting for per-chunk ACK timeouts.
    */
-  static handleFacilityDisconnect(facilityId: string): void {
+  static async handleFacilityDisconnect(facilityId: string): Promise<void> {
     for (const [pushId, pushState] of activePushes.entries()) {
       if (pushState.facilityId === facilityId && !pushState.cancel) {
         pushState.cancel = true;
@@ -865,6 +883,14 @@ export class FirmwareService {
           } catch {}
         }
         pushState.chunkAckResolvers.clear();
+        const failed = await this.pushModel.atomicFailIfActive(pushId, 'Gateway disconnected during firmware push');
+        if (failed) {
+          const push = await this.pushModel.findById(pushId);
+          if (push) {
+            this.clearVerifyingTimeout(pushId);
+            this.broadcastProgress(push, 'failed', push.progress_percent || 0, push.chunks_total ?? undefined, push.chunks_sent, 'Gateway disconnected during firmware push');
+          }
+        }
         logger.info(`Firmware push cancelled due to gateway disconnect pushId=${pushId} facility=${facilityId}`);
       }
     }
@@ -972,6 +998,75 @@ export class FirmwareService {
   private static isFacilityGatewayOnline(facilityId: string): boolean {
     const status = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
     return status.connected;
+  }
+
+  private static registerNonceMapping(nonce: string, pushId: string, facilityId: string): void {
+    nonceToPush.set(nonce, {
+      pushId,
+      facilityId,
+      expiresAt: Date.now() + Math.max(VERIFY_TIMEOUT_MS, 60 * 60 * 1000),
+    });
+  }
+
+  private static resolvePushByNonce(nonce: string, facilityId: string): string | null {
+    const entry = nonceToPush.get(nonce);
+    if (!entry) {
+      return null;
+    }
+    if (entry.expiresAt < Date.now()) {
+      nonceToPush.delete(nonce);
+      return null;
+    }
+    if (entry.facilityId !== facilityId) {
+      return null;
+    }
+    return entry.pushId;
+  }
+
+  private static scheduleVerifyingTimeout(push: FirmwarePush, nonce?: string): void {
+    this.clearVerifyingTimeout(push.id);
+    const timer = setTimeout(async () => {
+      try {
+        const failed = await this.pushModel.atomicFailIfActive(
+          push.id,
+          `Gateway did not report final firmware status before timeout (${Math.round(VERIFY_TIMEOUT_MS / 1000)}s)`,
+        );
+        if (!failed) {
+          return;
+        }
+        const latest = await this.pushModel.findById(push.id);
+        if (latest) {
+          this.broadcastProgress(
+            latest,
+            'failed',
+            latest.progress_percent || 0,
+            latest.chunks_total ?? undefined,
+            latest.chunks_sent,
+            latest.error_message || 'Firmware verification timeout',
+          );
+        }
+        if (nonce) {
+          nonceToPush.delete(nonce);
+        }
+      } catch (err) {
+        logger.warn(`Failed to apply firmware verifying timeout for pushId=${push.id}`, err);
+      } finally {
+        verifyingTimeouts.delete(push.id);
+      }
+    }, VERIFY_TIMEOUT_MS);
+    if (typeof (timer as any).unref === 'function') {
+      (timer as any).unref();
+    }
+    verifyingTimeouts.set(push.id, timer);
+  }
+
+  private static clearVerifyingTimeout(pushId: string): void {
+    const timer = verifyingTimeouts.get(pushId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    verifyingTimeouts.delete(pushId);
   }
 
   /**

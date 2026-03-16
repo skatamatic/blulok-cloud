@@ -121,8 +121,7 @@ export default function UnitDetailsPage() {
   const [showShareModal, setShowShareModal] = useState(false);
   const canManageUnits = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canChangePrimaryTenant = canManageUnits; // Only admins can change primary tenant
-  const isPrimaryTenant = unit?.primary_tenant?.id === authState.user?.id;
-  const canManageSharedAccess = canManageUnits || isPrimaryTenant; // Admins or primary tenant can manage shared access
+  const canManageSharedAccess = canManageUnits; // Manual shared access management is admin-scoped
 
   // Handle tab from URL query parameter
   useEffect(() => {
@@ -161,6 +160,7 @@ export default function UnitDetailsPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedPrimaryTenant, setSelectedPrimaryTenant] = useState<string>('');
   const [selectedSharedTenant, setSelectedSharedTenant] = useState<string>('');
+  const [showAddSharedAccess, setShowAddSharedAccess] = useState(false);
   const [showPrimaryTenantChange, setShowPrimaryTenantChange] = useState(false);
   const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
   const [updatingLock, setUpdatingLock] = useState(false);
@@ -549,13 +549,13 @@ export default function UnitDetailsPage() {
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-medium text-gray-900 dark:text-white">Primary Tenant</h3>
-                    {canChangePrimaryTenant && unit.primary_tenant && !showPrimaryTenantChange && (
+                    {canChangePrimaryTenant && !showPrimaryTenantChange && (
                       <button
                         onClick={() => setShowPrimaryTenantChange(true)}
                         className="inline-flex items-center px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                       >
                         <PencilIcon className="h-4 w-4 mr-1" />
-                        Change Primary
+                        {unit.primary_tenant ? 'Change Primary' : 'Assign Primary'}
                       </button>
                     )}
                   </div>
@@ -659,7 +659,10 @@ export default function UnitDetailsPage() {
                     </div>
                     {canManageSharedAccess && unit.primary_tenant && (!unit.shared_tenants || unit.shared_tenants.length < 4) && (
                 <button
-                        onClick={() => setSelectedSharedTenant('')}
+                        onClick={() => {
+                          setSelectedSharedTenant('');
+                          setShowAddSharedAccess(true);
+                        }}
                         className="inline-flex items-center px-3 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 transition-colors"
                 >
                         <PlusIcon className="h-4 w-4 mr-2" />
@@ -669,7 +672,7 @@ export default function UnitDetailsPage() {
                   </div>
 
                   {/* Inline Add Shared Access form (moved above list) */}
-                  {canManageSharedAccess && unit.primary_tenant && selectedSharedTenant === '' && (!unit.shared_tenants || unit.shared_tenants.length < 4) && (
+                  {canManageSharedAccess && unit.primary_tenant && showAddSharedAccess && (!unit.shared_tenants || unit.shared_tenants.length < 4) && (
                     <div className="mt-3 mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
                       <div className="flex items-start justify-between mb-3">
                         <div>
@@ -683,7 +686,10 @@ export default function UnitDetailsPage() {
                           </p>
                         </div>
                         <button
-                          onClick={() => setSelectedSharedTenant(' ')} // Use space to hide form
+                          onClick={() => {
+                            setShowAddSharedAccess(false);
+                            setSelectedSharedTenant('');
+                          }}
                           className="text-green-700 dark:text-green-300 hover:text-green-900 dark:hover:text-green-100"
                         >
                           <XMarkIcon className="h-5 w-5" />
@@ -691,12 +697,8 @@ export default function UnitDetailsPage() {
                       </div>
                       <div className="relative z-10">
                         <UserFilter
-                          value=""
-                          onChange={(tenantId) => {
-                            if (tenantId) {
-                              setSelectedSharedTenant(tenantId);
-                            }
-                          }}
+                          value={selectedSharedTenant}
+                          onChange={setSelectedSharedTenant}
                           placeholder="Search for tenant..."
                           className="w-full"
                           facilityId={unit.facility_id}
@@ -704,18 +706,22 @@ export default function UnitDetailsPage() {
                           excludeUserIds={[authState.user?.id || '']}
                         />
                       </div>
-                      {selectedSharedTenant && selectedSharedTenant !== '' && selectedSharedTenant !== ' ' && (
+                      {selectedSharedTenant && (
                         <div className="mt-3 flex justify-end space-x-2">
                           <button
-                            onClick={() => setSelectedSharedTenant('')}
+                            onClick={() => {
+                              setShowAddSharedAccess(false);
+                              setSelectedSharedTenant('');
+                            }}
                             className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                           >
                             Cancel
                           </button>
                           <button
-                            onClick={() => {
-                              handleAssignTenant(selectedSharedTenant, false);
-                              setSelectedSharedTenant(' '); // Hide form after adding
+                            onClick={async () => {
+                              await handleAssignTenant(selectedSharedTenant, false);
+                              setShowAddSharedAccess(false);
+                              setSelectedSharedTenant('');
                             }}
                             disabled={assigningTenant}
                             className="px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"

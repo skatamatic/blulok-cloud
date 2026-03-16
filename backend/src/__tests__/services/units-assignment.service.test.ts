@@ -125,6 +125,114 @@ describe('UnitsService - Tenant Assignment', () => {
         })
       ).rejects.toThrow('Unit not found');
     });
+
+    it('should replace existing primary tenant when assigning a new primary tenant', async () => {
+      mockUnitModel.findById = jest.fn().mockResolvedValue({
+        id: unitId,
+        facility_id: facilityId,
+        unit_number: 'A-101',
+      });
+
+      mockAssignmentModel.findByUnitAndTenant = jest.fn().mockResolvedValue(null);
+      mockAssignmentModel.findByUnitId = jest.fn().mockResolvedValue([
+        {
+          id: 'assignment-old-primary',
+          unit_id: unitId,
+          tenant_id: 'tenant-old-primary',
+          access_type: 'full',
+          is_primary: true,
+        } as any,
+      ]);
+      mockAssignmentModel.deleteByUnitAndTenant = jest.fn().mockResolvedValue(true);
+      mockAssignmentModel.create = jest.fn().mockResolvedValue({
+        id: 'assignment-new-primary',
+        unit_id: unitId,
+        tenant_id: tenantId,
+        is_primary: true,
+      } as any);
+      mockEventService.emitTenantUnassigned = jest.fn();
+      mockEventService.emitTenantAssigned = jest.fn();
+
+      await unitsService.assignTenant(unitId, tenantId, {
+        accessType: 'full',
+        isPrimary: true,
+        performedBy: 'admin-1',
+        source: 'api',
+      });
+
+      expect(mockAssignmentModel.deleteByUnitAndTenant).toHaveBeenCalledWith(unitId, 'tenant-old-primary');
+      expect(mockAssignmentModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unit_id: unitId,
+          tenant_id: tenantId,
+          is_primary: true,
+        })
+      );
+      expect(mockEventService.emitTenantUnassigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unitId,
+          tenantId: 'tenant-old-primary',
+        })
+      );
+      expect(mockEventService.emitTenantAssigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unitId,
+          tenantId,
+        })
+      );
+    });
+
+    it('should promote existing shared assignment to primary', async () => {
+      mockUnitModel.findById = jest.fn().mockResolvedValue({
+        id: unitId,
+        facility_id: facilityId,
+        unit_number: 'A-101',
+      });
+
+      mockAssignmentModel.findByUnitAndTenant = jest.fn().mockResolvedValue({
+        id: 'assignment-existing-shared',
+        unit_id: unitId,
+        tenant_id: tenantId,
+        access_type: 'full',
+        is_primary: false,
+        notes: undefined,
+      } as any);
+      mockAssignmentModel.findByUnitId = jest.fn().mockResolvedValue([
+        {
+          id: 'assignment-old-primary',
+          unit_id: unitId,
+          tenant_id: 'tenant-old-primary',
+          access_type: 'full',
+          is_primary: true,
+        } as any,
+      ]);
+      mockAssignmentModel.deleteByUnitAndTenant = jest.fn().mockResolvedValue(true);
+      mockAssignmentModel.update = jest.fn().mockResolvedValue({
+        id: 'assignment-existing-shared',
+        is_primary: true,
+      } as any);
+      mockEventService.emitTenantUnassigned = jest.fn();
+      mockEventService.emitTenantAssigned = jest.fn();
+
+      await unitsService.assignTenant(unitId, tenantId, {
+        accessType: 'full',
+        isPrimary: true,
+        performedBy: 'admin-1',
+        source: 'api',
+      });
+
+      expect(mockAssignmentModel.update).toHaveBeenCalledWith(
+        'assignment-existing-shared',
+        expect.objectContaining({ is_primary: true })
+      );
+      expect(mockAssignmentModel.create).not.toHaveBeenCalled();
+      expect(mockEventService.emitTenantAssigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unitId,
+          tenantId,
+        })
+      );
+    });
   });
 
   describe('unassignTenant', () => {

@@ -59,7 +59,7 @@ export class DenylistEntryModel {
   async create(data: {
     device_id: string;
     user_id: string;
-    expires_at?: Date | null;
+    expires_at?: Date | string | any | null;
     source: DenylistSource;
     created_by?: string | null;
   }): Promise<DeviceDenylistEntry> {
@@ -78,8 +78,8 @@ export class DenylistEntryModel {
         user_id: data.user_id,
         source: data.source,
         created_by: data.created_by || null,
-        created_at: this.db.fn.now(),
-        updated_at: this.db.fn.now(),
+        created_at: this.db.raw('UTC_TIMESTAMP()'),
+        updated_at: this.db.raw('UTC_TIMESTAMP()'),
       };
 
       if (data.expires_at !== undefined) {
@@ -108,11 +108,10 @@ export class DenylistEntryModel {
    */
   async findByDevice(deviceId: string): Promise<DeviceDenylistEntry[]> {
     try {
-      const now = new Date();
       return await this.db('device_denylist_entries')
         .where({ device_id: deviceId })
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         })
         .orderBy('created_at', 'desc');
     } catch (error) {
@@ -126,11 +125,10 @@ export class DenylistEntryModel {
    */
   async findByUser(userId: string): Promise<DeviceDenylistEntry[]> {
     try {
-      const now = new Date();
       return await this.db('device_denylist_entries')
         .where({ user_id: userId })
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         })
         .orderBy('created_at', 'desc');
     } catch (error) {
@@ -144,11 +142,10 @@ export class DenylistEntryModel {
    */
   async findByDeviceAndUser(deviceId: string, userId: string): Promise<DeviceDenylistEntry | null> {
     try {
-      const now = new Date();
       const entry = await this.db('device_denylist_entries')
         .where({ device_id: deviceId, user_id: userId })
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         })
         .first();
 
@@ -208,10 +205,9 @@ export class DenylistEntryModel {
    */
   async pruneExpired(): Promise<number> {
     try {
-      const now = new Date();
       return await this.db('device_denylist_entries')
         .whereNotNull('expires_at')
-        .where('expires_at', '<=', now)
+        .where('expires_at', '<=', this.db.raw('UTC_TIMESTAMP()'))
         .del();
     } catch (error) {
       logger.error('Error pruning expired denylist entries:', error);
@@ -260,13 +256,11 @@ export class DenylistEntryModel {
       }
 
       const deviceIds = devices.map((d: any) => d.id);
-      const now = new Date();
-
       return await this.db('device_denylist_entries')
         .where({ user_id: userId })
         .whereIn('device_id', deviceIds)
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         });
     } catch (error) {
       logger.error('Error finding denylist entries for units:', error);
@@ -281,7 +275,7 @@ export class DenylistEntryModel {
   async bulkCreate(entries: Array<{
     device_id: string;
     user_id: string;
-    expires_at?: Date | null;
+    expires_at?: Date | string | any | null;
     source: DenylistSource;
     created_by?: string | null;
   }>): Promise<void> {
@@ -302,7 +296,7 @@ export class DenylistEntryModel {
         .del();
 
       // Prepare insert data
-      const now = this.db.fn.now();
+      const now = this.db.raw('UTC_TIMESTAMP()');
       const insertData = entries.map(data => ({
         id: randomUUID(),
         device_id: data.device_id,

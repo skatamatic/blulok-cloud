@@ -33,6 +33,7 @@ describe('FirmwarePushModel', () => {
 
     mockBuilder = {
       where: jest.fn().mockReturnThis(),
+      forUpdate: jest.fn().mockReturnThis(),
       whereNotIn: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
@@ -43,7 +44,9 @@ describe('FirmwarePushModel', () => {
     };
     mockBuilder.then = jest.fn((resolve: (value: any) => void) => resolve([mockPushRow]));
 
-    (model as any).db = { connection: jest.fn(() => mockBuilder) };
+    const mockConnection: any = jest.fn(() => mockBuilder);
+    mockConnection.transaction = jest.fn(async (callback: (trx: any) => Promise<any>) => callback(mockConnection));
+    (model as any).db = { connection: mockConnection };
   });
 
   describe('findById', () => {
@@ -162,6 +165,45 @@ describe('FirmwarePushModel', () => {
     });
   });
 
+  describe('createIfNoActiveByGatewayTarget', () => {
+    it('returns existing active push and does not insert', async () => {
+      mockBuilder.first
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({ ...mockPushRow, id: 'existing-push' });
+
+      const result = await model.createIfNoActiveByGatewayTarget({
+        firmware_id: 'fw-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        target_type: 'gateway',
+        initiated_by: 'user-1',
+      });
+
+      expect(result.push).toBeNull();
+      expect(result.existingPush?.id).toBe('existing-push');
+      expect(mockBuilder.insert).not.toHaveBeenCalled();
+    });
+
+    it('creates push when no active push exists', async () => {
+      mockBuilder.first
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({ ...mockPushRow, id: 'test-push-id' });
+
+      const result = await model.createIfNoActiveByGatewayTarget({
+        firmware_id: 'fw-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        target_type: 'gateway',
+        initiated_by: 'user-1',
+      });
+
+      expect(mockBuilder.insert).toHaveBeenCalled();
+      expect(result.existingPush).toBeNull();
+      expect(result.push?.id).toBe('test-push-id');
+    });
+  });
+
   describe('updateProgress', () => {
     it('should update chunks_sent', async () => {
       await model.updateProgress('push-1', 5);
@@ -225,6 +267,25 @@ describe('FirmwarePushModel', () => {
     it('should return false when push is already terminal (no rows updated)', async () => {
       mockBuilder.update.mockResolvedValue(0);
       const result = await model.atomicCancel('push-1');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('atomicFailIfActive', () => {
+    it('updates status to failed when push is active and returns true', async () => {
+      mockBuilder.update.mockResolvedValue(1);
+      const result = await model.atomicFailIfActive('push-1', 'Gateway disconnected');
+      expect(mockBuilder.where).toHaveBeenCalledWith('id', 'push-1');
+      expect(mockBuilder.whereNotIn).toHaveBeenCalledWith('status', ['complete', 'failed', 'cancelled']);
+      const updateArg = mockBuilder.update.mock.calls[0][0];
+      expect(updateArg.status).toBe('failed');
+      expect(updateArg.error_message).toBe('Gateway disconnected');
+      expect(result).toBe(true);
+    });
+
+    it('returns false when no non-terminal row was updated', async () => {
+      mockBuilder.update.mockResolvedValue(0);
+      const result = await model.atomicFailIfActive('push-1', 'Gateway disconnected');
       expect(result).toBe(false);
     });
   });

@@ -431,17 +431,16 @@ export class KeySharingService {
 
       const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
 
-      const now = new Date();
-      const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
-      const expiresAt = new Date(now.getTime() + ttlMs);
-      const exp = Math.floor(expiresAt.getTime() / 1000);
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const ttlSeconds = (config.security.routePassTtlHours || 24) * 60 * 60;
+      const exp = nowEpoch + ttlSeconds;
       const denylistModel = new DenylistEntryModel();
 
       // Bulk create denylist entries (single query instead of N queries)
       await denylistModel.bulkCreate(deviceIds.map(deviceId => ({
         device_id: deviceId,
         user_id: existingSharing.shared_with_user_id,
-        expires_at: expiresAt,
+        expires_at: this.db.raw('FROM_UNIXTIME(?)', [exp]),
         source: 'key_sharing_revocation' as const,
         created_by: performedBy,
       })));

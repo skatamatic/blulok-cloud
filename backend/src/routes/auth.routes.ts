@@ -317,6 +317,43 @@ router.post('/invite/accept', inviteVerifyLimiter, asyncHandler(async (req: Requ
   }
 }));
 
+// POST /auth/invite/request-otp { token, phone?, email?, firstName?, lastName? }
+// Compatibility endpoint for first-time login flow tests and existing clients.
+router.post('/invite/request-otp', inviteRequestLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const schema = Joi.object({
+    token: Joi.string().required(),
+    phone: Joi.string().optional(),
+    email: Joi.string().email().optional(),
+    firstName: Joi.string().trim().min(1).max(100).optional(),
+    lastName: Joi.string().trim().min(1).max(100).optional(),
+  });
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
+    return;
+  }
+
+  const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+  const svc = FirstTimeUserService.getInstance();
+  try {
+    const result = await svc.requestOtp({
+      token: value.token,
+      phone: value.phone,
+      email: value.email,
+      firstName: value.firstName,
+      lastName: value.lastName,
+    });
+    res.json({
+      success: true,
+      expiresAt: result.expiresAt,
+      userId: result.userId,
+      inviteId: result.inviteId,
+    });
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e?.message || 'Unable to request OTP' });
+  }
+}));
+
 // POST /auth/invite/verify-otp { token, otp }
 router.post('/invite/verify-otp', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const schema = Joi.object({

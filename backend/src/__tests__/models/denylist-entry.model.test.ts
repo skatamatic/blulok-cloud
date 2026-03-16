@@ -33,6 +33,7 @@ describe('DenylistEntryModel', () => {
 
     // Add fn property for date functions
     mockKnex.fn = { now: () => new Date() };
+    mockKnex.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: mockKnex,

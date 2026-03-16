@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { createApp } from '@/app';
-import { createMockTestData, expectUnauthorized, expectForbidden, expectNotFound } from '@/__tests__/utils/mock-test-helpers';
+import { createMockTestData, expectUnauthorized, expectForbidden, expectNotFound, expectConflict } from '@/__tests__/utils/mock-test-helpers';
 
 // Mock DeviceModel to prevent errors during gateway sync operations
 jest.mock('@/models/device.model', () => ({
@@ -12,8 +12,6 @@ jest.mock('@/models/device.model', () => ({
     findByGatewayId: jest.fn().mockResolvedValue([]),
     findBluLokDevices: jest.fn().mockResolvedValue([]),
     findAccessControlDevices: jest.fn().mockResolvedValue([]),
-    updateStatus: jest.fn().mockResolvedValue(undefined),
-    updateLockStatus: jest.fn().mockResolvedValue(undefined),
   }))
 }));
 
@@ -22,8 +20,6 @@ describe('Gateway Routes', () => {
   let testData: any;
 
   beforeAll(() => {
-    jest.spyOn(console, 'error').mockImplementation(() => undefined);
-    jest.spyOn(console, 'log').mockImplementation(() => undefined);
     app = createApp();
   });
 
@@ -31,23 +27,15 @@ describe('Gateway Routes', () => {
     testData = createMockTestData();
   });
 
-  afterAll(async () => {
-    try {
-      const { GatewayService } = await import('@/services/gateway/gateway.service');
-      await GatewayService.getInstance().shutdown();
-    } catch {
-      // Best-effort cleanup for test speed/stability.
-    }
-    jest.restoreAllMocks();
-  });
-
   describe('Authentication Requirements', () => {
     it('should require authentication for all routes', async () => {
       const routes = [
         { method: 'get', path: '/api/v1/gateways' },
         { method: 'get', path: '/api/v1/gateways/gateway-1' },
+        { method: 'get', path: '/api/v1/gateways/reassignment-candidates/facility-1' },
         { method: 'post', path: '/api/v1/gateways' },
         { method: 'put', path: '/api/v1/gateways/gateway-1' },
+        { method: 'patch', path: '/api/v1/gateways/gateway-1/reassign' },
         { method: 'put', path: '/api/v1/gateways/gateway-1/status' }
       ];
 
@@ -59,12 +47,14 @@ describe('Gateway Routes', () => {
           response = await request(app).post(route.path);
         } else if (route.method === 'put') {
           response = await request(app).put(route.path);
+        } else if (route.method === 'patch') {
+          response = await request(app).patch(route.path);
         } else if (route.method === 'delete') {
           response = await request(app).delete(route.path);
         }
         expectUnauthorized(response);
       }
-    }, 30000); // Increase timeout to 30s
+    });
   });
 
   describe('POST /api/v1/gateways - Create Gateway', () => {
@@ -324,6 +314,85 @@ describe('Gateway Routes', () => {
     });
   });
 
+  describe('Gateway Reassignment', () => {
+    it('should allow ADMIN to list reassignment candidates', async () => {
+      const response = await request(app)
+        .get('/api/v1/gateways/reassignment-candidates/facility-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(Array.isArray(response.body.gateways)).toBe(true);
+      expect(response.body.gateways.every((gateway: any) => gateway.status === 'online')).toBe(true);
+      expect(response.body.gateways.every((gateway: any) => gateway.facility_id === null)).toBe(true);
+    });
+
+    it('should prevent FACILITY_ADMIN from listing reassignment candidates', async () => {
+      const response = await request(app)
+        .get('/api/v1/gateways/reassignment-candidates/facility-1')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
+
+      expectForbidden(response);
+    });
+
+    it('should allow ADMIN to assign unassigned online gateway to facility', async () => {
+      const targetFacilityId = 'facility-3';
+
+      const response = await request(app)
+        .patch('/api/v1/gateways/gateway-3/reassign')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ targetFacilityId });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.message).toBe('Gateway assigned successfully');
+      expect(response.body.gateway.facility_id).toBe(targetFacilityId);
+    });
+
+    it('should replace existing gateway at target by unassigning prior gateway', async () => {
+      const response = await request(app)
+        .patch('/api/v1/gateways/gateway-3/reassign')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ targetFacilityId: 'facility-1' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.message).toBe('Gateway replaced successfully');
+      expect(response.body.displacedGatewayId).toBe('gateway-1');
+      expect(response.body.gateway.facility_id).toBe('facility-1');
+    });
+
+    it('should block assignment for already-assigned source gateway', async () => {
+      const response = await request(app)
+        .patch('/api/v1/gateways/gateway-1/reassign')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ targetFacilityId: 'facility-3' });
+
+      expectConflict(response);
+      expect(response.body.message).toContain('must be unassigned');
+    });
+
+    it('should block assignment when source gateway is offline', async () => {
+      const response = await request(app)
+        .patch('/api/v1/gateways/gateway-4/reassign')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ targetFacilityId: 'facility-3' });
+
+      expectConflict(response);
+      expect(response.body.message).toContain('Only online gateways');
+    });
+
+    it('should return 404 when reassigning a non-existent gateway', async () => {
+      const response = await request(app)
+        .patch('/api/v1/gateways/non-existent/reassign')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ targetFacilityId: 'facility-1' });
+
+      expectNotFound(response);
+      expect(response.body.message).toBe('Gateway not found');
+    });
+  });
+
   describe('PUT /api/v1/gateways/:id/status - Update Gateway Status', () => {
     const statusData = { status: 'maintenance' };
 
@@ -452,6 +521,15 @@ describe('Gateway Routes', () => {
       expect(response.body.gateways).toBeDefined();
       // Should only see gateways from facility-1 (their assigned facility)
       expect(response.body.gateways.every((g: any) => g.facility_id === 'facility-1')).toBe(true);
+    });
+
+    it('should return 404 for candidates request with non-existent target facility', async () => {
+      const response = await request(app)
+        .get('/api/v1/gateways/reassignment-candidates/non-existent-facility')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expectNotFound(response);
+      expect(response.body.message).toBe('Target facility not found');
     });
   });
 

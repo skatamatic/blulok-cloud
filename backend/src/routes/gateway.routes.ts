@@ -40,15 +40,16 @@
  */
 
 import { Router, Response } from 'express';
+import Joi from 'joi';
 import { GatewayModel } from '../models/gateway.model';
+import { FacilityModel } from '../models/facility.model';
 import { authenticateToken, requireAdmin, requireRoles } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { asyncHandler } from '../middleware/error.middleware';
-import { AuthService } from '../services/auth.service';
-import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 
 const router = Router();
 const gatewayModel = new GatewayModel();
+const facilityModel = new FacilityModel();
 
 /**
  * Validate that a gateway has sufficient configuration for connection testing
@@ -77,23 +78,6 @@ function validateGatewayConfigurationForTesting(gateway: any): boolean {
 // Apply auth middleware to all routes
 router.use(authenticateToken);
 
-// GET /api/gateways/status/:facilityId - Inbound WS connection status for a facility
-router.get('/status/:facilityId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-  const facilityId = String(req.params.facilityId);
-
-  // Facility admins must be scoped to this facility
-  if (user.role === UserRole.FACILITY_ADMIN) {
-    if (!user.facilityIds?.includes(facilityId)) {
-      res.status(403).json({ success: false, message: 'Access denied to this facility' });
-      return;
-    }
-  }
-
-  const status = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
-  res.json({ success: true, facilityId, ...status });
-}));
-
 // POST /api/gateways - Create new gateway
 router.post('/', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
  
@@ -109,6 +93,7 @@ router.post('/', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, re
 // GET /api/gateways - Get all gateways
 router.get('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
+  const facilityFilter = typeof req.query.facility_id === 'string' ? req.query.facility_id : undefined;
   
   const gateways = await gatewayModel.findAll();
   
@@ -117,13 +102,42 @@ router.get('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACIL
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
     // Filter gateways to only those belonging to user's facilities
     filteredGateways = gateways.filter(gateway => 
-      user.facilityIds!.includes(gateway.facility_id)
+      !!gateway.facility_id && user.facilityIds!.includes(gateway.facility_id)
     );
+  }
+
+  // Optional direct facility filter used by facility-specific UI calls.
+  if (facilityFilter) {
+    filteredGateways = filteredGateways.filter((gateway) => gateway.facility_id === facilityFilter);
   }
   
   res.json({ 
     success: true, 
     gateways: filteredGateways 
+  });
+}));
+
+const reassignGatewaySchema = Joi.object({
+  targetFacilityId: Joi.string().trim().required(),
+});
+
+// GET /api/gateways/reassignment-candidates/:facilityId - List online gateways eligible for reassignment
+router.get('/reassignment-candidates/:facilityId', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const facilityId = req.params.facilityId as string;
+
+  const targetFacility = await facilityModel.findById(facilityId);
+  if (!targetFacility) {
+    res.status(404).json({
+      success: false,
+      message: 'Target facility not found',
+    });
+    return;
+  }
+
+  const gateways = await gatewayModel.findReassignmentCandidates();
+  res.json({
+    success: true,
+    gateways,
   });
 }));
 
@@ -144,7 +158,7 @@ router.get('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FA
 
   // Check facility access for FACILITY_ADMIN users
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
-    if (!user.facilityIds.includes(gateway.facility_id)) {
+    if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
       res.status(403).json({ 
         success: false, 
         message: 'Access denied. You can only access gateways in your assigned facilities.' 
@@ -190,6 +204,99 @@ router.put('/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, 
   });
 }));
 
+// PATCH /api/gateways/:id/reassign - Reassign gateway to a different facility
+router.patch('/:id/reassign', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const id = req.params.id as string;
+  const { error, value } = reassignGatewaySchema.validate(req.body, {
+    abortEarly: false,
+    stripUnknown: true,
+  });
+
+  if (error) {
+    res.status(400).json({
+      success: false,
+      message: error.details[0]?.message || 'Validation error',
+    });
+    return;
+  }
+
+  const { targetFacilityId } = value as { targetFacilityId: string };
+
+  const gateway = await gatewayModel.findById(id);
+  if (!gateway) {
+    res.status(404).json({
+      success: false,
+      message: 'Gateway not found',
+    });
+    return;
+  }
+
+  const targetFacility = await facilityModel.findById(targetFacilityId);
+  if (!targetFacility) {
+    res.status(404).json({
+      success: false,
+      message: 'Target facility not found',
+    });
+    return;
+  }
+
+  if (gateway.facility_id === targetFacilityId) {
+    res.json({
+      success: true,
+      message: 'Gateway is already assigned to this facility',
+      gateway,
+    });
+    return;
+  }
+
+  if (gateway.status !== 'online') {
+    res.status(409).json({
+      success: false,
+      message: 'Only online gateways can be assigned',
+    });
+    return;
+  }
+
+  if (gateway.facility_id && gateway.facility_id !== targetFacilityId) {
+    res.status(409).json({
+      success: false,
+      message: 'Gateway must be unassigned before it can be assigned to a facility',
+    });
+    return;
+  }
+
+  const assignmentResult = await gatewayModel.assignUnassignedGatewayToFacility(id, targetFacilityId);
+  if (!assignmentResult.gateway) {
+    res.status(404).json({
+      success: false,
+      message: 'Gateway not found',
+    });
+    return;
+  }
+
+  // Reinitialize gateway with updated facility context
+  try {
+    const { GatewayService } = await import('../services/gateway/gateway.service');
+    const gatewayService = GatewayService.getInstance();
+    await gatewayService.reinitializeGateway(assignmentResult.gateway);
+    if (assignmentResult.displacedGatewayId) {
+      const displacedGateway = await gatewayModel.findById(assignmentResult.displacedGatewayId);
+      if (displacedGateway) {
+        await gatewayService.reinitializeGateway(displacedGateway);
+      }
+    }
+  } catch (reinitError) {
+    console.warn(`Failed to reinitialize gateway ${id} after reassignment:`, reinitError);
+  }
+
+  res.json({
+    success: true,
+    message: assignmentResult.displacedGatewayId ? 'Gateway replaced successfully' : 'Gateway assigned successfully',
+    gateway: assignmentResult.gateway,
+    displacedGatewayId: assignmentResult.displacedGatewayId,
+  });
+}));
+
 // PUT /api/gateways/:id/status - Update gateway status
 router.put('/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
@@ -208,7 +315,7 @@ router.put('/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, User
   
   // Check facility access for FACILITY_ADMIN users
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
-    if (!user.facilityIds.includes(gateway.facility_id)) {
+    if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
       res.status(403).json({ 
         success: false, 
         message: 'Access denied. You can only update gateways in your assigned facilities.' 
@@ -242,7 +349,7 @@ router.post('/:id/test-connection', requireRoles([UserRole.ADMIN, UserRole.DEV_A
 
   // Check facility access for FACILITY_ADMIN users
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
-    if (!user.facilityIds.includes(gateway.facility_id)) {
+    if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
       res.status(403).json({
         success: false,
         message: 'Access denied. You can only test gateways in your assigned facilities.'
@@ -365,7 +472,7 @@ router.post('/:id/sync', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserR
 
   // Check facility access for FACILITY_ADMIN users
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
-    if (!user.facilityIds.includes(gateway.facility_id)) {
+    if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
       res.status(403).json({
         success: false,
         message: 'Access denied. You can only sync gateways in your assigned facilities.'

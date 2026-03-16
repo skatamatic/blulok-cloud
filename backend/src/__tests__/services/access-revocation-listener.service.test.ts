@@ -79,6 +79,7 @@ describe('AccessRevocationListenerService', () => {
         first: jest.fn().mockResolvedValue(null),
       };
     });
+    mockDb.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     jest.mock('@/services/database.service', () => ({
       DatabaseService: {

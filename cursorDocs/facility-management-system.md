@@ -50,6 +50,7 @@ A comprehensive facility management system with beautiful, intuitive interfaces 
 **Features:**
 - **Device type selection**: Access Control vs BluLok
 - **Facility integration** with gateway auto-assignment
+- **Admin/Dev Admin gateway assignment** for facilities without a gateway
 - **Access Control devices**: Gates, elevators, doors
 - **BluLok devices**: Smart lock assignment to units
 - **Real-time unit availability** based on facility selection
@@ -96,7 +97,7 @@ A comprehensive facility management system with beautiful, intuitive interfaces 
 ```
 Facility
 ├── Users (Facility Admins, Tenants)
-├── Gateway (Auto-created)
+├── Gateway (One per facility)
 ├── Access Control Devices
 │   ├── Gates, Elevators, Doors
 │   └── Relay Channel Assignment
@@ -110,7 +111,8 @@ Facility
 ### User Assignment Flow
 1. **Facility Creation** → Assign facility admins and tenants
 2. **Unit Creation** → Optional primary tenant assignment
-3. **Device Creation** → Automatic facility/gateway association
+3. **Gateway Assignment/Reassignment** → Admin/Dev Admin can assign an unassigned online gateway, or replace an existing facility gateway (previous gateway is moved back to unassigned pool)
+4. **Device Creation** → Automatic facility/gateway association
 4. **Tenant Management** → Add/remove primary/shared access
 
 ## Form Validation
@@ -153,6 +155,7 @@ Facility
 - **Pre-filled facility** when creating from facility page
 - **Intelligent user filtering** based on roles
 - **Automatic gateway assignment** based on facility
+- **Gateway assignment controls** available in the Facility Gateway tab for Admin/Dev Admin
 - **Status defaults** appropriate for entity type
 
 ## API Integration
@@ -165,11 +168,16 @@ Facility
 - `POST /api/v1/units` - Create unit
 - `POST /api/v1/units/:unitId/assign` - Assign tenant
 - `DELETE /api/v1/units/:unitId/assign/:tenantId` - Remove tenant
+- Unit Details tenant tab supports manual primary tenant assignment/change plus shared-access grant/revoke for `admin`, `dev_admin`, and `facility_admin` users (with facility scope enforced for facility admins)
 
 ### Device Management
 - `POST /api/v1/devices/access-control` - Create access control device
 - `POST /api/v1/devices/blulok` - Create BluLok device
 - `GET /api/v1/units?facility_id=:id` - Get facility units
+
+### Gateway Management
+- `GET /api/v1/gateways/reassignment-candidates/:facilityId` - List unassigned online gateways eligible for facility assignment
+- `PATCH /api/v1/gateways/:id/reassign` - Assign or replace facility gateway with server-side validation (admin/dev admin only)
 
 ## Security Features
 

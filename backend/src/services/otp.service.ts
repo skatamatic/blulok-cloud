@@ -35,17 +35,17 @@ export class OTPService {
   }): Promise<{ expiresAt: Date }> {
     const code = OTPService.generateCode();
     const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + OTP_TTL_MINUTES * 60 * 1000);
+    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
     await this.db('user_otps').insert({
       user_id: params.userId,
       invite_id: params.inviteId || null,
       code_hash: codeHash,
-      expires_at: expiresAt,
+      // Use DB clock to avoid app/DB timezone skew making OTPs immediately expired.
+      expires_at: this.db.raw('DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)', [OTP_TTL_MINUTES]),
       attempts: 0,
       delivery_method: params.delivery,
-      last_sent_at: now,
+      last_sent_at: this.db.raw('UTC_TIMESTAMP()'),
     });
 
     if (params.delivery === 'sms' && params.toPhone) {
@@ -110,17 +110,17 @@ export class OTPService {
   }): Promise<{ code: string; expiresAt: Date }> {
     const code = OTPService.generateCode();
     const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + OTP_TTL_MINUTES * 60 * 1000);
+    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
     await this.db('user_otps').insert({
       user_id: params.userId,
       invite_id: params.inviteId || null,
       code_hash: codeHash,
-      expires_at: expiresAt,
+      // Use DB clock to avoid app/DB timezone skew making OTPs immediately expired.
+      expires_at: this.db.raw('DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)', [OTP_TTL_MINUTES]),
       attempts: 0,
       delivery_method: params.delivery,
-      last_sent_at: now,
+      last_sent_at: this.db.raw('UTC_TIMESTAMP()'),
     });
 
     logger.info(`OTP record created for user ${params.userId}${params.inviteId ? ` invite ${params.inviteId}` : ''}`);

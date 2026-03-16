@@ -30,7 +30,7 @@ export interface Gateway {
   /** Primary key - unique gateway identifier */
   id: string;
   /** Foreign key to facilities table - facility this gateway serves */
-  facility_id: string;
+  facility_id: string | null;
   /** Human-readable gateway name for identification */
   name: string;
   /** Hardware model identifier */
@@ -138,6 +138,71 @@ export class GatewayModel {
       updated_at: new Date()
     });
     return await this.findById(id);
+  }
+
+  async reassignToFacility(id: string, targetFacilityId: string): Promise<Gateway | null> {
+    const knex = this.db.connection;
+    const updatedRows = await knex('gateways')
+      .where('id', id)
+      .update({
+        facility_id: targetFacilityId,
+        updated_at: new Date()
+      });
+
+    if (!updatedRows) {
+      return null;
+    }
+
+    return await this.findById(id);
+  }
+
+  async assignUnassignedGatewayToFacility(
+    id: string,
+    targetFacilityId: string,
+  ): Promise<{ gateway: Gateway | null; displacedGatewayId?: string }> {
+    const knex = this.db.connection;
+    return await knex.transaction(async (trx) => {
+      const gateway = await trx('gateways').where('id', id).first();
+      if (!gateway) {
+        return { gateway: null };
+      }
+
+      const existingAtTarget = await trx('gateways')
+        .where('facility_id', targetFacilityId)
+        .first();
+
+      let displacedGatewayId: string | undefined;
+      if (existingAtTarget && existingAtTarget.id !== id) {
+        displacedGatewayId = existingAtTarget.id;
+        await trx('gateways')
+          .where('id', existingAtTarget.id)
+          .update({
+            facility_id: null,
+            updated_at: new Date(),
+          });
+      }
+
+      await trx('gateways')
+        .where('id', id)
+        .update({
+          facility_id: targetFacilityId,
+          updated_at: new Date(),
+        });
+
+      const updatedGateway = await trx('gateways').where('id', id).first();
+      return {
+        gateway: updatedGateway || null,
+        displacedGatewayId,
+      };
+    });
+  }
+
+  async findReassignmentCandidates(): Promise<Gateway[]> {
+    const knex = this.db.connection;
+    return await knex('gateways')
+      .where('status', 'online')
+      .whereNull('facility_id')
+      .orderBy('name');
   }
 
   async updateStatus(id: string, status: Gateway['status']): Promise<void> {

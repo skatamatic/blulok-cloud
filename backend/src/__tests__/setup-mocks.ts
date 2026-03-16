@@ -1,4 +1,5 @@
 // Global test setup with database mocking
+process.env.NODE_ENV = 'test';
 import { resetMocks, mockDatabaseService, createMockKnex } from './mocks/database.mock';
 
 // Mock the database service before any tests run
@@ -2020,6 +2021,13 @@ afterEach(() => {
 
 afterAll(async () => {
   // Ensure singleton background timers/connections never leak across suites.
+  try {
+    const { GatewayEventsService } = await import('../services/gateway/gateway-events.service');
+    GatewayEventsService.getInstance().shutdown();
+  } catch {
+    // ignore cleanup failures in tests
+  }
+
   try {
     const { WebSocketService } = await import('../services/websocket.service');
     WebSocketService.getInstance().destroy();

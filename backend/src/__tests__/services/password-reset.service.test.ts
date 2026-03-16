@@ -52,6 +52,7 @@ describe('PasswordResetService', () => {
 
     mockDb = jest.fn(() => mockQueryBuilder);
     mockDb.fn = { now: jest.fn(() => new Date()) };
+    mockDb.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: mockDb,

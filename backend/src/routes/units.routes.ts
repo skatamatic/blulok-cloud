@@ -412,29 +412,7 @@ router.post('/:unitId/assign', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN,
       throw error;
     }
 
-    // Get unit details to determine primary tenant
-    const unitDetails = await unitModel.getUnitDetailsForUser(unitId, userId, userRole);
-    const isPrimaryTenantOfUnit = unitDetails?.primary_tenant?.id === userId;
     const isPrimary = req.body.is_primary ?? false;
-    const canManageUnits = [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(userRole);
-
-    // RBAC: Check if user can perform this action
-    if (!canManageUnits && !isPrimaryTenantOfUnit) {
-      res.status(403).json({
-        success: false,
-        message: 'Only admins or the primary tenant can manage unit access'
-      });
-      return;
-    }
-
-    // Primary tenant can only add shared access (non-primary assignments)
-    if (isPrimaryTenantOfUnit && isPrimary) {
-      res.status(403).json({
-        success: false,
-        message: 'Primary tenant cannot change the primary assignment. Only facility administrators can do this.'
-      });
-      return;
-    }
 
     // For facility admins, verify they manage this facility
     if (userRole === UserRole.FACILITY_ADMIN) {
@@ -531,38 +509,6 @@ router.delete('/:unitId/assign/:tenantId', requireRoles([UserRole.ADMIN, UserRol
       res.status(404).json({
         success: false,
         message: 'Assignment not found'
-      });
-      return;
-    }
-
-    // Get unit details to determine primary tenant
-    const unitDetails = await unitModel.getUnitDetailsForUser(unitId, userId, userRole);
-    const isPrimaryTenantOfUnit = unitDetails?.primary_tenant?.id === userId;
-    const canManageUnits = [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(userRole);
-
-    // RBAC: Check if user can perform this action
-    if (!canManageUnits && !isPrimaryTenantOfUnit) {
-      res.status(403).json({
-        success: false,
-        message: 'Only admins or the primary tenant can manage unit access'
-      });
-      return;
-    }
-
-    // Primary tenant cannot remove primary assignments (only shared access)
-    if (isPrimaryTenantOfUnit && assignment.is_primary) {
-      res.status(403).json({
-        success: false,
-        message: 'Cannot remove the primary tenant. Only facility administrators can do this.'
-      });
-      return;
-    }
-
-    // Primary tenant cannot remove themselves
-    if (isPrimaryTenantOfUnit && tenantId === userId) {
-      res.status(403).json({
-        success: false,
-        message: 'You cannot remove yourself from the unit'
       });
       return;
     }

@@ -90,10 +90,14 @@ async function assertFacilityAccess(
   }
   if (req.user?.role === UserRole.FACILITY_ADMIN) {
     const allowed = req.user.facilityIds || [];
-    if (!allowed.includes(gw.facility_id)) {
+    if (!gw.facility_id || !allowed.includes(gw.facility_id)) {
       res.status(403).json({ success: false, message: 'You do not have access to this gateway\'s facility' });
       return null;
     }
+  }
+  if (!gw.facility_id) {
+    res.status(409).json({ success: false, message: 'Gateway is not assigned to a facility' });
+    return null;
   }
   return gw.facility_id;
 }

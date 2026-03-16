@@ -43,8 +43,9 @@ export class InviteService {
     await this.db('user_invites').insert({
       user_id: userId,
       token_hash: tokenHash,
-      expires_at: expiresAt,
-      last_sent_at: now,
+      // Use DB clock to avoid app/DB timezone skew.
+      expires_at: this.db.raw('DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? HOUR)', [INVITE_TTL_HOURS]),
+      last_sent_at: this.db.raw('UTC_TIMESTAMP()'),
       consumed_at: null,
       metadata: metadata ? JSON.stringify(metadata) : null,
     });

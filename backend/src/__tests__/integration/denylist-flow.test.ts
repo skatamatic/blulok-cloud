@@ -73,6 +73,7 @@ describe('Denylist Flow Integration', () => {
       }
       return mockQueryBuilder;
     });
+    mockKnex.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: mockKnex,
@@ -100,6 +101,7 @@ describe('Denylist Flow Integration', () => {
 
 
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
+    (AccessRevocationListenerService as any).instance = undefined;
 
     // Mock JWT strings for denylist commands
     const mockDenylistAddJwt = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9BREQiLCJkZW55bGlzdF9hZGQiOltdfQ.mock-sig';

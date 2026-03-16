@@ -53,6 +53,11 @@ export interface CreateFirmwarePushData {
   chunks_total?: number;
 }
 
+export interface CreateIfNoActiveResult {
+  push: FirmwarePush | null;
+  existingPush: FirmwarePush | null;
+}
+
 /**
  * FirmwarePushModel
  *
@@ -120,6 +125,54 @@ export class FirmwarePushModel {
     return (await this.findById(id))!;
   }
 
+  /**
+   * Atomically create a new push if no active push exists for (gateway_id, target_type).
+   * Uses a gateway row lock to serialize competing push initiations for the same gateway.
+   */
+  async createIfNoActiveByGatewayTarget(data: CreateFirmwarePushData): Promise<CreateIfNoActiveResult> {
+    const knex = this.db.connection;
+    const targetType = data.target_type || 'gateway';
+
+    return await knex.transaction(async (trx) => {
+      await trx('gateways')
+        .where('id', data.gateway_id)
+        .forUpdate()
+        .first();
+
+      const existingPush = await trx('firmware_pushes')
+        .where('gateway_id', data.gateway_id)
+        .where('target_type', targetType)
+        .whereNotIn('status', TERMINAL_STATUSES)
+        .orderBy('created_at', 'desc')
+        .first();
+
+      if (existingPush) {
+        return {
+          push: null,
+          existingPush: existingPush as FirmwarePush,
+        };
+      }
+
+      const id = uuidv4();
+      const now = new Date();
+      await trx('firmware_pushes').insert({
+        id,
+        ...data,
+        target_type: targetType,
+        status: 'pending',
+        chunks_sent: 0,
+        created_at: now,
+        updated_at: now,
+      });
+
+      const push = await trx('firmware_pushes').where('id', id).first();
+      return {
+        push: (push || null) as FirmwarePush | null,
+        existingPush: null,
+      };
+    });
+  }
+
   async updateProgress(id: string, chunksSent: number): Promise<void> {
     const knex = this.db.connection;
     await knex('firmware_pushes').where('id', id).update({
@@ -170,6 +223,24 @@ export class FirmwarePushModel {
       .whereNotIn('status', TERMINAL_STATUSES)
       .update({
         status: 'cancelled',
+        completed_at: new Date(),
+        updated_at: new Date(),
+      });
+    return updated > 0;
+  }
+
+  /**
+   * Atomically mark a push as failed if it is still non-terminal.
+   * @returns true if the failure update was applied.
+   */
+  async atomicFailIfActive(id: string, errorMessage: string): Promise<boolean> {
+    const knex = this.db.connection;
+    const updated = await knex('firmware_pushes')
+      .where('id', id)
+      .whereNotIn('status', TERMINAL_STATUSES)
+      .update({
+        status: 'failed',
+        error_message: errorMessage,
         completed_at: new Date(),
         updated_at: new Date(),
       });

@@ -50,6 +50,13 @@ describe('FacilityGatewayTab', () => {
       success: true,
       gateways: []
     });
+    mockApiService.getGatewayReassignmentCandidates.mockResolvedValue({
+      success: true,
+      gateways: []
+    } as any);
+    mockApiService.reassignGateway.mockResolvedValue({
+      success: true
+    } as any);
     Object.defineProperty(navigator, 'clipboard', {
       value: {
         writeText: jest.fn().mockResolvedValue(undefined),
@@ -76,7 +83,7 @@ describe('FacilityGatewayTab', () => {
 
       // First wait for the gateway to load
       await waitFor(() => {
-        expect(screen.getByText('Test Gateway')).toBeInTheDocument();
+        expect(screen.getAllByText('Test Gateway').length).toBeGreaterThan(0);
       }, { timeout: 10000 });
 
       // Now check for the WebSocket URL - it should be on the Overview tab by default
@@ -133,6 +140,54 @@ describe('FacilityGatewayTab', () => {
       });
     });
 
+    it('should render assignment controls for admin when no gateway exists', async () => {
+      mockApiService.getGatewayReassignmentCandidates.mockResolvedValue({
+        success: true,
+        gateways: [
+          {
+            id: 'gateway-2',
+            facility_id: 'facility-2',
+            name: 'Candidate Gateway',
+            status: 'online',
+          },
+        ],
+      } as any);
+
+      renderComponent();
+
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: 'Assign Gateway' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Assign Gateway' })).toBeInTheDocument();
+      });
+    });
+
+    it('should render replace controls for admin when gateway exists', async () => {
+      const mockGateway = {
+        id: 'gateway-1',
+        facility_id: facilityId,
+        name: 'Current Gateway',
+        status: 'online',
+        gateway_type: 'http',
+      };
+
+      mockApiService.getGateways.mockResolvedValue({
+        success: true,
+        gateways: [mockGateway],
+      });
+      mockApiService.getGatewayReassignmentCandidates.mockResolvedValue({
+        success: true,
+        gateways: [{ id: 'gateway-3', facility_id: null, name: 'Unassigned Gateway', status: 'online' }],
+      } as any);
+
+      renderComponent();
+
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: 'Replace Gateway' })).toBeInTheDocument();
+        expect(screen.getByText(/Current gateway:/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Replace Gateway' })).toBeInTheDocument();
+      });
+    });
+
     it('should render gateway status when gateway exists', async () => {
       const mockGateway = {
         id: 'gateway-1',
@@ -151,7 +206,7 @@ describe('FacilityGatewayTab', () => {
 
       renderComponent();
       await waitFor(() => {
-        expect(screen.getByText('Test Gateway')).toBeInTheDocument();
+        expect(screen.getAllByText('Test Gateway').length).toBeGreaterThan(0);
         expect(screen.getByText('online')).toBeInTheDocument();
       });
     });

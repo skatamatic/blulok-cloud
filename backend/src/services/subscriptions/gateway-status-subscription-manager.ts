@@ -145,7 +145,7 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
 
     // Other roles limited to facilityIds
     const allowedFacilities = client.facilityIds || [];
-    return all.filter(g => allowedFacilities.includes(g.facility_id) && (!facilityIdFilter || g.facility_id === facilityIdFilter) && (!gatewayIdFilter || g.id === gatewayIdFilter));
+    return all.filter(g => !!g.facility_id && allowedFacilities.includes(g.facility_id) && (!facilityIdFilter || g.facility_id === facilityIdFilter) && (!gatewayIdFilter || g.id === gatewayIdFilter));
   }
 
   private async getAllGatewaysCached(): Promise<Gateway[]> {

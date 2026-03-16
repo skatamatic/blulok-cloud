@@ -193,6 +193,7 @@ Sent from gateway to cloud to report final update outcome.
 - `success` / `applied` → push status `complete`
 - `failed` / `error` → push status `failed` with error message
 - `verifying` → push status `verifying`
+- Terminal status updates (`success`/`applied`/`failed`/`error`) require nonce correlation to avoid mutating the wrong push.
 
 ## Push Status API Hydration
 
@@ -210,7 +211,7 @@ pending → transferring → verifying → complete
 
 1. **pending**: Push record created, background task spawned
 2. **transferring**: Manifest sent, chunks being delivered with ACK flow control
-3. **verifying**: All chunks delivered to the gateway. The gateway is applying (for `gateway` target) or BLE-relaying (for `lock`/`friend_node` targets) the firmware. This is the final cloud-side step; completion depends on the gateway reporting back via `FIRMWARE_UPDATE_STATUS`.
+3. **verifying**: All chunks delivered to the gateway. The gateway is applying (for `gateway` target) or BLE-relaying (for `lock`/`friend_node` targets) the firmware. Completion depends on `FIRMWARE_UPDATE_STATUS`; if no final status arrives before timeout, the push is auto-failed.
 4. **complete**: Gateway confirmed firmware applied successfully via `FIRMWARE_UPDATE_STATUS` with `status: 'success'` or `'applied'`
 5. **failed**: Chunk ACK timeout after max retries, SHA-256 mismatch, gateway reported failure, gateway disconnect, or other error
 6. **cancelled**: User cancelled via API (atomic status transition); background task stops at next chunk boundary
@@ -223,7 +224,7 @@ Before initiating a push, the system verifies:
 1. Firmware exists and is active
 2. Gateway exists
 3. Gateway is online (has active WebSocket connection)
-4. No active push for the same target type on this gateway
+4. No active push for the same target type on this gateway (enforced atomically in DB transaction)
 5. `compatible_models` match (warning only, non-blocking)
 
 ## Ed25519 Signing and Verification
@@ -244,8 +245,8 @@ Before initiating a push, the system verifies:
 ## Gateway Disconnect Handling
 
 - When a gateway WebSocket disconnects, the transport layer notifies `FirmwareService.handleFacilityDisconnect(facilityId)`.
-- Any active firmware pushes for that facility are immediately cancelled (cancel flag set), preventing long waits for ACK timeouts.
-- Push records are updated to `'failed'` through the normal cancellation flow.
+- Any active firmware pushes for that facility are failed immediately (atomic non-terminal -> `failed`) and in-flight ACK waits are unblocked.
+- This avoids pushes getting stuck in `pending`/`transferring` and makes retry behavior explicit.
 
 ## Upload Race Condition Handling
 

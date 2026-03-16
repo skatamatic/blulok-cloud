@@ -1,10 +1,12 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import type { SignOptions } from 'jsonwebtoken';
 import { config } from '@/config/environment';
 import { UserModel, User } from '@/models/user.model';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { JWTPayload, LoginRequest, LoginResponse, CreateUserRequest, UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
+import { toE164 } from '@/utils/phone.util';
 
 /**
  * Authentication Service
@@ -37,39 +39,47 @@ export class AuthService {
    */
   public static async login(credentials: LoginRequest, deviceCtx?: { appDeviceId?: string | undefined; appPlatform?: string | undefined }): Promise<LoginResponse & { key_generation_required?: boolean }> {
     try {
-      const { identifier, email, password } = credentials;
-      // Determine the raw identifier: prefer explicit identifier, fallback to legacy email field
-      const rawIdentifier = (identifier || email || '').trim();
+      const rawLoginIdentifier = (credentials.identifier || credentials.email || '').trim();
+      const loginIdentifier = rawLoginIdentifier.toLowerCase();
+      const { password } = credentials;
+
+      if (!loginIdentifier) {
+        return {
+          success: false,
+          message: 'Email or phone is required'
+        };
+      }
 
       // Database connectivity check
       try {
-        // Resolve user by identifier:
-        // - if looks like email: prefer direct email match
-        // - otherwise: normalize as phone (E.164) and match by phone_number
-        const isEmail = rawIdentifier.includes('@');
+        const identifierCandidates = [loginIdentifier];
+        const normalizedPhone = toE164(rawLoginIdentifier, 'US').toLowerCase();
+        if (normalizedPhone && !identifierCandidates.includes(normalizedPhone)) {
+          identifierCandidates.push(normalizedPhone);
+        }
+
         let user: User | undefined;
-        if (isEmail) {
-          const emailLower = rawIdentifier.toLowerCase();
-          user = await UserModel.findByEmail(emailLower) as User | undefined;
-        } else {
-          const { toE164 } = await import('@/utils/phone.util');
-          const phoneE164 = toE164(rawIdentifier);
-          if (phoneE164) {
-            user = await UserModel.findByPhone(phoneE164) as User | undefined;
-          }
+        for (const candidate of identifierCandidates) {
+          user = await UserModel.findByLoginIdentifier(candidate);
+          if (user) break;
+        }
+
+        // Backward compatibility for any users missing login_identifier.
+        if (!user && loginIdentifier.includes('@')) {
+          user = await UserModel.findByEmail(loginIdentifier);
         }
 
         if (!user) {
-          logger.warn(`Login attempt with invalid identifier: ${rawIdentifier}`);
+          logger.warn(`Login attempt with invalid identifier: ${loginIdentifier}`);
           return {
             success: false,
-            message: 'Invalid credentials'
+            message: 'Invalid email or password'
           };
         }
 
         // Check if user is active
         if (!user.is_active) {
-          logger.warn(`Login attempt with inactive account: ${rawIdentifier}`);
+          logger.warn(`Login attempt with inactive account: ${loginIdentifier}`);
           return {
             success: false,
             message: 'Account is deactivated. Please contact administrator.'
@@ -79,10 +89,10 @@ export class AuthService {
         // Verify password
         const isValidPassword = await bcrypt.compare(password, user.password_hash);
         if (!isValidPassword) {
-          logger.warn(`Login attempt with invalid password for identifier: ${rawIdentifier}`);
+          logger.warn(`Login attempt with invalid password: ${loginIdentifier}`);
           return {
             success: false,
-            message: 'Invalid credentials'
+            message: 'Invalid email or password'
           };
         }
 
@@ -90,7 +100,7 @@ export class AuthService {
         try {
           await UserModel.updateLastLogin(user.id);
         } catch (updateError) {
-          logger.warn(`Failed to update last login for ${email}:`, updateError);
+          logger.warn(`Failed to update last login for ${loginIdentifier}:`, updateError);
         }
 
         // Get user's facility associations if they're facility-scoped
@@ -109,8 +119,7 @@ export class AuthService {
           if (appDeviceId) {
             const { UserDeviceModel } = await import('@/models/user-device.model');
             const udm = new UserDeviceModel();
-            // Use findActiveByUserAndAppDeviceId to exclude revoked devices - they should re-register
-            const existing = await udm.findActiveByUserAndAppDeviceId(user.id, appDeviceId);
+            const existing = await udm.findByUserAndAppDeviceId(user.id, appDeviceId);
             if (!existing) {
               keyGenerationRequired = true;
             }
@@ -127,7 +136,7 @@ export class AuthService {
           logger.warn('Device detection failed during login', e);
         }
 
-        logger.info(`Successful login for user ${user.id} (${user.email ?? user.phone_number ?? 'no-email'})`);
+        logger.info(`Successful login: ${loginIdentifier}`);
 
         return {
           success: true,
@@ -144,7 +153,7 @@ export class AuthService {
         };
 
       } catch (dbError) {
-        logger.error(`Database error during login for identifier ${rawIdentifier}:`, dbError);
+        logger.error(`Database error during login for ${loginIdentifier}:`, dbError);
         return {
           success: false,
           message: 'Database temporarily unavailable. Please try again later.'
@@ -258,7 +267,7 @@ export class AuthService {
       facilityIds: facilityIds || []
     };
 
-    return jwt.sign(payload, config.jwt.secret, { expiresIn: '24h' });
+    return jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn as SignOptions['expiresIn'] });
   }
 
   public static verifyToken(token: string): JWTPayload | null {
