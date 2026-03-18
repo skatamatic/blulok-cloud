@@ -9,9 +9,9 @@ class WebSocketService implements IWebSocketService {
   private reconnectDelay = 1000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
-  private subscriptions: Map<string, any> = new Map();
+  private subscriptions: Map<string, Record<string, unknown> | undefined> = new Map();
   private subscriptionIds: Map<string, string> = new Map();
-  private messageHandlers: Map<string, Set<(data: any) => void>> = new Map();
+  private messageHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
   private connectionHandlers: Set<(connected: boolean) => void> = new Set();
   private isConnected = false;
 
@@ -68,7 +68,7 @@ class WebSocketService implements IWebSocketService {
     // Re-subscribe to all existing subscriptions on reconnect
     // The keys in subscriptions are in format "type" or "type:filters_json"
     // We need to parse them and re-send the subscription messages
-    const subscriptionsToResend: Array<{ type: string; filters?: any }> = [];
+    const subscriptionsToResend: Array<{ type: string; filters?: Record<string, unknown> }> = [];
     
     this.subscriptions.forEach((filters, subscriptionKey) => {
       // Extract the base type from the key
@@ -145,6 +145,12 @@ class WebSocketService implements IWebSocketService {
         case 'units_update':
           this.handleUnitsUpdate(message);
           break;
+        case 'activity_update':
+          this.handleActivityUpdate(message);
+          break;
+        case 'activity_new':
+          this.handleActivityNew(message);
+          break;
         default:
           break;
       }
@@ -153,28 +159,28 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  private handleDataMessage(message: any): void {
+  private handleDataMessage(message: { subscriptionType?: string; data?: unknown }): void {
     const handlers = this.messageHandlers.get(message.subscriptionType || 'general');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleDiagnosticsMessage(message: any): void {
+  private handleDiagnosticsMessage(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('diagnostics');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleCommandQueueUpdate(message: any): void {
+  private handleCommandQueueUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('command_queue');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleGatewayStatusUpdate(message: any): void {
+  private handleGatewayStatusUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('gateway_status');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
@@ -183,59 +189,73 @@ class WebSocketService implements IWebSocketService {
     // Optional: show toast on status change could be handled by subscribers
   }
 
-  private handleGeneralStatsUpdate(message: any): void {
+  private handleGeneralStatsUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('general_stats');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleDashboardLayoutUpdate(message: any): void {
+  private handleDashboardLayoutUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('dashboard_layout');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleBatteryStatusUpdate(message: any): void {
+  private handleBatteryStatusUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('battery_status');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleFMSSyncStatusUpdate(message: any): void {
+  private handleFMSSyncStatusUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('fms_sync_status');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleFMSSyncProgressUpdate(message: any): void {
+  private handleFMSSyncProgressUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('fms_sync_progress');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleFirmwarePushProgressUpdate(message: any): void {
+  private handleFirmwarePushProgressUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('firmware_push_progress');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }
   }
 
-  private handleDeviceStatusUpdate(message: any): void {
+  private handleDeviceStatusUpdate(message: unknown): void {
     const handlers = this.messageHandlers.get('device_status');
     if (handlers) {
       handlers.forEach(handler => handler(message));
     }
   }
 
-  private handleUnitsUpdate(message: any): void {
+  private handleUnitsUpdate(message: unknown): void {
     const handlers = this.messageHandlers.get('units');
     if (handlers) {
       handlers.forEach(handler => handler(message));
+    }
+  }
+
+  private handleActivityUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('activity');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleActivityNew(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('activity');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
     }
   }
 
@@ -306,7 +326,7 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  private send(message: any): void {
+  private send(message: Record<string, unknown>): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     } else {
@@ -314,7 +334,7 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  public subscribe(subscriptionType: string, filters?: any): void {
+  public subscribe(subscriptionType: string, filters?: Record<string, unknown>): void {
     // Create a unique key that includes filters for proper tracking
     const subscriptionKey = filters 
       ? `${subscriptionType}:${JSON.stringify(filters)}`
@@ -344,7 +364,7 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  public unsubscribe(subscriptionType: string, filters?: any): void {
+  public unsubscribe(subscriptionType: string, filters?: Record<string, unknown>): void {
     // Create the same unique key used when subscribing
     const subscriptionKey = filters 
       ? `${subscriptionType}:${JSON.stringify(filters)}`
@@ -371,7 +391,7 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  public onMessage(subscriptionType: string, handler: (data: any) => void): () => void {
+  public onMessage(subscriptionType: string, handler: (data: unknown) => void): () => void {
     console.log('📡 Registering message handler for:', subscriptionType);
     if (!this.messageHandlers.has(subscriptionType)) {
       this.messageHandlers.set(subscriptionType, new Set());
@@ -414,8 +434,8 @@ class WebSocketService implements IWebSocketService {
     return this.isConnected && this.ws?.readyState === WebSocket.OPEN;
   }
 
-  public getSubscriptionStatus(): { [key: string]: any } {
-    const status: { [key: string]: any } = {};
+  public getSubscriptionStatus(): Record<string, { filters?: Record<string, unknown>; subscriptionId?: string }> {
+    const status: Record<string, { filters?: Record<string, unknown>; subscriptionId?: string }> = {};
     this.subscriptions.forEach((filters, type) => {
       status[type] = {
         filters,

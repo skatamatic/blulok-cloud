@@ -61,7 +61,7 @@ jest.mock('@/services/device-sync.service', () => {
 
 // Access mocks exported by the jest factory above
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const deviceSyncModule = require('@/services/device-sync.service') as any;
+const deviceSyncModule = require('@/services/device-sync.service');
 const { syncGatewayDevicesMock, updateDeviceStatusesMock, syncDeviceInventoryMock, updateDeviceStatesMock } = deviceSyncModule.__mocks;
 
 describe('Internal Gateway Routes', () => {
@@ -159,6 +159,17 @@ describe('Internal Gateway Routes', () => {
     expect(resNoIds.status).toBe(400);
     expect(resNoIds.body.success).toBe(false);
     expect(String(resNoIds.body.message || '')).toContain('serial');
+
+    const resBlankSerial = await request(app)
+      .post('/api/v1/internal/gateway/device-sync')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .send({
+        facility_id: 'facility-1',
+        devices: [{ serial: '   ' }],
+      });
+
+    expect(resBlankSerial.status).toBe(400);
+    expect(resBlankSerial.body.success).toBe(false);
   });
 
   it('POST /api/v1/internal/gateway/device-sync enforces facility scope for facility admins', async () => {
@@ -285,6 +296,19 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.success).toBe(false);
     });
 
+    it('rejects blank lock_id values', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [{ lock_id: '   ' }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
     it('performs inventory sync successfully', async () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/inventory')
@@ -349,6 +373,19 @@ describe('Internal Gateway Routes', () => {
         .send({
           facility_id: 'facility-1',
           updates: [{ lock_id: 'lock-1', lock_state: 'INVALID' }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('rejects blank lock_id on state updates', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          updates: [{ lock_id: '   ', lock_state: 'LOCKED' }],
         });
 
       expect(res.status).toBe(400);
@@ -513,6 +550,61 @@ describe('Internal Gateway Routes', () => {
         .send({ facility_id: 'facility-1', tid: 'tx-99', updates: [{ lock_id: 'lock-1', online: true }] })
         .expect(200);
       expect(res.body.success).toBe(true);
+    });
+  });
+
+  describe('POST /api/v1/internal/gateway/access-events', () => {
+    it('ingests a valid access event payload', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/access-events')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          events: [
+            {
+              event_id: 'event-1',
+              occurred_at: new Date().toISOString(),
+              facility_id: 'facility-1',
+              device_id: 'device-1',
+              action: 'access_granted',
+              method: 'app',
+              success: true,
+              actor: {
+                user_id: 'tenant-1',
+                role: 'tenant',
+                name: 'Tenant User',
+              },
+            },
+          ],
+        })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.ingested).toBe(1);
+      expect(Array.isArray(res.body.data.activity_ids)).toBe(true);
+    });
+
+    it('rejects denied events missing denial_reason', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/access-events')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          events: [
+            {
+              event_id: 'event-2',
+              occurred_at: new Date().toISOString(),
+              facility_id: 'facility-1',
+              device_id: 'device-1',
+              action: 'access_denied',
+              method: 'app',
+              success: false,
+            },
+          ],
+        })
+        .expect(400);
+
+      expect(res.body.success).toBe(false);
     });
   });
 

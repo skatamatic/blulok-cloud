@@ -1,7 +1,6 @@
 import React, { useRef } from 'react';
 import { XMarkIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { motion, AnimatePresence } from 'framer-motion';
-// @ts-ignore - html2pdf.js doesn't have TypeScript definitions
 import html2pdf from 'html2pdf.js';
 import { MorningReportTabs } from './MorningReportTabs';
 import { SecurityIncidentTabs } from './SecurityIncidentTabs';

@@ -28,7 +28,6 @@ interface AssetEditorProps {
 
 export const AssetEditor: React.FC<AssetEditorProps> = ({
   asset,
-  onUpdate: _onUpdate,
   onClose,
   onEdit,
   isBuiltIn = false,

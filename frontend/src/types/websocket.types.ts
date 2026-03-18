@@ -2,7 +2,7 @@ export interface WebSocketMessage {
   type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics';
   subscriptionId?: string;
   subscriptionType?: string;
-  data?: any;
+  data?: unknown;
   error?: string;
   timestamp: string;
 }
@@ -27,7 +27,7 @@ export interface Subscription {
   userRole: string;
   createdAt: string;
   lastHeartbeat: string;
-  filters?: Record<string, any>;
+  filters?: Record<string, unknown>;
 }
 
 export interface DiagnosticsData {
@@ -39,9 +39,9 @@ export interface DiagnosticsData {
 }
 
 export interface IWebSocketService {
-  subscribe(subscriptionType: string, filters?: any): void;
+  subscribe(subscriptionType: string, filters?: Record<string, unknown>): void;
   unsubscribe(subscriptionType: string): void;
-  onMessage(subscriptionType: string, handler: (data: any) => void): () => void;
+  onMessage(subscriptionType: string, handler: (data: unknown) => void): () => void;
   onConnectionChange(handler: (connected: boolean) => void): () => void;
   requestDiagnostics(): void;
   isWebSocketConnected(): boolean;

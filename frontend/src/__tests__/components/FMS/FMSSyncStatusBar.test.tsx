@@ -335,7 +335,7 @@ describe('Completed Sync State', () => {
 
     it('handles requestAnimationFrame errors gracefully', () => {
       const originalRAF = global.requestAnimationFrame;
-      global.requestAnimationFrame = jest.fn((_cb) => 0) as any;
+      global.requestAnimationFrame = jest.fn(() => 0) as any;
 
       mockUseFMSSyncReturn.syncState.currentStep = 'fetching';
       mockUseFMSSyncReturn.syncState.progressPercentage = 50;

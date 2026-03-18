@@ -21,6 +21,14 @@ import { AccessCodeService } from '@/services/access-code.service';
 import { GatewayModel } from '@/models/gateway.model';
 import { AuthService } from '@/services/auth.service';
 import { logger } from '@/utils/logger';
+import { AccessEventIngestionService } from '@/services/access/access-event-ingestion.service';
+import {
+  ACCESS_EVENT_ACTIONS,
+  ACCESS_EVENT_ACTOR_ROLES,
+  ACCESS_EVENT_DENIAL_REASONS,
+  ACCESS_EVENT_METHODS,
+  AccessEventPayload,
+} from '@/services/access/access-event.types';
 
 const router = Router();
 
@@ -113,9 +121,9 @@ const deviceSyncSchema = Joi.object({
   devices: Joi.array().items(
     Joi.object({
       // Core identifiers – at least one of these is REQUIRED for proper mapping
-      serial: Joi.string().optional(),
-      id: Joi.string().optional(),
-      lockId: Joi.string().optional(),
+      serial: Joi.string().trim().min(1).optional(),
+      id: Joi.string().trim().min(1).optional(),
+      lockId: Joi.string().trim().min(1).optional(),
 
       // Status and telemetry fields we actively use
       firmwareVersion: Joi.string().optional(),
@@ -135,6 +143,53 @@ const deviceSyncSchema = Joi.object({
       .or('serial', 'id', 'lockId')
       .unknown(true) // Allow extra fields; we will ignore anything we don't need
   ).required()
+});
+
+const accessEventSchema = Joi.object({
+  event_id: Joi.string().required(),
+  correlation_id: Joi.string().optional(),
+  occurred_at: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).required(),
+  facility_id: Joi.string().optional(),
+  unit_id: Joi.string().optional(),
+  device_id: Joi.string().required(),
+  gateway_id: Joi.string().optional(),
+  action: Joi.string().valid(...ACCESS_EVENT_ACTIONS).required(),
+  method: Joi.string().valid(...ACCESS_EVENT_METHODS).required(),
+  success: Joi.boolean().required(),
+  denial_reason: Joi.string().valid(...ACCESS_EVENT_DENIAL_REASONS).optional(),
+  reason_message: Joi.string().max(500).optional(),
+  actor: Joi.object({
+    user_id: Joi.string().optional(),
+    role: Joi.string().valid(...ACCESS_EVENT_ACTOR_ROLES).required(),
+    name: Joi.string().max(255).optional(),
+    app_device_id: Joi.string().optional(),
+  }).optional(),
+  keypad: Joi.object({
+    entered_code: Joi.string().max(64).optional(),
+    code_id: Joi.string().optional(),
+    code_label: Joi.string().max(255).optional(),
+    schedule_id: Joi.string().optional(),
+    schedule_name: Joi.string().max(255).optional(),
+    zone_id: Joi.string().optional(),
+    zone_name: Joi.string().max(255).optional(),
+  }).optional(),
+  route_pass: Joi.object({
+    route_pass_id: Joi.string().optional(),
+    issuance_id: Joi.string().optional(),
+    nonce: Joi.string().optional(),
+  }).optional(),
+  metadata: Joi.object().unknown(true).optional(),
+}).custom((value, helpers) => {
+  if (!value.success && !value.denial_reason) {
+    return helpers.error('any.custom', { message: 'denial_reason is required when success is false' });
+  }
+  return value;
+});
+
+const accessEventsSchema = Joi.object({
+  tid: tidField,
+  facility_id: Joi.string().optional(),
+  events: Joi.array().items(accessEventSchema).min(1).required(),
 });
 
 router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -207,7 +262,7 @@ const inventorySyncSchema = Joi.object({
   facility_id: Joi.string().optional(),
   devices: Joi.array().items(
     Joi.object({
-      lock_id: Joi.string().required(),
+      lock_id: Joi.string().trim().min(1).required(),
       lock_number: Joi.number().optional(),
       // State fields (matching gateway payload format)
       state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
@@ -264,9 +319,9 @@ const stateUpdateSchema = Joi.object({
   facility_id: Joi.string().optional(),
   updates: Joi.array().items(
     Joi.object({
-      lock_id: Joi.string().required(),
+      lock_id: Joi.string().trim().min(1).required(),
       lock_number: Joi.number().optional(),
-      serial: Joi.string().optional(),
+      serial: Joi.string().trim().min(1).optional(),
       // State fields (matching gateway payload format)
       state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
       lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
@@ -312,6 +367,39 @@ router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHand
     success: true,
     message: 'State updates applied',
     data: result
+  });
+}));
+
+router.post('/access-events', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { error, value } = accessEventsSchema.validate(req.body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
+  if (!facilityId) {
+    return;
+  }
+
+  const ingestionService = new AccessEventIngestionService();
+  const events = (value.events as AccessEventPayload[]).map((event) => ({
+    ...event,
+    facility_id: event.facility_id || facilityId,
+  }));
+
+  const created = await ingestionService.ingestMany(events, {
+    facilityId,
+    source: 'gateway_internal_api',
+  });
+
+  res.json({
+    success: true,
+    data: {
+      facility_id: facilityId,
+      ingested: created.length,
+      activity_ids: created.map((entry) => entry.id),
+    },
   });
 }));
 

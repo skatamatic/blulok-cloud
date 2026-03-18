@@ -1,9 +1,11 @@
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { ToastProvider } from '@/contexts/ToastContext';
 import DeviceDetailsPage from '@/pages/DeviceDetailsPage';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
+
+const mockNavigate = jest.fn();
 
 jest.mock('@/services/api.service');
 const mockApiService = apiService as jest.Mocked<typeof apiService>;
@@ -27,7 +29,7 @@ jest.mock('@/contexts/WebSocketContext', () => ({
 
 jest.mock('react-router-dom', () => ({
   ...jest.requireActual('react-router-dom'),
-  useNavigate: () => jest.fn(),
+  useNavigate: jest.fn(() => mockNavigate),
   useParams: () => ({ deviceId: 'device-1' }),
 }));
 
@@ -91,6 +93,7 @@ const mockDenylistEntries = [
 describe('DeviceDetailsPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (useNavigate as jest.Mock).mockReturnValue(mockNavigate);
     (useAuth as jest.Mock).mockReturnValue({
       authState: {
         user: { id: 'admin-id', email: 'admin@example.com', role: 'admin' },
@@ -209,8 +212,7 @@ describe('DeviceDetailsPage', () => {
   });
 
   it('navigates back to previous page (or fallback)', async () => {
-    const mockNavigate = jest.fn();
-    jest.spyOn(require('react-router-dom'), 'useNavigate').mockReturnValue(mockNavigate);
+    (useNavigate as jest.Mock).mockReturnValue(mockNavigate);
 
     render(
       <MemoryRouter initialEntries={['/devices/device-1']}>
@@ -444,7 +446,7 @@ describe('DeviceDetailsPage', () => {
 
     it('updates device state when receiving WebSocket update', async () => {
       let capturedHandler: ((data: any) => void) | null = null;
-      mockSubscribe.mockImplementation((type, handler, _onError, _filters) => {
+      mockSubscribe.mockImplementation((type, handler) => {
         if (type === 'device_status') {
           capturedHandler = handler;
         }
@@ -493,7 +495,7 @@ describe('DeviceDetailsPage', () => {
 
     it('ignores WebSocket updates for different devices', async () => {
       let capturedHandler: ((data: any) => void) | null = null;
-      mockSubscribe.mockImplementation((type, handler, _onError, _filters) => {
+      mockSubscribe.mockImplementation((type, handler) => {
         if (type === 'device_status') {
           capturedHandler = handler;
         }

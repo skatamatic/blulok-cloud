@@ -273,7 +273,7 @@ export class GDriveBaseStorage implements BaseStorageProvider {
       if (response.data.mimeType !== 'application/vnd.google-apps.folder') {
         throw new StorageError(`File ${folderId} is not a folder`, StorageErrorCode.INVALID_FILE);
       }
-      return { id: response.data.id!, name: response.data.name!, mimeType: response.data.mimeType! };
+      return { id: response.data.id!, name: response.data.name!, mimeType: response.data.mimeType };
     } catch (error: any) {
       if (error instanceof StorageError) throw error;
       if ((error.code === 401 || error.response?.status === 401) && !isRetry) {

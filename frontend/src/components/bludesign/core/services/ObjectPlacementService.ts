@@ -129,7 +129,7 @@ export class ObjectPlacementService {
     // Calculate world position
     const worldX = position.x * gridSize;
     const worldZ = position.z * gridSize;
-    let worldY = floor * 3; // Default floor height
+    const worldY = floor * 3; // Default floor height
     
     // For wall-attached objects, calculate proper position
     if (wallAttachment) {
@@ -240,7 +240,9 @@ export class ObjectPlacementService {
   /**
    * Validate placement position
    */
-  validatePlacement(_asset: AssetMetadata, position: GridPosition, _floor: number): { valid: boolean; reason?: string } {
+  validatePlacement(asset: AssetMetadata, position: GridPosition, floor: number): { valid: boolean; reason?: string } {
+    void asset;
+    void floor;
     const { buildings } = this.context;
     
     // Check if position is inside a building (for non-building assets)

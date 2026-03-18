@@ -58,12 +58,18 @@ jest.mock('@/models/device.model', () => {
   (global as any).__mockReturnValues = mockReturnValues;
   
   // Create mock functions that read from the global mockReturnValues
-  const createAccessControlDeviceMock = jest.fn(async () => {
+  const createAccessControlDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
+    if (payload && ('serial' in payload || 'device_serial' in payload)) {
+      throw new Error('Access control create payload must not contain BluLok serial fields');
+    }
     const values = (global as any).__mockReturnValues || mockReturnValues;
     return values.createAccessControlDevice;
   });
   
-  const createBluLokDeviceMock = jest.fn(async () => {
+  const createBluLokDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
+    if (!payload?.device_serial || !payload?.serial) {
+      throw new Error('BluLok create payload must include normalized serial fields');
+    }
     const values = (global as any).__mockReturnValues || mockReturnValues;
     return values.createBluLokDevice;
   });
@@ -443,7 +449,8 @@ describe('Devices Routes', () => {
         name: 'Unit 1 Lock Controller',
         device_type: 'blulok',
         location_description: 'Unit 1 entrance',
-        unit_id: 'unit-1'
+        unit_id: 'unit-1',
+        serial: 'BL-UNIT-1'
       };
 
       it('should create BluLok device for DEV_ADMIN', async () => {
@@ -470,6 +477,65 @@ describe('Devices Routes', () => {
         expect(response.body).toHaveProperty('device');
         expect(response.body.device).toHaveProperty('name', validBluLokData.name);
         expect(response.body.device).toHaveProperty('device_type', validBluLokData.device_type);
+      });
+
+      it('should normalize serial alias to device_serial and serial', async () => {
+        const response = await request(app)
+          .post('/api/v1/devices/blulok')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send(validBluLokData)
+          .expect(201);
+        expectSuccess(response);
+      });
+
+      it('should accept device_serial alias directly', async () => {
+        const response = await request(app)
+          .post('/api/v1/devices/blulok')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            gateway_id: 'gateway-1',
+            name: 'Unit 2 Lock Controller',
+            device_type: 'blulok',
+            location_description: 'Unit 2 entrance',
+            unit_id: 'unit-2',
+            device_serial: 'BL-UNIT-2',
+          })
+          .expect(201);
+        expectSuccess(response);
+      });
+
+      it('should reject request when both serial aliases are missing', async () => {
+        const response = await request(app)
+          .post('/api/v1/devices/blulok')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            gateway_id: 'gateway-1',
+            name: 'Missing Serial Lock',
+            device_type: 'blulok',
+            location_description: 'Unit 3 entrance',
+            unit_id: 'unit-3',
+          })
+          .expect(400);
+
+        expectBadRequest(response);
+      });
+
+      it('should reject request when serial and device_serial disagree', async () => {
+        const response = await request(app)
+          .post('/api/v1/devices/blulok')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            gateway_id: 'gateway-1',
+            name: 'Conflicting Serial Lock',
+            device_type: 'blulok',
+            location_description: 'Unit conflict entrance',
+            unit_id: 'unit-4',
+            serial: 'BL-UNIT-4A',
+            device_serial: 'BL-UNIT-4B',
+          })
+          .expect(400);
+
+        expectBadRequest(response);
       });
 
       it('should create BluLok device for ADMIN', async () => {
@@ -933,7 +999,8 @@ describe('Devices Routes', () => {
         name: 'Unit 1 Lock Controller',
         device_type: 'blulok',
         location_description: 'Unit 1 entrance',
-        unit_id: 'unit-1'
+        unit_id: 'unit-1',
+        serial: 'BL-UNIT-1'
       };
 
       it('should allow DEV_ADMIN to create BluLok devices', async () => {

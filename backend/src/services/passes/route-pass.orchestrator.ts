@@ -141,13 +141,13 @@ export class RoutePassOrchestrator {
       if (sharedAudience) {
         const parts = sharedAudience.split(':');
         const primaryTenantId = parts[1];
-        const lockId = parts[2];
+        const lockSerial = parts[2];
         let sharedFacilityId = requestedFacilityId;
 
         if (!sharedFacilityId) {
           const lockRow = await db('blulok_devices as bd')
             .join('units as u', 'bd.unit_id', 'u.id')
-            .where('bd.id', lockId)
+            .where('bd.device_serial', lockSerial)
             .select('u.facility_id')
             .first();
           sharedFacilityId = lockRow?.facility_id as string | undefined;

@@ -163,6 +163,12 @@ export class DeviceSyncService {
   private static instance: DeviceSyncService;
   private deviceModel: DeviceModel;
   private eventService: DeviceEventService;
+  private extractDeviceIdentifier(device: { serial?: string; id?: string; lockId?: string }): string | null {
+    const raw = device.serial || device.id || device.lockId;
+    if (!raw) return null;
+    const trimmed = String(raw).trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
 
   constructor(deviceModel?: DeviceModel, eventService?: DeviceEventService) {
     this.deviceModel = deviceModel || new DeviceModel();
@@ -190,7 +196,7 @@ export class DeviceSyncService {
       // Create maps for easier lookup using device serial/identifier
       const gatewayDeviceMap = new Map<string, GatewayDeviceData>();
       for (const device of gatewayDevices) {
-        const deviceId = device.serial || device.id || device.lockId;
+        const deviceId = this.extractDeviceIdentifier(device);
         if (deviceId) {
           gatewayDeviceMap.set(deviceId, device);
         }
@@ -218,12 +224,13 @@ export class DeviceSyncService {
       if (devicesToAdd.length > 0) {
         const deviceDataToInsert = devicesToAdd
           .map(gatewayDevice => {
-            const deviceId = gatewayDevice.serial || gatewayDevice.id || gatewayDevice.lockId;
+            const deviceId = this.extractDeviceIdentifier(gatewayDevice);
             if (!deviceId) return null;
             
             const createData: any = {
               gateway_id: gatewayId,
               device_serial: deviceId,
+              serial: deviceId,
               device_settings: JSON.stringify({ gatewayData: gatewayDevice }),
               metadata: JSON.stringify({
                 autoCreated: true,
@@ -288,7 +295,7 @@ export class DeviceSyncService {
    */
   private async addGatewayDevice(gatewayId: string, gatewayDevice: GatewayDeviceData): Promise<void> {
     try {
-      const deviceId = gatewayDevice.serial || gatewayDevice.id || gatewayDevice.lockId;
+      const deviceId = this.extractDeviceIdentifier(gatewayDevice);
       if (!deviceId) {
         console.warn(`Cannot add device from gateway ${gatewayId}: no valid device identifier`);
         return;
@@ -300,6 +307,7 @@ export class DeviceSyncService {
       const createData: CreateBluLokDeviceData = {
         gateway_id: gatewayId,
         device_serial: deviceId,
+        serial: deviceId,
         device_settings: { gatewayData: gatewayDevice },
         metadata: {
           autoCreated: true,
@@ -364,7 +372,7 @@ export class DeviceSyncService {
       // Create maps for easier lookup
       const gatewayDeviceMap = new Map<string, GatewayDeviceData>();
       for (const device of gatewayDevices) {
-        const deviceId = device.serial || device.id || device.lockId;
+        const deviceId = this.extractDeviceIdentifier(device);
         if (deviceId) {
           gatewayDeviceMap.set(deviceId, device);
         }
@@ -458,7 +466,10 @@ export class DeviceSyncService {
       const incomingDeviceMap = new Map<string, DeviceInventoryItem>();
       for (const device of devices) {
         if (device.lock_id) {
-          incomingDeviceMap.set(device.lock_id, device);
+          const lockId = String(device.lock_id).trim();
+          if (lockId.length > 0) {
+            incomingDeviceMap.set(lockId, device);
+          }
         }
       }
 
@@ -475,6 +486,7 @@ export class DeviceSyncService {
           const createData: CreateBluLokDeviceData = {
             gateway_id: gatewayId,
             device_serial: lockId,
+            serial: lockId,
             device_settings: { lockNumber: inventoryItem.lock_number },
             metadata: {
               autoCreated: true,

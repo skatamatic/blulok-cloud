@@ -2,11 +2,18 @@ import '@testing-library/jest-dom';
 
 // Polyfill for TextEncoder/TextDecoder (needed for supertest)
 import { TextEncoder, TextDecoder } from 'util';
-(global as any).TextEncoder = TextEncoder;
-(global as any).TextDecoder = TextDecoder;
+type GlobalWithPolyfills = typeof globalThis & {
+  TextEncoder: typeof TextEncoder;
+  TextDecoder: typeof TextDecoder;
+  setImmediate: (callback: (...args: unknown[]) => void, ...args: unknown[]) => ReturnType<typeof setTimeout>;
+  IntersectionObserver: typeof IntersectionObserver;
+};
+const globalWithPolyfills = global as GlobalWithPolyfills;
+globalWithPolyfills.TextEncoder = TextEncoder;
+globalWithPolyfills.TextDecoder = TextDecoder;
 
 // Polyfill for setImmediate (needed for Express)
-(global as any).setImmediate = (callback: (...args: any[]) => void, ...args: any[]) => {
+globalWithPolyfills.setImmediate = (callback: (...args: unknown[]) => void, ...args: unknown[]) => {
   return setTimeout(callback, 0, ...args);
 };
 
@@ -24,7 +31,7 @@ Object.defineProperty(globalThis, 'import.meta', {
 });
 
 // Mock IntersectionObserver
-(global as any).IntersectionObserver = class IntersectionObserver {
+globalWithPolyfills.IntersectionObserver = class IntersectionObserver {
   root = null;
   rootMargin = '';
   thresholds = [];
@@ -66,7 +73,7 @@ const originalWarn = console.warn;
 const originalLog = console.log;
 
 beforeAll(() => {
-  console.error = jest.fn((...args: any[]) => {
+  console.error = jest.fn((...args: unknown[]) => {
     // Suppress React warnings about act(), deprecated APIs, and non-boolean attributes
     // Only show actual test failures and critical errors
     const message = args[0]?.toString() || '';

@@ -628,7 +628,6 @@ describe('UserDetailsPage', () => {
         canManageUsers: jest.fn().mockReturnValue(false),
       });
 
-      const { render } = require('@testing-library/react');
       render(
         <MemoryRouter initialEntries={['/users/test-user-id/details']}>
           <ToastProvider>

@@ -711,7 +711,7 @@ export class FMSService {
         changes.push(change);
       } else {
         // Existing tenant - check for info changes
-        const user = existingUser as any;
+        const user = existingUser;
 
         // CRITICAL: If user exists but has no mapping, this is a data integrity issue that needs repair
         // This can happen if a user was created manually or if a previous sync failed to create the mapping
@@ -809,7 +809,7 @@ export class FMSService {
     
     for (const mapping of existingMappings) {
       if (!fmsTenantExtIds.has(mapping.external_id)) {
-        const user = usersById.get(mapping.internal_id) as any;
+        const user = usersById.get(mapping.internal_id);
         if (user) {
           const change = await this.changeModel.create({
             sync_log_id: syncLogId,
@@ -996,7 +996,7 @@ export class FMSService {
         existingUnit = unitsByNumber.get(fmsUnit.unitNumber);
       } else if (mapping && existingUnit) {
         // Mapping points to an existing unit — sanity check that it's the unit with the same unit_number
-        const numberMatch = (existingUnit as any).unit_number === fmsUnit.unitNumber;
+        const numberMatch = (existingUnit).unit_number === fmsUnit.unitNumber;
         if (!numberMatch) {
           const correctUnit = unitsByNumber.get(fmsUnit.unitNumber);
           if (correctUnit) {
@@ -1006,17 +1006,17 @@ export class FMSService {
               facility_id: facilityId,
               external_id: fmsUnit.externalId,
               mapping_internal_id: mapping.internal_id,
-              mapped_unit_number: (existingUnit as any).unit_number,
+              mapped_unit_number: (existingUnit).unit_number,
               expected_unit_number: fmsUnit.unitNumber,
-              correct_internal_id: (correctUnit as any).id,
+              correct_internal_id: (correctUnit).id,
             });
             // Self-heal mapping in DB
-            await this.entityMappingModel.updateInternalId(mapping.id, (correctUnit as any).id);
+            await this.entityMappingModel.updateInternalId(mapping.id, (correctUnit).id);
             // Update local state to reflect corrected mapping for this run
             existingUnit = correctUnit;
             mappingsByExternalId.set(fmsUnit.externalId, {
               ...mapping,
-              internal_id: (correctUnit as any).id,
+              internal_id: (correctUnit).id,
               updated_at: new Date(),
             } as any);
           }
@@ -1055,14 +1055,14 @@ export class FMSService {
           is_valid: true,
         });
         changes.push(change);
-      } else if (!mapping || mapping.internal_id !== (existingUnit as any).id) {
+      } else if (!mapping || mapping.internal_id !== (existingUnit).id) {
         // With the simplified approach, don't mutate or emit mapping-only changes during detection.
         const reason = !mapping ? 'no mapping' : 'stale mapping';
         logger.info(`[FMS] Unit ${fmsUnit.unitNumber} exists (${reason}), no detection-side repair`, {
           fms_sync: true,
           sync_log_id: syncLogId,
           facility_id: facilityId,
-          unit_id: (existingUnit as any).id,
+          unit_id: (existingUnit).id,
           external_id: fmsUnit.externalId,
           mapping_internal_id: mapping?.internal_id,
         });
@@ -1070,7 +1070,7 @@ export class FMSService {
         // Existing unit - check for changes
         // NOTE: We don't compare size_sqft because FMS gives us dimensional strings like "10x15"
         // but our database stores numeric square footage. We store FMS size in metadata instead.
-        const unit = existingUnit as any;
+        const unit = existingUnit;
         const hasChanges = 
           unit.status !== fmsUnit.status ||
           unit.unit_type !== fmsUnit.unitType;
@@ -1208,15 +1208,15 @@ export class FMSService {
     const changes = allChanges
       .filter(c => c !== null)
       .sort((a, b) => {
-        const priorityA = changeTypePriority[a!.change_type] || 999;
-        const priorityB = changeTypePriority[b!.change_type] || 999;
+        const priorityA = changeTypePriority[a.change_type] || 999;
+        const priorityB = changeTypePriority[b.change_type] || 999;
         return priorityA - priorityB;
       });
 
     logger.info(`[FMS] Applying ${changes.length} changes in dependency order`, {
       fms_sync: true,
       sync_log_id: syncLogId,
-      order: changes.map(c => c!.change_type),
+      order: changes.map(c => c.change_type),
     });
 
     for (const change of changes) {
@@ -1716,7 +1716,7 @@ export class FMSService {
 
     const facilityId = syncLog.facility_id;
     const performedBy = syncLog.triggered_by_user_id || 'fms-system';
-    const actionData = (change.after_data || change.before_data) as any;
+    const actionData = (change.after_data || change.before_data);
 
     if (change.after_data && actionData.action === 'assign_unit') {
       // Assign tenant to unit using UnitsService (which will emit events)
@@ -1855,7 +1855,7 @@ export class FMSService {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
-        unit_id: (existingUnit as any).id,
+        unit_id: (existingUnit).id,
       });
 
       // Check if mapping already exists to avoid duplicates
@@ -1870,8 +1870,8 @@ export class FMSService {
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
         external_id: unitData.externalId,
-        existing_unit_id: (existingUnit as any).id,
-        existing_unit_number: (existingUnit as any).unit_number,
+        existing_unit_id: (existingUnit).id,
+        existing_unit_number: (existingUnit).unit_number,
         existing_mapping: !!existingUnitMapping,
       });
 
@@ -1881,7 +1881,7 @@ export class FMSService {
         facility_id: facilityId,
         entity_type: 'unit',
         external_id: unitData.externalId,
-        internal_id: (existingUnit as any).id,
+        internal_id: (existingUnit).id,
         provider_type: config?.provider_type || 'generic_rest',
         metadata: {
           unitNumber: unitData.unitNumber,
@@ -1894,7 +1894,7 @@ export class FMSService {
           sync_log_id: change.sync_log_id,
           facility_id: facilityId,
           external_id: unitData.externalId,
-          internal_id: (existingUnit as any).id,
+          internal_id: (existingUnit).id,
         });
       } else {
         logger.info(`[FMS] Unit entity mapping already exists for external_id ${unitData.externalId}`, {
@@ -1902,7 +1902,7 @@ export class FMSService {
           sync_log_id: change.sync_log_id,
           facility_id: facilityId,
           existing_internal_id: existingUnitMapping.internal_id,
-          expected_internal_id: (existingUnit as any).id,
+          expected_internal_id: (existingUnit).id,
         });
       }
 

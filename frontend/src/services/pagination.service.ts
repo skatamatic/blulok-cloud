@@ -97,7 +97,7 @@ export class PaginationService {
       let data: any[] = [];
       
       switch (type) {
-        case 'unit':
+        case 'unit': {
           const unitsResponse = await apiService.getUnits({ 
             ...filters, 
             offset: undefined, 
@@ -105,8 +105,9 @@ export class PaginationService {
           });
           data = unitsResponse.units || [];
           break;
+        }
           
-        case 'device':
+        case 'device': {
           const devicesResponse = await apiService.getDevices({ 
             ...filters, 
             offset: undefined, 
@@ -114,8 +115,9 @@ export class PaginationService {
           });
           data = devicesResponse.devices || [];
           break;
+        }
           
-        case 'facility':
+        case 'facility': {
           const facilitiesResponse = await apiService.getFacilities({ 
             ...filters, 
             offset: undefined, 
@@ -123,13 +125,15 @@ export class PaginationService {
           });
           data = facilitiesResponse.facilities || [];
           break;
+        }
           
-        case 'user':
+        case 'user': {
           const usersResponse = await apiService.getUsers({ 
             ...filters
           });
           data = usersResponse.users || [];
           break;
+        }
           
         default:
           console.warn(`Unknown data type for pagination: ${type}`);

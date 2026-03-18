@@ -337,9 +337,7 @@ export class GeometryOptimizer {
     };
     
     // Greedy: Keep finding largest rectangles
-    let rectangleIterations = 0;
     while (cellSet.size > 0) {
-      rectangleIterations++;
       const remainingCells = Array.from(cellSet).map(key => {
         const [x, z] = key.split(',').map(Number);
         return { x, z, key };
@@ -368,11 +366,9 @@ export class GeometryOptimizer {
       
       let bestRect: OptimizedRectangle | null = null;
       let bestArea = 0;
-      let seedsTried = 0;
       
       // Try a limited subset of cells as seeds
       for (const seed of seedsToTry) {
-        seedsTried++;
         const rect = findLargestRectangleFromSeed(seed.x, seed.z);
         if (rect && rect.area > bestArea) {
           bestArea = rect.area;
@@ -565,11 +561,9 @@ export class GeometryOptimizer {
     
     // Process rectangles in batches with yielding between batches
     const RECTANGLES_PER_BATCH = 1; // Process 1 rectangle, then yield (very frequent updates)
-    let rectangleIterations = 0;
     let rectanglesInCurrentBatch = 0;
     
     while (cellSet.size > 0) {
-      rectangleIterations++;
       rectanglesInCurrentBatch++;
       
       const remainingCells = Array.from(cellSet).map(key => {

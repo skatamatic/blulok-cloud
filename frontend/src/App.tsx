@@ -69,7 +69,7 @@ function FMSModals() {
           isOpen={true}
           onClose={hideReview}
           changes={syncState.pendingChanges}
-          onApply={async (_changeIds) => {
+          onApply={async () => {
             // Callback after changes are applied - currently handled by modal internally
             console.log('Changes applied successfully');
           }}

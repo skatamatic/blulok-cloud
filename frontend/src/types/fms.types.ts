@@ -60,7 +60,7 @@ export interface FMSAuthConfig {
     tokenEndpoint?: string;
     consumerKey?: string; // OAuth1 consumer key
     consumerSecret?: string; // OAuth1 consumer secret
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -81,7 +81,7 @@ export interface FMSProviderConfig {
     webhookUrl?: string;
     webhookSecret?: string;
   };
-  customSettings?: Record<string, any>;
+  customSettings?: Record<string, unknown>;
 }
 
 export interface FMSConfiguration {
@@ -103,8 +103,8 @@ export interface FMSChange {
   entity_type: 'tenant' | 'unit';
   external_id: string;
   internal_id?: string;
-  before_data?: any;
-  after_data: any;
+  before_data?: unknown;
+  after_data: unknown;
   required_actions: FMSChangeAction[];
   impact_summary: string;
   is_reviewed: boolean;

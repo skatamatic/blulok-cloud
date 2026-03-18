@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
@@ -57,7 +57,19 @@ const statusIcons = {
 };
 
 interface DevicesPageProps {
-  initialCommandQueue?: { items: any[]; total: number };
+  initialCommandQueue?: { items: CommandQueueItem[]; total: number };
+}
+
+type DeviceListItem = (AccessControlDevice | BluLokDevice) & { device_category: string };
+
+interface CommandQueueItem {
+  id: string;
+  facility_id?: string;
+  device_id?: string;
+  command_type?: string;
+  status?: string;
+  attempt_count?: number;
+  next_attempt_at?: string | null;
 }
 
 export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = {}) {
@@ -67,8 +79,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const { authState } = useAuth();
   const { addToast } = useToast();
   const { selectedFacilityId } = useGlobalFacility();
-  const [devices, setDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]);
-  const [allDevices, setAllDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]); // Store full dataset for pagination calculations
+  const [devices, setDevices] = useState<DeviceListItem[]>([]);
+  const [allDevices, setAllDevices] = useState<DeviceListItem[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
@@ -87,33 +99,12 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'grid' | 'list' | 'commands'>(initialCommandQueue ? 'commands' : 'grid');
-  const [commandQueue, setCommandQueue] = useState<{ items: any[]; total: number } | null>(initialCommandQueue || null);
+  const [commandQueue, setCommandQueue] = useState<{ items: CommandQueueItem[]; total: number } | null>(initialCommandQueue || null);
   const [cmdFilters, setCmdFilters] = useState<{ status: string }>({ status: '' });
   const [showUnassignConfirm, setShowUnassignConfirm] = useState<{ deviceId: string; deviceSerial: string } | null>(null);
   const [unassigningDevice, setUnassigningDevice] = useState(false);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
-
-  useEffect(() => {
-    loadDevices();
-  }, [filters, currentPage, selectedFacilityId]);
-
-  // Command queue subscription
-  useEffect(() => {
-    if (activeTab !== 'commands') return;
-    const subId = ws.subscribe(
-      'command_queue',
-      (data: any) => {
-        setCommandQueue({ items: data.items || [], total: data.total || 0 });
-      },
-      undefined // no error handler needed
-    );
-    // initial fetch
-    apiService.getCommandQueue({ status: cmdFilters.status || undefined }).then(data => setCommandQueue({ items: data.items || [], total: data.total || 0 })).catch(() => {});
-    return () => {
-      if (subId) ws.unsubscribe(subId);
-    };
-  }, [activeTab, cmdFilters.status]);
 
   // Ref to track the latest loadDevices function for WebSocket callback
   const loadDevicesRef = useRef<() => void>(() => {});
@@ -143,11 +134,11 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     };
   }, [activeTab, ws]);
 
-  const loadDevices = async () => {
+  const loadDevices = useCallback(async () => {
     try {
       setLoading(true);
-      const normalize = (obj: Record<string, any>) => {
-        const out: Record<string, any> = {};
+      const normalize = (obj: Record<string, unknown>) => {
+        const out: Record<string, unknown> = {};
         Object.entries(obj).forEach(([k, v]) => {
           if (v === undefined || v === null) return;
           if (typeof v === 'string' && v.trim() === '') return;
@@ -191,7 +182,31 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, currentPage, selectedFacilityId]);
+
+  useEffect(() => {
+    loadDevices();
+  }, [loadDevices]);
+
+  // Command queue subscription
+  useEffect(() => {
+    if (activeTab !== 'commands') return;
+    const subId = ws.subscribe(
+      'command_queue',
+      (data: unknown) => {
+        const payload = (data || {}) as { items?: CommandQueueItem[]; total?: number };
+        setCommandQueue({ items: payload.items || [], total: payload.total || 0 });
+      },
+      undefined // no error handler needed
+    );
+    // initial fetch
+    apiService.getCommandQueue({ status: cmdFilters.status || undefined })
+      .then(data => setCommandQueue({ items: data.items || [], total: data.total || 0 }))
+      .catch(() => {});
+    return () => {
+      if (subId) ws.unsubscribe(subId);
+    };
+  }, [activeTab, cmdFilters.status, ws]);
 
   // Keep ref updated for WebSocket callback
   useEffect(() => {
@@ -204,7 +219,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   };
 
   const handleTypeFilter = (type: string) => {
-    setFilters(prev => ({ ...prev, device_type: type as any }));
+    setFilters(prev => ({ ...prev, device_type: type as DeviceFilters['device_type'] }));
     setCurrentPage(1);
   };
 
@@ -218,14 +233,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   };
 
   // Helper function to safely access device properties
-  const getDeviceProperty = (device: any, property: string) => {
-    if ('facility_id' in device) {
-      // BluLok device
-      return device[property];
-    } else {
-      // AccessControl device - doesn't have these properties
-      return null;
-    }
+  const getDeviceProperty = (device: DeviceListItem, property: keyof BluLokDevice): unknown => {
+    return 'facility_id' in device ? device[property] : null;
   };
 
   // Handle highlighting when page loads - use allDevices for proper pagination calculation
@@ -247,11 +256,12 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       addToast({ type: 'success', title: 'Device unassigned successfully' });
       await loadDevices(); // Refresh data
       setShowUnassignConfirm(null);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { message?: string } } };
       console.error('Failed to unassign device:', error);
       addToast({ 
         type: 'error', 
-        title: error?.response?.data?.message || 'Failed to unassign device from unit' 
+        title: apiError?.response?.data?.message || 'Failed to unassign device from unit' 
       });
     } finally {
       setUnassigningDevice(false);
@@ -409,7 +419,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-gray-800">
-              {(commandQueue?.items || []).map((cmd: any) => (
+              {(commandQueue?.items || []).map((cmd) => (
                 <tr key={cmd.id} className="border-b border-gray-200 dark:border-gray-700 last:border-b-0">
                   <td className="px-6 py-3 text-sm">{cmd.facility_id}</td>
                   <td className="px-6 py-3 text-sm">{cmd.device_id}</td>
@@ -465,8 +475,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                 key={`blulok-${device.id}`}
                 device={device as BluLokDevice & { device_category: string }}
                 onViewDevice={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
-                onViewUnit={((device as any).unit_id)
-                  ? () => navigate(`/units/${(device as any).unit_id}`, { state: withReturnPath(location, { from: 'devices' }) })
+                onViewUnit={('unit_id' in device && device.unit_id)
+                  ? () => navigate(`/units/${device.unit_id}`, { state: withReturnPath(location, { from: 'devices' }) })
                   : undefined}
               />
             ) : (
@@ -477,8 +487,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                 canManageAccessMethods={canManage}
                 onAccessMethodsUpdated={loadDevices}
                 onViewFacility={() => {
-                  const gatewayId = (device as any).gateway_id;
-                  const facilityIndex = devices.findIndex(d => (d as any).gateway_id === gatewayId);
+                  const gatewayId = 'gateway_id' in device ? device.gateway_id : '';
+                  const facilityIndex = devices.findIndex(d => 'gateway_id' in d && d.gateway_id === gatewayId);
                   const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
                   navigateAndHighlight(navigate, { id: gatewayId, type: 'facility', page: calculatedPage });
                 }}
@@ -514,8 +524,10 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
             <tbody className="bg-white dark:bg-gray-800">
               {devices.map((device) => {
                 const isBlulok = device.device_category === 'blulok';
-                const DeviceIcon = isBlulok ? LockClosedIcon : deviceTypeIcons[(device as any).device_type as keyof typeof deviceTypeIcons] || ServerIcon;
-                const StatusIcon = statusIcons[isBlulok ? (device as any).device_status as keyof typeof statusIcons : (device as any).status as keyof typeof statusIcons] || CheckCircleIcon;
+                const accessDevice = device as AccessControlDevice & { device_category: string };
+                const blulokDevice = device as BluLokDevice & { device_category: string };
+                const DeviceIcon = isBlulok ? LockClosedIcon : deviceTypeIcons[accessDevice.device_type as keyof typeof deviceTypeIcons] || ServerIcon;
+                const StatusIcon = statusIcons[isBlulok ? blulokDevice.device_status as keyof typeof statusIcons : accessDevice.status as keyof typeof statusIcons] || CheckCircleIcon;
                 
                 return (
                   <tr 
@@ -530,10 +542,10 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                         </div>
                         <div className="ml-3">
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
-                            {isBlulok ? `Unit ${(device as any).unit_number}` : (device as any).name}
+                            {isBlulok ? `Unit ${blulokDevice.unit_number}` : accessDevice.name}
                           </div>
                           <div className="text-sm text-gray-500 dark:text-gray-400">
-                            {isBlulok ? (device as any).device_serial : (device as any).location_description || 'N/A'}
+                            {isBlulok ? blulokDevice.device_serial : accessDevice.location_description || 'N/A'}
                           </div>
                         </div>
                       </div>
@@ -544,17 +556,17 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                           ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
                           : 'bg-primary-100 text-primary-800 dark:bg-primary-900/20 dark:text-primary-400'
                       }`}>
-                        {isBlulok ? 'BluLok Device' : (device as any).device_type?.replace('_', ' ').toUpperCase() || 'Access Control'}
+                        {isBlulok ? 'BluLok Device' : accessDevice.device_type?.replace('_', ' ').toUpperCase() || 'Access Control'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[isBlulok ? (device as any).device_status as keyof typeof statusColors : (device as any).status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}`}>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[isBlulok ? blulokDevice.device_status as keyof typeof statusColors : accessDevice.status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}`}>
                         <StatusIcon className="h-3 w-3 mr-1" />
-                        {isBlulok ? (device as any).device_status : (device as any).status}
+                        {isBlulok ? blulokDevice.device_status : accessDevice.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      {isBlulok ? (device as any).facility_name : (device as any).location_description || 'N/A'}
+                      {isBlulok ? blulokDevice.facility_name : accessDevice.location_description || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       {device.last_activity ? new Date(device.last_activity).toLocaleDateString() : 'Never'}

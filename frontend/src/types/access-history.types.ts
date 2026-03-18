@@ -10,23 +10,24 @@ export interface AccessLog {
   primary_tenant_id?: string;
   credential_id?: string;
   credential_type?: 'physical_key' | 'mobile_app' | 'card' | 'keypad';
-  action: 'unlock' | 'lock' | 'access_granted' | 'access_denied' | 'manual_override' | 
+  action: 'unlock' | 'lock' | 'access_granted' | 'access_denied' | 'manual_override' | 'admin_remote_open' | 'keypad_attempt' |
           'door_open' | 'door_close' | 'gate_open' | 'gate_close' | 'elevator_call' |
           'system_error' | 'timeout' | 'invalid_credential' | 'schedule_violation';
   method: 'app' | 'keypad' | 'card' | 'manual' | 'automatic' | 'physical_key' |
           'mobile_key' | 'admin_override' | 'emergency' | 'scheduled';
   success: boolean;
   denial_reason?: 'invalid_credential' | 'out_of_schedule' | 'system_error' | 'device_offline' |
-                  'insufficient_permissions' | 'expired_access' | 'maintenance_mode' | 'other';
+                  'insufficient_permissions' | 'expired_access' | 'maintenance_mode' | 'denylist_blocked' |
+                  'route_pass_expired' | 'route_pass_invalid_signature' | 'route_pass_wrong_lock' | 'unknown_error' | 'other';
   reason?: string;
   location_context?: string;
   session_id?: string;
-  device_response?: Record<string, any>;
+  device_response?: Record<string, unknown>;
   latitude?: number;
   longitude?: number;
   duration_seconds?: number;
   ip_address?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   occurred_at: string;
   created_at: string;
   updated_at: string;
@@ -73,7 +74,7 @@ export interface KeySharing {
   expires_at?: string;
   granted_by: string;
   notes?: string;
-  access_restrictions?: Record<string, any>;
+  access_restrictions?: Record<string, unknown>;
   is_active: boolean;
   created_at: string;
   updated_at: string;

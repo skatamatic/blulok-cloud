@@ -24,8 +24,8 @@ export interface RoutePassClaims {
   /**
    * Audience claim - array of audience-scoped targets this pass grants access to
    * Formats:
-   * - Direct access to a lock:         lock:{lockId}
-   * - Shared access via owner user:    shared_key:{primaryTenantId}:{lockId}
+   * - Direct access to a lock:         lock:{lockSerial}
+   * - Shared access via owner user:    shared_key:{primaryTenantId}:{lockSerial}
    */
   aud: string[];
   /** Issued at timestamp (JWT standard claim) */
@@ -74,7 +74,7 @@ export class PassesService {
    * @param params - Route pass issuance parameters
    * @param params.userId - ID of the user requesting access
    * @param params.devicePublicKey - Public key of the user's registered device
-   * @param params.audiences - Array of lock/zone IDs the user can access
+   * @param params.audiences - Array of access audiences (e.g. lock:{device_serial})
    * @returns Promise resolving to the signed Route Pass JWT string
    *
    * @throws Error if JWT signing fails or parameters are invalid

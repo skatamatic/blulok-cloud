@@ -300,7 +300,8 @@ export class GridSystem {
   /**
    * Check if a position is valid on the grid
    */
-  isValidPosition(gridPos: GridPosition, _objectSize: { x: number; z: number }): boolean {
+  isValidPosition(gridPos: GridPosition, objectSize: { x: number; z: number }): boolean {
+    void objectSize;
     // Check bounds
     const halfSize = this.config.size / 2;
     const size = this.getGridSize(); // Size in meters

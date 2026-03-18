@@ -43,13 +43,13 @@ export const UserFilter: React.FC<UserFilterProps> = ({
 
   // Load users on component mount
   useEffect(() => {
-    loadUsers(1, true);
+    loadUsers();
   }, []);
 
   // Load users when search term changes (with debouncing)
   useEffect(() => {
     const timeoutId = setTimeout(() => {
-      loadUsers(1, true, searchTerm);
+      loadUsers(searchTerm);
     }, 300); // 300ms debounce
 
     return () => clearTimeout(timeoutId);
@@ -70,7 +70,7 @@ export const UserFilter: React.FC<UserFilterProps> = ({
     }
   }, [value]);
 
-  const loadUsers = async (_page: number = 1, _isInitialLoad: boolean = false, search: string = '') => {
+  const loadUsers = async (search: string = '') => {
     try {
       setLoading(true);
       

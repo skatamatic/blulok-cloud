@@ -26,7 +26,6 @@ export const RightPanelContent: React.FC<RightPanelContentProps> = ({
   currentWorkflow,
   isWorkflowComplete = false,
   reportGenerationProgress = null,
-  onShowCardDetails: _onShowCardDetails,
   onViewWorkflowReport,
   onTimelineMarkerClick,
   onDismissEphemeral,

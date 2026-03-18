@@ -42,7 +42,7 @@ router.post('/request', authenticateToken, passRequestLimiter, asyncHandler(asyn
     const routePass = await RoutePassOrchestrator.issueForUser({
       userId: req.user!.userId,
       role: req.user!.role,
-      facilityIds: req.user!.facilityIds as string[] | undefined,
+      facilityIds: req.user!.facilityIds,
       facilityId: value.facility_id,
     }, rawHeader);
 

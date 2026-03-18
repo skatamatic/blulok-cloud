@@ -731,7 +731,7 @@ export default function DeveloperToolsPage() {
       const timestamp = parsed.timestamp || new Date().toISOString();
       const level = parsed.level || 'info';
       let message = parsed.message || '';
-      let stack = parsed.stack;
+      const stack = parsed.stack;
       
       // If no message but we have other properties, try to construct a meaningful message
       if (!message && parsed.error) {
@@ -1120,7 +1120,7 @@ export default function DeveloperToolsPage() {
   };
 
   const getFilterButtonClass = (isActive: boolean, type: 'level' | 'source', value: string) => {
-    const colorMaps = {
+    const colorMaps: Record<'level' | 'source', Record<string, string>> = {
       level: {
         error: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 border border-red-200 dark:border-red-700 shadow-sm',
         warn: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700 shadow-sm',
@@ -1135,7 +1135,6 @@ export default function DeveloperToolsPage() {
 
     const inactiveClass = 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600';
     
-    // @ts-ignore
     return isActive ? (colorMaps[type][value] || inactiveClass) : inactiveClass;
   };
 

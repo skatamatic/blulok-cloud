@@ -141,7 +141,7 @@ const reassignGatewaySchema = Joi.object({
 
 // GET /api/gateways/reassignment-candidates/:facilityId - List online gateways eligible for reassignment
 router.get('/reassignment-candidates/:facilityId', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const facilityId = req.params.facilityId as string;
+  const facilityId = req.params.facilityId;
 
   const targetFacility = await facilityModel.findById(facilityId);
   if (!targetFacility) {
@@ -162,7 +162,7 @@ router.get('/reassignment-candidates/:facilityId', requireAdmin, asyncHandler(as
 // GET /api/gateways/:id - Get specific gateway
 router.get('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  const id = req.params.id as string;
+  const id = req.params.id;
   
   const gateway = await gatewayModel.findById(String(id));
   
@@ -193,7 +193,7 @@ router.get('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FA
 
 // PUT /api/gateways/:id - Update gateway
 router.put('/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const id = req.params.id as string;
+  const id = req.params.id;
  
   const gatewayData = req.body;
   const gateway = await gatewayModel.update(String(id), gatewayData);
@@ -224,7 +224,7 @@ router.put('/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, 
 
 // PATCH /api/gateways/:id/reassign - Reassign gateway to a different facility
 router.patch('/:id/reassign', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const id = req.params.id as string;
+  const id = req.params.id;
   const { error, value } = reassignGatewaySchema.validate(req.body, {
     abortEarly: false,
     stripUnknown: true,
@@ -318,7 +318,7 @@ router.patch('/:id/reassign', requireAdmin, asyncHandler(async (req: Authenticat
 // PUT /api/gateways/:id/status - Update gateway status
 router.put('/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  const id = req.params.id as string;
+  const id = req.params.id;
   const { status } = req.body as { status: string };
   
   // Check if gateway exists and user has access
@@ -353,7 +353,7 @@ router.put('/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, User
 // POST /api/gateways/:id/test-connection - Test gateway connection
 router.post('/:id/test-connection', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  const id = req.params.id as string;
+  const id = req.params.id;
 
   // Check if gateway exists and user has access
   const gateway = await gatewayModel.findById(String(id));
@@ -476,7 +476,7 @@ router.post('/:id/test-connection', requireRoles([UserRole.ADMIN, UserRole.DEV_A
 // POST /api/gateways/:id/sync - Manually sync gateway
 router.post('/:id/sync', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  const id = req.params.id as string;
+  const id = req.params.id;
 
   // Check if gateway exists and user has access
   const gateway = await gatewayModel.findById(String(id));

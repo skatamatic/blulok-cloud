@@ -180,7 +180,9 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
         isInitialLoadRef.current = false;
       }
     },
-    onDragStart: (_layout: Layout[], oldItem: Layout, _newItem: Layout, _placeholder: Layout, e: MouseEvent) => {
+    onDragStart: (...args: [Layout[], Layout, Layout, Layout, MouseEvent]) => {
+      const oldItem = args[1];
+      const e = args[4];
       setIsDragging(true);
       
       // Initialize drag state for smart collision detection
@@ -194,12 +196,13 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
         startAutoScroll(e);
       }
     },
-    onDrag: (_layout: Layout[], _oldItem: Layout, _newItem: Layout, _placeholder: Layout, e: MouseEvent) => {
+    onDrag: (...args: [Layout[], Layout, Layout, Layout, MouseEvent]) => {
+      const e = args[4];
       if (enableAutoScroll) {
         updateAutoScroll(e);
       }
     },
-    onDragStop: (_layout: Layout[]) => {
+    onDragStop: () => {
       setIsDragging(false);
       stopAutoScroll();
       

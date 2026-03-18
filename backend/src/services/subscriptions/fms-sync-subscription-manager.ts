@@ -120,7 +120,7 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
       // Get user's facility IDs based on role
       let facilityIds: string[] = [];
 
-      let facilityNameMap: Map<string, string> = new Map();
+      const facilityNameMap: Map<string, string> = new Map();
 
       if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
         // Admin can see ALL facilities - get them from the facility model

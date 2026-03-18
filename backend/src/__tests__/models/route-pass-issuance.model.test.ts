@@ -52,7 +52,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: ['lock:lock-1', 'lock:lock-2'],
+        audiences: ['lock:serial-1', 'lock:serial-2'],
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
@@ -82,7 +82,7 @@ describe('RoutePassIssuanceModel', () => {
       const result = await model.create({
         userId: 'user-1',
         deviceId: 'device-1',
-        audiences: ['lock:lock-1', 'lock:lock-2'],
+        audiences: ['lock:serial-1', 'lock:serial-2'],
         jti: 'jwt-id-123',
         issuedAt: now,
         expiresAt,
@@ -92,14 +92,14 @@ describe('RoutePassIssuanceModel', () => {
         id: expect.any(String),
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1', 'lock:lock-2']),
+        audiences: JSON.stringify(['lock:serial-1', 'lock:serial-2']),
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
         created_at: expect.anything(),
         updated_at: expect.anything(),
       });
-      expect(result.audiences).toEqual(['lock:lock-1', 'lock:lock-2']);
+      expect(result.audiences).toEqual(['lock:serial-1', 'lock:serial-2']);
     });
   });
 
@@ -112,7 +112,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1']),
+        audiences: JSON.stringify(['lock:serial-1']),
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
@@ -137,7 +137,7 @@ describe('RoutePassIssuanceModel', () => {
 
       expect(firstMock).toHaveBeenCalled();
       expect(result).toBeDefined();
-      expect(result?.audiences).toEqual(['lock:lock-1']);
+      expect(result?.audiences).toEqual(['lock:serial-1']);
     });
 
     it('returns undefined if no route pass exists', async () => {
@@ -187,7 +187,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1']),
+        audiences: JSON.stringify(['lock:serial-1']),
         jti: 'jwt-id-123',
         issued_at: new Date(now.getTime() - 25 * 60 * 60 * 1000),
         expires_at: expiredAt,
@@ -220,7 +220,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1']),
+        audiences: JSON.stringify(['lock:serial-1']),
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
@@ -256,7 +256,7 @@ describe('RoutePassIssuanceModel', () => {
           id: 'log-1',
           user_id: 'user-1',
           device_id: 'device-1',
-          audiences: JSON.stringify(['lock:lock-1']),
+          audiences: JSON.stringify(['lock:serial-1']),
           jti: 'jwt-id-123',
           issued_at: now,
           expires_at: expiresAt,
@@ -267,7 +267,7 @@ describe('RoutePassIssuanceModel', () => {
           id: 'log-2',
           user_id: 'user-1',
           device_id: 'device-2',
-          audiences: JSON.stringify(['lock:lock-2']),
+          audiences: JSON.stringify(['lock:serial-2']),
           jti: 'jwt-id-456',
           issued_at: new Date(now.getTime() - 1000),
           expires_at: new Date(now.getTime() + 23 * 60 * 60 * 1000),
@@ -293,8 +293,8 @@ describe('RoutePassIssuanceModel', () => {
       const result = await model.getUserHistory('user-1', { limit: 50, offset: 0 });
 
       expect(result).toHaveLength(2);
-      expect(result[0].audiences).toEqual(['lock:lock-1']);
-      expect(result[1].audiences).toEqual(['lock:lock-2']);
+      expect(result[0].audiences).toEqual(['lock:serial-1']);
+      expect(result[1].audiences).toEqual(['lock:serial-2']);
     });
 
     it('applies date filters', async () => {

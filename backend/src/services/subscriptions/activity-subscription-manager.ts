@@ -7,6 +7,7 @@ import { ActivityEventsService, ActivityEvent } from '@/services/events/activity
 import { AuthService } from '@/services/auth.service';
 import { UnitModel } from '@/models/unit.model';
 import { DeviceModel } from '@/models/device.model';
+import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 
 /**
  * Activity Subscription Manager
@@ -43,8 +44,10 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
   private deviceModel: DeviceModel;
   private initialized: boolean = false;
   private cleanupFunctions: Array<() => void> = [];
+  private scopeService: AccessEventScopeService;
   // Store filters per subscription
-  private subscriptionFilters: Map<string, { facilityId?: string; unitId?: string; deviceId?: string }> = new Map();
+  private subscriptionFilters: Map<string, { facilityId?: string; unitId?: string; deviceId?: string; action?: string; method?: string; denialReason?: string }> = new Map();
+  private tenantUnitScopes: Map<string, string[]> = new Map();
 
   constructor() {
     super();
@@ -52,6 +55,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     this.eventService = ActivityEventsService.getInstance();
     this.unitModel = new UnitModel();
     this.deviceModel = new DeviceModel();
+    this.scopeService = new AccessEventScopeService();
     this.setupEventListeners();
   }
 
@@ -79,6 +83,9 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     const facilityId = filters.facility_id || filters.facilityId;
     const unitId = filters.unit_id || filters.unitId;
     const deviceId = filters.device_id || filters.deviceId;
+    const action = filters.action;
+    const method = filters.method;
+    const denialReason = filters.denial_reason || filters.denialReason;
 
     const subscriptionId = message.subscriptionId || `${this.getSubscriptionType()}-${Date.now()}`;
 
@@ -119,6 +126,14 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
         this.sendError(ws, 'Access denied: You do not have access to this unit');
         return false;
       }
+
+      if (client.userRole === UserRole.TENANT) {
+        const tenantUnitIds = await this.scopeService.getTenantAccessibleUnitIds(client.userId);
+        if (!tenantUnitIds.includes(unitId)) {
+          this.sendError(ws, 'Access denied: You do not have access to this unit');
+          return false;
+        }
+      }
     }
 
     // Validate device access if filtering by device
@@ -147,7 +162,11 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     }
 
     // Store filters for this subscription
-    this.subscriptionFilters.set(subscriptionId, { facilityId, unitId, deviceId });
+    this.subscriptionFilters.set(subscriptionId, { facilityId, unitId, deviceId, action, method, denialReason });
+    if (client.userRole === UserRole.TENANT) {
+      const tenantUnitIds = await this.scopeService.getTenantAccessibleUnitIds(client.userId);
+      this.tenantUnitScopes.set(subscriptionId, tenantUnitIds);
+    }
 
     // Store client context
     this.clientContext.set(subscriptionId, client);
@@ -172,6 +191,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     this.removeWatcher(subscriptionId, ws, client);
     this.clientContext.delete(subscriptionId);
     this.subscriptionFilters.delete(subscriptionId);
+    this.tenantUnitScopes.delete(subscriptionId);
     this.logger.info(`📡 ${this.getSubscriptionType()} unsubscription: ${subscriptionId} for user ${client.userId}`);
   }
 
@@ -184,6 +204,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
           this.watchers.delete(key);
           this.clientContext.delete(key);
           this.subscriptionFilters.delete(key);
+          this.tenantUnitScopes.delete(key);
         }
       }
     });
@@ -208,6 +229,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       // Build query filters
       const queryFilters: any = {
         limit: 20,
+        activity_type: 'access_attempt',
         sortBy: 'occurred_at',
         sortOrder: 'desc',
       };
@@ -215,9 +237,19 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       if (filters?.facilityId) {
         queryFilters.facility_id = filters.facilityId;
       } else if (!AuthService.canAccessAllFacilities(client.userRole)) {
-        // Non-admin users: filter by their facilities
-        if (client.facilityIds && client.facilityIds.length > 0) {
-          queryFilters.facility_id = client.facilityIds[0];
+        if (client.userRole === UserRole.TENANT) {
+          const unitIds = this.tenantUnitScopes.get(subscriptionId) || [];
+          if (unitIds.length === 0) {
+            this.sendMessage(ws, {
+              type: 'activity_update',
+              subscriptionId,
+              data: { activities: [], count: 0, lastUpdated: new Date().toISOString() },
+              timestamp: new Date().toISOString(),
+            });
+            return;
+          }
+        } else if (client.facilityIds && client.facilityIds.length > 0) {
+          queryFilters.facility_ids = client.facilityIds;
         }
       }
 
@@ -230,13 +262,14 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       }
 
       const activities = await this.activityLogModel.findWithContext(queryFilters);
+      const filteredActivities = activities.filter((activity) => this.matchesSubscriptionFilters(activity, filters, client, subscriptionId));
 
       this.sendMessage(ws, {
         type: 'activity_update',
         subscriptionId,
         data: {
-          activities: activities.map(a => this.formatActivity(a)),
-          count: activities.length,
+          activities: filteredActivities.map(a => this.formatActivity(a)),
+          count: filteredActivities.length,
           lastUpdated: new Date().toISOString(),
         },
         timestamp: new Date().toISOString(),
@@ -260,6 +293,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       const filters = this.subscriptionFilters.get(subscriptionId);
       
       if (!client) continue;
+      if (event.activityType !== 'access_attempt') continue;
 
       // Check if this subscription should receive this activity
       // 1. If subscribed to specific facility, skip if event doesn't match
@@ -286,6 +320,25 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       // 4. Check facility access for non-admin users
       if (!AuthService.canAccessAllFacilities(client.userRole)) {
         if (event.facilityId && client.facilityIds && !client.facilityIds.includes(event.facilityId)) {
+          continue;
+        }
+      }
+
+      // 5. Tenant-specific scope by unit or own actor
+      if (client.userRole === UserRole.TENANT) {
+        const unitIds = this.tenantUnitScopes.get(subscriptionId) || [];
+        const hasUnitAccess = !!event.unitId && unitIds.includes(event.unitId);
+        const isOwnEvent = !!event.actorId && event.actorId === client.userId;
+        if (!hasUnitAccess && !isOwnEvent) {
+          continue;
+        }
+      }
+
+      // 6. Extra subscription metadata filters
+      const subscriptionFilter = this.subscriptionFilters.get(subscriptionId);
+      if (subscriptionFilter?.action || subscriptionFilter?.method || subscriptionFilter?.denialReason) {
+        const eventDescription = event.description || '';
+        if (subscriptionFilter.action && !eventDescription.toLowerCase().includes(subscriptionFilter.action.toLowerCase())) {
           continue;
         }
       }
@@ -356,6 +409,35 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       facilityName: activity.facility_name,
       occurredAt: activity.occurred_at,
     };
+  }
+
+  private matchesSubscriptionFilters(
+    activity: any,
+    filters: { action?: string; method?: string; denialReason?: string } | undefined,
+    client: SubscriptionClient,
+    subscriptionId: string,
+  ): boolean {
+    const metadata = activity.metadata && typeof activity.metadata === 'object' ? activity.metadata : {};
+    const action = typeof metadata.action === 'string' ? metadata.action : undefined;
+    const method = typeof metadata.method === 'string' ? metadata.method : undefined;
+    const denialReason = typeof metadata.denial_reason === 'string' ? metadata.denial_reason : undefined;
+
+    if (filters?.action && action !== filters.action) return false;
+    if (filters?.method && method !== filters.method) return false;
+    if (filters?.denialReason && denialReason !== filters.denialReason) return false;
+
+    if (client.userRole === UserRole.TENANT) {
+      const unitIds = this.tenantUnitScopes.get(subscriptionId) || [];
+      const hasUnitAccess = !!activity.unit_id && unitIds.includes(activity.unit_id);
+      const isOwnEvent = !!activity.actor_id && activity.actor_id === client.userId;
+      return hasUnitAccess || isOwnEvent;
+    }
+
+    if (client.userRole === UserRole.MAINTENANCE) {
+      return !!activity.actor_id && activity.actor_id === client.userId;
+    }
+
+    return true;
   }
 
   /**

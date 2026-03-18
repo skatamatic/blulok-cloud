@@ -3,12 +3,13 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { SyncFMSWidget } from '@/components/Widget/SyncFMSWidget';
 import { WidgetSize } from '@/components/Widget/WidgetSizeDropdown';
 import { fmsService } from '@/services/fms.service';
-import { ThemeProvider } from '@/contexts/ThemeContext';
-import { AuthProvider } from '@/contexts/AuthContext';
-import { ToastProvider } from '@/contexts/ToastContext';
+import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { ToastProvider, useToast } from '@/contexts/ToastContext';
 import ToastContainer from '@/components/Toast/ToastContainer';
-import { WebSocketProvider } from '@/contexts/WebSocketContext';
-import { FMSSyncProvider } from '@/contexts/FMSSyncContext';
+import { WebSocketProvider, useWebSocket } from '@/contexts/WebSocketContext';
+import { FMSSyncProvider, useFMSSync } from '@/contexts/FMSSyncContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 
 // Mock all the dependencies
 jest.mock('@/services/fms.service');
@@ -138,12 +139,12 @@ const mockGlobalFacilityContext = {
 beforeEach(() => {
   jest.clearAllMocks();
 
-  (require('@/contexts/AuthContext').useAuth as jest.Mock).mockReturnValue(mockAuthContext);
-  (require('@/contexts/ToastContext').useToast as jest.Mock).mockReturnValue(mockToastContext);
-  (require('@/contexts/WebSocketContext').useWebSocket as jest.Mock).mockReturnValue(mockWebSocketContext);
-  (require('@/contexts/FMSSyncContext').useFMSSync as jest.Mock).mockReturnValue(mockFMSSyncContext);
-  (require('@/contexts/ThemeContext').useTheme as jest.Mock).mockReturnValue(mockThemeContext);
-  (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue(mockGlobalFacilityContext);
+  (useAuth as jest.Mock).mockReturnValue(mockAuthContext);
+  (useToast as jest.Mock).mockReturnValue(mockToastContext);
+  (useWebSocket as jest.Mock).mockReturnValue(mockWebSocketContext);
+  (useFMSSync as jest.Mock).mockReturnValue(mockFMSSyncContext);
+  (useTheme as jest.Mock).mockReturnValue(mockThemeContext);
+  (useGlobalFacility as jest.Mock).mockReturnValue(mockGlobalFacilityContext);
 
   // Mock fetch for facility API call
   (global.fetch as jest.Mock).mockResolvedValue({
@@ -206,7 +207,7 @@ describe('SyncFMSWidget', () => {
 
   describe('Loading State', () => {
     it('renders loading state initially', () => {
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         isLoading: true,
       });
@@ -251,7 +252,7 @@ describe('SyncFMSWidget', () => {
 
     it('renders tiny size correctly with single facility', async () => {
       // Mock single facility user
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [{ id: 'facility-1', name: 'Facility One' }],
         hasMultipleFacilities: false,
@@ -288,7 +289,7 @@ describe('SyncFMSWidget', () => {
     });
 
     it('shows message when no facility selected', async () => {
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         selectedFacilityId: null,
         selectedFacility: null,
@@ -324,7 +325,7 @@ describe('SyncFMSWidget', () => {
         return 'subscription-id';
       });
 
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         selectedFacilityId: 'facility-1',
         selectedFacility: { id: 'facility-1', name: 'Facility One' },
@@ -378,7 +379,7 @@ describe('SyncFMSWidget', () => {
     });
 
     it('shows sync status for small widget with single facility', async () => {
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [{ id: 'facility-1', name: 'Facility One' }],
         hasMultipleFacilities: false,
@@ -471,7 +472,7 @@ describe('SyncFMSWidget', () => {
     });
 
     it('shows message when All Facilities is selected', async () => {
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         selectedFacilityId: '__ALL_FACILITIES__',
         isAllFacilitiesSelected: true,
@@ -608,7 +609,7 @@ describe('SyncFMSWidget', () => {
         return 'subscription-id';
       });
 
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         selectedFacilityId: 'facility-2',
         selectedFacility: { id: 'facility-2', name: 'Facility Two' },
@@ -649,7 +650,7 @@ describe('SyncFMSWidget', () => {
     });
 
     it('handles manual sync successfully', async () => {
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [{ id: 'facility-1', name: 'Facility One' }],
         hasMultipleFacilities: false,
@@ -669,7 +670,7 @@ describe('SyncFMSWidget', () => {
     it('shows error toast when sync fails', async () => {
       (fmsService.triggerSync as jest.Mock).mockRejectedValue(new Error('Sync failed'));
 
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [{ id: 'facility-1', name: 'Facility One' }],
         hasMultipleFacilities: false,
@@ -692,7 +693,7 @@ describe('SyncFMSWidget', () => {
     it('prevents sync when another sync is active', async () => {
       mockFMSSyncContext.canStartNewSync.mockReturnValue(false);
 
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [{ id: 'facility-1', name: 'Facility One' }],
         hasMultipleFacilities: false,
@@ -734,7 +735,7 @@ describe('SyncFMSWidget', () => {
         requiresReview: false,
       });
 
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [{ id: 'facility-1', name: 'Facility One' }],
         hasMultipleFacilities: false,
@@ -820,7 +821,7 @@ describe('SyncFMSWidget', () => {
   describe('User Roles and Permissions', () => {
     it('handles admin users with all facilities access', async () => {
       // Admin role is already set in mockAuthContext
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [
           { id: 'facility-1', name: 'Facility One' },
@@ -839,7 +840,7 @@ describe('SyncFMSWidget', () => {
 
     it('handles facility admin users with limited access', async () => {
       mockAuthContext.authState.user!.role = 'facility_admin';
-      (require('@/contexts/GlobalFacilityContext').useGlobalFacility as jest.Mock).mockReturnValue({
+      (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,
         facilities: [
           { id: 'facility-1', name: 'Facility One' },

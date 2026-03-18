@@ -6,7 +6,7 @@ export interface WidgetConfig {
   title: string;
   position: { x: number; y: number; w: number; h: number };
   size: WidgetSize;
-  config?: Record<string, any>;
+  config?: Record<string, unknown>;
 }
 
 export interface WidgetInstance {
@@ -14,5 +14,5 @@ export interface WidgetInstance {
   type: string;
   title: string;
   size: WidgetSize;
-  config?: Record<string, any>;
+  config?: Record<string, unknown>;
 }

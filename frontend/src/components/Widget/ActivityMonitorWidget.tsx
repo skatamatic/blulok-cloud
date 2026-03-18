@@ -16,6 +16,7 @@ import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 
 interface ActivityLogEntry {
   id: string;
@@ -144,6 +145,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'alerts' | 'access'>('all');
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
 
   const loadActivities = useCallback(async (showRefreshState = false) => {
     if (showRefreshState) {
@@ -184,6 +186,14 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
 
     return () => clearInterval(interval);
   }, [loadActivities]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    const subscriptionId = subscribe('activity', () => {
+      void loadActivities();
+    });
+    return () => unsubscribe(subscriptionId);
+  }, [isConnected, subscribe, unsubscribe, loadActivities]);
 
   const getMaxDisplayItems = (size: WidgetSize): number => {
     switch (size) {

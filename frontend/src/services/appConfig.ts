@@ -12,7 +12,6 @@ const getRuntimeConfig = (): RuntimeConfig => {
 const getViteEnv = (key: string): string | undefined => {
   try {
     // Access import.meta via eval to avoid syntax errors in Jest/CommonJS
-    // eslint-disable-next-line no-eval
     const meta = (0, eval)('import.meta') as any;
     const env = meta?.env;
     if (env && env[key] !== undefined) {

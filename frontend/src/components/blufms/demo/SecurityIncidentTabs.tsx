@@ -4,8 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
 import { securityEventsData, securityEventBreakdown, zoneActivityData } from './reportData';
 import { VideoPlayer } from './VideoPlayer';
-// @ts-ignore - html2pdf.js doesn't have TypeScript definitions
-import html2pdf from 'html2pdf.js';
 
 const COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'];
 

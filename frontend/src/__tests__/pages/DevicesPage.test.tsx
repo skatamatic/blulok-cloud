@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import DevicesPage from '@/pages/DevicesPage';
 import { apiService } from '@/services/api.service';
@@ -65,12 +65,13 @@ describe('DevicesPage - Commands Tab', () => {
   });
 
   it('should render commands tab for admin users', async () => {
+    const initialQueue = { items: [], total: 0 };
     render(
       <BrowserRouter>
         <AuthProvider>
           <GlobalFacilityProvider>
             <WebSocketProvider>
-              <DevicesPage />
+              <DevicesPage initialCommandQueue={initialQueue} />
             </WebSocketProvider>
           </GlobalFacilityProvider>
         </AuthProvider>
@@ -78,26 +79,9 @@ describe('DevicesPage - Commands Tab', () => {
     );
 
     await waitFor(() => {
-      // The Commands tab should be present in the tab group
-      const tabButtons = screen.getAllByRole('button').filter(btn =>
-        btn.className.includes('rounded-md') &&
-        btn.querySelector('svg') &&
-        !btn.textContent?.includes('Filters') &&
-        !btn.textContent?.includes('Add Device')
-      );
-      expect(tabButtons).toHaveLength(3); // Grid, List, Commands tabs
+      expect(screen.getByText('Pending Commands: 0')).toBeInTheDocument();
     });
 
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
     expect(mockApiService.getCommandQueue).toHaveBeenCalled();
   });
 
@@ -127,17 +111,6 @@ describe('DevicesPage - Commands Tab', () => {
         </AuthProvider>
       </BrowserRouter>
     );
-
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
 
     await waitFor(() => {
       expect(screen.getByText('fac-1')).toBeInTheDocument();
@@ -175,17 +148,6 @@ describe('DevicesPage - Commands Tab', () => {
       </BrowserRouter>
     );
 
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
-
     await waitFor(() => {
       const retryButton = screen.getByText('Retry');
       fireEvent.click(retryButton);
@@ -222,22 +184,6 @@ describe('DevicesPage - Commands Tab', () => {
     );
 
     // Commands tab should be active (check by the presence of command action buttons)
-    await waitFor(() => {
-      expect(screen.getByText('Retry')).toBeInTheDocument();
-      expect(screen.getByText('Cancel')).toBeInTheDocument();
-    });
-
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
-
     await waitFor(() => {
       expect(screen.getByText('Retry')).toBeInTheDocument();
       expect(screen.getByText('Cancel')).toBeInTheDocument();

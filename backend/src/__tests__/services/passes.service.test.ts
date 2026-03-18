@@ -6,7 +6,7 @@ jest.mock('@/services/database.service');
 
 describe('PassesService', () => {
   it('issues a route pass containing device_pubkey and claims', async () => {
-    const token = await PassesService.issueRoutePass({ userId: 'user-xyz', devicePublicKey: 'cHVibGljS2V5', audiences: ['lock:1'] });
+    const token = await PassesService.issueRoutePass({ userId: 'user-xyz', devicePublicKey: 'cHVibGljS2V5', audiences: ['lock:serial-1'] });
     const payload = await Ed25519Service.verifyJwt(token);
     expect(payload.sub).toBe('user-xyz');
     expect(payload.device_pubkey).toBe('cHVibGljS2V5');

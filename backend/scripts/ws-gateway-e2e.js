@@ -607,7 +607,7 @@ async function createBlulokDevice(token, gatewayId, unitId, serial) {
     device_type: 'blulok',
     location_description: 'E2E Test Device',
     unit_id: unitId,
-    device_serial: serial
+    serial
   }, { headers: { Authorization: `Bearer ${token}` } });
   const device = res.data?.device || res.data;
   if (!device?.id) throw new Error('Create device failed');
@@ -920,7 +920,9 @@ function handleFirmwareDelivery(ws, opsKeyB64, timeoutMs = 60000) {
         if (msg.type === 'FIRMWARE_MANIFEST' && msg.jwt) {
           const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
           if (payload.cmd_type !== 'FIRMWARE_MANIFEST') throw new Error(`Expected cmd_type FIRMWARE_MANIFEST, got ${payload.cmd_type}`);
-          if (!payload.sha256 || !payload.version || !payload.nonce) throw new Error('Manifest missing required fields (sha256, version, nonce)');
+          if (!payload.sha256 || !payload.version || !payload.nonce || !payload.push_id) {
+            throw new Error('Manifest missing required fields (sha256, version, nonce, push_id)');
+          }
           if (typeof payload.chunk_count !== 'number' || payload.chunk_count < 1) throw new Error(`Invalid chunk_count: ${payload.chunk_count}`);
           if (!payload.target_type) throw new Error('Manifest missing target_type');
           if (!payload.filename) throw new Error('Manifest missing filename');
@@ -1170,6 +1172,7 @@ async function run() {
     deviceId: null,
     primaryTenantId: null,
     users: [],
+    units: [],
     shares: [],
     scheduleId: null,
     accessControlDeviceIds: [],
@@ -1687,6 +1690,44 @@ async function run() {
     const badSyncResp = await waitForProxyResponse(ws, badSyncId);
     if (badSyncResp.status !== 400) {
       throw new Error(`Expected 400 for invalid device-sync payload, got ${badSyncResp.status}`);
+    }
+    step('Negative device-sync payload (blank identifier) should be rejected');
+    const blankIdSyncId = 'req-internal-sync-blank-id';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: blankIdSyncId,
+      method: 'POST',
+      path: `/internal/gateway/device-sync`,
+      body: {
+        facility_id: facilityId,
+        devices: [{ serial: '   ' }],
+      },
+    }));
+    const blankIdSyncResp = await waitForProxyResponse(ws, blankIdSyncId);
+    if (blankIdSyncResp.status !== 400) {
+      throw new Error(`Expected 400 for blank identifier device-sync payload, got ${blankIdSyncResp.status}`);
+    }
+
+    step('Negative BluLok create payload (conflicting serial aliases) should be rejected');
+    const conflictSerialId = 'req-device-create-conflicting-serial';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: conflictSerialId,
+      method: 'POST',
+      path: `/devices/blulok`,
+      body: {
+        gateway_id: gatewayId,
+        name: 'Conflict Serial Device',
+        device_type: 'blulok',
+        location_description: 'E2E Conflict Serial Device',
+        unit_id: unitId,
+        serial: `BL-CONFLICT-${Date.now()}-A`,
+        device_serial: `BL-CONFLICT-${Date.now()}-B`,
+      },
+    }));
+    const conflictSerialResp = await waitForProxyResponse(ws, conflictSerialId);
+    if (conflictSerialResp.status !== 400) {
+      throw new Error(`Expected 400 for conflicting serial aliases, got ${conflictSerialResp.status}`);
     }
 
     // ---- NEW ENDPOINTS: /devices/inventory and /devices/state ----
@@ -2509,6 +2550,339 @@ async function run() {
     share2Token = await completeFirstTimeLogin(share2Id, share2Email);
     ok('First-time login flows completed for all users');
 
+    step('Ensuring primary tenant has explicit unit assignment for RBAC scope checks');
+    try {
+      await assignTenantToUnit(token, unitId, primaryId);
+      ok('Primary tenant assigned to unit for access-history scope validation');
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status !== 400 && status !== 409) {
+        throw err;
+      }
+      info('Primary tenant already assigned to unit; continuing');
+    }
+
+    heading('Access Event Canonical Pipeline');
+    step('Subscribing role-scoped activity feeds');
+    async function openActivityFeed(label, authToken, filter = {}) {
+      const socket = new WebSocket(`${UI_WS_URL}?token=${authToken}`);
+      const events = [];
+      await new Promise((resolve, reject) => {
+        socket.once('open', resolve);
+        socket.once('error', reject);
+      });
+      socket.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if ((msg.type === 'activity_update' || msg.type === 'activity_new') && msg.data) {
+            events.push(msg);
+          }
+        } catch {}
+      });
+      socket.send(JSON.stringify({
+        type: 'subscription',
+        subscriptionType: 'activity',
+        data: filter,
+      }));
+      return { label, socket, events };
+    }
+
+    const tenantFeed = await openActivityFeed('tenant', primaryToken);
+    const facAdminFeed = await openActivityFeed('facility_admin', facilityAdmin.token, { facility_id: facilityId });
+    const adminFeed = await openActivityFeed('admin', platformAdmin.token, { facility_id: facilityId });
+    await delay(1000);
+    const shadowUnit = await createUnit(token, facilityId, `E2E-ACCESS-SHADOW-${Date.now()}`);
+    if (!shadowUnit?.id) throw new Error('Failed creating secondary unit for tenant scope isolation checks');
+    created.units.push(shadowUnit.id);
+    ok(`Created secondary unit ${shadowUnit.id} for RBAC isolation checks`);
+
+    step('Negative ingestion: reject denied events without denial_reason');
+    const reqAccessEventsBadValidation = `req-access-events-bad-${Date.now()}`;
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessEventsBadValidation,
+      method: 'POST',
+      path: '/internal/gateway/access-events',
+      body: {
+        facility_id: facilityId,
+        events: [
+          {
+            event_id: `evt-invalid-${Date.now()}`,
+            occurred_at: new Date().toISOString(),
+            facility_id: facilityId,
+            unit_id: unitId,
+            device_id: deviceId,
+            action: 'access_denied',
+            method: 'app',
+            success: false,
+          },
+        ],
+      },
+    }));
+    const badValidationResp = await waitForProxyResponse(ws, reqAccessEventsBadValidation);
+    if (badValidationResp.status !== 400) {
+      throw new Error(`Expected 400 for denied event missing denial_reason, got ${badValidationResp.status}`);
+    }
+    ok('Rejected invalid denied-event payload without denial_reason');
+
+    step('Negative ingestion: tenant cannot call internal gateway ingestion endpoint directly');
+    let tenantInternalIngestDenied = false;
+    try {
+      await axios.post(
+        `${API_BASE}/internal/gateway/access-events`,
+        {
+          facility_id: facilityId,
+          events: [
+            {
+              event_id: `evt-tenant-forbidden-${Date.now()}`,
+              occurred_at: new Date().toISOString(),
+              facility_id: facilityId,
+              unit_id: unitId,
+              device_id: deviceId,
+              action: 'access_granted',
+              method: 'app',
+              success: true,
+            },
+          ],
+        },
+        { headers: authHeaders(primaryToken) },
+      );
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        tenantInternalIngestDenied = true;
+      } else {
+        throw err;
+      }
+    }
+    if (!tenantInternalIngestDenied) {
+      throw new Error('Expected tenant internal ingestion attempt to be denied');
+    }
+    ok('Direct tenant ingestion attempt is denied for internal gateway endpoint');
+
+    const eventsToIngest = [
+      {
+        event_id: `evt-granted-${Date.now()}`,
+        occurred_at: new Date().toISOString(),
+        facility_id: facilityId,
+        unit_id: unitId,
+        device_id: deviceId,
+        action: 'access_granted',
+        method: 'app',
+        success: true,
+        actor: {
+          user_id: primaryId,
+          role: 'tenant',
+          name: 'Primary Tenant',
+        },
+      },
+      {
+        event_id: `evt-denied-${Date.now()}`,
+        occurred_at: new Date().toISOString(),
+        facility_id: facilityId,
+        unit_id: unitId,
+        device_id: deviceId,
+        action: 'access_denied',
+        method: 'route_pass',
+        success: false,
+        denial_reason: 'route_pass_invalid_signature',
+        actor: {
+          user_id: share1Id,
+          role: 'shared_user',
+          name: 'Shared User',
+        },
+      },
+      {
+        event_id: `evt-admin-open-${Date.now()}`,
+        occurred_at: new Date().toISOString(),
+        facility_id: facilityId,
+        unit_id: unitId,
+        device_id: deviceId,
+        action: 'admin_remote_open',
+        method: 'admin_remote',
+        success: true,
+        actor: {
+          user_id: platformAdmin.id,
+          role: 'admin',
+          name: 'Platform Admin',
+        },
+      },
+      {
+        event_id: `evt-keypad-${Date.now()}`,
+        occurred_at: new Date().toISOString(),
+        facility_id: facilityId,
+        unit_id: unitId,
+        device_id: deviceId,
+        action: 'keypad_attempt',
+        method: 'keypad',
+        success: false,
+        denial_reason: 'out_of_schedule',
+        keypad: {
+          entered_code: '1234',
+          schedule_name: 'Night Schedule',
+          zone_name: 'Zone A',
+        },
+      },
+      {
+        event_id: `evt-shadow-unit-${Date.now()}`,
+        occurred_at: new Date().toISOString(),
+        facility_id: facilityId,
+        unit_id: shadowUnit.id,
+        device_id: deviceId,
+        action: 'access_denied',
+        method: 'app',
+        success: false,
+        denial_reason: 'denylist_blocked',
+        actor: {
+          user_id: share2Id,
+          role: 'shared_user',
+          name: 'Shadow Unit User',
+        },
+      },
+    ];
+
+    const reqAccessEvents = `req-access-events-${Date.now()}`;
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessEvents,
+      method: 'POST',
+      path: '/internal/gateway/access-events',
+      body: {
+        facility_id: facilityId,
+        events: eventsToIngest,
+      },
+    }));
+    const respAccessEvents = await waitForProxyResponse(ws, reqAccessEvents);
+    if (respAccessEvents.status !== 200) {
+      throw new Error(`Access-event ingestion failed: ${respAccessEvents.status} ${JSON.stringify(respAccessEvents.body)}`);
+    }
+    ok(`Ingested ${eventsToIngest.length} canonical access events`);
+
+    await delay(1200);
+
+    step('Validating role-scoped access-history API');
+    const [tenantHistory, facAdminHistory, adminHistory] = await Promise.all([
+      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(primaryToken), params: { facility_id: facilityId, limit: 50 } }),
+      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(facilityAdmin.token), params: { facility_id: facilityId, limit: 50 } }),
+      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(platformAdmin.token), params: { facility_id: facilityId, limit: 50 } }),
+    ]);
+    if (!tenantHistory.data?.logs?.length) throw new Error('Tenant history feed missing expected scoped entries');
+    if (!facAdminHistory.data?.logs?.length) throw new Error('Facility-admin history feed missing expected entries');
+    if (!adminHistory.data?.logs?.length) throw new Error('Admin history feed missing expected entries');
+
+    const denied = adminHistory.data.logs.find((x) => x.denial_reason === 'route_pass_invalid_signature');
+    if (!denied) throw new Error('Missing route_pass_invalid_signature denial in access history');
+    const keypadDenied = adminHistory.data.logs.find((x) => x.action === 'keypad_attempt' && x.denial_reason === 'out_of_schedule');
+    if (!keypadDenied) throw new Error('Missing keypad out_of_schedule denial in access history');
+    const shadowUnitSeenByTenant = adminHistory.data.logs.some(
+      (x) => x.unit_id === shadowUnit.id && x.denial_reason === 'denylist_blocked',
+    );
+    if (!shadowUnitSeenByTenant) throw new Error('Admin history missing secondary-unit denylist_blocked event');
+    const shadowUnitLeakedToTenant = tenantHistory.data.logs.some(
+      (x) => x.unit_id === shadowUnit.id && x.denial_reason === 'denylist_blocked',
+    );
+    if (shadowUnitLeakedToTenant) throw new Error('Tenant leaked secondary-unit event they should not see');
+    ok('Access-history API contains canonical denial taxonomy and keypad metadata');
+
+    step('Validating realtime role-scoped activity subscriptions');
+    const waitForFeedEvent = async (feed, predicate, label, timeoutMs = 8000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (feed.events.some((evt) => {
+          try {
+            return predicate(evt);
+          } catch {
+            return false;
+          }
+        })) {
+          return true;
+        }
+        await delay(200);
+      }
+      throw new Error(`Timed out waiting for ${feed.label} realtime event: ${label}`);
+    };
+
+    const realtimeToken = `rt-${Date.now()}`;
+    const realtimePrimaryActorName = `Realtime Primary ${realtimeToken}`;
+    const realtimeShadowActorName = `Realtime Shadow ${realtimeToken}`;
+    const reqRealtimeAccessEvents = `req-access-events-realtime-${Date.now()}`;
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqRealtimeAccessEvents,
+      method: 'POST',
+      path: '/internal/gateway/access-events',
+      body: {
+        facility_id: facilityId,
+        events: [
+          {
+            event_id: `evt-realtime-primary-${Date.now()}`,
+            occurred_at: new Date().toISOString(),
+            facility_id: facilityId,
+            unit_id: unitId,
+            device_id: deviceId,
+            action: 'admin_remote_open',
+            method: 'admin_remote',
+            success: true,
+            actor: {
+              user_id: platformAdmin.id,
+              role: 'admin',
+              name: realtimePrimaryActorName,
+            },
+          },
+          {
+            event_id: `evt-realtime-shadow-${Date.now()}`,
+            occurred_at: new Date().toISOString(),
+            facility_id: facilityId,
+            unit_id: shadowUnit.id,
+            device_id: deviceId,
+            action: 'access_denied',
+            method: 'app',
+            success: false,
+            denial_reason: 'denylist_blocked',
+            actor: {
+              user_id: share2Id,
+              role: 'shared_user',
+              name: realtimeShadowActorName,
+            },
+          },
+        ],
+      },
+    }));
+    const realtimeResp = await waitForProxyResponse(ws, reqRealtimeAccessEvents);
+    if (realtimeResp.status !== 200) {
+      throw new Error(`Realtime probe ingestion failed: ${realtimeResp.status} ${JSON.stringify(realtimeResp.body)}`);
+    }
+
+    const matchesActorName = (evt, actorName) => evt?.type === 'activity_new'
+      && evt?.data?.activity?.actor?.name === actorName;
+    const matchesRealtimePrimary = (evt) => matchesActorName(evt, realtimePrimaryActorName)
+      && evt?.data?.activity?.unitId === unitId;
+    const matchesRealtimeShadow = (evt) => matchesActorName(evt, realtimeShadowActorName)
+      && evt?.data?.activity?.unitId === shadowUnit.id;
+
+    await Promise.all([
+      waitForFeedEvent(tenantFeed, matchesRealtimePrimary, 'tenant primary-unit event'),
+      waitForFeedEvent(facAdminFeed, matchesRealtimePrimary, 'facility_admin primary-unit event'),
+      waitForFeedEvent(adminFeed, matchesRealtimePrimary, 'admin primary-unit event'),
+    ]);
+
+    await Promise.all([
+      waitForFeedEvent(facAdminFeed, matchesRealtimeShadow, 'facility_admin shadow-unit event'),
+      waitForFeedEvent(adminFeed, matchesRealtimeShadow, 'admin shadow-unit event'),
+    ]);
+
+    const tenantShadowLeak = tenantFeed.events.some((evt) => matchesRealtimeShadow(evt));
+    if (tenantShadowLeak) {
+      throw new Error('Tenant realtime feed leaked secondary-unit event');
+    }
+    ok('Realtime role-scoped activity feeds propagated expected events without tenant leakage');
+
+    for (const feed of [tenantFeed, facAdminFeed, adminFeed]) {
+      if (feed.socket.readyState === WebSocket.OPEN) {
+        feed.socket.close();
+      }
+    }
+
     // -------------------------------------------------------------------
     // New invited user (not in system before invite) – first-time flow
     // -------------------------------------------------------------------
@@ -2680,7 +3054,7 @@ async function run() {
     // Assert shared-key audience for share2
     const share2Claims = decodeJwtClaims(share2Pass);
     if (!share2Claims || !Array.isArray(share2Claims.aud)) throw new Error('Invalid route pass payload for share2');
-    const expectedSharedAud2 = `shared_key:${primaryId}:${deviceId}`;
+    const expectedSharedAud2 = `shared_key:${primaryId}:${remainingSerial}`;
     if (!share2Claims.aud.includes(expectedSharedAud2)) {
       throw new Error(`Missing expected aud for share2: ${expectedSharedAud2}`);
     }
@@ -2694,7 +3068,7 @@ async function run() {
     const share1Pass = await requestRoutePass(share1Token, share1AppDevId);
     const share1Claims = decodeJwtClaims(share1Pass);
     if (!share1Claims || !Array.isArray(share1Claims.aud)) throw new Error('Invalid route pass payload for share1');
-    const expectedSharedAud1 = `shared_key:${primaryId}:${deviceId}`;
+    const expectedSharedAud1 = `shared_key:${primaryId}:${remainingSerial}`;
     if (!share1Claims.aud.includes(expectedSharedAud1)) {
       throw new Error(`Missing expected aud for share1: ${expectedSharedAud1}`);
     }
@@ -2709,7 +3083,7 @@ async function run() {
     const primaryPass = await requestRoutePass(primaryToken, primaryAppDevId);
     const primaryClaims = decodeJwtClaims(primaryPass);
     if (!primaryClaims || !Array.isArray(primaryClaims.aud)) throw new Error('Invalid route pass payload for primary');
-    const expectedPrimaryAud = `lock:${deviceId}`;
+    const expectedPrimaryAud = `lock:${remainingSerial}`;
     if (!primaryClaims.aud.includes(expectedPrimaryAud)) {
       throw new Error(`Missing expected aud for primary: ${expectedPrimaryAud}`);
     }
@@ -4186,7 +4560,7 @@ async function run() {
     step('Sending FIRMWARE_PROGRESS (distributing, 50%)');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_PROGRESS',
-      nonce: delivery.manifest.nonce,
+      push_id: delivery.manifest.push_id,
       target_type: delivery.manifest.target_type || 'gateway',
       progress_percent: 50,
       phase: 'distributing',
@@ -4201,7 +4575,7 @@ async function run() {
     step('Sending FIRMWARE_PROGRESS (installing, 80%)');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_PROGRESS',
-      nonce: delivery.manifest.nonce,
+      push_id: delivery.manifest.push_id,
       target_type: delivery.manifest.target_type || 'gateway',
       progress_percent: 80,
       phase: 'installing',
@@ -4216,7 +4590,7 @@ async function run() {
     step('Sending FIRMWARE_PROGRESS (complete, 100%)');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_PROGRESS',
-      nonce: delivery.manifest.nonce,
+      push_id: delivery.manifest.push_id,
       target_type: delivery.manifest.target_type || 'gateway',
       progress_percent: 100,
       phase: 'verifying',
@@ -4228,10 +4602,11 @@ async function run() {
     }));
     await delay(500);
 
-    // Compatibility check: Tulsi payload format (no nonce + camelCase device fields)
-    step('Sending FIRMWARE_PROGRESS in Tulsi async format (camelCase, no nonce)');
+    // Compatibility check: Tulsi payload format (camelCase device fields)
+    step('Sending FIRMWARE_PROGRESS in Tulsi async format (camelCase devices)');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_PROGRESS',
+      push_id: delivery.manifest.push_id,
       progress_percent: 100,
       phase: 'flashing_ble_mcu',
       message: 'Sending blocks to downstream lock',
@@ -4279,26 +4654,25 @@ async function run() {
     if (eventsData.total < 3) throw new Error(`Expected at least 3 events, got ${eventsData.total}`);
     ok(`Push events: ${eventsData.total} total, ${eventsData.events.length} returned, ${eventsData.device_statuses?.length || 0} device statuses`);
 
-    // Gateway sends staged FIRMWARE_UPDATE_STATUS updates (without target_type)
-    // to verify server-side nonce/facility fallback and status mapping.
+    // Gateway sends staged FIRMWARE_UPDATE_STATUS updates.
     step('Sending FIRMWARE_UPDATE_STATUS lifecycle (verifying → applying → success) from gateway');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_UPDATE_STATUS',
-      nonce: delivery.manifest.nonce,
+      push_id: delivery.manifest.push_id,
       status: 'verifying',
       version: delivery.manifest.version,
     }));
     await delay(60);
     ws.send(JSON.stringify({
       type: 'FIRMWARE_UPDATE_STATUS',
-      nonce: delivery.manifest.nonce,
+      push_id: delivery.manifest.push_id,
       status: 'applying',
       version: delivery.manifest.version,
     }));
     await delay(60);
     ws.send(JSON.stringify({
       type: 'FIRMWARE_UPDATE_STATUS',
-      nonce: delivery.manifest.nonce,
+      push_id: delivery.manifest.push_id,
       status: 'success',
       version: delivery.manifest.version,
     }));
@@ -4422,7 +4796,7 @@ async function run() {
     step('Sending completion status for recovery OTA push');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_UPDATE_STATUS',
-      nonce: resumedDelivery.manifest.nonce,
+      push_id: resumedDelivery.manifest.push_id,
       status: 'success',
       version: resumedDelivery.manifest.version || testVersion,
       target_type: resumedDelivery.manifest.target_type || 'gateway',
@@ -4436,7 +4810,22 @@ async function run() {
         `${API_BASE}/firmware/push-status/${created.gatewayId}?target_type=gateway`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      recoveryStatus = statusResp.data?.data || null;
+      const latestGatewayPush = statusResp.data?.data || null;
+      if (latestGatewayPush?.id === recoveryPushId) {
+        recoveryStatus = latestGatewayPush;
+      } else {
+        // When multiple push records exist, gateway "latest" may momentarily reference
+        // the previous failed push. Confirm the target push status from history by ID.
+        const historyResp = await axios.get(
+          `${API_BASE}/firmware/push-history/${created.gatewayId}?target_type=gateway&limit=20&offset=0`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const historyRows = Array.isArray(historyResp.data?.data) ? historyResp.data.data : [];
+        const matchingPush = historyRows.find((row) => row?.id === recoveryPushId) || null;
+        if (matchingPush) {
+          recoveryStatus = matchingPush;
+        }
+      }
       if (recoveryStatus?.id === recoveryPushId && recoveryStatus?.status === 'complete') {
         break;
       }
@@ -4445,7 +4834,7 @@ async function run() {
       if (poll === 10 && recoveryStatus?.id === recoveryPushId && recoveryStatus?.status === 'verifying') {
         ws.send(JSON.stringify({
           type: 'FIRMWARE_UPDATE_STATUS',
-          nonce: resumedDelivery.manifest.nonce,
+          push_id: resumedDelivery.manifest.push_id,
           status: 'success',
           version: resumedDelivery.manifest.version || testVersion,
           target_type: resumedDelivery.manifest.target_type || 'gateway',
@@ -4456,6 +4845,110 @@ async function run() {
       throw new Error(`Expected recovery push ${recoveryPushId} to reach complete status, got id=${recoveryStatus?.id} status=${recoveryStatus?.status}`);
     }
     ok(`Recovery push ${recoveryPushId} reached complete after reconnect`);
+
+    // Correlation hardening: updates without push_id must be ignored.
+    step('Verifying terminal status without push_id is ignored during concurrent verifying pushes');
+    const tempLockBinary = crypto.randomBytes(64 * 1024);
+    const tempLockVersion = `e2e-lock-corr-${Date.now()}`;
+    const tempLockForm = new FormData();
+    tempLockForm.append('file', tempLockBinary, { filename: 'lock-corr.bin', contentType: 'application/octet-stream' });
+    tempLockForm.append('version', tempLockVersion);
+    tempLockForm.append('target_type', 'lock');
+    tempLockForm.append('description', 'Temporary lock firmware for status-correlation test');
+    const tempLockUploadResp = await axios.post(`${API_BASE}/firmware/upload`, tempLockForm, {
+      headers: { Authorization: `Bearer ${token}`, ...tempLockForm.getHeaders() },
+      maxContentLength: 50 * 1024 * 1024,
+    });
+    if (tempLockUploadResp.status !== 201) throw new Error(`Temp lock upload status expected 201 got ${tempLockUploadResp.status}`);
+    const tempLockFirmwareId = tempLockUploadResp.data?.data?.id;
+    if (!tempLockFirmwareId) throw new Error('Temp lock firmware upload missing id');
+
+    const pollPushById = async (targetType, expectedPushId, terminalOnly = false) => {
+      for (let poll = 0; poll < 25; poll++) {
+        await delay(400);
+        const historyResp = await axios.get(
+          `${API_BASE}/firmware/push-history/${created.gatewayId}?target_type=${targetType}&limit=20&offset=0`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const rows = Array.isArray(historyResp.data?.data) ? historyResp.data.data : [];
+        const match = rows.find((row) => row?.id === expectedPushId);
+        if (!match) continue;
+        if (!terminalOnly || ['complete', 'failed', 'cancelled'].includes(match.status)) {
+          return match;
+        }
+        return match;
+      }
+      return null;
+    };
+
+    const gatewayProbeDeliveryPromise = handleFirmwareDelivery(ws, loginOpsPublicKey, 60000);
+    const gatewayProbePushResp = await axios.post(
+      `${API_BASE}/firmware/${firmwareId}/push/${created.gatewayId}`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const gatewayProbePushId = gatewayProbePushResp.data?.data?.id;
+    if (!gatewayProbePushId) throw new Error('Gateway probe push missing id');
+    const gatewayProbeDelivery = await gatewayProbeDeliveryPromise;
+
+    const lockProbeDeliveryPromise = handleFirmwareDelivery(ws, loginOpsPublicKey, 60000);
+    const lockProbePushResp = await axios.post(
+      `${API_BASE}/firmware/${tempLockFirmwareId}/push/${created.gatewayId}`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const lockProbePushId = lockProbePushResp.data?.data?.id;
+    if (!lockProbePushId) throw new Error('Lock probe push missing id');
+    const lockProbeDelivery = await lockProbeDeliveryPromise;
+
+    const gatewayProbeStatus = await pollPushById('gateway', gatewayProbePushId);
+    const lockProbeStatus = await pollPushById('lock', lockProbePushId);
+    if (gatewayProbeStatus?.status !== 'verifying') {
+      throw new Error(`Gateway probe push expected verifying before ambiguous update, got ${gatewayProbeStatus?.status}`);
+    }
+    if (lockProbeStatus?.status !== 'verifying') {
+      throw new Error(`Lock probe push expected verifying before ambiguous update, got ${lockProbeStatus?.status}`);
+    }
+
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      status: 'success',
+    }));
+    await delay(700);
+
+    const gatewayAfterAmbiguous = await pollPushById('gateway', gatewayProbePushId);
+    const lockAfterAmbiguous = await pollPushById('lock', lockProbePushId);
+    if (gatewayAfterAmbiguous?.status !== 'verifying' || lockAfterAmbiguous?.status !== 'verifying') {
+      throw new Error(`Status without push_id should be ignored; got gateway=${gatewayAfterAmbiguous?.status} lock=${lockAfterAmbiguous?.status}`);
+    }
+    ok('Terminal status without push_id was ignored while concurrent verifying pushes existed');
+
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      push_id: gatewayProbeDelivery.manifest.push_id,
+      status: 'success',
+      version: gatewayProbeDelivery.manifest.version || testVersion,
+      target_type: gatewayProbeDelivery.manifest.target_type || 'gateway',
+    }));
+    ws.send(JSON.stringify({
+      type: 'FIRMWARE_UPDATE_STATUS',
+      push_id: lockProbeDelivery.manifest.push_id,
+      status: 'success',
+      version: lockProbeDelivery.manifest.version || tempLockVersion,
+      target_type: lockProbeDelivery.manifest.target_type || 'lock',
+    }));
+
+    const gatewayProbeTerminal = await pollPushById('gateway', gatewayProbePushId, true);
+    const lockProbeTerminal = await pollPushById('lock', lockProbePushId, true);
+    if (gatewayProbeTerminal?.status !== 'complete' || lockProbeTerminal?.status !== 'complete') {
+      throw new Error(`Expected probe pushes to complete after explicit push_id updates; got gateway=${gatewayProbeTerminal?.status} lock=${lockProbeTerminal?.status}`);
+    }
+    ok('Explicit push_id terminal updates completed both probe pushes');
+
+    await axios.delete(`${API_BASE}/firmware/${tempLockFirmwareId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    ok('Temporary lock firmware from correlation test deleted');
 
     // Step 8: Delete gateway firmware (cleanup)
     step('Deleting test gateway firmware');
@@ -4570,7 +5063,7 @@ async function run() {
     step('Sending FIRMWARE_UPDATE_STATUS (success) from gateway for lock firmware');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_UPDATE_STATUS',
-      nonce: lockDelivery.manifest.nonce,
+      push_id: lockDelivery.manifest.push_id,
       status: 'success',
       version: lockDelivery.manifest.version,
       target_type: 'lock',
@@ -5609,7 +6102,7 @@ async function run() {
       for (let i = 0; i < firmwareProgressSpamCount; i++) {
         ws.send(JSON.stringify({
           type: 'FIRMWARE_PROGRESS',
-          nonce: stressDelivery.manifest.nonce,
+          push_id: stressDelivery.manifest.push_id,
           target_type: 'gateway',
           progress_percent: Math.min(99, 1 + (i % 99)),
           phase: i % 3 === 0 ? 'distributing' : (i % 3 === 1 ? 'installing' : 'verifying'),
@@ -5670,7 +6163,7 @@ async function run() {
       while (Date.now() - chaosSoakStart < chaosSoakDurationMs) {
         ws.send(JSON.stringify({
           type: 'FIRMWARE_PROGRESS',
-          nonce: stressDelivery.manifest.nonce,
+          push_id: stressDelivery.manifest.push_id,
           target_type: 'gateway',
           progress_percent: Math.min(99, 1 + (soakProgressCount % 99)),
           phase: soakProgressCount % 2 === 0 ? 'installing' : 'verifying',
@@ -5734,7 +6227,7 @@ async function run() {
     step('Completing stress firmware push and validating backend responsiveness');
     ws.send(JSON.stringify({
       type: 'FIRMWARE_UPDATE_STATUS',
-      nonce: stressDelivery.manifest.nonce,
+      push_id: stressDelivery.manifest.push_id,
       status: 'success',
       version: stressDelivery.manifest.version,
       target_type: 'gateway',

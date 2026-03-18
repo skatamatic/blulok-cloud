@@ -191,7 +191,10 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           access_methods: accessControlData.access_methods,
         });
       } else {
-        await apiService.createBluLokDevice(bluLokData);
+        await apiService.createBluLokDevice({
+          ...bluLokData,
+          device_serial: bluLokData.device_serial.trim(),
+        });
       }
 
       onSuccess();
@@ -515,6 +518,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                     type="text"
                     value={bluLokData.device_serial}
                     onChange={(e) => setBluLokData(prev => ({ ...prev, device_serial: e.target.value }))}
+                    required
                     className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 ${
                       errors.device_serial 
                         ? 'border-red-300 dark:border-red-600' 

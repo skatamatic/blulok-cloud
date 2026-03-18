@@ -5,6 +5,7 @@ import { ClockIcon, UserIcon, LockClosedIcon, LockOpenIcon, ExclamationTriangleI
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 
 interface AccessHistoryWidgetProps {
   currentSize: WidgetSize;
@@ -18,6 +19,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   onRemove,
 }) => {
   const { authState } = useAuth();
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const [accessHistory, setAccessHistory] = useState<AccessLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +47,23 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
 
     fetchAccessHistory();
   }, [authState.user]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const subscriptionId = subscribe('activity', () => {
+      void (async () => {
+        try {
+          const response = await apiService.getAccessHistory({ limit: 20 });
+          setAccessHistory(response.logs || []);
+        } catch {
+          // Ignore transient websocket refresh failures.
+        }
+      })();
+    });
+
+    return () => unsubscribe(subscriptionId);
+  }, [isConnected, subscribe, unsubscribe]);
 
   const getMaxItems = (size: WidgetSize): number => {
     switch (size) {

@@ -27,7 +27,7 @@ describe('GatewayEventsService.getFacilityConnectionStatus', () => {
 
     const status = svc.getFacilityConnectionStatus('fac-2');
     expect(status.connected).toBe(false);
-    expect((status as any).lastPongAt).toBeUndefined();
+    expect((status).lastPongAt).toBeUndefined();
   });
 });
 

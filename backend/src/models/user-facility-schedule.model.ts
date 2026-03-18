@@ -135,7 +135,7 @@ export class UserFacilityScheduleModel extends BaseModel {
         throw new Error('Failed to update user facility schedule');
       }
 
-      return updated as UserFacilitySchedule;
+      return updated;
     } else {
       // Create new association
       const associationId = uuidv4();
@@ -155,7 +155,7 @@ export class UserFacilityScheduleModel extends BaseModel {
         throw new Error('Failed to create user facility schedule');
       }
 
-      return created as UserFacilitySchedule;
+      return created;
     }
   }
 

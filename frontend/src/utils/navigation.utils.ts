@@ -32,14 +32,11 @@ export const calculatePageForItem = (itemIndex: number, itemsPerPage: number = 2
  */
 export const navigateAndHighlight = async (
   navigate: NavigateFunction,
-  target: NavigationTarget,
-  _options: HighlightOptions = {}
+  target: NavigationTarget
 ): Promise<void> => {
-  // Options are available for future use if needed
-
   // Build the navigation path
   let path = '';
-  let searchParams = new URLSearchParams();
+  const searchParams = new URLSearchParams();
 
   switch (target.type) {
     case 'user':
@@ -97,7 +94,7 @@ export const navigateAndHighlight = async (
  */
 export const calculatePageForItemInFullDataset = (
   itemId: string,
-  allData: any[],
+  allData: Array<{ id: string }>,
   itemsPerPage: number = 20
 ): number => {
   const itemIndex = allData.findIndex(item => item.id === itemId);
@@ -116,9 +113,8 @@ export const calculatePageForItemInFullDataset = (
 export const navigateAndHighlightWithPagination = async (
   navigate: NavigateFunction,
   target: NavigationTarget,
-  allData: any[],
-  itemsPerPage: number = 20,
-  options: HighlightOptions = {}
+  allData: Array<{ id: string }>,
+  itemsPerPage: number = 20
 ): Promise<void> => {
   // Calculate the correct page for this item
   const calculatedPage = calculatePageForItemInFullDataset(target.id, allData, itemsPerPage);
@@ -130,7 +126,7 @@ export const navigateAndHighlightWithPagination = async (
   };
   
   // Use the existing navigation function
-  await navigateAndHighlight(navigate, targetWithPage, options);
+  await navigateAndHighlight(navigate, targetWithPage);
 };
 
 /**
@@ -144,8 +140,7 @@ export const navigateAndHighlightWithPagination = async (
 export const navigateAndHighlightWithAutoPagination = async (
   navigate: NavigateFunction,
   target: NavigationTarget,
-  itemsPerPage: number = 20,
-  options: HighlightOptions = {}
+  itemsPerPage: number = 20
 ): Promise<void> => {
   try {
     // Convert NavigationTarget to PaginationTarget
@@ -165,7 +160,7 @@ export const navigateAndHighlightWithAutoPagination = async (
     };
     
     // Use the existing navigation function
-    await navigateAndHighlight(navigate, targetWithPage, options);
+    await navigateAndHighlight(navigate, targetWithPage);
   } catch (error) {
     console.error('Error navigating with auto pagination:', error);
     // Fallback to page 1
@@ -173,7 +168,7 @@ export const navigateAndHighlightWithAutoPagination = async (
       ...target,
       page: 1
     };
-    await navigateAndHighlight(navigate, targetWithPage, options);
+    await navigateAndHighlight(navigate, targetWithPage);
   }
 };
 

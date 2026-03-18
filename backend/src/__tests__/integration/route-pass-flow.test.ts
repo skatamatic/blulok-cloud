@@ -41,9 +41,15 @@ const createMockDbConnection = (userDeviceRow: any, lockRows: any[]) => {
       return qb;
     }
     if (table === 'blulok_devices' || table.startsWith('blulok_devices')) {
+      (qb as any)._joinTarget = '';
+      qb.join = jest.fn().mockImplementation((target: string) => {
+        (qb as any)._joinTarget = target;
+        return qb;
+      });
       qb.then = (onFulfilled?: (rows: any[]) => any) => {
-        if (onFulfilled) onFulfilled(lockRows);
-        return Promise.resolve(lockRows);
+        const rows = String((qb as any)._joinTarget || '').includes('key_sharing') ? [] : lockRows;
+        if (onFulfilled) onFulfilled(rows);
+        return Promise.resolve(rows);
       };
       qb.first.mockResolvedValue(lockRows[0] || null);
       return qb;
@@ -88,7 +94,7 @@ describe('Route Pass Integration', () => {
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: createMockDbConnection(
         { id: 'dev-1', user_id: testData.users.tenant.id, app_device_id: 'phone-1', status: 'active', public_key: devicePublicKeyB64 },
-        [{ id: 'lock-1' }, { id: 'lock-2' }]
+        [{ device_serial: 'serial-1' }, { device_serial: 'serial-2' }]
       ),
     });
 
@@ -106,7 +112,7 @@ describe('Route Pass Integration', () => {
     expect(payload.sub).toBe(testData.users.tenant.id);
     expect(payload.device_pubkey).toBe(devicePublicKeyB64);
     expect(Array.isArray(payload.aud)).toBe(true);
-    expect(payload.aud).toEqual(['lock:lock-1', 'lock:lock-2']);
+    expect(payload.aud).toEqual(['lock:serial-1', 'lock:serial-2']);
 
     // Verify protected header uses EdDSA
     const header = decodeProtectedHeader(res.body.routePass);

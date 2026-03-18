@@ -16,7 +16,7 @@ import { DetailsSlideIn } from '@/components/blufms/demo/DetailsSlideIn';
 import { ComprehensiveReportView } from '@/components/blufms/demo/ComprehensiveReportView';
 import { DemoScriptRunner } from '@/scripts/blufms/demoScriptRunner';
 import { allDemoScripts } from '@/scripts/blufms';
-import { DemoScript, CardData, MapLayer, TimelineMarker } from '@/scripts/blufms/demoActionTypes';
+import { DemoScript, CardData, MapLayer } from '@/scripts/blufms/demoActionTypes';
 import { FacilityViewer3D } from '@/components/bludesign/viewer';
 import * as bludesignApi from '@/api/bludesign';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -151,10 +151,10 @@ export default function BluFMSFacilityMapPage() {
       onEphemeralStatusAdded: (id: string, type: 'success' | 'info' | 'warning' | 'error', title: string, message?: string) => {
         setEphemeralCards(prev => [...prev, { id, type, title, message }]);
       },
-      onTimelineShown: (_visible: boolean) => {
+      onTimelineShown: () => {
         // Timeline is now handled via timeline cards
       },
-      onTimelineUpdated: (_markers: TimelineMarker[]) => {
+      onTimelineUpdated: () => {
         // Timeline is now handled via timeline cards
       },
       onTimelineStepSet: (step: number) => {

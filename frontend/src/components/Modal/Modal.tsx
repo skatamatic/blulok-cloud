@@ -13,7 +13,7 @@ interface ModalProps {
 export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
-  title: _title,
+  title,
   children,
   size = 'md',
   showCloseButton = true,
@@ -93,6 +93,7 @@ export const Modal: React.FC<ModalProps> = ({
 
           {/* Content */}
           <div className="px-6 py-4">
+            {title ? <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">{title}</h2> : null}
             {children}
           </div>
         </div>

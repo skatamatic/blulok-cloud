@@ -153,6 +153,42 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
 
+  const normalizeActivityToAccessLog = (input: unknown): AccessLog | null => {
+    if (!input || typeof input !== 'object') return null;
+    const raw = input as Record<string, unknown>;
+    const metadata = raw.metadata && typeof raw.metadata === 'object' ? (raw.metadata as Record<string, unknown>) : {};
+    const action = typeof metadata.action === 'string' ? metadata.action : 'access_granted';
+    const method = typeof metadata.method === 'string' ? metadata.method : 'app';
+    const denialReason = typeof metadata.denial_reason === 'string' ? metadata.denial_reason : undefined;
+    const occurredAtValue = raw.occurredAt || raw.occurred_at;
+    const occurredAt = typeof occurredAtValue === 'string' ? occurredAtValue : new Date().toISOString();
+    const actor = raw.actor && typeof raw.actor === 'object' ? (raw.actor as Record<string, unknown>) : {};
+    const actorId = typeof actor.id === 'string' ? actor.id : undefined;
+    const actorName = typeof actor.name === 'string' ? actor.name : undefined;
+
+    return {
+      id: String(raw.id || `${Date.now()}-${Math.random()}`),
+      device_id: String(raw.deviceId || raw.device_id || ''),
+      device_type: 'blulok',
+      facility_id: typeof raw.facilityId === 'string' ? raw.facilityId : undefined,
+      unit_id: typeof raw.unitId === 'string' ? raw.unitId : undefined,
+      user_id: actorId,
+      action: action as AccessLog['action'],
+      method: method as AccessLog['method'],
+      success: raw.result === 'success',
+      denial_reason: denialReason as AccessLog['denial_reason'],
+      reason: typeof raw.resultMessage === 'string' ? raw.resultMessage : undefined,
+      metadata,
+      occurred_at: occurredAt,
+      created_at: occurredAt,
+      updated_at: occurredAt,
+      facility_name: typeof raw.facilityName === 'string' ? raw.facilityName : undefined,
+      unit_number: typeof raw.unitNumber === 'string' ? raw.unitNumber : undefined,
+      user_name: actorName,
+      device_name: typeof raw.deviceSerial === 'string' ? raw.deviceSerial : undefined,
+    };
+  };
+
   const loadNotifications = useCallback(async () => {
     setError(null);
     
@@ -194,8 +230,16 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   useEffect(() => {
     if (!isConnected) return;
 
-    const handleAccessLogUpdate = (data: { log?: AccessLog; logs?: AccessLog[] }) => {
-      const newLogs = data.logs || (data.log ? [data.log] : []);
+    const handleAccessLogUpdate = (data: unknown) => {
+      const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+      const activitiesRaw = Array.isArray(payload.activities)
+        ? payload.activities
+        : payload.activity
+          ? [payload.activity]
+          : [];
+      const newLogs = activitiesRaw
+        .map(normalizeActivityToAccessLog)
+        .filter((entry: AccessLog | null): entry is AccessLog => entry !== null);
       
       const newNotifications = newLogs
         .map(transformAccessLogToNotification)
@@ -210,7 +254,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       }
     };
 
-    const subscriptionId = subscribe('access_logs', handleAccessLogUpdate);
+    const subscriptionId = subscribe('activity', handleAccessLogUpdate);
 
     return () => {
       unsubscribe(subscriptionId);

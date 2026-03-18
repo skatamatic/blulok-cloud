@@ -123,7 +123,7 @@ describe('UserModel', () => {
       }) as User;
       await UserModel.deactivateUser(inactiveUser.id);
 
-      const result = await UserModel.findActiveUsers() as User[];
+      const result = await UserModel.findActiveUsers();
 
       expect(result.length).toBeGreaterThanOrEqual(2);
       expect(result.every(user => user.is_active)).toBe(true);
@@ -148,7 +148,7 @@ describe('UserModel', () => {
       const updatedUser = await UserModel.findById(user.id) as User;
       expect(updatedUser?.last_login).toBeDefined();
       
-      const lastLogin = new Date(updatedUser!.last_login!);
+      const lastLogin = new Date(updatedUser.last_login!);
       expect(lastLogin.getTime()).toBeGreaterThanOrEqual(beforeUpdate.getTime());
       expect(lastLogin.getTime()).toBeLessThanOrEqual(afterUpdate.getTime());
     });

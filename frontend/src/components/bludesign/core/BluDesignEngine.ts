@@ -383,10 +383,10 @@ export class BluDesignEngine {
           }
           this.emit('state-updated', this.state);
         },
-        onWallCreated: (_wall, _mesh) => {
+        onWallCreated: () => {
           // Wall mesh is already added to scene by BuildingManager
         },
-        onFloorTileCreated: (_floorTileId, _mesh) => {
+        onFloorTileCreated: () => {
           // Floor tile mesh is already added to scene by BuildingManager
         },
       }
@@ -530,10 +530,10 @@ export class BluDesignEngine {
           // Capture start state for undo
           this.captureRotationStartState();
         },
-        onDrag: (deltaAngle, _totalAngle) => {
+        onDrag: (deltaAngle) => {
           this.handleRotateGizmoDrag(deltaAngle);
         },
-        onDragEnd: (_totalAngle) => {
+        onDragEnd: () => {
           console.log('[RotateGizmo] Drag ended');
           // Record rotation to history before re-enabling controls
           this.recordRotationToHistory();
@@ -731,7 +731,7 @@ export class BluDesignEngine {
       id: 'camera',
       priority: InputPriority.CAMERA,
       enabled: true,
-      handle: (_event: Event, _eventType: InputEventType): boolean => {
+      handle: (): boolean => {
         // Never block - camera is lowest priority
         return false;
       },
@@ -1463,7 +1463,8 @@ export class BluDesignEngine {
    * Add vertical shaft objects (elevators, stairwells) to a new floor
    * Copies objects from an existing floor that have spansAllFloors metadata
    */
-  private addVerticalShaftObjectsToFloor(newLevel: number, _building: Building): void {
+  private addVerticalShaftObjectsToFloor(newLevel: number, building: Building): void {
+    void building;
     // Get all placed objects
     const allObjects = this.sceneManager.getAllObjects();
     
@@ -4782,7 +4783,8 @@ if (obj.skinId) {
   /**
    * Paste clipboard objects with preview mode
    */
-  paste(_targetPosition?: GridPosition): void {
+  paste(targetPosition?: GridPosition): void {
+    void targetPosition;
     if (!this.clipboardManager.hasContent()) return;
     
     // Get objects from clipboard
@@ -4810,7 +4812,8 @@ if (obj.skinId) {
   selectAll(): void {
     const allIds: string[] = [];
     // Get all selectable objects including building walls and floor tiles
-    this.sceneManager.getAllSelectableObjectsMap().forEach((_mesh: THREE.Object3D, id: string) => {
+    this.sceneManager.getAllSelectableObjectsMap().forEach((mesh: THREE.Object3D, id: string) => {
+      void mesh;
       allIds.push(id);
     });
     
@@ -5168,7 +5171,8 @@ private updateGizmoVisibility(): void {
    * Handle gizmo drag to move selection
    * Uses smooth visual feedback - moves meshes immediately, commits on drag end
    */
-  private handleGizmoDrag(deltaX: number, deltaZ: number, _axis: GizmoAxis): void {
+  private handleGizmoDrag(deltaX: number, deltaZ: number, axis: GizmoAxis): void {
+    void axis;
     if (deltaX === 0 && deltaZ === 0) return;
     
     // Accumulate and update visual positions

@@ -176,7 +176,7 @@ describe('NotificationsWidget', () => {
       
       await waitFor(() => {
         expect(mockSubscribe).toHaveBeenCalledWith(
-          'access_logs',
+          'activity',
           expect.any(Function)
         );
       });
@@ -521,26 +521,26 @@ describe('NotificationsWidget', () => {
       const messageHandler = subscribeCall[1];
       
       // Simulate receiving a new access log via WebSocket
-      const newLog: AccessLog = {
+      const newActivity = {
         id: 'new-log-1',
-        device_id: 'device-5',
-        device_type: 'blulok',
-        facility_id: 'facility-1',
-        unit_id: 'unit-5',
-        user_id: 'user-5',
-        action: 'invalid_credential',
-        method: 'card',
-        success: false,
-        occurred_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        facility_name: 'Test Facility',
-        unit_number: 'E-505',
-        user_name: 'New User',
+        unitId: 'unit-5',
+        deviceId: 'device-5',
+        facilityId: 'facility-1',
+        facilityName: 'Test Facility',
+        unitNumber: 'E-505',
+        actor: { id: 'user-5', name: 'New User' },
+        result: 'failure',
+        resultMessage: 'Access denied: invalid credential',
+        occurredAt: new Date().toISOString(),
+        metadata: {
+          action: 'invalid_credential',
+          method: 'card',
+          denial_reason: 'invalid_credential',
+        },
       };
       
       act(() => {
-        messageHandler({ log: newLog });
+        messageHandler({ activity: newActivity });
       });
       
       await waitFor(() => {
@@ -562,36 +562,31 @@ describe('NotificationsWidget', () => {
       const messageHandler = subscribeCall[1];
       
       // Simulate receiving multiple logs at once
-      const newLogs: AccessLog[] = [
+      const newActivities = [
         {
           id: 'batch-log-1',
-          device_id: 'device-6',
-          device_type: 'blulok',
-          action: 'timeout',
-          method: 'app',
-          success: false,
-          occurred_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          unit_number: 'F-606',
+          unitId: 'unit-6',
+          deviceId: 'device-6',
+          actor: { id: 'user-6', name: 'User 6' },
+          result: 'failure',
+          occurredAt: new Date().toISOString(),
+          unitNumber: 'F-606',
+          metadata: { action: 'timeout', method: 'app' },
         },
         {
           id: 'batch-log-2',
-          device_id: 'device-7',
-          device_type: 'blulok',
-          action: 'manual_override',
-          method: 'admin_override',
-          success: true,
-          occurred_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          unit_number: 'G-707',
-          user_name: 'Admin User',
+          unitId: 'unit-7',
+          deviceId: 'device-7',
+          actor: { id: 'admin-1', name: 'Admin User' },
+          result: 'success',
+          occurredAt: new Date().toISOString(),
+          unitNumber: 'G-707',
+          metadata: { action: 'manual_override', method: 'admin_override' },
         },
       ];
       
       act(() => {
-        messageHandler({ logs: newLogs });
+        messageHandler({ activities: newActivities });
       });
       
       await waitFor(() => {

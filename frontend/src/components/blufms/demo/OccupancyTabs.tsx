@@ -3,8 +3,6 @@ import { Tab } from '@headlessui/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart, ComposedChart, Line } from 'recharts';
 import { occupancyData, unitTypeData } from './reportData';
-// @ts-ignore - html2pdf.js doesn't have TypeScript definitions
-import html2pdf from 'html2pdf.js';
 
 const tabClass = (selected: boolean) =>
   selected

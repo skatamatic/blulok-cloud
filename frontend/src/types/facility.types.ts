@@ -10,7 +10,7 @@ export interface Facility {
   contact_email?: string;
   contact_phone?: string;
   status: 'active' | 'inactive' | 'maintenance';
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   stats?: FacilityStats;
@@ -36,8 +36,8 @@ export interface Gateway {
   mac_address?: string;
   status: 'online' | 'offline' | 'error' | 'maintenance';
   last_seen?: string;
-  configuration?: Record<string, any>;
-  metadata?: Record<string, any>;
+  configuration?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -52,8 +52,8 @@ export interface AccessControlDevice {
   status: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked: boolean;
   last_activity?: string;
-  device_settings?: Record<string, any>;
-  metadata?: Record<string, any>;
+  device_settings?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   access_methods?: AccessMethod[];
   created_at: string;
   updated_at: string;
@@ -71,8 +71,8 @@ export interface DeviceGroup {
   access_code_current_valid_until?: string | null;
   name: string;
   description?: string | null;
-  settings?: Record<string, any> | null;
-  metadata?: Record<string, any> | null;
+  settings?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -165,8 +165,8 @@ export interface BluLokDevice {
   error_message?: string | null;
   last_activity?: string;
   last_seen?: string;
-  device_settings?: Record<string, any>;
-  metadata?: Record<string, any>;
+  device_settings?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   // Context fields
@@ -190,7 +190,7 @@ export interface Unit {
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
   description?: string;
   features?: string[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   primary_tenant?: {
@@ -234,7 +234,7 @@ export interface CreateFacilityData {
   contact_email?: string;
   contact_phone?: string;
   status?: 'active' | 'inactive' | 'maintenance';
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface FacilityFilters {

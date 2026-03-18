@@ -98,6 +98,7 @@ describe('DeviceSyncService', () => {
       expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledWith([{
         gateway_id: gatewayId,
         device_serial: 'ABC123',
+        serial: 'ABC123',
         device_settings: JSON.stringify({ gatewayData: gatewayDevices[0] }),
         metadata: JSON.stringify({
           autoCreated: true,
@@ -514,6 +515,7 @@ describe('DeviceSyncService', () => {
       expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledWith([{
         gateway_id: gatewayId,
         device_serial: 'LOCK-1',
+        serial: 'LOCK-1',
         device_settings: { lockNumber: 101 },
         metadata: { autoCreated: true, createdFromInventorySync: true },
         firmware_version: '1.0.0',

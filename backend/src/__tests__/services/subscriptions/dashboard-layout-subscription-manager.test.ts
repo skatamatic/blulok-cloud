@@ -78,9 +78,9 @@ describe('DashboardLayoutSubscriptionManager', () => {
       expect(mockWebSocket.send).toHaveBeenCalledTimes(1);
       const sentCall = mockWebSocket.send.mock.calls[0];
       expect(sentCall).toBeDefined();
-      expect(sentCall![0]).toBeDefined();
+      expect(sentCall[0]).toBeDefined();
       
-      const sentData = JSON.parse(sentCall![0] as string);
+      const sentData = JSON.parse(sentCall[0] as string);
       expect(sentData.data.layouts).toHaveProperty('lg');
       expect(sentData.data.widgetInstances).toHaveLength(1);
       expect(sentData.data.widgetInstances[0]).toMatchObject({
@@ -111,9 +111,9 @@ describe('DashboardLayoutSubscriptionManager', () => {
       expect(mockWebSocket.send).toHaveBeenCalledTimes(1);
       const sentCall = mockWebSocket.send.mock.calls[0];
       expect(sentCall).toBeDefined();
-      expect(sentCall![0]).toBeDefined();
+      expect(sentCall[0]).toBeDefined();
       
-      const sentData = JSON.parse(sentCall![0] as string);
+      const sentData = JSON.parse(sentCall[0] as string);
       expect(sentData.data.layouts.lg).toHaveLength(0);
       expect(sentData.data.widgetInstances).toHaveLength(0);
     });
@@ -140,9 +140,9 @@ describe('DashboardLayoutSubscriptionManager', () => {
       expect(mockWebSocket.send).toHaveBeenCalledTimes(1);
       const sentCall = mockWebSocket.send.mock.calls[0];
       expect(sentCall).toBeDefined();
-      expect(sentCall![0]).toBeDefined();
+      expect(sentCall[0]).toBeDefined();
       
-      const sentData = JSON.parse(sentCall![0] as string);
+      const sentData = JSON.parse(sentCall[0] as string);
       expect(sentData.data.layouts.lg).toHaveLength(0);
       expect(sentData.data.widgetInstances).toHaveLength(0);
     });

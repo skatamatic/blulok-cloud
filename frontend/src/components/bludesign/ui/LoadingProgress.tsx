@@ -247,7 +247,6 @@ interface StepProgressProps {
 
 export const StepProgress: React.FC<StepProgressProps> = ({
   steps,
-  currentStep: _currentStep,
   vertical = false,
 }) => {
   const getStepColor = (status: Step['status']) => {

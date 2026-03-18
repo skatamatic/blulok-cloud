@@ -14,6 +14,14 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+jest.mock('@/contexts/WebSocketContext', () => ({
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => 'activity-subscription'),
+    unsubscribe: jest.fn(),
+    isConnected: true,
+  }),
+}));
+
 // Mock framer-motion to avoid animation issues in tests
 jest.mock('framer-motion', () => ({
   motion: {

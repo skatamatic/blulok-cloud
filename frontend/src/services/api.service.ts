@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosInstance, AxiosError, AxiosRequestConfig } from 'axios';
 import { getApiBaseUrl } from './appConfig';
 import { LoginCredentials, LoginResponse } from '@/types/auth.types';
 import { AccessCode, AccessCodeConfig, AccessCodeGroupConfig, DeviceGroup, EffectiveAccessCode, UserAccessCode } from '@/types/facility.types';
@@ -91,12 +91,12 @@ class ApiService {
     return response.data;
   }
 
-  async createUser(userData: any) {
+  async createUser(userData: Record<string, unknown>) {
     const response = await this.api.post('/users', userData);
     return response.data;
   }
 
-  async updateUser(id: string, userData: any) {
+  async updateUser(id: string, userData: Record<string, unknown>) {
     const response = await this.api.put(`/users/${id}`, userData);
     return response.data;
   }
@@ -152,7 +152,7 @@ class ApiService {
     widgetId: string;
     widgetType?: string;
     config?: Record<string, unknown>;
-    layoutConfig: any;
+    layoutConfig: unknown;
     displayOrder: number;
     isVisible?: boolean;
   }>) {
@@ -161,7 +161,7 @@ class ApiService {
   }
 
   async updateWidget(widgetId: string, data: {
-    layoutConfig?: any;
+    layoutConfig?: unknown;
     isVisible?: boolean;
     displayOrder?: number;
   }) {
@@ -194,7 +194,7 @@ class ApiService {
     return response.data;
   }
 
-  async updateSystemSettings(settings: any) {
+  async updateSystemSettings(settings: Record<string, unknown>) {
     const response = await this.api.put('/system-settings', settings);
     return response.data;
   }
@@ -204,12 +204,12 @@ class ApiService {
     return response.data;
   }
 
-  async updateNotificationSettings(config: any) {
+  async updateNotificationSettings(config: Record<string, unknown>) {
     const response = await this.api.put('/system-settings/notifications', config);
     return response.data;
   }
 
-  async sendTestNotifications(payload?: { toEmail?: string; toPhone?: string; configOverride?: any }) {
+  async sendTestNotifications(payload?: { toEmail?: string; toPhone?: string; configOverride?: Record<string, unknown> }) {
     const response = await this.api.post('/system-settings/notifications/test', payload || {});
     return response.data as { success: boolean; message: string; sent?: string[]; errors?: { channel: string; message: string }[]; toEmail?: string; toPhone?: string };
   }
@@ -220,7 +220,7 @@ class ApiService {
   }
 
   // Facilities Management
-  async getFacilities(filters?: any) {
+  async getFacilities(filters?: Record<string, unknown>) {
     const response = await this.api.get('/facilities', { params: filters });
     return response.data;
   }
@@ -230,12 +230,12 @@ class ApiService {
     return response.data;
   }
 
-  async createFacility(data: any) {
+  async createFacility(data: Record<string, unknown>) {
     const response = await this.api.post('/facilities', data);
     return response.data;
   }
 
-  async updateFacility(id: string, data: any) {
+  async updateFacility(id: string, data: Record<string, unknown>) {
     const response = await this.api.put(`/facilities/${id}`, data);
     return response.data;
   }
@@ -261,12 +261,12 @@ class ApiService {
     return response.data;
   }
 
-  async createSchedule(facilityId: string, data: any) {
+  async createSchedule(facilityId: string, data: Record<string, unknown>) {
     const response = await this.api.post(`/facilities/${facilityId}/schedules`, data);
     return response.data;
   }
 
-  async updateSchedule(facilityId: string, scheduleId: string, data: any) {
+  async updateSchedule(facilityId: string, scheduleId: string, data: Record<string, unknown>) {
     const response = await this.api.put(`/facilities/${facilityId}/schedules/${scheduleId}`, data);
     return response.data;
   }
@@ -293,12 +293,12 @@ class ApiService {
     return response.data;
   }
 
-  async createGateway(data: any) {
+  async createGateway(data: Record<string, unknown>) {
     const response = await this.api.post('/gateways', data);
     return response.data;
   }
 
-  async getGateways(filters?: any) {
+  async getGateways(filters?: Record<string, unknown>) {
     const response = await this.api.get('/gateways', { params: filters });
     return response.data;
   }
@@ -308,7 +308,7 @@ class ApiService {
     return response.data;
   }
 
-  async updateGateway(id: string, data: any) {
+  async updateGateway(id: string, data: Record<string, unknown>) {
     const response = await this.api.put(`/gateways/${id}`, data);
     return response.data;
   }
@@ -320,7 +320,7 @@ class ApiService {
 
   async getGatewayReassignmentCandidates(facilityId: string) {
     const response = await this.api.get(`/gateways/reassignment-candidates/${facilityId}`);
-    return response.data as { success: boolean; gateways: any[] };
+    return response.data as { success: boolean; gateways: unknown[] };
   }
 
   async updateGatewayStatus(id: string, status: string) {
@@ -428,14 +428,14 @@ class ApiService {
     return response.data as {
       success: boolean;
       command: string;
-      payload?: any;
+      payload?: unknown;
       signature?: string;
       targetDeviceIds?: string[];
     };
   }
 
   // Devices Management
-  async getDevices(filters?: any) {
+  async getDevices(filters?: Record<string, unknown>) {
     const response = await this.api.get('/devices', { params: filters });
     return response.data;
   }
@@ -472,7 +472,7 @@ class ApiService {
     startDate?: string;
     endDate?: string;
   }) {
-    const params: any = {};
+    const params: Record<string, number | string> = {};
     if (filters?.limit) params.limit = filters.limit;
     if (filters?.offset) params.offset = filters.offset;
     if (filters?.startDate) params.startDate = filters.startDate;
@@ -482,17 +482,17 @@ class ApiService {
     return response.data;
   }
 
-  async createAccessControlDevice(data: any) {
+  async createAccessControlDevice(data: Record<string, unknown>) {
     const response = await this.api.post('/devices/access-control', data);
     return response.data;
   }
 
-  async updateAccessControlDevice(id: string, data: any) {
+  async updateAccessControlDevice(id: string, data: Record<string, unknown>) {
     const response = await this.api.put(`/devices/access-control/${id}`, data);
     return response.data;
   }
 
-  async createBluLokDevice(data: any) {
+  async createBluLokDevice(data: Record<string, unknown>) {
     const response = await this.api.post('/devices/blulok', data);
     return response.data;
   }
@@ -524,7 +524,7 @@ class ApiService {
   }
 
   // Units Management
-  async getUnits(filters?: any) {
+  async getUnits(filters?: Record<string, unknown>) {
     const response = await this.api.get('/units', { params: filters });
     return response.data;
   }
@@ -539,12 +539,12 @@ class ApiService {
     return response.data;
   }
 
-  async createUnit(data: any) {
+  async createUnit(data: Record<string, unknown>) {
     const response = await this.api.post('/units', data);
     return response.data;
   }
 
-  async updateUnit(id: string, data: any) {
+  async updateUnit(id: string, data: Record<string, unknown>) {
     const response = await this.api.put(`/units/${id}`, data);
     return response.data;
   }
@@ -890,7 +890,7 @@ class ApiService {
     access_level: 'full' | 'limited' | 'temporary' | 'permanent';
     expires_at?: string;
     notes?: string;
-    access_restrictions?: Record<string, any>;
+    access_restrictions?: Record<string, unknown>;
   }) {
     const response = await this.api.post('/key-sharing', data);
     return response.data;
@@ -900,7 +900,7 @@ class ApiService {
     access_level?: 'full' | 'limited' | 'temporary' | 'permanent';
     expires_at?: string;
     notes?: string;
-    access_restrictions?: Record<string, any>;
+    access_restrictions?: Record<string, unknown>;
     is_active?: boolean;
   }) {
     const response = await this.api.put(`/key-sharing/${id}`, data);
@@ -979,8 +979,8 @@ class ApiService {
   async getFirmwarePushHistory(gatewayId: string, targetType?: string, limit = 50, offset = 0) {
     const params: Record<string, string> = {};
     if (targetType) params.target_type = targetType;
-    if (limit !== 50) (params as any).limit = String(limit);
-    if (offset > 0) (params as any).offset = String(offset);
+    if (limit !== 50) params.limit = String(limit);
+    if (offset > 0) params.offset = String(offset);
     const response = await this.api.get(`/firmware/push-history/${gatewayId}`, { params });
     return response.data;
   }
@@ -1000,22 +1000,22 @@ class ApiService {
   }
 
   // Generic HTTP methods for flexibility
-  async get(url: string, config?: any) {
+  async get(url: string, config?: AxiosRequestConfig) {
     const response = await this.api.get(url, config);
     return response.data;
   }
 
-  async post(url: string, data?: any, config?: any) {
+  async post(url: string, data?: unknown, config?: AxiosRequestConfig) {
     const response = await this.api.post(url, data, config);
     return response.data;
   }
 
-  async put(url: string, data?: any, config?: any) {
+  async put(url: string, data?: unknown, config?: AxiosRequestConfig) {
     const response = await this.api.put(url, data, config);
     return response.data;
   }
 
-  async delete(url: string, config?: any) {
+  async delete(url: string, config?: AxiosRequestConfig) {
     const response = await this.api.delete(url, config);
     return response.data;
   }

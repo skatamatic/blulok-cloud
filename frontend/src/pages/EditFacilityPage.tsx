@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   PhoneIcon, 
@@ -48,15 +48,7 @@ export default function EditFacilityPage() {
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
 
-  useEffect(() => {
-    if (id && canManage) {
-      loadFacility();
-    } else if (!canManage) {
-      navigate('/facilities');
-    }
-  }, [id, canManage, navigate]);
-
-  const loadFacility = async () => {
+  const loadFacility = useCallback(async () => {
     try {
       setLoading(true);
       const response = await apiService.getFacility(id!);
@@ -85,7 +77,15 @@ export default function EditFacilityPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    if (id && canManage) {
+      loadFacility();
+    } else if (!canManage) {
+      navigate('/facilities');
+    }
+  }, [id, canManage, navigate, loadFacility]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;

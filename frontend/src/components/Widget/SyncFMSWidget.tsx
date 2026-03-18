@@ -176,7 +176,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       setLoading(false);
     };
 
-    const handleError = (_error: string) => {
+    const handleError = () => {
       // Error handled silently - user will see loading state end
       clearTimeout(loadingTimeout);
       setLoading(false);

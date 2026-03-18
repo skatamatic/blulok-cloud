@@ -364,8 +364,9 @@ export class AssetFactory {
    */
   private static createGate(
     asset: AssetMetadata,
-    _state: DeviceState
+    state: DeviceState
   ): THREE.Object3D {
+    void state;
     const group = new THREE.Group();
     const { width, height } = asset.dimensions;
     const depth = 0.15; // Gates are thin
@@ -478,8 +479,9 @@ export class AssetFactory {
    */
   private static createElevator(
     asset: AssetMetadata,
-    _state: DeviceState
+    state: DeviceState
   ): THREE.Object3D {
+    void state;
     const group = new THREE.Group();
     const { width, height, depth } = asset.dimensions;
     
@@ -1855,7 +1857,8 @@ export class AssetFactory {
   /**
    * Create label (invisible placeholder, will be rendered as HTML overlay)
    */
-  private static createLabel(_asset: AssetMetadata): THREE.Object3D {
+  private static createLabel(asset: AssetMetadata): THREE.Object3D {
+    void asset;
     // Labels are rendered as HTML overlays, so create an invisible marker
     const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
     const material = new THREE.MeshBasicMaterial({ 

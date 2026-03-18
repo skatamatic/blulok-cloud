@@ -1258,7 +1258,8 @@ for (const item of itemsToRender) {
   /**
    * Create a bounding outline for rectangle preview
    */
-  private createRectangleOutline(minX: number, maxX: number, minZ: number, maxZ: number, _gridSize: number): void {
+  private createRectangleOutline(minX: number, maxX: number, minZ: number, maxZ: number, gridSize: number): void {
+    void gridSize;
     const startWorld = this.gridSystem.gridToWorld({ x: minX, z: minZ, y: 0 });
     const endWorld = this.gridSystem.gridToWorld({ x: maxX + 1, z: maxZ + 1, y: 0 });
     
@@ -1354,7 +1355,8 @@ for (const item of itemsToRender) {
    * Create a simple filled plane for large area previews
    * Used when there are too many tiles for individual previews
    */
-  private createSimpleFillPreview(minX: number, maxX: number, minZ: number, maxZ: number, _gridSize: number): void {
+  private createSimpleFillPreview(minX: number, maxX: number, minZ: number, maxZ: number, gridSize: number): void {
+    void gridSize;
     const startWorld = this.gridSystem.gridToWorld({ x: minX, z: minZ, y: 0 });
     const endWorld = this.gridSystem.gridToWorld({ x: maxX + 1, z: maxZ + 1, y: 0 });
     
@@ -1440,13 +1442,15 @@ for (const item of itemsToRender) {
     const isHorizontalPath = dx >= dz;
     const baseOrientation = isHorizontalPath ? Orientation.NORTH : Orientation.EAST;
     
-    while (true) {
+    let reachedEnd = false;
+    while (!reachedEnd) {
       result.push({ 
         position: { x: x0, z: z0, y: 0 },
         orientation: baseOrientation
       });
       
-      if (x0 === x1 && z0 === z1) break;
+      reachedEnd = x0 === x1 && z0 === z1;
+      if (reachedEnd) break;
       
       const e2 = 2 * err;
       if (e2 > -dz) {

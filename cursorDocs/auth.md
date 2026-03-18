@@ -373,3 +373,36 @@ npm run db:setup            # Full setup: init + migrate + seed
 2. **OAuth Integration**: Third-party authentication providers
 3. **Microservices**: Separate authentication service
 4. **Load Balancing**: Stateless design supports horizontal scaling
+
+## Access Event Security Model
+
+### Internal Ingestion Authentication
+
+- `POST /api/v1/internal/gateway/access-events` is authenticated with the same gateway proxy JWT flow used by other internal gateway endpoints.
+- `facility_admin`, `admin`, and `dev_admin` are allowed to call the endpoint; facility scope is still enforced through `resolveScopedFacilityId` + `AuthService.canAccessFacility`.
+- Facility-scoped gateway sessions cannot override `facility_id` outside their scope.
+
+### Access History RBAC
+
+- Canonical access history now reads from `activity_logs` entries with `activity_type=access_attempt`.
+- **tenant/shared** users see:
+  - their own actor events, and
+  - events for units they currently have access to (primary assignment or active shared access).
+- **facility_admin** users see only events from facilities they administer.
+- **admin/dev_admin** users can query all facilities.
+- **maintenance** users are restricted to their own actor events.
+
+### Denial Reason Taxonomy
+
+The canonical ingestion contract supports explicit deny reasons for security and forensic workflows:
+
+- `out_of_schedule`
+- `route_pass_expired`
+- `route_pass_invalid_signature`
+- `route_pass_wrong_lock`
+- `internal_error`
+- `denylist_blocked`
+- `insufficient_permissions`
+- `invalid_credential`
+- `unknown_error`
+- `other`

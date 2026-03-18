@@ -54,9 +54,15 @@ const createMockDbConnection = (userDevices: any, lockRows: any[]) => {
       return mockQueryBuilder;
     }
     if (table === 'blulok_devices' || table.startsWith('blulok_devices')) {
+      (mockQueryBuilder as any)._joinTarget = '';
+      mockQueryBuilder.join = jest.fn().mockImplementation((target: string) => {
+        (mockQueryBuilder as any)._joinTarget = target;
+        return mockQueryBuilder;
+      });
       mockQueryBuilder.then = (onFulfilled?: (rows: any[]) => any) => {
-        if (onFulfilled) onFulfilled(lockRows);
-        return Promise.resolve(lockRows);
+        const rows = String((mockQueryBuilder as any)._joinTarget || '').includes('key_sharing') ? [] : lockRows;
+        if (onFulfilled) onFulfilled(rows);
+        return Promise.resolve(rows);
       };
       mockQueryBuilder.first.mockResolvedValue(lockRows[0] || null);
       return mockQueryBuilder;
@@ -107,7 +113,7 @@ describe('Passes Routes', () => {
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({
         connection: createMockDbConnection(
           { public_key: 'cHVibGlj' },
-          [{ id: 'lock-1' }, { id: 'lock-2' }]
+          [{ device_serial: 'serial-1' }, { device_serial: 'serial-2' }]
         ),
       });
 
@@ -137,7 +143,7 @@ describe('Passes Routes', () => {
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({
         connection: createMockDbConnection(
           { id: 'device-1', public_key: 'cHVibGlj' },
-          [{ id: 'lock-1' }, { id: 'lock-2' }]
+          [{ device_serial: 'serial-1' }, { device_serial: 'serial-2' }]
         ),
       });
 
@@ -151,7 +157,7 @@ describe('Passes Routes', () => {
       const callArgs = mockRoutePassModel.create.mock.calls[0][0];
       expect(callArgs.userId).toBe(testData.users.tenant.id);
       expect(callArgs.deviceId).toBe('device-1');
-      expect(callArgs.audiences).toEqual(['lock:lock-1', 'lock:lock-2']);
+      expect(callArgs.audiences).toEqual(['lock:serial-1', 'lock:serial-2']);
       expect(callArgs.jti).toBeDefined();
       expect(callArgs.issuedAt).toBeInstanceOf(Date);
       expect(callArgs.expiresAt).toBeInstanceOf(Date);
@@ -180,7 +186,7 @@ describe('Passes Routes', () => {
           builder.where = jest.fn().mockImplementation((...args: any[]) => {
             builder._queries.push({ type: 'where', args });
             // Track lock ID for facility lookup
-            if (args[0] === 'bd.id') {
+            if (args[0] === 'bd.id' || args[0] === 'bd.device_serial') {
               builder._lockId = args[1];
             }
             return builder;
@@ -202,10 +208,10 @@ describe('Passes Routes', () => {
             }
             // Handle regular lock queries
             if (builder._joinTarget.includes('unit_assignments')) {
-              return Promise.resolve({ id: 'lock-assigned' });
+              return Promise.resolve({ device_serial: 'serial-assigned' });
             }
             if (builder._joinTarget.includes('key_sharing')) {
-              return Promise.resolve({ device_id: 'lock-shared', owner_user_id: 'owner-123' });
+              return Promise.resolve({ device_serial: 'serial-shared', owner_user_id: 'owner-123' });
             }
             return Promise.resolve(null);
           });
@@ -214,10 +220,10 @@ describe('Passes Routes', () => {
           builder.then = jest.fn().mockImplementation((resolve: any) => {
             // When awaited directly (without .first()), return array results
             if (builder._joinTarget.includes('unit_assignments')) {
-              return Promise.resolve([{ id: 'lock-assigned' }]).then(resolve);
+              return Promise.resolve([{ device_serial: 'serial-assigned' }]).then(resolve);
             }
             if (builder._joinTarget.includes('key_sharing')) {
-              return Promise.resolve([{ device_id: 'lock-shared', owner_user_id: 'owner-123' }]).then(resolve);
+              return Promise.resolve([{ device_serial: 'serial-shared', owner_user_id: 'owner-123' }]).then(resolve);
             }
             return Promise.resolve([]).then(resolve);
           });
@@ -259,7 +265,7 @@ describe('Passes Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
-      expect(payload.aud).toEqual(expect.arrayContaining(['lock:lock-assigned', 'shared_key:owner-123:lock-shared']));
+      expect(payload.aud).toEqual(expect.arrayContaining(['lock:serial-assigned', 'shared_key:owner-123:serial-shared']));
     });
   });
 
@@ -268,7 +274,7 @@ describe('Passes Routes', () => {
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({
         connection: createMockDbConnection(
           { public_key: 'YWRtaW4=' },
-          [{ id: 'lock-all-1' }, { id: 'lock-all-2' }, { id: 'lock-all-3' }]
+          [{ device_serial: 'serial-all-1' }, { device_serial: 'serial-all-2' }, { device_serial: 'serial-all-3' }]
         ),
       });
 
@@ -280,7 +286,7 @@ describe('Passes Routes', () => {
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
       expect(payload.sub).toBe(testData.users.admin.id);
-      expect(payload.aud).toEqual(['lock:lock-all-1', 'lock:lock-all-2', 'lock:lock-all-3']);
+      expect(payload.aud).toEqual(['lock:serial-all-1', 'lock:serial-all-2', 'lock:serial-all-3']);
     });
   });
 
@@ -289,7 +295,7 @@ describe('Passes Routes', () => {
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({
         connection: createMockDbConnection(
           { public_key: 'ZmFjaWw=' },
-          [{ id: 'lock-fac-1' }]
+          [{ device_serial: 'serial-fac-1' }]
         ),
       });
 
@@ -300,14 +306,14 @@ describe('Passes Routes', () => {
 
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
-      expect(payload.aud).toEqual(['lock:lock-fac-1']);
+      expect(payload.aud).toEqual(['lock:serial-fac-1']);
     });
   });
 
   describe('Error cases', () => {
     it('returns 400 when facility_id is invalid', async () => {
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({
-        connection: createMockDbConnection({ public_key: 'cHVibGlj' }, [{ id: 'lock-1' }]),
+        connection: createMockDbConnection({ public_key: 'cHVibGlj' }, [{ device_serial: 'serial-1' }]),
       });
 
       const res = await request(app)

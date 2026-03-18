@@ -72,7 +72,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
       sort_order = 'desc'
     } = req.query;
 
-    let filters: any = {
+    const filters: any = {
       limit: parseInt(limit as string),
       offset: parseInt(offset as string),
       sort_by: sort_by as string,

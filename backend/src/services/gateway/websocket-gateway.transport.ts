@@ -372,7 +372,9 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           const status = e?.response?.status || 500;
           const data = e?.response?.data || { error: 'Proxy failed' };
           const errorBody = this.mergeTidIntoResponse(data, tid);
-          logger.warn(`Gateway WS proxy error facility=${authed.facilityId} user=${authed.user.userId} method=${method} path=${path} status=${status}`);
+          logger.warn(
+            `Gateway WS proxy error facility=${authed.facilityId} user=${authed.user.userId} method=${method} path=${path} status=${status} message=${e?.message || 'unknown'} details=${JSON.stringify(e?.response?.data || {})}`,
+          );
           safeSend(ws, { type: 'PROXY_RESPONSE', id, status, body: errorBody });
         }
         return;

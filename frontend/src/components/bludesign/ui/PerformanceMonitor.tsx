@@ -65,8 +65,9 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ engine }
         if (canvas) {
           const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
           if (gl) {
-            // @ts-ignore - experimental API
-            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info') as
+              | { UNMASKED_RENDERER_WEBGL: number }
+              | null;
             if (debugInfo) {
               const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
               if (renderer) {

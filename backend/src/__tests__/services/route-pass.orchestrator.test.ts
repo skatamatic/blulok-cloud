@@ -50,7 +50,7 @@ describe('RoutePassOrchestrator', () => {
       if (table === 'user_devices') {
         qb.first.mockResolvedValue({ id: 'device-1', public_key: 'pubkey' });
       } else if (table.startsWith('blulok_devices')) {
-        qb.select.mockResolvedValue([{ id: 'lock-1' }]);
+        qb.select.mockResolvedValue([{ device_serial: 'serial-1' }]);
       }
       return qb;
     });
@@ -66,7 +66,7 @@ describe('RoutePassOrchestrator', () => {
     expect(PassesService.issueRoutePass).toHaveBeenCalledWith(expect.objectContaining({
       userId: 'u1',
       devicePublicKey: 'pubkey',
-      audiences: ['lock:lock-1'],
+      audiences: ['lock:serial-1'],
     }));
   });
 
@@ -84,7 +84,7 @@ describe('RoutePassOrchestrator', () => {
       if (table === 'user_devices') {
         qb.first.mockResolvedValue({ id: 'device-1', public_key: 'pubkey' });
       } else if (table.startsWith('blulok_devices')) {
-        qb.select.mockResolvedValue([{ id: 'lock-1' }]);
+        qb.select.mockResolvedValue([{ device_serial: 'serial-1' }]);
       }
       return qb;
     });
@@ -136,7 +136,7 @@ describe('RoutePassOrchestrator', () => {
       if (table === 'user_devices') {
         qb.first.mockResolvedValue({ id: 'device-1', public_key: 'pubkey' });
       } else if (table.startsWith('blulok_devices')) {
-        qb.select.mockResolvedValue([{ id: 'lock-1' }]);
+        qb.select.mockResolvedValue([{ device_serial: 'serial-1' }]);
       } else if (table === 'facilities') {
         qb.first.mockResolvedValue({ id: 'fac-2' });
       }

@@ -105,7 +105,7 @@ const createMockKnex = (): Knex => {
         } else if (typeof column === 'object' && column !== null) {
           // Handle where({ id: value }) syntax
           builder.first = jest.fn().mockResolvedValue({
-            id: (column as any).id,
+            id: (column).id,
             facility_id: 'facility-1'
           });
         } else {

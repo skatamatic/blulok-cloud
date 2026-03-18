@@ -27,7 +27,7 @@ jest.mock('@/contexts/ToastContext', () => ({
 import { useToast } from '@/contexts/ToastContext';
 
 // Mock the useFMSSync hook
-let mockUseFMSSyncReturn = {
+const mockUseFMSSyncReturn = {
   hideReview: jest.fn(),
   minimizeReview: jest.fn(),
 };

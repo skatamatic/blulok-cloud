@@ -29,11 +29,10 @@ export function ProviderConfigForm({
   const [autoAccept, setAutoAccept] = useState(false);
 
   const providerMeta = getProviderMetadata(providerType);
-  if (!providerMeta) return null;
 
   // Populate form data from existing config when available
   useEffect(() => {
-    if (existingConfig?.config) {
+    if (existingConfig?.config && providerMeta) {
       const config = existingConfig.config;
       const newFormData: Record<string, any> = {};
 
@@ -66,7 +65,9 @@ export function ProviderConfigForm({
 
       setFormData(newFormData);
     }
-  }, [existingConfig, providerType]);
+  }, [existingConfig, providerMeta, providerType]);
+
+  if (!providerMeta) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

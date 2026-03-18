@@ -178,6 +178,28 @@ Facility
 ### Gateway Management
 - `GET /api/v1/gateways/reassignment-candidates/:facilityId` - List unassigned online gateways eligible for facility assignment
 - `PATCH /api/v1/gateways/:id/reassign` - Assign or replace facility gateway with server-side validation (admin/dev admin only)
+- `POST /api/v1/internal/gateway/access-events` - Canonical gateway/app/keypad access-event ingestion path via WS `PROXY_REQUEST`
+
+### Access Event Ingestion Contract (Canonical)
+
+Gateways/apps submit one or more events in a single request:
+
+- top-level: `facility_id`, `events[]`
+- each event: `event_id`, `occurred_at`, `facility_id`, `device_id`, `action`, `method`, `success`
+- optional context: `unit_id`, `actor`, `route_pass`, `keypad`, `metadata`, `denial_reason`, `reason_message`
+
+Representative event classes:
+
+- `access_granted` (app/mobile key success)
+- `access_denied` (explicit denial reason)
+- `admin_remote_open` (remote open initiated by admin/facility admin)
+- `keypad_attempt` (includes schedule/zone and redacted code context)
+
+### Canonical History Source
+
+- Access history APIs and realtime activity feeds now use `activity_logs` as canonical source for access events (`activity_type=access_attempt`).
+- Existing response shape is preserved for frontend/mobile compatibility (`logs`, `occurred_at`, `action`, `method`, `success`, `denial_reason`, contextual names).
+- Metadata remains additive and extensible for future credential and denial categories.
 
 ## Security Features
 

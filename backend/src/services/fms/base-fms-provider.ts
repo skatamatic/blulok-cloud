@@ -261,7 +261,7 @@ export abstract class BaseFMSProvider {
         throw new Error(`Token refresh failed: ${response.statusText}`);
       }
 
-      const data = await response.json() as any;
+      const data = await response.json();
       
       // Update the token in config (should be persisted by caller)
       this.config.auth.credentials.bearerToken = data.access_token;

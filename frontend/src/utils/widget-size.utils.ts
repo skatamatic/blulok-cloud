@@ -32,7 +32,7 @@ export function gridToSize(w: number, h: number): WidgetSize {
   const entries = Object.entries(WIDGET_SIZE_TO_GRID) as [WidgetSize, { w: number; h: number }][];
   
   // First try exact match
-  const exactMatch = entries.find(([_, dimensions]) => dimensions.w === w && dimensions.h === h);
+  const exactMatch = entries.find(([, dimensions]) => dimensions.w === w && dimensions.h === h);
   if (exactMatch) {
     return exactMatch[0];
   }

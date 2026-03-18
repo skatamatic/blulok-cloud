@@ -394,7 +394,9 @@ export class SceneManager {
    * DEPRECATED: Use FloorManager.applyGhosting() instead
    * This method is kept for backwards compatibility but does nothing
    */
-  applyFloorGhosting(_currentFloor: number, _isFullBuildingView: boolean = false): void {
+  applyFloorGhosting(currentFloor: number, isFullBuildingView: boolean = false): void {
+    void currentFloor;
+    void isFullBuildingView;
     // No-op: FloorManager handles all ghosting now
   }
 

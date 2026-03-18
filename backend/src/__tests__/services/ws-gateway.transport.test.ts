@@ -352,7 +352,7 @@ describe('WebsocketGatewayTransport', () => {
 
       ws.send(JSON.stringify({
         type: 'FIRMWARE_UPDATE_STATUS',
-        nonce: 'test-nonce',
+        push_id: 'test-push-id',
         status: 'installed',
         message: 'Firmware installed successfully',
       }));

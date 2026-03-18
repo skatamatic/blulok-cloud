@@ -210,6 +210,7 @@ export interface CreateBluLokDeviceData {
   gateway_id: string;
   unit_id?: string; // Optional - devices can exist without unit association
   device_serial: string;
+  serial?: string;
   firmware_version?: string;
   device_settings?: Record<string, any>;
   metadata?: Record<string, any>;
@@ -448,7 +449,7 @@ export class DeviceModel {
   }
 
   async findBluLokDeviceById(id: string): Promise<DeviceWithContext | null> {
-    const results = await this.findBluLokDevices({ ...(undefined as any), id } as any);
+    const results = await this.findBluLokDevices({ ...(undefined as any), id });
     return results[0] || null;
   }
 
@@ -538,7 +539,19 @@ export class DeviceModel {
   async createBluLokDevice(data: CreateBluLokDeviceData): Promise<BluLokDevice> {
     const knex = this.db.connection;
     const id = uuidv4();
-    await knex('blulok_devices').insert({ id, ...data });
+    if (!data.device_serial || !String(data.device_serial).trim()) {
+      throw new Error('device_serial is required when creating a BluLok device');
+    }
+    const canonicalDeviceSerial = String(data.device_serial).trim();
+    const canonicalSerial = data.serial && String(data.serial).trim()
+      ? String(data.serial).trim()
+      : canonicalDeviceSerial;
+    const normalizedData: CreateBluLokDeviceData = {
+      ...data,
+      device_serial: canonicalDeviceSerial,
+      serial: canonicalSerial,
+    };
+    await knex('blulok_devices').insert({ id, ...normalizedData });
     const device = await knex('blulok_devices').where('id', id).first();
     return device as BluLokDevice;
   }
@@ -553,7 +566,21 @@ export class DeviceModel {
   async bulkCreateBluLokDevices(devices: CreateBluLokDeviceData[]): Promise<number> {
     if (devices.length === 0) return 0;
     const knex = this.db.connection;
-    await knex('blulok_devices').insert(devices);
+    const normalizedDevices = devices.map((device) => {
+      if (!device.device_serial || !String(device.device_serial).trim()) {
+        throw new Error('device_serial is required when bulk creating BluLok devices');
+      }
+      const canonicalDeviceSerial = String(device.device_serial).trim();
+      const canonicalSerial = device.serial && String(device.serial).trim()
+        ? String(device.serial).trim()
+        : canonicalDeviceSerial;
+      return {
+        ...device,
+        device_serial: canonicalDeviceSerial,
+        serial: canonicalSerial,
+      };
+    });
+    await knex('blulok_devices').insert(normalizedDevices);
     return devices.length;
   }
 

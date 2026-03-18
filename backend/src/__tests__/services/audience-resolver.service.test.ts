@@ -19,7 +19,7 @@ describe('AudienceResolver', () => {
       first: jest.fn(),
       fn: { now: () => new Date() },
     };
-    (db as any).mockImplementation(() => qb);
+    (db).mockImplementation(() => qb);
     return { db, qb };
   };
 
@@ -29,22 +29,22 @@ describe('AudienceResolver', () => {
 
   it('returns lock:* for all locks when role is ADMIN', async () => {
     const { db, qb } = makeKnex();
-    qb.select.mockResolvedValue([{ id: 'l1' }, { id: 'l2' }]);
+    qb.select.mockResolvedValue([{ device_serial: 'ser-1' }, { device_serial: 'ser-2' }]);
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
     jest.spyOn(AppEntryAccessService, 'resolveDeviceIds').mockResolvedValue([]);
 
-    const aud = await AudienceResolver.resolve(db as any, { userId: 'u1', userRole: UserRole.ADMIN });
-    expect(aud).toEqual(['lock:l1', 'lock:l2']);
+    const aud = await AudienceResolver.resolve(db, { userId: 'u1', userRole: UserRole.ADMIN });
+    expect(aud).toEqual(['lock:ser-1', 'lock:ser-2']);
   });
 
   it('includes app-entry access_control:* audiences', async () => {
     const { db, qb } = makeKnex();
-    qb.select.mockResolvedValue([{ id: 'l1' }]);
+    qb.select.mockResolvedValue([{ device_serial: 'ser-1' }]);
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
     jest.spyOn(AppEntryAccessService, 'resolveDeviceIds').mockResolvedValue(['ac-1', 'ac-2']);
 
-    const aud = await AudienceResolver.resolve(db as any, { userId: 'u1', userRole: UserRole.ADMIN });
-    expect(aud).toEqual(expect.arrayContaining(['lock:l1', 'access_control:ac-1', 'access_control:ac-2']));
+    const aud = await AudienceResolver.resolve(db, { userId: 'u1', userRole: UserRole.ADMIN });
+    expect(aud).toEqual(expect.arrayContaining(['lock:ser-1', 'access_control:ac-1', 'access_control:ac-2']));
   });
 
   it('returns mixed audiences for TENANT (assigned + shared)', async () => {
@@ -53,15 +53,15 @@ describe('AudienceResolver', () => {
     let call = 0;
     qb.select.mockImplementation(() => {
       call += 1;
-      if (call === 1) return Promise.resolve([{ id: 'lock-assigned' }]); // assigned
-      if (call === 2) return Promise.resolve([{ device_id: 'lock-shared', owner_user_id: 'owner-1' }]); // shared
+      if (call === 1) return Promise.resolve([{ device_serial: 'serial-assigned' }]); // assigned
+      if (call === 2) return Promise.resolve([{ device_serial: 'serial-shared', owner_user_id: 'owner-1' }]); // shared
       return Promise.resolve([]);
     });
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
 
-    const aud = await AudienceResolver.resolve(db as any, { userId: 'tenant-1', userRole: UserRole.TENANT });
-    expect(aud).toEqual(expect.arrayContaining(['lock:lock-assigned', 'shared_key:owner-1:lock-shared']));
+    const aud = await AudienceResolver.resolve(db, { userId: 'tenant-1', userRole: UserRole.TENANT });
+    expect(aud).toEqual(expect.arrayContaining(['lock:serial-assigned', 'shared_key:owner-1:serial-shared']));
     expect(qb.where).toHaveBeenCalledWith('ua.tenant_id', 'tenant-1');
     expect(qb.where).toHaveBeenCalledWith(expect.any(Function));
   });

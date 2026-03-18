@@ -8,6 +8,7 @@ import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import {
   ArrowDownTrayIcon,
   ClockIcon,
@@ -166,6 +167,7 @@ export default function AccessHistoryPage() {
   const { authState } = useAuth();
   const navigate = useNavigate();
   const { selectedFacilityId } = useGlobalFacility();
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -176,6 +178,7 @@ export default function AccessHistoryPage() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showExportDropdown, setShowExportDropdown] = useState(false);
   const [isCustomDateRange, setIsCustomDateRange] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   
   const [filters, setFilters] = useState<FilterState>({
@@ -189,7 +192,15 @@ export default function AccessHistoryPage() {
 
   useEffect(() => {
     loadAccessHistory();
-  }, [filters, currentPage, sortBy, sortOrder, selectedFacilityId]);
+  }, [filters, currentPage, sortBy, sortOrder, selectedFacilityId, refreshNonce]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    const subscriptionId = subscribe('activity', () => {
+      setRefreshNonce((prev) => prev + 1);
+    });
+    return () => unsubscribe(subscriptionId);
+  }, [isConnected, subscribe, unsubscribe]);
 
   // Handle highlighting when page loads
   useHighlight(logs, (log) => log.id, (id) => generateHighlightId('access-log', id));
@@ -548,20 +559,23 @@ export default function AccessHistoryPage() {
                 setIsCustomDateRange(false);
                 const now = new Date();
                 let dateFrom = '';
-                let dateTo = now.toISOString().split('T')[0];
+                const dateTo = now.toISOString().split('T')[0];
                 
                 switch (value) {
-                  case 'today':
+                  case 'today': {
                     dateFrom = now.toISOString().split('T')[0];
                     break;
-                  case 'week':
+                  }
+                  case 'week': {
                     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
                     dateFrom = weekAgo.toISOString().split('T')[0];
                     break;
-                  case 'month':
+                  }
+                  case 'month': {
                     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
                     dateFrom = monthAgo.toISOString().split('T')[0];
                     break;
+                  }
                 }
                 
                 handleFilterChange('date_from', dateFrom);

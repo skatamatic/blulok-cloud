@@ -97,7 +97,7 @@ export class SimulatedProvider extends BaseFMSProvider {
     const data = this.readSimulatedData();
     
     // Filter tenants for this facility if specified
-    let tenants = data.tenants || [];
+    const tenants = data.tenants || [];
     if (data.metadata?.facilityId && data.metadata.facilityId !== this.facilityId) {
       this.logger.warn(`[Simulated FMS] Data file is for facility ${data.metadata.facilityId}, but syncing ${this.facilityId}`);
     }
@@ -113,7 +113,7 @@ export class SimulatedProvider extends BaseFMSProvider {
     const data = this.readSimulatedData();
     
     // Filter units for this facility if specified
-    let units = data.units || [];
+    const units = data.units || [];
     if (data.metadata?.facilityId && data.metadata.facilityId !== this.facilityId) {
       this.logger.warn(`[Simulated FMS] Data file is for facility ${data.metadata.facilityId}, but syncing ${this.facilityId}`);
     }

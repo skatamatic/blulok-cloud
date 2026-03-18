@@ -522,10 +522,10 @@ export class SelectionManager {
         const gridPositions = worldPositions.map(wp => this.gridSystem!.worldToGrid(wp));
         
         // Find grid bounds
-        let minGridX = Math.min(...gridPositions.map(p => p.x));
-        let maxGridX = Math.max(...gridPositions.map(p => p.x));
-        let minGridZ = Math.min(...gridPositions.map(p => p.z));
-        let maxGridZ = Math.max(...gridPositions.map(p => p.z));
+        const minGridX = Math.min(...gridPositions.map(p => p.x));
+        const maxGridX = Math.max(...gridPositions.map(p => p.x));
+        const minGridZ = Math.min(...gridPositions.map(p => p.z));
+        const maxGridZ = Math.max(...gridPositions.map(p => p.z));
         
         // Query ground tiles in this grid area (much faster than iterating all markers)
         const groundTileIds = this.groundTileManager.getTileIdsInArea(minGridX, maxGridX, minGridZ, maxGridZ);

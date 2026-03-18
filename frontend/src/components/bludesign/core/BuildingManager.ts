@@ -227,7 +227,8 @@ export class BuildingManager implements OptimizationClient {
     return contexts;
   }
   
-  async onOptimizationComplete(contextId: string, _result: OptimizationResult): Promise<void> {
+  async onOptimizationComplete(contextId: string, result: OptimizationResult): Promise<void> {
+    void result;
     // This callback is called when optimization completes asynchronously
     // Used for manual optimization requests (e.g., when settings change)
     
@@ -1371,7 +1372,8 @@ export class BuildingManager implements OptimizationClient {
    * Generate floor tiles for a building at a specific floor level (legacy method, now redirects to rebuildFloorLevel)
    * @deprecated Use rebuildFloorLevel instead - batches are shared across buildings
    */
-  private async generateFloorTiles(_building: Building, floorLevel: number): Promise<void> {
+  private async generateFloorTiles(building: Building, floorLevel: number): Promise<void> {
+    void building;
     // Just rebuild the entire floor level since batches are shared
     await this.rebuildFloorLevel(floorLevel);
   }
@@ -1381,7 +1383,7 @@ export class BuildingManager implements OptimizationClient {
    */
   private async rebuildAllRoofs(): Promise<void> {
     // Clear all existing roof markers
-    this.roofTileIds.forEach((tileIds, _buildingId) => {
+    this.roofTileIds.forEach((tileIds) => {
       tileIds.forEach(tileId => {
         const marker = this.roofTileMeshes.get(tileId);
         if (marker) {
@@ -1426,7 +1428,8 @@ export class BuildingManager implements OptimizationClient {
    * 
    * NOTE: This now calls rebuildAllRoofs() since roofs share a batch
    */
-  async generateRoof(_building: Building): Promise<void> {
+  async generateRoof(building: Building): Promise<void> {
+    void building;
     // Since roof batch is shared, we need to rebuild all roofs
     await this.rebuildAllRoofs();
   }
@@ -2795,14 +2798,17 @@ export class BuildingManager implements OptimizationClient {
    * NOTE: This is called multiple times from rebuildAllRoofs, accumulating instances into the shared batch
    */
   private createOptimizedRoofTiles(
-    _building: Building,
+    building: Building,
     maxFloorLevel: number,
     roofY: number,
     roofRenderOrder: number,
     optimization: OptimizationResult,
-    _roofTileIds: string[],
-    _cellList: Array<{x: number, z: number}>
+    roofTileIds: string[],
+    cellList: Array<{x: number, z: number}>
   ): void {
+    void building;
+    void roofTileIds;
+    void cellList;
     const batch = this.getOrCreateRoofTileBatch();
     const gridSize = this.gridSystem.getGridSize();
     
@@ -2928,8 +2934,9 @@ export class BuildingManager implements OptimizationClient {
     maxFloorLevel: number,
     roofY: number,
     cellList: Array<{x: number, z: number}>,
-    _roofTileIds: string[]
+    roofTileIds: string[]
   ): void {
+    void roofTileIds;
     const gridSize = this.gridSystem.getGridSize();
     
     cellList.forEach(({x, z}) => {
@@ -3071,7 +3078,8 @@ export class BuildingManager implements OptimizationClient {
   /**
    * Check if a position has a stairwell that connects floors
    */
-  hasStairwellAt(_position: GridPosition): boolean {
+  hasStairwellAt(position: GridPosition): boolean {
+    void position;
     // This would be expanded to check actual placed stairwell objects
     // For now, return false - actual implementation would check scene
     return false;

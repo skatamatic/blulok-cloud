@@ -12,7 +12,7 @@ export interface RoutePassIssuanceLog {
   id: string;
   user_id: string;
   device_id: string;
-  audiences: string[]; // JSON array of lock IDs in format lock:deviceId
+  audiences: string[]; // JSON array of audiences (e.g. lock:{device_serial}, shared_key:{owner}:{device_serial})
   jti: string; // JWT ID for correlation
   issued_at: Date;
   expires_at: Date;
@@ -85,7 +85,7 @@ export class RoutePassIssuanceModel {
    * @param params - Route pass issuance parameters
    * @param params.userId - User ID the pass was issued for
    * @param params.deviceId - Device ID (user_devices.id) the pass was bound to
-   * @param params.audiences - Array of lock IDs in format lock:deviceId
+   * @param params.audiences - Array of pass audiences (e.g. lock:{device_serial})
    * @param params.jti - JWT ID from the issued JWT
    * @param params.issuedAt - Timestamp when the pass was issued
    * @param params.expiresAt - Timestamp when the pass expires

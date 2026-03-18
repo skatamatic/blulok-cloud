@@ -92,13 +92,12 @@ export default function UserManagementPage() {
       }
       setError('Error fetching users');
     } finally {
-      if (requestId !== latestRequestIdRef.current) {
-        return;
-      }
-      if (isInitialLoad) {
-        setLoading(false);
-      } else {
-        setSearchLoading(false);
+      if (requestId === latestRequestIdRef.current) {
+        if (isInitialLoad) {
+          setLoading(false);
+        } else {
+          setSearchLoading(false);
+        }
       }
     }
   }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, isFacilityLoading]);

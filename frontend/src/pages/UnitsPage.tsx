@@ -89,7 +89,7 @@ export default function UnitsPage() {
   useEffect(() => {
     const subscriptionId = subscribe(
       'units',
-      (_data: any) => {
+      () => {
         // Debounce refresh to prevent excessive API calls
         if (wsRefreshDebounceRef.current) {
           clearTimeout(wsRefreshDebounceRef.current);

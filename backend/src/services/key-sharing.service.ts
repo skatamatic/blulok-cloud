@@ -49,7 +49,7 @@ export class KeySharingService {
     const { unitId, phoneE164, accessLevel, expiresAt, grantedBy, primaryTenantIdFallback } = params;
 
     // Find or create invitee by phone
-    let invitee = await UserModel.findByPhone(phoneE164) as User | undefined;
+    let invitee = await UserModel.findByPhone(phoneE164);
     let createdUser = false;
     if (!invitee) {
       const created = await UserModel.create({
@@ -250,7 +250,7 @@ export class KeySharingService {
     });
     if (existingAny.sharings.length > 0) {
       const current = existingAny.sharings[0] as any;
-      if (Boolean(current.is_active)) {
+      if (current.is_active) {
         throw new Error('Key sharing already exists for this user and unit');
       }
       // Reactivate existing instead of creating a new row (avoids unique constraint collisions)
@@ -357,7 +357,7 @@ export class KeySharingService {
       const newIsActive = (dto.is_active !== undefined)
         ? Boolean(dto.is_active)
         : (updatedSharing ? Boolean((updatedSharing as any).is_active) : Boolean((existingSharing as any).is_active));
-      const becameActive = newIsActive && !Boolean((existingSharing as any).is_active);
+      const becameActive = newIsActive && !(existingSharing as any).is_active;
 
       const effectiveExpiresAt: Date | null | undefined =
         (dto.expires_at !== undefined)

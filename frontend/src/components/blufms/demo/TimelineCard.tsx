@@ -10,7 +10,6 @@ interface TimelineCardProps {
 export const TimelineCard: React.FC<TimelineCardProps> = ({
   markers,
   currentStep,
-  onMarkerClick: _onMarkerClick,
 }) => {
   if (markers.length === 0) return null;
 

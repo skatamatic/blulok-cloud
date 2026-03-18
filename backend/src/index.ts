@@ -68,6 +68,8 @@ async function bootstrap(): Promise<void> {
     // Initialize Gateway WS for site gateways
     const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
     GatewayEventsService.getInstance().initialize(server);
+    const { FirmwareService } = await import('@/services/firmware/firmware.service');
+    await FirmwareService.recoverInFlightStateOnStartup();
 
     const loggerInterceptor = LoggerInterceptorService.getInstance();
 

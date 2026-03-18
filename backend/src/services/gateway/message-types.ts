@@ -110,7 +110,7 @@ export type FirmwareChunkAckMessage = {
 
 export type FirmwareUpdateStatusMessage = {
   type: 'FIRMWARE_UPDATE_STATUS';
-  nonce?: string;
+  push_id: string;
   status: string;
   version?: string;
   target_type?: 'gateway' | 'lock' | 'friend_node' | 'access_control';
@@ -129,7 +129,7 @@ export type FirmwareProgressDeviceReport = {
 
 export type FirmwareProgressMessage = {
   type: 'FIRMWARE_PROGRESS';
-  nonce?: string;
+  push_id: string;
   target_type?: string;
   targetType?: string;
   progress_percent?: number;
@@ -163,7 +163,7 @@ export function isProxyRequest(m: any): m is ProxyRequestMessage {
   return m && m.type === 'PROXY_REQUEST' && typeof m.id === 'string' && typeof m.method === 'string' && typeof m.path === 'string';
 }
 export function isFirmwareProgress(m: any): m is FirmwareProgressMessage {
-  return m && m.type === 'FIRMWARE_PROGRESS' && typeof m.nonce === 'string';
+  return m && m.type === 'FIRMWARE_PROGRESS' && typeof m.push_id === 'string' && m.push_id.length > 0;
 }
 
 

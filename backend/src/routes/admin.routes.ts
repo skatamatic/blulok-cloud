@@ -77,7 +77,7 @@ const gatewayCommandSchema = Joi.object({
 
 // POST /api/v1/admin/ops-key-rotation/broadcast
 router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const body = (req.body || {}) as any;
+  const body = (req.body || {});
   const db = DatabaseService.getInstance().connection;
   const settingKey = 'security.last_root_rotation_ts';
 
@@ -152,7 +152,7 @@ router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, r
 
   const payload = {
     cmd_type: 'ROTATE_OPERATIONS_KEY',
-    new_ops_pubkey: newOpsPublicKey!,
+    new_ops_pubkey: newOpsPublicKey,
     ts: Math.floor(Date.now() / 1000),
   };
 

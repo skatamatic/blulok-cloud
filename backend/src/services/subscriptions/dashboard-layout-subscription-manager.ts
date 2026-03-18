@@ -111,7 +111,7 @@ export class DashboardLayoutSubscriptionManager extends BaseSubscriptionManager 
           h,
         };
         
-        frontendLayouts.lg!.push(layoutItem);
+        frontendLayouts.lg.push(layoutItem);
         
         // Use shared widget type helper for consistent type mapping
         const frontendWidgetType = WidgetTypeHelper.extractWidgetTypeFromId(widget.widget_id);

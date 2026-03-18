@@ -185,7 +185,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       return;
     }
 
-    let timer: any;
     const poll = async () => {
       try {
         const res = await apiService.getGatewayWsStatus(facilityId);
@@ -195,8 +194,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       }
     };
     poll();
-    timer = setInterval(poll, 5000);
-    return () => { if (timer) clearInterval(timer); };
+    const timer = setInterval(poll, 5000);
+    return () => clearInterval(timer);
   }, [facilityId, activeTab]);
 
   // Subscribe to gateway debug WS stream (DEV admin only)

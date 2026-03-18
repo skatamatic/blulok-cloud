@@ -61,8 +61,8 @@ const statusColors = {
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
 };
 
-const sanitizeFilters = (filters: Record<string, any>) => {
-  const sanitized: Record<string, any> = {};
+const sanitizeFilters = (filters: Record<string, unknown>) => {
+  const sanitized: Record<string, unknown> = {};
   Object.entries(filters).forEach(([key, value]) => {
     if (value === undefined || value === null) return;
     if (typeof value === 'string' && value.trim() === '') return;
@@ -83,27 +83,31 @@ export default function FacilityDetailsPage() {
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
   
+  type FacilityTab = 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes';
+  type FacilityDeviceListItem = (AccessControlDevice | BluLokDevice) & { device_category: string };
+
   // Get initial tab from URL query parameter or location state
-  const getInitialTab = (): 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes' => {
+  const getInitialTab = (): FacilityTab => {
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
     if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'device-groups', 'access-codes'].includes(tabParam)) {
       return tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes';
     }
-    if ((location.state as any)?.tab) {
-      return (location.state as any).tab;
+    const locationState = location.state as { tab?: FacilityTab } | null;
+    if (locationState?.tab) {
+      return locationState.tab;
     }
     return 'overview';
   };
   
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes'>(getInitialTab());
+  const [activeTab, setActiveTab] = useState<FacilityTab>(getInitialTab());
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteImpact, setDeleteImpact] = useState<{ units: number; devices: number; gateways: number } | null>(null);
   const [loadingImpact, setLoadingImpact] = useState(false);
-  const [facilityDevices, setFacilityDevices] = useState<any[]>([]);
+  const [facilityDevices, setFacilityDevices] = useState<FacilityDeviceListItem[]>([]);
   const [deviceTotal, setDeviceTotal] = useState(0);
   const [devicePage, setDevicePage] = useState(1);
   const [deviceTotalPages, setDeviceTotalPages] = useState(1);
@@ -188,22 +192,14 @@ export default function FacilityDetailsPage() {
     }
   }, [location.search, location.pathname, navigate, facility]);
 
-  useEffect(() => {
-    // Use global context facility ID if available, otherwise use route ID
-    const facilityId = selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : id;
-    if (facilityId) {
-      loadFacilityData(facilityId);
-    }
-  }, [id, selectedFacilityId]);
-
   // Subscribe to gateway status updates to update overview gateway status
   useEffect(() => {
     if (!ws) return;
     const subscriptionId = ws.subscribe(
       'gateway_status',
-      (data: any) => {
-        const gateways = data?.gateways || [];
-        gateways.forEach((g: any) => {
+      (data: unknown) => {
+        const gateways = ((data as { gateways?: Array<{ id: string; status: 'online' | 'offline' | 'error' | 'maintenance' }> })?.gateways) || [];
+        gateways.forEach((g) => {
           // Update deviceHierarchy gateway status for overview tab
           setDeviceHierarchy(prev => {
             if (!prev?.gateway || prev.gateway.id !== g.id) return prev;
@@ -277,7 +273,7 @@ export default function FacilityDetailsPage() {
     };
   }, [activeTab, facility?.id, ws]);
 
-  const loadFacilityData = async (facilityId?: string) => {
+  const loadFacilityData = useCallback(async (facilityId?: string) => {
     const targetId = facilityId || id;
     if (!targetId) return;
     
@@ -297,7 +293,15 @@ export default function FacilityDetailsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, isTenant]);
+
+  useEffect(() => {
+    // Use global context facility ID if available, otherwise use route ID
+    const facilityId = selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : id;
+    if (facilityId) {
+      loadFacilityData(facilityId);
+    }
+  }, [id, selectedFacilityId, loadFacilityData]);
 
   const loadFacilityDevices = useCallback(async () => {
     if (!facility?.id) return;
@@ -422,8 +426,9 @@ export default function FacilityDetailsPage() {
         gateways: impact.gateways ?? 0,
       });
       setShowDeleteConfirm(true);
-    } catch (error: any) {
-      addToast({ type: 'error', title: error?.response?.data?.message || 'Failed to load delete impact' });
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { message?: string } } };
+      addToast({ type: 'error', title: apiError?.response?.data?.message || 'Failed to load delete impact' });
     } finally {
       setLoadingImpact(false);
     }
@@ -435,8 +440,9 @@ export default function FacilityDetailsPage() {
       await apiService.deleteFacility(facility.id);
       addToast({ type: 'success', title: 'Facility deleted successfully' });
       navigate('/facilities');
-    } catch (error: any) {
-      addToast({ type: 'error', title: error?.response?.data?.message || 'Failed to delete facility' });
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { message?: string } } };
+      addToast({ type: 'error', title: apiError?.response?.data?.message || 'Failed to delete facility' });
     } finally {
       setShowDeleteConfirm(false);
     }
@@ -665,7 +671,7 @@ export default function FacilityDetailsPage() {
             <button
               key={key}
               onClick={() => {
-                setActiveTab(key as any);
+                setActiveTab(key as FacilityTab);
                 // Update URL with tab parameter
                 const newSearchParams = new URLSearchParams(location.search);
                 newSearchParams.set('tab', key);
@@ -892,7 +898,7 @@ export default function FacilityDetailsPage() {
                 </div>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {facilityDevices.map((device: any) =>
+                {facilityDevices.map((device) =>
                 device.device_category === 'blulok' ? (
                   <BluLokDeviceCardShared
                     key={device.id}
@@ -1153,9 +1159,9 @@ export default function FacilityDetailsPage() {
         <DeviceGroupManager
           facilityId={facility.id}
           devices={[
-            ...((deviceHierarchy?.accessControlDevices || []).map((d: any) => ({ ...d, device_category: 'access_control' }))),
-            ...((deviceHierarchy?.blulokDevices || []).map((d: any) => ({ ...d, device_category: 'blulok' }))),
-          ] as any}
+            ...((deviceHierarchy?.accessControlDevices || []).map((d) => ({ ...d, device_category: 'access_control' as const }))),
+            ...((deviceHierarchy?.blulokDevices || []).map((d) => ({ ...d, device_category: 'blulok' as const }))),
+          ]}
           groups={deviceGroups}
           onGroupsChanged={loadDeviceGroups}
         />
@@ -1177,7 +1183,7 @@ export default function FacilityDetailsPage() {
         ) : (
           <AccessCodeManagementTab
             facilityId={facility.id}
-            devices={(deviceHierarchy?.accessControlDevices || []) as any}
+            devices={deviceHierarchy?.accessControlDevices || []}
           />
         )
       )}

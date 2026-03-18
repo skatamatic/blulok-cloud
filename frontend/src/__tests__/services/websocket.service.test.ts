@@ -18,7 +18,29 @@ Object.defineProperty(window, 'localStorage', {
 });
 
 // Mock WebSocket constructor
-let mockWebSocketInstance: any;
+type MockSocket = {
+  readyState: number;
+  send: jest.Mock;
+  close: jest.Mock;
+  addEventListener: jest.Mock;
+  removeEventListener: jest.Mock;
+};
+
+type WebSocketServiceInternals = {
+  ws: WebSocket | null;
+  isConnected: boolean;
+  subscriptions: Map<string, unknown>;
+  subscriptionIds: Map<string, string>;
+  messageHandlers: Map<string, Set<(data: unknown) => void>>;
+  connectionHandlers: Set<(connected: boolean) => void>;
+  reconnectAttempts: number;
+  connect: () => void;
+  handleOpen: (event: Event, socket: WebSocket) => void;
+  handleClose: (event: CloseEvent, socket: WebSocket) => void;
+  handleMessage: (event: MessageEvent) => void;
+};
+
+let mockWebSocketInstance: MockSocket;
 const mockWebSocket = {
   OPEN: WebSocket.OPEN,
   readyState: WebSocket.OPEN,
@@ -31,10 +53,11 @@ const mockWebSocket = {
 global.WebSocket = jest.fn(() => {
   mockWebSocketInstance = { ...mockWebSocket };
   return mockWebSocketInstance;
-}) as any;
+}) as unknown as typeof WebSocket;
 
 // Import after mocking
 import { websocketService } from '@/services/websocket.service';
+const service = websocketService as unknown as WebSocketServiceInternals;
 
 describe('WebSocketService', () => {
   beforeEach(() => {
@@ -48,13 +71,13 @@ describe('WebSocketService', () => {
     mockWebSocket.removeEventListener.mockClear();
 
     // Reset service state
-    (websocketService as any).ws = mockWebSocketInstance;
-    (websocketService as any).isConnected = true;
-    (websocketService as any).subscriptions = new Map();
-    (websocketService as any).subscriptionIds = new Map();
-    (websocketService as any).messageHandlers = new Map();
-    (websocketService as any).connectionHandlers = new Set();
-    (websocketService as any).reconnectAttempts = 0;
+    service.ws = mockWebSocketInstance as unknown as WebSocket;
+    service.isConnected = true;
+    service.subscriptions = new Map();
+    service.subscriptionIds = new Map();
+    service.messageHandlers = new Map();
+    service.connectionHandlers = new Set();
+    service.reconnectAttempts = 0;
   });
 
   describe('Connection status', () => {
@@ -63,28 +86,29 @@ describe('WebSocketService', () => {
     });
 
     it('should return false when not connected', () => {
-      (websocketService as any).isConnected = false;
+      service.isConnected = false;
       expect(websocketService.isWebSocketConnected()).toBe(false);
-      (websocketService as any).isConnected = true; // Reset
+      service.isConnected = true; // Reset
     });
   });
 
   describe('Connection management', () => {
     it('should not connect without auth token', () => {
       mockLocalStorage.getItem.mockReturnValue(null);
-      (websocketService as any).connect();
+      service.connect();
       expect(global.WebSocket).not.toHaveBeenCalled();
     });
 
     it('should create WebSocket connection with auth token', () => {
-      (websocketService as any).connect();
+      service.connect();
       expect(global.WebSocket).toHaveBeenCalledWith('ws://localhost:3000/ws?token=mock-token');
     });
 
-    it('should close existing connection before creating new one', () => {
-      (websocketService as any).ws = mockWebSocket;
-      (websocketService as any).connect();
-      expect(mockWebSocket.close).toHaveBeenCalled();
+    it('should not duplicate an open connection', () => {
+      const existingSocket = { ...mockWebSocket, readyState: WebSocket.OPEN };
+      service.ws = existingSocket as unknown as WebSocket;
+      service.connect();
+      expect(existingSocket.close).not.toHaveBeenCalled();
     });
 
     // Event listeners are set up during WebSocket creation and are tested implicitly
@@ -93,8 +117,8 @@ describe('WebSocketService', () => {
 
   describe('Subscription management', () => {
     beforeEach(() => {
-      (websocketService as any).ws = mockWebSocketInstance;
-      (websocketService as any).isConnected = true;
+      service.ws = mockWebSocketInstance as unknown as WebSocket;
+      service.isConnected = true;
       mockWebSocketInstance.readyState = WebSocket.OPEN;
     });
 
@@ -131,7 +155,7 @@ describe('WebSocketService', () => {
       expect(typeof cleanup).toBe('function');
 
       // Check that handler was added to the Set
-      const handlers = (websocketService as any).messageHandlers.get('general_stats');
+      const handlers = service.messageHandlers.get('general_stats');
       expect(handlers).toBeDefined();
       expect(handlers.has(handler)).toBe(true);
     });
@@ -141,14 +165,14 @@ describe('WebSocketService', () => {
       const cleanup = websocketService.onMessage('general_stats', handler);
 
       // Handler should be present
-      const handlers = (websocketService as any).messageHandlers.get('general_stats');
+      const handlers = service.messageHandlers.get('general_stats');
       expect(handlers).toBeDefined();
       expect(handlers.has(handler)).toBe(true);
 
       cleanup();
 
       // Handler should be removed (or set should be empty)
-      const remainingHandlers = (websocketService as any).messageHandlers.get('general_stats');
+      const remainingHandlers = service.messageHandlers.get('general_stats');
       if (remainingHandlers) {
         expect(remainingHandlers.has(handler)).toBe(false);
       }
@@ -161,26 +185,28 @@ describe('WebSocketService', () => {
       const cleanup = websocketService.onConnectionChange(handler);
 
       expect(typeof cleanup).toBe('function');
-      expect((websocketService as any).connectionHandlers.has(handler)).toBe(true);
+      expect(service.connectionHandlers.has(handler)).toBe(true);
     });
 
     it('should return cleanup function that removes handler', () => {
       const handler = jest.fn();
       const cleanup = websocketService.onConnectionChange(handler);
 
-      expect((websocketService as any).connectionHandlers.has(handler)).toBe(true);
+      expect(service.connectionHandlers.has(handler)).toBe(true);
 
       cleanup();
 
-      expect((websocketService as any).connectionHandlers.has(handler)).toBe(false);
+      expect(service.connectionHandlers.has(handler)).toBe(false);
     });
 
     it('should call connection handlers on connect', () => {
       const handler = jest.fn();
       websocketService.onConnectionChange(handler);
+      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as WebSocket;
+      service.ws = socket;
 
       // Simulate connection open by calling the handleOpen method directly
-      (websocketService as any).handleOpen();
+      service.handleOpen({} as Event, socket);
 
       expect(handler).toHaveBeenCalledWith(true);
     });
@@ -188,9 +214,11 @@ describe('WebSocketService', () => {
     it('should call connection handlers on disconnect', () => {
       const handler = jest.fn();
       websocketService.onConnectionChange(handler);
+      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as WebSocket;
+      service.ws = socket;
 
       // Simulate connection close by calling the handleClose method with a mock event
-      (websocketService as any).handleClose({ code: 1000, reason: 'test', wasClean: true });
+      service.handleClose({ code: 1000, reason: 'test', wasClean: true } as CloseEvent, socket);
 
       expect(handler).toHaveBeenCalledWith(false);
     });
@@ -198,8 +226,8 @@ describe('WebSocketService', () => {
 
   describe('Message handling', () => {
     beforeEach(() => {
-      (websocketService as any).ws = mockWebSocketInstance;
-      (websocketService as any).isConnected = true;
+      service.ws = mockWebSocketInstance as unknown as WebSocket;
+      service.isConnected = true;
     });
 
     it('should handle data messages', () => {
@@ -213,7 +241,7 @@ describe('WebSocketService', () => {
         data: { test: 'data' }
       });
 
-      (websocketService as any).handleMessage({ data: messageData });
+      service.handleMessage({ data: messageData } as MessageEvent);
 
       expect(handler).toHaveBeenCalledWith({ test: 'data' });
     });
@@ -229,7 +257,7 @@ describe('WebSocketService', () => {
         data: { critical: 2, low: 1, offline: 1 }
       });
 
-      (websocketService as any).handleMessage({ data: batteryMessageData });
+      service.handleMessage({ data: batteryMessageData } as MessageEvent);
 
       expect(handler).toHaveBeenCalledWith({ critical: 2, low: 1, offline: 1 });
     });
@@ -237,8 +265,8 @@ describe('WebSocketService', () => {
 
   describe('Diagnostics', () => {
     it('should send diagnostics request', () => {
-      (websocketService as any).ws = mockWebSocketInstance;
-      (websocketService as any).isConnected = true;
+      service.ws = mockWebSocketInstance as unknown as WebSocket;
+      service.isConnected = true;
 
       websocketService.requestDiagnostics();
 
@@ -250,13 +278,13 @@ describe('WebSocketService', () => {
 
   describe('Disconnect', () => {
     it('should close WebSocket connection', () => {
-      (websocketService as any).ws = mockWebSocket;
-      (websocketService as any).isConnected = true;
+      service.ws = mockWebSocket as unknown as WebSocket;
+      service.isConnected = true;
 
       websocketService.disconnect();
 
       expect(mockWebSocket.close).toHaveBeenCalled();
-      expect((websocketService as any).isConnected).toBe(false);
+      expect(service.isConnected).toBe(false);
     });
   });
 });

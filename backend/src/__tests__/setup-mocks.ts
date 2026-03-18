@@ -492,7 +492,7 @@ jest.mock('../models/access-log.model', () => ({
       const result: Array<{ timestamp: string; count: number }> = [];
       const { startDate, endDate, groupBy } = options;
       
-      let current = new Date(startDate);
+      const current = new Date(startDate);
       while (current <= new Date(endDate)) {
         let timestamp: string;
         switch (groupBy) {
@@ -592,12 +592,16 @@ jest.mock('../models/gateway.model', () => ({
   GatewayModel: createModelMock({
     findAll: jest.fn().mockResolvedValue([
       { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
-      { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
+      { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' },
+      { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
+      { id: 'gateway-4', facility_id: null, name: 'Gateway 4', status: 'offline', gateway_type: 'simulated' },
     ]),
     findById: jest.fn().mockImplementation((id: string) => {
       const gateways = [
         { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
-        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
+        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' },
+        { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
+        { id: 'gateway-4', facility_id: null, name: 'Gateway 4', status: 'offline', gateway_type: 'simulated' },
       ];
 
       // Handle dynamically created gateways
@@ -626,10 +630,31 @@ jest.mock('../models/gateway.model', () => ({
     update: jest.fn().mockImplementation((id: string, data: any) => {
       const gateways = [
         { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
-        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
+        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' },
+        { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
+        { id: 'gateway-4', facility_id: null, name: 'Gateway 4', status: 'offline', gateway_type: 'simulated' },
       ];
       const gateway = gateways.find(g => g.id === id);
       return Promise.resolve(gateway ? { ...gateway, ...data } : null);
+    }),
+    findReassignmentCandidates: jest.fn().mockResolvedValue([
+      { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
+    ]),
+    assignUnassignedGatewayToFacility: jest.fn().mockImplementation((id: string, targetFacilityId: string) => {
+      if (id !== 'gateway-3') {
+        return Promise.resolve({ gateway: null, displacedGatewayId: null });
+      }
+      const displacedGatewayId = targetFacilityId === 'facility-1' ? 'gateway-1' : null;
+      return Promise.resolve({
+        gateway: {
+          id: 'gateway-3',
+          facility_id: targetFacilityId,
+          name: 'Gateway 3',
+          status: 'online',
+          gateway_type: 'simulated',
+        },
+        displacedGatewayId,
+      });
     }),
     updateStatus: jest.fn().mockResolvedValue(undefined),
     delete: jest.fn().mockResolvedValue(true)

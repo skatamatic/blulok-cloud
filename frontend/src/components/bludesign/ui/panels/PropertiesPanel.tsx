@@ -64,8 +64,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onUpdateSkin,
   onSimulateState,
   dataSourceFacilityId,
-  availableSkins: _availableSkins = [],
+  availableSkins = [],
 }) => {
+  void availableSkins;
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
   

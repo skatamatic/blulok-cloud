@@ -7,6 +7,8 @@
 
 import { AssetCategory, DeviceState, PlacedObject, AssetMetadata, Orientation } from '../../../../components/bludesign/core/types';
 import { ObjectManagementService, ManagementContext } from '../../../../components/bludesign/core/services/ObjectManagementService';
+import * as THREE from 'three';
+import { AssetFactory } from '../../../../components/bludesign/assets/AssetFactory';
 
 // Helper function for creating mock assets
 const createMockAsset = (): AssetMetadata => ({
@@ -91,7 +93,6 @@ describe('ObjectManagementService - Simulation', () => {
     mockPlacedObjects = new Map();
     
     // Create a mock THREE.Group instance
-    const THREE = require('three');
     const mockMesh = new THREE.Group();
     
     mockContext = {
@@ -139,13 +140,11 @@ describe('ObjectManagementService - Simulation', () => {
     });
     
     it('should call AssetFactory.updateAssetState', () => {
-      const { AssetFactory } = require('../../../../components/bludesign/assets/AssetFactory');
       const placedObj = createMockPlacedObject('smart-obj-2');
       mockPlacedObjects.set('smart-obj-2', placedObj);
       
       // Ensure getObject returns a THREE.Group instance
       // Use the same THREE instance that ObjectManagementService will use
-      const THREE = require('three');
       const mockMesh = new THREE.Group();
       
       (mockContext.sceneManager.getObject as jest.Mock).mockReturnValue(mockMesh);
@@ -167,7 +166,6 @@ describe('ObjectManagementService - Simulation', () => {
     
     it('should handle all device states', () => {
       // Ensure getObject returns a THREE.Group instance
-      const THREE = require('three');
       const mockMesh = new THREE.Group();
       (mockContext.sceneManager.getObject as jest.Mock).mockReturnValue(mockMesh);
       
@@ -229,7 +227,6 @@ describe('Data Binding Edge Cases', () => {
     mockPlacedObjects = new Map();
     
     // Create a mock THREE.Group instance
-    const THREE = require('three');
     const mockMesh = new THREE.Group();
     
     mockSceneManager = {
@@ -301,7 +298,6 @@ describe('Data Binding Edge Cases', () => {
     mockPlacedObjects.set('partial-binding', placedObj);
     
     // Ensure getObject returns a THREE.Group instance
-    const THREE = require('three');
     const mockMesh = new THREE.Group();
     mockSceneManager.getObject.mockReturnValue(mockMesh);
     

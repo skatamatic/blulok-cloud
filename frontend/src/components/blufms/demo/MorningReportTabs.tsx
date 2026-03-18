@@ -3,8 +3,6 @@ import { Tab } from '@headlessui/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart, PieChart, Pie, Cell, ComposedChart, Line } from 'recharts';
 import { occupancyData, unitTypeData, paymentsData, securityEventsData, maintenanceData, securityEventBreakdown, workOrderList, failedPayments, vendorPerformance, zoneActivityData } from './reportData';
-// @ts-ignore - html2pdf.js doesn't have TypeScript definitions
-import html2pdf from 'html2pdf.js';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 

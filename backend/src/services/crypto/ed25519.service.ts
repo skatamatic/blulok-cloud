@@ -51,8 +51,8 @@ export class Ed25519Service {
 
 	private static async getOpsPrivateKey(): Promise<KeyLike> {
 		if (!this.opsPrivateKeyPromise) {
-			let d = config.security.opsPrivateKeyB64 as string;
-			let x = config.security.opsPublicKeyB64 as string;
+			let d = config.security.opsPrivateKeyB64;
+			let x = config.security.opsPublicKeyB64;
 			// In test, generate a valid keypair to avoid invalid env defaults
 			if (config.nodeEnv === 'test') {
 				if (!this.testGenerated) {
@@ -67,12 +67,12 @@ export class Ed25519Service {
 			const jwk: JWK = { kty: 'OKP', crv: 'Ed25519', d, x };
 			this.opsPrivateKeyPromise = importJWK(jwk, 'EdDSA') as unknown as Promise<KeyLike>;
 		}
-		return this.opsPrivateKeyPromise as Promise<KeyLike>;
+		return this.opsPrivateKeyPromise;
 	}
 
 	private static async getOpsPublicKey(): Promise<KeyLike> {
 		if (!this.opsPublicKeyPromise) {
-			let x = config.security.opsPublicKeyB64 as string;
+			let x = config.security.opsPublicKeyB64;
 			if (config.nodeEnv === 'test') {
 				if (!this.testGenerated) {
 					const { privateKey, publicKey } = await generateKeyPair('EdDSA');
@@ -85,7 +85,7 @@ export class Ed25519Service {
 			const jwk: JWK = { kty: 'OKP', crv: 'Ed25519', x } as any;
 			this.opsPublicKeyPromise = importJWK(jwk, 'EdDSA') as unknown as Promise<KeyLike>;
 		}
-		return this.opsPublicKeyPromise as Promise<KeyLike>;
+		return this.opsPublicKeyPromise;
 	}
 
   /**

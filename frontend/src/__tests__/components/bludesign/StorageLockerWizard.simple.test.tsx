@@ -14,7 +14,7 @@ jest.mock('@/components/bludesign/services/AssetService');
 // Mock framer-motion to avoid animation issues in tests
 jest.mock('framer-motion', () => ({
   motion: {
-    div: ({ children, initial, animate, exit, transition, ...props }: React.PropsWithChildren<any>) => (
+    div: ({ children, ...props }: React.PropsWithChildren<any>) => (
       <div {...props}>{children}</div>
     ),
   },

@@ -31,6 +31,14 @@ export interface Subscription {
   filters?: Record<string, any>;
 }
 
+interface WebSocketClientContext {
+  userId: string;
+  userRole: UserRole;
+  subscriptions: Map<string, Subscription>;
+  pendingSubscriptionKeys: Set<string>;
+  facilityIds?: string[];
+}
+
 /**
  * WebSocket Message Interface
  *
@@ -96,7 +104,8 @@ export interface WebSocketMessage {
 export class WebSocketService {
   private static instance: WebSocketService;
   private wss: WebSocketServer | null = null;
-  private clients: Map<WebSocket, { userId: string; userRole: UserRole; subscriptions: Map<string, Subscription>; pendingSubscriptionKeys: Set<string> }> = new Map();
+  private clients: Map<WebSocket, WebSocketClientContext> = new Map();
+  private pendingMessages: Map<WebSocket, Buffer[]> = new Map();
   private subscriptions: Map<string, Subscription> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private subscriptionRegistry: SubscriptionRegistry;
@@ -142,6 +151,28 @@ export class WebSocketService {
   }
 
   private async handleConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
+    ws.on('message', (data: Buffer) => {
+      const hasClientContext = this.clients.has(ws);
+      if (!hasClientContext) {
+        const queued = this.pendingMessages.get(ws) || [];
+        if (queued.length < 20) {
+          queued.push(data);
+          this.pendingMessages.set(ws, queued);
+        }
+        return;
+      }
+      this.handleMessage(ws, data);
+    });
+
+    ws.on('close', () => {
+      this.handleDisconnection(ws);
+    });
+
+    ws.on('error', (error: Error) => {
+      logger.error('WebSocket error:', error);
+      this.handleDisconnection(ws);
+    });
+
     try {
       const token = this.extractToken(req);
       if (!token) {
@@ -168,19 +199,11 @@ export class WebSocketService {
 
       this.clients.set(ws, client);
       logger.info(`🔌 WebSocket client connected: ${client.userId} (${client.userRole})`);
-
-      ws.on('message', (data: Buffer) => {
-        this.handleMessage(ws, data);
-      });
-
-      ws.on('close', () => {
-        this.handleDisconnection(ws);
-      });
-
-      ws.on('error', (error: Error) => {
-        logger.error('WebSocket error:', error);
-        this.handleDisconnection(ws);
-      });
+      const queuedMessages = this.pendingMessages.get(ws) || [];
+      this.pendingMessages.delete(ws);
+      for (const pendingMessage of queuedMessages) {
+        await this.handleMessage(ws, pendingMessage);
+      }
 
     } catch (error) {
       logger.error('WebSocket connection error:', error);
@@ -225,14 +248,14 @@ export class WebSocketService {
     }
   }
 
-  private async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: any): Promise<void> {
+  private async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): Promise<void> {
     if (!message.subscriptionType) {
       this.sendError(ws, 'Subscription type required');
       return;
     }
 
     const subscriptionKey = this.makeSubscriptionKey(message.subscriptionType, message.data);
-    const existing = (Array.from(client.subscriptions.values()) as Subscription[]).find((sub) =>
+    const existing = Array.from(client.subscriptions.values()).find((sub: Subscription) =>
       this.makeSubscriptionKey(sub.type, sub.filters) === subscriptionKey,
     );
     if (existing) {
@@ -295,7 +318,7 @@ export class WebSocketService {
     }
   }
 
-  private handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: any): void {
+  private handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): void {
     if (!message.subscriptionId) {
       this.sendError(ws, 'Subscription ID required');
       return;
@@ -325,7 +348,7 @@ export class WebSocketService {
     logger.info(`📡 Unsubscription: ${message.subscriptionId} for user ${client.userId}`);
   }
 
-  private handleHeartbeat(ws: WebSocket, message: WebSocketMessage, client: any): void {
+  private handleHeartbeat(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): void {
     if (message.subscriptionId) {
       const subscription = client.subscriptions.get(message.subscriptionId);
       if (subscription) {
@@ -340,7 +363,7 @@ export class WebSocketService {
     });
   }
 
-  private handleDiagnostics(ws: WebSocket, _message: WebSocketMessage, client: any): void {
+  private handleDiagnostics(ws: WebSocket, _message: WebSocketMessage, client: WebSocketClientContext): void {
     const logsManager = this.subscriptionRegistry.getLogsManager();
     const logsStats = logsManager ? logsManager.getStats() : { activeSubscriptions: 0, totalWatchers: 0 };
     
@@ -369,6 +392,7 @@ export class WebSocketService {
 
   private handleDisconnection(ws: WebSocket): void {
     const client = this.clients.get(ws);
+    this.pendingMessages.delete(ws);
     if (client) {
       logger.info(`WebSocket client disconnected: ${client.userId}`);
 
@@ -526,6 +550,7 @@ export class WebSocketService {
       this.wss = null;
     }
     this.clients.clear();
+    this.pendingMessages.clear();
     this.subscriptions.clear();
     WebSocketService.instance = undefined as any;
     logger.info('🔌 WebSocket service destroyed');

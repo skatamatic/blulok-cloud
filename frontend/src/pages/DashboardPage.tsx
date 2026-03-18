@@ -218,7 +218,7 @@ export default function DashboardPage() {
       // Managing subscriptions for units widgets
       subscriptions.push('units');
       subscriptionMap['units'] = {
-        handler: (_data: any) => {
+        handler: () => {
           // Received units update
           // The individual widget hooks will handle the data via their own subscriptions
           // This is just for logging and coordination

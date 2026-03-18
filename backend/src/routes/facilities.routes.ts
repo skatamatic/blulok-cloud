@@ -140,11 +140,11 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
       user_id: user_id as string,
     };
 
-    let result = await facilityModel.findAll(filters);
+    const result = await facilityModel.findAll(filters);
 
     // Filter by facility IDs if user has restricted access
     if (facilityIds) {
-      result.facilities = result.facilities.filter(f => facilityIds!.includes(f.id));
+      result.facilities = result.facilities.filter(f => facilityIds.includes(f.id));
       result.total = result.facilities.length;
     }
 
@@ -189,7 +189,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
 router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const id = req.params.id as string;
+    const id = req.params.id;
 
     // Check access permissions
     if (AuthService.isFacilityAdmin(user.role) || user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
@@ -260,7 +260,7 @@ router.post('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), async (req:
 router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const id = req.params.id as string;
+    const id = req.params.id;
 
     // Check permissions
     if (user.role === UserRole.FACILITY_ADMIN) {

@@ -97,8 +97,16 @@ const bluLokDeviceSchema = Joi.object({
   device_type: Joi.string().valid('blulok').required(),
   location_description: Joi.string().required(),
   unit_id: Joi.string().required(),
-  // Optional if the device already exists on gateway and will be assigned later
-  device_serial: Joi.string().optional(),
+  // Legacy alias accepted for backwards compatibility
+  serial: Joi.string().trim().min(1).optional(),
+  device_serial: Joi.string().trim().min(1).optional(),
+}).or('serial', 'device_serial').custom((value, helpers) => {
+  if (value.serial && value.device_serial && value.serial.trim() !== value.device_serial.trim()) {
+    return helpers.error('any.invalid');
+  }
+  return value;
+}).messages({
+  'any.invalid': 'serial and device_serial must match when both are provided',
 });
 
 const lockStatusSchema = Joi.object({
@@ -296,7 +304,7 @@ router.get('/access-control/:id', asyncHandler(async (req: AuthenticatedRequest,
 router.get('/facility/:facilityId/hierarchy', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const facilityId = req.params.facilityId as string;
+    const facilityId = req.params.facilityId;
 
     // Check access permissions consistent with tests
     if (user.role === UserRole.TENANT) {
@@ -385,9 +393,12 @@ router.post('/blulok', requireAdminOrFacilityAdmin, asyncHandler(async (req: Aut
 
     // TODO: Add facility access check for FACILITY_ADMIN
 
+    const normalizedSerial = String(value.device_serial || value.serial).trim();
     // Sanitize device name to prevent XSS
     const sanitizedValue = {
       ...value,
+      serial: normalizedSerial,
+      device_serial: normalizedSerial,
       name: sanitizeHtml(value.name),
       location_description: sanitizeHtml(value.location_description)
     };
@@ -440,7 +451,7 @@ router.put('/:deviceType/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV
   try {
     const user = req.user!;
     const deviceType = req.params.deviceType as 'access_control' | 'blulok';
-    const id = req.params.id as string;
+    const id = req.params.id;
 
     if (deviceType !== 'access_control' && deviceType !== 'blulok') {
       res.status(400).json({ success: false, message: 'Invalid device type' });
@@ -471,7 +482,7 @@ router.put('/:deviceType/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV
 router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const id = req.params.id as string;
+    const id = req.params.id;
 
     // Validate request body
     const { error, value } = lockStatusSchema.validate(req.body);

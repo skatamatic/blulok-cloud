@@ -16,8 +16,7 @@ export const FacilityDropdown: React.FC<FacilityDropdownProps> = ({
   selectedFacilityId,
   onSelect,
   placeholder = 'Select a facility',
-  className = '',
-  required: _required = true
+  className = ''
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);

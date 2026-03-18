@@ -14,7 +14,7 @@ export async function up(knex: Knex): Promise<void> {
       AND COLUMN_NAME = 'facility_id'
   `);
 
-  const row = (columnInfo as any)[0]?.[0];
+  const row = (columnInfo)[0]?.[0];
   if (!row || row.IS_NULLABLE === 'YES') {
     return;
   }
@@ -27,7 +27,7 @@ export async function up(knex: Knex): Promise<void> {
       AND COLUMN_NAME = 'facility_id'
       AND REFERENCED_TABLE_NAME IS NOT NULL
   `);
-  const fkName = (fkInfo as any)[0]?.[0]?.CONSTRAINT_NAME;
+  const fkName = (fkInfo)[0]?.[0]?.CONSTRAINT_NAME;
   if (fkName) {
     await knex.raw(`ALTER TABLE gateways DROP FOREIGN KEY ??`, [fkName]);
   }
@@ -68,7 +68,7 @@ export async function down(knex: Knex): Promise<void> {
       AND COLUMN_NAME = 'facility_id'
       AND REFERENCED_TABLE_NAME IS NOT NULL
   `);
-  const fkName = (fkInfo as any)[0]?.[0]?.CONSTRAINT_NAME;
+  const fkName = (fkInfo)[0]?.[0]?.CONSTRAINT_NAME;
   if (fkName) {
     await knex.raw(`ALTER TABLE gateways DROP FOREIGN KEY ??`, [fkName]);
   }
@@ -80,7 +80,7 @@ export async function down(knex: Knex): Promise<void> {
       AND TABLE_NAME = 'gateways'
       AND COLUMN_NAME = 'facility_id'
   `);
-  const columnType = (typeInfo as any)[0]?.[0]?.COLUMN_TYPE || 'char(36)';
+  const columnType = (typeInfo)[0]?.[0]?.COLUMN_TYPE || 'char(36)';
 
   await knex.raw(`
     ALTER TABLE gateways

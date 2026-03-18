@@ -182,11 +182,12 @@ export class ThumbnailGenerator {
           this.camera.position.set(0, distance, 0.01);
           break;
         case 'isometric':
-        default:
+        default: {
           // True isometric angle (atan(1/sqrt(2)) ≈ 35.264°)
           const iso = distance / Math.sqrt(3);
           this.camera.position.set(iso, iso * 1.2, iso); // Slightly higher for better view
           break;
+        }
       }
       
       this.camera.lookAt(0, size3.y * 0.3, 0); // Look slightly above center for better composition

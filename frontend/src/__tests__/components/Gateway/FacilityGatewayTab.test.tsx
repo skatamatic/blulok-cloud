@@ -6,6 +6,8 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { apiService } from '@/services/api.service';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { getWsBaseUrl } from '@/services/appConfig';
+import { useAuth } from '@/contexts/AuthContext';
+import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
 
 // Mock the API service
 jest.mock('@/services/api.service');
@@ -104,9 +106,6 @@ describe('FacilityGatewayTab', () => {
   });
 
   const renderComponent = (canManageGateway = true) => {
-    // Import component dynamically to avoid issues
-    const FacilityGatewayTab = require('@/components/Gateway/FacilityGatewayTab').default;
-
     return render(
       <WebSocketProvider>
         <FacilityGatewayTab
@@ -407,10 +406,9 @@ describe('FacilityGatewayTab', () => {
       } as any);
 
       // Elevate role to dev_admin for this test so rotation button is visible
-      const { useAuth } = require('@/contexts/AuthContext') as { useAuth: jest.Mock };
-      useAuth.mockReturnValue({ authState: { user: { id: 'test-user', role: 'dev_admin' } } });
-
-      const FacilityGatewayTab = require('@/components/Gateway/FacilityGatewayTab').default;
+      (useAuth as jest.MockedFunction<typeof useAuth>).mockReturnValue({
+        authState: { user: { id: 'test-user', role: 'dev_admin' } },
+      } as ReturnType<typeof useAuth>);
       render(
         <WebSocketProvider>
           <FacilityGatewayTab
