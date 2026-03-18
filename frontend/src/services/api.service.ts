@@ -91,12 +91,12 @@ class ApiService {
     return response.data;
   }
 
-  async createUser(userData: Record<string, unknown>) {
+  async createUser(userData: object) {
     const response = await this.api.post('/users', userData);
     return response.data;
   }
 
-  async updateUser(id: string, userData: Record<string, unknown>) {
+  async updateUser(id: string, userData: object) {
     const response = await this.api.put(`/users/${id}`, userData);
     return response.data;
   }
@@ -194,7 +194,7 @@ class ApiService {
     return response.data;
   }
 
-  async updateSystemSettings(settings: Record<string, unknown>) {
+  async updateSystemSettings(settings: object) {
     const response = await this.api.put('/system-settings', settings);
     return response.data;
   }
@@ -204,12 +204,12 @@ class ApiService {
     return response.data;
   }
 
-  async updateNotificationSettings(config: Record<string, unknown>) {
+  async updateNotificationSettings(config: object) {
     const response = await this.api.put('/system-settings/notifications', config);
     return response.data;
   }
 
-  async sendTestNotifications(payload?: { toEmail?: string; toPhone?: string; configOverride?: Record<string, unknown> }) {
+  async sendTestNotifications(payload?: { toEmail?: string; toPhone?: string; configOverride?: object }) {
     const response = await this.api.post('/system-settings/notifications/test', payload || {});
     return response.data as { success: boolean; message: string; sent?: string[]; errors?: { channel: string; message: string }[]; toEmail?: string; toPhone?: string };
   }
@@ -220,7 +220,7 @@ class ApiService {
   }
 
   // Facilities Management
-  async getFacilities(filters?: Record<string, unknown>) {
+  async getFacilities(filters?: object) {
     const response = await this.api.get('/facilities', { params: filters });
     return response.data;
   }
@@ -230,12 +230,12 @@ class ApiService {
     return response.data;
   }
 
-  async createFacility(data: Record<string, unknown>) {
+  async createFacility(data: object | FormData) {
     const response = await this.api.post('/facilities', data);
     return response.data;
   }
 
-  async updateFacility(id: string, data: Record<string, unknown>) {
+  async updateFacility(id: string, data: object | FormData) {
     const response = await this.api.put(`/facilities/${id}`, data);
     return response.data;
   }
@@ -261,12 +261,12 @@ class ApiService {
     return response.data;
   }
 
-  async createSchedule(facilityId: string, data: Record<string, unknown>) {
+  async createSchedule(facilityId: string, data: object) {
     const response = await this.api.post(`/facilities/${facilityId}/schedules`, data);
     return response.data;
   }
 
-  async updateSchedule(facilityId: string, scheduleId: string, data: Record<string, unknown>) {
+  async updateSchedule(facilityId: string, scheduleId: string, data: object) {
     const response = await this.api.put(`/facilities/${facilityId}/schedules/${scheduleId}`, data);
     return response.data;
   }
@@ -293,12 +293,12 @@ class ApiService {
     return response.data;
   }
 
-  async createGateway(data: Record<string, unknown>) {
+  async createGateway(data: object) {
     const response = await this.api.post('/gateways', data);
     return response.data;
   }
 
-  async getGateways(filters?: Record<string, unknown>) {
+  async getGateways(filters?: object) {
     const response = await this.api.get('/gateways', { params: filters });
     return response.data;
   }
@@ -308,7 +308,7 @@ class ApiService {
     return response.data;
   }
 
-  async updateGateway(id: string, data: Record<string, unknown>) {
+  async updateGateway(id: string, data: object) {
     const response = await this.api.put(`/gateways/${id}`, data);
     return response.data;
   }
@@ -435,7 +435,7 @@ class ApiService {
   }
 
   // Devices Management
-  async getDevices(filters?: Record<string, unknown>) {
+  async getDevices(filters?: object) {
     const response = await this.api.get('/devices', { params: filters });
     return response.data;
   }
@@ -482,17 +482,17 @@ class ApiService {
     return response.data;
   }
 
-  async createAccessControlDevice(data: Record<string, unknown>) {
+  async createAccessControlDevice(data: object) {
     const response = await this.api.post('/devices/access-control', data);
     return response.data;
   }
 
-  async updateAccessControlDevice(id: string, data: Record<string, unknown>) {
+  async updateAccessControlDevice(id: string, data: object) {
     const response = await this.api.put(`/devices/access-control/${id}`, data);
     return response.data;
   }
 
-  async createBluLokDevice(data: Record<string, unknown>) {
+  async createBluLokDevice(data: object) {
     const response = await this.api.post('/devices/blulok', data);
     return response.data;
   }
@@ -524,7 +524,7 @@ class ApiService {
   }
 
   // Units Management
-  async getUnits(filters?: Record<string, unknown>) {
+  async getUnits(filters?: object) {
     const response = await this.api.get('/units', { params: filters });
     return response.data;
   }
@@ -539,12 +539,12 @@ class ApiService {
     return response.data;
   }
 
-  async createUnit(data: Record<string, unknown>) {
+  async createUnit(data: object) {
     const response = await this.api.post('/units', data);
     return response.data;
   }
 
-  async updateUnit(id: string, data: Record<string, unknown>) {
+  async updateUnit(id: string, data: object) {
     const response = await this.api.put(`/units/${id}`, data);
     return response.data;
   }

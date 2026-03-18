@@ -983,14 +983,21 @@ export default function DashboardPage() {
         );
       
       case 'facility-viewer':
+        {
+          const viewerConfig = (widget.config ?? {}) as {
+            bluDesignFacilityId?: string;
+            bluLokFacilityId?: string;
+            facilityName?: string;
+          };
         return (
           <FacilityViewerWidget
             {...commonProps}
-            bluDesignFacilityId={widget.config?.bluDesignFacilityId || ''}
-            bluLokFacilityId={widget.config?.bluLokFacilityId}
-            facilityName={widget.config?.facilityName}
+            bluDesignFacilityId={viewerConfig.bluDesignFacilityId || ''}
+            bluLokFacilityId={viewerConfig.bluLokFacilityId}
+            facilityName={viewerConfig.facilityName}
           />
         );
+        }
 
       default:
         return null;

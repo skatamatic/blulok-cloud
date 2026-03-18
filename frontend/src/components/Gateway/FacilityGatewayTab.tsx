@@ -292,7 +292,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     try {
       setLoadingCandidates(true);
       const response = await apiService.getGatewayReassignmentCandidates(facilityId);
-      setCandidateGateways(response.gateways || []);
+      setCandidateGateways(Array.isArray(response.gateways) ? (response.gateways as Gateway[]) : []);
       setSelectedCandidateGatewayId('');
     } catch (error) {
       console.error('Failed to load gateway reassignment candidates:', error);

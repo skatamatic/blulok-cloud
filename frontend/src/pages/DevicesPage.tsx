@@ -232,9 +232,9 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     setCurrentPage(page);
   };
 
-  // Helper function to safely access device properties
-  const getDeviceProperty = (device: DeviceListItem, property: keyof BluLokDevice): unknown => {
-    return 'facility_id' in device ? device[property] : null;
+  const getFacilityId = (device: DeviceListItem): string | undefined => {
+    const value = (device as { facility_id?: unknown }).facility_id;
+    return typeof value === 'string' ? value : undefined;
   };
 
   // Handle highlighting when page loads - use allDevices for proper pagination calculation
@@ -573,12 +573,12 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <div className="flex items-center justify-end space-x-2">
-                        {isBlulok && getDeviceProperty(device, 'facility_id') && (
+                        {isBlulok && getFacilityId(device) && (
                           <button
                             onClick={() => {
-                              const facilityId = getDeviceProperty(device, 'facility_id');
+                              const facilityId = getFacilityId(device);
                               if (facilityId) {
-                                const facilityIndex = devices.findIndex(d => getDeviceProperty(d, 'facility_id') === facilityId);
+                                const facilityIndex = devices.findIndex(d => getFacilityId(d) === facilityId);
                                 const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
                                 navigateAndHighlight(navigate, { id: facilityId, type: 'facility', page: calculatedPage });
                               }

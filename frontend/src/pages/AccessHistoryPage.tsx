@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { Fragment, useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
@@ -48,6 +48,34 @@ interface FilterState {
   search?: string;
   limit?: number;
   offset?: number;
+}
+
+interface AccessLogMetadata {
+  user?: {
+    id: string;
+    name: string;
+    email?: string;
+    navigation_url: string;
+  };
+  facility?: {
+    id: string;
+    name: string;
+    navigation_url: string;
+  };
+  unit?: {
+    id: string;
+    number: string;
+    type?: string;
+    navigation_url: string;
+  };
+  device?: {
+    id: string;
+    name: string;
+    type?: string;
+    location?: string;
+    navigation_url: string;
+  };
+  description?: string;
 }
 
 const actionIcons = {
@@ -746,10 +774,14 @@ export default function AccessHistoryPage() {
                   const ActionIcon = getActionIcon(log.action);
                   const MethodIcon = getMethodIcon(log.method);
                   const isExpanded = expandedRow === log.id;
-                  const metadata = log.metadata || {};
+                  const metadata = (log.metadata || {}) as AccessLogMetadata;
+                  const metadataUser = metadata.user;
+                  const metadataFacility = metadata.facility;
+                  const metadataUnit = metadata.unit;
+                  const metadataDevice = metadata.device;
                   
                   return (
-                    <>
+                    <Fragment key={log.id}>
                       <tr 
                         key={log.id}
                         id={generateHighlightId('access-log', log.id)}
@@ -775,15 +807,15 @@ export default function AccessHistoryPage() {
                           <div className="flex items-center">
                             <UserIcon className="h-4 w-4 text-gray-400 mr-2" />
                             <div>
-                              {metadata.user ? (
+                              {metadataUser ? (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleNavigation(metadata.user.navigation_url, metadata.user.id, 'user');
+                                    handleNavigation(metadataUser.navigation_url, metadataUser.id, 'user');
                                   }}
                                   className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                 >
-                                  {metadata.user.name}
+                                  {metadataUser.name}
                                   <LinkIcon className="h-3 w-3 ml-1" />
                                 </button>
                               ) : (
@@ -792,7 +824,7 @@ export default function AccessHistoryPage() {
                                 </div>
                               )}
                               <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {metadata.user?.email || log.user_email || 'N/A'}
+                                {metadataUser?.email || log.user_email || 'N/A'}
                               </div>
                             </div>
                           </div>
@@ -805,15 +837,15 @@ export default function AccessHistoryPage() {
                               <CpuChipIcon className="h-4 w-4 text-gray-400 mr-2" />
                             )}
                             <div>
-                              {metadata.facility ? (
+                              {metadataFacility ? (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleNavigation(metadata.facility.navigation_url, metadata.facility.id, 'facility');
+                                    handleNavigation(metadataFacility.navigation_url, metadataFacility.id, 'facility');
                                   }}
                                   className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                 >
-                                  {metadata.facility.name}
+                                  {metadataFacility.name}
                                   <LinkIcon className="h-3 w-3 ml-1" />
                                 </button>
                               ) : (
@@ -822,19 +854,19 @@ export default function AccessHistoryPage() {
                                 </div>
                               )}
                               <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {metadata.unit ? (
+                                {metadataUnit ? (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleNavigation(metadata.unit.navigation_url, metadata.unit.id, 'unit');
+                                      handleNavigation(metadataUnit.navigation_url, metadataUnit.id, 'unit');
                                     }}
                                     className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                   >
-                                    Unit {metadata.unit.number} ({metadata.unit.type})
+                                    Unit {metadataUnit.number} ({metadataUnit.type || 'N/A'})
                                     <LinkIcon className="h-3 w-3 ml-1" />
                                   </button>
                                 ) : log.device_type === 'access_control' ? (
-                                  metadata.device?.name || 'Access Control Device'
+                                  metadataDevice?.name || 'Access Control Device'
                                 ) : (
                                   `Unit ${log.unit_number || 'N/A'}`
                                 )}
@@ -886,7 +918,7 @@ export default function AccessHistoryPage() {
                               }}
                             >
                               {/* Device Information */}
-                              {metadata.device && (
+                              {metadataDevice && (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div>
                                     <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Device Information</h4>
@@ -895,21 +927,21 @@ export default function AccessHistoryPage() {
                                         <CpuChipIcon className="h-4 w-4 text-gray-400 mr-2" />
                                         <span className="text-sm text-gray-600 dark:text-gray-400">Name:</span>
                                         <button
-                                          onClick={() => handleNavigation(metadata.device.navigation_url, metadata.device.id, 'device')}
+                                          onClick={() => handleNavigation(metadataDevice.navigation_url, metadataDevice.id, 'device')}
                                           className="ml-2 text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                         >
-                                          {metadata.device.name}
+                                          {metadataDevice.name}
                                           <LinkIcon className="h-3 w-3 ml-1" />
                                         </button>
                                       </div>
                                       <div className="flex items-center">
                                         <MapPinIcon className="h-4 w-4 text-gray-400 mr-2" />
                                         <span className="text-sm text-gray-600 dark:text-gray-400">Location:</span>
-                                        <span className="ml-2 text-sm text-gray-900 dark:text-white">{metadata.device.location}</span>
+                                        <span className="ml-2 text-sm text-gray-900 dark:text-white">{metadataDevice.location || 'N/A'}</span>
                                       </div>
                                       <div className="flex items-center">
                                         <span className="text-sm text-gray-600 dark:text-gray-400">Type:</span>
-                                        <span className="ml-2 text-sm text-gray-900 dark:text-white capitalize">{metadata.device.type}</span>
+                                        <span className="ml-2 text-sm text-gray-900 dark:text-white capitalize">{metadataDevice.type || 'unknown'}</span>
                                       </div>
                                     </div>
                                   </div>
@@ -944,7 +976,7 @@ export default function AccessHistoryPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>

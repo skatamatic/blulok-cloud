@@ -3,19 +3,26 @@ import '@testing-library/jest-dom';
 // Polyfill for TextEncoder/TextDecoder (needed for supertest)
 import { TextEncoder, TextDecoder } from 'util';
 type GlobalWithPolyfills = typeof globalThis & {
-  TextEncoder: typeof TextEncoder;
-  TextDecoder: typeof TextDecoder;
-  setImmediate: (callback: (...args: unknown[]) => void, ...args: unknown[]) => ReturnType<typeof setTimeout>;
+  setImmediate?: typeof setImmediate;
   IntersectionObserver: typeof IntersectionObserver;
 };
 const globalWithPolyfills = global as GlobalWithPolyfills;
-globalWithPolyfills.TextEncoder = TextEncoder;
-globalWithPolyfills.TextDecoder = TextDecoder;
+
+Object.defineProperty(globalThis, 'TextEncoder', {
+  writable: true,
+  configurable: true,
+  value: TextEncoder as unknown as typeof globalThis.TextEncoder,
+});
+Object.defineProperty(globalThis, 'TextDecoder', {
+  writable: true,
+  configurable: true,
+  value: TextDecoder as unknown as typeof globalThis.TextDecoder,
+});
 
 // Polyfill for setImmediate (needed for Express)
-globalWithPolyfills.setImmediate = (callback: (...args: unknown[]) => void, ...args: unknown[]) => {
+globalWithPolyfills.setImmediate = ((callback: (...args: unknown[]) => void, ...args: unknown[]) => {
   return setTimeout(callback, 0, ...args);
-};
+}) as unknown as typeof setImmediate;
 
 // Mock import.meta for Vite environment variables
 Object.defineProperty(globalThis, 'import.meta', {

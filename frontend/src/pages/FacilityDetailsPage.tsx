@@ -22,7 +22,7 @@ import {
   RectangleGroupIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { Facility, DeviceHierarchy, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
+import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
@@ -898,37 +898,41 @@ export default function FacilityDetailsPage() {
                 </div>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {facilityDevices.map((device) =>
-                device.device_category === 'blulok' ? (
-                  <BluLokDeviceCardShared
-                    key={device.id}
-                    device={device as BluLokDevice}
-                    canManage={canManage}
-                    onToggleLock={() => handleLockToggle(device as BluLokDevice)}
-                    onViewDevice={() => navigate(`/devices/${device.id}`, {
-                      state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
-                    })}
-                    onViewUnit={device.unit_id ? () => {
-                      // Preserve current tab in URL when navigating to unit
-                      const currentTab = activeTab || 'overview';
-                      navigate(`/units/${device.unit_id}`, {
-                        state: withReturnPath(location, { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` }),
-                      });
-                    } : undefined}
-                  />
-                ) : (
-                  <ACDeviceCardShared
-                    key={device.id}
-                    device={device}
-                    onViewDevice={() => navigate(`/devices/${device.id}`, {
-                      state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
-                    })}
-                    canManageAccessMethods={canManage}
-                    onAccessMethodsUpdated={loadFacilityDevices}
-                    groupNames={groupNamesByDeviceId[device.id] || []}
-                  />
-                )
-              )}
+                {facilityDevices.map((device) => {
+                  if (device.device_category === 'blulok') {
+                    const bluLokDevice = device as BluLokDevice;
+                    return (
+                      <BluLokDeviceCardShared
+                        key={device.id}
+                        device={bluLokDevice}
+                        canManage={canManage}
+                        onToggleLock={() => handleLockToggle(bluLokDevice)}
+                        onViewDevice={() => navigate(`/devices/${device.id}`, {
+                          state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
+                        })}
+                        onViewUnit={bluLokDevice.unit_id ? () => {
+                          const currentTab = activeTab || 'overview';
+                          navigate(`/units/${bluLokDevice.unit_id}`, {
+                            state: withReturnPath(location, { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` }),
+                          });
+                        } : undefined}
+                      />
+                    );
+                  }
+
+                  return (
+                    <ACDeviceCardShared
+                      key={device.id}
+                      device={device as AccessControlDevice}
+                      onViewDevice={() => navigate(`/devices/${device.id}`, {
+                        state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
+                      })}
+                      canManageAccessMethods={canManage}
+                      onAccessMethodsUpdated={loadFacilityDevices}
+                      groupNames={groupNamesByDeviceId[device.id] || []}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1160,7 +1164,11 @@ export default function FacilityDetailsPage() {
           facilityId={facility.id}
           devices={[
             ...((deviceHierarchy?.accessControlDevices || []).map((d) => ({ ...d, device_category: 'access_control' as const }))),
-            ...((deviceHierarchy?.blulokDevices || []).map((d) => ({ ...d, device_category: 'blulok' as const }))),
+            ...((deviceHierarchy?.blulokDevices || []).map((d) => ({
+              ...d,
+              name: d.unit_number ? `Unit ${d.unit_number}` : d.device_serial,
+              device_category: 'blulok' as const,
+            }))),
           ]}
           groups={deviceGroups}
           onGroupsChanged={loadDeviceGroups}

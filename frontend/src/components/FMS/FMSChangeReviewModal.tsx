@@ -220,7 +220,7 @@ export function FMSChangeReviewModal({
     }
   };
 
-  const renderChangeData = (data: any) => {
+  const renderChangeData = (data: unknown) => {
     if (!data) return null;
 
     const formatLabel = (key: string): string => {
@@ -232,16 +232,16 @@ export function FMSChangeReviewModal({
         .trim();
     };
 
-    const formatValue = (value: any): string => {
+    const formatValue = (value: unknown): string => {
       if (value === null || value === undefined) return 'N/A';
       if (typeof value === 'boolean') return value ? 'Yes' : 'No';
       if (Array.isArray(value)) {
         if (value.length === 0) return 'None';
         return value.join(', ');
       }
-      if (typeof value === 'object') {
+      if (typeof value === 'object' && value !== null) {
         // Handle nested objects (like customFields)
-        return Object.entries(value)
+        return Object.entries(value as Record<string, unknown>)
           .map(([k, v]) => `${formatLabel(k)}: ${formatValue(v)}`)
           .join(', ');
       }
@@ -260,7 +260,7 @@ export function FMSChangeReviewModal({
       return String(value);
     };
 
-    const renderField = (key: string, value: any) => {
+    const renderField = (key: string, value: unknown) => {
       // Skip internal/technical fields
       if (key === 'id' || key === 'externalId' || key === 'tenantId') return null;
 
@@ -292,7 +292,7 @@ export function FMSChangeReviewModal({
 
     return (
       <>
-        {Object.entries(data).map(([key, value]) => renderField(key, value))}
+        {Object.entries(data as Record<string, unknown>).map(([key, value]) => renderField(key, value))}
       </>
     );
   };
@@ -562,7 +562,7 @@ export function FMSChangeReviewModal({
                                   {isExpanded && (
                                     <div className="mt-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900/50 dark:to-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
                                       <div className={`grid ${change.before_data ? 'grid-cols-2' : 'grid-cols-1'} gap-6`}>
-                                        {change.before_data && (
+                                        {Boolean(change.before_data) && (
                                           <div>
                                             <div className="flex items-center mb-3">
                                               <div className="h-8 w-1 bg-red-500 rounded-full mr-2"></div>
@@ -579,7 +579,7 @@ export function FMSChangeReviewModal({
                                           <div className="flex items-center mb-3">
                                             <div className="h-8 w-1 bg-green-500 rounded-full mr-2"></div>
                                             <div className="font-semibold text-gray-900 dark:text-white text-sm">
-                                              {change.before_data ? 'New (After)' : 'Details'}
+                                              {Boolean(change.before_data) ? 'New (After)' : 'Details'}
                                             </div>
                                           </div>
                                           <div className="space-y-2">

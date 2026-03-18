@@ -65,6 +65,28 @@ interface DiagnosticsData {
   logWatchers: Record<string, number>;
 }
 
+interface LogsWsPayload {
+  logType: string;
+  content: string;
+}
+
+const isLogsWsPayload = (value: unknown): value is LogsWsPayload => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.logType === 'string' && typeof candidate.content === 'string';
+};
+
+const isDiagnosticsData = (value: unknown): value is DiagnosticsData => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.totalClients === 'number'
+    && typeof candidate.totalSubscriptions === 'number'
+    && Array.isArray(candidate.clientSubscriptions)
+    && Array.isArray(candidate.allSubscriptions)
+    && typeof candidate.logWatchers === 'object'
+    && candidate.logWatchers !== null;
+};
+
 import { getApiBaseUrl } from '@/services/appConfig';
 const API_BASE_URL = getApiBaseUrl();
 
@@ -633,11 +655,14 @@ export default function DeveloperToolsPage() {
 
   // Deployment info
   const [backendInfo, setBackendInfo] = useState<any | null>(null);
+  const appConfig = (globalThis as typeof globalThis & {
+    window?: { __APP_CONFIG__?: { frontendVersion?: string; frontendCommit?: string; frontendBuildUrl?: string } };
+  }).window?.__APP_CONFIG__;
   const frontendInfo = {
-    version: (globalThis as any)?.window?.__APP_CONFIG__?.frontendVersion as string | undefined,
-    commit: (globalThis as any)?.window?.__APP_CONFIG__?.frontendCommit as string | undefined,
-    commitShort: ((globalThis as any)?.window?.__APP_CONFIG__?.frontendCommit as string | undefined)?.slice(0,7),
-    buildUrl: (globalThis as any)?.window?.__APP_CONFIG__?.frontendBuildUrl as string | undefined,
+    version: appConfig?.frontendVersion,
+    commit: appConfig?.frontendCommit,
+    commitShort: appConfig?.frontendCommit?.slice(0, 7),
+    buildUrl: appConfig?.frontendBuildUrl,
   };
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
 
@@ -665,7 +690,7 @@ export default function DeveloperToolsPage() {
 
     const unsubscribeLogs = websocketService.onMessage('logs', (data) => {
       console.log('📋 Logs: Received WebSocket log data:', data);
-      if (data.logType && data.content) {
+      if (isLogsWsPayload(data)) {
         console.log('📋 Logs: Parsing content:', data.content.substring(0, 200) + '...');
         const logEntries = parseMultilineLogs(data.content, data.logType);
         console.log('📋 Logs: Parsed entries:', logEntries.length);
@@ -673,7 +698,9 @@ export default function DeveloperToolsPage() {
       }
     });
 
-    const unsubscribeDiagnostics = websocketService.onMessage('diagnostics', setDiagnostics);
+    const unsubscribeDiagnostics = websocketService.onMessage('diagnostics', (data) => {
+      setDiagnostics(isDiagnosticsData(data) ? data : null);
+    });
 
     setWsConnected(websocketService.isWebSocketConnected());
 

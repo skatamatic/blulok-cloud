@@ -100,7 +100,7 @@ export default function NotificationsSettingsTab() {
 
       const resp = await apiService.sendTestNotifications(payload);
       const errorDetails = Array.isArray(resp.errors) && resp.errors.length
-        ? `Errors: ${resp.errors.map((e: any) => `${e.channel}: ${e.message}`).join('; ')}`
+        ? `Errors: ${resp.errors.map((e: { channel: string; message: string }) => `${e.channel}: ${e.message}`).join('; ')}`
         : '';
 
       if (resp.success) {
@@ -115,21 +115,25 @@ export default function NotificationsSettingsTab() {
       } else {
         addToast({ type: 'error', title: 'Failed to send test notifications', message: errorDetails || resp.message });
       }
-    } catch (e: any) {
-      addToast({ type: 'error', title: 'Failed to send test notifications', message: e?.message || 'Unknown error' });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Unknown error';
+      addToast({ type: 'error', title: 'Failed to send test notifications', message });
     } finally {
       setIsTesting(false);
     }
   };
 
-  const updateConfig = (path: string, value: any) => {
+  const updateConfig = (path: string, value: unknown) => {
     setConfig((prev: NotificationsConfig) => {
       const newConfig = { ...prev };
       const keys = path.split('.');
-      let current = newConfig as any;
+      let current: Record<string, unknown> = newConfig as unknown as Record<string, unknown>;
       for (let i = 0; i < keys.length - 1; i++) {
-        if (!current[keys[i]]) current[keys[i]] = {};
-        current = current[keys[i]];
+        const next = current[keys[i]];
+        if (!next || typeof next !== 'object') {
+          current[keys[i]] = {};
+        }
+        current = current[keys[i]] as Record<string, unknown>;
       }
       current[keys[keys.length - 1]] = value;
       return newConfig;

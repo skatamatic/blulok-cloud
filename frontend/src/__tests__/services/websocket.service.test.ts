@@ -157,7 +157,7 @@ describe('WebSocketService', () => {
       // Check that handler was added to the Set
       const handlers = service.messageHandlers.get('general_stats');
       expect(handlers).toBeDefined();
-      expect(handlers.has(handler)).toBe(true);
+      expect(handlers?.has(handler)).toBe(true);
     });
 
     it('should return cleanup function that removes handler', () => {
@@ -167,7 +167,7 @@ describe('WebSocketService', () => {
       // Handler should be present
       const handlers = service.messageHandlers.get('general_stats');
       expect(handlers).toBeDefined();
-      expect(handlers.has(handler)).toBe(true);
+      expect(handlers?.has(handler)).toBe(true);
 
       cleanup();
 
@@ -202,7 +202,7 @@ describe('WebSocketService', () => {
     it('should call connection handlers on connect', () => {
       const handler = jest.fn();
       websocketService.onConnectionChange(handler);
-      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as WebSocket;
+      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as unknown as WebSocket;
       service.ws = socket;
 
       // Simulate connection open by calling the handleOpen method directly
@@ -214,7 +214,7 @@ describe('WebSocketService', () => {
     it('should call connection handlers on disconnect', () => {
       const handler = jest.fn();
       websocketService.onConnectionChange(handler);
-      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as WebSocket;
+      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as unknown as WebSocket;
       service.ws = socket;
 
       // Simulate connection close by calling the handleClose method with a mock event
