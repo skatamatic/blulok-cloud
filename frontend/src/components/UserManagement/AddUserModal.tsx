@@ -1,32 +1,47 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { AxiosError } from 'axios';
 import { useForm } from 'react-hook-form';
 import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/Modal/Modal';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
+import { useToast } from '@/contexts/ToastContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface AddUserFormData {
   email: string;
   firstName: string;
   lastName: string;
+  phoneNumber: string;
   password: string;
   confirmPassword: string;
   role: UserRole;
+  /** Omit password — user completes first-time login / invite flow */
+  skipPassword: boolean;
+  /** After create, send invite (SMS if phone set, else email when enabled). Only when skip password. */
+  sendInvite: boolean;
 }
 
 interface AddUserModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  /** When true, default "send invite" on for skip-password flow (e.g. facility / HMI dashboard). */
+  defaultSendInviteWhenSkippingPassword?: boolean;
 }
 
 export const AddUserModal: React.FC<AddUserModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  defaultSendInviteWhenSkippingPassword = true,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const { addToast } = useToast();
+  const { authState } = useAuth();
+  const [facilitiesForSelect, setFacilitiesForSelect] = useState<Array<{ id: string; name: string }>>([]);
+  const [loadingFacilities, setLoadingFacilities] = useState(false);
+  const [selectedFacilityIds, setSelectedFacilityIds] = useState<string[]>([]);
 
   const {
     register,
@@ -34,13 +49,116 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     formState: { errors },
     watch,
     reset,
-  } = useForm<AddUserFormData>();
+    setValue,
+    unregister,
+  } = useForm<AddUserFormData>({
+    defaultValues: {
+      skipPassword: false,
+      sendInvite: defaultSendInviteWhenSkippingPassword,
+      phoneNumber: '',
+    },
+  });
 
   const password = watch('password');
+  const skipPassword = watch('skipPassword');
+  const role = watch('role') as UserRole | '';
+
+  const needsFacilityAssignment = useMemo(
+    () => !!role && ![UserRole.ADMIN, UserRole.DEV_ADMIN].includes(role as UserRole),
+    [role]
+  );
+
+  const creatableRoleOptions = useMemo(() => {
+    const u = authState.user;
+    if (!u) {
+      return [
+        UserRole.TENANT,
+        UserRole.MAINTENANCE,
+        UserRole.BLULOK_TECHNICIAN,
+        UserRole.FACILITY_ADMIN,
+        UserRole.ADMIN,
+      ];
+    }
+    if (u.role === UserRole.FACILITY_ADMIN) {
+      return [UserRole.TENANT, UserRole.MAINTENANCE, UserRole.BLULOK_TECHNICIAN];
+    }
+    const base = [
+      UserRole.TENANT,
+      UserRole.MAINTENANCE,
+      UserRole.BLULOK_TECHNICIAN,
+      UserRole.FACILITY_ADMIN,
+      UserRole.ADMIN,
+      UserRole.DEV_ADMIN,
+    ];
+    if (u.role !== UserRole.DEV_ADMIN) {
+      return base.filter((r) => r !== UserRole.DEV_ADMIN);
+    }
+    return base;
+  }, [authState.user]);
+
+  useEffect(() => {
+    if (skipPassword) {
+      unregister('password');
+      unregister('confirmPassword');
+    }
+  }, [skipPassword, unregister]);
+
+  useEffect(() => {
+    if (role === UserRole.ADMIN || role === UserRole.DEV_ADMIN) {
+      setSelectedFacilityIds([]);
+    }
+  }, [role]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingFacilities(true);
+      try {
+        const res = await apiService.getFacilities();
+        if (cancelled || !res?.success || !Array.isArray(res.facilities)) return;
+        let list = res.facilities as Array<{ id: string; name: string }>;
+        if (authState.user?.role === UserRole.FACILITY_ADMIN && authState.user.facilityIds?.length) {
+          const allowed = new Set(authState.user.facilityIds);
+          list = list.filter((f) => allowed.has(f.id));
+        }
+        setFacilitiesForSelect(list);
+      } catch {
+        if (!cancelled) setFacilitiesForSelect([]);
+      } finally {
+        if (!cancelled) setLoadingFacilities(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, authState.user?.role, authState.user?.facilityIds]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedFacilityIds([]);
+    }
+  }, [isOpen]);
+
+  const toggleFacility = (facilityId: string) => {
+    setSelectedFacilityIds((prev) =>
+      prev.includes(facilityId) ? prev.filter((id) => id !== facilityId) : [...prev, facilityId]
+    );
+  };
 
   const onSubmit = async (data: AddUserFormData) => {
-    if (data.password !== data.confirmPassword) {
-      setError('Passwords do not match');
+    if (!data.skipPassword) {
+      if (data.password !== data.confirmPassword) {
+        setError('Passwords do not match');
+        return;
+      }
+    }
+
+    const roleVal = data.role as UserRole;
+    const needsFacilities =
+      roleVal && ![UserRole.ADMIN, UserRole.DEV_ADMIN].includes(roleVal);
+    if (needsFacilities && selectedFacilityIds.length === 0) {
+      setError('Select at least one facility for this role.');
       return;
     }
 
@@ -48,16 +166,50 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     setError('');
 
     try {
-      const response = await apiService.createUser({
+      const payload: Record<string, unknown> = {
         email: data.email,
         firstName: data.firstName,
         lastName: data.lastName,
-        password: data.password,
         role: data.role,
-      });
+      };
+      if (needsFacilities) {
+        payload.facilityIds = selectedFacilityIds;
+      }
+      if (data.phoneNumber?.trim()) {
+        payload.phoneNumber = data.phoneNumber.trim();
+      }
+      if (!data.skipPassword) {
+        payload.password = data.password;
+      }
+      if (data.skipPassword && data.sendInvite) {
+        payload.sendInvite = true;
+      }
+
+      const response = await apiService.createUser(payload) as {
+        success: boolean;
+        message?: string;
+        inviteSent?: boolean;
+        inviteWarning?: string;
+      };
 
       if (response.success) {
+        if (response.inviteWarning) {
+          addToast({ type: 'warning', title: 'User created', message: response.inviteWarning });
+        } else if (data.skipPassword && data.sendInvite && response.inviteSent) {
+          addToast({
+            type: 'success',
+            title: 'User created',
+            message: 'Invite sent — user can complete setup from SMS or email.',
+          });
+        } else if (data.skipPassword && data.sendInvite && response.inviteSent === false) {
+          addToast({
+            type: 'info',
+            title: 'User created',
+            message: 'Invite was not sent — check notification settings or use Resend invite on the user profile.',
+          });
+        }
         reset();
+        setSelectedFacilityIds([]);
         onSuccess();
         onClose();
       } else {
@@ -73,7 +225,12 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
   };
 
   const handleClose = () => {
-    reset();
+    reset({
+      skipPassword: false,
+      sendInvite: defaultSendInviteWhenSkippingPassword,
+      phoneNumber: '',
+    });
+    setSelectedFacilityIds([]);
     setError('');
     onClose();
   };
@@ -152,6 +309,22 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
             </div>
 
             <div>
+              <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Phone number <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                {...register('phoneNumber')}
+                type="tel"
+                autoComplete="tel"
+                className="input mt-1"
+                placeholder="+1… or 10-digit (E.164 preferred)"
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Used for SMS invites and login. Leave blank if not needed.
+              </p>
+            </div>
+
+            <div>
               <label htmlFor="role" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Role
               </label>
@@ -160,18 +333,108 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
               className="input mt-1"
             >
               <option value="">Select a role</option>
-              <option value={UserRole.TENANT}>Tenant</option>
-              <option value={UserRole.MAINTENANCE}>Maintenance</option>
-              <option value={UserRole.BLULOK_TECHNICIAN}>BluLok Technician</option>
-              <option value={UserRole.FACILITY_ADMIN}>Facility Admin</option>
-              <option value={UserRole.ADMIN}>Admin</option>
-              <option value={UserRole.DEV_ADMIN}>Dev Admin</option>
+              {creatableRoleOptions.map((r) => (
+                <option key={r} value={r}>
+                  {r === UserRole.TENANT && 'Tenant'}
+                  {r === UserRole.MAINTENANCE && 'Maintenance'}
+                  {r === UserRole.BLULOK_TECHNICIAN && 'BluLok Technician'}
+                  {r === UserRole.FACILITY_ADMIN && 'Facility Admin'}
+                  {r === UserRole.ADMIN && 'Admin'}
+                  {r === UserRole.DEV_ADMIN && 'Dev Admin'}
+                </option>
+              ))}
             </select>
             {errors.role && (
               <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.role.message}</p>
             )}
             </div>
 
+            {needsFacilityAssignment && (
+              <div>
+                <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Facilities <span className="text-red-500">*</span>
+                </span>
+                {loadingFacilities ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Loading facilities…</p>
+                ) : facilitiesForSelect.length === 0 ? (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    No facilities available. You may need facility access, or create a facility first.
+                  </p>
+                ) : (
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-600 divide-y divide-gray-200 dark:divide-gray-600">
+                    {facilitiesForSelect.map((f) => (
+                      <label
+                        key={f.id}
+                        className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900/50"
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                          checked={selectedFacilityIds.includes(f.id)}
+                          onChange={() => toggleFacility(f.id)}
+                        />
+                        <span className="text-sm text-gray-900 dark:text-white">{f.name || f.id}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  User is linked to these facilities immediately (same rules as User → Facilities).
+                </p>
+              </div>
+            )}
+
+            {role && (role === UserRole.ADMIN || role === UserRole.DEV_ADMIN) && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 rounded-lg bg-gray-100 dark:bg-gray-800/80 px-3 py-2">
+                Global roles do not use per-facility associations.
+              </p>
+            )}
+
+            <div className="rounded-lg border border-gray-200 dark:border-gray-600 p-4 space-y-3 bg-gray-50/80 dark:bg-gray-900/40">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                  {...register('skipPassword', {
+                    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+                      if (e.target.checked) {
+                        setValue('password', '');
+                        setValue('confirmPassword', '');
+                        setValue('sendInvite', defaultSendInviteWhenSkippingPassword);
+                      }
+                    },
+                  })}
+                />
+                <span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    Skip password (first-time login)
+                  </span>
+                  <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    User will set their password via the invite / app flow. You can still add an optional phone for SMS.
+                  </span>
+                </span>
+              </label>
+
+              {skipPassword && (
+                <label className="flex items-start gap-3 cursor-pointer pl-1">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                    {...register('sendInvite')}
+                  />
+                  <span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">
+                      Send invite SMS or email now
+                    </span>
+                    <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      Sends the invite link and verification code. SMS if phone is set; otherwise email (when enabled in system settings). Uncheck to skip — use &quot;Resend invite&quot; on the user later.
+                    </span>
+                  </span>
+                </label>
+              )}
+            </div>
+
+            {!skipPassword && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -216,6 +479,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
               )}
             </div>
             </div>
+            )}
           </div>
         </ModalBody>
 

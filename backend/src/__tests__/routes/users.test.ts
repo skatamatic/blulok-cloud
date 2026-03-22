@@ -246,7 +246,8 @@ describe('Users Routes', () => {
       password: 'SecurePassword123!',
       firstName: 'New',
       lastName: 'User',
-      role: 'tenant'
+      role: 'tenant',
+      facilityIds: ['550e8400-e29b-41d4-a716-446655440001'],
     };
 
     it('should create user for DEV_ADMIN', async () => {
@@ -366,6 +367,75 @@ describe('Users Routes', () => {
 
       expectBadRequest(response);
     });
+
+    it('should return 400 when scoped role is missing facilityIds', async () => {
+      const response = await request(app)
+        .post('/api/v1/users')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          email: 'noscope@test.com',
+          password: 'SecurePassword123!',
+          firstName: 'No',
+          lastName: 'Scope',
+          role: 'tenant',
+          facilityIds: [],
+        })
+        .expect(400);
+
+      expectBadRequest(response);
+      expect(response.body.message).toMatch(/facility/i);
+    });
+
+    it('should return 403 when facility admin creates an admin user', async () => {
+      const response = await request(app)
+        .post('/api/v1/users')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          email: 'badrole@test.com',
+          password: 'SecurePassword123!',
+          firstName: 'Bad',
+          lastName: 'Role',
+          role: 'admin',
+          facilityIds: [],
+        })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 403 when facility admin assigns a facility they do not manage', async () => {
+      const response = await request(app)
+        .post('/api/v1/users')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          email: 'wrongfac@test.com',
+          password: 'SecurePassword123!',
+          firstName: 'Wrong',
+          lastName: 'Fac',
+          role: 'tenant',
+          facilityIds: ['550e8400-e29b-41d4-a716-446655440002'],
+        })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 400 when global role includes facilityIds', async () => {
+      const response = await request(app)
+        .post('/api/v1/users')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          email: 'globalwithfac@test.com',
+          password: 'SecurePassword123!',
+          firstName: 'G',
+          lastName: 'W',
+          role: 'admin',
+          facilityIds: ['550e8400-e29b-41d4-a716-446655440001'],
+        })
+        .expect(400);
+
+      expectBadRequest(response);
+    });
   });
 
   describe('PUT /api/v1/users/:id - Update User', () => {
@@ -407,6 +477,16 @@ describe('Users Routes', () => {
 
       expectSuccess(response);
       expect(response.body).toHaveProperty('user');
+    });
+
+    it('should return 403 when facility admin tries to update another facility_admin on the same facility', async () => {
+      const response = await request(app)
+        .put('/api/v1/users/facility-admin-2')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send(updateData)
+        .expect(403);
+
+      expectForbidden(response);
     });
 
     it('should allow users to update their own profile', async () => {
@@ -478,6 +558,21 @@ describe('Users Routes', () => {
 
       expectBadRequest(response);
     });
+
+    it('should return 403 when facility admin tries to change role to admin', async () => {
+      const response = await request(app)
+        .put(`/api/v1/users/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          firstName: 'Updated',
+          lastName: 'Name',
+          role: 'admin',
+          isActive: true,
+        })
+        .expect(403);
+
+      expectForbidden(response);
+    });
   });
 
   describe('DELETE /api/v1/users/:id - Delete User', () => {
@@ -535,6 +630,26 @@ describe('Users Routes', () => {
         .expect(403);
 
       expectForbidden(response);
+    });
+  });
+
+  describe('POST /api/v1/users/:id/resend-invite', () => {
+    it('should return 403 for facility admin without access to target user', async () => {
+      const response = await request(app)
+        .post(`/api/v1/users/${testData.users.facility2Tenant.id}/resend-invite`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should allow dev admin to resend invite', async () => {
+      const response = await request(app)
+        .post(`/api/v1/users/${testData.users.tenant.id}/resend-invite`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
     });
   });
 
@@ -603,7 +718,8 @@ describe('Users Routes', () => {
         password: 'SecurePassword123!',
         firstName: '<script>alert("xss")</script>',
         lastName: 'User',
-        role: 'tenant'
+        role: 'tenant',
+        facilityIds: ['550e8400-e29b-41d4-a716-446655440001'],
       };
 
       const response = await request(app)

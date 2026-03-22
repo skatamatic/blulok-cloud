@@ -1271,6 +1271,18 @@ jest.mock('../models/user.model', () => {
       updated_at: new Date('2024-01-01'),
     },
     {
+      id: 'facility-admin-2',
+      email: 'facilityadmin2@test.com',
+      login_identifier: 'facilityadmin2@test.com',
+      password_hash: 'hashed-password',
+      first_name: 'Facility',
+      last_name: 'AdminTwo',
+      role: 'facility_admin',
+      is_active: true,
+      created_at: new Date('2024-01-01'),
+      updated_at: new Date('2024-01-01'),
+    },
+    {
       id: 'admin-1',
       email: 'admin@test.com',
       login_identifier: 'admin@test.com',
@@ -1451,6 +1463,9 @@ jest.mock('../models/user-facility-association.model', () => ({
         getUserFacilityIds: jest.fn().mockImplementation((userId: string) => {
           // Return mock facility IDs based on user
           if (userId === 'facility-admin-1') {
+            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
+          }
+          if (userId === 'facility-admin-2') {
             return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
           }
           if (userId === 'tenant-1') {

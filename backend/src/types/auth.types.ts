@@ -114,14 +114,20 @@ export interface LoginResponse {
  * Data required to create a new user account in the system.
  * Used by administrators and facility managers.
  *
- * Security: Password must meet complexity requirements.
+ * Security: When a password is supplied, the HTTP layer enforces complexity rules.
+ * Password may be omitted so the account uses the first-time / invite flow (`requires_password_reset`).
  * Audit: User creation is logged with performing user details.
  */
 export interface CreateUserRequest {
   /** User's email address (must be unique) */
   email: string;
-  /** Initial password (will be hashed with bcrypt) */
-  password: string;
+  /**
+   * Initial password (bcrypt-hashed). If omitted or empty, a placeholder hash is stored and
+   * `requires_password_reset` is set so the user completes first-time / invite flow.
+   */
+  password?: string;
+  /** Normalized E.164 phone (optional; must be unique when set) */
+  phoneNumber?: string | null;
   /** User's first name */
   firstName: string;
   /** User's last name */
@@ -137,12 +143,15 @@ export interface CreateUserRequest {
  * Used by administrators for user management.
  *
  * Security: Role changes are audited and require appropriate permissions.
+ * Phone numbers are normalized to E.164; empty string clears `phone_number`.
  */
 export interface UpdateUserRequest {
   /** Updated first name */
   firstName?: string;
   /** Updated last name */
   lastName?: string;
+  /** Updated phone (raw); empty string clears the stored E.164 number */
+  phoneNumber?: string | null;
   /** Updated role (requires admin privileges) */
   role?: UserRole;
   /** Account activation status */

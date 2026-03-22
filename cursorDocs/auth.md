@@ -355,6 +355,23 @@ npm run db:setup            # Full setup: init + migrate + seed
 3. **Secure Storage**: Tokens stored in httpOnly cookies (recommended) or localStorage
 4. **Blacklisting**: Consider implementing token blacklisting for logout
 
+## Admin user provisioning (dashboard / operator UI)
+
+- **Phone number**: Stored as normalized E.164 in `users.phone_number` (unique when set). Admin APIs:
+  - `POST /api/v1/users` accepts optional `phoneNumber`, optional `password`, optional `sendInvite`, and optional **`facilityIds`** (UUID array).
+  - `PUT /api/v1/users/:id` accepts optional `phoneNumber`; empty string clears the number.
+- **Facility assignment on create**: For roles that are **not** globally scoped (`admin`, `dev_admin`), the API requires **at least one** `facilityId`. Associations are applied with `UserFacilityAssociationModel.addUserToFacility` per ID (same behavior as `PUT /user-facilities/:userId`). Global roles must send **no** `facilityIds` (empty array). If association insert fails (e.g. invalid FK), the user row is rolled back via `UserModel.deleteById`.
+- **RBAC (create)**:
+  - **`facility_admin`** may only create **`tenant`**, **`maintenance`**, **`blulok_technician`** (enforced in `users-rbac.util.ts` + route).
+  - Only **`dev_admin`** may create **`dev_admin`** users (unchanged).
+  - **`facility_admin`** may only include facility IDs that appear in **`req.user.facilityIds`** (same idea as `PUT /user-facilities/:userId`).
+- **RBAC (update role)**: **`facility_admin`** cannot assign **`admin`**, **`facility_admin`**, or **`dev_admin`**; only global administrators (`admin` / `dev_admin`) may assign **`admin`** or **`facility_admin`** (`assertRequesterMayAssignRoleOnUpdate`).
+- **RBAC (update user / PUT)**: **`facility_admin`** may only **update** accounts whose **existing** role is **`tenant`**, **`maintenance`**, or **`blulok_technician`** (matches create scope). They must not edit **`admin`**, **`facility_admin`**, **`dev_admin`**, or another peer **`facility_admin`**—even when **`checkFacilityAccess`** passes due to a shared facility—except for **self** (`id === req.user.userId`). Enforced in `users.routes.ts` using `FACILITY_ADMIN_CREATABLE_ROLES`.
+- **Resend invite**: `POST /users/:id/resend-invite` now uses **`checkFacilityAccess`** so facility admins cannot resend for users outside their facilities.
+- **Password optional**: If `password` is omitted or blank, `AuthService.createUser` stores a non-login placeholder hash (`!`) and sets `requires_password_reset` so the user must complete first-time setup.
+- **Invite SMS / email**: When `sendInvite: true` and no password was set, the server calls `FirstTimeUserService.sendInvite` after create. Delivery uses **SMS** when `phone_number` is set, otherwise **email** (if enabled in notification settings). Clients may omit `sendInvite` or use **Resend invite** on the user profile later.
+- **UI** (`AddUserModal`): “Skip password” enables first-time flow; “Send invite SMS or email now” maps to `sendInvite` (can be unchecked to skip both phone requirement and invite). Role options are filtered for **facility admins** to match the backend. **Facilities** multi-select sends `facilityIds` when the role requires facility scope.
+
 ## Future Enhancements
 
 ### Planned Security Improvements
@@ -406,3 +423,12 @@ The canonical ingestion contract supports explicit deny reasons for security and
 - `invalid_credential`
 - `unknown_error`
 - `other`
+
+## Login: `key_generation_required` (no `X-App-Device-Id`)
+
+Web and gateway tooling often log in **without** `X-App-Device-Id`. In that case, **`facility_admin`**, **`admin`**, and **`dev_admin`** must **not** receive `key_generation_required: true` (mobile key onboarding is not applicable). **`tenant`** and **`maintenance`** still receive the flag so app clients can complete device registration when appropriate.
+
+**Regression tests:**
+
+- `backend/src/__tests__/services/auth.service.login-key-generation.test.ts` — real `AuthService.login` without `X-App-Device-Id` (`jest.unmock('@/services/auth.service')`; global `setup-mocks` otherwise replaces `AuthService` with a stub).
+- `backend/src/__tests__/services/auth.service.login-app-device.test.ts` — with `appDeviceId`, `key_generation_required` when no active device row vs omitted when a row exists (mocks `UserDeviceModel`).

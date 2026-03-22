@@ -2,6 +2,9 @@ import { Server as HTTPServer } from 'http';
 import { logger } from '@/utils/logger';
 import { GatewayTransport } from './gateway-transport.interface';
 import { WebsocketGatewayTransport } from './websocket-gateway.transport';
+import { GatewayModel } from '@/models/gateway.model';
+import { WebSocketService } from '@/services/websocket.service';
+import { GatewayStatusSubscriptionManager } from '@/services/subscriptions/gateway-status-subscription-manager';
 
 /**
  * Gateway Client Information Interface
@@ -30,7 +33,7 @@ class NoopTransport implements GatewayTransport {
  * - Automatic connection management and cleanup
  *
  * Authentication & Authorization:
- * - JWT token required in WebSocket upgrade request
+ * - After upgrade, client must send JSON { type: 'AUTH', token, facilityId }
  * - Restricted to FACILITY_ADMIN, ADMIN, and DEV_ADMIN roles
  * - Facility-scoped permissions prevent cross-tenant access
  * - Token validation on connection establishment
@@ -50,6 +53,7 @@ class NoopTransport implements GatewayTransport {
 export class GatewayEventsService {
   private static instance: GatewayEventsService;
   private transport: GatewayTransport;
+  private readonly gatewayModel = new GatewayModel();
   private unbindTransportConnectionListener?: () => void;
   private connectionListeners = new Set<(event: {
     facilityId: string;
@@ -91,6 +95,7 @@ export class GatewayEventsService {
         reason?: string;
         lastActivityAt?: number;
       }) => {
+        void this.syncGatewayDbWithInboundConnection(event);
         this.connectionListeners.forEach((listener) => {
           try {
             listener(event);
@@ -191,6 +196,43 @@ export class GatewayEventsService {
     }
     if (this.transport && typeof this.transport.shutdown === 'function') {
       this.transport.shutdown();
+    }
+  }
+
+  /**
+   * Keep `gateways.status` aligned with inbound `/ws/gateway` sessions for mesh/physical gateways.
+   * HTTP gateways use outbound polling to report liveness; do not overwrite their DB status from inbound WS.
+   */
+  private async syncGatewayDbWithInboundConnection(event: {
+    facilityId: string;
+    connected: boolean;
+    timestamp: number;
+    reason?: string;
+    lastActivityAt?: number;
+  }): Promise<void> {
+    const { facilityId, connected } = event;
+    try {
+      const gw = await this.gatewayModel.findByFacilityId(facilityId);
+      if (!gw?.gateway_type) {
+        return;
+      }
+      if (gw.gateway_type === 'http') {
+        return;
+      }
+
+      const next: 'online' | 'offline' = connected ? 'online' : 'offline';
+      if (next === 'online') {
+        await this.gatewayModel.updateStatusAndLastSeen(gw.id, 'online');
+      } else {
+        await this.gatewayModel.updateStatus(gw.id, 'offline');
+      }
+
+      const wsService = WebSocketService.getInstance();
+      const mgr = wsService.getSubscriptionRegistry().getManager('gateway_status') as GatewayStatusSubscriptionManager | undefined;
+      mgr?.invalidateCache();
+      await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+    } catch (error) {
+      logger.warn(`syncGatewayDbWithInboundConnection failed facility=${facilityId}`, error);
     }
   }
 }

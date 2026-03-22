@@ -154,8 +154,8 @@ Facility
 ### Smart Defaults
 - **Pre-filled facility** when creating from facility page
 - **Intelligent user filtering** based on roles
-- **Automatic gateway assignment** based on facility
-- **Gateway assignment controls** available in the Facility Gateway tab for Admin/Dev Admin
+- **Facility-scoped gateway session** (mesh uses facility UUID in `AUTH`); **DB binding** of a gateway row to a facility is via admin/dev **reassignment** or provisioning, not implicit from the mesh UI alone
+- **Gateway assignment controls** in the Facility Gateway tab (Admin/Dev Admin): assign/replace from the **unassigned online** pool
 - **Status defaults** appropriate for entity type
 
 ## API Integration
@@ -179,6 +179,23 @@ Facility
 - `GET /api/v1/gateways/reassignment-candidates/:facilityId` - List unassigned online gateways eligible for facility assignment
 - `PATCH /api/v1/gateways/:id/reassign` - Assign or replace facility gateway with server-side validation (admin/dev admin only)
 - `POST /api/v1/internal/gateway/access-events` - Canonical gateway/app/keypad access-event ingestion path via WS `PROXY_REQUEST`
+
+#### Why mesh “facility id” ≠ automatic DB assignment
+
+- **Gateway app / inbound WebSocket**: Operators enter the facility UUID so `AUTH` on `/ws/gateway` uses a JWT scoped to that facility. That only establishes **which facility the session is allowed to represent** for realtime commands and proxy.
+- **Database**: Device sync, firmware, and internal routes resolve the **gateway row** with `GatewayModel.findByFacilityId` — i.e. **`gateways.facility_id`** must point at that facility. That link is **inventory**: which physical gateway **record** is bound to the facility.
+
+**Manual reassignment (admin/dev admin)** exists because:
+
+1. **Unassigned pool** — Migration `060` allows `gateways.facility_id` to be **NULL**. `findReassignmentCandidates()` returns **online** gateways with **no** facility yet. Admins attach that hardware to a site when ready.
+2. **Replace / RMA** — `assignUnassignedGatewayToFacility` can **displace** the existing facility gateway (previous row becomes unassigned) so the new unit becomes the one facility gateway.
+3. **Order of operations** — Facilities and gateway hardware are often provisioned at different times; the dashboard flow matches **real** rollout without requiring a single automatic “register” path to write `facility_id` (there is no separate auto-assign endpoint in `gateway.routes.ts` beyond this reassignment API).
+
+**Summary:** Facility UUID in the mesh config handles **auth + routing** for the session; **PATCH reassign** handles **which gateway row owns** that facility in the DB for devices and APIs.
+
+**Inbound WebSocket does not assign `gateways.facility_id`.** `AUTH` with `facilityId` only scopes the socket. The server does **not** INSERT a gateway row or SET `facility_id` on connect.
+
+**What *does* happen on connect (when a row already exists):** after `AUTH`, the backend runs `findByFacilityId(facilityId)` and, if it finds a gateway for that facility, updates **`status`** to **`online`** and **`last_seen`**. That is why the Gateway tab often flips to **online immediately** after you connect — you are seeing **liveness**, not first-time **inventory linking**. If no row exists yet for that facility, the facility Gateway tab still shows **no gateway** (or you must assign from the unassigned pool), even though the WS session may be authenticated.
 
 ### Access Event Ingestion Contract (Canonical)
 

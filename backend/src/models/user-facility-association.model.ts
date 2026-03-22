@@ -171,6 +171,7 @@ export class UserFacilityAssociationModel extends BaseModel {
       .select(
         'users.id',
         'users.email',
+        'users.phone_number',
         'users.first_name',
         'users.last_name',
         'users.role',

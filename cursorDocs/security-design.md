@@ -71,6 +71,7 @@ This document summarizes the new centralized trust model implemented in the back
     - `POST /api/v1/access-codes/push/:facilityId` - Push signed ACCESS_CODE_UPDATE command to gateway
     - `POST/GET/PUT/DELETE /api/v1/device-groups...` - Generic device group management
 - Websocket Gateway at `/ws/gateway` (facility-scoped) for:
+  - **Mesh / Docker sim**: see `cursorDocs/gateway-integration.md` (`CLOUD_WS`, `CLOUD_API`, Cloud Run caveats).
   - Secure command delivery (denylist add/remove, time sync) via unicast/broadcast
   - Full REST API proxying over WS using loopback HTTP with facility guard
   - Auth: JWT required; roles allowed: DEV_ADMIN, ADMIN, FACILITY_ADMIN; one facilityId per connection

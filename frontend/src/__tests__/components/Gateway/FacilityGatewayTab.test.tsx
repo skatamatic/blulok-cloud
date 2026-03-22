@@ -59,6 +59,11 @@ describe('FacilityGatewayTab', () => {
     mockApiService.reassignGateway.mockResolvedValue({
       success: true
     } as any);
+    mockApiService.getGatewayWsStatus = jest.fn().mockResolvedValue({
+      success: true,
+      facilityId,
+      connected: false,
+    });
     Object.defineProperty(navigator, 'clipboard', {
       value: {
         writeText: jest.fn().mockResolvedValue(undefined),
@@ -136,6 +141,45 @@ describe('FacilityGatewayTab', () => {
       renderComponent();
       await waitFor(() => {
         expect(screen.getByText('No Gateway Configured')).toBeInTheDocument();
+      });
+    });
+
+    it('shows inbound WebSocket banner when no gateway row but session is connected', async () => {
+      mockApiService.getGatewayWsStatus = jest.fn().mockResolvedValue({
+        success: true,
+        facilityId,
+        connected: true,
+        lastPongAt: '2025-01-01T12:00:00.000Z',
+      });
+
+      renderComponent();
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toBeInTheDocument();
+        expect(screen.getByText('Inbound WebSocket session is active')).toBeInTheDocument();
+        expect(screen.getByText(/there is no gateway record/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows Gateway status (database) when a gateway row exists', async () => {
+      mockApiService.getGateways.mockResolvedValue({
+        success: true,
+        gateways: [
+          {
+            id: 'gateway-1',
+            facility_id: facilityId,
+            name: 'Row Gateway',
+            status: 'online',
+            gateway_type: 'physical',
+          },
+        ],
+      });
+
+      renderComponent();
+
+      await waitFor(() => {
+        expect(screen.getByText('Gateway status (database)')).toBeInTheDocument();
+        expect(screen.getAllByText('Row Gateway').length).toBeGreaterThan(0);
       });
     });
 

@@ -1151,6 +1151,7 @@ export default function DashboardPage() {
       <AddUserModal
         isOpen={showAddUserModal}
         onClose={() => setShowAddUserModal(false)}
+        defaultSendInviteWhenSkippingPassword
         onSuccess={() => {
           setShowAddUserModal(false);
           // Optionally show a success notification or refresh any user-related widgets

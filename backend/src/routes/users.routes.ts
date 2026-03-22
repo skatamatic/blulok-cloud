@@ -12,6 +12,13 @@ import { FirstTimeUserService } from '@/services/first-time-user.service';
 import { logger } from '@/utils/logger';
 import { AppEntryAccessService } from '@/services/passes/app-entry-access.service';
 import { AccessCodeService } from '@/services/access-code.service';
+import { toE164 } from '@/utils/phone.util';
+import {
+  assertRequesterMayAssignRoleOnCreate,
+  assertRequesterMayAssignRoleOnUpdate,
+  FACILITY_ADMIN_CREATABLE_ROLES,
+  validateFacilityIdsForAssignment,
+} from '@/utils/users-rbac.util';
 
 /**
  * User Management Routes
@@ -71,12 +78,16 @@ const checkFacilityAccess = async (req: AuthenticatedRequest, targetUserId: stri
 };
 
 // Validation schemas
+const CREATE_PASSWORD_PATTERN = new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$');
+
 const createUserSchema = Joi.object({
   email: Joi.string().email().required(),
-  password: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$')).required()
-    .messages({
-      'string.pattern.base': 'Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character'
-    }),
+  password: Joi.string().allow('').optional(),
+  phoneNumber: Joi.string().trim().allow('').optional(),
+  /** When true and password is omitted, sends first-time invite (SMS if phone set, else email when enabled). */
+  sendInvite: Joi.boolean().optional(),
+  /** Initial facility associations (required for non–globally-scoped roles). */
+  facilityIds: Joi.array().items(Joi.string().uuid()).optional().default([]),
   firstName: Joi.string().min(1).max(100).required(),
   lastName: Joi.string().min(1).max(100).required(),
   role: Joi.string().valid(...Object.values(UserRole)).required()
@@ -85,6 +96,7 @@ const createUserSchema = Joi.object({
 const updateUserSchema = Joi.object({
   firstName: Joi.string().min(1).max(100).optional(),
   lastName: Joi.string().min(1).max(100).optional(),
+  phoneNumber: Joi.string().trim().allow('', null).optional(),
   role: Joi.string().valid(...Object.values(UserRole)).optional(),
   isActive: Joi.boolean().optional()
 });
@@ -130,8 +142,9 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
       const first = (user.first_name || '').toLowerCase();
       const last = (user.last_name || '').toLowerCase();
       const email = (user.email || '').toLowerCase();
+      const phone = String(user.phone_number || '').toLowerCase();
       const facNames = (user.facility_names || '').toLowerCase();
-      return first.includes(searchTerm) || last.includes(searchTerm) || email.includes(searchTerm) || facNames.includes(searchTerm);
+      return first.includes(searchTerm) || last.includes(searchTerm) || email.includes(searchTerm) || phone.includes(searchTerm) || facNames.includes(searchTerm);
     });
   }
 
@@ -215,6 +228,7 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   const sanitizedUsers = paginatedUsers.map(user => ({
     id: user.id,
     email: user.email,
+    phoneNumber: user.phone_number ?? null,
     firstName: user.first_name,
     lastName: user.last_name,
     role: user.role,
@@ -270,6 +284,7 @@ router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     user: {
       id: user.id,
       email: user.email,
+      phoneNumber: user.phone_number ?? null,
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
@@ -511,6 +526,7 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
     user: {
       id: user.id,
       email: user.email,
+      phoneNumber: user.phone_number ?? null,
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
@@ -541,34 +557,107 @@ router.post('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRe
     return;
   }
 
-  const userData: CreateUserRequest = value;
-  
-  // Only dev_admin can create other dev_admin users
-  if (userData.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({
-      success: false,
-      message: 'Only dev_admin can create dev_admin users'
-    });
+  const passwordTrimmed = typeof value.password === 'string' ? value.password.trim() : '';
+  if (passwordTrimmed) {
+    if (passwordTrimmed.length < 8 || !CREATE_PASSWORD_PATTERN.test(passwordTrimmed)) {
+      res.status(400).json({
+        success: false,
+        message:
+          'Password must be at least 8 characters and contain uppercase, lowercase, number, and special character (@$!%*?&)',
+      });
+      return;
+    }
+  }
+
+  const userData: CreateUserRequest = {
+    email: value.email,
+    firstName: value.firstName,
+    lastName: value.lastName,
+    role: value.role,
+    ...(passwordTrimmed ? { password: passwordTrimmed } : {}),
+    ...(value.phoneNumber && String(value.phoneNumber).trim()
+      ? { phoneNumber: String(value.phoneNumber).trim() }
+      : {}),
+  };
+
+  const roleCheck = assertRequesterMayAssignRoleOnCreate(req, userData.role as UserRole);
+  if (!roleCheck.ok) {
+    res.status(roleCheck.status).json({ success: false, message: roleCheck.message });
+    return;
+  }
+
+  const facilityCheck = validateFacilityIdsForAssignment(
+    req,
+    value.facilityIds || [],
+    userData.role as UserRole
+  );
+  if (!facilityCheck.ok) {
+    res.status(facilityCheck.status).json({ success: false, message: facilityCheck.message });
     return;
   }
 
   const result = await AuthService.createUser(userData);
-  const statusCode = result.success ? 201 : 400;
   if (!result.success) {
     logger.warn('Create user failed', {
       requester: req.user?.userId,
       role: req.user?.role,
       reason: result.message,
     });
-  } else {
-    logger.info('User created', {
-      requester: req.user?.userId,
-      role: req.user?.role,
-      createdUserEmail: userData.email,
-      createdRole: userData.role,
-    });
+    res.status(400).json(result);
+    return;
   }
-  res.status(statusCode).json(result);
+
+  const newUserId = result.userId as string;
+
+  try {
+    if (facilityCheck.facilityIds.length > 0) {
+      for (const fid of facilityCheck.facilityIds) {
+        await UserFacilityAssociationModel.addUserToFacility(newUserId, fid);
+      }
+    }
+  } catch (assocErr) {
+    logger.error('Failed to associate new user with facilities; rolling back user', assocErr);
+    try {
+      await UserModel.deleteById(newUserId);
+    } catch (delErr) {
+      logger.error('Failed to delete user after association error', delErr);
+    }
+    res.status(500).json({
+      success: false,
+      message: 'User could not be linked to facilities. Try again or verify facility IDs exist.',
+    });
+    return;
+  }
+
+  logger.info('User created', {
+    requester: req.user?.userId,
+    role: req.user?.role,
+    createdUserEmail: userData.email,
+    createdRole: userData.role,
+  });
+
+  const shouldSendInvite = Boolean(value.sendInvite) && !passwordTrimmed;
+  let inviteSent = false;
+  let inviteWarning: string | undefined;
+  if (shouldSendInvite) {
+    try {
+      const created = await UserModel.findById(newUserId) as User | undefined;
+      if (created) {
+        await FirstTimeUserService.getInstance().sendInvite(created);
+        inviteSent = true;
+      }
+    } catch (e) {
+      logger.error('Failed to send invite after user create', e);
+      inviteWarning =
+        'User was created but the invite could not be sent. You can resend from the user profile.';
+    }
+  }
+
+  res.status(201).json({
+    ...result,
+    inviteSent,
+    ...(inviteWarning ? { inviteWarning } : {}),
+  });
 }));
 
 // POST /users/:id/resend-invite - Admin action to resend first-time invite
@@ -580,8 +669,11 @@ router.post('/:id/resend-invite', requireUserManagement, asyncHandler(async (req
     return;
   }
 
-  // Facility Admin must have access to this user's facilities; existing helper covers checks in other routes
-  // Keep simple here: only ADMIN/DEV_ADMIN or FACILITY_ADMIN with association can proceed (reuse checkFacilityAccess if required)
+  const hasAccess = await checkFacilityAccess(req, String(id));
+  if (!hasAccess) {
+    res.status(403).json({ success: false, message: 'Access denied to this user' });
+    return;
+  }
 
   await FirstTimeUserService.getInstance().sendInvite(user);
   res.json({ success: true, message: 'Invite resent' });
@@ -631,12 +723,33 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     return;
   }
 
+  // Facility admins may only manage tenant / maintenance / technician accounts (not peers or global roles).
+  // Self-service updates (same id) are still allowed for the admin's own profile.
+  if (
+    AuthService.isFacilityAdmin(req.user!.role) &&
+    id !== req.user!.userId &&
+    !FACILITY_ADMIN_CREATABLE_ROLES.includes(existingUser.role as UserRole)
+  ) {
+    res.status(403).json({
+      success: false,
+      message:
+        'Facility admins can only update tenant, maintenance, or BluLok technician users',
+    });
+    return;
+  }
+
   // Only dev_admin can modify dev_admin users or assign dev_admin role
   if ((existingUser.role === UserRole.DEV_ADMIN || updateData.role === UserRole.DEV_ADMIN) && req.user!.role !== UserRole.DEV_ADMIN) {
     res.status(403).json({
       success: false,
       message: 'Only dev_admin can modify dev_admin users'
     });
+    return;
+  }
+
+  const roleAssignCheck = assertRequesterMayAssignRoleOnUpdate(req, updateData.role as UserRole | undefined);
+  if (!roleAssignCheck.ok) {
+    res.status(roleAssignCheck.status).json({ success: false, message: roleAssignCheck.message });
     return;
   }
 
@@ -652,7 +765,34 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     }
   }
 
-  // Update user
+  if (updateData.phoneNumber !== undefined) {
+    const raw =
+      updateData.phoneNumber === null ? '' : String(updateData.phoneNumber).trim();
+    if (raw === '') {
+      await UserModel.setPhoneNumber(id, null);
+    } else {
+      const normalized = toE164(raw, 'US');
+      const digits = normalized.replace(/\D/g, '');
+      if (!normalized || digits.length < 10) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid phone number',
+        });
+        return;
+      }
+      const other = await UserModel.findByPhone(normalized);
+      if (other && other.id !== id) {
+        res.status(400).json({
+          success: false,
+          message: 'Phone number already in use',
+        });
+        return;
+      }
+      await UserModel.setPhoneNumber(id, normalized);
+    }
+  }
+
+  // Update user (non-phone fields)
   const updatedUser = await UserModel.updateById(id, {
     first_name: updateData.firstName,
     last_name: updateData.lastName,
@@ -666,6 +806,7 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     user: {
       id: updatedUser.id,
       email: updatedUser.email,
+      phoneNumber: updatedUser.phone_number ?? null,
       firstName: updatedUser.first_name,
       lastName: updatedUser.last_name,
       role: updatedUser.role,

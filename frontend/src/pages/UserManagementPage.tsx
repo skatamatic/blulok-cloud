@@ -16,6 +16,7 @@ import {
 interface User {
   id: string;
   email: string;
+  phoneNumber?: string | null;
   firstName: string;
   lastName: string;
   role: UserRole;
@@ -222,7 +223,7 @@ export default function UserManagementPage() {
       <ExpandableFilters
         searchValue={search}
         onSearchChange={setSearch}
-        searchPlaceholder="Search users, emails, or facilities..."
+        searchPlaceholder="Search users, email, phone, or facilities..."
         isExpanded={filtersExpanded}
         onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
         onClearFilters={() => {
@@ -340,6 +341,9 @@ export default function UserManagementPage() {
                             {user.firstName} {user.lastName}
                           </div>
                           <div className="text-sm text-gray-500 dark:text-gray-400">{user.email}</div>
+                          {user.phoneNumber ? (
+                            <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{user.phoneNumber}</div>
+                          ) : null}
                         </div>
                       </div>
                     </td>

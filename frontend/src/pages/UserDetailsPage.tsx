@@ -25,6 +25,7 @@ import { useBackNavigation } from '@/hooks/useBackNavigation';
 interface UserDetails {
   id: string;
   email: string;
+  phoneNumber?: string | null;
   firstName: string;
   lastName: string;
   role: UserRole;
@@ -138,6 +139,7 @@ export default function UserDetailsPage() {
   const [editForm, setEditForm] = useState({
     firstName: '',
     lastName: '',
+    phoneNumber: '',
     role: '' as UserRole | '',
     isActive: true
   });
@@ -376,6 +378,7 @@ export default function UserDetailsPage() {
       const response = await apiService.updateUser(userDetails.id, {
         firstName: editForm.firstName,
         lastName: editForm.lastName,
+        phoneNumber: editForm.phoneNumber.trim() === '' ? '' : editForm.phoneNumber.trim(),
         role: editForm.role,
         isActive: editForm.isActive
       });
@@ -516,6 +519,9 @@ export default function UserDetailsPage() {
                 {userDetails.firstName} {userDetails.lastName}
               </h1>
               <p className="text-gray-600 dark:text-gray-400">{userDetails.email}</p>
+              {userDetails.phoneNumber ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{userDetails.phoneNumber}</p>
+              ) : null}
             </div>
             <div className="flex items-center space-x-4">
               <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${getRoleBadgeColor(userDetails.role)}`}>
@@ -536,6 +542,7 @@ export default function UserDetailsPage() {
                       setEditForm({
                         firstName: userDetails.firstName,
                         lastName: userDetails.lastName,
+                        phoneNumber: userDetails.phoneNumber || '',
                         role: userDetails.role,
                         isActive: userDetails.isActive
                       });
@@ -985,6 +992,22 @@ export default function UserDetailsPage() {
                     onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Phone number <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="tel"
+                    autoComplete="tel"
+                    value={editForm.phoneNumber}
+                    onChange={(e) => setEditForm({ ...editForm, phoneNumber: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    placeholder="E.164 or 10-digit US"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Clear the field to remove the phone number from this account.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

@@ -184,6 +184,18 @@ export class UserModel extends BaseModel {
   }
 
   /**
+   * Set or clear phone number (nullable). Uses direct update so `null` clears the column.
+   */
+  public static async setPhoneNumber(id: string, phoneE164: string | null): Promise<void> {
+    await this.query()
+      .where('id', id)
+      .update({
+        phone_number: phoneE164,
+        updated_at: this.db.fn.now(),
+      });
+  }
+
+  /**
    * Deactivate a user account.
    * Sets is_active to false, preventing authentication.
    * Triggers model hooks for event-driven operations (e.g., denylist updates).

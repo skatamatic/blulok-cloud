@@ -479,21 +479,44 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     if (!gateway) return null;
     if (gateway.gateway_type === 'physical') {
       const apiBase = getWsBaseUrl();
-      const token = localStorage.getItem('authToken') || '<FACILITY_ADMIN_JWT>';
-      const wsUrl = `${apiBase}/ws/gateway?token=${token}`;
+      const wsUrl = `${apiBase}/ws/gateway`;
+      const authExample = `{"type":"AUTH","token":"<JWT from this API>","facilityId":"${facilityId}"}`;
       return (
-        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm">
-          <p className="text-gray-700 dark:text-gray-300 mb-2">WebSocket gateway connection URL:</p>
-          <div className="flex items-center gap-3 flex-wrap">
-            <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all">{wsUrl}</code>
-            <button
-              onClick={() => copyToClipboard(wsUrl, 'Copied WebSocket URL')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              aria-label="Copy WebSocket URL"
-            >
-              <DocumentDuplicateIcon className="h-4 w-4" />
-              Copy URL
-            </button>
+        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm space-y-3">
+          <p className="text-gray-700 dark:text-gray-300">
+            Connect with <strong className="font-semibold">WSS</strong> (or <strong className="font-semibold">WS</strong> in dev). The server does{' '}
+            <strong className="font-semibold">not</strong> use <code className="text-xs">?token=</code> on the URL — after the socket opens, send{' '}
+            <strong className="font-semibold">AUTH</strong> as the first JSON message (see below).
+          </p>
+          <div>
+            <p className="text-gray-700 dark:text-gray-300 mb-2">WebSocket URL (path only, no query):</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all">{wsUrl}</code>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(wsUrl, 'Copied WebSocket URL')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                aria-label="Copy WebSocket URL"
+              >
+                <DocumentDuplicateIcon className="h-4 w-4" />
+                Copy URL
+              </button>
+            </div>
+          </div>
+          <div>
+            <p className="text-gray-700 dark:text-gray-300 mb-2">First message (example):</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all max-w-full text-xs">{authExample}</code>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(authExample, 'Copied AUTH example')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                aria-label="Copy AUTH JSON example"
+              >
+                <DocumentDuplicateIcon className="h-4 w-4" />
+                Copy AUTH JSON
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -531,12 +554,30 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       return (
         <div className="space-y-6">
           {renderGatewayAssignmentCard()}
+          {wsStatus?.connected && (
+            <div
+              className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+              role="status"
+            >
+              <p className="font-medium">Inbound WebSocket session is active</p>
+              <p className="mt-1 text-amber-900/90 dark:text-amber-200/90">
+                A client has authenticated to <code className="text-xs font-mono px-1 rounded bg-white/60 dark:bg-black/20">/ws/gateway</code> for this facility, but{' '}
+                <strong className="font-semibold">there is no gateway record</strong> in the database yet. Realtime commands may work; device sync, firmware, and inventory still need a{' '}
+                <strong className="font-semibold">gateway row</strong> linked to this facility (e.g. assign an unassigned gateway below, or create one via Admin API).
+              </p>
+              {wsStatus.lastPongAt && (
+                <p className="mt-2 text-xs text-amber-800/80 dark:text-amber-300/80">
+                  Last activity: {new Date(wsStatus.lastPongAt).toLocaleString()}
+                </p>
+              )}
+            </div>
+          )}
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <div className="text-center py-8">
               <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
               <p className="text-gray-600 dark:text-gray-400 mb-4">
-                This facility doesn't have a gateway configured yet.
+                This facility doesn&apos;t have a gateway record yet. That is separate from a mesh client simply logging in with this facility&apos;s ID.
               </p>
             </div>
           </div>
@@ -544,51 +585,72 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       );
     }
 
+    const connectionLabel =
+      gateway.gateway_type === 'http'
+        ? gateway.status
+        : gateway.gateway_type === 'simulated'
+          ? `simulated · ${gateway.status}`
+          : gateway.status;
+    const connectionBadgeClass =
+      gateway.status === 'online'
+        ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+        : gateway.status === 'offline'
+          ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+          : gateway.status === 'error'
+            ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+
     return (
       <div className="space-y-6">
         {renderGatewayAssignmentCard()}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Inbound Gateway Connection</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            Gateways connect to the cloud WebSocket and authenticate using an Admin/Dev Admin JWT, or a Facility Admin JWT scoped to this facility.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Overview</h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Mesh gateways connect inbound to <code className="text-xs font-mono bg-gray-100 dark:bg-gray-900/50 px-1 rounded">/ws/gateway</code> with a facility-scoped admin JWT.
+          HTTP gateways report liveness via polling instead. The badge below reflects this facility&apos;s <strong className="font-medium text-gray-700 dark:text-gray-300">gateway record</strong> (inventory); for physical/simulated types it also updates when an inbound session is present.
+        </p>
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 px-4 py-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Gateway status (database)</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${connectionBadgeClass}`}>
+                {connectionLabel}
+              </span>
+              {gateway.gateway_type !== 'http' && wsStatus?.lastPongAt && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  Last activity: {new Date(wsStatus.lastPongAt).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+          </div>
+          {gateway.gateway_type !== 'http' && (
+            <button
+              type="button"
+              onClick={() => copyToClipboard(gatewayWsUrl)}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors self-start sm:self-center"
+              aria-label="Copy WebSocket URL"
+            >
+              <DocumentDuplicateIcon className="h-4 w-4" />
+              Copy WS URL
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-sm">
+          {gateway.gateway_type !== 'http' && (
             <div>
               <div className="text-xs text-gray-500 dark:text-gray-400">WebSocket URL</div>
-              <div className="mt-1 flex items-center gap-3 flex-wrap">
-                <code className="font-mono text-sm text-gray-900 dark:text-white break-all px-2 py-1 bg-gray-50 dark:bg-gray-900/40 rounded border border-gray-200 dark:border-gray-700">
-                  {gatewayWsUrl}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(gatewayWsUrl)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                  aria-label="Copy WebSocket URL"
-                >
-                  <DocumentDuplicateIcon className="h-4 w-4" />
-                  Copy URL
-                </button>
-              </div>
+              <div className="mt-1 font-mono text-xs text-gray-900 dark:text-white break-all">{gatewayWsUrl}</div>
             </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">Facility ID</div>
-              <div className="mt-1 font-mono text-sm text-gray-900 dark:text-white">{facilityId}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">Facility Name</div>
-              <div className="mt-1 text-sm font-medium text-gray-900 dark:text-white break-words">{facilityName}</div>
-            </div>
+          )}
+          <div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Facility ID</div>
+            <div className="mt-1 font-mono text-xs text-gray-900 dark:text-white break-all">{facilityId}</div>
           </div>
-          <div className="mt-4 flex items-center space-x-3">
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${wsStatus?.connected ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'}`}>
-              {wsStatus?.connected ? 'Connected' : 'Disconnected'}
-            </span>
-            {wsStatus?.lastPongAt && (
-              <span className="text-xs text-gray-500 dark:text-gray-400">Last heartbeat: {new Date(wsStatus.lastPongAt).toLocaleTimeString()}</span>
-            )}
+          <div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Facility name</div>
+            <div className="mt-1 font-medium text-gray-900 dark:text-white break-words">{facilityName}</div>
           </div>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">Gateway Overview</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">Basic Information</h4>
@@ -596,20 +658,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               <div>
                 <dt className="text-sm text-gray-500 dark:text-gray-400">Name</dt>
                 <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.name}</dd>
-              </div>
-              <div>
-                <dt className="text-sm text-gray-500 dark:text-gray-400">Status</dt>
-                <dd className="mt-1">
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    gateway.gateway_type === 'simulated' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
-                    gateway.status === 'online' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
-                    gateway.status === 'offline' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' :
-                    gateway.status === 'error' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' :
-                    'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-                  }`}>
-                    {gateway.gateway_type === 'simulated' ? 'SIMULATED' : gateway.status}
-                  </span>
-                </dd>
               </div>
               <div>
                 <dt className="text-sm text-gray-500 dark:text-gray-400">Gateway Type</dt>

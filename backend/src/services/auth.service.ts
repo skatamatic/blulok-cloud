@@ -125,10 +125,18 @@ export class AuthService {
               keyGenerationRequired = true;
             }
           } else {
-            // If user has never generated keys, also require
-            const hasKeyStatusColumn = true; // added by migration
-            if (hasKeyStatusColumn) {
-              // naive check: treat absence as pending
+            // No X-App-Device-Id: web dashboards, gateway simulators, and admin tools are not
+            // mobile key onboarding clients — do not force key_generation_required for those roles.
+            // (Legacy users.key_status was removed; the previous "always true" branch broke gateway login UX.)
+            const role = user.role as UserRole;
+            if (
+              role === UserRole.FACILITY_ADMIN ||
+              role === UserRole.ADMIN ||
+              role === UserRole.DEV_ADMIN
+            ) {
+              keyGenerationRequired = false;
+            } else {
+              // Tenant / maintenance without device context may still need mobile key registration
               keyGenerationRequired = true;
             }
           }
@@ -172,7 +180,7 @@ export class AuthService {
 
   public static async createUser(userData: CreateUserRequest): Promise<{ success: boolean; message: string; userId?: string }> {
     try {
-      const { email, password, firstName, lastName, role } = userData;
+      const { email, password, firstName, lastName, role, phoneNumber } = userData;
 
       // Check if user already exists
       const existingUser = await UserModel.findByEmail(email.toLowerCase());
@@ -183,8 +191,38 @@ export class AuthService {
         };
       }
 
-      // Hash password
-      const passwordHash = await bcrypt.hash(password, this.SALT_ROUNDS);
+      let normalizedPhone: string | null = null;
+      const rawPhone = phoneNumber != null ? String(phoneNumber).trim() : '';
+      if (rawPhone) {
+        normalizedPhone = toE164(rawPhone, 'US');
+        if (!normalizedPhone || normalizedPhone.replace(/\D/g, '').length < 10) {
+          return {
+            success: false,
+            message: 'Invalid phone number'
+          };
+        }
+        const phoneOwner = await UserModel.findByPhone(normalizedPhone);
+        if (phoneOwner) {
+          return {
+            success: false,
+            message: 'Phone number already in use'
+          };
+        }
+      }
+
+      const trimmedPassword = typeof password === 'string' ? password.trim() : '';
+      const hasPassword = trimmedPassword.length > 0;
+
+      let passwordHash: string;
+      let requiresPasswordReset: boolean;
+      if (hasPassword) {
+        passwordHash = await bcrypt.hash(trimmedPassword, this.SALT_ROUNDS);
+        requiresPasswordReset = false;
+      } else {
+        // Matches key-sharing / phone-only provisional accounts: bcrypt never succeeds until set via invite flow.
+        passwordHash = '!';
+        requiresPasswordReset = true;
+      }
 
       // Create user
       const normalizedEmail = email.toLowerCase();
@@ -195,7 +233,9 @@ export class AuthService {
         first_name: firstName,
         last_name: lastName,
         role,
-        is_active: true
+        is_active: true,
+        ...(normalizedPhone ? { phone_number: normalizedPhone } : {}),
+        requires_password_reset: requiresPasswordReset,
       }) as User;
 
       logger.info(`User created: ${email} with role ${role}`);

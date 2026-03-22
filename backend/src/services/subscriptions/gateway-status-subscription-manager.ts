@@ -50,6 +50,12 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
     this.gatewayModel = new GatewayModel();
   }
 
+  /** Drop cached gateway rows so the next broadcast reflects fresh DB state (e.g. after inbound WS connect). */
+  public invalidateCache(): void {
+    this.cachedAllGateways = null;
+    this.cacheLoadedAtMs = 0;
+  }
+
   getSubscriptionType(): string {
     return 'gateway_status';
   }
