@@ -1,8 +1,8 @@
 /**
  * @jest-environment jsdom
  */
-import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { UnlockedUnitsWidget } from '@/components/Widget/UnlockedUnitsWidget';
@@ -33,9 +33,9 @@ jest.mock('@/components/Widget/Widget', () => ({
     title,
     enhancedMenu,
   }: {
-    children: React.ReactNode;
+    children: ReactNode;
     title: string;
-    enhancedMenu?: React.ReactNode;
+    enhancedMenu?: ReactNode;
   }) => (
     <div>
       <div data-testid="widget-menu">{enhancedMenu}</div>

@@ -19,7 +19,7 @@ export interface WidgetLayout {
 }
 
 interface WidgetGridProps {
-  children: React.ReactNode[];
+  children: React.ReactNode;
   layouts: { [key: string]: WidgetLayout[] };
   onLayoutChange?: (layout: Layout[], layouts: { [key: string]: Layout[] }) => void;
   onLayoutSave?: (layouts: { [key: string]: Layout[] }) => void;

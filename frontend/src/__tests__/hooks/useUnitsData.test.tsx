@@ -1,7 +1,6 @@
 /**
  * @jest-environment jsdom
  */
-import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useUnitsData } from '@/hooks/useUnitsData';
 import { apiService } from '@/services/api.service';

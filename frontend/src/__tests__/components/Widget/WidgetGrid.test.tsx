@@ -1,16 +1,15 @@
 /**
  * @jest-environment jsdom
  */
-import React, { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { render, act } from '@testing-library/react';
 import { WidgetGrid } from '@/components/Widget/WidgetGrid';
 
 jest.mock('framer-motion', () => ({
-  AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 jest.mock('react-grid-layout', () => {
-  const React = require('react') as typeof import('react');
   const Responsive = (props: Record<string, unknown>) => {
     useEffect(() => {
       const item = { i: 'w1', x: 0, y: 0, w: 3, h: 2 };
@@ -22,9 +21,9 @@ jest.mock('react-grid-layout', () => {
       onLayoutChange?.([item], layoutsPayload);
       onLayoutChange?.([item], layoutsPayload);
     }, [props.onLayoutChange]);
-    return <div data-testid="mock-responsive">{props.children as React.ReactNode}</div>;
+    return <div data-testid="mock-responsive">{props.children as ReactNode}</div>;
   };
-  const WidthProvider = (Wrapped: React.ComponentType<Record<string, unknown>>) => {
+  const WidthProvider = (Wrapped: import('react').ComponentType<Record<string, unknown>>) => {
     return function WithWidth(p: Record<string, unknown>) {
       return <Wrapped {...p} />;
     };
