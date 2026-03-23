@@ -18,7 +18,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '@/components/Modal/Modal';
-import { getWsBaseUrl } from '@/services/appConfig';
+import { getApiBaseUrl, getWsBaseUrl } from '@/services/appConfig';
 import { UserRole } from '@/types/auth.types';
 
 interface Gateway {
@@ -84,17 +84,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     };
   } | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'firmware' | 'devtools'>('overview');
-  const [configForm, setConfigForm] = useState({
-    gateway_type: 'http' as 'physical' | 'http' | 'simulated',
-    base_url: '',
-    connection_url: '',
-    api_key: '',
-    username: 'admin',
-    password: '',
-    protocol_version: '1.1',
-    poll_frequency_ms: 30000,
-    ignore_ssl_cert: false
-  });
 
   // Debug panel state
   const [fallbackJwtInput, setFallbackJwtInput] = useState('');
@@ -125,6 +114,12 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
   const gatewayWsUrl = useMemo(() => {
     const base = getWsBaseUrl();
     return `${base}/ws/gateway`;
+  }, []);
+
+  /** REST API base for gateway env (`CLOUD_API`); matches deployed backend the UI talks to. */
+  const backendApiUrl = useMemo(() => {
+    const base = getApiBaseUrl().replace(/\/+$/, '');
+    return base ? `${base}/api/v1` : '';
   }, []);
 
   const copyToClipboard = useCallback(async (value: string, successTitle = 'Copied WebSocket URL') => {
@@ -233,22 +228,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     };
   }, [ws, facilityId, isDevAdmin]);
 
-  // Check if gateway is properly configured
-  const isGatewayProperlyConfigured = (gw: Gateway | null) => {
-    if (!gw || !gw.gateway_type) return false;
-
-    switch (gw.gateway_type) {
-      case 'http':
-        return !!(gw.base_url && gw.base_url.trim().length > 0);
-      case 'physical':
-        return !!(gw.connection_url && gw.connection_url.trim().length > 0);
-      case 'simulated':
-        return true; // Simulated gateways are always "configured"
-      default:
-        return false;
-    }
-  };
-
   useEffect(() => {
     loadGateway();
   }, [facilityId]);
@@ -261,17 +240,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       if (facilityGateways.length > 0) {
         const gw = facilityGateways[0];
         setGateway(gw);
-        setConfigForm({
-          gateway_type: gw.gateway_type || 'http',
-          base_url: gw.base_url || '',
-          connection_url: gw.connection_url || '',
-          api_key: gw.api_key || '',
-          username: gw.username || 'admin',
-          password: '', // Don't populate password
-          protocol_version: gw.protocol_version || '1.1',
-          poll_frequency_ms: gw.poll_frequency_ms || 30000,
-          ignore_ssl_cert: gw.ignore_ssl_cert || false
-        });
       } else {
         setGateway(null);
       }
@@ -348,8 +316,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
         </h3>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
           {gateway
-            ? 'Choose an unassigned online gateway to replace the current facility gateway.'
-            : 'Choose an unassigned online gateway and assign it to this facility.'}
+            ? 'Select an unassigned gateway that is already connected to the cloud, then replace the current assignment.'
+            : 'Select an unassigned gateway that is online so it can be linked to this facility.'}
         </p>
         {gateway && (
           <div className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
@@ -475,60 +443,50 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     }
   };
 
+  /** Shown on Sync tab — mesh gateways all use inbound WSS + AUTH (see Overview for copy-paste URLs). */
   const renderGatewayModeInfo = () => {
     if (!gateway) return null;
-    if (gateway.gateway_type === 'physical') {
-      const apiBase = getWsBaseUrl();
-      const wsUrl = `${apiBase}/ws/gateway`;
-      const authExample = `{"type":"AUTH","token":"<JWT from this API>","facilityId":"${facilityId}"}`;
-      return (
-        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm space-y-3">
-          <p className="text-gray-700 dark:text-gray-300">
-            Connect with <strong className="font-semibold">WSS</strong> (or <strong className="font-semibold">WS</strong> in dev). The server does{' '}
-            <strong className="font-semibold">not</strong> use <code className="text-xs">?token=</code> on the URL — after the socket opens, send{' '}
-            <strong className="font-semibold">AUTH</strong> as the first JSON message (see below).
-          </p>
-          <div>
-            <p className="text-gray-700 dark:text-gray-300 mb-2">WebSocket URL (path only, no query):</p>
-            <div className="flex items-center gap-3 flex-wrap">
-              <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all">{wsUrl}</code>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(wsUrl, 'Copied WebSocket URL')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                aria-label="Copy WebSocket URL"
-              >
-                <DocumentDuplicateIcon className="h-4 w-4" />
-                Copy URL
-              </button>
-            </div>
-          </div>
-          <div>
-            <p className="text-gray-700 dark:text-gray-300 mb-2">First message (example):</p>
-            <div className="flex items-center gap-3 flex-wrap">
-              <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all max-w-full text-xs">{authExample}</code>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(authExample, 'Copied AUTH example')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                aria-label="Copy AUTH JSON example"
-              >
-                <DocumentDuplicateIcon className="h-4 w-4" />
-                Copy AUTH JSON
-              </button>
-            </div>
+    const wsUrl = `${getWsBaseUrl()}/ws/gateway`;
+    const authExample = `{"type":"AUTH","token":"<JWT from this API>","facilityId":"${facilityId}"}`;
+    return (
+      <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm space-y-3">
+        <p className="text-gray-700 dark:text-gray-300">
+          Gateways connect with <strong className="font-semibold">WSS</strong> (or <strong className="font-semibold">WS</strong> in local dev). The server does{' '}
+          <strong className="font-semibold">not</strong> use <code className="text-xs">?token=</code> on the URL — after the socket opens, send{' '}
+          <strong className="font-semibold">AUTH</strong> as the first JSON message.
+        </p>
+        <div>
+          <p className="text-gray-700 dark:text-gray-300 mb-2">WebSocket URL</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all">{wsUrl}</code>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(wsUrl, 'Copied WebSocket URL')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              aria-label="Copy WebSocket URL"
+            >
+              <DocumentDuplicateIcon className="h-4 w-4" />
+              Copy
+            </button>
           </div>
         </div>
-      );
-    }
-    if (gateway.gateway_type === 'http') {
-      return (
-        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm">
-          <p className="text-gray-700 dark:text-gray-300">HTTP gateway uses polling for updates (denylists/time sync). Poll interval: {configForm.poll_frequency_ms} ms.</p>
+        <div>
+          <p className="text-gray-700 dark:text-gray-300 mb-2">First message (example)</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all max-w-full text-xs">{authExample}</code>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(authExample, 'Copied AUTH example')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              aria-label="Copy AUTH JSON example"
+            >
+              <DocumentDuplicateIcon className="h-4 w-4" />
+              Copy AUTH JSON
+            </button>
+          </div>
         </div>
-      );
-    }
-    return null;
+      </div>
+    );
   };
 
   if (loading) {
@@ -559,11 +517,10 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
               role="status"
             >
-              <p className="font-medium">Inbound WebSocket session is active</p>
+              <p className="font-medium">WebSocket session active — no gateway assigned yet</p>
               <p className="mt-1 text-amber-900/90 dark:text-amber-200/90">
-                A client has authenticated to <code className="text-xs font-mono px-1 rounded bg-white/60 dark:bg-black/20">/ws/gateway</code> for this facility, but{' '}
-                <strong className="font-semibold">there is no gateway record</strong> in the database yet. Realtime commands may work; device sync, firmware, and inventory still need a{' '}
-                <strong className="font-semibold">gateway row</strong> linked to this facility (e.g. assign an unassigned gateway below, or create one via Admin API).
+                A gateway has authenticated to this facility for <code className="text-xs font-mono px-1 rounded bg-white/60 dark:bg-black/20">/ws/gateway</code>, but this facility
+                does not have a gateway record. Assign a gateway below (if your role allows) or contact BluLok so device sync and firmware can run.
               </p>
               {wsStatus.lastPongAt && (
                 <p className="mt-2 text-xs text-amber-800/80 dark:text-amber-300/80">
@@ -572,76 +529,98 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               )}
             </div>
           )}
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-            <div className="text-center py-8">
-              <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No Gateway Configured</h3>
-              <p className="text-gray-600 dark:text-gray-400 mb-4">
-                This facility doesn&apos;t have a gateway record yet. That is separate from a mesh client simply logging in with this facility&apos;s ID.
-              </p>
-            </div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center">
+            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No gateway assigned</h3>
+            <p className="text-gray-600 dark:text-gray-400 max-w-lg mx-auto">
+              No gateway has been assigned to this facility yet. Contact BluLok for setup assistance, or use Assign Gateway above if your administrator has placed an
+              unassigned gateway online.
+            </p>
           </div>
         </div>
       );
     }
 
-    const connectionLabel =
-      gateway.gateway_type === 'http'
-        ? gateway.status
-        : gateway.gateway_type === 'simulated'
-          ? `simulated · ${gateway.status}`
-          : gateway.status;
-    const connectionBadgeClass =
-      gateway.status === 'online'
-        ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-        : gateway.status === 'offline'
-          ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-          : gateway.status === 'error'
-            ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+    const wsConnected = Boolean(wsStatus?.connected);
+    const statusLabel = wsConnected ? 'connected' : 'disconnected';
+    const connectionBadgeClass = wsConnected
+      ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+      : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
 
     return (
       <div className="space-y-6">
         {renderGatewayAssignmentCard()}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Overview</h3>
-        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          Mesh gateways connect inbound to <code className="text-xs font-mono bg-gray-100 dark:bg-gray-900/50 px-1 rounded">/ws/gateway</code> with a facility-scoped admin JWT.
-          HTTP gateways report liveness via polling instead. The badge below reflects this facility&apos;s <strong className="font-medium text-gray-700 dark:text-gray-300">gateway record</strong> (inventory); for physical/simulated types it also updates when an inbound session is present.
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+          On-site gateways open a secure WebSocket to <code className="text-xs font-mono bg-gray-100 dark:bg-gray-900/50 px-1 rounded">/ws/gateway</code> and authenticate
+          with a facility-scoped JWT. Use the URLs below in your gateway configuration (same values as <code className="text-xs">CLOUD_WS</code> and{' '}
+          <code className="text-xs">CLOUD_API</code> in the mesh bundle).
         </p>
+
+        <div className="mb-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-4">
+          <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Endpoints</div>
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">WebSocket URL (WSS)</div>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <code className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-xs font-mono text-gray-900 dark:text-white break-all">
+                  {gatewayWsUrl}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(gatewayWsUrl, 'Copied WebSocket URL')}
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  aria-label="Copy WebSocket URL"
+                >
+                  <DocumentDuplicateIcon className="h-4 w-4" />
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Backend API URL</div>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <code className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-xs font-mono text-gray-900 dark:text-white break-all">
+                  {backendApiUrl || '(configure VITE_API_URL or runtime apiBaseUrl)'}
+                </code>
+                <button
+                  type="button"
+                  disabled={!backendApiUrl}
+                  onClick={() => backendApiUrl && copyToClipboard(backendApiUrl, 'Copied API URL')}
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label="Copy backend API URL"
+                >
+                  <DocumentDuplicateIcon className="h-4 w-4" />
+                  Copy
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 px-4 py-3">
           <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Gateway status (database)</div>
+            <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Gateway connection</div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${connectionBadgeClass}`}>
-                {connectionLabel}
+                {statusLabel}
               </span>
-              {gateway.gateway_type !== 'http' && wsStatus?.lastPongAt && (
+              {wsConnected && wsStatus?.lastPongAt && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Last activity: {new Date(wsStatus.lastPongAt).toLocaleTimeString()}
+                  Last activity: {new Date(wsStatus.lastPongAt).toLocaleString()}
+                </span>
+              )}
+              {!wsConnected && gateway.last_seen && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  Last seen (inventory): {new Date(gateway.last_seen).toLocaleString()}
                 </span>
               )}
             </div>
           </div>
-          {gateway.gateway_type !== 'http' && (
-            <button
-              type="button"
-              onClick={() => copyToClipboard(gatewayWsUrl)}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors self-start sm:self-center"
-              aria-label="Copy WebSocket URL"
-            >
-              <DocumentDuplicateIcon className="h-4 w-4" />
-              Copy WS URL
-            </button>
-          )}
         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-sm">
-          {gateway.gateway_type !== 'http' && (
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">WebSocket URL</div>
-              <div className="mt-1 font-mono text-xs text-gray-900 dark:text-white break-all">{gatewayWsUrl}</div>
-            </div>
-          )}
           <div>
             <div className="text-xs text-gray-500 dark:text-gray-400">Facility ID</div>
             <div className="mt-1 font-mono text-xs text-gray-900 dark:text-white break-all">{facilityId}</div>
@@ -653,20 +632,11 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">Basic Information</h4>
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">Gateway</h4>
             <dl className="space-y-3">
               <div>
                 <dt className="text-sm text-gray-500 dark:text-gray-400">Name</dt>
                 <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.name}</dd>
-              </div>
-              <div>
-                <dt className="text-sm text-gray-500 dark:text-gray-400">Gateway Type</dt>
-                <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-                  {gateway.gateway_type === 'http' ? 'HTTP (Mesh Manager API)' :
-                   gateway.gateway_type === 'physical' ? 'Physical (WebSocket)' :
-                   gateway.gateway_type === 'simulated' ? 'Simulated (Testing)' :
-                   'Unknown'}
-                </dd>
               </div>
               {gateway.model && (
                 <div>
@@ -676,75 +646,31 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               )}
               {gateway.firmware_version && (
                 <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">Firmware Version</dt>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">Firmware version</dt>
                   <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.firmware_version}</dd>
                 </div>
               )}
             </dl>
           </div>
           <div>
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">Connection Details</h4>
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">Network</h4>
             <dl className="space-y-3">
               {gateway.ip_address && (
                 <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">IP Address</dt>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">IP address</dt>
                   <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono">{gateway.ip_address}</dd>
                 </div>
               )}
               {gateway.mac_address && (
                 <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">MAC Address</dt>
+                  <dt className="text-sm text-gray-500 dark:text-gray-400">MAC address</dt>
                   <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono">{gateway.mac_address}</dd>
                 </div>
               )}
-              {gateway.base_url && (
-                <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">Base URL</dt>
-                  <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono break-all">{gateway.base_url}</dd>
-                </div>
-              )}
-              {gateway.connection_url && (
-                <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">Connection URL</dt>
-                  <dd className="mt-1 text-sm text-gray-900 dark:text-white font-mono break-all">{gateway.connection_url}</dd>
-                </div>
-              )}
-              {gateway.last_seen && (
-                <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">Last Seen</dt>
-                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-                    {new Date(gateway.last_seen).toLocaleString()}
-                  </dd>
-                </div>
-              )}
-              {gateway.protocol_version && (
-                <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">Protocol Version</dt>
-                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.protocol_version}</dd>
-                </div>
-              )}
-              {gateway.poll_frequency_ms && (
-                <div>
-                  <dt className="text-sm text-gray-500 dark:text-gray-400">Poll Frequency</dt>
-                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.poll_frequency_ms} ms</dd>
-                </div>
+              {!gateway.ip_address && !gateway.mac_address && (
+                <p className="text-sm text-gray-500 dark:text-gray-400">No network metadata reported yet.</p>
               )}
             </dl>
-          </div>
-        </div>
-        <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-          <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
-            {isGatewayProperlyConfigured(gateway) ? (
-              <>
-                <CheckCircleIcon className="h-5 w-5 text-green-500 mr-2" />
-                Gateway is properly configured
-              </>
-            ) : (
-              <>
-                <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500 mr-2" />
-                Gateway needs setup configuration
-              </>
-            )}
           </div>
         </div>
         </div>
@@ -760,7 +686,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
           <div className="text-center py-8">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400">
-              Gateway must be configured before syncing.
+              Assign a gateway to this facility before running sync. See Overview for the WebSocket and API URLs your gateway needs.
             </p>
           </div>
         </div>
@@ -1027,7 +953,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
           <div className="text-center py-8">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400">
-              Gateway must be configured to use diagnostics tools.
+              Assign a gateway to this facility to use diagnostics. Connection status and endpoints are on the Overview tab.
             </p>
           </div>
         </div>

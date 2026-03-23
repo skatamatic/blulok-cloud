@@ -140,7 +140,8 @@ describe('FacilityGatewayTab', () => {
     it('should render no gateway message when no gateway exists', async () => {
       renderComponent();
       await waitFor(() => {
-        expect(screen.getByText('No Gateway Configured')).toBeInTheDocument();
+        expect(screen.getByText('No gateway assigned')).toBeInTheDocument();
+        expect(screen.getByText(/Contact BluLok for setup assistance/i)).toBeInTheDocument();
       });
     });
 
@@ -156,12 +157,12 @@ describe('FacilityGatewayTab', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('status')).toBeInTheDocument();
-        expect(screen.getByText('Inbound WebSocket session is active')).toBeInTheDocument();
-        expect(screen.getByText(/there is no gateway record/i)).toBeInTheDocument();
+        expect(screen.getByText('WebSocket session active — no gateway assigned yet')).toBeInTheDocument();
+        expect(screen.getByText(/does not have a gateway record/i)).toBeInTheDocument();
       });
     });
 
-    it('shows Gateway status (database) when a gateway row exists', async () => {
+    it('shows Gateway connection (websocket) when a gateway row exists', async () => {
       mockApiService.getGateways.mockResolvedValue({
         success: true,
         gateways: [
@@ -178,7 +179,8 @@ describe('FacilityGatewayTab', () => {
       renderComponent();
 
       await waitFor(() => {
-        expect(screen.getByText('Gateway status (database)')).toBeInTheDocument();
+        expect(screen.getByText('Gateway connection')).toBeInTheDocument();
+        expect(screen.getByText('disconnected')).toBeInTheDocument();
         expect(screen.getAllByText('Row Gateway').length).toBeGreaterThan(0);
       });
     });
@@ -231,14 +233,13 @@ describe('FacilityGatewayTab', () => {
       });
     });
 
-    it('should render gateway status when gateway exists', async () => {
+    it('shows connected when websocket session is active', async () => {
       const mockGateway = {
         id: 'gateway-1',
         facility_id: facilityId,
         name: 'Test Gateway',
         status: 'online',
         gateway_type: 'http',
-        protocol_version: '1.1',
         ip_address: '192.168.1.100'
       };
 
@@ -246,11 +247,17 @@ describe('FacilityGatewayTab', () => {
         success: true,
         gateways: [mockGateway]
       });
+      mockApiService.getGatewayWsStatus = jest.fn().mockResolvedValue({
+        success: true,
+        facilityId,
+        connected: true,
+        lastPongAt: Date.now(),
+      });
 
       renderComponent();
       await waitFor(() => {
         expect(screen.getAllByText('Test Gateway').length).toBeGreaterThan(0);
-        expect(screen.getByText('online')).toBeInTheDocument();
+        expect(screen.getByText('connected')).toBeInTheDocument();
       });
     });
 

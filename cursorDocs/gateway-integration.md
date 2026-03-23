@@ -14,6 +14,10 @@ Set these in **`gateway/mesh-manager-bundle/docker-compose.yml`** (or override w
 - `CLOUD_WS` — full WebSocket URL, e.g. `wss://YOUR-SERVICE-URL.run.app/ws/gateway`
 - `CLOUD_API` — REST base, e.g. `https://YOUR-SERVICE-URL.run.app/api/v1`
 
+### Facility UI (operator copy-paste)
+
+In the web app, **Facility → Gateway → Overview** shows the same **WSS URL** (`…/ws/gateway`) and **backend API URL** (`…/api/v1`) as copyable fields, derived from the deployment the UI is using (`VITE_API_URL` / runtime config). Use those values when configuring an on-site gateway so they always match the environment you logged into.
+
 **Do not rely on the default URLs in compose** unless they match your deployed service. Defaults were examples; your Cloud Run URL is shown in **Cloud Console → Cloud Run → service → URL**.
 
 ### URL naming drift to avoid
