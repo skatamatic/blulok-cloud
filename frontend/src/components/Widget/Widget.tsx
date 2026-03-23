@@ -114,7 +114,7 @@ export const Widget: React.FC<WidgetProps> = ({
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className={`card h-full group ${isDragging ? 'shadow-lg scale-105 z-10' : ''} ${className}`}
+      className={`card h-full min-h-0 flex flex-col overflow-hidden group ${isDragging ? 'shadow-lg scale-105 z-10' : ''} ${className}`}
       style={{
         transformOrigin: 'center',
       }}
@@ -142,10 +142,12 @@ export const Widget: React.FC<WidgetProps> = ({
          </div>
       </div>
 
-      {/* Widget Content - Size-appropriate scrolling */}
-      <div className={`widget-content no-drag ${styles.contentPadding} ${
-        currentSize === 'small' ? 'overflow-hidden' : 'overflow-auto'
-      } flex-1`}>
+      {/* Widget Content - flex child must shrink in grid (min-h-0) so scroll works */}
+      <div
+        className={`widget-content no-drag ${styles.contentPadding} flex-1 min-h-0 ${
+          currentSize === 'small' ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'
+        }`}
+      >
         {children}
       </div>
     </motion.div>

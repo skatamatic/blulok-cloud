@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { fmsService } from '@/services/fms.service';
+import { apiService } from '@/services/api.service';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { FMSSyncLog } from '@/types/fms.types';
@@ -71,22 +72,16 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   // Get user's facilities
   const isAdminUser = authState.user?.role === 'admin' || authState.user?.role === 'dev_admin';
   
-  // Fetch all facilities for admin users
+  // Fetch all facilities for admin users (for name fallbacks in WS payloads)
   useEffect(() => {
-    const fetchFacilities = async () => {
-      if (!isAdminUser) return;
+    if (!isAdminUser) return;
 
+    (async () => {
       try {
-        const response = await fetch('/api/v1/facilities', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
+        const data = await apiService.getFacilities();
+        if (data?.success && Array.isArray(data.facilities)) {
           const namesMap: Record<string, string> = {};
-          data.facilities?.forEach((facility: any) => {
+          data.facilities.forEach((facility: { id: string; name: string }) => {
             namesMap[facility.id] = facility.name;
           });
           setFacilityNamesMap(namesMap);
@@ -94,14 +89,11 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       } catch (error) {
         console.error('Failed to fetch facilities:', error);
       }
-    };
-
-    fetchFacilities();
+    })();
   }, [isAdminUser]);
 
   // Use facilities from global context
   const userFacilities = facilities.map(f => f.id);
-  const hasMultipleFacilities = facilities.length > 1;
 
   // Create a mapping of facility ID to name
   const getFacilityName = (facilityId: string) => {
@@ -334,18 +326,19 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     }
   };
 
-  const getStatusColor = (status: string) => {
+  /** Full panel class names (Tailwind) — do not use as inline CSS */
+  const getStatusPanelClassName = (status: string) => {
     switch (status) {
       case 'completed':
-        return 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800';
+        return 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800';
       case 'failed':
-        return 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800';
+        return 'text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800';
       case 'partial':
-        return 'text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800';
+        return 'text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800';
       case 'never_synced':
-        return 'text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-600';
+        return 'text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600';
       default:
-        return 'text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-600';
+        return 'text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600';
     }
   };
 
@@ -384,8 +377,8 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         onGridSizeChange={onGridSizeChange}
         onRemove={onRemove}
       >
-        <div className="flex items-center justify-center h-full">
-          <div className="text-gray-500 dark:text-gray-400">Loading...</div>
+        <div className="flex items-center justify-center h-full min-h-0">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" aria-label="Loading" />
         </div>
       </Widget>
     );
@@ -467,7 +460,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           ) : undefined
         }
       >
-        <div className="h-full flex flex-col space-y-3">
+        <div className="h-full min-h-0 flex flex-col space-y-3 overflow-hidden">
           {/* Show message if "All Facilities" is selected */}
           {selectedFacilityId === ALL_FACILITIES_ID && (
             <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
@@ -475,31 +468,46 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
             </div>
           )}
           
-          {/* Small size - button to left of time ago */}
-          {size === 'small' && effectiveFacilityId && (
-            <div className="h-full flex items-center justify-center">
-              <div className="flex items-center space-x-3">
-                {/* Sync button */}
-                <button
-                  onClick={handleManualSync}
-                  disabled={syncing || loading || !fmsConfigured}
-                  className={`py-3 px-4 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                    fmsConfigured
-                      ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                      : 'bg-gray-400 text-gray-200'
-                  }`}
-                  title={!fmsConfigured ? 'FMS not configured for this facility' : undefined}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-                </button>
-
-                {/* Oldest sync time to the right */}
-                {oldestSyncStatus && (
-                  <div className="text-left">
-                    <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">
-                      {formatTimeAgo(oldestSyncStatus.lastSyncTime!)}
+          {/* Small: single compact row — only when this facility has FMS (avoid stacking with empty-state blocks) */}
+          {size === 'small' && effectiveFacilityId && hasAnyFMSConfigured && fmsConfigured && (
+            <div className="flex min-h-0 flex-1 shrink-0 items-center justify-center gap-2 overflow-hidden px-1 py-0">
+              <button
+                type="button"
+                onClick={handleManualSync}
+                disabled={syncing || loading || !fmsConfigured}
+                className={`no-drag flex shrink-0 items-center justify-center rounded-lg p-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  fmsConfigured
+                    ? 'bg-primary-600 text-white hover:bg-primary-700'
+                    : 'bg-gray-400 text-gray-200'
+                }`}
+                title={!fmsConfigured ? 'FMS not configured for this facility' : 'Sync now'}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+              </button>
+              <div className="min-w-0 flex-1 text-left">
+                {currentFacilityStatus ? (
+                  <>
+                    <div className="truncate text-xs font-medium text-gray-900 dark:text-white">
+                      {currentFacilityStatus.status === 'completed'
+                        ? 'Synced'
+                        : currentFacilityStatus.status === 'failed'
+                          ? 'Failed'
+                          : currentFacilityStatus.status === 'never_synced'
+                            ? 'Never sync'
+                            : 'Partial'}
                     </div>
+                    <div className="truncate text-xs text-gray-500 dark:text-gray-400">
+                      {currentFacilityStatus.lastSyncTime
+                        ? formatTimeAgo(currentFacilityStatus.lastSyncTime)
+                        : 'No history'}
+                    </div>
+                  </>
+                ) : (
+                  <div className="truncate text-xs text-gray-500 dark:text-gray-400">
+                    {oldestSyncStatus?.lastSyncTime
+                      ? formatTimeAgo(oldestSyncStatus.lastSyncTime)
+                      : 'Waiting for status…'}
                   </div>
                 )}
               </div>
@@ -541,7 +549,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           {size === 'medium' && effectiveFacilityId && currentFacilityStatus && (
             <div className="flex items-center space-x-3 h-full">
               {/* Last sync status - takes 66% of width */}
-              <div className="flex-1 p-3 rounded-lg border" style={{ backgroundColor: getStatusColor(currentFacilityStatus.status).split(' ')[0], borderColor: getStatusColor(currentFacilityStatus.status).split(' ')[1] }}>
+              <div className={`flex-1 min-w-0 p-3 rounded-lg ${getStatusPanelClassName(currentFacilityStatus.status)}`}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-2">
                     {getStatusIcon(currentFacilityStatus.status)}
@@ -593,30 +601,6 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               )}
             </div>
           )}
-
-          {/* Small size sync status (when not using tiny-style layout) */}
-          {size === 'small' && effectiveFacilityId && currentFacilityStatus && !hasMultipleFacilities && (
-            <div className="p-2 rounded-lg border" style={{ backgroundColor: getStatusColor(currentFacilityStatus.status).split(' ')[0], borderColor: getStatusColor(currentFacilityStatus.status).split(' ')[1] }}>
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center space-x-2">
-                  {getStatusIcon(currentFacilityStatus.status)}
-                  <span className="text-xs font-medium">
-                    {currentFacilityStatus.status === 'completed' ? 'Success' :
-                     currentFacilityStatus.status === 'failed' ? 'Failed' :
-                     currentFacilityStatus.status === 'never_synced' ? 'Never' : 'Partial'}
-                  </span>
-                </div>
-              </div>
-              <div className="text-xs">
-                {currentFacilityStatus.lastSyncTime ? (
-                  <div>{formatTimeAgo(currentFacilityStatus.lastSyncTime)}</div>
-                ) : (
-                  <div>No sync history</div>
-                )}
-              </div>
-            </div>
-          )}
-
 
           {/* Sync History (for large widgets) */}
           {(size === 'large' || size === 'large-wide' || size === 'huge') && effectiveFacilityId && syncHistory.length > 0 && (

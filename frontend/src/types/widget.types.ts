@@ -31,7 +31,6 @@ export const WIDGET_TYPES = {
   
   // Activity widgets
   'activity-monitor': 'activity-monitor',
-  'activity-feed': 'activity-feed',
   'access-history': 'access-history',
   
   // Status widgets
@@ -41,12 +40,10 @@ export const WIDGET_TYPES = {
   'lock-status': 'lock-status',
   'shared-keys': 'shared-keys',
   'daily-access-codes': 'daily-access-codes',
-  'system-status': 'system-status',
   
   // System widgets
   'remote-gate': 'remote-gate',
   'sync-fms': 'sync-fms',
-  'performance-stats': 'performance-stats',
   
   // Analytics widgets
   'histogram': 'histogram',
@@ -70,7 +67,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-devices': {
     type: 'stats-devices',
@@ -80,7 +77,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-users': {
     type: 'stats-users',
@@ -90,7 +87,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-alerts': {
     type: 'stats-alerts',
@@ -100,7 +97,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'activity-monitor': {
     type: 'activity-monitor',
@@ -110,17 +107,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'activity-feed': {
-    type: 'activity-feed',
-    name: 'Recent Activity',
-    description: 'Latest system activity',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'medium-tall', 'large', 'huge', 'large-wide', 'huge-wide'],
-    allowMultiple: false,
-    category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'access-history': {
     type: 'access-history',
@@ -130,7 +117,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'notifications': {
     type: 'notifications',
@@ -140,7 +127,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'battery-status': {
     type: 'battery-status',
@@ -150,7 +137,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'medium-tall', 'large'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance', 'tenant']
   },
   'unlocked-units': {
     type: 'unlocked-units',
@@ -160,7 +147,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'medium-tall', 'large', 'large-wide', 'huge'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance', 'tenant']
   },
   'lock-status': {
     type: 'lock-status',
@@ -170,7 +157,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'shared-keys': {
     type: 'shared-keys',
@@ -180,7 +167,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'daily-access-codes': {
     type: 'daily-access-codes',
@@ -190,17 +177,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'medium-tall', 'large'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin']
-  },
-  'system-status': {
-    type: 'system-status',
-    name: 'System Status',
-    description: 'Overall system health',
-    defaultSize: 'large',
-    availableSizes: ['small', 'medium', 'large', 'large-wide'],
-    allowMultiple: false,
-    category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'remote-gate': {
     type: 'remote-gate',
@@ -210,7 +187,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'large'],
     allowMultiple: false,
     category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'sync-fms': {
     type: 'sync-fms',
@@ -220,17 +197,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'system',
-    requiredPermissions: ['admin', 'dev_admin', 'facility_admin']
-  },
-  'performance-stats': {
-    type: 'performance-stats',
-    name: 'System Performance',
-    description: 'Performance metrics',
-    defaultSize: 'huge',
-    availableSizes: ['medium', 'large', 'huge'],
-    allowMultiple: false,
-    category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'histogram': {
     type: 'histogram',
@@ -240,7 +207,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
     allowMultiple: true,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'facility-viewer': {
     type: 'facility-viewer',
@@ -250,7 +217,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['huge', 'huge-wide'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   }
 };
 
@@ -319,11 +286,11 @@ export class WidgetTypeHelper {
     if (widgetId.includes('recent_activity') || widgetId.includes('activity')) {
       return WIDGET_TYPES['activity-monitor'];
     }
-    if (widgetId.includes('system_status') || widgetId.includes('status')) {
-      return WIDGET_TYPES['system-status'];
+    if (widgetId.includes('system_status')) {
+      return WIDGET_TYPES['stats-facilities'];
     }
     if (widgetId.includes('performance_stats') || widgetId.includes('performance')) {
-      return WIDGET_TYPES['performance-stats'];
+      return WIDGET_TYPES['stats-devices'];
     }
     if (widgetId.includes('syncfms') || widgetId.includes('sync_fms')) {
       return WIDGET_TYPES['sync-fms'];

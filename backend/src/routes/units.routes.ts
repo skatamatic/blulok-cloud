@@ -79,7 +79,8 @@ router.get('/unlocked', asyncHandler(async (req: AuthenticatedRequest, res: Resp
 
   try {
     const unitsService = UnitsService.getInstance();
-    const result = await unitsService.getUnits(userId, userRole, { lock_status: 'unlocked' });
+    const filters = { ...req.query, lock_status: 'unlocked' };
+    const result = await unitsService.getUnits(userId, userRole, filters);
 
     res.json({
       success: true,

@@ -40,7 +40,7 @@ export interface UseUnitsDataReturn {
   onError: (error: string) => void;
 }
 
-export const useUnitsData = (): UseUnitsDataReturn => {
+export const useUnitsData = (facilityId?: string | null): UseUnitsDataReturn => {
   const [data, setData] = useState<UnitsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,12 +49,14 @@ export const useUnitsData = (): UseUnitsDataReturn => {
     try {
       setLoading(true);
       setError(null);
-      
-      // Fetch all units first
-      const allUnitsResponse = await apiService.get('/units');
-      
+
+      const params = facilityId ? { facility_id: facilityId } : undefined;
+
+      // Fetch all units first (scoped when global facility is selected)
+      const allUnitsResponse = await apiService.get('/units', params ? { params } : undefined);
+
       // Fetch unlocked units using the dedicated endpoint
-      const unlockedUnitsResponse = await apiService.get('/units/unlocked');
+      const unlockedUnitsResponse = await apiService.get('/units/unlocked', params ? { params } : undefined);
       
       if (allUnitsResponse.success && unlockedUnitsResponse.success) {
         const allUnits = allUnitsResponse.units || [];
@@ -92,7 +94,7 @@ export const useUnitsData = (): UseUnitsDataReturn => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [facilityId]);
 
   const lockUnit = useCallback(async (unitId: string): Promise<boolean> => {
     try {

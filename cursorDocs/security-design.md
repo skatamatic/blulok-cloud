@@ -135,4 +135,7 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
   - `GATEWAY_MAX_MESSAGE_BYTES` (default 512KB), `GATEWAY_PING_INTERVAL_SEC` (25s), `GATEWAY_PONG_TIMEOUT_SEC` (20s).
   - One active connection per facility (latest connection replaces previous).
 
+### Dashboard & widget API scoping
+- See **`cursorDocs/dashboard-widgets.md`** for facility-scoped dashboard widgets, notifications RBAC, and related API patterns.
+
 

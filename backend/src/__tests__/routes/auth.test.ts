@@ -1,7 +1,15 @@
 import request from 'supertest';
 import { createApp } from '@/app';
-import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
+import {
+  createMockTestData,
+  MockTestData,
+  expectSuccess,
+  expectUnauthorized,
+  expectBadRequest,
+  expectForbidden,
+} from '@/__tests__/utils/mock-test-helpers';
 import { AuthService } from '@/services/auth.service';
+import { UserModel } from '@/models/user.model';
 
 describe('Auth Routes', () => {
   let app: any;
@@ -27,6 +35,20 @@ describe('Auth Routes', () => {
       expect(response.body).toHaveProperty('user');
       expect(response.body.user.email).toBe('tenant@test.com');
       expect(response.body.user).not.toHaveProperty('password');
+    });
+
+    it('should login using identifier field (alias for email)', async () => {
+      const response = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          identifier: 'tenant@test.com',
+          password: 'password123',
+        })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('token');
+      expect(response.body.user.email).toBe('tenant@test.com');
     });
 
     it('should include key_generation_required when login indicates re-registration is needed', async () => {
@@ -451,14 +473,23 @@ describe('Auth Routes', () => {
     });
 
     it('should return 403 for inactive user account', async () => {
+      const findByIdMock = UserModel.findById as jest.Mock;
+      findByIdMock.mockResolvedValueOnce({
+        id: 'tenant-1',
+        email: 'tenant@test.com',
+        first_name: 'Tenant',
+        last_name: 'User',
+        role: 'tenant',
+        is_active: false,
+      } as any);
+
       const response = await request(app)
         .post('/api/v1/auth/refresh-token')
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .expect(200);
+        .expect(403);
 
-      // Note: This test assumes the mock data has an inactive user
-      // If inactive user token exists in testData, use it instead
-      // Otherwise, this validates the check exists in the code
+      expectForbidden(response);
+      expect(response.body.message).toMatch(/deactivat/i);
     });
 
     it('should return a new token with valid JWT structure', async () => {

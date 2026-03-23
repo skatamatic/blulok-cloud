@@ -3,6 +3,8 @@ import { Modal } from '@/components/Modal/Modal';
 // import { WidgetType } from '@/types/widget-management.types';
 import { getAvailableWidgets } from '@/config/widgetRegistry';
 import { PlusIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '@/contexts/AuthContext';
+import { filterWidgetsByRole } from '@/utils/rbac.utils';
 
 interface AddWidgetModalProps {
   isOpen: boolean;
@@ -19,13 +21,18 @@ export const AddWidgetModal: React.FC<AddWidgetModalProps> = ({
   existingWidgets,
   maxWidgets
 }) => {
-  const availableWidgets = getAvailableWidgets().filter(widget => {
-    // If widget doesn't allow multiple instances, check if it already exists
-    if (!widget.allowMultiple) {
-      return !existingWidgets.some(existingType => existingType === widget.type);
-    }
-    return true;
-  });
+  const { authState } = useAuth();
+  const role = authState.user?.role;
+
+  const availableWidgets = filterWidgetsByRole(
+    getAvailableWidgets().filter((widget) => {
+      if (!widget.allowMultiple) {
+        return !existingWidgets.some((existingType) => existingType === widget.type);
+      }
+      return true;
+    }),
+    role
+  );
 
   const handleAddWidget = (widgetType: string) => {
     if (existingWidgets.length >= maxWidgets) {

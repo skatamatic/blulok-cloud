@@ -18,6 +18,11 @@ const createMockQueryBuilder = () => {
     whereExists: jest.fn().mockReturnThis(),
     whereNotExists: jest.fn().mockReturnThis(),
     whereRaw: jest.fn().mockReturnThis(),
+    /** Knex .modify(fn) — used by OTP verification and other queries */
+    modify: jest.fn().mockImplementation(function (this: any, cb: (qb: any) => void) {
+      cb(this);
+      return this;
+    }),
     orWhere: jest.fn().mockReturnThis(),
     orWhereIn: jest.fn().mockReturnThis(),
     orWhereNot: jest.fn().mockReturnThis(),

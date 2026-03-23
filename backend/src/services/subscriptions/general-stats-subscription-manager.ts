@@ -22,6 +22,7 @@ import { GeneralStatsService } from '@/services/general-stats.service';
  * - DEV_ADMIN: Full system statistics across all facilities
  * - ADMIN: Full system statistics across all facilities
  * - FACILITY_ADMIN: Statistics limited to assigned facilities
+ * - MAINTENANCE: Statistics limited to assigned facilities
  * - Other roles: Access denied
  */
 export class GeneralStatsSubscriptionManager extends BaseSubscriptionManager {
@@ -32,18 +33,7 @@ export class GeneralStatsSubscriptionManager extends BaseSubscriptionManager {
   }
 
   canSubscribe(userRole: UserRole): boolean {
-    // Admin and Dev Admin see all data
-    if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
-      return true;
-    }
-
-    // Facility Admin sees only their associated facilities
-    if (userRole === UserRole.FACILITY_ADMIN) {
-      return true;
-    }
-
-    // Other roles cannot access general stats
-    return false;
+    return this.generalStatsService.canSubscribeToGeneralStats(userRole);
   }
 
   private async getStatsForClient(client: SubscriptionClient): Promise<any> {

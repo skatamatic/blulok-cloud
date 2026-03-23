@@ -27,6 +27,16 @@ const getViteEnv = (key: string): string | undefined => {
   return undefined;
 };
 
+/** True when running Vite dev server; false in production and in Jest unless import.meta is polyfilled. */
+export const isViteDev = (): boolean => {
+  try {
+    const meta = (0, eval)('import.meta') as { env?: { DEV?: boolean } };
+    return Boolean(meta?.env?.DEV);
+  } catch {
+    return false;
+  }
+};
+
 export const getApiBaseUrl = (): string => {
   const runtime = getRuntimeConfig();
   const viteApi = getViteEnv('VITE_API_URL') || '';

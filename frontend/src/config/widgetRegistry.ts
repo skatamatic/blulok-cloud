@@ -1,6 +1,5 @@
 import { WidgetTypeDefinition } from '@/types/widget.types';
 import {
-  ChartBarIcon,
   ExclamationTriangleIcon,
   ClockIcon,
   CpuChipIcon,
@@ -41,10 +40,6 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
     ...SHARED_WIDGET_REGISTRY['activity-monitor'],
     icon: ClockIcon
   },
-  'activity-feed': {
-    ...SHARED_WIDGET_REGISTRY['activity-feed'],
-    icon: ClockIcon
-  },
   'access-history': {
     ...SHARED_WIDGET_REGISTRY['access-history'],
     icon: ClockIcon
@@ -73,10 +68,6 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
     ...SHARED_WIDGET_REGISTRY['daily-access-codes'],
     icon: KeyIcon
   },
-  'system-status': {
-    ...SHARED_WIDGET_REGISTRY['system-status'],
-    icon: CpuChipIcon
-  },
   'remote-gate': {
     ...SHARED_WIDGET_REGISTRY['remote-gate'],
     icon: ServerIcon
@@ -84,10 +75,6 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
   'sync-fms': {
     ...SHARED_WIDGET_REGISTRY['sync-fms'],
     icon: ArrowPathIcon
-  },
-  'performance-stats': {
-    ...SHARED_WIDGET_REGISTRY['performance-stats'],
-    icon: ChartBarIcon
   },
   'histogram': {
     ...SHARED_WIDGET_REGISTRY['histogram'],

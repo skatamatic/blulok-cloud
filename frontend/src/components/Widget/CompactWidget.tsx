@@ -52,7 +52,7 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className={`card h-full group relative compact-widget ${isDragging ? 'shadow-lg scale-105 z-10' : ''} ${className}`}
+      className={`card h-full min-h-0 flex flex-col overflow-hidden group relative compact-widget ${isDragging ? 'shadow-lg scale-105 z-10' : ''} ${className}`}
       style={{
         transformOrigin: 'center',
       }}
@@ -79,7 +79,7 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
         </div>
 
         {/* Widget Content - Full Area */}
-        <div className="p-3 h-full pointer-events-none">
+        <div className="p-3 flex-1 min-h-0 overflow-hidden pointer-events-none">
           {children}
         </div>
 

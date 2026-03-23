@@ -2,6 +2,8 @@ import axios, { AxiosInstance, AxiosError, AxiosRequestConfig } from 'axios';
 import { getApiBaseUrl } from './appConfig';
 import { LoginCredentials, LoginResponse } from '@/types/auth.types';
 import { AccessCode, AccessCodeConfig, AccessCodeGroupConfig, DeviceGroup, EffectiveAccessCode, UserAccessCode } from '@/types/facility.types';
+import type { ScopedGeneralStatsData } from '@/types/dashboard.types';
+import type { UserNotificationApi } from '@/types/notifications.types';
 
 // Safe access to import.meta for Jest compatibility
 const API_BASE_URL = getApiBaseUrl();
@@ -56,6 +58,17 @@ class ApiService {
 
   async getProfile() {
     const response = await this.api.get('/auth/profile');
+    return response.data;
+  }
+
+  /** Initial dashboard stats (same payload as WebSocket `general_stats_update`) */
+  async getDashboardGeneralStats(params?: {
+    /** When set, server limits counts to this facility (RBAC enforced) */
+    facility_id?: string;
+  }): Promise<{ success: boolean; data: ScopedGeneralStatsData }> {
+    const response = await this.api.get('/dashboard/general-stats', {
+      params: params?.facility_id ? { facility_id: params.facility_id } : undefined,
+    });
     return response.data;
   }
 
@@ -760,6 +773,51 @@ class ApiService {
   }) {
     const response = await this.api.get('/access-history', { params: filters });
     return response.data;
+  }
+
+  /** In-app notifications (user-scoped; optional facility filter matches backend `facilityId` query param) */
+  async getNotifications(params?: {
+    facilityId?: string;
+    type?: string;
+    priority?: string;
+    isRead?: boolean;
+    limit?: number;
+    offset?: number;
+  }) {
+    const response = await this.api.get('/notifications', { params });
+    return response.data as {
+      success: boolean;
+      notifications: UserNotificationApi[];
+      total: number;
+      unreadCount: number;
+      limit: number;
+      offset: number;
+    };
+  }
+
+  async getNotificationsUnreadCount(params?: { facilityId?: string }) {
+    const response = await this.api.get('/notifications/unread-count', { params });
+    return response.data as { success: boolean; unreadCount: number };
+  }
+
+  async markNotificationRead(notificationId: string) {
+    const response = await this.api.post(`/notifications/${notificationId}/read`);
+    return response.data as { success: boolean; notification: UserNotificationApi };
+  }
+
+  async markNotificationsRead(notificationIds: string[]) {
+    const response = await this.api.post('/notifications/read', { notificationIds });
+    return response.data as { success: boolean; markedCount: number };
+  }
+
+  async markAllNotificationsRead(facilityId?: string) {
+    const response = await this.api.post('/notifications/read-all', facilityId ? { facilityId } : {});
+    return response.data as { success: boolean; markedCount: number };
+  }
+
+  async deleteNotification(notificationId: string) {
+    const response = await this.api.delete(`/notifications/${notificationId}`);
+    return response.data as { success: boolean; message?: string };
   }
 
   async getUserAccessHistory(userId: string, filters?: {

@@ -55,6 +55,7 @@ export class BatterySubscriptionManager extends BaseSubscriptionManager {
   private getEmptyBatteryData() {
     return {
       lowBatteryUnits: [],
+      rankedUnits: [],
       totalUnits: 0,
       criticalBatteryUnits: 0,
       lowBatteryCount: 0,
@@ -67,14 +68,23 @@ export class BatterySubscriptionManager extends BaseSubscriptionManager {
   private async buildBatteryData(client: SubscriptionClient) {
     const allUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole);
     const allUnits = allUnitsResult.units;
-    const lowBatteryUnits = allUnits.filter((u) => (u.battery_level || 0) <= 20);
+    /** Online units first (lowest battery at top), then offline (lowest first) */
+    const rankedUnits = [...allUnits].sort((a, b) => {
+      const ao = a.is_online ? 0 : 1;
+      const bo = b.is_online ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      return (a.battery_level ?? 0) - (b.battery_level ?? 0);
+    });
+    const lowBatteryUnits = rankedUnits.filter((u) => (u.battery_level || 0) <= 20);
     const totalUnits = allUnits.length;
     const criticalBatteryUnits = allUnits.filter((u) => (u.battery_level || 0) <= 5).length;
     const lowBatteryCount = allUnits.filter((u) => (u.battery_level || 0) <= 20 && (u.battery_level || 0) > 5).length;
     const offlineUnits = allUnits.filter((u) => !u.is_online).length;
     const onlineUnits = allUnits.filter((u) => u.is_online).length;
     return {
+      /** @deprecated prefer rankedUnits for full dashboard list */
       lowBatteryUnits,
+      rankedUnits,
       totalUnits,
       criticalBatteryUnits,
       lowBatteryCount,

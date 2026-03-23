@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { 
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
   BellIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
@@ -12,24 +12,12 @@ import { WidgetSize } from './WidgetSizeDropdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
-import { AccessLog } from '@/types/access-history.types';
+import type { UserNotificationApi } from '@/types/notifications.types';
+import {
+  mapApiNotificationToDashboardView,
+} from '@/utils/notification-display.utils';
 
-interface Notification {
-  id: string;
-  title: string;
-  message: string;
-  type: 'info' | 'warning' | 'error' | 'success';
-  timestamp: Date;
-  isRead: boolean;
-  actionRequired: boolean;
-  source: 'system' | 'device' | 'user' | 'security';
-  metadata?: {
-    unitId?: string;
-    userId?: string;
-    deviceId?: string;
-    facilityId?: string;
-  };
-}
+type DisplayNotification = ReturnType<typeof mapApiNotificationToDashboardView>;
 
 interface NotificationsWidgetProps {
   id: string;
@@ -38,103 +26,42 @@ interface NotificationsWidgetProps {
   availableSizes?: WidgetSize[];
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  /** Global facility filter (omit when "All facilities") */
+  facilityFilter?: string;
 }
 
-/**
- * Transform an AccessLog from the API into a Notification for display.
- * Only important events (failures, security events, etc.) are shown as notifications.
- */
-const transformAccessLogToNotification = (log: AccessLog): Notification | null => {
-  // Only create notifications for significant events
-  const isScheduleViolation = log.action === 'schedule_violation';
-  const isManualOverride = log.action === 'manual_override';
-  
-  // Skip successful routine operations - they are not notification-worthy
-  // Exception: manual_override actions and emergency methods should always create notifications
-  if (log.success && !isScheduleViolation && !isManualOverride && !['manual_override', 'emergency'].includes(log.method)) {
-    return null;
-  }
-
-  let title = '';
-  let message = '';
-  let type: Notification['type'] = 'info';
-  let source: Notification['source'] = 'system';
-  let actionRequired = false;
-
-  const unitNumber = log.unit_number || log.device_name || 'Unknown unit';
-  const userName = log.user_name || log.primary_tenant_name || 'Unknown user';
-  const facilityName = log.facility_name || 'Unknown facility';
-
-  if (log.action === 'access_denied') {
-    title = 'Access Denied';
-    message = `Failed access attempt on ${unitNumber} by ${userName}`;
-    if (log.denial_reason) {
-      message += ` - ${log.denial_reason.replace(/_/g, ' ')}`;
-    }
-    type = 'error';
-    source = 'security';
-    actionRequired = true;
-  } else if (log.action === 'invalid_credential') {
-    title = 'Invalid Credential';
-    message = `Invalid credential used on ${unitNumber}`;
-    type = 'error';
-    source = 'security';
-    actionRequired = true;
-  } else if (log.action === 'system_error') {
-    title = 'System Error';
-    message = `Error on ${unitNumber}${log.reason ? ': ' + log.reason : ''}`;
-    type = 'error';
-    source = 'device';
-    actionRequired = true;
-  } else if (log.action === 'timeout') {
-    title = 'Device Timeout';
-    message = `${unitNumber} did not respond`;
-    type = 'warning';
-    source = 'device';
-    actionRequired = false;
-  } else if (log.action === 'schedule_violation') {
-    title = 'Schedule Violation';
-    message = `${userName} accessed ${unitNumber} outside schedule`;
-    type = 'warning';
-    source = 'security';
-    actionRequired = true;
-  } else if (log.action === 'manual_override') {
-    title = 'Manual Override';
-    message = `${userName} used manual override on ${unitNumber}`;
-    type = 'warning';
-    source = 'security';
-    actionRequired = false;
-  } else if (!log.success) {
-    title = 'Operation Failed';
-    message = `${log.action.replace(/_/g, ' ')} failed on ${unitNumber}`;
-    type = 'error';
-    source = 'device';
-    actionRequired = true;
-  } else {
-    // Other successful events that we want to notify about (emergency access, etc.)
-    title = 'Access Event';
-    message = `${log.action.replace(/_/g, ' ')} on ${unitNumber}`;
-    type = 'info';
-    source = 'system';
-  }
-
-  return {
-    id: log.id,
-    title,
-    message: `${message} at ${facilityName}`,
-    type,
-    timestamp: new Date(log.occurred_at),
-    isRead: false,
-    actionRequired,
-    source,
-    metadata: {
-      unitId: log.unit_id,
-      userId: log.user_id,
-      deviceId: log.device_id,
-      facilityId: log.facility_id,
-    },
-  };
+type WsNotificationEvent = {
+  eventType?: string;
+  payload?: unknown;
 };
+
+function toApiNotification(
+  n: UserNotificationApi | Record<string, unknown>
+): UserNotificationApi {
+  const r = n as Record<string, unknown>;
+  return {
+    id: String(r.id ?? ''),
+    type: String(r.type ?? 'general'),
+    title: String(r.title ?? ''),
+    message: String(r.message ?? ''),
+    priority: String(r.priority ?? 'normal'),
+    isRead: Boolean(r.isRead ?? r.is_read),
+    readAt: (r.readAt ?? r.read_at) as string | null,
+    reference: (r.reference as UserNotificationApi['reference']) ?? null,
+    facilityId: (r.facilityId ?? r.facility_id) as string | null,
+    metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+    createdAt: String(r.createdAt ?? r.created_at ?? new Date().toISOString()),
+  };
+}
+
+function matchesFacilityFilter(
+  n: UserNotificationApi,
+  facilityFilter: string | undefined
+): boolean {
+  if (!facilityFilter) return true;
+  if (!n.facilityId) return true;
+  return n.facilityId === facilityFilter;
+}
 
 export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   id,
@@ -142,175 +69,210 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   initialSize = 'medium-tall',
   availableSizes = ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
   onGridSizeChange,
-  onRemove
+  onRemove,
+  facilityFilter,
 }) => {
   const [size, setSize] = useState<WidgetSize>(initialSize);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [rows, setRows] = useState<DisplayNotification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'unread' | 'actionRequired'>('unread');
-  const [readNotificationIds, setReadNotificationIds] = useState<Set<string>>(new Set());
-  
+
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
 
-  const normalizeActivityToAccessLog = (input: unknown): AccessLog | null => {
-    if (!input || typeof input !== 'object') return null;
-    const raw = input as Record<string, unknown>;
-    const metadata = raw.metadata && typeof raw.metadata === 'object' ? (raw.metadata as Record<string, unknown>) : {};
-    const action = typeof metadata.action === 'string' ? metadata.action : 'access_granted';
-    const method = typeof metadata.method === 'string' ? metadata.method : 'app';
-    const denialReason = typeof metadata.denial_reason === 'string' ? metadata.denial_reason : undefined;
-    const occurredAtValue = raw.occurredAt || raw.occurred_at;
-    const occurredAt = typeof occurredAtValue === 'string' ? occurredAtValue : new Date().toISOString();
-    const actor = raw.actor && typeof raw.actor === 'object' ? (raw.actor as Record<string, unknown>) : {};
-    const actorId = typeof actor.id === 'string' ? actor.id : undefined;
-    const actorName = typeof actor.name === 'string' ? actor.name : undefined;
+  const mergeById = useCallback((incoming: UserNotificationApi[]) => {
+    setRows((prev) => {
+      const map = new Map<string, DisplayNotification>();
+      prev.forEach((p) => map.set(p.id, p));
+      incoming.forEach((raw) => {
+        if (!matchesFacilityFilter(raw, facilityFilter)) return;
+        const v = mapApiNotificationToDashboardView(raw);
+        map.set(v.id, v);
+      });
+      return Array.from(map.values()).sort(
+        (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+      );
+    });
+  }, [facilityFilter]);
 
-    return {
-      id: String(raw.id || `${Date.now()}-${Math.random()}`),
-      device_id: String(raw.deviceId || raw.device_id || ''),
-      device_type: 'blulok',
-      facility_id: typeof raw.facilityId === 'string' ? raw.facilityId : undefined,
-      unit_id: typeof raw.unitId === 'string' ? raw.unitId : undefined,
-      user_id: actorId,
-      action: action as AccessLog['action'],
-      method: method as AccessLog['method'],
-      success: raw.result === 'success',
-      denial_reason: denialReason as AccessLog['denial_reason'],
-      reason: typeof raw.resultMessage === 'string' ? raw.resultMessage : undefined,
-      metadata,
-      occurred_at: occurredAt,
-      created_at: occurredAt,
-      updated_at: occurredAt,
-      facility_name: typeof raw.facilityName === 'string' ? raw.facilityName : undefined,
-      unit_number: typeof raw.unitNumber === 'string' ? raw.unitNumber : undefined,
-      user_name: actorName,
-      device_name: typeof raw.deviceSerial === 'string' ? raw.deviceSerial : undefined,
-    };
-  };
-
-  const loadNotifications = useCallback(async () => {
-    setError(null);
-    
+  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setError(null);
     try {
-      // Fetch recent access logs, filtering for important events (failures, denials)
-      const response = await apiService.getAccessHistory({
+      const response = await apiService.getNotifications({
+        facilityId: facilityFilter,
         limit: 50,
         offset: 0,
-        // Note: Backend will filter based on user permissions
       });
-
-      if (response.success && response.logs) {
-        const transformedNotifications = response.logs
-          .map(transformAccessLogToNotification)
-          .filter((n: Notification | null): n is Notification => n !== null)
-          .map((n: Notification) => ({
-            ...n,
-            isRead: readNotificationIds.has(n.id),
-          }));
-        
-        setNotifications(transformedNotifications);
+      if (response.success && response.notifications) {
+        const mapped = response.notifications
+          .filter((n) => matchesFacilityFilter(n, facilityFilter))
+          .map(mapApiNotificationToDashboardView);
+        setRows(mapped);
       } else {
-        setNotifications([]);
+        setRows([]);
       }
     } catch (err) {
       console.error('Failed to load notifications:', err);
-      setError('Failed to load notifications');
-      setNotifications([]);
+      if (!silent) {
+        setError('Failed to load notifications');
+        setRows([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
-  }, [readNotificationIds]);
+  }, [facilityFilter]);
 
   useEffect(() => {
+    setIsLoading(true);
     loadNotifications();
   }, [loadNotifications]);
 
-  // Subscribe to real-time access log updates
+  const handleWs = useCallback(
+    (message: WsNotificationEvent) => {
+      const { eventType, payload } = message;
+      const data = payload as Record<string, unknown> | undefined;
+
+      switch (eventType) {
+        case 'notifications_update': {
+          const recent = data?.recentNotifications as unknown[] | undefined;
+          if (recent?.length) {
+            mergeById(recent.map((x) => toApiNotification(x as Record<string, unknown>)));
+          }
+          break;
+        }
+        case 'notification_created': {
+          if (!data?.notificationId) break;
+          const apiRow: UserNotificationApi = {
+            id: String(data.notificationId),
+            type: String(data.type ?? 'general'),
+            title: String(data.title ?? ''),
+            message: String(data.message ?? ''),
+            priority: String(data.priority ?? 'normal'),
+            isRead: false,
+            readAt: null,
+            reference: null,
+            facilityId: (data.facilityId as string) ?? null,
+            metadata: null,
+            createdAt: String(data.timestamp ?? new Date().toISOString()),
+          };
+          if (!matchesFacilityFilter(apiRow, facilityFilter)) break;
+          mergeById([apiRow]);
+          break;
+        }
+        case 'notification_read': {
+          const nid = data?.notificationId as string | undefined;
+          if (!nid) break;
+          setRows((prev) =>
+            prev.map((r) =>
+              r.id === nid ? { ...r, isRead: true } : r
+            )
+          );
+          break;
+        }
+        case 'notifications_batch_read': {
+          const ids = data?.notificationIds as string[] | undefined;
+          if (!ids?.length) break;
+          const idSet = new Set(ids);
+          setRows((prev) =>
+            prev.map((r) => (idSet.has(r.id) ? { ...r, isRead: true } : r))
+          );
+          break;
+        }
+        case 'notifications_count_update':
+          void loadNotifications({ silent: true });
+          break;
+        case 'notification_deleted': {
+          const nid = data?.notificationId as string | undefined;
+          if (!nid) break;
+          setRows((prev) => prev.filter((r) => r.id !== nid));
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [facilityFilter, mergeById, loadNotifications]
+  );
+
   useEffect(() => {
     if (!isConnected) return;
+    const subId = subscribe('notifications', handleWs);
+    return () => unsubscribe(subId);
+  }, [subscribe, unsubscribe, isConnected, handleWs]);
 
-    const handleAccessLogUpdate = (data: unknown) => {
-      const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
-      const activitiesRaw = Array.isArray(payload.activities)
-        ? payload.activities
-        : payload.activity
-          ? [payload.activity]
-          : [];
-      const newLogs = activitiesRaw
-        .map(normalizeActivityToAccessLog)
-        .filter((entry: AccessLog | null): entry is AccessLog => entry !== null);
-      
-      const newNotifications = newLogs
-        .map(transformAccessLogToNotification)
-        .filter((n): n is Notification => n !== null);
-
-      if (newNotifications.length > 0) {
-        setNotifications(prev => {
-          const existingIds = new Set(prev.map(n => n.id));
-          const uniqueNew = newNotifications.filter(n => !existingIds.has(n.id));
-          return [...uniqueNew, ...prev].slice(0, 100); // Keep max 100 notifications
-        });
-      }
-    };
-
-    const subscriptionId = subscribe('activity', handleAccessLogUpdate);
-
-    return () => {
-      unsubscribe(subscriptionId);
-    };
-  }, [subscribe, unsubscribe, isConnected]);
-
-  const markAsRead = (notificationId: string) => {
-    setReadNotificationIds(prev => new Set(prev).add(notificationId));
-    setNotifications(prev => 
-      prev.map(n => n.id === notificationId ? { ...n, isRead: true } : n)
-    );
+  const markAsRead = async (notificationId: string) => {
+    try {
+      await apiService.markNotificationRead(notificationId);
+      setRows((prev) =>
+        prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
+      );
+    } catch (e) {
+      console.error('Mark read failed', e);
+    }
   };
 
-  const dismissNotification = (notificationId: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== notificationId));
+  const dismissNotification = async (notificationId: string) => {
+    try {
+      await apiService.deleteNotification(notificationId);
+      setRows((prev) => prev.filter((n) => n.id !== notificationId));
+    } catch (e) {
+      console.error('Delete notification failed', e);
+    }
   };
 
-  const markAllAsRead = () => {
-    const allIds = new Set(notifications.map(n => n.id));
-    setReadNotificationIds(prev => new Set([...prev, ...allIds]));
-    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  const markAllAsRead = async () => {
+    try {
+      await apiService.markAllNotificationsRead(facilityFilter);
+      setRows((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    } catch (e) {
+      console.error('Mark all read failed', e);
+    }
   };
 
   const clearRead = () => {
-    setNotifications(prev => prev.filter(n => !n.isRead || n.actionRequired));
+    setRows((prev) => prev.filter((n) => !n.isRead || n.actionRequired));
   };
 
   const handleRefresh = async () => {
     setIsLoading(true);
-    await loadNotifications();
+    await loadNotifications({ silent: false });
   };
 
-  const getMaxDisplayItems = (size: WidgetSize): number => {
-    switch (size) {
-      case 'small': return 2;
-      case 'medium': return 4;
-      case 'medium-tall': return 8;
-      case 'large': return 6;
-      case 'large-wide': return 8;
-      case 'huge': return 10;
-      case 'huge-wide': return 12;
-      default: return 4;
+  const getMaxDisplayItems = (s: WidgetSize): number => {
+    switch (s) {
+      case 'small':
+        return 2;
+      case 'medium':
+        return 4;
+      case 'medium-tall':
+        return 8;
+      case 'large':
+        return 6;
+      case 'large-wide':
+        return 8;
+      case 'huge':
+        return 10;
+      case 'huge-wide':
+        return 12;
+      default:
+        return 4;
     }
   };
 
-  const filteredNotifications = notifications.filter(notification => {
-    if (filter === 'unread') return !notification.isRead;
-    if (filter === 'actionRequired') return notification.actionRequired;
-    return true;
-  });
+  const filteredNotifications = useMemo(() => {
+    return rows.filter((notification) => {
+      if (filter === 'unread') return !notification.isRead;
+      if (filter === 'actionRequired') return notification.actionRequired;
+      return true;
+    });
+  }, [rows, filter]);
 
   const displayedNotifications = filteredNotifications.slice(0, getMaxDisplayItems(size));
-  const unreadCount = notifications.filter(n => !n.isRead).length;
+  const unreadCount = useMemo(() => rows.filter((n) => !n.isRead).length, [rows]);
 
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
+  const getNotificationIcon = (displayType: string) => {
+    switch (displayType) {
       case 'error':
         return <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />;
       case 'warning':
@@ -325,7 +287,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   const formatTimestamp = (timestamp: Date) => {
     const diffMs = Date.now() - timestamp.getTime();
     const diffMins = Math.floor(diffMs / (1000 * 60));
-    
+
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
@@ -355,8 +317,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           <button
             onClick={() => setFilter('all')}
             className={`w-full px-3 py-2 text-left text-sm rounded ${
-              filter === 'all' 
-                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400' 
+              filter === 'all'
+                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
                 : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
             }`}
           >
@@ -365,8 +327,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           <button
             onClick={() => setFilter('unread')}
             className={`w-full px-3 py-2 text-left text-sm rounded ${
-              filter === 'unread' 
-                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400' 
+              filter === 'unread'
+                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
                 : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
             }`}
           >
@@ -375,8 +337,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           <button
             onClick={() => setFilter('actionRequired')}
             className={`w-full px-3 py-2 text-left text-sm rounded ${
-              filter === 'actionRequired' 
-                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400' 
+              filter === 'actionRequired'
+                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
                 : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
             }`}
           >
@@ -385,14 +347,17 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         </div>
       }
     >
-      <div className="h-full flex flex-col">
-        {/* Filter Tabs (for larger widgets) */}
+      <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {(size === 'large' || size === 'huge' || size.includes('wide')) && (
-          <div className="flex space-x-1 mb-3">
+          <div className="flex space-x-1 mb-3 shrink-0">
             {[
-              { key: 'all', label: 'All', count: notifications.length },
+              { key: 'all', label: 'All', count: rows.length },
               { key: 'unread', label: 'Unread', count: unreadCount },
-              { key: 'actionRequired', label: 'Action Required', count: notifications.filter(n => n.actionRequired).length }
+              {
+                key: 'actionRequired',
+                label: 'Action Required',
+                count: rows.filter((n) => n.actionRequired).length,
+              },
             ].map(({ key, label, count }) => (
               <button
                 key={key}
@@ -409,9 +374,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           </div>
         )}
 
-        {/* Loading State */}
-        {isLoading && notifications.length === 0 ? (
-          <div className="flex-1 space-y-2">
+        {isLoading && rows.length === 0 ? (
+          <div className="flex-1 min-h-0 space-y-2 overflow-hidden">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="animate-pulse flex items-start space-x-3 p-3">
                 <div className="h-8 w-8 bg-gray-200 dark:bg-gray-700 rounded"></div>
@@ -434,8 +398,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             </button>
           </div>
         ) : size !== 'small' ? (
-          /* Notifications List - Hide for small widgets */
-          <div className="flex-1 space-y-2 overflow-y-auto">
+          <div className="flex-1 min-h-0 space-y-2 overflow-y-auto">
             <AnimatePresence>
               {displayedNotifications.length > 0 ? (
                 displayedNotifications.map((notification, index) => (
@@ -448,30 +411,31 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                     className={`relative ${
                       size === 'medium' ? 'p-2' : 'p-3'
                     } border rounded-lg transition-all group hover:shadow-sm ${
-                      notification.isRead 
-                        ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800' 
+                      notification.isRead
+                        ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
                         : 'border-primary-200 dark:border-primary-700 bg-primary-50 dark:bg-primary-900/10'
                     }`}
                   >
                     <div className={`flex items-start ${size === 'medium' ? 'space-x-2' : 'space-x-3'}`}>
                       <div className="flex-shrink-0 mt-0.5">
-                        {React.cloneElement(getNotificationIcon(notification.type), {
-                          className: size === 'medium' ? 'h-3 w-3' : 'h-4 w-4'
+                        {React.cloneElement(getNotificationIcon(notification.displayType), {
+                          className: size === 'medium' ? 'h-3 w-3' : 'h-4 w-4',
                         })}
                       </div>
-                      
+
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between">
-                          <h4 className={`${size === 'medium' ? 'text-xs' : 'text-sm'} font-medium truncate ${
-                            notification.isRead 
-                              ? 'text-gray-900 dark:text-white' 
-                              : 'text-gray-900 dark:text-white font-semibold'
-                          }`}>
+                          <h4
+                            className={`${size === 'medium' ? 'text-xs' : 'text-sm'} font-medium truncate ${
+                              notification.isRead
+                                ? 'text-gray-900 dark:text-white'
+                                : 'text-gray-900 dark:text-white font-semibold'
+                            }`}
+                          >
                             {notification.title}
                           </h4>
                         </div>
-                        
-                        {/* Show message only for larger sizes or truncated for medium */}
+
                         {size === 'medium' ? (
                           <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5 truncate">
                             {notification.message}
@@ -481,12 +445,14 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                             {notification.message}
                           </p>
                         )}
-                        
+
                         <div className={`flex items-center justify-between ${size === 'medium' ? 'mt-1' : 'mt-2'}`}>
                           <span className="text-xs text-gray-500 dark:text-gray-400">
-                            {size === 'medium' ? formatTimestamp(notification.timestamp).split(' ')[0] : formatTimestamp(notification.timestamp)}
+                            {size === 'medium'
+                              ? formatTimestamp(notification.timestamp).split(' ')[0]
+                              : formatTimestamp(notification.timestamp)}
                           </span>
-                          
+
                           {notification.actionRequired && size !== 'medium' && (
                             <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 rounded-full">
                               Action Required
@@ -495,7 +461,6 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                         </div>
                       </div>
 
-                      {/* Action Buttons - Simplified for medium */}
                       {size === 'medium' ? (
                         <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
@@ -533,9 +498,11 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                 <div className="flex flex-col items-center justify-center h-full text-center py-8">
                   <BellIcon className="h-8 w-8 text-gray-400 mb-2" />
                   <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {filter === 'unread' ? 'No unread notifications' : 
-                     filter === 'actionRequired' ? 'No actions required' : 
-                     'No notifications'}
+                    {filter === 'unread'
+                      ? 'No unread notifications'
+                      : filter === 'actionRequired'
+                        ? 'No actions required'
+                        : 'No notifications'}
                   </p>
                 </div>
               )}
@@ -543,29 +510,28 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           </div>
         ) : null}
 
-        {/* Quick Actions Footer */}
-        {(size === 'medium-tall' || size === 'large' || size === 'huge' || size.includes('wide')) && unreadCount > 0 && (
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
-            <div className="flex space-x-2">
-              <button
-                onClick={markAllAsRead}
-                className="flex-1 py-2 px-3 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-              >
-                Mark All Read
-              </button>
-              <button
-                onClick={clearRead}
-                className="flex-1 py-2 px-3 text-xs font-medium text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/40 rounded-lg transition-colors"
-              >
-                Clear Read
-              </button>
+        {(size === 'medium-tall' || size === 'large' || size === 'huge' || size.includes('wide')) &&
+          unreadCount > 0 && (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3 shrink-0">
+              <div className="flex space-x-2">
+                <button
+                  onClick={markAllAsRead}
+                  className="flex-1 py-2 px-3 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                >
+                  Mark All Read
+                </button>
+                <button
+                  onClick={clearRead}
+                  className="flex-1 py-2 px-3 text-xs font-medium text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/40 rounded-lg transition-colors"
+                >
+                  Clear Read
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Compact view for small widgets */}
         {size === 'small' && (
-          <div className="h-full flex flex-col justify-center text-center">
+          <div className="h-full min-h-0 flex flex-col justify-center text-center">
             <div className="relative mb-2">
               <BellIcon className="h-8 w-8 text-gray-600 dark:text-gray-400 mx-auto" />
               {unreadCount > 0 && (
@@ -574,9 +540,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                 </span>
               )}
             </div>
-            <div className="text-lg font-bold text-gray-900 dark:text-white">
-              {notifications.length}
-            </div>
+            <div className="text-lg font-bold text-gray-900 dark:text-white">{rows.length}</div>
             <div className="text-xs text-gray-500 dark:text-gray-400">
               {unreadCount > 0 ? `${unreadCount} unread` : 'All read'}
             </div>

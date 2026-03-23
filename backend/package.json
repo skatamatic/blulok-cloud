@@ -10,6 +10,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:coverage:areas": "jest --coverage --coverageReporters=json-summary --coverageReporters=text-summary --silent && node ../scripts/print-coverage-by-area.mjs backend",
     "test:security": "node scripts/run-security-tests.js",
     "test:security:watch": "jest --testPathPattern=security --watch",
     "test:security:coverage": "jest --testPathPattern=security --coverage",

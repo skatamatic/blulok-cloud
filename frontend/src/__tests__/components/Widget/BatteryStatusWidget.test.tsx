@@ -5,6 +5,17 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
 import { createMockUnit } from '@/__tests__/utils/test-utils';
 
+jest.mock('@/services/api.service', () => {
+  const actual = jest.requireActual('@/services/api.service') as { apiService: Record<string, unknown> };
+  return {
+    ...actual,
+    apiService: {
+      ...actual.apiService,
+      getUnits: jest.fn().mockResolvedValue({ units: [] }),
+    },
+  };
+});
+
 // Mock the WebSocket context
 const mockSubscribe = jest.fn();
 const mockUnsubscribe = jest.fn();
@@ -99,9 +110,9 @@ describe('BatteryStatusWidget', () => {
   });
 
   it('renders loading state initially', () => {
-    renderWithProviders(<BatteryStatusWidget {...mockProps} />);
-    
-    expect(screen.getByText('Loading...')).toBeInTheDocument();
+    const { container } = renderWithProviders(<BatteryStatusWidget {...mockProps} />);
+
+    expect(container.querySelector('.animate-spin')).toBeTruthy();
   });
 
   it('subscribes to battery_status websocket on mount', () => {
@@ -149,7 +160,7 @@ describe('BatteryStatusWidget', () => {
     });
   });
 
-  it('shows critical units by default', async () => {
+  it('shows all units by default sorted lowest-battery first (online)', async () => {
     renderWithProviders(<BatteryStatusWidget {...mockProps} />);
 
     // Wait for component to mount and subscribe
@@ -165,10 +176,9 @@ describe('BatteryStatusWidget', () => {
     });
 
     await waitFor(() => {
-      // Default filter is 'critical', so only critical units should be shown
-      // The component shows critical units sorted by battery level (lowest first)
-      expect(screen.getByText('Unit A-102')).toBeInTheDocument(); // Critical unit (3%)
-      expect(screen.getByText('3%')).toBeInTheDocument(); // Critical battery level
+      expect(screen.getByText('Unit A-102')).toBeInTheDocument();
+      expect(screen.getByText('3%')).toBeInTheDocument();
+      expect(screen.getByText('Unit A-101')).toBeInTheDocument();
     });
   });
 
@@ -216,9 +226,10 @@ describe('BatteryStatusWidget', () => {
     });
   });
 
-  it('shows no critical alerts message when no critical issues', async () => {
+  it('shows empty message when there are no units in scope', async () => {
     const emptyBatteryData = {
       ...mockBatteryData,
+      rankedUnits: [],
       lowBatteryUnits: [],
       criticalBatteryUnits: 0,
       lowBatteryCount: 0,
@@ -240,8 +251,7 @@ describe('BatteryStatusWidget', () => {
     });
 
     await waitFor(() => {
-      // Default filter is 'critical', so it should show "No critical battery alerts"
-      expect(screen.getByText('No critical battery alerts')).toBeInTheDocument();
+      expect(screen.getByText('No units in scope')).toBeInTheDocument();
     });
   });
 

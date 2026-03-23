@@ -5,6 +5,17 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
 import { createMockUnit } from '@/__tests__/utils/test-utils';
 
+jest.mock('@/services/api.service', () => {
+  const actual = jest.requireActual('@/services/api.service') as { apiService: Record<string, unknown> };
+  return {
+    ...actual,
+    apiService: {
+      ...actual.apiService,
+      getUnits: jest.fn().mockResolvedValue({ units: [] }),
+    },
+  };
+});
+
 // Mock the WebSocket context
 const mockSubscribe = jest.fn();
 const mockUnsubscribe = jest.fn();
@@ -92,8 +103,10 @@ describe('BatteryStatusWidget Comprehensive Tests', () => {
     });
 
     it('displays loading state initially', () => {
-      renderWithProviders(<BatteryStatusWidget currentSize="medium" onSizeChange={() => {}} />);
-      expect(screen.getByText('Loading...')).toBeInTheDocument();
+      const { container } = renderWithProviders(
+        <BatteryStatusWidget currentSize="medium" onSizeChange={() => {}} />
+      );
+      expect(container.querySelector('.animate-spin')).toBeTruthy();
     });
 
     it('subscribes to websocket on mount', () => {
@@ -114,6 +127,7 @@ describe('BatteryStatusWidget Comprehensive Tests', () => {
 
   describe('Data Display', () => {
     const mockBatteryData = {
+      rankedUnits: [mockUnits[1], mockUnits[0], mockUnits[2]],
       lowBatteryUnits: [mockUnits[0], mockUnits[1], mockUnits[2]], // Include offline unit
       totalUnits: 10,
       criticalBatteryUnits: 3, // Updated to include offline unit as critical
@@ -172,12 +186,15 @@ describe('BatteryStatusWidget Comprehensive Tests', () => {
         expect(mockSubscribe).toHaveBeenCalled();
       });
 
-      const subscribeCall = mockSubscribe.mock.calls[0];
-      const dataHandler = subscribeCall[1];
-      dataHandler(mockBatteryData);
+      const lastCall = mockSubscribe.mock.calls[mockSubscribe.mock.calls.length - 1];
+      const dataHandler = lastCall[1];
+
+      act(() => {
+        dataHandler(mockBatteryData);
+      });
 
       await waitFor(() => {
-        expect(screen.getByText('Test Facility')).toBeInTheDocument();
+        expect(screen.getAllByText('Test Facility').length).toBeGreaterThan(0);
       });
     });
 
@@ -205,6 +222,7 @@ describe('BatteryStatusWidget Comprehensive Tests', () => {
 
   describe('Widget Sizing', () => {
     const mockBatteryData = {
+      rankedUnits: [mockUnits[0]],
       lowBatteryUnits: [mockUnits[0]],
       totalUnits: 10,
       criticalBatteryUnits: 1,

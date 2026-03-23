@@ -42,7 +42,6 @@ export const StatsWidget: React.FC<StatsWidgetProps> = ({
   // Update size when currentSize prop changes (for external size changes like WebSocket sync)
   useEffect(() => {
     if (currentSize && currentSize !== size) {
-      console.log(`📊 StatsWidget ${id}: Size changed from ${size} to ${currentSize}`);
       setSize(currentSize);
     }
   }, [currentSize, id, size]);
@@ -177,18 +176,6 @@ export const StatsWidget: React.FC<StatsWidgetProps> = ({
                 <Icon className="h-12 w-12" />
               </motion.div>
             </div>
-            
-            {/* Additional content for large widgets */}
-            <div className="flex-1 grid grid-cols-2 gap-4 text-sm">
-              <div className="text-center p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="text-lg font-semibold text-gray-900 dark:text-white">+5.2%</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">This Month</div>
-              </div>
-              <div className="text-center p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="text-lg font-semibold text-gray-900 dark:text-white">+12.8%</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">This Quarter</div>
-              </div>
-            </div>
           </div>
         );
 
@@ -226,9 +213,6 @@ export const StatsWidget: React.FC<StatsWidgetProps> = ({
                   </motion.div>
                 )}
                 
-                <p className="text-gray-600 dark:text-gray-400 mt-2">
-                  Comprehensive overview with detailed analytics and trends
-                </p>
               </div>
               
               <motion.div 
@@ -238,25 +222,6 @@ export const StatsWidget: React.FC<StatsWidgetProps> = ({
               >
                 <Icon className="h-16 w-16" />
               </motion.div>
-            </div>
-            
-            {/* Rich content for huge widgets */}
-            <div className="flex-1 grid grid-cols-3 gap-4">
-              <div className="text-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">+5.2%</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">This Month</div>
-                <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">vs last month</div>
-              </div>
-              <div className="text-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">+12.8%</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">This Quarter</div>
-                <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">vs last quarter</div>
-              </div>
-              <div className="text-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">+28.3%</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">This Year</div>
-                <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">vs last year</div>
-              </div>
             </div>
           </div>
         );
@@ -302,32 +267,6 @@ export const StatsWidget: React.FC<StatsWidgetProps> = ({
                 </span>
               </motion.div>
             )}
-
-            {/* Additional metrics for tall layout */}
-            <div className="flex-1 space-y-3 text-sm">
-              <div className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <span className="text-gray-600 dark:text-gray-400">This Month</span>
-                <span className="font-medium text-gray-900 dark:text-white">{value}</span>
-              </div>
-              <div className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <span className="text-gray-600 dark:text-gray-400">Last Month</span>
-                <span className="font-medium text-gray-900 dark:text-white">
-                  {change ? Math.round(parseInt(String(value)) / (1 + change.value/100)) : value}
-                </span>
-              </div>
-              <div className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <span className="text-gray-600 dark:text-gray-400">Growth Rate</span>
-                <span className={`font-medium ${
-                  change?.trend === 'up' 
-                    ? 'text-green-600 dark:text-green-400' 
-                    : change?.trend === 'down' 
-                      ? 'text-red-600 dark:text-red-400' 
-                      : 'text-gray-500 dark:text-gray-400'
-                }`}>
-                  {change ? `${change.value > 0 ? '+' : ''}${change.value}%` : '0%'}
-                </span>
-              </div>
-            </div>
           </div>
         );
 

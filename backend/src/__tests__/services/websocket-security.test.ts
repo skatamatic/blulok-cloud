@@ -5,10 +5,13 @@ import { WebSocket } from 'ws';
 // Mock WebSocket
 jest.mock('ws');
 
-// Mock GeneralStatsService
+// Mock GeneralStatsService (must include canSubscribeToGeneralStats — used before getScopedStats)
 jest.mock('@/services/general-stats.service', () => ({
   GeneralStatsService: {
     getInstance: jest.fn().mockReturnValue({
+      canSubscribeToGeneralStats: jest.fn().mockImplementation((role: string) =>
+        ['admin', 'dev_admin', 'facility_admin', 'maintenance'].includes(role)
+      ),
       getScopedStats: jest.fn().mockResolvedValue({
         total_facilities: 5,
         total_units: 100,
@@ -17,10 +20,10 @@ jest.mock('@/services/general-stats.service', () => ({
         units_occupied: 80,
         units_available: 20,
         devices_online: 180,
-        devices_offline: 20
-      })
-    })
-  }
+        devices_offline: 20,
+      }),
+    }),
+  },
 }));
 
 // Mock UserFacilityAssociationModel

@@ -1,12 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { UserRole } from '@/types/auth.types';
 import { Layout } from 'react-grid-layout';
 import { WidgetGrid, WidgetLayout } from '@/components/Widget/WidgetGrid';
 import { apiService } from '@/services/api.service';
 import { StatsWidget } from '@/components/Widget/StatsWidget';
-import { ActivityWidget } from '@/components/Widget/ActivityWidget';
-import { StatusWidget } from '@/components/Widget/StatusWidget';
 import { HistogramWidget } from '@/components/Widget/HistogramWidget';
 import { AddWidgetModal } from '@/components/Widget/AddWidgetModal';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
@@ -32,7 +31,6 @@ import {
   CubeIcon, 
   UsersIcon,
   ExclamationTriangleIcon,
-  ChartBarIcon,
   Cog6ToothIcon,
   UserPlusIcon,
   ArrowPathIcon,
@@ -40,6 +38,10 @@ import {
 
 export default function DashboardPage() {
   const { authState } = useAuth();
+  const { selectedFacilityId } = useGlobalFacility();
+  /** When "All facilities" is selected, widgets aggregate across allowed scope (no facility_id filter) */
+  const effectiveFacilityId =
+    selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : undefined;
   const [isLoading, setIsLoading] = useState(true);
   const { stats: generalStats, loading: statsLoading, error: statsError, canAccess, getHandlers } = useGeneralStatsData();
 
@@ -183,7 +185,7 @@ export default function DashboardPage() {
       return;
     }
 
-    const statsWidgetTypes = ['stats-facilities', 'stats-devices', 'stats-users'];
+    const statsWidgetTypes = ['stats-facilities', 'stats-devices', 'stats-users', 'stats-alerts'];
     const unitsWidgetTypes = ['unlocked-units'];
     const batteryWidgetTypes = ['battery-status'];
     
@@ -273,45 +275,6 @@ export default function DashboardPage() {
     md: [],
     sm: []
   });
-
-  // Sample data
-  const recentActivities = [
-    {
-      id: '1',
-      type: 'success' as const,
-      message: 'Device BL-001 came online',
-      timestamp: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-      user: 'System'
-    },
-    {
-      id: '2',
-      type: 'info' as const,
-      message: 'New user registered: john.doe@example.com',
-      timestamp: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-      user: 'Admin'
-    },
-    {
-      id: '3',
-      type: 'warning' as const,
-      message: 'Maintenance scheduled for Facility A',
-      timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-      user: 'Maintenance Team'
-    },
-    {
-      id: '4',
-      type: 'error' as const,
-      message: 'Device BL-045 connection timeout',
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-      user: 'System'
-    },
-  ];
-
-  const systemStatus = [
-    { label: 'API Services', status: 'online' as const, details: 'All endpoints responding' },
-    { label: 'Database', status: 'online' as const, details: 'Connection stable' },
-    { label: 'Device Network', status: 'online' as const, details: '247/248 devices connected' },
-    { label: 'Backup System', status: 'online' as const, details: 'Last backup: 2 hours ago' },
-  ];
 
   // Create default layout - fixed professional layout
   const createDefaultLayout = () => {
@@ -833,7 +796,7 @@ export default function DashboardPage() {
         return (
           <StatsWidget
             {...commonProps}
-            value={generalStats?.facilities.total.toString() || '0'}
+            value={String(generalStats?.facilities?.total ?? 0)}
             change={undefined} // Remove historical comparison for now
             icon={BuildingStorefrontIcon}
             color="blue"
@@ -845,7 +808,7 @@ export default function DashboardPage() {
         return (
           <StatsWidget
             {...commonProps}
-            value={generalStats?.devices.total.toString() || '0'}
+            value={String(generalStats?.devices?.total ?? 0)}
             change={undefined} // Remove historical comparison for now
             icon={CubeIcon}
             color="green"
@@ -857,7 +820,7 @@ export default function DashboardPage() {
         return (
           <StatsWidget
             {...commonProps}
-            value={generalStats?.users.total.toString() || '0'}
+            value={String(generalStats?.users?.total ?? 0)}
             change={undefined} // Remove historical comparison for now
             icon={UsersIcon}
             color="purple"
@@ -869,40 +832,20 @@ export default function DashboardPage() {
         return (
           <StatsWidget
             {...commonProps}
-            value="3"
-            change={{ value: 25.0, trend: 'down' }}
+            title="Unread alert notifications"
+            value={String(generalStats?.alerts?.open ?? 0)}
+            change={undefined}
             icon={ExclamationTriangleIcon}
             color="red"
-          />
-        );
-      case 'activity-feed':
-        return (
-          <ActivityWidget
-            {...commonProps}
-            activities={recentActivities}
-          />
-        );
-      case 'system-status':
-        return (
-          <StatusWidget
-            {...commonProps}
-            items={systemStatus}
-          />
-        );
-      case 'performance-stats':
-        return (
-          <StatsWidget
-            {...commonProps}
-            value="99.8%"
-            change={{ value: 0.2, trend: 'up' }}
-            icon={ChartBarIcon}
-            color="green"
+            loading={statsLoading}
+            error={statsError}
           />
         );
       case 'histogram':
         return (
           <HistogramWidget
             {...commonProps}
+            facilityFilter={effectiveFacilityId}
           />
         );
 
@@ -911,6 +854,7 @@ export default function DashboardPage() {
         return (
           <ActivityMonitorWidget
             {...commonProps}
+            facilityFilter={effectiveFacilityId}
           />
         );
 
@@ -918,6 +862,7 @@ export default function DashboardPage() {
         return (
           <RemoteGateWidget
             {...commonProps}
+            facilityFilter={effectiveFacilityId}
           />
         );
 
@@ -925,6 +870,7 @@ export default function DashboardPage() {
         return (
           <NotificationsWidget
             {...commonProps}
+            facilityFilter={effectiveFacilityId}
           />
         );
 
@@ -932,6 +878,7 @@ export default function DashboardPage() {
         return (
           <BatteryStatusWidget
             {...commonProps}
+            facilityFilter={effectiveFacilityId}
           />
         );
 
@@ -939,6 +886,7 @@ export default function DashboardPage() {
         return (
           <UnlockedUnitsWidget
             {...commonProps}
+            facilityFilter={effectiveFacilityId}
           />
         );
 

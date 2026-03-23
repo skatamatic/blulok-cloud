@@ -21,6 +21,8 @@ interface UnlockedUnitsWidgetProps {
   availableSizes?: WidgetSize[];
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  /** When set (single facility from global selector), scopes unit lists to that facility */
+  facilityFilter?: string;
 }
 
 // Helper function to calculate duration since unlock
@@ -62,13 +64,14 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
   initialSize = 'medium',
   availableSizes = ['small', 'medium', 'medium-tall', 'large', 'large-wide', 'huge'],
   onGridSizeChange,
-  onRemove
+  onRemove,
+  facilityFilter,
 }) => {
   const navigate = useNavigate();
   const [size, setSize] = useState<WidgetSize>(initialSize);
   const [filter, setFilter] = useState<'all' | 'long_unlocked' | 'recent_unlocked'>('all');
   
-  const { data: unitsData, loading, error, refetch } = useUnitsData();
+  const { data: unitsData, loading, error, refetch } = useUnitsData(facilityFilter);
 
 
   // Filter units based on duration

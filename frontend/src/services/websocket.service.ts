@@ -151,6 +151,14 @@ class WebSocketService implements IWebSocketService {
         case 'activity_new':
           this.handleActivityNew(message);
           break;
+        case 'notifications_update':
+        case 'notification_created':
+        case 'notification_read':
+        case 'notifications_batch_read':
+        case 'notifications_count_update':
+        case 'notification_deleted':
+          this.handleNotificationsMessage(message);
+          break;
         default:
           break;
       }
@@ -256,6 +264,19 @@ class WebSocketService implements IWebSocketService {
     const handlers = this.messageHandlers.get('activity');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  /** Real-time notification feed (subscription type `notifications` on the server). */
+  private handleNotificationsMessage(message: {
+    type?: string;
+    data?: unknown;
+    subscriptionId?: string;
+  }): void {
+    const handlers = this.messageHandlers.get('notifications');
+    if (handlers) {
+      const payload = { eventType: message.type, payload: message.data };
+      handlers.forEach(handler => handler(payload));
     }
   }
 

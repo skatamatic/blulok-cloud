@@ -4,6 +4,19 @@
 
 The BluLok Cloud widget system provides a flexible, drag-and-drop dashboard interface that adapts to user roles and preferences. Widgets are the primary building blocks for displaying data and functionality in the application.
 
+## Per-size layout contract (grid cells)
+
+Widgets live inside **react-grid-layout** cells with a fixed height. Follow this so content never clips spinners, icons, or controls:
+
+1. **Shell**: The shared `Widget` / `CompactWidget` wrapper uses **`h-full min-h-0 flex flex-col overflow-hidden`**. The scrollable region is the **content** area: **`flex-1 min-h-0`** plus **`overflow-y-auto`** (or `overflow-hidden` for tiny/small-only UIs).
+2. **Body**: Widget implementations should wrap scrollable lists in **`flex-1 min-h-0 overflow-y-auto`** (nested as needed).
+3. **Typography (guideline)**:
+   - **`small` / `tiny`**: Prefer **single-line** titles/status; **`text-xs`**; avoid multi-block layouts.
+   - **`medium`**: **`text-xs`–`text-sm`** body; cap list rows to what fits **~3–4** lines without scroll, or scroll the inner region.
+   - **`large`+**: Full detail, filters, secondary actions.
+
+4. **Facility scope**: When the global facility selector is a **single facility**, pass **`facility_id` / `facilityId`** query params from dashboard widgets; when **“All facilities”** is selected, omit the filter and rely on backend role scope.
+
 ## Widget Interaction Design
 
 ### Drag and Drop Behavior
@@ -114,6 +127,13 @@ if (size === 'small') {
 // Medium size: Full layout
 return <FullStatsLayout />;
 ```
+
+### Dashboard stats & alerts (facility scope)
+
+- **REST bootstrap**: `GET /api/v1/dashboard/general-stats` returns the same payload as WebSocket `general_stats_update` so facility admins / maintenance / admins see numbers on first paint (not only after WS connects).
+- **Roles**: `ADMIN`, `DEV_ADMIN`, `FACILITY_ADMIN`, and `MAINTENANCE` receive scoped stats; facility-limited users only see facilities/devices/users tied to their associations.
+- **“Active Alerts” widget (`stats-alerts`)**: shows **`alerts.open`** — count of **unread** notifications with priority **high** or **urgent**, scoped to the user’s facilities when applicable (global notifications with `facility_id` null still count). This is **notification-based**, not activity-log alerts; it complements the Activity Monitor.
+- **Battery Status**: loads units via **`GET /api/v1/units`** (role-scoped) for an initial list, then follows **`battery_status`** WebSocket updates. Backend payloads include **`rankedUnits`** (online units lowest-battery-first, then offline) for consistent sorting with the UI.
 
 ### Activity Widget
 

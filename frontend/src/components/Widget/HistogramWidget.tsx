@@ -26,6 +26,8 @@ interface HistogramWidgetProps {
   availableSizes?: WidgetSize[];
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  /** Single facility from global selector; when set, stats are limited to this facility */
+  facilityFilter?: string;
 }
 
 type TimePeriod = 'day' | 'week' | 'month' | 'year';
@@ -55,6 +57,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   availableSizes = ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
   onGridSizeChange,
   onRemove,
+  facilityFilter,
 }) => {
   const { authState } = useAuth();
   const [size, setSize] = useState<WidgetSize>(initialSize);
@@ -100,6 +103,13 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     }
   }, [authState.user]);
 
+  const facilityIdsForApi = useMemo(() => {
+    if (facilityFilter) {
+      return [facilityFilter];
+    }
+    return selectedFacilities.length > 0 ? selectedFacilities : undefined;
+  }, [facilityFilter, selectedFacilities]);
+
   const loadActivityStats = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -107,7 +117,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     try {
       const response: ActivityStatsResponse = await apiService.getActivityStats({
         period: timePeriod,
-        facility_ids: selectedFacilities.length > 0 ? selectedFacilities : undefined,
+        facility_ids: facilityIdsForApi,
       });
 
       if (response.success && response.data) {
@@ -129,7 +139,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [timePeriod, selectedFacilities]);
+  }, [timePeriod, facilityIdsForApi]);
 
   useEffect(() => {
     loadActivityStats();
@@ -162,8 +172,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   // Group data by date for stacked bars
   const groupedData = useMemo(() => {
     const grouped: Record<string, HistogramData[]> = {};
+    const filterIds = facilityFilter ? [facilityFilter] : selectedFacilities;
     const filteredData = histogramData.filter(item => 
-      selectedFacilities.length === 0 || selectedFacilities.includes(item.facilityId)
+      filterIds.length === 0 || filterIds.includes(item.facilityId)
     );
     
     filteredData.forEach(item => {
@@ -173,7 +184,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
       grouped[item.date].push(item);
     });
     return grouped;
-  }, [histogramData, selectedFacilities]);
+  }, [histogramData, selectedFacilities, facilityFilter]);
 
   const maxValue = useMemo(() => {
     const totals = Object.values(groupedData).map(dayData => 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { isViteDev } from '@/services/appConfig';
 import { LockClosedIcon, EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 export default function LoginPage() {
@@ -17,7 +18,7 @@ export default function LoginPage() {
   const location = useLocation();
 
   const from = location.state?.from?.pathname || '/dashboard';
-  const isDev = (import.meta as any).env?.DEV;
+  const isDev = isViteDev();
 
   // Redirect if already authenticated
   useEffect(() => {
