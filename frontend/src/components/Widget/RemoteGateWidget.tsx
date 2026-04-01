@@ -15,6 +15,9 @@ import { useWebSocket } from '@/contexts/WebSocketContext';
 import { AccessControlDevice } from '@/types/facility.types';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
+import { useToast } from '@/contexts/ToastContext';
+import { startHardwareAckWatch, LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS } from '@/utils/lockHardwareFeedback.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 
 interface GateDevice {
   id: string;
@@ -73,9 +76,28 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   const [holdDuration, setHoldDuration] = useState<number>(5); // minutes
 
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
+  const { addToast } = useToast();
   const loadGatesRef = useRef<() => Promise<void>>(async () => {});
   const wsRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gateIdsRef = useRef<Set<string>>(new Set());
+  const gatesRef = useRef<GateDevice[]>([]);
+  gatesRef.current = gates;
+  const gateOpenAckCancelRef = useRef<(() => void) | null>(null);
+  const pendingGateOpenIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => gateOpenAckCancelRef.current?.();
+  }, []);
+
+  useEffect(() => {
+    if (!pendingGateOpenIdRef.current) return;
+    const g = gates.find((x) => x.id === pendingGateOpenIdRef.current);
+    if (g?.isOpen) {
+      gateOpenAckCancelRef.current?.();
+      gateOpenAckCancelRef.current = null;
+      pendingGateOpenIdRef.current = null;
+    }
+  }, [gates]);
 
   const loadGates = useCallback(async () => {
     setError(null);
@@ -176,6 +198,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   const handleGateOperation = async (operation: 'open' | 'close' | 'hold') => {
     const gate = gates.find(g => g.id === selectedGate);
     if (!gate || gate.status !== 'online') return;
+    if ((operation === 'open' || operation === 'hold') && gate.isOpen) return;
 
     setIsOperating(true);
     setError(null);
@@ -185,6 +208,25 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         operation === 'close' ? 'locked' : 'unlocked';
       await apiService.updateAccessControlLockStatus(selectedGate, lockStatus);
       await loadGates();
+
+      if (operation === 'open' || operation === 'hold') {
+        const gateId = selectedGate;
+        pendingGateOpenIdRef.current = gateId;
+        gateOpenAckCancelRef.current?.();
+        gateOpenAckCancelRef.current = startHardwareAckWatch(
+          () => {
+            if (pendingGateOpenIdRef.current !== gateId) return false;
+            const g = gatesRef.current.find((x) => x.id === gateId);
+            return !!g && !g.isOpen;
+          },
+          () => {
+            addToast(lockHardwareFeedbackToasts.accessPointOpenTimeout());
+            pendingGateOpenIdRef.current = null;
+            gateOpenAckCancelRef.current = null;
+          },
+          LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS,
+        );
+      }
 
       if (operation === 'hold') {
         setGates((prev) =>
@@ -199,6 +241,9 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         );
       }
     } catch (err: unknown) {
+      gateOpenAckCancelRef.current?.();
+      gateOpenAckCancelRef.current = null;
+      pendingGateOpenIdRef.current = null;
       console.error('Gate operation failed:', err);
       setError(getApiErrorMessage(err, 'Failed to operate gate'));
     } finally {
@@ -396,7 +441,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                 
                 <button
                   onClick={() => handleGateOperation('hold')}
-                  disabled={isOperating}
+                  disabled={isOperating || selectedGateData.isOpen}
                   className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
                 >
                   <ClockIcon className="h-4 w-4" />

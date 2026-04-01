@@ -1,12 +1,22 @@
-import { isBluLokLockToggleable } from '@/utils/unitLock.utils';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 
-describe('isBluLokLockToggleable', () => {
-  it('allows locked and unlocked only', () => {
-    expect(isBluLokLockToggleable('locked')).toBe(true);
-    expect(isBluLokLockToggleable('unlocked')).toBe(true);
-    expect(isBluLokLockToggleable('locking')).toBe(false);
-    expect(isBluLokLockToggleable('unlocking')).toBe(false);
-    expect(isBluLokLockToggleable('error')).toBe(false);
-    expect(isBluLokLockToggleable('unknown')).toBe(false);
+describe('canRequestRemoteUnlock', () => {
+  it('allows only locked', () => {
+    expect(canRequestRemoteUnlock('locked')).toBe(true);
+    expect(canRequestRemoteUnlock('unlocked')).toBe(false);
+    expect(canRequestRemoteUnlock('locking')).toBe(false);
+    expect(canRequestRemoteUnlock('unlocking')).toBe(false);
+    expect(canRequestRemoteUnlock('error')).toBe(false);
+    expect(canRequestRemoteUnlock('unknown')).toBe(false);
+    expect(canRequestRemoteUnlock(undefined)).toBe(false);
+  });
+});
+
+describe('isLockTransitionPending', () => {
+  it('is true only for locking and unlocking', () => {
+    expect(isLockTransitionPending('locking')).toBe(true);
+    expect(isLockTransitionPending('unlocking')).toBe(true);
+    expect(isLockTransitionPending('locked')).toBe(false);
+    expect(isLockTransitionPending('unlocked')).toBe(false);
   });
 });

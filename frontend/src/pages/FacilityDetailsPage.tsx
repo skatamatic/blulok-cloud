@@ -20,6 +20,7 @@ import {
   ClockIcon,
   KeyIcon,
   RectangleGroupIcon,
+  CpuChipIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
@@ -40,6 +41,9 @@ import { useToast } from '@/contexts/ToastContext';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { withReturnPath } from '@/hooks/useBackNavigation';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
+import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
 
 const DEVICES_PAGE_LIMIT = 30;
 const UNITS_PAGE_LIMIT = 20;
@@ -137,6 +141,20 @@ export default function FacilityDetailsPage() {
   const [unitsInitialLoad, setUnitsInitialLoad] = useState(true);
   const [deviceGroups, setDeviceGroups] = useState<DeviceGroup[]>([]);
   const [groupNamesByDeviceId, setGroupNamesByDeviceId] = useState<Record<string, string[]>>({});
+
+  const facilityDevicesRef = useRef<FacilityDeviceListItem[]>([]);
+  facilityDevicesRef.current = facilityDevices;
+  const facilityUnitsRef = useRef<Unit[]>([]);
+  facilityUnitsRef.current = facilityUnitsPageData;
+
+  const unlockBluLokDeviceIdRef = useRef<string | null>(null);
+  const unitUnlockWatchIdRef = useRef<string | null>(null);
+  const { scheduleUnlockWatch: scheduleBluLokUnlockWatch, cancelWatch: cancelBluLokUnlockWatch } =
+    useLockHardwareFeedback();
+  const { scheduleUnlockWatch: scheduleUnitUnlockWatch, cancelWatch: cancelUnitUnlockWatch } =
+    useLockHardwareFeedback({
+      timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+    });
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
@@ -273,6 +291,25 @@ export default function FacilityDetailsPage() {
     };
   }, [activeTab, facility?.id, ws]);
 
+  useEffect(() => {
+    if (!unlockBluLokDeviceIdRef.current) return;
+    const item = facilityDevices.find((x) => x.id === unlockBluLokDeviceIdRef.current);
+    const ls = item && 'lock_status' in item ? (item as BluLokDevice).lock_status : undefined;
+    if (ls === 'unlocked') {
+      cancelBluLokUnlockWatch();
+      unlockBluLokDeviceIdRef.current = null;
+    }
+  }, [facilityDevices, cancelBluLokUnlockWatch]);
+
+  useEffect(() => {
+    if (!unitUnlockWatchIdRef.current) return;
+    const u = facilityUnitsPageData.find((x) => x.id === unitUnlockWatchIdRef.current);
+    if (u?.blulok_device?.lock_status === 'unlocked') {
+      cancelUnitUnlockWatch();
+      unitUnlockWatchIdRef.current = null;
+    }
+  }, [facilityUnitsPageData, cancelUnitUnlockWatch]);
+
   const loadFacilityData = useCallback(async (facilityId?: string) => {
     const targetId = facilityId || id;
     if (!targetId) return;
@@ -405,13 +442,85 @@ export default function FacilityDetailsPage() {
   }, [activeTab, loadFacilityUnitsPageData]);
 
   const handleLockToggle = async (device: BluLokDevice) => {
+    if (!canRequestRemoteUnlock(device.lock_status)) return;
+    setFacilityDevices((prev) =>
+      prev.map((item) =>
+        item.id === device.id && item.device_category === 'blulok'
+          ? {
+              ...(item as BluLokDevice & { device_category: string }),
+              lock_status: 'unlocking',
+            }
+          : item,
+      ),
+    );
+    unlockBluLokDeviceIdRef.current = device.id;
+    scheduleBluLokUnlockWatch(
+      () => {
+        const cur = facilityDevicesRef.current.find((x) => x.id === device.id) as BluLokDevice | undefined;
+        return cur?.lock_status;
+      },
+      () => {
+        unlockBluLokDeviceIdRef.current = null;
+        void loadFacilityDevices();
+      },
+    );
     try {
-      const newStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(device.id, newStatus);
-      await loadFacilityData(); // Refresh data
+      await apiService.updateLockStatus(device.id, 'unlocked');
+      addToast(lockHardwareFeedbackToasts.unlockCommandSent());
+      await loadFacilityData();
       await loadFacilityDevices();
     } catch (error) {
-      console.error('Failed to toggle lock:', error);
+      cancelBluLokUnlockWatch();
+      unlockBluLokDeviceIdRef.current = null;
+      console.error('Failed to unlock device:', error);
+      addToast(lockHardwareFeedbackToasts.couldNotUnlockDevice());
+      await loadFacilityDevices();
+    }
+  };
+
+  const handleAccessControlUnlock = async (accessDevice: AccessControlDevice) => {
+    if (!accessDevice.is_locked || accessDevice.status !== 'online') return;
+    try {
+      await apiService.updateAccessControlLockStatus(accessDevice.id, 'unlocked');
+      addToast(lockHardwareFeedbackToasts.unlockCommandSent());
+      await loadFacilityDevices();
+    } catch (error) {
+      console.error('Failed to unlock access control device:', error);
+      addToast(lockHardwareFeedbackToasts.couldNotUnlockDevice());
+    }
+  };
+
+  const handleFacilityUnitUnlock = async (unit: Unit) => {
+    if (!unit.blulok_device || !canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
+    setFacilityUnitsPageData((prev) =>
+      prev.map((u) =>
+        u.id === unit.id && u.blulok_device
+          ? { ...u, blulok_device: { ...u.blulok_device, lock_status: 'unlocking' } }
+          : u,
+      ),
+    );
+    unitUnlockWatchIdRef.current = unit.id;
+    scheduleUnitUnlockWatch(
+      () => {
+        const cur = facilityUnitsRef.current.find((x) => x.id === unit.id);
+        return cur?.blulok_device?.lock_status;
+      },
+      () => {
+        unitUnlockWatchIdRef.current = null;
+        void loadFacilityUnitsPageData();
+      },
+    );
+    try {
+      await apiService.updateLockStatus(unit.blulok_device.id, 'unlocked');
+      addToast(lockHardwareFeedbackToasts.unlockCommandSent());
+      await loadFacilityUnitsPageData();
+      await loadFacilityData();
+    } catch (error) {
+      cancelUnitUnlockWatch();
+      unitUnlockWatchIdRef.current = null;
+      console.error('Failed to unlock unit:', error);
+      addToast(lockHardwareFeedbackToasts.couldNotUnlockUnit());
+      await loadFacilityUnitsPageData();
     }
   };
 
@@ -570,12 +679,18 @@ export default function FacilityDetailsPage() {
         {unit.blulok_device ? (
           <div className="flex items-center justify-between mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
             <div className="flex items-center space-x-2">
-              {unit.blulok_device.lock_status === 'locked' ? 
+              {unit.blulok_device.lock_status === 'locked' || unit.blulok_device.lock_status === 'locking' ? 
                 <LockClosedIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" /> : 
+                unit.blulok_device.lock_status === 'unlocking' ?
+                <LockOpenIcon className="h-4 w-4 text-green-600 dark:text-green-400 animate-pulse" /> :
                 <LockOpenIcon className="h-4 w-4 text-green-600 dark:text-green-400" />
               }
               <span className="text-sm font-medium text-gray-900 dark:text-white">
-                {unit.blulok_device.lock_status === 'locked' ? 'Secured' : 'Unlocked'}
+                {unit.blulok_device.lock_status === 'unlocking'
+                  ? 'Unlocking…'
+                  : unit.blulok_device.lock_status === 'locked' || unit.blulok_device.lock_status === 'locking'
+                    ? 'Secured'
+                    : 'Unlocked'}
               </span>
             </div>
             {unit.blulok_device.battery_level && (
@@ -612,7 +727,54 @@ export default function FacilityDetailsPage() {
           </div>
         )}
 
-        {/* Actions removed per design (Manage/Lock) */}
+        <div
+          className="mt-6 flex flex-wrap gap-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {unit.blulok_device && (
+            <button
+              type="button"
+              onClick={() => {
+                navigate(`/devices/${unit.blulok_device!.id}`, {
+                  state: withReturnPath(location, { returnTab: activeTab || 'units', returnPath: `${location.pathname}?tab=${activeTab || 'units'}` }),
+                });
+              }}
+              className="inline-flex items-center rounded-lg border border-transparent bg-primary-50 dark:bg-primary-900/20 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
+            >
+              <CpuChipIcon className="h-4 w-4 mr-1.5" />
+              View device
+            </button>
+          )}
+          {canManage && unit.blulok_device && (
+            <button
+              type="button"
+              disabled={
+                !canRequestRemoteUnlock(unit.blulok_device.lock_status) ||
+                unit.blulok_device.lock_status === 'unlocking' ||
+                unit.blulok_device.lock_status === 'locking'
+              }
+              onClick={() => void handleFacilityUnitUnlock(unit)}
+              className={`inline-flex items-center rounded-lg border border-transparent px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                unit.blulok_device.lock_status === 'unlocking'
+                  ? 'bg-blue-600 text-white animate-pulse'
+                  : canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
+              }`}
+            >
+              {unit.blulok_device.lock_status === 'unlocking' ? (
+                'Unlocking…'
+              ) : canRequestRemoteUnlock(unit.blulok_device.lock_status) ? (
+                <>
+                  <LockOpenIcon className="h-4 w-4 mr-1.5" />
+                  Unlock
+                </>
+              ) : (
+                'Unlocked'
+              )}
+            </button>
+          )}
+        </div>
       </div>
     );
   };
@@ -929,6 +1091,7 @@ export default function FacilityDetailsPage() {
                       })}
                       canManageAccessMethods={canManage}
                       onAccessMethodsUpdated={loadFacilityDevices}
+                      onRequestUnlock={canManage ? () => handleAccessControlUnlock(device as AccessControlDevice) : undefined}
                       groupNames={groupNamesByDeviceId[device.id] || []}
                     />
                   );

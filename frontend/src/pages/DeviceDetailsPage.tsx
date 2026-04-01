@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
@@ -19,6 +19,9 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { EffectiveAccessCode } from '@/types/facility.types';
 import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 
 interface DeviceDetails {
   id: string;
@@ -111,6 +114,20 @@ export default function DeviceDetailsPage() {
   const [deviceCategory, setDeviceCategory] = useState<DeviceCategory | null>(null);
   const [effectiveAccessCode, setEffectiveAccessCode] = useState<EffectiveAccessCode | null>(null);
   const [deviceGroupNames, setDeviceGroupNames] = useState<string[]>([]);
+
+  const deviceLockStatusRef = useRef<DeviceDetails['lock_status'] | undefined>(undefined);
+  const pendingRemoteUnlockRef = useRef(false);
+  const { scheduleUnlockWatch, cancelWatch } = useLockHardwareFeedback();
+
+  deviceLockStatusRef.current = device?.lock_status;
+
+  useEffect(() => {
+    if (!pendingRemoteUnlockRef.current) return;
+    if (device?.lock_status === 'unlocked') {
+      cancelWatch();
+      pendingRemoteUnlockRef.current = false;
+    }
+  }, [device?.lock_status, cancelWatch]);
 
   // Handle tab from URL query parameter
   useEffect(() => {
@@ -420,57 +437,60 @@ export default function DeviceDetailsPage() {
           {canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') && (
             <div>
               <button
+                disabled={
+                  !canRequestRemoteUnlock(device.lock_status) ||
+                  isLockTransitionPending(device.lock_status)
+                }
                 onClick={async () => {
+                  if (!canRequestRemoteUnlock(device.lock_status)) return;
                   try {
-                    const targetStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
-                    // Optimistically show transitional state while backend issues command
+                    pendingRemoteUnlockRef.current = true;
+                    scheduleUnlockWatch(() => deviceLockStatusRef.current, () => {
+                      pendingRemoteUnlockRef.current = false;
+                    });
+
                     setDevice(prev =>
                       prev
                         ? {
                             ...prev,
-                            lock_status:
-                              targetStatus === 'locked' ? 'locking' : 'unlocking',
+                            lock_status: 'unlocking',
                           }
                         : prev,
                     );
 
                     const response =
                       deviceCategory === 'blulok'
-                        ? await apiService.updateLockStatus(device.id, targetStatus)
-                        : await apiService.updateAccessControlLockStatus(device.id, targetStatus);
+                        ? await apiService.updateLockStatus(device.id, 'unlocked')
+                        : await apiService.updateAccessControlLockStatus(device.id, 'unlocked');
 
                     const nextStatus =
-                      (response?.lock_status as DeviceDetails['lock_status']) ||
-                      (deviceCategory === 'blulok'
-                        ? (targetStatus === 'locked' ? 'locking' : 'unlocking')
-                        : (targetStatus === 'locked' ? 'locking' : 'unlocking'));
+                      (response?.lock_status as DeviceDetails['lock_status']) || 'unlocking';
 
                     setDevice(prev =>
                       prev ? { ...prev, lock_status: nextStatus } : prev,
                     );
 
-                    addToast({
-                      type: 'success',
-                      title:
-                        targetStatus === 'locked'
-                          ? 'Lock command sent'
-                          : 'Unlock command sent',
-                    });
+                    addToast(lockHardwareFeedbackToasts.unlockCommandSent());
                   } catch (e) {
-                    // Reload device details to ensure we show the true backend state
+                    pendingRemoteUnlockRef.current = false;
+                    cancelWatch();
                     await loadDeviceDetails();
-                    addToast({ type: 'error', title: 'Failed to update lock status' });
+                    addToast(lockHardwareFeedbackToasts.failedToUpdateLockStatus());
                   }
                 }}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  device.lock_status === 'locked'
-                    ? 'bg-green-600 hover:bg-green-700 text-white'
-                    : 'bg-red-600 hover:bg-red-700 text-white'
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  isLockTransitionPending(device.lock_status)
+                    ? 'bg-blue-600 text-white animate-pulse'
+                    : canRequestRemoteUnlock(device.lock_status)
+                      ? 'bg-green-600 hover:bg-green-700 text-white'
+                      : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
                 }`}
               >
-                {device.lock_status === 'locked' || device.lock_status === 'locking'
-                  ? 'Unlock'
-                  : 'Lock'}
+                {isLockTransitionPending(device.lock_status)
+                  ? 'Unlocking…'
+                  : canRequestRemoteUnlock(device.lock_status)
+                    ? 'Unlock'
+                    : 'Unlocked'}
               </button>
             </div>
           )}

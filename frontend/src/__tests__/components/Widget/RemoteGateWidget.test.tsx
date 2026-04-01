@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { RemoteGateWidget } from '@/components/Widget/RemoteGateWidget';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
+import { ToastProvider } from '@/contexts/ToastContext';
 import { AccessControlDevice } from '@/types/facility.types';
 
 // Mock the API service
@@ -35,7 +36,7 @@ const renderWithProviders = (component: React.ReactElement) => {
   return render(
     <ThemeProvider>
       <DropdownProvider>
-        {component}
+        <ToastProvider>{component}</ToastProvider>
       </DropdownProvider>
     </ThemeProvider>
   );

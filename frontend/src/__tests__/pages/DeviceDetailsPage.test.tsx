@@ -260,8 +260,9 @@ describe('DeviceDetailsPage', () => {
   });
 
   it('calls updateAccessControlLockStatus when unlocking an access-control device', async () => {
-    mockApiService.getBluLokDevice.mockRejectedValueOnce({ response: { status: 404 } });
-    mockApiService.getAccessControlDevice.mockResolvedValueOnce({
+    mockApiService.getBluLokDevice.mockReset();
+    mockApiService.getBluLokDevice.mockRejectedValue({ response: { status: 404 } });
+    mockApiService.getAccessControlDevice.mockResolvedValue({
       success: true,
       device: {
         id: 'device-1',
@@ -293,6 +294,12 @@ describe('DeviceDetailsPage', () => {
       expect(mockApiService.updateAccessControlLockStatus).toHaveBeenCalledWith('device-1', 'unlocked');
     });
     expect(mockApiService.updateLockStatus).not.toHaveBeenCalled();
+
+    mockApiService.getBluLokDevice.mockReset();
+    mockApiService.getBluLokDevice.mockResolvedValue({
+      success: true,
+      device: mockDevice,
+    } as any);
   });
 
   describe('Telemetry Fields Display', () => {

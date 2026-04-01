@@ -18,7 +18,8 @@ import {
   PlusIcon,
   ArrowTopRightOnSquareIcon,
   QuestionMarkCircleIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  CpuChipIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit, UnitFilters } from '@/types/facility.types';
@@ -27,7 +28,9 @@ import { useToast } from '@/contexts/ToastContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { withReturnPath } from '@/hooks/useBackNavigation';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
-import { isBluLokLockToggleable } from '@/utils/unitLock.utils';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -74,6 +77,13 @@ export default function UnitsPage() {
   });
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [lockPendingUnitId, setLockPendingUnitId] = useState<string | null>(null);
+
+  const unitsDataRef = useRef<Unit[]>([]);
+  unitsDataRef.current = units;
+  const unlockUnitWatchIdRef = useRef<string | null>(null);
+  const { scheduleUnlockWatch, cancelWatch } = useLockHardwareFeedback({
+    timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+  });
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
@@ -210,6 +220,15 @@ export default function UnitsPage() {
     loadUnitsRef.current = loadUnits;
   }, [loadUnits]);
 
+  useEffect(() => {
+    if (!unlockUnitWatchIdRef.current) return;
+    const u = units.find((x) => x.id === unlockUnitWatchIdRef.current);
+    if (u?.blulok_device?.lock_status === 'unlocked') {
+      cancelWatch();
+      unlockUnitWatchIdRef.current = null;
+    }
+  }, [units, cancelWatch]);
+
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
     setCurrentPage(1);
@@ -245,23 +264,48 @@ export default function UnitsPage() {
     handlePageChange
   );
 
-  const handleLockToggle = async (unit: Unit) => {
+  const patchUnitLockOptimistic = (unitId: string, lockStatus: string) => {
+    const patch = (list: Unit[]) =>
+      list.map((u) =>
+        u.id === unitId && u.blulok_device
+          ? { ...u, blulok_device: { ...u.blulok_device, lock_status: lockStatus } }
+          : u,
+      );
+    setUnits(patch);
+    setAllUnits(patch);
+  };
+
+  const handleUnlockUnit = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;
-    const ls = unit.blulok_device.lock_status;
-    if (!isBluLokLockToggleable(ls)) return;
+    if (!canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
 
     setLockPendingUnitId(unit.id);
+    patchUnitLockOptimistic(unit.id, 'unlocking');
+    unlockUnitWatchIdRef.current = unit.id;
+    scheduleUnlockWatch(
+      () => {
+        const cur = unitsDataRef.current.find((x) => x.id === unit.id);
+        return cur?.blulok_device?.lock_status;
+      },
+      () => {
+        unlockUnitWatchIdRef.current = null;
+        void loadUnits();
+      },
+    );
     try {
-      const newStatus = ls === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
+      await apiService.updateLockStatus(unit.blulok_device.id, 'unlocked');
+      addToast(lockHardwareFeedbackToasts.unlockCommandSent());
       await loadUnits();
     } catch (error: unknown) {
-      console.error('Failed to toggle lock:', error);
+      cancelWatch();
+      unlockUnitWatchIdRef.current = null;
+      console.error('Failed to unlock unit:', error);
       addToast({
         type: 'error',
         title: 'Could not update lock',
         message: getApiErrorMessage(error, 'Try again in a moment.'),
       });
+      await loadUnits();
     } finally {
       setLockPendingUnitId(null);
     }
@@ -368,17 +412,31 @@ export default function UnitsPage() {
           </div>
         )}
 
-        {/* Footer: facility link + lock/unlock when user can manage */}
+        {/* Footer: same control row pattern as device cards (view device, facility, unlock) */}
         <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex flex-wrap gap-2">
+            {unit.blulok_device && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/devices/${unit.blulok_device!.id}`, { state: withReturnPath(location) });
+                }}
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-50 dark:bg-primary-900/20 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
+              >
+                <CpuChipIcon className="h-4 w-4 mr-1.5" />
+                View device
+              </button>
+            )}
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 navigate(`/facilities/${unit.facility_id}`, { state: { tab: 'units' } });
               }}
-              className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+              className="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
-              <BuildingOfficeIcon className="h-4 w-4 mr-1" />
+              <BuildingOfficeIcon className="h-4 w-4 mr-1.5" />
               View Facility
               <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
             </button>
@@ -388,56 +446,48 @@ export default function UnitsPage() {
                 title={
                   !unit.blulok_device
                     ? 'No device associated with this unit'
-                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
-                      ? `Lock control unavailable (status: ${unit.blulok_device.lock_status})`
-                    : unit.blulok_device.lock_status === 'locked'
-                      ? 'Unlock unit'
-                      : 'Lock unit'
+                    : !canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? unit.blulok_device.lock_status === 'unlocked'
+                        ? 'Already unlocked — re-lock must be done on site'
+                        : `Unavailable (status: ${unit.blulok_device.lock_status})`
+                      : 'Unlock unit'
                 }
                 aria-label={
                   !unit.blulok_device
-                    ? 'Lock control unavailable — no device on this unit'
-                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
-                      ? `Lock control unavailable, status ${unit.blulok_device.lock_status}`
-                      : unit.blulok_device.lock_status === 'locked'
-                        ? 'Unlock unit'
-                        : 'Lock unit'
+                    ? 'Unlock unavailable — no device on this unit'
+                    : canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? 'Unlock unit'
+                      : `Unlock unavailable, status ${unit.blulok_device.lock_status}`
                 }
                 disabled={
                   !unit.blulok_device ||
-                  !isBluLokLockToggleable(unit.blulok_device.lock_status) ||
-                  lockPendingUnitId === unit.id
+                  lockPendingUnitId === unit.id ||
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
                 }
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (unit.blulok_device) void handleLockToggle(unit);
+                  if (unit.blulok_device) void handleUnlockUnit(unit);
                 }}
                 className={`inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
                   !unit.blulok_device ||
-                  (unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status))
-                    ? 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500'
-                    : unit.blulok_device.lock_status === 'locked'
-                      ? 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-60'
-                      : 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500 disabled:opacity-60'
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
+                    ? 'cursor-not-allowed bg-gray-200 text-gray-500 dark:bg-gray-600 dark:text-gray-400'
+                    : isLockTransitionPending(unit.blulok_device!.lock_status) || lockPendingUnitId === unit.id
+                      ? 'bg-blue-600 text-white animate-pulse disabled:opacity-80'
+                      : 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60'
                 }`}
               >
-                {lockPendingUnitId === unit.id ? (
-                  <span className="inline-block h-4 w-4 animate-pulse rounded-full bg-white/80" aria-hidden />
-                ) : unit.blulok_device?.lock_status === 'locked' ? (
+                {lockPendingUnitId === unit.id || isLockTransitionPending(unit.blulok_device?.lock_status) ? (
+                  'Unlocking…'
+                ) : canRequestRemoteUnlock(unit.blulok_device?.lock_status) ? (
                   <>
                     <LockOpenIcon className="h-4 w-4 mr-1.5" />
                     Unlock
                   </>
-                ) : unit.blulok_device && isBluLokLockToggleable(unit.blulok_device.lock_status) ? (
-                  <>
-                    <LockClosedIcon className="h-4 w-4 mr-1.5" />
-                    Lock
-                  </>
                 ) : (
-                  <>
-                    <QuestionMarkCircleIcon className="h-4 w-4 mr-1.5" />
-                    N/A
-                  </>
+                  'Unlocked'
                 )}
               </button>
             )}
@@ -524,44 +574,45 @@ export default function UnitsPage() {
                 title={
                   !unit.blulok_device
                     ? 'No device associated'
-                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
-                      ? `Unavailable (${unit.blulok_device.lock_status})`
-                    : unit.blulok_device.lock_status === 'locked'
-                      ? 'Unlock'
-                      : 'Lock'
+                    : !canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? unit.blulok_device.lock_status === 'unlocked'
+                        ? 'Already unlocked'
+                        : `Unavailable (${unit.blulok_device.lock_status})`
+                      : 'Unlock'
                 }
                 aria-label={
                   !unit.blulok_device
-                    ? 'Lock control unavailable — no device'
-                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
-                      ? `Lock control unavailable, status ${unit.blulok_device.lock_status}`
-                      : unit.blulok_device.lock_status === 'locked'
-                        ? 'Unlock unit'
-                        : 'Lock unit'
+                    ? 'Unlock unavailable — no device'
+                    : canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? 'Unlock unit'
+                      : `Unlock unavailable, status ${unit.blulok_device.lock_status}`
                 }
                 disabled={
                   !unit.blulok_device ||
-                  !isBluLokLockToggleable(unit.blulok_device.lock_status) ||
-                  lockPendingUnitId === unit.id
+                  lockPendingUnitId === unit.id ||
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
                 }
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (unit.blulok_device) void handleLockToggle(unit);
+                  if (unit.blulok_device) void handleUnlockUnit(unit);
                 }}
                 className={`p-1 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                  !unit.blulok_device
+                  !unit.blulok_device ||
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
                     ? 'text-gray-400 dark:text-gray-500'
-                    : unit.blulok_device.lock_status === 'locked'
-                      ? 'text-green-600 hover:text-green-700'
-                      : 'text-red-600 hover:text-red-700'
+                    : isLockTransitionPending(unit.blulok_device.lock_status) || lockPendingUnitId === unit.id
+                      ? 'text-blue-600'
+                      : 'text-green-600 hover:text-green-700'
                 }`}
               >
-                {lockPendingUnitId === unit.id ? (
+                {lockPendingUnitId === unit.id || isLockTransitionPending(unit.blulok_device?.lock_status) ? (
                   <span className="inline-block h-4 w-4 animate-pulse rounded-full bg-current opacity-60" aria-hidden />
-                ) : unit.blulok_device?.lock_status === 'locked' ? (
+                ) : canRequestRemoteUnlock(unit.blulok_device?.lock_status) ? (
                   <LockOpenIcon className="h-4 w-4" />
                 ) : (
-                  <LockClosedIcon className="h-4 w-4" />
+                  <LockClosedIcon className="h-4 w-4 text-gray-400" />
                 )}
               </button>
             )}

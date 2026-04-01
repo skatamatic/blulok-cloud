@@ -1,7 +1,12 @@
 /**
- * BluLok unit lock: only `locked` / `unlocked` are safe for remote toggle.
- * Other states (locking, unlocking, error, unknown) should not send a toggle command.
+ * Remote unlock is only offered when the device reports fully locked.
+ * Remote lock is not offered (physical re-lock is required on most hardware).
+ * Transitional states block new commands.
  */
-export function isBluLokLockToggleable(lockStatus: string): boolean {
-  return lockStatus === 'locked' || lockStatus === 'unlocked';
+export function canRequestRemoteUnlock(lockStatus: string | undefined): boolean {
+  return lockStatus === 'locked';
+}
+
+export function isLockTransitionPending(lockStatus: string | undefined): boolean {
+  return lockStatus === 'locking' || lockStatus === 'unlocking';
 }

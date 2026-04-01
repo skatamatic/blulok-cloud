@@ -198,7 +198,7 @@ describe('UnitsPage', () => {
       });
 
       const lockBtn = screen.getByRole('button', {
-        name: /Lock control unavailable — no device on this unit/i,
+        name: /Unlock unavailable — no device on this unit/i,
       });
       expect(lockBtn).toBeDisabled();
     });
@@ -222,7 +222,7 @@ describe('UnitsPage', () => {
       });
 
       expect(
-        screen.getByRole('button', { name: /Lock control unavailable, status error/i })
+        screen.getByRole('button', { name: /Unlock unavailable, status error/i })
       ).toBeDisabled();
     });
 
@@ -258,7 +258,9 @@ describe('UnitsPage', () => {
       await waitFor(() => {
         expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
       });
-      expect(mockAddToast).not.toHaveBeenCalled();
+      expect(mockAddToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'success', title: 'Unlock command sent' }),
+      );
     });
 
     it('shows a toast when the lock API fails', async () => {

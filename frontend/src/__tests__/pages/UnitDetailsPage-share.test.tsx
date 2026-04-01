@@ -1,5 +1,6 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { ToastProvider } from '@/contexts/ToastContext';
 import UnitDetailsPage from '@/pages/UnitDetailsPage';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
@@ -128,7 +129,9 @@ describe('UnitDetailsPage shared access', () => {
 
     render(
       <MemoryRouter initialEntries={['/units/unit-1']}>
-        <UnitDetailsPage />
+        <ToastProvider>
+          <UnitDetailsPage />
+        </ToastProvider>
       </MemoryRouter>
     );
 
@@ -161,7 +164,9 @@ describe('UnitDetailsPage shared access', () => {
 
     render(
       <MemoryRouter initialEntries={['/units/unit-1']}>
-        <UnitDetailsPage />
+        <ToastProvider>
+          <UnitDetailsPage />
+        </ToastProvider>
       </MemoryRouter>
     );
 
@@ -184,7 +189,9 @@ describe('UnitDetailsPage shared access', () => {
 
     render(
       <MemoryRouter initialEntries={['/units/unit-1']}>
-        <UnitDetailsPage />
+        <ToastProvider>
+          <UnitDetailsPage />
+        </ToastProvider>
       </MemoryRouter>
     );
 
@@ -207,7 +214,9 @@ describe('UnitDetailsPage shared access', () => {
 
     render(
       <MemoryRouter initialEntries={['/units/unit-1']}>
-        <UnitDetailsPage />
+        <ToastProvider>
+          <UnitDetailsPage />
+        </ToastProvider>
       </MemoryRouter>
     );
 

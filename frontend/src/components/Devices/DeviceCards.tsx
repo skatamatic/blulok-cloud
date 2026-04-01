@@ -1,9 +1,11 @@
-import { MouseEvent, useMemo, useState } from 'react';
+import { MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AccessControlDevice, BluLokDevice } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -22,16 +24,31 @@ const statusIcons = {
   low_battery: ExclamationTriangleIcon
 };
 
-export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, canManageAccessMethods, onAccessMethodsUpdated, groupNames = [] }: {
+export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, canManageAccessMethods, onAccessMethodsUpdated, onRequestUnlock, groupNames = [] }: {
   device: AccessControlDevice;
   onViewFacility?: () => void;
   onViewDevice?: () => void;
   canManageAccessMethods?: boolean;
   onAccessMethodsUpdated?: () => Promise<void> | void;
+  /** Remote unlock (open); no remote re-lock — button disabled when already unlocked. */
+  onRequestUnlock?: () => Promise<void> | void;
   groupNames?: string[];
 }) {
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const [unlockPending, setUnlockPending] = useState(false);
+  const acLockSnapRef = useRef({ is_locked: device.is_locked, unlockPending: false });
+  acLockSnapRef.current = { is_locked: device.is_locked, unlockPending };
+  const { scheduleUnlockWatch, cancelWatch } = useLockHardwareFeedback();
+
+  useEffect(() => {
+    if (!unlockPending) return;
+    if (!device.is_locked) {
+      cancelWatch();
+      setUnlockPending(false);
+    }
+  }, [device.is_locked, unlockPending, cancelWatch]);
+
   const StatusIcon = (statusIcons as any)[device.status] || CheckCircleIcon;
   const [isEditingMethods, setIsEditingMethods] = useState(false);
   const [isSavingMethods, setIsSavingMethods] = useState(false);
@@ -193,7 +210,7 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, 
         </div>
       </div>
 
-      {(onViewFacility || onViewDevice) && (
+      {(onViewFacility || onViewDevice || onRequestUnlock) && (
         <div className="mt-6 flex flex-wrap gap-2">
           {onViewFacility && (
             <button
@@ -219,6 +236,42 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, 
               View Details
             </button>
           )}
+          {onRequestUnlock && (
+            <button
+              type="button"
+              onClick={async (event) => {
+                event.stopPropagation();
+                if (!device.is_locked || device.status !== 'online' || unlockPending) return;
+                setUnlockPending(true);
+                scheduleUnlockWatch(
+                  () => {
+                    const { is_locked: il, unlockPending: up } = acLockSnapRef.current;
+                    if (up && il) return 'unlocking';
+                    return il ? 'locked' : 'unlocked';
+                  },
+                  () => {
+                    setUnlockPending(false);
+                  },
+                );
+                try {
+                  await onRequestUnlock();
+                } catch {
+                  cancelWatch();
+                  setUnlockPending(false);
+                }
+              }}
+              disabled={!device.is_locked || device.status !== 'online' || unlockPending}
+              className={`inline-flex items-center rounded-lg border border-transparent px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                unlockPending
+                  ? 'bg-blue-600 text-white animate-pulse'
+                  : device.is_locked && device.status === 'online'
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-200 text-gray-500 dark:bg-gray-600 dark:text-gray-400'
+              }`}
+            >
+              {unlockPending ? 'Unlocking…' : device.is_locked ? 'Unlock' : 'Unlocked'}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -230,15 +283,18 @@ export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, 
   onViewDevice?: () => void;
   onViewUnit?: () => void;
   canManage?: boolean;
+  /** Remote unlock only; parent should update list state / refresh after the command. */
   onToggleLock?: () => Promise<void> | void;
 }) {
   const navigate = useNavigate();
   const StatusIcon = (statusIcons as any)[device.device_status] || CheckCircleIcon;
   const [isToggling, setIsToggling] = useState(false);
+  const canUnlock = canRequestRemoteUnlock(device.lock_status);
+  const lockPending = isLockTransitionPending(device.lock_status);
 
-  const handleToggleLock = async (event: MouseEvent<HTMLButtonElement>) => {
+  const handleUnlock = async (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (!onToggleLock) return;
+    if (!onToggleLock || !canUnlock) return;
     try {
       setIsToggling(true);
       await onToggleLock();
@@ -330,11 +386,17 @@ export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, 
           {canManage && onToggleLock && (
             <button
               type="button"
-              onClick={handleToggleLock}
-              disabled={isToggling}
-              className="inline-flex items-center rounded-lg border border-transparent bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+              onClick={handleUnlock}
+              disabled={isToggling || lockPending || !canUnlock}
+              className={`inline-flex items-center rounded-lg border border-transparent px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                lockPending || isToggling
+                  ? 'bg-blue-600 text-white animate-pulse'
+                  : canUnlock
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
+              }`}
             >
-              {isToggling ? 'Updating…' : device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
+              {lockPending || isToggling ? 'Unlocking…' : canUnlock ? 'Unlock' : 'Unlocked'}
             </button>
           )}
         </div>
