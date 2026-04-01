@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
@@ -23,8 +23,11 @@ import {
 import { apiService } from '@/services/api.service';
 import { Unit, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { withReturnPath } from '@/hooks/useBackNavigation';
+import { getApiErrorMessage } from '@/utils/apiError.utils';
+import { isBluLokLockToggleable } from '@/utils/unitLock.utils';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -48,6 +51,7 @@ export default function UnitsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { authState } = useAuth();
+  const { addToast } = useToast();
   const { subscribe, unsubscribe } = useWebSocket();
   const { selectedFacilityId } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
@@ -69,6 +73,7 @@ export default function UnitsPage() {
     limit: 20
   });
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const [lockPendingUnitId, setLockPendingUnitId] = useState<string | null>(null);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
@@ -76,10 +81,6 @@ export default function UnitsPage() {
   // Ref to track the latest loadUnits function for WebSocket callback
   const loadUnitsRef = useRef<() => void>(() => {});
   const wsRefreshDebounceRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    loadUnits();
-  }, [filters, currentPage, selectedFacilityId]);
 
   useEffect(() => {
     loadUsers();
@@ -130,7 +131,7 @@ export default function UnitsPage() {
     }
   };
 
-  const loadUnits = async () => {
+  const loadUnits = useCallback(async () => {
     // For non-tenants, require facility selection (unless "All Facilities" is selected)
     if (!isTenant && !selectedFacilityId) {
       setLoading(false);
@@ -157,13 +158,7 @@ export default function UnitsPage() {
         delete queryFilters.search;
       }
       
-      // Debug logging
-      console.log('Loading units with filters:', queryFilters);
-      
       const response = isTenant ? await apiService.getMyUnits() : await apiService.getUnits(queryFilters);
-      
-      // Debug logging
-      console.log('Units response:', response);
       
       setUnits(response.units || []);
       setTotal(response.total || response.units?.length || 0);
@@ -204,12 +199,16 @@ export default function UnitsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, currentPage, selectedFacilityId, isTenant]);
+
+  useEffect(() => {
+    void loadUnits();
+  }, [loadUnits]);
 
   // Keep ref updated for WebSocket callback
   useEffect(() => {
     loadUnitsRef.current = loadUnits;
-  });
+  }, [loadUnits]);
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
@@ -248,13 +247,23 @@ export default function UnitsPage() {
 
   const handleLockToggle = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;
-    
+    const ls = unit.blulok_device.lock_status;
+    if (!isBluLokLockToggleable(ls)) return;
+
+    setLockPendingUnitId(unit.id);
     try {
-      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
+      const newStatus = ls === 'locked' ? 'unlocked' : 'locked';
       await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
-      await loadUnits(); // Refresh data
-    } catch (error) {
+      await loadUnits();
+    } catch (error: unknown) {
       console.error('Failed to toggle lock:', error);
+      addToast({
+        type: 'error',
+        title: 'Could not update lock',
+        message: getApiErrorMessage(error, 'Try again in a moment.'),
+      });
+    } finally {
+      setLockPendingUnitId(null);
     }
   };
 
@@ -359,23 +368,79 @@ export default function UnitsPage() {
           </div>
         )}
 
-        {/* Footer: keep facility link only, remove lock button */}
+        {/* Footer: facility link + lock/unlock when user can manage */}
         <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/facilities/${unit.facility_id}`, { state: { tab: 'units' } });
+              }}
+              className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+            >
+              <BuildingOfficeIcon className="h-4 w-4 mr-1" />
+              View Facility
+              <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
+            </button>
+            {canManage && (
               <button
+                type="button"
+                title={
+                  !unit.blulok_device
+                    ? 'No device associated with this unit'
+                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
+                      ? `Lock control unavailable (status: ${unit.blulok_device.lock_status})`
+                    : unit.blulok_device.lock_status === 'locked'
+                      ? 'Unlock unit'
+                      : 'Lock unit'
+                }
+                aria-label={
+                  !unit.blulok_device
+                    ? 'Lock control unavailable — no device on this unit'
+                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
+                      ? `Lock control unavailable, status ${unit.blulok_device.lock_status}`
+                      : unit.blulok_device.lock_status === 'locked'
+                        ? 'Unlock unit'
+                        : 'Lock unit'
+                }
+                disabled={
+                  !unit.blulok_device ||
+                  !isBluLokLockToggleable(unit.blulok_device.lock_status) ||
+                  lockPendingUnitId === unit.id
+                }
                 onClick={(e) => {
                   e.stopPropagation();
-                  navigate(`/facilities/${unit.facility_id}`, { state: { tab: 'units' } });
+                  if (unit.blulok_device) void handleLockToggle(unit);
                 }}
-                className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+                className={`inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  !unit.blulok_device ||
+                  (unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status))
+                    ? 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500'
+                    : unit.blulok_device.lock_status === 'locked'
+                      ? 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-60'
+                      : 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500 disabled:opacity-60'
+                }`}
               >
-                <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-                View Facility
-                <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
+                {lockPendingUnitId === unit.id ? (
+                  <span className="inline-block h-4 w-4 animate-pulse rounded-full bg-white/80" aria-hidden />
+                ) : unit.blulok_device?.lock_status === 'locked' ? (
+                  <>
+                    <LockOpenIcon className="h-4 w-4 mr-1.5" />
+                    Unlock
+                  </>
+                ) : unit.blulok_device && isBluLokLockToggleable(unit.blulok_device.lock_status) ? (
+                  <>
+                    <LockClosedIcon className="h-4 w-4 mr-1.5" />
+                    Lock
+                  </>
+                ) : (
+                  <>
+                    <QuestionMarkCircleIcon className="h-4 w-4 mr-1.5" />
+                    N/A
+                  </>
+                )}
               </button>
-            </div>
-            <span className="text-xs text-transparent">.</span>
+            )}
           </div>
         </div>
       </div>
@@ -453,22 +518,51 @@ export default function UnitsPage() {
             >
               <ArrowTopRightOnSquareIcon className="h-4 w-4" />
             </button>
-            {canManage && unit.blulok_device && (
+            {canManage && (
               <button
+                type="button"
+                title={
+                  !unit.blulok_device
+                    ? 'No device associated'
+                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
+                      ? `Unavailable (${unit.blulok_device.lock_status})`
+                    : unit.blulok_device.lock_status === 'locked'
+                      ? 'Unlock'
+                      : 'Lock'
+                }
+                aria-label={
+                  !unit.blulok_device
+                    ? 'Lock control unavailable — no device'
+                    : unit.blulok_device && !isBluLokLockToggleable(unit.blulok_device.lock_status)
+                      ? `Lock control unavailable, status ${unit.blulok_device.lock_status}`
+                      : unit.blulok_device.lock_status === 'locked'
+                        ? 'Unlock unit'
+                        : 'Lock unit'
+                }
+                disabled={
+                  !unit.blulok_device ||
+                  !isBluLokLockToggleable(unit.blulok_device.lock_status) ||
+                  lockPendingUnitId === unit.id
+                }
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleLockToggle(unit);
+                  if (unit.blulok_device) void handleLockToggle(unit);
                 }}
-                className={`p-1 rounded transition-colors ${
-                  unit.blulok_device.lock_status === 'locked'
-                    ? 'text-green-600 hover:text-green-700'
-                    : 'text-red-600 hover:text-red-700'
+                className={`p-1 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  !unit.blulok_device
+                    ? 'text-gray-400 dark:text-gray-500'
+                    : unit.blulok_device.lock_status === 'locked'
+                      ? 'text-green-600 hover:text-green-700'
+                      : 'text-red-600 hover:text-red-700'
                 }`}
               >
-                {unit.blulok_device.lock_status === 'locked' ? 
-                  <LockOpenIcon className="h-4 w-4" /> : 
+                {lockPendingUnitId === unit.id ? (
+                  <span className="inline-block h-4 w-4 animate-pulse rounded-full bg-current opacity-60" aria-hidden />
+                ) : unit.blulok_device?.lock_status === 'locked' ? (
+                  <LockOpenIcon className="h-4 w-4" />
+                ) : (
                   <LockClosedIcon className="h-4 w-4" />
-                }
+                )}
               </button>
             )}
           </div>

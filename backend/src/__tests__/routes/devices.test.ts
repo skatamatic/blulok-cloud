@@ -4,6 +4,20 @@ import { createMockTestData, MockTestData, expectUnauthorized, expectForbidden, 
 import { DatabaseService } from '@/services/database.service';
 import { DevicesService } from '@/services/devices.service';
 
+/** Matches knex chains used by devices.routes (join + select + where + first). */
+function mockKnexChainForFirstRow(row: Record<string, unknown>) {
+  return jest.fn(() => ({
+    select: jest.fn().mockReturnThis(),
+    join: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    first: jest.fn().mockResolvedValue(row),
+    whereIn: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    offset: jest.fn().mockReturnThis(),
+  }));
+}
+
 // Mock DevicesService
 jest.mock('@/services/devices.service');
 
@@ -18,82 +32,25 @@ jest.mock('@/services/lock-command.service', () => {
     lock_status: 'locking',
     previous_status: 'locked',
   });
+  const issueAccessControlLockCommandMock = jest.fn().mockResolvedValue({
+    success: true,
+    message: 'Lock command accepted',
+  });
   return {
     LockCommandService: {
       getInstance: jest.fn(() => ({
         issueLockCommand: issueLockCommandMock,
+        issueAccessControlLockCommand: issueAccessControlLockCommandMock,
       })),
     },
     __mocks: {
       issueLockCommandMock,
+      issueAccessControlLockCommandMock,
     },
   };
 });
 
-// Create a shared mock instance that will be returned by DeviceModel
-// This must be defined before jest.mock to be accessible
-let sharedMockDeviceModel: any;
-
-// Mock DeviceModel with all required methods - always return the shared instance
-jest.mock('@/models/device.model', () => {
-  // Create variables that tests can update to control mock return values - inside jest.mock to avoid hoisting
-  const mockReturnValues: any = {
-    createAccessControlDevice: { id: 'device-1', name: 'Test Device' },
-    createBluLokDevice: { id: 'device-1', name: 'Test Device' },
-  };
-  
-  // Create the shared instance inline to avoid hoisting issues
-  const mockKnexFn = jest.fn((table: string) => ({
-    select: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    first: jest.fn().mockResolvedValue({ unit_id: 'unit-1' }),
-    whereIn: jest.fn().mockReturnThis(),
-    join: jest.fn().mockReturnThis(),
-    orderBy: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    offset: jest.fn().mockReturnThis(),
-  }));
-  
-  // Store mockReturnValues on global so tests can update it
-  (global as any).__mockReturnValues = mockReturnValues;
-  
-  // Create mock functions that read from the global mockReturnValues
-  const createAccessControlDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
-    if (payload && ('serial' in payload || 'device_serial' in payload)) {
-      throw new Error('Access control create payload must not contain BluLok serial fields');
-    }
-    const values = (global as any).__mockReturnValues || mockReturnValues;
-    return values.createAccessControlDevice;
-  });
-  
-  const createBluLokDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
-    if (!payload?.device_serial || !payload?.serial) {
-      throw new Error('BluLok create payload must include normalized serial fields');
-    }
-    const values = (global as any).__mockReturnValues || mockReturnValues;
-    return values.createBluLokDevice;
-  });
-  
-  const mockInstance = {
-    findUnassignedDevices: jest.fn().mockResolvedValue([]),
-    countUnassignedDevices: jest.fn().mockResolvedValue(0),
-    findBluLokDevices: jest.fn().mockResolvedValue([]),
-    findAccessControlDevices: jest.fn().mockResolvedValue([]),
-    countBluLokDevices: jest.fn().mockResolvedValue(0),
-    countAccessControlDevices: jest.fn().mockResolvedValue(0),
-    getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({}),
-    createAccessControlDevice: createAccessControlDeviceMock,
-    createBluLokDevice: createBluLokDeviceMock,
-    updateDeviceStatus: jest.fn().mockResolvedValue(undefined),
-    updateLockStatus: jest.fn().mockResolvedValue(undefined),
-    db: { connection: mockKnexFn },
-  };
-  // Export it via a getter so tests can access it
-  (global as any).__sharedMockDeviceModel = mockInstance;
-  return {
-    DeviceModel: jest.fn().mockImplementation(() => mockInstance),
-  };
-});
+// DeviceModel is mocked once in setup-mocks.ts (singleton on __sharedMockDeviceModel).
 
 // Helper function to create mock device model instance
 const createMockDeviceModel = () => ({
@@ -127,16 +84,11 @@ describe('Devices Routes', () => {
   let mockUnitsService: any;
 
   beforeAll(async () => {
-    // Get the shared mock instance from the global scope (set by jest.mock)
-    mockDeviceModel = (global as any).__sharedMockDeviceModel;
-    if (!mockDeviceModel) {
-      // Fallback: get it from the mock
-      const { DeviceModel } = require('@/models/device.model');
-      mockDeviceModel = new DeviceModel();
-      (global as any).__sharedMockDeviceModel = mockDeviceModel;
-    }
-    
     app = createApp();
+    // Same object as `const deviceModel` in devices.routes (Jest can duplicate device.model mocks).
+    const { deviceModel: routeDeviceModel } = require('@/routes/devices.routes');
+    mockDeviceModel = routeDeviceModel;
+    (global as any).__sharedMockDeviceModel = routeDeviceModel;
   });
 
   beforeEach(async () => {
@@ -693,11 +645,7 @@ describe('Devices Routes', () => {
 
       it('should send lock command and enter transitional state for DEV_ADMIN', async () => {
         // Setup mock knex for device lookup
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit1.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit1.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
 
         const response = await request(app)
@@ -712,11 +660,7 @@ describe('Devices Routes', () => {
 
       it('should update lock status for ADMIN', async () => {
         // Setup mock knex for device lookup
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit1.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit1.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
 
         const response = await request(app)
@@ -731,11 +675,7 @@ describe('Devices Routes', () => {
 
       it('should update lock status for FACILITY_ADMIN with access', async () => {
         // Setup mock knex for device lookup
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit1.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit1.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
 
         const response = await request(app)
@@ -750,11 +690,7 @@ describe('Devices Routes', () => {
 
       it('should update lock status for TENANT with access', async () => {
         // Setup mock knex for device lookup
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit1.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit1.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
 
         const response = await request(app)
@@ -769,11 +705,7 @@ describe('Devices Routes', () => {
 
       it('should update lock status for MAINTENANCE when assigned', async () => {
         // Setup mock knex for device lookup
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit1.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit1.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
 
         const response = await request(app)
@@ -796,6 +728,65 @@ describe('Devices Routes', () => {
           .expect(400);
 
         expectBadRequest(response);
+      });
+    });
+
+    describe('PUT /api/v1/devices/access-control/:id/lock - Gateway OPEN/CLOSE', () => {
+      const validLockData = { lock_status: 'unlocked' as const };
+
+      it('should issue access-control unlock for ADMIN', async () => {
+        mockDeviceModel.db.connection = jest.fn(() => ({
+          join: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ facility_id: testData.facilities.facility1.id }),
+          update: jest.fn().mockResolvedValue(1),
+        }));
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-device-1/lock')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send(validLockData)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.success).toBe(true);
+      });
+
+      it('should return 403 for FACILITY_ADMIN when device is in another facility', async () => {
+        mockDeviceModel.db.connection = jest.fn(() => ({
+          join: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ facility_id: testData.facilities.facility2.id }),
+        }));
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-device-1/lock')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send(validLockData)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('should allow FACILITY_ADMIN when device facility is in scope', async () => {
+        mockDeviceModel.db.connection = jest.fn(() => ({
+          join: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ facility_id: testData.facilities.facility1.id }),
+          update: jest.fn().mockResolvedValue(1),
+        }));
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-device-1/lock')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send(validLockData)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.success).toBe(true);
       });
     });
   });
@@ -1156,11 +1147,7 @@ describe('Devices Routes', () => {
 
       it('should allow TENANT to control lock status for their units', async () => {
         // Setup mock knex to return device with unit_id that tenant has access to
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit1.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit1.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
 
         const response = await request(app)
@@ -1175,11 +1162,7 @@ describe('Devices Routes', () => {
 
       it('should prevent TENANT from controlling lock status for other units', async () => {
         // Setup mock knex to return device with unit_id that tenant doesn't have access to
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit2.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit2.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(false);
 
         const response = await request(app)
@@ -1193,11 +1176,7 @@ describe('Devices Routes', () => {
 
       it('should allow MAINTENANCE to control lock status when assigned', async () => {
         // Setup mock knex to return device with unit_id
-        mockDeviceModel.db.connection = jest.fn((table: string) => ({
-          select: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue({ unit_id: testData.units.unit1.id }),
-        }));
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({ unit_id: testData.units.unit1.id });
         mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
 
         const response = await request(app)

@@ -68,7 +68,8 @@ import { AccessCodeService } from '@/services/access-code.service';
 import { validate } from '@/middleware/validator.middleware';
 
 const router = Router();
-const deviceModel = new DeviceModel();
+/** Used by devices route tests so knex mocks apply to the same instance the router holds. */
+export const deviceModel = new DeviceModel();
 
 // Validation schemas
 const accessControlDeviceSchema = Joi.object({
@@ -563,6 +564,76 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
     res.status(500).json({ success: false, message: 'Failed to update lock status' });
   }
 });
+
+// PUT /api/devices/access-control/:id/lock — OPEN/CLOSE via gateway (same pipeline as BluLok)
+router.put(
+  '/access-control/:id/lock',
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = req.user!;
+      const id = req.params.id;
+
+      const { error, value } = lockStatusSchema.validate(req.body);
+      if (error) {
+        res.status(400).json({
+          success: false,
+          message: error.details[0]?.message || 'Validation error',
+          error: error.details[0]?.message || 'Validation error',
+        });
+        return;
+      }
+
+      const knex = deviceModel['db'].connection;
+      const deviceRow = await knex('access_control_devices')
+        .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+        .select('gateways.facility_id')
+        .where('access_control_devices.id', String(id))
+        .first();
+
+      if (!deviceRow) {
+        res.status(404).json({ success: false, message: 'Device not found' });
+        return;
+      }
+
+      if (user.role === UserRole.FACILITY_ADMIN) {
+        if (!user.facilityIds?.includes(deviceRow.facility_id)) {
+          res.status(403).json({ success: false, message: 'Insufficient permissions - facility access required' });
+          return;
+        }
+      }
+
+      if (value.lock_status === 'error') {
+        await knex('access_control_devices').where('id', String(id)).update({
+          is_locked: true,
+          updated_at: new Date(),
+        });
+        res.json({ success: true, message: 'Access control lock state overridden' });
+        return;
+      }
+
+      const { LockCommandService } = await import('@/services/lock-command.service');
+      const lockCommandService = LockCommandService.getInstance();
+      const result = await lockCommandService.issueAccessControlLockCommand(
+        String(id),
+        value.lock_status as 'locked' | 'unlocked',
+      );
+
+      if (!result.success) {
+        res.status(502).json({ success: false, message: result.message });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: result.message,
+      });
+    } catch (error) {
+      console.error('Error updating access-control lock status:', error);
+      res.status(500).json({ success: false, message: 'Failed to update lock status' });
+    }
+  },
+);
 
 // GET /api/devices/blulok/:id/denylist - Get denylist entries for a device
 router.get('/blulok/:id/denylist', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {

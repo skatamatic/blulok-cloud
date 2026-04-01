@@ -205,6 +205,32 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
     };
   }
 
+  /** Access-control rows use `is_locked` and `status`; map to the same WS shape clients expect. */
+  private formatAccessControlDeviceStatus(device: any): any {
+    const lockStatus = device.is_locked === true ? 'locked' : 'unlocked';
+    return {
+      id: device.id,
+      device_serial: device.name ?? device.id,
+      unit_id: null,
+      unit_number: null,
+      facility_id: device.facility_id,
+      facility_name: device.facility_name,
+      gateway_id: device.gateway_id,
+      gateway_name: device.gateway_name,
+      lock_status: lockStatus,
+      device_status: device.status,
+      battery_level: undefined,
+      signal_strength: undefined,
+      temperature: undefined,
+      error_code: undefined,
+      error_message: undefined,
+      firmware_version: undefined,
+      last_activity: device.last_activity,
+      last_seen: device.last_seen,
+      updated_at: device.updated_at,
+    };
+  }
+
   /**
    * Broadcast update for a specific device
    * Called when device state changes
@@ -217,14 +243,22 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
         return;
       }
 
-      // Get fresh device data
-      const device = await this.deviceModel.findBluLokDeviceById(deviceId);
-      if (!device) {
-        this.logger.warn(`Device ${deviceId} not found for broadcast`);
-        return;
+      // BluLok first; fall back to access control (gates/doors) — IDs do not overlap by table.
+      let deviceData: any;
+      const bluLok = await this.deviceModel.findBluLokDeviceById(deviceId);
+      if (bluLok) {
+        deviceData = this.formatDeviceStatus(bluLok);
+      } else {
+        const ac = await this.deviceModel.findAccessControlDeviceWithGateway(deviceId);
+        if (!ac) {
+          this.logger.warn(`Device ${deviceId} not found for broadcast`);
+          return;
+        }
+        deviceData = this.formatAccessControlDeviceStatus(ac);
+        if (!facilityId && ac.facility_id) {
+          facilityId = ac.facility_id;
+        }
       }
-
-      const deviceData = this.formatDeviceStatus(device);
 
       for (const subscriptionId of activeSubscriptions) {
         const client = this.clientContext.get(subscriptionId);

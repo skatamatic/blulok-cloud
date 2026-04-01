@@ -45,6 +45,9 @@ export interface Gateway {
 export interface AccessControlDevice {
   id: string;
   gateway_id: string;
+  /** Present on list/detail responses (from gateway’s facility). */
+  facility_id?: string;
+  facility_name?: string | null;
   name: string;
   device_type: 'gate' | 'elevator' | 'door';
   location_description?: string;
@@ -210,6 +213,7 @@ export interface Unit {
   blulok_device?: {
     id: string;
     device_serial: string;
+    /** Remote toggle is only valid for locked/unlocked; transitional or error states are read-only. */
     lock_status: string;
     device_status: string;
     battery_level?: number;

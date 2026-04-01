@@ -521,56 +521,40 @@ jest.mock('../models/access-log.model', () => ({
   }),
 }));
 
-jest.mock('../models/device.model', () => ({
-  DeviceModel: createModelMock({
-    findAccessControlDevices: jest.fn().mockResolvedValue([
-      {
-        id: 'device-1',
-        name: 'Test Access Control Device',
-        device_type: 'access_control',
-        facility_id: '550e8400-e29b-41d4-a716-446655440001',
-        status: 'online'
-      }
-    ]),
-    findBluLokDevices: jest.fn().mockResolvedValue([
-      {
-        id: 'device-2',
-        name: 'Test BluLok Device',
-        device_type: 'blulok',
-        facility_id: '550e8400-e29b-41d4-a716-446655440001',
-        unit_id: '550e8400-e29b-41d4-a716-446655440011',
-        status: 'online',
-        lock_status: 'locked'
-      }
-    ]),
-    updateLockStatus: jest.fn().mockResolvedValue({ success: true }),
-    updateStatus: jest.fn().mockResolvedValue({ success: true }),
-    updateDeviceStatus: jest.fn().mockResolvedValue({ success: true }),
-    createAccessControlDevice: jest.fn().mockImplementation((data: any) => 
-      Promise.resolve({ 
-        id: 'new-device', 
-        name: data.name,
-        device_type: data.device_type,
-        location_description: data.location_description,
-        relay_channel: data.relay_channel,
-        gateway_id: data.gateway_id
-      })
-    ),
-    createBluLokDevice: jest.fn().mockImplementation((data: any) => 
-      Promise.resolve({ 
-        id: 'new-device', 
-        name: data.name,
-        device_type: data.device_type,
-        location_description: data.location_description,
-        unit_id: data.unit_id,
-        gateway_id: data.gateway_id
-      })
-    ),
-    getFacilityHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
-    getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
-    findByFacilityId: jest.fn().mockResolvedValue([]),
-    countAccessControlDevices: jest.fn().mockResolvedValue(1),
-    countBluLokDevices: jest.fn().mockResolvedValue(1),
+// Single shared DeviceModel instance so route modules (e.g. devices.routes) and tests
+// mutate the same `db.connection` and method mocks (see devices.routes.test.ts).
+jest.mock('../models/device.model', () => {
+  const mockReturnValues: any = {
+    createAccessControlDevice: { id: 'device-1', name: 'Test Device' },
+    createBluLokDevice: { id: 'device-1', name: 'Test Device' },
+  };
+  const mockKnexFn = jest.fn((table: string) => ({
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    first: jest.fn().mockResolvedValue({ unit_id: 'unit-1' }),
+    whereIn: jest.fn().mockReturnThis(),
+    join: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    offset: jest.fn().mockReturnThis(),
+  }));
+  (global as any).__mockReturnValues = mockReturnValues;
+  const createAccessControlDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
+    if (payload && ('serial' in payload || 'device_serial' in payload)) {
+      throw new Error('Access control create payload must not contain BluLok serial fields');
+    }
+    const values = (global as any).__mockReturnValues || mockReturnValues;
+    return values.createAccessControlDevice;
+  });
+  const createBluLokDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
+    if (!payload?.device_serial || !payload?.serial) {
+      throw new Error('BluLok create payload must include normalized serial fields');
+    }
+    const values = (global as any).__mockReturnValues || mockReturnValues;
+    return values.createBluLokDevice;
+  });
+  const mockInstance = {
+    findAll: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     findById: jest.fn().mockImplementation((id: string) => {
       if (id === 'device-1') {
         return Promise.resolve({
@@ -580,13 +564,55 @@ jest.mock('../models/device.model', () => ({
           facility_id: '550e8400-e29b-41d4-a716-446655440001',
           unit_id: '550e8400-e29b-41d4-a716-446655440011',
           status: 'online',
-          lock_status: 'locked'
+          lock_status: 'locked',
         });
       }
       return Promise.resolve(null);
     }),
-  }),
-}));
+    create: jest.fn().mockResolvedValue({ id: 'new-item' }),
+    updateById: jest.fn().mockResolvedValue({ id: 'updated-item' }),
+    deleteById: jest.fn().mockResolvedValue(1),
+    exists: jest.fn().mockResolvedValue(false),
+    count: jest.fn().mockResolvedValue(0),
+    findUnassignedDevices: jest.fn().mockResolvedValue([]),
+    countUnassignedDevices: jest.fn().mockResolvedValue(0),
+    findAccessControlDevices: jest.fn().mockResolvedValue([
+      {
+        id: 'device-1',
+        name: 'Test Access Control Device',
+        device_type: 'access_control',
+        facility_id: '550e8400-e29b-41d4-a716-446655440001',
+        status: 'online',
+      },
+    ]),
+    findBluLokDevices: jest.fn().mockResolvedValue([
+      {
+        id: 'device-2',
+        name: 'Test BluLok Device',
+        device_type: 'blulok',
+        facility_id: '550e8400-e29b-41d4-a716-446655440001',
+        unit_id: '550e8400-e29b-41d4-a716-446655440011',
+        status: 'online',
+        lock_status: 'locked',
+      },
+    ]),
+    countAccessControlDevices: jest.fn().mockResolvedValue(1),
+    countBluLokDevices: jest.fn().mockResolvedValue(1),
+    getFacilityHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
+    getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
+    findByFacilityId: jest.fn().mockResolvedValue([]),
+    createAccessControlDevice: createAccessControlDeviceMock,
+    createBluLokDevice: createBluLokDeviceMock,
+    updateLockStatus: jest.fn().mockResolvedValue({ success: true }),
+    updateStatus: jest.fn().mockResolvedValue({ success: true }),
+    updateDeviceStatus: jest.fn().mockResolvedValue({ success: true }),
+    db: { connection: mockKnexFn },
+  };
+  (global as any).__sharedMockDeviceModel = mockInstance;
+  return {
+    DeviceModel: jest.fn().mockImplementation(() => mockInstance),
+  };
+});
 
 jest.mock('../models/gateway.model', () => ({
   GatewayModel: createModelMock({

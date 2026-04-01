@@ -555,7 +555,8 @@ async function createUnit(token, facilityId, unitNumber) {
   return res.data?.unit || res.data;
 }
 
-async function createUser(token, email, role = 'tenant') {
+/** @param {string[]|string|null} facilityIdsForCreate Required for facility_admin (and some flows); pass facility UUID(s). */
+async function createUser(token, email, role = 'tenant', facilityIdsForCreate = null) {
   // First try to find existing
   const list = await axios.get(`${API_BASE}/users`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -569,13 +570,17 @@ async function createUser(token, email, role = 'tenant') {
     }
     return existing.id;
   }
+  const facilityIds = facilityIdsForCreate
+    ? (Array.isArray(facilityIdsForCreate) ? facilityIdsForCreate : [facilityIdsForCreate])
+    : undefined;
   // Create new
   const res = await axios.post(`${API_BASE}/users`, {
     email,
     password: 'TestUser123!',
     firstName: 'E2E',
     lastName: 'User',
-    role
+    role,
+    ...(facilityIds && facilityIds.length ? { facilityIds } : {}),
   }, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.data?.success) throw new Error(`Create user failed: ${res.data?.message}`);
   // Fetch back
@@ -1202,10 +1207,9 @@ async function run() {
   step('Provisioning facility admin for coverage');
   const facilityAdminEmail = `fac-admin-${Date.now()}@test.com`;
   const facilityAdminPassword = 'TestUser123!';
-  facilityAdmin.id = await createUser(token, facilityAdminEmail, 'facility_admin');
+  facilityAdmin.id = await createUser(token, facilityAdminEmail, 'facility_admin', facilityId);
   facilityAdmin.email = facilityAdminEmail;
   created.users.push(facilityAdmin.id);
-  await assignUserToFacility(token, facilityAdmin.id, facilityId);
   const facilityAdminLogin = await axios.post(`${API_BASE}/auth/login`, {
     email: facilityAdminEmail,
     password: facilityAdminPassword
@@ -1641,6 +1645,41 @@ async function run() {
     await assignDeviceToUnit(token, deviceId, unitId);
     ok(`Assigned device ${deviceId} to unit`);
     created.deviceId = deviceId;
+
+    // ---- HTTP: same LockCommandService path as dashboard (not DevTools gateway-command) ----
+    heading('HTTP API — Cloud lock / unlock (BluLok + access control)');
+    step('PUT /devices/blulok/:id/lock — lock then unlock (CLOSE / OPEN via gateway)');
+    const lockRes = await axios.put(
+      `${API_BASE}/devices/blulok/${deviceId}/lock`,
+      { lock_status: 'locked' },
+      { headers: authHeaders(token) },
+    );
+    if (lockRes.status !== 200 || lockRes.data?.success === false) {
+      throw new Error(`Cloud lock failed: ${lockRes.status} ${JSON.stringify(lockRes.data)}`);
+    }
+    ok('BluLok cloud lock accepted');
+    const unlockRes = await axios.put(
+      `${API_BASE}/devices/blulok/${deviceId}/lock`,
+      { lock_status: 'unlocked' },
+      { headers: authHeaders(token) },
+    );
+    if (unlockRes.status !== 200 || unlockRes.data?.success === false) {
+      throw new Error(`Cloud unlock failed: ${unlockRes.status} ${JSON.stringify(unlockRes.data)}`);
+    }
+    ok('BluLok cloud unlock accepted');
+    if (created.accessControlDeviceIds.length > 0) {
+      const acId = created.accessControlDeviceIds[0];
+      step(`PUT /devices/access-control/:id/lock — unlock (${acId})`);
+      const acLock = await axios.put(
+        `${API_BASE}/devices/access-control/${acId}/lock`,
+        { lock_status: 'unlocked' },
+        { headers: authHeaders(token) },
+      );
+      if (acLock.status !== 200 || acLock.data?.success === false) {
+        throw new Error(`Access-control cloud unlock failed: ${acLock.status} ${JSON.stringify(acLock.data)}`);
+      }
+      ok('Access-control cloud unlock (OPEN) accepted');
+    }
 
     // ---- Gateway-specific tests via PROXY_REQUEST over WS ----
     heading('Gateway Proxy API Tests');
@@ -3442,21 +3481,21 @@ async function run() {
 
     heading('Gateway Command DevTools Test');
     step('Testing dev gateway command: LOCK');
-    const lockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+    const devToolsLockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
       facilityId,
       command: 'LOCK',
       targetDeviceIds: [deviceId],
     }, { headers: { Authorization: `Bearer ${token}` } });
-    if (!lockRes.data?.success) throw new Error('LOCK command failed');
+    if (!devToolsLockRes.data?.success) throw new Error('LOCK command failed');
     ok('LOCK gateway command sent successfully');
 
     step('Testing dev gateway command: UNLOCK');
-    const unlockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+    const devToolsUnlockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
       facilityId,
       command: 'UNLOCK',
       targetDeviceIds: [deviceId],
     }, { headers: { Authorization: `Bearer ${token}` } });
-    if (!unlockRes.data?.success) throw new Error('UNLOCK command failed');
+    if (!devToolsUnlockRes.data?.success) throw new Error('UNLOCK command failed');
     ok('UNLOCK gateway command sent successfully');
 
     step('Testing dev gateway command: DENYLIST_ADD');

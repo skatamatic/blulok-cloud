@@ -5,6 +5,7 @@
 import { LockCommandService } from '@/services/lock-command.service';
 
 const mockUpdateLockStatus = jest.fn().mockResolvedValue(undefined);
+const mockUpdateAccessControlDevice = jest.fn().mockResolvedValue({});
 const sendLockCommand = jest.fn();
 
 let knexInvocation = 0;
@@ -41,6 +42,7 @@ jest.mock('@/models/device.model', () => ({
   DeviceModel: jest.fn().mockImplementation(() => ({
     db: { connection: mockKnex },
     updateLockStatus: mockUpdateLockStatus,
+    updateAccessControlDevice: mockUpdateAccessControlDevice,
   })),
 }));
 
@@ -136,5 +138,60 @@ describe('LockCommandService', () => {
     await jest.advanceTimersByTimeAsync(10_000);
 
     expect(mockUpdateLockStatus.mock.calls.length).toBe(callsBefore);
+  });
+
+  describe('issueAccessControlLockCommand', () => {
+    beforeEach(() => {
+      resetSingleton();
+      jest.clearAllMocks();
+      mockUpdateAccessControlDevice.mockClear();
+      sendLockCommand.mockReset();
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'access_control_devices') {
+          return buildJoinFirst({
+            id: 'ac-1',
+            gateway_id: 'gw-1',
+            is_locked: true,
+          });
+        }
+        return buildJoinFirst(null);
+      });
+    });
+
+    it('returns failure when access control row is missing', async () => {
+      mockKnex.mockImplementation(() => buildJoinFirst(null));
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('missing', 'unlocked');
+      expect(res.success).toBe(false);
+      expect(res.message).toMatch(/device not found/i);
+      expect(sendLockCommand).not.toHaveBeenCalled();
+    });
+
+    it('sends OPEN when requesting unlocked', async () => {
+      sendLockCommand.mockResolvedValueOnce({ success: true });
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked');
+      expect(res.success).toBe(true);
+      expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'OPEN');
+      expect(mockUpdateAccessControlDevice).toHaveBeenCalledWith('ac-1', { is_locked: false });
+    });
+
+    it('sends CLOSE when requesting locked', async () => {
+      sendLockCommand.mockResolvedValueOnce({ success: true });
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'locked');
+      expect(res.success).toBe(true);
+      expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'CLOSE');
+      expect(mockUpdateAccessControlDevice).toHaveBeenCalledWith('ac-1', { is_locked: true });
+    });
+
+    it('returns failure when gateway rejects command', async () => {
+      sendLockCommand.mockResolvedValueOnce({ success: false, error: 'gw-offline' });
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked');
+      expect(res.success).toBe(false);
+      expect(res.message).toContain('gw-offline');
+      expect(mockUpdateAccessControlDevice).not.toHaveBeenCalled();
+    });
   });
 });

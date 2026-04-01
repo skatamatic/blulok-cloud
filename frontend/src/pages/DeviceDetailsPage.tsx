@@ -417,7 +417,7 @@ export default function DeviceDetailsPage() {
               {device.unit_number && ` • Unit ${device.unit_number}`}
             </p>
           </div>
-          {canManage && deviceCategory === 'blulok' && (
+          {canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') && (
             <div>
               <button
                 onClick={async () => {
@@ -434,14 +434,16 @@ export default function DeviceDetailsPage() {
                         : prev,
                     );
 
-                    const response = await apiService.updateLockStatus(
-                      device.id,
-                      targetStatus,
-                    );
+                    const response =
+                      deviceCategory === 'blulok'
+                        ? await apiService.updateLockStatus(device.id, targetStatus)
+                        : await apiService.updateAccessControlLockStatus(device.id, targetStatus);
 
                     const nextStatus =
                       (response?.lock_status as DeviceDetails['lock_status']) ||
-                      (targetStatus === 'locked' ? 'locking' : 'unlocking');
+                      (deviceCategory === 'blulok'
+                        ? (targetStatus === 'locked' ? 'locking' : 'unlocking')
+                        : (targetStatus === 'locked' ? 'locking' : 'unlocking'));
 
                     setDevice(prev =>
                       prev ? { ...prev, lock_status: nextStatus } : prev,

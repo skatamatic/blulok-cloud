@@ -521,6 +521,19 @@ export class DeviceModel {
 
   async updateAccessControlDevice(deviceId: string, data: UpdateAccessControlDeviceData): Promise<AccessControlDevice | null> {
     const knex = this.db.connection;
+
+    let prevLocked: boolean | undefined;
+    let gatewayId: string | undefined;
+    let facilityId: string | undefined;
+    if (data.is_locked !== undefined) {
+      const before = await this.findAccessControlDeviceWithGateway(deviceId);
+      if (before) {
+        prevLocked = before.is_locked;
+        gatewayId = before.gateway_id;
+        facilityId = before.facility_id;
+      }
+    }
+
     const updatePayload: Record<string, unknown> = { updated_at: new Date() };
 
     if (data.name !== undefined) updatePayload.name = data.name;
@@ -533,6 +546,20 @@ export class DeviceModel {
     if (data.metadata !== undefined) updatePayload.metadata = JSON.stringify(data.metadata);
 
     await knex('access_control_devices').where('id', deviceId).update(updatePayload);
+
+    if (
+      data.is_locked !== undefined &&
+      prevLocked !== undefined &&
+      data.is_locked !== prevLocked &&
+      gatewayId
+    ) {
+      this.eventService.emitDeviceTelemetryUpdated({
+        deviceId,
+        gatewayId,
+        facilityId,
+      });
+    }
+
     return this.findAccessControlDeviceById(deviceId);
   }
 

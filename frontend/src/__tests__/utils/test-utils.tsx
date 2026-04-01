@@ -52,6 +52,7 @@ export const mockApiService = {
   createBluLokDevice: jest.fn(),
   updateDeviceStatus: jest.fn(),
   updateLockStatus: jest.fn(),
+  updateAccessControlLockStatus: jest.fn(),
   getDevice: jest.fn(),
   createDevice: jest.fn(),
 

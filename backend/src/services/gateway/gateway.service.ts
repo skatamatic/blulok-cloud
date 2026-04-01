@@ -425,8 +425,32 @@ export class GatewayService extends EventEmitter {
 
   /**
    * Send lock command (OPEN/CLOSE)
+   *
+   * When the facility has an active inbound `/ws/gateway` session, commands are delivered as
+   * signed JWTs (same path as dev-tools LOCK/UNLOCK). Otherwise uses the registered gateway
+   * implementation (HTTP mesh, simulated, etc.).
    */
   public async sendLockCommand(gatewayId: string, lockId: string, command: 'OPEN' | 'CLOSE'): Promise<ICommandResult> {
+    const start = Date.now();
+    const row = await this.db('gateways').where('id', gatewayId).select('facility_id').first();
+    const facilityId = row?.facility_id ? String(row.facility_id) : null;
+
+    if (facilityId) {
+      const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+      const { connected } = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+      if (connected) {
+        const { Ed25519Service } = await import('@/services/crypto/ed25519.service');
+        const cmd_type = command === 'CLOSE' ? 'LOCK' : 'UNLOCK';
+        const jwt = await Ed25519Service.signCommandJwt({ cmd_type, device_id: lockId });
+        GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
+        return {
+          success: true,
+          executedAt: new Date(),
+          duration: Date.now() - start,
+        };
+      }
+    }
+
     return await this.executeDeviceCommand(gatewayId, lockId, command);
   }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   BoltIcon,
   PlayIcon,
@@ -13,11 +13,14 @@ import { WidgetSize } from './WidgetSizeDropdown';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { AccessControlDevice } from '@/types/facility.types';
+import { getApiErrorMessage } from '@/utils/apiError.utils';
+import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
 
 interface GateDevice {
   id: string;
   name: string;
   facility: string;
+  /** Facility UUID when known; empty when the API omits `facility_id`. */
   facilityId: string;
   status: 'online' | 'offline' | 'error' | 'maintenance';
   isOpen: boolean;
@@ -37,16 +40,16 @@ interface RemoteGateWidgetProps {
 }
 
 /**
- * Transform an AccessControlDevice from the API into a GateDevice for display
+ * Transform an AccessControlDevice from the API into a GateDevice for display.
  */
-const transformToGateDevice = (device: AccessControlDevice & { facility_name?: string }): GateDevice => {
+const transformToGateDevice = (device: AccessControlDevice): GateDevice => {
   return {
     id: device.id,
     name: device.name,
     facility: device.facility_name || 'Unknown Facility',
-    facilityId: device.gateway_id, // Note: gateway_id is used here, could be linked to facility
+    facilityId: device.facility_id ?? '',
     status: device.status,
-    isOpen: !device.is_locked, // is_locked=false means gate is open
+    isOpen: !device.is_locked,
     lastActivity: device.last_activity ? new Date(device.last_activity) : new Date(),
     deviceType: device.device_type,
   };
@@ -70,6 +73,9 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   const [holdDuration, setHoldDuration] = useState<number>(5); // minutes
 
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
+  const loadGatesRef = useRef<() => Promise<void>>(async () => {});
+  const wsRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gateIdsRef = useRef<Set<string>>(new Set());
 
   const loadGates = useCallback(async () => {
     setError(null);
@@ -77,7 +83,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     try {
       const response = await apiService.getDevices({
         device_type: 'access_control',
-        facility_id: facilityFilter,
+        ...(facilityFilter ? { facility_id: facilityFilter } : {}),
       });
 
       if (response.devices) {
@@ -86,13 +92,16 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
           (d: AccessControlDevice) => ['gate', 'elevator', 'door'].includes(d.device_type)
         );
         const transformedGates = accessControlDevices.map(transformToGateDevice);
+        gateIdsRef.current = new Set(transformedGates.map((g) => g.id));
         setGates(transformedGates);
       } else {
+        gateIdsRef.current = new Set();
         setGates([]);
       }
     } catch (err) {
       console.error('Failed to load access control devices:', err);
       setError('Failed to load gates');
+      gateIdsRef.current = new Set();
       setGates([]);
     } finally {
       setIsLoading(false);
@@ -100,45 +109,54 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   }, [facilityFilter]);
 
   useEffect(() => {
+    loadGatesRef.current = loadGates;
+  }, [loadGates]);
+
+  useEffect(() => {
     loadGates();
-    // Update gate status every 30 seconds
     const interval = setInterval(loadGates, 30000);
     return () => clearInterval(interval);
   }, [loadGates]);
 
-  // Subscribe to real-time device status updates
+  // Refresh device list when any device status is pushed (same pattern as Devices page)
   useEffect(() => {
     if (!isConnected) return;
 
-    const handleDeviceStatusUpdate = (data: { device?: AccessControlDevice; devices?: AccessControlDevice[] }) => {
-      const updatedDevices = data.devices || (data.device ? [data.device] : []);
-      
-      // Update gates with new status info
-      setGates(prev => {
-        const updated = [...prev];
-        for (const device of updatedDevices) {
-          if (['gate', 'elevator', 'door'].includes(device.device_type)) {
-            const index = updated.findIndex(g => g.id === device.id);
-            if (index !== -1) {
-              updated[index] = {
-                ...updated[index],
-                status: device.status,
-                isOpen: !device.is_locked,
-                lastActivity: device.last_activity ? new Date(device.last_activity) : updated[index].lastActivity,
-              };
-            }
-          }
-        }
-        return updated;
-      });
+    const scheduleRefresh = () => {
+      if (wsRefreshDebounceRef.current) {
+        clearTimeout(wsRefreshDebounceRef.current);
+      }
+      wsRefreshDebounceRef.current = setTimeout(() => {
+        void loadGatesRef.current();
+      }, 450);
     };
 
-    const subscriptionId = subscribe('device_status', handleDeviceStatusUpdate);
+    const onDeviceStatusMessage = (payload: unknown) => {
+      if (!shouldRefreshDeviceListForPayload(payload, gateIdsRef.current)) {
+        return;
+      }
+      scheduleRefresh();
+    };
+
+    const subscriptionId = subscribe('device_status', onDeviceStatusMessage, undefined);
 
     return () => {
       unsubscribe(subscriptionId);
+      if (wsRefreshDebounceRef.current) {
+        clearTimeout(wsRefreshDebounceRef.current);
+      }
     };
   }, [subscribe, unsubscribe, isConnected]);
+
+  useEffect(() => {
+    if (gates.length === 0) {
+      if (selectedGate) setSelectedGate('');
+      return;
+    }
+    if (selectedGate && !gates.some((g) => g.id === selectedGate)) {
+      setSelectedGate('');
+    }
+  }, [gates, selectedGate]);
 
   useEffect(() => {
     // Auto-select first online gate
@@ -150,33 +168,39 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     }
   }, [gates, selectedGate]);
 
+  const showLargeStats = useMemo(
+    () => size === 'large' || size === 'huge' || `${size}`.includes('wide'),
+    [size]
+  );
+
   const handleGateOperation = async (operation: 'open' | 'close' | 'hold') => {
     const gate = gates.find(g => g.id === selectedGate);
     if (!gate || gate.status !== 'online') return;
 
     setIsOperating(true);
-    
+    setError(null);
+
     try {
-      // TODO: When backend supports gate operations, call the API here
-      // For now, simulate the operation with optimistic update
-      // await apiService.operateAccessControlDevice(selectedGate, { operation, holdDuration });
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      setGates(prev => prev.map(g => 
-        g.id === selectedGate 
-          ? { 
-              ...g, 
-              isOpen: operation === 'open' || operation === 'hold',
-              lastActivity: new Date(),
-              holdUntil: operation === 'hold' ? new Date(Date.now() + holdDuration * 60 * 1000) : undefined
-            }
-          : g
-      ));
-    } catch (err) {
+      const lockStatus =
+        operation === 'close' ? 'locked' : 'unlocked';
+      await apiService.updateAccessControlLockStatus(selectedGate, lockStatus);
+      await loadGates();
+
+      if (operation === 'hold') {
+        setGates((prev) =>
+          prev.map((g) =>
+            g.id === selectedGate
+              ? {
+                  ...g,
+                  holdUntil: new Date(Date.now() + holdDuration * 60 * 1000),
+                }
+              : g
+          )
+        );
+      }
+    } catch (err: unknown) {
       console.error('Gate operation failed:', err);
-      setError('Failed to operate gate');
+      setError(getApiErrorMessage(err, 'Failed to operate gate'));
     } finally {
       setIsOperating(false);
     }
@@ -350,7 +374,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
 
             {selectedGateData.holdUntil && (
               <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Holding open until {selectedGateData.holdUntil.toLocaleTimeString()}
+                Local reminder until {selectedGateData.holdUntil.toLocaleTimeString()}
               </div>
             )}
           </div>
@@ -376,8 +400,11 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                   className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
                 >
                   <ClockIcon className="h-4 w-4" />
-                  <span>{isOperating ? 'Setting...' : `Hold Open (${holdDuration}m)`}</span>
+                  <span>{isOperating ? 'Setting...' : `Unlock & remind (${holdDuration}m)`}</span>
                 </button>
+                <p className="text-xs text-gray-500 dark:text-gray-400 px-0.5">
+                  Unlocks the gate. Timer is a local reminder only; re-lock behavior depends on hardware.
+                </p>
 
                 {selectedGateData.isOpen && (
                   <button
@@ -420,7 +447,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
 
         {/* Quick Stats for larger widgets */}
-        {(size === 'large' || size === 'huge' || size.includes('wide')) && gates.length > 0 && (
+        {showLargeStats && gates.length > 0 && (
           <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
             <div className="grid grid-cols-3 gap-2 text-center">
               <div>

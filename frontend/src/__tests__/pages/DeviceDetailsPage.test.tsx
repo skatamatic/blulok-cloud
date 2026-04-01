@@ -259,6 +259,42 @@ describe('DeviceDetailsPage', () => {
     });
   });
 
+  it('calls updateAccessControlLockStatus when unlocking an access-control device', async () => {
+    mockApiService.getBluLokDevice.mockRejectedValueOnce({ response: { status: 404 } });
+    mockApiService.getAccessControlDevice.mockResolvedValueOnce({
+      success: true,
+      device: {
+        id: 'device-1',
+        name: 'Main Door',
+        facility_id: 'facility-1',
+        facility_name: 'Main Facility',
+        is_locked: true,
+        status: 'online',
+      },
+    } as any);
+    mockApiService.updateAccessControlLockStatus.mockResolvedValueOnce({ success: true, message: 'Lock command accepted' });
+
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Device Details')).toBeInTheDocument();
+    });
+
+    const button = screen.getByRole('button', { name: /Unlock/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(mockApiService.updateAccessControlLockStatus).toHaveBeenCalledWith('device-1', 'unlocked');
+    });
+    expect(mockApiService.updateLockStatus).not.toHaveBeenCalled();
+  });
+
   describe('Telemetry Fields Display', () => {
     it('displays signal strength with quality indicator', async () => {
       render(

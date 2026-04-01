@@ -168,6 +168,69 @@ export class LockCommandService {
   }
 
   /**
+   * Issue OPEN/CLOSE for an access-control device (gates, doors, elevators).
+   * Does not use BluLok transitional lock_status rows; device sync updates `is_locked`.
+   */
+  public async issueAccessControlLockCommand(
+    deviceId: string,
+    requestedStatus: 'locked' | 'unlocked',
+  ): Promise<{ success: boolean; message: string }> {
+    const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
+    const deviceRow = await knex('access_control_devices')
+      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .select(
+        'access_control_devices.id',
+        'gateways.id as gateway_id',
+        'access_control_devices.is_locked',
+      )
+      .where('access_control_devices.id', deviceId)
+      .first();
+
+    if (!deviceRow) {
+      return { success: false, message: 'Device not found' };
+    }
+
+    const gatewayId = String(deviceRow.gateway_id);
+    const command: 'OPEN' | 'CLOSE' = requestedStatus === 'locked' ? 'CLOSE' : 'OPEN';
+
+    try {
+      const result = await this.gatewayService.sendLockCommand(gatewayId, deviceId, command);
+      if (!result.success) {
+        logger.warn('LockCommandService: access-control gateway command failed', {
+          deviceId,
+          gatewayId,
+          error: result.error,
+        });
+        return {
+          success: false,
+          message: result.error || 'Gateway reported failure executing lock command',
+        };
+      }
+    } catch (error: any) {
+      logger.error('LockCommandService: access-control lock command error', {
+        deviceId,
+        gatewayId,
+        error: error?.message || String(error),
+      });
+      return { success: false, message: 'Failed to send lock command to gateway' };
+    }
+
+    // Persist intended state after gateway ack so UI/API match immediately; gateway sync may refine later.
+    try {
+      await this.deviceModel.updateAccessControlDevice(deviceId, {
+        is_locked: requestedStatus === 'locked',
+      });
+    } catch (persistErr: any) {
+      logger.error('LockCommandService: failed to persist access-control lock state after gateway success', {
+        deviceId,
+        error: persistErr?.message || String(persistErr),
+      });
+    }
+
+    return { success: true, message: 'Lock command accepted' };
+  }
+
+  /**
    * Clear any pending timeout for a given device.
    */
   private clearPending(deviceId: string): void {

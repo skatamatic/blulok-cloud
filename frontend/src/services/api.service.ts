@@ -520,6 +520,12 @@ class ApiService {
     return response.data;
   }
 
+  /** Cloud lock/unlock for access-control devices (gates, doors, elevators); same gateway OPEN/CLOSE pipeline as BluLok. */
+  async updateAccessControlLockStatus(id: string, lock_status: string) {
+    const response = await this.api.put(`/devices/access-control/${id}/lock`, { lock_status });
+    return response.data;
+  }
+
   async getUnassignedDevices(facilityId?: string) {
     const params = facilityId ? { facility_id: facilityId } : {};
     const response = await this.api.get('/devices/unassigned', { params });

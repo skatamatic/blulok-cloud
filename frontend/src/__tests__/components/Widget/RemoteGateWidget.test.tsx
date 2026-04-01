@@ -7,10 +7,13 @@ import { AccessControlDevice } from '@/types/facility.types';
 
 // Mock the API service
 const mockGetDevices = jest.fn();
+const mockUpdateAccessControlLockStatus = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getDevices: (...args: unknown[]) => mockGetDevices(...args),
+    updateAccessControlLockStatus: (...args: unknown[]) =>
+      mockUpdateAccessControlLockStatus(...args),
   },
 }));
 
@@ -86,9 +89,14 @@ describe('RemoteGateWidget', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
     mockGetDevices.mockResolvedValue({
       devices: mockAccessControlDevices,
       total: mockAccessControlDevices.length,
+    });
+    mockUpdateAccessControlLockStatus.mockResolvedValue({
+      success: true,
+      message: 'Lock command accepted',
     });
     mockSubscribe.mockReturnValue('test-subscription-id');
   });
@@ -120,7 +128,6 @@ describe('RemoteGateWidget', () => {
       await waitFor(() => {
         expect(mockGetDevices).toHaveBeenCalledWith({
           device_type: 'access_control',
-          facility_id: undefined,
         });
       });
     });
@@ -150,7 +157,8 @@ describe('RemoteGateWidget', () => {
       await waitFor(() => {
         expect(mockSubscribe).toHaveBeenCalledWith(
           'device_status',
-          expect.any(Function)
+          expect.any(Function),
+          undefined
         );
       });
     });
@@ -329,6 +337,19 @@ describe('RemoteGateWidget', () => {
 
   describe('Gate Operations', () => {
     it('opens gate when Open Once is clicked', async () => {
+      const afterOpen = mockAccessControlDevices.map((d) =>
+        d.id === 'gate-1' ? { ...d, is_locked: false } : d
+      );
+      mockGetDevices
+        .mockResolvedValueOnce({
+          devices: mockAccessControlDevices,
+          total: mockAccessControlDevices.length,
+        })
+        .mockResolvedValue({
+          devices: afterOpen,
+          total: afterOpen.length,
+        });
+
       renderWithProviders(
         <RemoteGateWidget 
           id="test-widget" 
@@ -347,23 +368,28 @@ describe('RemoteGateWidget', () => {
         fireEvent.click(openButton);
       });
       
-      // Should show operating state
       await waitFor(() => {
-        expect(screen.getByText('Opening...')).toBeInTheDocument();
+        expect(mockUpdateAccessControlLockStatus).toHaveBeenCalledWith('gate-1', 'unlocked');
       });
-      
-      // After operation completes, gate should be Open
+
+      // Gate list refreshes after unlock; "Open" appears in multiple places (badge + stats), so assert via control state
       await waitFor(() => {
-        expect(screen.getByText('Open')).toBeInTheDocument();
-      }, { timeout: 2000 });
+        expect(screen.getByRole('button', { name: /Open Once/ })).toBeDisabled();
+      }, { timeout: 3000 });
     });
 
     it('closes gate when Close Gate is clicked', async () => {
-      // Use gate-2 which is already open
-      mockGetDevices.mockResolvedValue({
-        devices: [mockAccessControlDevices[1]], // Loading Dock (open)
-        total: 1,
-      });
+      const openDock = { ...mockAccessControlDevices[1] };
+      const afterClose = [{ ...openDock, is_locked: true }];
+      mockGetDevices
+        .mockResolvedValueOnce({
+          devices: [openDock],
+          total: 1,
+        })
+        .mockResolvedValue({
+          devices: afterClose,
+          total: 1,
+        });
       
       renderWithProviders(
         <RemoteGateWidget 
@@ -383,13 +409,26 @@ describe('RemoteGateWidget', () => {
         fireEvent.click(closeButton);
       });
       
-      // After operation completes, gate should be Closed
+      await waitFor(() => {
+        expect(mockUpdateAccessControlLockStatus).toHaveBeenCalledWith('gate-2', 'locked');
+      });
+      
       await waitFor(() => {
         expect(screen.getByText('Closed')).toBeInTheDocument();
-      }, { timeout: 2000 });
+      }, { timeout: 3000 });
     });
 
     it('holds gate open for specified duration', async () => {
+      mockGetDevices
+        .mockResolvedValueOnce({
+          devices: mockAccessControlDevices,
+          total: mockAccessControlDevices.length,
+        })
+        .mockResolvedValue({
+          devices: mockAccessControlDevices,
+          total: mockAccessControlDevices.length,
+        });
+
       renderWithProviders(
         <RemoteGateWidget 
           id="test-widget" 
@@ -399,19 +438,22 @@ describe('RemoteGateWidget', () => {
       );
       
       await waitFor(() => {
-        expect(screen.getByText(/Hold Open/)).toBeInTheDocument();
+        expect(screen.getByText(/Unlock & remind/)).toBeInTheDocument();
       });
       
-      const holdButton = screen.getByText(/Hold Open/);
+      const holdButton = screen.getByText(/Unlock & remind/);
       
       await act(async () => {
         fireEvent.click(holdButton);
       });
       
-      // After operation completes, should show holding message
       await waitFor(() => {
-        expect(screen.getByText(/Holding open until/)).toBeInTheDocument();
-      }, { timeout: 2000 });
+        expect(mockUpdateAccessControlLockStatus).toHaveBeenCalledWith('gate-1', 'unlocked');
+      });
+      
+      await waitFor(() => {
+        expect(screen.getByText(/Local reminder until/)).toBeInTheDocument();
+      }, { timeout: 3000 });
     });
 
     it('disables operations for offline gates', async () => {
@@ -451,7 +493,22 @@ describe('RemoteGateWidget', () => {
   });
 
   describe('Real-time Updates', () => {
-    it('updates gate status from WebSocket updates', async () => {
+    it('refreshes gate list after debounced WebSocket device_status', async () => {
+      jest.useFakeTimers();
+
+      const refreshedDevices = mockAccessControlDevices.map((d) =>
+        d.id === 'gate-1' ? { ...d, is_locked: false } : d
+      );
+      mockGetDevices
+        .mockResolvedValueOnce({
+          devices: mockAccessControlDevices,
+          total: mockAccessControlDevices.length,
+        })
+        .mockResolvedValue({
+          devices: refreshedDevices,
+          total: refreshedDevices.length,
+        });
+
       renderWithProviders(
         <RemoteGateWidget id="test-widget" title="Remote Gate Control" initialSize="large" />
       );
@@ -460,26 +517,91 @@ describe('RemoteGateWidget', () => {
         expect(mockSubscribe).toHaveBeenCalled();
       });
       
-      // Get the message handler
       const subscribeCall = mockSubscribe.mock.calls[0];
-      const messageHandler = subscribeCall[1];
-      
-      // Simulate device status update
-      const updatedDevice: AccessControlDevice = {
-        ...mockAccessControlDevices[0],
-        is_locked: false, // Now open
-        status: 'online',
-      };
-      
-      act(() => {
-        messageHandler({ device: updatedDevice });
+      const onDeviceStatusMessage = subscribeCall[1];
+
+      await act(async () => {
+        onDeviceStatusMessage(undefined);
+        jest.advanceTimersByTime(450);
       });
-      
+
       await waitFor(() => {
-        // There may be multiple "Open" elements (status badge and stats), so use getAllByText
+        expect(mockGetDevices).toHaveBeenCalledTimes(2);
+      });
+
+      await waitFor(() => {
         const openElements = screen.getAllByText('Open');
         expect(openElements.length).toBeGreaterThan(0);
       });
+
+      jest.useRealTimers();
+    });
+
+    it('does not schedule refresh when WebSocket payload is for an unrelated device', async () => {
+      jest.useFakeTimers();
+      mockGetDevices.mockResolvedValue({
+        devices: mockAccessControlDevices,
+        total: mockAccessControlDevices.length,
+      });
+      renderWithProviders(
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" initialSize="large" />
+      );
+      await waitFor(() => {
+        expect(mockGetDevices).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('gate-1');
+      });
+
+      const countAfterLoad = mockGetDevices.mock.calls.length;
+      const onDeviceStatusMessage = mockSubscribe.mock.calls[0][1];
+
+      await act(async () => {
+        onDeviceStatusMessage({ updatedDeviceId: 'totally-other-device' });
+        jest.advanceTimersByTime(450);
+      });
+
+      expect(mockGetDevices.mock.calls.length).toBe(countAfterLoad);
+      jest.useRealTimers();
+    });
+
+    it('clears invalid gate selection after refresh removes that gate', async () => {
+      jest.useFakeTimers();
+      const withoutGate2 = mockAccessControlDevices.filter((d) => d.id !== 'gate-2');
+      mockGetDevices
+        .mockResolvedValueOnce({
+          devices: mockAccessControlDevices,
+          total: mockAccessControlDevices.length,
+        })
+        .mockResolvedValue({
+          devices: withoutGate2,
+          total: withoutGate2.length,
+        });
+
+      renderWithProviders(
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" initialSize="large" />
+      );
+
+      await waitFor(() => {
+        expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('gate-1');
+      });
+
+      const select = screen.getByRole('combobox') as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(select, { target: { value: 'gate-2' } });
+      });
+      expect(select.value).toBe('gate-2');
+
+      const onDeviceStatusMessage = mockSubscribe.mock.calls[0][1];
+      await act(async () => {
+        onDeviceStatusMessage({ updatedDeviceId: 'gate-1' });
+        jest.advanceTimersByTime(450);
+      });
+
+      await waitFor(() => {
+        expect(select.value).toBe('gate-1');
+      });
+      jest.useRealTimers();
     });
   });
 
