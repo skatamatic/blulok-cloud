@@ -92,7 +92,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
           (d: AccessControlDevice) => ['gate', 'elevator', 'door'].includes(d.device_type)
         );
         const transformedGates = accessControlDevices.map(transformToGateDevice);
-        gateIdsRef.current = new Set(transformedGates.map((g) => g.id));
+        gateIdsRef.current = new Set(transformedGates.map((g: GateDevice) => g.id));
         setGates(transformedGates);
       } else {
         gateIdsRef.current = new Set();
