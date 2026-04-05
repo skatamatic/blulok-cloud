@@ -231,6 +231,7 @@ export class DeviceSyncService {
               gateway_id: gatewayId,
               device_serial: deviceId,
               serial: deviceId,
+              supports_remote_lock: true,
               device_settings: JSON.stringify({ gatewayData: gatewayDevice }),
               metadata: JSON.stringify({
                 autoCreated: true,
@@ -308,6 +309,7 @@ export class DeviceSyncService {
         gateway_id: gatewayId,
         device_serial: deviceId,
         serial: deviceId,
+        supports_remote_lock: true,
         device_settings: { gatewayData: gatewayDevice },
         metadata: {
           autoCreated: true,
@@ -487,6 +489,7 @@ export class DeviceSyncService {
             gateway_id: gatewayId,
             device_serial: lockId,
             serial: lockId,
+            supports_remote_lock: true,
             device_settings: { lockNumber: inventoryItem.lock_number },
             metadata: {
               autoCreated: true,

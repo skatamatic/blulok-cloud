@@ -1,10 +1,83 @@
 /* eslint-disable no-console */
+const fs = require('fs');
+const path = require('path');
 const axios = require('axios').default;
 const WebSocket = require('ws');
+const dotenv = require('dotenv');
 
-const API_BASE = process.env.API_BASE_URL || 'http://127.0.0.1:3000/api/v1';
-const WS_URL = process.env.WS_URL || 'ws://127.0.0.1:3000/ws/gateway';
-const UI_WS_URL = process.env.UI_WS_URL || 'ws://127.0.0.1:3000/ws';
+/**
+ * End-to-end: facility gateway on /ws/gateway (AUTH + PROXY_REQUEST → internal APIs such as
+ * POST /internal/gateway/devices/state) → DB → dashboard /ws fanout:
+ *   device_status_update (HTTP + gateway lock_status), units_update, gateway_status_update
+ * Uses DEV_ADMIN (or env overrides) to provision facility/gateway/device, then validates
+ * the same paths the web app uses (UI_WS_URL + subscription JSON).
+ *
+ * Target resolution (same server as `npm run dev` in backend/):
+ * - `E2E_API_PORT` or `BACKEND_PORT` overrides everything else for host-based URLs.
+ * - Else `PORT` is read from `backend/.env` (file), not shell `PORT` (avoids frontend/vite stealing PORT).
+ * - Else shell `PORT`, else 3000 (matches backend Joi default when no `.env`).
+ * - If `API_BASE_URL` is set, default `WS_URL` / `UI_WS_URL` use the same host:port as that URL.
+ */
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+function parsePortNum(value) {
+  const p = parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(p) && p > 0 && p <= 65535 ? p : null;
+}
+
+function readPortFromBackendEnvFile() {
+  const envFilePath = path.join(__dirname, '..', '.env');
+  try {
+    if (!fs.existsSync(envFilePath)) return null;
+    const parsed = dotenv.parse(fs.readFileSync(envFilePath, 'utf8'));
+    return parsePortNum(parsed.PORT);
+  } catch {
+    return null;
+  }
+}
+
+function resolveE2eEndpoints() {
+  const filePort = readPortFromBackendEnvFile();
+  const overridePort = parsePortNum(process.env.E2E_API_PORT || process.env.BACKEND_PORT);
+  let port = overridePort ?? filePort ?? parsePortNum(process.env.PORT) ?? 3000;
+  const host = process.env.E2E_HOST || '127.0.0.1';
+
+  const apiBaseUrlRaw = process.env.API_BASE_URL?.trim();
+  if (apiBaseUrlRaw) {
+    try {
+      const u = new URL(apiBaseUrlRaw);
+      const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsOrigin = `${wsProto}//${u.host}`;
+      const apiBase = apiBaseUrlRaw.replace(/\/$/, '');
+      return {
+        API_BASE: apiBase,
+        WS_URL: process.env.WS_URL?.trim() || `${wsOrigin}/ws/gateway`,
+        UI_WS_URL: process.env.UI_WS_URL?.trim() || `${wsOrigin}/ws`,
+        port,
+        portSource: 'API_BASE_URL (+ optional WS_URL/UI_WS_URL overrides)',
+      };
+    } catch {
+      /* fall through */
+    }
+  }
+
+  return {
+    API_BASE: `http://${host}:${port}/api/v1`,
+    WS_URL: process.env.WS_URL?.trim() || `ws://${host}:${port}/ws/gateway`,
+    UI_WS_URL: process.env.UI_WS_URL?.trim() || `ws://${host}:${port}/ws`,
+    port,
+    portSource:
+      overridePort != null
+        ? 'E2E_API_PORT or BACKEND_PORT'
+        : filePort != null
+          ? 'backend/.env PORT'
+          : parsePortNum(process.env.PORT) != null
+            ? 'process.env.PORT (shell)'
+            : 'default 3000',
+  };
+}
+
+const { API_BASE, WS_URL, UI_WS_URL, port: E2E_RESOLVED_PORT, portSource: E2E_PORT_SOURCE } = resolveE2eEndpoints();
 const EMAIL = process.env.DEV_ADMIN_EMAIL || 'devadmin@blulok.com';
 const PASSWORD = process.env.DEV_ADMIN_PASSWORD || 'DevAdmin123!@#';
 const VERBOSE = process.env.E2E_VERBOSE === '1' || process.env.VERBOSE === '1' || process.argv.includes('--verbose');
@@ -12,6 +85,24 @@ const VERBOSE = process.env.E2E_VERBOSE === '1' || process.env.VERBOSE === '1' |
 axios.defaults.timeout = Number(process.env.HTTP_TIMEOUT_MS) || 15000;
 
 function delay(ms) { return new Promise((res) => setTimeout(res, ms)); }
+
+/**
+ * Poll `device_status_update` payloads (same channel/filters as the dashboard: subscriptionType
+ * `device_status`, `data: { device_id }`) until the row for `deviceId` has `lock_status`.
+ * `expected` may be a single status or a list (e.g. `['locking','locked']` after HTTP CLOSE — API uses transitional states).
+ */
+async function waitForDeviceStatusLockStatus(events, deviceId, expected, startLen, timeoutMs) {
+  const wanted = Array.isArray(expected) ? expected : [expected];
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (let i = startLen; i < events.length; i++) {
+      const d = events[i]?.data?.devices?.find((x) => x.id === deviceId);
+      if (d && wanted.includes(d.lock_status)) return d;
+    }
+    await delay(200);
+  }
+  return null;
+}
 
 // Minimal ANSI color helpers (no external deps)
 const C = {
@@ -1144,8 +1235,10 @@ function waitForProxyResponse(ws, id, timeoutMs = 10000) {
 
 async function run() {
   console.log('=== WS Gateway E2E ===');
-  console.log(C.gray(`API_BASE_URL=${API_BASE}`));
-  console.log(C.gray(`WS_URL=${WS_URL}`));
+  console.log(C.gray(`API (HTTP)=${API_BASE}`));
+  console.log(C.gray(`Gateway WS=${WS_URL}`));
+  console.log(C.gray(`Dashboard WS=${UI_WS_URL}`));
+  console.log(C.gray(`Port ${E2E_RESOLVED_PORT} — ${E2E_PORT_SOURCE}`));
 
   const loginResult = await login();
   const token = loginResult.token;
@@ -2165,11 +2258,83 @@ async function run() {
     const presentTelemetry = telemetryFields.filter(f => f in initialDevice);
     info(`Telemetry fields present: ${presentTelemetry.join(', ') || 'none'}`);
     
-    // Test: Update device state and verify we receive the update
-    step('Updating device state to trigger WebSocket event');
-    const preUpdateCount = deviceStatusEvents.length;
-    
-    // Use the internal gateway endpoint to update device state
+    // ---- Dashboard parity: HTTP cloud lock → LOCK_STATUS_CHANGED → device_status_update ----
+    heading('Device status subscription — HTTP cloud lock (same API as web UI)');
+    let httpLockBaseline = deviceStatusEvents.length;
+    step('PUT /devices/blulok/:id/lock locked while subscribed — expect device_status_update');
+    await axios.put(
+      `${API_BASE}/devices/blulok/${deviceId}/lock`,
+      { lock_status: 'locked' },
+      { headers: authHeaders(token) },
+    );
+    let rowAfterHttpLock = await waitForDeviceStatusLockStatus(
+      deviceStatusEvents,
+      deviceId,
+      ['locking', 'locked'],
+      httpLockBaseline,
+      8000,
+    );
+    if (!rowAfterHttpLock) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) deviceStatusWs.close();
+      throw new Error('Did not receive device_status_update with lock_status locking|locked after HTTP cloud lock');
+    }
+    ok(`WebSocket shows lock in progress (${rowAfterHttpLock.lock_status}) after HTTP cloud lock`);
+
+    httpLockBaseline = deviceStatusEvents.length;
+    step('PUT /devices/blulok/:id/lock unlocked — expect device_status_update');
+    await axios.put(
+      `${API_BASE}/devices/blulok/${deviceId}/lock`,
+      { lock_status: 'unlocked' },
+      { headers: authHeaders(token) },
+    );
+    rowAfterHttpLock = await waitForDeviceStatusLockStatus(
+      deviceStatusEvents,
+      deviceId,
+      ['unlocking', 'unlocked'],
+      httpLockBaseline,
+      8000,
+    );
+    if (!rowAfterHttpLock) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) deviceStatusWs.close();
+      throw new Error('Did not receive device_status_update with lock_status unlocking|unlocked after HTTP cloud unlock');
+    }
+    ok(`WebSocket shows unlock in progress (${rowAfterHttpLock.lock_status}) after HTTP cloud unlock`);
+
+    // ---- Inbound gateway devices/state → telemetry + lock_status (same path as facility gateway) ----
+    heading('Device status subscription — gateway devices/state lock + telemetry');
+    let preUpdateCount = deviceStatusEvents.length;
+    step('POST /internal/gateway/devices/state LOCKED — expect lock_status locked on /ws');
+    const reqStateLocked = 'req-state-locked-ws';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqStateLocked,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [{ lock_id: remainingSerial, lock_state: 'LOCKED' }],
+      },
+    }));
+    const respStateLocked = await waitForProxyResponse(ws, reqStateLocked);
+    if (respStateLocked.status !== 200) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) deviceStatusWs.close();
+      throw new Error(`Gateway devices/state LOCKED failed: ${respStateLocked.status}`);
+    }
+    let gwLockedRow = await waitForDeviceStatusLockStatus(
+      deviceStatusEvents,
+      deviceId,
+      'locked',
+      preUpdateCount,
+      8000,
+    );
+    if (!gwLockedRow) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) deviceStatusWs.close();
+      throw new Error('Did not receive device_status_update with lock_status locked after gateway LOCKED');
+    }
+    ok('WebSocket shows lock_status locked after gateway devices/state');
+
+    preUpdateCount = deviceStatusEvents.length;
+    step('POST /internal/gateway/devices/state UNLOCKED + telemetry — expect device_status_update');
     const reqStateUpdate = 'req-state-update-ws';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -2179,12 +2344,12 @@ async function run() {
       body: {
         facility_id: facilityId,
         updates: [
-          { 
-            lock_id: remainingSerial, 
-            lock_state: 'UNLOCKED', 
+          {
+            lock_id: remainingSerial,
+            lock_state: 'UNLOCKED',
             battery_level: 92,
             signal_strength: -48,
-            temperature: 24.5
+            temperature: 24.5,
           },
         ],
       },
@@ -2196,38 +2361,29 @@ async function run() {
       }
       throw new Error(`Device state update for WS test failed: ${respStateUpdate.status}`);
     }
-    ok('Device state updated successfully');
-    
-    // Wait for WebSocket event with polling
-    step('Waiting for device_status_update WebSocket event');
-    const updateStartTime = Date.now();
-    const updateTimeoutMs = 3000;
-    while (Date.now() - updateStartTime < updateTimeoutMs) {
-      if (deviceStatusEvents.length > preUpdateCount) {
-        break;
-      }
-      await delay(200);
+    ok('Gateway UNLOCKED + telemetry accepted');
+    const gwUnlockedRow = await waitForDeviceStatusLockStatus(
+      deviceStatusEvents,
+      deviceId,
+      'unlocked',
+      preUpdateCount,
+      8000,
+    );
+    if (!gwUnlockedRow) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) deviceStatusWs.close();
+      throw new Error('Did not receive device_status_update with lock_status unlocked after gateway UNLOCKED');
     }
-    
-    // Check if we received a new event after our update
-    if (deviceStatusEvents.length > preUpdateCount) {
-      const latestEvent = deviceStatusEvents[deviceStatusEvents.length - 1];
-      const updatedDevice = latestEvent.data?.devices?.find(d => d.id === deviceId);
-      if (updatedDevice) {
-        ok('Received device status update via WebSocket after state change');
-        // Verify the updated values
-        if (updatedDevice.battery_level === 92 && 
-            updatedDevice.signal_strength === -48 && 
-            updatedDevice.temperature === 24.5) {
-          ok('WebSocket event contains updated telemetry values');
-        } else {
-          info(`WebSocket event received with values: battery=${updatedDevice.battery_level}, signal=${updatedDevice.signal_strength}, temp=${updatedDevice.temperature}`);
-        }
-      } else {
-        info('Received device_status_update but device not in payload (may be filtered differently)');
-      }
+    ok('WebSocket shows lock_status unlocked after gateway devices/state');
+    const bat = Number(gwUnlockedRow.battery_level);
+    const sig = Number(gwUnlockedRow.signal_strength);
+    const temp = Number(gwUnlockedRow.temperature);
+    const tempOk = Number.isFinite(temp) && Math.abs(temp - 24.5) < 0.001;
+    if (bat === 92 && sig === -48 && tempOk) {
+      ok('WebSocket event contains updated telemetry values');
     } else {
-      info('No additional WebSocket events received (device may not match filter or event timing)');
+      throw new Error(
+        `Expected telemetry battery=92 signal=-48 temp≈24.5; got battery=${gwUnlockedRow.battery_level} signal=${gwUnlockedRow.signal_strength} temp=${gwUnlockedRow.temperature}`,
+      );
     }
     
     step('Unsubscribing from device_status');
@@ -2323,15 +2479,15 @@ async function run() {
     }));
     const respToggleLock = await waitForProxyResponse(ws, reqToggleLock);
     if (respToggleLock.status !== 200) {
-      info(`Lock toggle returned: ${respToggleLock.status}`);
-    } else {
-      ok('Device lock state updated successfully');
+      if (unitsWs && unitsWs.readyState === WebSocket.OPEN) unitsWs.close();
+      throw new Error(`Gateway devices/state LOCKED for units test failed: ${respToggleLock.status}`);
     }
+    ok('Device lock state updated successfully (gateway path)');
     
-    // Wait for units WebSocket event with polling
+    // Wait for units WebSocket event (LockStatusWidget / facility pages use debounced units_update)
     step('Waiting for units_update WebSocket event after device state change');
     const unitsUpdateStartTime = Date.now();
-    const unitsUpdateTimeoutMs = 3000;
+    const unitsUpdateTimeoutMs = 8000;
     while (Date.now() - unitsUpdateStartTime < unitsUpdateTimeoutMs) {
       if (unitsEvents.length > preUnitsUpdateCount) {
         break;
@@ -2339,14 +2495,13 @@ async function run() {
       await delay(200);
     }
     
-    // Check if we received a new event after our update
-    if (unitsEvents.length > preUnitsUpdateCount) {
-      ok('Received units_update via WebSocket after device state change');
-      const latestUnitsEvent = unitsEvents[unitsEvents.length - 1];
-      info(`Updated units data: total=${latestUnitsEvent.data?.totalUnits}, locked=${latestUnitsEvent.data?.lockedCount}, unlocked=${latestUnitsEvent.data?.unlockedCount}`);
-    } else {
-      info('No additional units WebSocket events received (may be expected if no visible units changed)');
+    if (unitsEvents.length <= preUnitsUpdateCount) {
+      if (unitsWs && unitsWs.readyState === WebSocket.OPEN) unitsWs.close();
+      throw new Error('Did not receive units_update after gateway LOCKED (expected for facility-scoped refresh)');
     }
+    ok('Received units_update via WebSocket after gateway lock state change');
+    const latestUnitsEvent = unitsEvents[unitsEvents.length - 1];
+    info(`Updated units data: total=${latestUnitsEvent.data?.totalUnits}, locked=${latestUnitsEvent.data?.lockedCount}, unlocked=${latestUnitsEvent.data?.unlockedCount}`);
     
     step('Unsubscribing from units');
     unitsWs.send(JSON.stringify({
@@ -2359,6 +2514,91 @@ async function run() {
       unitsWs.close();
     }
     ok('Units subscription tests complete');
+
+    // Dashboard /ws: gateway_status_update (inbound /ws/gateway session syncs gateways.status → broadcast)
+    heading('Gateway Status WebSocket (Dashboard /ws)');
+    let gatewayStatusWs = null;
+    const gatewayStatusEvents = [];
+    step('Connecting UI WebSocket for gateway_status subscription');
+    gatewayStatusWs = new WebSocket(`${UI_WS_URL}?token=${token}`);
+    await new Promise((res, rej) => {
+      gatewayStatusWs.once('open', res);
+      gatewayStatusWs.once('error', rej);
+    });
+    ok('Gateway status UI WebSocket connected');
+
+    gatewayStatusWs.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (VERBOSE) console.log('[WS-GATEWAY-STATUS <-]', raw.toString());
+        if (msg.type === 'gateway_status_update' && msg.data) {
+          gatewayStatusEvents.push(msg);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+
+    step('Subscribing to gateway_status (Facility Details / Gateway tab channel)');
+    gatewayStatusWs.send(
+      JSON.stringify({
+        type: 'subscription',
+        subscriptionType: 'gateway_status',
+      }),
+    );
+
+    step('Waiting for initial gateway_status_update including E2E gateway row');
+    const gwStatusDeadline = Date.now() + 8000;
+    let rowForCreated = null;
+    while (Date.now() < gwStatusDeadline) {
+      for (const ev of gatewayStatusEvents) {
+        const list = ev.data?.gateways;
+        if (!Array.isArray(list)) continue;
+        const hit = list.find((g) => g.id === created.gatewayId);
+        if (hit) {
+          rowForCreated = hit;
+          break;
+        }
+      }
+      if (rowForCreated) break;
+      await delay(200);
+    }
+
+    if (!rowForCreated) {
+      if (gatewayStatusWs && gatewayStatusWs.readyState === WebSocket.OPEN) {
+        gatewayStatusWs.close();
+      }
+      throw new Error(
+        `gateway_status_update never included gateway ${created.gatewayId} (expected while /ws/gateway is connected)`,
+      );
+    }
+
+    if (rowForCreated.status !== 'online') {
+      warn(
+        `E2E gateway status is "${rowForCreated.status}" (expected online while /ws/gateway session is active)`,
+      );
+    } else {
+      ok(`gateway_status_update shows E2E gateway ${created.gatewayId} as online`);
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(rowForCreated, 'facilityId')) {
+      warn('gateway_status payload missing facilityId (camelCase)');
+    } else if (rowForCreated.facilityId && rowForCreated.facilityId !== facilityId) {
+      info(`Gateway facilityId in WS payload: ${rowForCreated.facilityId} (E2E facility: ${facilityId})`);
+    }
+
+    step('Unsubscribing from gateway_status');
+    gatewayStatusWs.send(
+      JSON.stringify({
+        type: 'unsubscription',
+        subscriptionType: 'gateway_status',
+      }),
+    );
+    await delay(200);
+    if (gatewayStatusWs && gatewayStatusWs.readyState === WebSocket.OPEN) {
+      gatewayStatusWs.close();
+    }
+    ok('Gateway status WebSocket checks complete');
 
     // WebSocket flood/churn resilience checks to catch regressions that can
     // overload subscription setup or destabilize the backend event loop.
@@ -3772,14 +4012,13 @@ async function run() {
         lastName: 'Test',
         role: 'tenant',
         password: 'TestUser123!',
+        facilityIds: [created.facilityId],
       },
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const testUserId = testUserResp.data?.userId;
     if (!testUserId) throw new Error(`Failed to create test user for schedule deletion test: ${JSON.stringify(testUserResp.data)}`);
     created.users.push(testUserId);
-    // Add user to facility
-    await assignUserToFacility(token, testUserId, created.facilityId);
 
     // Assign schedule to test user
     await axios.put(
@@ -5999,7 +6238,7 @@ async function run() {
       step('Verifying tenant with no unit/key-share zone access cannot see zone-linked access control devices');
       const noZoneEmail = `tenant-no-zone-${Date.now()}@test.com`;
       const noZonePassword = 'TestUser123!';
-      const noZoneUserId = await createUser(token, noZoneEmail, 'tenant');
+      const noZoneUserId = await createUser(token, noZoneEmail, 'tenant', created.facilityId);
       created.users.push(noZoneUserId);
       const noZoneLogin = await axios.post(`${API_BASE}/auth/login`, {
         email: noZoneEmail,

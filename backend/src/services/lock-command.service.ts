@@ -83,6 +83,7 @@ export class LockCommandService {
       .select(
         'blulok_devices.id',
         'blulok_devices.lock_status',
+        'blulok_devices.supports_remote_lock',
         'gateways.id as gateway_id',
         'gateways.facility_id',
       )
@@ -91,6 +92,14 @@ export class LockCommandService {
 
     if (!deviceRow) {
       return { success: false, message: 'Device not found' };
+    }
+
+    const supportsRemoteLock = Boolean((deviceRow as { supports_remote_lock?: boolean }).supports_remote_lock);
+    if (requestedStatus === 'locked' && !supportsRemoteLock) {
+      return {
+        success: false,
+        message: 'Remote lock is not enabled for this device; re-lock manually on site.',
+      };
     }
 
     const previousStatus = (deviceRow.lock_status || 'unknown') as LockStatus;
@@ -182,12 +191,21 @@ export class LockCommandService {
         'access_control_devices.id',
         'gateways.id as gateway_id',
         'access_control_devices.is_locked',
+        'access_control_devices.supports_remote_lock',
       )
       .where('access_control_devices.id', deviceId)
       .first();
 
     if (!deviceRow) {
       return { success: false, message: 'Device not found' };
+    }
+
+    const supportsRemoteLock = Boolean((deviceRow as { supports_remote_lock?: boolean }).supports_remote_lock);
+    if (requestedStatus === 'locked' && !supportsRemoteLock) {
+      return {
+        success: false,
+        message: 'Remote lock is not enabled for this device; re-lock manually on site.',
+      };
     }
 
     const gatewayId = String(deviceRow.gateway_id);

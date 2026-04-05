@@ -76,9 +76,11 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   useEffect(() => {
     if (!isAdminUser) return;
 
+    let cancelled = false;
     (async () => {
       try {
         const data = await apiService.getFacilities();
+        if (cancelled) return;
         if (data?.success && Array.isArray(data.facilities)) {
           const namesMap: Record<string, string> = {};
           data.facilities.forEach((facility: { id: string; name: string }) => {
@@ -87,9 +89,13 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           setFacilityNamesMap(namesMap);
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('Failed to fetch facilities:', error);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [isAdminUser]);
 
   // Use facilities from global context

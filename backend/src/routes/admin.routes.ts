@@ -26,12 +26,14 @@ import { authenticateToken, requireDevAdmin, requireAdmin } from '@/middleware/a
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { GatewayService } from '@/services/gateway/gateway.service';
 import { validate } from '@/middleware/validator.middleware';
 import rateLimit from 'express-rate-limit';
 import { adminWriteLimiter } from '@/middleware/security-limits';
 import { InviteService } from '@/services/invite.service';
 import { OTPService } from '@/services/otp.service';
 import { DatabaseService } from '@/services/database.service';
+import { UnitModel } from '@/models/unit.model';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '@/config/environment';
 import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
@@ -279,6 +281,7 @@ router.delete('/users/:id/hard', authenticateToken, requireDevAdmin, asyncHandle
     return;
   }
   const db = DatabaseService.getInstance().connection;
+  const unitModel = new UnitModel();
   await db.transaction(async (trx) => {
     // Collect user_device ids for cleanup in distributions
     const userDeviceIds = await trx('user_devices').where({ user_id: id }).pluck('id');
@@ -294,8 +297,12 @@ router.delete('/users/:id/hard', authenticateToken, requireDevAdmin, asyncHandle
     await trx('user_devices').where({ user_id: id }).del().catch(() => {});
     // Remove facility associations
     await trx('user_facility_associations').where({ user_id: id }).del().catch(() => {});
+    const affectedUnitIds: string[] = await trx('unit_assignments').where({ tenant_id: id }).distinct('unit_id').pluck('unit_id');
     // Remove unit assignments where tenant_id matches
     await trx('unit_assignments').where({ tenant_id: id }).del().catch(() => {});
+    for (const uid of affectedUnitIds) {
+      await unitModel.syncUnitOccupancyStatusFromAssignments(uid, trx);
+    }
     // Remove key_sharing where user is owner or shared_with
     await trx('key_sharing').where({ primary_tenant_id: id }).del().catch(() => {});
     await trx('key_sharing').where({ shared_with_user_id: id }).del().catch(() => {});
@@ -572,10 +579,12 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
       }
 
       case 'LOCK': {
-        // Send lock command for each device as JWT
+        // Send lock command for each device as JWT (`device_id` claim = hardware serial, like route passes)
         const jwts: string[] = [];
+        const gatewaySvc = GatewayService.getInstance();
         for (const deviceId of targetDeviceIds) {
-          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'LOCK', device_id: deviceId });
+          const jwtDeviceClaim = await gatewaySvc.resolveDeviceIdForLockCommandJwt(deviceId);
+          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'LOCK', device_id: jwtDeviceClaim });
           gateway.unicastToFacility(facilityId, jwt);
           jwts.push(jwt);
         }
@@ -601,10 +610,12 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
       }
 
       case 'UNLOCK': {
-        // Send unlock command for each device as JWT
+        // Send unlock command for each device as JWT (`device_id` claim = hardware serial, like route passes)
         const jwts: string[] = [];
+        const gatewaySvc = GatewayService.getInstance();
         for (const deviceId of targetDeviceIds) {
-          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'UNLOCK', device_id: deviceId });
+          const jwtDeviceClaim = await gatewaySvc.resolveDeviceIdForLockCommandJwt(deviceId);
+          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'UNLOCK', device_id: jwtDeviceClaim });
           gateway.unicastToFacility(facilityId, jwt);
           jwts.push(jwt);
         }

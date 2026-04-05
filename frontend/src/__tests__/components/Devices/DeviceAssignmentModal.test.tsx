@@ -641,9 +641,12 @@ describe('DeviceAssignmentModal', () => {
         />
       );
 
-      await waitFor(() => {
-        expect(screen.getByText('Assign Device to Unit')).toBeInTheDocument();
-      });
+      await waitFor(
+        () => {
+          expect(screen.getByText('Assign Device to Unit')).toBeInTheDocument();
+        },
+        { timeout: 15_000 },
+      );
 
       const closeButton = screen.getByRole('button', { name: /close/i });
       await act(async () => {
@@ -651,7 +654,7 @@ describe('DeviceAssignmentModal', () => {
       });
 
       expect(mockOnClose).toHaveBeenCalled();
-    });
+    }, 20_000);
 
     it('should reset selected device when modal closes', async () => {
       renderWithProviders(

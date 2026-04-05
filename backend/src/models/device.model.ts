@@ -58,6 +58,10 @@ export interface AccessControlDevice {
   status: 'online' | 'offline' | 'error' | 'maintenance';
   /** Current lock state of the device */
   is_locked: boolean;
+  /**
+   * When true, cloud may issue remote lock (CLOSE) commands. Default false: unlock-only from cloud.
+   */
+  supports_remote_lock?: boolean;
   /** Timestamp of last device activity */
   last_activity?: Date;
   /** Device-specific configuration settings */
@@ -95,6 +99,10 @@ export interface BluLokDevice {
   firmware_version?: string;
   /** Current lock mechanism status */
   lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+  /**
+   * When true, cloud may issue remote lock (CLOSE) commands. Default false: unlock-only from cloud.
+   */
+  supports_remote_lock?: boolean;
   /** Overall device connectivity and health status */
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   /** Battery charge level (0-100) */
@@ -212,12 +220,16 @@ export interface CreateBluLokDeviceData {
   device_serial: string;
   serial?: string;
   firmware_version?: string;
+  /** When true, cloud may issue remote CLOSE; omit/false uses DB default (false). */
+  supports_remote_lock?: boolean;
   device_settings?: Record<string, any>;
   metadata?: Record<string, any>;
 }
 
 export interface DeviceFilters {
   facility_id?: string;
+  /** When set (and `facility_id` is not), restrict to these facilities (e.g. all of a scoped user’s assignments). */
+  facility_ids?: string[];
   gateway_id?: string;
   unit_id?: string;
   device_type?: 'access_control' | 'blulok' | 'all';
@@ -271,11 +283,18 @@ export class DeviceModel {
   async findAccessControlDevices(filters: DeviceFilters = {}): Promise<AccessControlDevice[]> {
     const knex = this.db.connection;
     let query = knex('access_control_devices')
-      .select('access_control_devices.*')
-      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id');
+      .select(
+        'access_control_devices.*',
+        'gateways.facility_id as facility_id',
+        'facilities.name as facility_name'
+      )
+      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .leftJoin('facilities', 'gateways.facility_id', 'facilities.id');
 
     if (filters.facility_id) {
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.gateway_id) {
@@ -344,6 +363,8 @@ export class DeviceModel {
     if (filters.facility_id) {
       // Filter by gateway's facility - this is the authoritative facility for the device
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.gateway_id) {
@@ -415,6 +436,7 @@ export class DeviceModel {
         serial: row.serial,
         firmware_version: row.firmware_version,
         lock_status: row.lock_status,
+        supports_remote_lock: Boolean(row.supports_remote_lock),
         device_status: row.device_status,
         battery_level: row.battery_level,
         signal_strength: row.signal_strength,
@@ -918,6 +940,8 @@ export class DeviceModel {
 
     if (filters.facility_id) {
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.gateway_id) {
@@ -954,6 +978,8 @@ export class DeviceModel {
     if (filters.facility_id) {
       // Filter by gateway's facility - this is the authoritative facility for the device
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.unit_id) {

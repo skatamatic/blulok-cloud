@@ -67,7 +67,7 @@ A secure cloud platform for managing BluLok storage facility locking systems, pr
    cd backend
    npm run dev
    ```
-   - Runs on `http://localhost:3000`
+   - Runs on `http://localhost:3000` by default (override with `PORT` in `backend/.env`)
    - Includes auto-reload and logging
 
 2. Database setup (if not using Docker):
@@ -288,7 +288,7 @@ VITE_WS_URL=ws://localhost:3000
    - Run `npm run migrate` in backend
 
 2. **CORS Errors**:
-   - Backend runs on port 3000
+   - Backend runs on the port in `backend/.env` (`PORT`, default local dev `3000`)
    - Frontend proxies to `/api`
    - Ensure `VITE_API_URL` is correct
 

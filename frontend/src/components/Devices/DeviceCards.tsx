@@ -1,11 +1,6 @@
-import { MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AccessControlDevice, BluLokDevice } from '@/types/facility.types';
-import { apiService } from '@/services/api.service';
-import { useToast } from '@/contexts/ToastContext';
-import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
-import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -24,73 +19,33 @@ const statusIcons = {
   low_battery: ExclamationTriangleIcon
 };
 
-export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, canManageAccessMethods, onAccessMethodsUpdated, onRequestUnlock, groupNames = [] }: {
+/**
+ * Access control device card: read-only summary; entire card navigates to device details.
+ */
+export function AccessControlDeviceCard({ device, groupNames = [], onViewDevice }: {
   device: AccessControlDevice;
-  onViewFacility?: () => void;
+  /** Optional override navigation (e.g. return-path state). */
   onViewDevice?: () => void;
-  canManageAccessMethods?: boolean;
-  onAccessMethodsUpdated?: () => Promise<void> | void;
-  /** Remote unlock (open); no remote re-lock — button disabled when already unlocked. */
-  onRequestUnlock?: () => Promise<void> | void;
   groupNames?: string[];
 }) {
   const navigate = useNavigate();
-  const { addToast } = useToast();
-  const [unlockPending, setUnlockPending] = useState(false);
-  const acLockSnapRef = useRef({ is_locked: device.is_locked, unlockPending: false });
-  acLockSnapRef.current = { is_locked: device.is_locked, unlockPending };
-  const { scheduleUnlockWatch, cancelWatch } = useLockHardwareFeedback();
-
-  useEffect(() => {
-    if (!unlockPending) return;
-    if (!device.is_locked) {
-      cancelWatch();
-      setUnlockPending(false);
-    }
-  }, [device.is_locked, unlockPending, cancelWatch]);
-
-  const StatusIcon = (statusIcons as any)[device.status] || CheckCircleIcon;
-  const [isEditingMethods, setIsEditingMethods] = useState(false);
-  const [isSavingMethods, setIsSavingMethods] = useState(false);
-  const [localAccessMethods, setLocalAccessMethods] = useState<Array<'app' | 'keypad' | 'fob'>>(
-    (device.access_methods && device.access_methods.length > 0 ? device.access_methods : ['app']) as Array<'app' | 'keypad' | 'fob'>,
-  );
-
-  const accessMethods = useMemo(
-    () => (localAccessMethods.length > 0 ? localAccessMethods : ['app']),
-    [localAccessMethods],
-  );
-
-  const toggleMethod = (method: 'app' | 'keypad' | 'fob') => {
-    setLocalAccessMethods((prev) => {
-      const next = prev.includes(method)
-        ? prev.filter((m) => m !== method)
-        : [...prev, method];
-      return (next.length > 0 ? next : ['app']) as Array<'app' | 'keypad' | 'fob'>;
-    });
-  };
-
-  const saveMethods = async (): Promise<boolean> => {
-    try {
-      setIsSavingMethods(true);
-      await apiService.updateAccessControlDevice(device.id, { access_methods: accessMethods });
-      setIsEditingMethods(false);
-      addToast({ type: 'success', title: 'Access methods updated' });
-      return true;
-    } catch (error) {
-      console.error('Failed to update access methods:', error);
-      addToast({ type: 'error', title: 'Failed to update access methods' });
-      return false;
-    } finally {
-      setIsSavingMethods(false);
-    }
-  };
+  const StatusIcon = (statusIcons as Record<string, typeof CheckCircleIcon>)[device.status] || CheckCircleIcon;
+  const accessMethods =
+    device.access_methods && device.access_methods.length > 0 ? device.access_methods : ['app'];
 
   return (
     <div
       id={`device-${device.id}`}
+      role="link"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onViewDevice ? onViewDevice() : navigate(`/devices/${device.id}`);
+        }
+      }}
       className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
-      onClick={() => onViewDevice ? onViewDevice() : navigate(`/devices/${device.id}`)}
+      onClick={() => (onViewDevice ? onViewDevice() : navigate(`/devices/${device.id}`))}
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center">
@@ -103,7 +58,7 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, 
           </div>
         </div>
         <div className="flex items-center space-x-2">
-          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${(statusColors as any)[device.status] || statusColors.unknown}`}>
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${(statusColors as Record<string, string>)[device.status] || statusColors.unknown}`}>
             <StatusIcon className="h-3 w-3 mr-1" />
             {device.status}
           </span>
@@ -117,12 +72,12 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, 
       <div className="mb-4 space-y-3">
         <div className="flex flex-wrap gap-2">
           {accessMethods.map((method) => (
-          <span
-            key={method}
-            className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-1 text-xs font-medium text-primary-700 dark:text-primary-300 capitalize"
-          >
-            {method}
-          </span>
+            <span
+              key={method}
+              className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-1 text-xs font-medium text-primary-700 dark:text-primary-300 capitalize"
+            >
+              {method}
+            </span>
           ))}
         </div>
         {groupNames && groupNames.length > 0 && (
@@ -136,63 +91,6 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, 
                 {groupName}
               </span>
             ))}
-          </div>
-        )}
-        {canManageAccessMethods && (
-          <div className="flex flex-wrap items-center gap-2">
-            {!isEditingMethods ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setIsEditingMethods(true);
-                }}
-                className="inline-flex items-center rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300"
-              >
-                Edit Methods
-              </button>
-            ) : (
-              <>
-                {(['app', 'keypad', 'fob'] as const).map((method) => (
-                  <label
-                    key={method}
-                    onClick={(event) => event.stopPropagation()}
-                    className="inline-flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs text-gray-700 dark:text-gray-300"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={accessMethods.includes(method)}
-                      onChange={() => toggleMethod(method)}
-                    />
-                    <span className="capitalize">{method}</span>
-                  </label>
-                ))}
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    saveMethods().then((ok) => {
-                      if (ok) onAccessMethodsUpdated?.();
-                    });
-                  }}
-                  disabled={isSavingMethods}
-                  className="inline-flex items-center rounded-lg bg-primary-600 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
-                >
-                  {isSavingMethods ? 'Saving...' : 'Save'}
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setLocalAccessMethods((device.access_methods && device.access_methods.length > 0 ? device.access_methods : ['app']) as Array<'app' | 'keypad' | 'fob'>);
-                    setIsEditingMethods(false);
-                  }}
-                  className="inline-flex items-center rounded-lg border border-gray-300 dark:border-gray-600 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300"
-                >
-                  Cancel
-                </button>
-              </>
-            )}
           </div>
         )}
       </div>
@@ -209,99 +107,19 @@ export function AccessControlDeviceCard({ device, onViewFacility, onViewDevice, 
           </span>
         </div>
       </div>
-
-      {(onViewFacility || onViewDevice || onRequestUnlock) && (
-        <div className="mt-6 flex flex-wrap gap-2">
-          {onViewFacility && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onViewFacility();
-              }}
-              className="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              View Facility
-            </button>
-          )}
-          {onViewDevice && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onViewDevice();
-              }}
-              className="inline-flex items-center rounded-lg border border-transparent bg-primary-50 dark:bg-primary-900/20 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
-            >
-              View Details
-            </button>
-          )}
-          {onRequestUnlock && (
-            <button
-              type="button"
-              onClick={async (event) => {
-                event.stopPropagation();
-                if (!device.is_locked || device.status !== 'online' || unlockPending) return;
-                setUnlockPending(true);
-                scheduleUnlockWatch(
-                  () => {
-                    const { is_locked: il, unlockPending: up } = acLockSnapRef.current;
-                    if (up && il) return 'unlocking';
-                    return il ? 'locked' : 'unlocked';
-                  },
-                  () => {
-                    setUnlockPending(false);
-                  },
-                );
-                try {
-                  await onRequestUnlock();
-                } catch {
-                  cancelWatch();
-                  setUnlockPending(false);
-                }
-              }}
-              disabled={!device.is_locked || device.status !== 'online' || unlockPending}
-              className={`inline-flex items-center rounded-lg border border-transparent px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                unlockPending
-                  ? 'bg-blue-600 text-white animate-pulse'
-                  : device.is_locked && device.status === 'online'
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-gray-200 text-gray-500 dark:bg-gray-600 dark:text-gray-400'
-              }`}
-            >
-              {unlockPending ? 'Unlocking…' : device.is_locked ? 'Unlock' : 'Unlocked'}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, onToggleLock }: {
+/**
+ * BluLok device card: read-only summary; entire card navigates to device details.
+ */
+export function BluLokDeviceCard({ device, onViewDevice }: {
   device: BluLokDevice;
   onViewDevice?: () => void;
-  onViewUnit?: () => void;
-  canManage?: boolean;
-  /** Remote unlock only; parent should update list state / refresh after the command. */
-  onToggleLock?: () => Promise<void> | void;
 }) {
   const navigate = useNavigate();
-  const StatusIcon = (statusIcons as any)[device.device_status] || CheckCircleIcon;
-  const [isToggling, setIsToggling] = useState(false);
-  const canUnlock = canRequestRemoteUnlock(device.lock_status);
-  const lockPending = isLockTransitionPending(device.lock_status);
-
-  const handleUnlock = async (event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    if (!onToggleLock || !canUnlock) return;
-    try {
-      setIsToggling(true);
-      await onToggleLock();
-    } finally {
-      setIsToggling(false);
-    }
-  };
+  const StatusIcon = (statusIcons as Record<string, typeof CheckCircleIcon>)[device.device_status] || CheckCircleIcon;
 
   const handleCardClick = () => {
     if (onViewDevice) {
@@ -310,9 +128,18 @@ export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, 
       navigate(`/devices/${device.id}`);
     }
   };
+
   return (
     <div
       id={`device-${device.id}`}
+      role="link"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleCardClick();
+        }
+      }}
       className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
       onClick={handleCardClick}
     >
@@ -329,7 +156,7 @@ export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, 
           </div>
         </div>
         <div className="flex items-center space-x-2">
-          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${(statusColors as any)[device.device_status] || statusColors.unknown}`}>
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${(statusColors as Record<string, string>)[device.device_status] || statusColors.unknown}`}>
             <StatusIcon className="h-3 w-3 mr-1" />
             {device.device_status}
           </span>
@@ -348,7 +175,7 @@ export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, 
       <div className="space-y-3">
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
-          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${(statusColors as any)[device.lock_status] || statusColors.unknown}`}>
+          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${(statusColors as Record<string, string>)[device.lock_status] || statusColors.unknown}`}>
             {device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : 
              device.lock_status === 'unlocked' ? <LockOpenIcon className="h-3 w-3 mr-1" /> :
              <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />}
@@ -356,53 +183,6 @@ export function BluLokDeviceCard({ device, onViewDevice, onViewUnit, canManage, 
           </span>
         </div>
       </div>
-
-      {(onViewUnit || onViewDevice || (canManage && onToggleLock)) && (
-        <div className="mt-6 flex flex-wrap gap-2">
-          {onViewUnit && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onViewUnit();
-              }}
-              className="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              View Unit
-            </button>
-          )}
-          {onViewDevice && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onViewDevice();
-              }}
-              className="inline-flex items-center rounded-lg border border-transparent bg-primary-50 dark:bg-primary-900/20 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
-            >
-              View Details
-            </button>
-          )}
-          {canManage && onToggleLock && (
-            <button
-              type="button"
-              onClick={handleUnlock}
-              disabled={isToggling || lockPending || !canUnlock}
-              className={`inline-flex items-center rounded-lg border border-transparent px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                lockPending || isToggling
-                  ? 'bg-blue-600 text-white animate-pulse'
-                  : canUnlock
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
-              }`}
-            >
-              {lockPending || isToggling ? 'Unlocking…' : canUnlock ? 'Unlock' : 'Unlocked'}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
-
-

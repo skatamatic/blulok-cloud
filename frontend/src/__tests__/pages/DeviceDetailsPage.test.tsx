@@ -171,6 +171,46 @@ describe('DeviceDetailsPage', () => {
     });
   });
 
+  it('does not show gateway denylist command buttons for non-dev-admin', async () => {
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1?tab=denylist']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No denylist entries')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: 'DENYLIST_ADD' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'DENYLIST_REMOVE' })).not.toBeInTheDocument();
+  });
+
+  it('shows gateway denylist command buttons for dev admin', async () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      authState: {
+        user: { id: 'dev-1', email: 'dev@example.com', role: 'dev_admin' },
+        isAuthenticated: true,
+        isLoading: false,
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1?tab=denylist']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'DENYLIST_ADD' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'DENYLIST_REMOVE' })).toBeInTheDocument();
+    });
+  });
+
   it('displays denylist entries with expiration info', async () => {
     mockApiService.getDeviceDenylist.mockResolvedValue({
       success: true,
@@ -464,7 +504,7 @@ describe('DeviceDetailsPage', () => {
       expect(mockSubscribe).toHaveBeenCalledWith(
         'device_status',
         expect.any(Function),
-        expect.any(Function), // onError handler
+        undefined,
         { device_id: 'device-1' }
       );
     });

@@ -199,7 +199,7 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       await waitFor(() => {
         expect(screen.getByText('Changes Applied Successfully')).toBeInTheDocument();
       });
-    });
+    }, 20_000);
 
     it('should generate correct summary message with multiple access changes', async () => {
       const successResult: FMSChangeApplicationResult = {

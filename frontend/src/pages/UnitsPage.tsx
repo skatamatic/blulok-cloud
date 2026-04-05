@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { 
   HomeIcon,
@@ -55,7 +55,6 @@ export default function UnitsPage() {
   const location = useLocation();
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const { subscribe, unsubscribe } = useWebSocket();
   const { selectedFacilityId } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
@@ -90,37 +89,15 @@ export default function UnitsPage() {
 
   // Ref to track the latest loadUnits function for WebSocket callback
   const loadUnitsRef = useRef<() => void>(() => {});
-  const wsRefreshDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadUsers();
   }, []);
 
-  // Subscribe to units WebSocket for real-time updates on lock status, battery, etc.
-  useEffect(() => {
-    const subscriptionId = subscribe(
-      'units',
-      () => {
-        // Debounce refresh to prevent excessive API calls
-        if (wsRefreshDebounceRef.current) {
-          clearTimeout(wsRefreshDebounceRef.current);
-        }
-        wsRefreshDebounceRef.current = setTimeout(() => {
-          loadUnitsRef.current();
-        }, 500);
-      },
-      undefined
-    );
-
-    return () => {
-      if (subscriptionId) {
-        unsubscribe(subscriptionId);
-      }
-      if (wsRefreshDebounceRef.current) {
-        clearTimeout(wsRefreshDebounceRef.current);
-      }
-    };
-  }, [subscribe, unsubscribe]);
+  useLockDeviceRealtime({
+    debouncedRefresh: () => loadUnitsRef.current(),
+    debounceMs: 500,
+  });
 
 
   const loadUsers = async () => {

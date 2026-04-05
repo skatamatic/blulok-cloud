@@ -1,6 +1,51 @@
-import { UnitModel } from '@/models/unit.model';
+import {
+  UnitModel,
+  deriveEffectiveUnitStatus,
+  assertStoredStatusAllowedWithAssignments,
+} from '@/models/unit.model';
 import { UserRole } from '@/types/auth.types';
 import { createMockTestData, MockTestData } from '@/__tests__/utils/mock-test-helpers';
+
+describe('deriveEffectiveUnitStatus', () => {
+  it('treats any assignment as occupied', () => {
+    expect(deriveEffectiveUnitStatus('available', 1)).toBe('occupied');
+    expect(deriveEffectiveUnitStatus('maintenance', 2)).toBe('occupied');
+    expect(deriveEffectiveUnitStatus('reserved', 1)).toBe('occupied');
+  });
+
+  it('maps stale occupied with zero assignments to available', () => {
+    expect(deriveEffectiveUnitStatus('occupied', 0)).toBe('available');
+  });
+
+  it('preserves maintenance and reserved when unassigned', () => {
+    expect(deriveEffectiveUnitStatus('maintenance', 0)).toBe('maintenance');
+    expect(deriveEffectiveUnitStatus('reserved', 0)).toBe('reserved');
+    expect(deriveEffectiveUnitStatus('available', 0)).toBe('available');
+  });
+});
+
+describe('assertStoredStatusAllowedWithAssignments', () => {
+  it('allows available and reserved when there are no assignments', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('available', 0)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('reserved', 0)).not.toThrow();
+  });
+
+  it('rejects available and reserved when assignments exist', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('available', 1)).toThrow(
+      /Cannot set unit to available or reserved/
+    );
+    expect(() => assertStoredStatusAllowedWithAssignments('reserved', 2)).toThrow(
+      /Cannot set unit to available or reserved/
+    );
+  });
+
+  it('allows occupied and maintenance regardless of assignment count', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 0)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 3)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 0)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 1)).not.toThrow();
+  });
+});
 
 describe('UnitModel', () => {
   let unitModel: UnitModel;

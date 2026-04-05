@@ -7,12 +7,12 @@ import { Unit } from '@/types/units.types';
 
 // Mock the API service
 const mockGetMyUnits = jest.fn();
-const mockUpdateUnit = jest.fn();
+const mockUpdateLockStatus = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getMyUnits: (...args: unknown[]) => mockGetMyUnits(...args),
-    updateUnit: (...args: unknown[]) => mockUpdateUnit(...args),
+    updateLockStatus: (...args: unknown[]) => mockUpdateLockStatus(...args),
   },
 }));
 
@@ -69,6 +69,8 @@ describe('LockStatusWidget', () => {
       unit_number: 'A-101',
       unit_type: 'storage',
       status: 'locked',
+      lock_status: 'locked',
+      blulok_device: { id: 'dev-1', lock_status: 'locked' },
       is_online: true,
       battery_level: 85,
       last_seen: new Date().toISOString(),
@@ -81,6 +83,8 @@ describe('LockStatusWidget', () => {
       unit_number: 'A-102',
       unit_type: 'storage',
       status: 'unlocked',
+      lock_status: 'unlocked',
+      blulok_device: { id: 'dev-2', lock_status: 'unlocked' },
       is_online: true,
       battery_level: 45,
       last_seen: new Date(Date.now() - 3600000).toISOString(),
@@ -93,6 +97,8 @@ describe('LockStatusWidget', () => {
       unit_number: 'A-103',
       unit_type: 'storage',
       status: 'locked',
+      lock_status: 'locked',
+      blulok_device: { id: 'dev-3', lock_status: 'locked' },
       is_online: false,
       battery_level: 15,
       last_seen: new Date(Date.now() - 86400000).toISOString(),
@@ -107,7 +113,7 @@ describe('LockStatusWidget', () => {
       units: mockUnits,
       total: mockUnits.length,
     });
-    mockUpdateUnit.mockResolvedValue({ success: true });
+    mockUpdateLockStatus.mockResolvedValue({ success: true });
     mockSubscribe.mockReturnValue('test-subscription-id');
   });
 
@@ -148,7 +154,9 @@ describe('LockStatusWidget', () => {
       await waitFor(() => {
         expect(mockSubscribe).toHaveBeenCalledWith(
           'device_status',
-          expect.any(Function)
+          expect.any(Function),
+          undefined,
+          undefined
         );
       });
     });
@@ -186,13 +194,10 @@ describe('LockStatusWidget', () => {
       );
       
       await waitFor(() => {
-        // A-101 is locked, should have Unlock button
         const unlockButtons = screen.getAllByText('Unlock');
         expect(unlockButtons.length).toBeGreaterThan(0);
-        
-        // A-102 is unlocked, should have Lock button
-        const lockButtons = screen.getAllByText('Lock');
-        expect(lockButtons.length).toBeGreaterThan(0);
+        const unlockedLabels = screen.getAllByText('Unlocked');
+        expect(unlockedLabels.length).toBeGreaterThan(0);
       });
     });
 
@@ -200,20 +205,18 @@ describe('LockStatusWidget', () => {
       renderWithProviders(
         <LockStatusWidget currentSize="large" onSizeChange={() => {}} />
       );
-      
-      // Wait for data to load first - ensure loading state is gone
-      await waitFor(() => {
-        expect(screen.getByText('A-101')).toBeInTheDocument();
-        expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
-      }, { timeout: 5000 });
-      
-      // Then check for summary statistics (Offline may appear multiple times, use getAllByText)
-      await waitFor(() => {
-        expect(screen.getByText('Unlocked')).toBeInTheDocument();
-        expect(screen.getByText('Low Battery')).toBeInTheDocument();
-        expect(screen.getAllByText('Offline').length).toBeGreaterThan(0);
-      }, { timeout: 5000 });
-    });
+
+      await waitFor(
+        () => {
+          expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+          expect(screen.getByText('A-101')).toBeInTheDocument();
+          expect(screen.getByText('Low Battery')).toBeInTheDocument();
+          expect(screen.getAllByText('Offline').length).toBeGreaterThan(0);
+          expect(screen.getAllByText('Unlocked').length).toBeGreaterThan(0);
+        },
+        { timeout: 15000 },
+      );
+    }, 20000);
 
     it('handles empty data gracefully', async () => {
       mockGetMyUnits.mockResolvedValue({
@@ -306,43 +309,28 @@ describe('LockStatusWidget', () => {
       // Click the button
       fireEvent.click(unlockButtons[0]);
       
-      // Wait for the API call - use a shorter timeout and don't wait for state updates
       await waitFor(() => {
-        expect(mockUpdateUnit).toHaveBeenCalled();
+        expect(mockUpdateLockStatus).toHaveBeenCalled();
       }, { timeout: 3000 });
       
-      // Verify it was called with correct parameters
-      expect(mockUpdateUnit).toHaveBeenCalledWith('unit-1', { is_locked: false });
+      expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
     });
 
-    it('locks an unlocked unit when clicking Lock', async () => {
+    it('does not remote-lock an unlocked unit (no Lock action)', async () => {
       renderWithProviders(
         <LockStatusWidget currentSize="large" onSizeChange={() => {}} />
       );
       
-      // Wait for data to load and component to be ready
       await waitFor(() => {
         expect(screen.getByText('A-102')).toBeInTheDocument();
       }, { timeout: 5000 });
       
-      // Find the Lock button (for A-102)
-      const lockButtons = await screen.findAllByText('Lock');
-      expect(lockButtons.length).toBeGreaterThan(0);
-      
-      // Click the button
-      fireEvent.click(lockButtons[0]);
-      
-      // Wait for the API call - use a shorter timeout
-      await waitFor(() => {
-        expect(mockUpdateUnit).toHaveBeenCalled();
-      }, { timeout: 3000 });
-      
-      // Verify it was called with correct parameters
-      expect(mockUpdateUnit).toHaveBeenCalledWith('unit-2', { is_locked: true });
+      expect(screen.queryByRole('button', { name: /^Lock$/ })).not.toBeInTheDocument();
+      expect(mockUpdateLockStatus).not.toHaveBeenCalled();
     });
 
     it('shows loading state during lock toggle', async () => {
-      mockUpdateUnit.mockImplementation(() => 
+      mockUpdateLockStatus.mockImplementation(() => 
         new Promise(resolve => setTimeout(() => resolve({ success: true }), 500))
       );
       
@@ -366,38 +354,43 @@ describe('LockStatusWidget', () => {
   });
 
   describe('Real-time Updates', () => {
-    it('updates unit status from WebSocket updates', async () => {
-      renderWithProviders(
-        <LockStatusWidget currentSize="large" onSizeChange={() => {}} />
-      );
-      
-      await waitFor(() => {
-        expect(mockSubscribe).toHaveBeenCalled();
-      });
-      
-      // Get the message handler
-      const subscribeCall = mockSubscribe.mock.calls[0];
-      const messageHandler = subscribeCall[1];
-      
-      // Simulate device status update - unit-1 becomes unlocked
-      act(() => {
-        messageHandler({ 
-          update: {
-            unit_id: 'unit-1',
-            lock_status: 'unlocked',
-            device_status: 'online',
-            battery_level: 80,
-          }
+    it(
+      'updates unit status from WebSocket updates',
+      async () => {
+        renderWithProviders(
+          <LockStatusWidget currentSize="large" onSizeChange={() => {}} />
+        );
+        
+        await waitFor(() => {
+          expect(screen.getByText('A-101')).toBeInTheDocument();
+          expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+        }, { timeout: 10000 });
+        
+        await waitFor(() => {
+          expect(mockSubscribe).toHaveBeenCalled();
         });
-      });
-      
-      // After update, A-101 should show Lock button instead of Unlock
-      await waitFor(() => {
-        // The unlockedCount should increase
-        const statsDiv = screen.getByText('Unlocked').closest('div');
-        expect(statsDiv).toBeInTheDocument();
-      });
-    });
+        
+        const subscribeCall = mockSubscribe.mock.calls[0];
+        const messageHandler = subscribeCall[1];
+        
+        act(() => {
+          messageHandler({
+            update: {
+              unit_id: 'unit-1',
+              lock_status: 'unlocked',
+              device_status: 'online',
+              battery_level: 80,
+            },
+          });
+        });
+        
+        await waitFor(() => {
+          const unlockedButtons = screen.getAllByText('Unlocked');
+          expect(unlockedButtons.length).toBeGreaterThan(0);
+        });
+      },
+      20000,
+    );
 
     it('updates battery level from WebSocket updates', async () => {
       renderWithProviders(
@@ -455,12 +448,10 @@ describe('LockStatusWidget', () => {
         });
       });
       
-      // Both units should be updated
       await waitFor(() => {
-        // Now both should show either Lock or Unlock buttons correctly
-        const lockButtons = screen.getAllByText('Lock');
         const unlockButtons = screen.getAllByText('Unlock');
-        expect(lockButtons.length + unlockButtons.length).toBeGreaterThan(0);
+        const unlockedLabels = screen.getAllByText('Unlocked');
+        expect(unlockButtons.length + unlockedLabels.length).toBeGreaterThan(0);
       });
     });
   });

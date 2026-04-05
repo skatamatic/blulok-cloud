@@ -219,6 +219,7 @@ export class UnitsService {
             source: options.source || 'api',
             replacedPrimaryCount: primaryMutation.removedPrimaryAssignments.length,
           });
+          await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
           return;
         }
 
@@ -247,6 +248,7 @@ export class UnitsService {
           options.performedBy, options.source || 'api'
         ).catch(err => logger.error('Failed to log assignment side effects:', err));
 
+        await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
         return;
       }
 
@@ -254,6 +256,7 @@ export class UnitsService {
       const existing = await this.unitAssignmentModel.findByUnitAndTenant(unitId, tenantId);
       if (existing) {
         logger.warn(`Assignment already exists for tenant ${tenantId} to unit ${unitId}`);
+        await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
         return;
       }
 
@@ -278,6 +281,7 @@ export class UnitsService {
       if (options.notes) assignmentData.notes = options.notes;
 
       await this.unitAssignmentModel.create(assignmentData);
+      await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
 
       // Emit event for gateway/hardware updates
       const eventMetadata: any = {
@@ -386,7 +390,8 @@ export class UnitsService {
         const createPromises = assignmentsToCreate.map(async (data) => {
           try {
             await this.unitAssignmentModel.create(data);
-            
+            await this.unitModel.syncUnitOccupancyStatusFromAssignments(data.unit_id);
+
             // Emit event for each assignment
             const unit = unitsById.get(data.unit_id);
             if (unit) {
@@ -465,6 +470,7 @@ export class UnitsService {
 
       // Delete assignment
       await this.unitAssignmentModel.deleteByUnitAndTenant(unitId, tenantId);
+      await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
 
       // Emit event for gateway/hardware updates
       const eventMetadata: any = {

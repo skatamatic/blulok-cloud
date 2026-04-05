@@ -10,7 +10,7 @@
  *   - Backend running at API_BASE_URL
  *
  * Optional env vars:
- *   API_BASE_URL           (default http://127.0.0.1:3000/api/v1)
+ *   API_BASE_URL           (default from backend/.env PORT, else http://127.0.0.1:3000/api/v1)
  *   DEV_ADMIN_EMAIL        (default devadmin@blulok.com)
  *   DEV_ADMIN_PASSWORD     (default DevAdmin123!@#)
  *   GCS_PROJECT_ID         (default BluLok-Cloud-Dev)
@@ -20,11 +20,36 @@
  *   node scripts/storage-e2e.js [--verbose]
  */
 
+const fs = require('fs');
+const path = require('path');
 const axios = require('axios').default;
 const crypto = require('crypto');
 const FormData = require('form-data');
+const dotenv = require('dotenv');
 
-const API_BASE = process.env.API_BASE_URL || 'http://127.0.0.1:3000/api/v1';
+function parsePortNum(value) {
+  const p = parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(p) && p > 0 && p <= 65535 ? p : null;
+}
+
+function readPortFromBackendEnvFile() {
+  const envFilePath = path.join(__dirname, '..', '.env');
+  try {
+    if (!fs.existsSync(envFilePath)) return null;
+    const parsed = dotenv.parse(fs.readFileSync(envFilePath, 'utf8'));
+    return parsePortNum(parsed.PORT);
+  } catch {
+    return null;
+  }
+}
+
+const e2ePort =
+  parsePortNum(process.env.E2E_API_PORT || process.env.BACKEND_PORT) ??
+  readPortFromBackendEnvFile() ??
+  parsePortNum(process.env.PORT) ??
+  3000;
+const API_BASE =
+  process.env.API_BASE_URL || `http://127.0.0.1:${e2ePort}/api/v1`;
 const EMAIL = process.env.DEV_ADMIN_EMAIL || 'devadmin@blulok.com';
 const PASSWORD = process.env.DEV_ADMIN_PASSWORD || 'DevAdmin123!@#';
 const VERBOSE = process.env.E2E_VERBOSE === '1' || process.argv.includes('--verbose');

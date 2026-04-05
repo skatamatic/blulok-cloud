@@ -437,6 +437,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       for (const [facilityId, client] of this.facilityToClient.entries()) {
         if (client.ws.readyState !== WebSocket.OPEN) {
           this.facilityToClient.delete(facilityId);
+          this.notifyConnectionChange(facilityId, false, 'socket_not_open', client.lastActivityAt);
           continue;
         }
         const inactiveMs = now - client.lastActivityAt;

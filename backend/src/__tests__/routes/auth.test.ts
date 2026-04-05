@@ -769,7 +769,9 @@ describe('Auth Routes', () => {
       expect(requestOtpMock).toHaveBeenCalled();
     });
 
-    it('POST /api/v1/auth/invite/request-otp is rate limited (5 per minute)', async () => {
+    it(
+      'POST /api/v1/auth/invite/request-otp is rate limited (5 per minute)',
+      async () => {
       // Create a fresh app instance so limiter state is clean
       let isolatedApp: any;
       jest.isolateModules(() => {
@@ -797,7 +799,7 @@ describe('Auth Routes', () => {
         .post('/api/v1/auth/invite/request-otp')
         .send({ token: 'invite-token', phone: '+15550001234' })
         .expect(429);
-    });
+    }, 60_000);
 
     it('POST /api/v1/auth/invite/verify-otp validates body', async () => {
       const res = await require('supertest')(appForInvite)

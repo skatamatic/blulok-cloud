@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 // import { Stage, Layer, Rect, Text, Circle, Line, Group } from 'react-konva';
 import { 
@@ -19,6 +19,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
 import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -84,6 +86,7 @@ export default function FacilitySiteMapPage() {
   const [showUnitDetails, setShowUnitDetails] = useState(false);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const loadUnitsRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     loadUnits();
@@ -99,24 +102,30 @@ export default function FacilitySiteMapPage() {
     }
   };
 
-  const handleLockToggle = async (unit: Unit) => {
+  loadUnitsRef.current = loadUnits;
+
+  useLockDeviceRealtime({
+    debouncedRefresh: () => {
+      void loadUnitsRef.current();
+    },
+    debounceMs: 500,
+  });
+
+  const handleRemoteUnlock = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;
-    
+    if (!canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
     try {
-      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
-      
-      // Update the layout element
+      await apiService.updateLockStatus(unit.blulok_device.id, 'unlocked');
+
       setLayout(prev => ({
         ...prev,
-        elements: prev.elements.map(element => 
-          element.properties.unitId === unit.id 
-            ? { ...element, properties: { ...element.properties, lockStatus: newStatus } }
+        elements: prev.elements.map(element =>
+          element.properties.unitId === unit.id
+            ? { ...element, properties: { ...element.properties, lockStatus: 'unlocked' } }
             : element
-        )
+        ),
       }));
-      
-      // Refresh unit data
+
       await loadUnits();
     } catch (error) {
       console.error('Failed to toggle lock:', error);
@@ -539,18 +548,28 @@ export default function FacilitySiteMapPage() {
                   
                   {selectedUnit.blulok_device && (
                     <button
-                      onClick={() => handleLockToggle(selectedUnit)}
-                      className={`w-full flex items-center justify-center space-x-2 py-2 px-4 text-sm font-medium rounded-lg transition-colors ${
-                        selectedUnit.blulok_device.lock_status === 'locked'
-                          ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                          : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
+                      type="button"
+                      onClick={() => void handleRemoteUnlock(selectedUnit)}
+                      disabled={
+                        isLockTransitionPending(selectedUnit.blulok_device.lock_status) ||
+                        !canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                      }
+                      className={`w-full flex items-center justify-center space-x-2 py-2 px-4 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                        isLockTransitionPending(selectedUnit.blulok_device.lock_status)
+                          ? 'bg-blue-600 text-white animate-pulse'
+                          : canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                            : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
                       }`}
                     >
-                      {selectedUnit.blulok_device.lock_status === 'locked' ? 
-                        <LockOpenIcon className="h-4 w-4" /> : 
-                        <LockClosedIcon className="h-4 w-4" />
-                      }
-                      <span>{selectedUnit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}</span>
+                      <LockOpenIcon className="h-4 w-4" />
+                      <span>
+                        {isLockTransitionPending(selectedUnit.blulok_device.lock_status)
+                          ? 'Unlocking…'
+                          : canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                            ? 'Unlock'
+                            : 'Unlocked'}
+                      </span>
                     </button>
                   )}
                 </div>

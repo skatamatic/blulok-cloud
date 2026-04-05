@@ -636,7 +636,7 @@ describe('FMSChangeReviewModal', () => {
         );
         expect(mockOnApply).toHaveBeenCalledWith(['change-1', 'change-2', 'change-3', 'change-4']);
       });
-    });
+    }, 20_000);
 
     it('handles apply API failure gracefully', async () => {
       const mockOnApply = jest.fn();

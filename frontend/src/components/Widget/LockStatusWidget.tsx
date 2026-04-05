@@ -6,20 +6,14 @@ import { apiService } from '@/services/api.service';
 import { Unit } from '@/types/units.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 
 interface LockStatusWidgetProps {
   currentSize: WidgetSize;
   onSizeChange: (size: WidgetSize) => void;
   onRemove?: () => void;
-}
-
-interface DeviceStatusUpdate {
-  device_id?: string;
-  unit_id?: string;
-  lock_status?: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error';
-  device_status?: 'online' | 'offline' | 'low_battery' | 'error';
-  battery_level?: number;
-  last_seen?: string;
 }
 
 export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
@@ -28,7 +22,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   onRemove,
 }) => {
   const { authState } = useAuth();
-  const { subscribe, unsubscribe, isConnected } = useWebSocket();
+  const { isConnected } = useWebSocket();
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,54 +49,62 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
     fetchUnits();
   }, [fetchUnits, authState.user]);
 
-  // Subscribe to real-time device status updates
-  useEffect(() => {
-    if (!isConnected) return;
+  const mergeLockSnapshots = useCallback((updates: LockDeviceSnapshot[]) => {
+    if (updates.length === 0) return;
 
-    const handleDeviceStatusUpdate = (data: { update?: DeviceStatusUpdate; updates?: DeviceStatusUpdate[] }) => {
-      const updates = data.updates || (data.update ? [data.update] : []);
-      
-      if (updates.length === 0) return;
+    setUnits((prev) => {
+      const updated = [...prev];
+      for (const update of updates) {
+        const unitId = update.unit_id;
+        const index =
+          unitId != null && unitId !== ''
+            ? updated.findIndex((u) => u.id === unitId)
+            : update.device_id
+              ? updated.findIndex((u) => u.blulok_device?.id === update.device_id)
+              : -1;
+        if (index === -1) continue;
 
-      setUnits(prev => {
-        const updated = [...prev];
-        for (const update of updates) {
-          // Find unit by unit_id from the update
-          const unitId = update.unit_id;
-          if (!unitId) continue;
-
-          const index = updated.findIndex(u => u.id === unitId);
-          if (index !== -1) {
-            const unit = updated[index];
-            updated[index] = {
-              ...unit,
-              // Update lock status if provided
-              status: update.lock_status === 'locked' ? 'locked' : 
-                      update.lock_status === 'unlocked' ? 'unlocked' : 
-                      unit.status,
-              // Update online status if provided
-              is_online: update.device_status === 'online' || update.device_status === 'low_battery' 
-                ? true 
-                : update.device_status === 'offline' || update.device_status === 'error'
-                ? false 
+        const unit = updated[index];
+        const nextLock =
+          update.lock_status === 'locked' || update.lock_status === 'unlocked'
+            ? update.lock_status
+            : unit.lock_status;
+        updated[index] = {
+          ...unit,
+          status:
+            update.lock_status === 'locked'
+              ? 'locked'
+              : update.lock_status === 'unlocked'
+                ? 'unlocked'
+                : unit.status,
+          ...(nextLock ? { lock_status: nextLock } : {}),
+          ...(unit.blulok_device && update.lock_status
+            ? {
+                blulok_device: {
+                  ...unit.blulok_device,
+                  lock_status: update.lock_status,
+                },
+              }
+            : {}),
+          is_online:
+            update.device_status === 'online' || update.device_status === 'low_battery'
+              ? true
+              : update.device_status === 'offline' || update.device_status === 'error'
+                ? false
                 : unit.is_online,
-              // Update battery level if provided
-              battery_level: update.battery_level ?? unit.battery_level,
-              // Update last seen if provided
-              last_seen: update.last_seen ?? unit.last_seen,
-            };
-          }
-        }
-        return updated;
-      });
-    };
+          battery_level: update.battery_level ?? unit.battery_level,
+          last_seen: update.last_seen ?? unit.last_seen,
+        } as Unit;
+      }
+      return updated;
+    });
+  }, []);
 
-    const subscriptionId = subscribe('device_status', handleDeviceStatusUpdate);
-
-    return () => {
-      unsubscribe(subscriptionId);
-    };
-  }, [subscribe, unsubscribe, isConnected]);
+  useLockDeviceRealtime({
+    enabled: isConnected,
+    onDeviceRows: mergeLockSnapshots,
+    subscribeUnitsForRefresh: false,
+  });
 
   const getMaxItems = (size: WidgetSize): number => {
     switch (size) {
@@ -143,31 +145,38 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
     return '🔋';
   };
 
-  const handleLockToggle = async (unitId: string) => {
+  const deviceLockStatus = (u: Unit) =>
+    u.lock_status ?? u.blulok_device?.lock_status ?? u.status;
+
+  const deviceIdForLock = (u: Unit) => u.blulok_device?.id ?? u.device_id;
+
+  const handleRemoteUnlock = async (unitId: string) => {
+    const unit = units.find((u) => u.id === unitId);
+    if (!unit) return;
+    const deviceId = deviceIdForLock(unit);
+    const ls = deviceLockStatus(unit);
+    if (!deviceId || !canRequestRemoteUnlock(ls)) return;
+
     try {
       setActionLoading(unitId);
-      
-      const unit = units.find(u => u.id === unitId);
-      if (!unit) return;
-
-      if (unit.status === 'locked') {
-        await apiService.updateUnit(unitId, { is_locked: false });
-        setUnits(prev => prev.map(u => 
-          u.id === unitId 
-            ? { ...u, status: 'unlocked' as const, last_seen: new Date().toISOString() }
-            : u
-        ));
-      } else {
-        await apiService.updateUnit(unitId, { is_locked: true });
-        setUnits(prev => prev.map(u => 
-          u.id === unitId 
-            ? { ...u, status: 'locked' as const, last_seen: new Date().toISOString() }
-            : u
-        ));
-      }
+      await apiService.updateLockStatus(deviceId, 'unlocked');
+      setUnits((prev) =>
+        prev.map((u) =>
+          u.id === unitId
+            ? {
+                ...u,
+                status: 'unlocked' as const,
+                lock_status: 'unlocked',
+                last_seen: new Date().toISOString(),
+                ...(u.blulok_device
+                  ? { blulok_device: { ...u.blulok_device, lock_status: 'unlocked' } }
+                  : {}),
+              }
+            : u,
+        ),
+      );
     } catch (err) {
-      console.error('Error toggling lock:', err);
-      // Could show a toast notification here
+      console.error('Error unlocking:', err);
     } finally {
       setActionLoading(null);
     }
@@ -179,7 +188,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
 
   const maxItems = getMaxItems(currentSize);
   const displayUnits = units.slice(0, maxItems);
-  const unlockedCount = units.filter(unit => unit.status === 'unlocked').length;
+  const unlockedCount = units.filter((unit) => deviceLockStatus(unit) === 'unlocked').length;
   const lowBatteryCount = units.filter(unit => (unit.battery_level || 0) < 20).length;
   const offlineCount = units.filter(unit => !unit.is_online).length;
 
@@ -277,7 +286,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
             {displayUnits.map((unit) => (
               <div key={unit.id} className="flex items-center justify-between text-xs">
                 <div className="flex items-center space-x-1">
-                  {unit.status === 'locked' ? (
+                  {deviceLockStatus(unit) === 'locked' ? (
                     <LockClosedIcon className="h-3 w-3 text-green-600" />
                   ) : (
                     <LockOpenIcon className="h-3 w-3 text-red-600" />
@@ -285,15 +294,27 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                   <span className="truncate">{unit.unit_number}</span>
                 </div>
                 <button
-                  onClick={() => handleLockToggle(unit.id)}
-                  disabled={actionLoading === unit.id}
-                  className={`px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 ${
-                    unit.status === 'locked'
+                  type="button"
+                  onClick={() => void handleRemoteUnlock(unit.id)}
+                  disabled={
+                    actionLoading === unit.id ||
+                    !deviceIdForLock(unit) ||
+                    isLockTransitionPending(deviceLockStatus(unit)) ||
+                    !canRequestRemoteUnlock(deviceLockStatus(unit))
+                  }
+                  className={`px-2 py-1 rounded text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    canRequestRemoteUnlock(deviceLockStatus(unit))
                       ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800'
-                      : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300 dark:hover:bg-green-800'
+                      : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400'
                   }`}
                 >
-                  {actionLoading === unit.id ? '...' : (unit.status === 'locked' ? 'Unlock' : 'Lock')}
+                  {actionLoading === unit.id
+                    ? '...'
+                    : isLockTransitionPending(deviceLockStatus(unit))
+                      ? '…'
+                      : canRequestRemoteUnlock(deviceLockStatus(unit))
+                        ? 'Unlock'
+                        : 'Unlocked'}
                 </button>
               </div>
             ))}
@@ -329,7 +350,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                 <div key={unit.id} className="flex items-center justify-between p-2 rounded-md bg-gray-50 dark:bg-gray-700">
                   <div className="flex items-center space-x-3">
                     <div className="flex-shrink-0">
-                      {unit.status === 'locked' ? (
+                      {deviceLockStatus(unit) === 'locked' ? (
                         <LockClosedIcon className="h-5 w-5 text-green-600" />
                       ) : (
                         <LockOpenIcon className="h-5 w-5 text-red-600" />
@@ -353,15 +374,27 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                     </div>
                   </div>
                   <button
-                    onClick={() => handleLockToggle(unit.id)}
-                    disabled={actionLoading === unit.id}
-                    className={`px-3 py-1 rounded text-sm font-medium transition-colors disabled:opacity-50 ${
-                      unit.status === 'locked'
+                    type="button"
+                    onClick={() => void handleRemoteUnlock(unit.id)}
+                    disabled={
+                      actionLoading === unit.id ||
+                      !deviceIdForLock(unit) ||
+                      isLockTransitionPending(deviceLockStatus(unit)) ||
+                      !canRequestRemoteUnlock(deviceLockStatus(unit))
+                    }
+                    className={`px-3 py-1 rounded text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      canRequestRemoteUnlock(deviceLockStatus(unit))
                         ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800'
-                        : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300 dark:hover:bg-green-800'
+                        : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400'
                     }`}
                   >
-                    {actionLoading === unit.id ? '...' : (unit.status === 'locked' ? 'Unlock' : 'Lock')}
+                    {actionLoading === unit.id
+                      ? '...'
+                      : isLockTransitionPending(deviceLockStatus(unit))
+                        ? 'Unlocking…'
+                        : canRequestRemoteUnlock(deviceLockStatus(unit))
+                          ? 'Unlock'
+                          : 'Unlocked'}
                   </button>
                 </div>
               ))}

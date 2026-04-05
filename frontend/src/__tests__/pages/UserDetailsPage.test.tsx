@@ -336,35 +336,40 @@ describe('UserDetailsPage', () => {
     });
 
     it('reloads route pass history when pagination offset changes', async () => {
-      mockApiService.getUserRoutePassHistory = jest.fn()
-        .mockResolvedValueOnce({
-          success: true,
-          data: [
-            {
-              id: 'pass-1',
-              issuedAt: new Date().toISOString(),
-              expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-              deviceId: 'device-1',
-              audiences: ['lock:1'],
-              isExpired: false,
-            },
-          ],
-          pagination: { total: 60, limit: 50, offset: 0, hasMore: true },
-        })
-        .mockResolvedValueOnce({
+      // Use implementation (not once-chains): tab effect may call load more than once.
+      mockApiService.getUserRoutePassHistory = jest.fn().mockImplementation(async (_userId, filters: { offset?: number }) => {
+        const offset = filters?.offset ?? 0;
+        if (offset === 0) {
+          return {
+            success: true,
+            data: [
+              {
+                id: 'pass-1',
+                issued_at: new Date().toISOString(),
+                expires_at: new Date(Date.now() + 3600_000).toISOString(),
+                device_id: 'device-1',
+                audiences: ['lock:1'],
+                isExpired: false,
+              },
+            ],
+            pagination: { total: 60, limit: 50, offset: 0, hasMore: true },
+          };
+        }
+        return {
           success: true,
           data: [
             {
               id: 'pass-2',
-              issuedAt: new Date().toISOString(),
-              expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-              deviceId: 'device-2',
+              issued_at: new Date().toISOString(),
+              expires_at: new Date(Date.now() + 3600_000).toISOString(),
+              device_id: 'device-2',
               audiences: ['lock:2'],
               isExpired: false,
             },
           ],
           pagination: { total: 60, limit: 50, offset: 50, hasMore: false },
-        });
+        };
+      });
 
       renderUserDetailsPage();
       await waitFor(() => {

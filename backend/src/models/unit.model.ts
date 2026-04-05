@@ -1,3 +1,4 @@
+import type { Knex } from 'knex';
 import { DatabaseService } from '@/services/database.service';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
@@ -127,6 +128,40 @@ export interface UnitAssignment {
 }
 
 /**
+ * Effective occupancy status for API responses: any tenant assignment implies occupied;
+ * stale `units.status = 'occupied'` with zero assignments is treated as available.
+ */
+export function deriveEffectiveUnitStatus(
+  storedStatus: Unit['status'],
+  assignmentCount: number
+): Unit['status'] {
+  if (assignmentCount > 0) {
+    return 'occupied';
+  }
+  if (storedStatus === 'occupied') {
+    return 'available';
+  }
+  return storedStatus;
+}
+
+/** List/detail label when the unit has tenants but no primary assignment row. */
+export const SHARED_ACCESS_TENANT_LABEL = 'Shared access';
+
+/**
+ * Stored `units.status` cannot be "vacant" while assignments exist (DB + API stay aligned).
+ */
+export function assertStoredStatusAllowedWithAssignments(
+  newStatus: Unit['status'],
+  assignmentCount: number
+): void {
+  if (assignmentCount > 0 && (newStatus === 'available' || newStatus === 'reserved')) {
+    throw new Error(
+      'Cannot set unit to available or reserved while tenants are assigned. Remove assignments first.'
+    );
+  }
+}
+
+/**
  * Unit Model Class
  *
  * Handles all database operations for rental units within facilities. Units are the
@@ -151,6 +186,23 @@ export class UnitModel {
 
   constructor() {
     this.db = DatabaseService.getInstance();
+  }
+
+  /**
+   * Persist `units.status` from `unit_assignments` so the column stays aligned with reality.
+   */
+  async syncUnitOccupancyStatusFromAssignments(unitId: string, trx?: Knex.Transaction): Promise<void> {
+    const knex = trx ?? this.db.connection;
+    const row = await knex('unit_assignments').where({ unit_id: unitId }).count('* as c').first();
+    const count = Number((row as { c?: string | number })?.c ?? 0);
+    const unit = (await knex('units').where('id', unitId).first()) as Unit | undefined;
+    if (!unit) {
+      return;
+    }
+    const next = deriveEffectiveUnitStatus(unit.status, count);
+    if (next !== unit.status) {
+      await knex('units').where('id', unitId).update({ status: next, updated_at: knex.fn.now() });
+    }
   }
 
   /**
@@ -210,9 +262,10 @@ export class UnitModel {
           'u.id', 'pa.unit_id'
         )
         .where('pa.rn', 1)
-        .where('bd.lock_status', 'unlocked')
-        .where('u.status', 'occupied');
+        .where('bd.lock_status', 'unlocked');
 
+      // Occupancy is defined by assignments (primary join above), not only `units.status`,
+      // so we do not filter on u.status here—stale status must not hide unlocked leased units.
 
       // Apply role-based filtering
       if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
@@ -384,6 +437,9 @@ export class UnitModel {
       let query = knex
         .select([
           'u.*',
+          knex.raw(
+            '(SELECT COUNT(*) FROM unit_assignments WHERE unit_assignments.unit_id = u.id) as assignment_count'
+          ),
           'f.name as facility_name',
           'f.address as facility_address',
           'bd.id as device_id',
@@ -397,6 +453,7 @@ export class UnitModel {
           'bd.temperature',
           'bd.error_code',
           'bd.error_message',
+          'bd.supports_remote_lock',
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
@@ -459,7 +516,22 @@ export class UnitModel {
     }
     
     if (filters.status) {
-        query = query.where('u.status', filters.status);
+        const st = filters.status as string;
+        if (st === 'occupied') {
+          query = query.whereExists(
+            knex.select(knex.raw('1')).from('unit_assignments as ua_stat').whereRaw('ua_stat.unit_id = u.id')
+          );
+        } else if (st === 'available') {
+          query = query
+            .whereNotExists(
+              knex.select(knex.raw('1')).from('unit_assignments as ua_stat').whereRaw('ua_stat.unit_id = u.id')
+            )
+            .where(function () {
+              this.where('u.status', 'available').orWhere('u.status', 'occupied');
+            });
+        } else {
+          query = query.where('u.status', st);
+        }
     }
     
     if (filters.unit_type) {
@@ -496,10 +568,24 @@ export class UnitModel {
 
       // We'll calculate the total after deduplication
 
-    // Apply sorting
+    // Apply sorting (effective status matches deriveEffectiveUnitStatus / API payload)
     const sortBy = filters.sortBy || 'unit_number';
     const sortOrder = filters.sortOrder || 'asc';
+    if (sortBy === 'status') {
+      const dir = sortOrder === 'desc' ? 'DESC' : 'ASC';
+      query = query.orderByRaw(
+        `FIELD(
+          CASE
+            WHEN (SELECT COUNT(*) FROM unit_assignments ua_sort WHERE ua_sort.unit_id = u.id) > 0 THEN 'occupied'
+            WHEN u.status = 'occupied' THEN 'available'
+            ELSE u.status
+          END,
+          'available', 'reserved', 'maintenance', 'occupied'
+        ) ${dir}`
+      );
+    } else {
       query = query.orderBy(sortBy, sortOrder);
+    }
 
     // Get all results first (without pagination)
     const allResults = await query;
@@ -526,7 +612,7 @@ export class UnitModel {
         id: row.id,
         unit_number: row.unit_number,
         unit_type: row.unit_type,
-        status: row.status,
+        status: deriveEffectiveUnitStatus(row.status, Number(row.assignment_count ?? 0)),
         facility_id: row.facility_id,
         facility_name: row.facility_name,
         facility_address: row.facility_address,
@@ -538,12 +624,17 @@ export class UnitModel {
         battery_level: row.battery_level,
         last_activity: row.last_activity,
         unlocked_since: row.last_activity || new Date().toISOString(), // Use last_activity as unlocked_since, fallback to now
-        tenant_name: row.primary_tenant_id ? `${row.tenant_first_name || ''} ${row.tenant_last_name || ''}`.trim() : null,
+        tenant_name: row.primary_tenant_id
+          ? `${row.tenant_first_name || ''} ${row.tenant_last_name || ''}`.trim()
+          : Number(row.assignment_count ?? 0) > 0
+            ? SHARED_ACCESS_TENANT_LABEL
+            : null,
         tenant_email: row.tenant_email,
         blulok_device: row.device_id ? {
           id: row.device_id,
           device_serial: row.device_serial,
           lock_status: row.lock_status,
+          supports_remote_lock: Boolean(row.supports_remote_lock),
           device_status: row.device_status,
           battery_level: row.battery_level,
           last_activity: row.last_activity,
@@ -572,6 +663,20 @@ export class UnitModel {
     const knex = this.db.connection;
     
     try {
+      const device = await knex('blulok_devices')
+        .where('unit_id', unitId)
+        .select('id', 'supports_remote_lock')
+        .first();
+
+      if (!device) {
+        return false;
+      }
+
+      if (!Boolean(device.supports_remote_lock)) {
+        logger.warn('lockUnit rejected: supports_remote_lock is false', { unitId, deviceId: device.id });
+        return false;
+      }
+
       const result = await knex('blulok_devices')
         .where('unit_id', unitId)
         .update({
@@ -785,23 +890,32 @@ export class UnitModel {
         };
       }
 
-      // Get unit status counts
+      const assignmentAgg = knex('unit_assignments').select('unit_id').count('* as cnt').groupBy('unit_id').as('ua_cnt');
+
       const statusCounts = await baseQuery
         .clone()
+        .leftJoin(assignmentAgg, 'u.id', 'ua_cnt.unit_id')
         .select(
           knex.raw('COUNT(*) as total'),
-          knex.raw('SUM(CASE WHEN u.status = "occupied" THEN 1 ELSE 0 END) as occupied'),
-          knex.raw('SUM(CASE WHEN u.status = "available" THEN 1 ELSE 0 END) as available'),
-          knex.raw('SUM(CASE WHEN u.status = "maintenance" THEN 1 ELSE 0 END) as maintenance'),
-          knex.raw('SUM(CASE WHEN u.status = "reserved" THEN 1 ELSE 0 END) as reserved')
+          knex.raw('SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) > 0 THEN 1 ELSE 0 END) as occupied'),
+          knex.raw(
+            "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status IN ('available', 'occupied') THEN 1 ELSE 0 END) as available"
+          ),
+          knex.raw(
+            "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status = 'maintenance' THEN 1 ELSE 0 END) as maintenance"
+          ),
+          knex.raw(
+            "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status = 'reserved' THEN 1 ELSE 0 END) as reserved"
+          )
         )
         .first();
 
-      // Get lock status counts for occupied units
       const lockCounts = await baseQuery
         .clone()
         .join('blulok_devices as bd', 'u.id', 'bd.unit_id')
-        .where('u.status', 'occupied')
+        .whereExists(
+          knex.select(knex.raw('1')).from('unit_assignments as ua_lk').whereRaw('ua_lk.unit_id = u.id')
+        )
         .select(
           knex.raw('SUM(CASE WHEN bd.lock_status = "unlocked" THEN 1 ELSE 0 END) as unlocked'),
           knex.raw('SUM(CASE WHEN bd.lock_status = "locked" THEN 1 ELSE 0 END) as locked')
@@ -853,6 +967,9 @@ export class UnitModel {
       let query = knex
         .select([
           'u.*',
+          knex.raw(
+            '(SELECT COUNT(*) FROM unit_assignments WHERE unit_assignments.unit_id = u.id) as assignment_count'
+          ),
           'f.name as facility_name',
           'f.address as facility_address',
           'bd.id as device_id',
@@ -866,6 +983,7 @@ export class UnitModel {
           'bd.temperature',
           'bd.error_code',
           'bd.error_message',
+          'bd.supports_remote_lock',
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
@@ -955,7 +1073,7 @@ export class UnitModel {
         id: result.id,
         unit_number: result.unit_number,
         unit_type: result.unit_type,
-        status: result.status,
+        status: deriveEffectiveUnitStatus(result.status, Number(result.assignment_count ?? 0)),
         facility_id: result.facility_id,
         facility_name: result.facility_name,
         facility_address: result.facility_address,
@@ -966,12 +1084,17 @@ export class UnitModel {
         device_status: result.device_status,
         battery_level: result.battery_level,
         last_activity: result.last_activity,
-        tenant_name: result.primary_tenant_id ? `${result.tenant_first_name || ''} ${result.tenant_last_name || ''}`.trim() : null,
-        tenant_email: result.tenant_email,
+        tenant_name: result.primary_tenant_id
+          ? `${result.tenant_first_name || ''} ${result.tenant_last_name || ''}`.trim()
+          : Number(result.assignment_count ?? 0) > 0
+            ? SHARED_ACCESS_TENANT_LABEL
+            : null,
+        tenant_email: result.primary_tenant_id ? result.tenant_email : null,
         blulok_device: result.device_id ? {
           id: result.device_id,
           device_serial: result.device_serial,
           lock_status: result.lock_status,
+          supports_remote_lock: Boolean(result.supports_remote_lock),
           device_status: result.device_status,
           battery_level: result.battery_level,
           last_activity: result.last_activity,
@@ -1048,6 +1171,13 @@ export class UnitModel {
         }
       }
 
+      const assignmentCountRow = await knex('unit_assignments').where({ unit_id: unitId }).count('* as c').first();
+      const assignmentCount = Number((assignmentCountRow as { c?: string | number })?.c ?? 0);
+
+      if (updateData.status !== undefined) {
+        assertStoredStatusAllowedWithAssignments(updateData.status, assignmentCount);
+      }
+
       // Prepare update data
       const updateFields: any = {
         updated_at: knex.fn.now()
@@ -1078,11 +1208,16 @@ export class UnitModel {
         .where('id', unitId)
         .update(updateFields);
 
-      // Get the updated unit
-      const updatedUnit = await knex('units').where('id', unitId).first();
-      
+      const updatedUnit = (await knex('units').where('id', unitId).first()) as Unit | undefined;
+      if (!updatedUnit) {
+        throw new Error('Unit not found');
+      }
+
       logger.info(`Unit updated: ${unitId} by user ${userId}`);
-      return updatedUnit;
+      return {
+        ...updatedUnit,
+        status: deriveEffectiveUnitStatus(updatedUnit.status, assignmentCount),
+      } as Unit;
     } catch (error) {
       logger.error('Error updating unit:', error);
       throw error;

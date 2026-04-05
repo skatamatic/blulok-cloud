@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
 import {
   ArrowLeftIcon,
   LockClosedIcon,
@@ -17,16 +16,23 @@ import {
   SignalIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
-import { EffectiveAccessCode } from '@/types/facility.types';
+import { UserRole } from '@/types/auth.types';
+import { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
 import { useBackNavigation } from '@/hooks/useBackNavigation';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 
 interface DeviceDetails {
   id: string;
   name?: string;
   device_serial: string;
+  /** Access-control only: enabled credential channels (app / keypad / fob). */
+  access_methods?: AccessMethod[];
+  /** When true, cloud may issue remote lock; default false — unlock-only from cloud. */
+  supports_remote_lock?: boolean;
   /** Gateway-provided serial number (optional, separate from device_serial) */
   serial?: string;
   unit_id?: string;
@@ -103,7 +109,6 @@ export default function DeviceDetailsPage() {
   const navigate = useNavigate();
   const { addToast } = useToast();
   const { authState } = useAuth();
-  const ws = useWebSocket();
   const handleBack = useBackNavigation('/devices');
   const [device, setDevice] = useState<DeviceDetails | null>(null);
   const [denylistEntries, setDenylistEntries] = useState<DenylistEntry[]>([]);
@@ -114,6 +119,9 @@ export default function DeviceDetailsPage() {
   const [deviceCategory, setDeviceCategory] = useState<DeviceCategory | null>(null);
   const [effectiveAccessCode, setEffectiveAccessCode] = useState<EffectiveAccessCode | null>(null);
   const [deviceGroupNames, setDeviceGroupNames] = useState<string[]>([]);
+  const [accessMethodsDraft, setAccessMethodsDraft] = useState<AccessMethod[]>(['app']);
+  const [editingAccessMethods, setEditingAccessMethods] = useState(false);
+  const [savingAccessMethods, setSavingAccessMethods] = useState(false);
 
   const deviceLockStatusRef = useRef<DeviceDetails['lock_status'] | undefined>(undefined);
   const pendingRemoteUnlockRef = useRef(false);
@@ -195,56 +203,41 @@ export default function DeviceDetailsPage() {
     loadEffectiveCode().catch(() => undefined);
   }, [device?.facility_id, device?.id, deviceCategory]);
 
-  // Subscribe to device status updates for live telemetry
-  const handleDeviceStatusUpdate = useCallback((data: any) => {
-    if (!data?.devices || !deviceId) return;
-    
-    // Find the update for this specific device
-    const deviceUpdate = data.devices.find((d: any) => d.id === deviceId);
-    if (deviceUpdate) {
-      setDevice(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          lock_status: deviceUpdate.lock_status ?? prev.lock_status,
-          device_status: deviceUpdate.device_status ?? prev.device_status,
-          battery_level: deviceUpdate.battery_level ?? prev.battery_level,
-          signal_strength: deviceUpdate.signal_strength ?? prev.signal_strength,
-          temperature: deviceUpdate.temperature !== undefined && deviceUpdate.temperature !== null 
+  const mergeDeviceFromSnapshots = useCallback((rows: LockDeviceSnapshot[]) => {
+    if (!deviceId || rows.length === 0) return;
+    const deviceUpdate = rows.find((r) => r.device_id === deviceId) ?? rows[0];
+    setDevice((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        lock_status: (deviceUpdate.lock_status ?? prev.lock_status) as DeviceDetails['lock_status'],
+        device_status: (deviceUpdate.device_status ?? prev.device_status) as DeviceDetails['device_status'],
+        battery_level: deviceUpdate.battery_level ?? prev.battery_level,
+        signal_strength: deviceUpdate.signal_strength ?? prev.signal_strength,
+        temperature:
+          deviceUpdate.temperature !== undefined && deviceUpdate.temperature !== null
             ? (() => {
-                const temp = typeof deviceUpdate.temperature === 'number' 
-                  ? deviceUpdate.temperature 
-                  : Number(deviceUpdate.temperature);
-                return isNaN(temp) ? prev.temperature : temp;
+                const temp =
+                  typeof deviceUpdate.temperature === 'number'
+                    ? deviceUpdate.temperature
+                    : Number(deviceUpdate.temperature);
+                return Number.isNaN(temp) ? prev.temperature : temp;
               })()
             : prev.temperature,
-          error_code: deviceUpdate.error_code ?? prev.error_code,
-          error_message: deviceUpdate.error_message ?? prev.error_message,
-          firmware_version: deviceUpdate.firmware_version ?? prev.firmware_version,
-          last_activity: deviceUpdate.last_activity ?? prev.last_activity,
-          last_seen: deviceUpdate.last_seen ?? prev.last_seen,
-        };
-      });
-    }
+        error_code: deviceUpdate.error_code ?? prev.error_code,
+        error_message: deviceUpdate.error_message ?? prev.error_message,
+        firmware_version: deviceUpdate.firmware_version ?? prev.firmware_version,
+        last_activity: deviceUpdate.last_activity ?? prev.last_activity,
+        last_seen: deviceUpdate.last_seen ?? prev.last_seen,
+      };
+    });
   }, [deviceId]);
 
-  useEffect(() => {
-    if (!ws || !deviceId) return;
-
-    // Subscribe to device status updates filtered to this specific device
-    const subscriptionId = ws.subscribe(
-      'device_status',
-      handleDeviceStatusUpdate,
-      (err) => console.error('Device status subscription error:', err),
-      { device_id: deviceId }
-    );
-
-    return () => {
-      if (subscriptionId) {
-        ws.unsubscribe(subscriptionId);
-      }
-    };
-  }, [ws, deviceId, handleDeviceStatusUpdate]);
+  useLockDeviceRealtime({
+    deviceId: deviceId ?? undefined,
+    onDeviceRows: mergeDeviceFromSnapshots,
+    subscribeUnitsForRefresh: false,
+  });
 
   const loadDeviceDetails = async () => {
     if (!deviceId) return;
@@ -263,6 +256,7 @@ export default function DeviceDetailsPage() {
         // Normalize temperature to ensure it's a number
         const normalizedDevice = {
           ...response.device,
+          supports_remote_lock: Boolean((response.device as { supports_remote_lock?: boolean }).supports_remote_lock),
           temperature: response.device.temperature !== undefined && response.device.temperature !== null
             ? (() => {
                 const temp = typeof response.device.temperature === 'number'
@@ -285,16 +279,20 @@ export default function DeviceDetailsPage() {
           return;
         }
 
+        const ac = response.device;
+        const methods = (ac.access_methods && ac.access_methods.length > 0 ? ac.access_methods : ['app']) as AccessMethod[];
         const mappedAccessControl: DeviceDetails = {
-          id: response.device.id,
-          name: response.device.name,
-          device_serial: response.device.name || response.device.id,
-          facility_id: response.device.facility_id,
-          facility_name: response.device.facility_name || String(response.device.facility_id),
-          lock_status: response.device.is_locked ? 'locked' : 'unlocked',
-          device_status: response.device.status || 'offline',
-          last_activity: response.device.last_activity,
-          firmware_version: response.device.firmware_version,
+          id: ac.id,
+          name: ac.name,
+          device_serial: ac.name || ac.id,
+          access_methods: methods,
+          supports_remote_lock: Boolean(ac.supports_remote_lock),
+          facility_id: ac.facility_id,
+          facility_name: ac.facility_name || String(ac.facility_id),
+          lock_status: ac.is_locked ? 'locked' : 'unlocked',
+          device_status: ac.status || 'offline',
+          last_activity: ac.last_activity,
+          firmware_version: ac.firmware_version,
           unit_id: undefined,
           unit_number: undefined,
           battery_level: undefined,
@@ -307,6 +305,8 @@ export default function DeviceDetailsPage() {
         };
         setDeviceCategory('access_control');
         setDenylistEntries([]);
+        setAccessMethodsDraft(methods);
+        setEditingAccessMethods(false);
         setDevice(mappedAccessControl);
       }
     } catch (error: any) {
@@ -382,6 +382,32 @@ export default function DeviceDetailsPage() {
   };
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const isDevAdmin = authState.user?.role === UserRole.DEV_ADMIN;
+
+  const saveAccessMethods = async () => {
+    if (!device || deviceCategory !== 'access_control') return;
+    const effective =
+      accessMethodsDraft.length > 0 ? accessMethodsDraft : (['app'] as AccessMethod[]);
+    try {
+      setSavingAccessMethods(true);
+      await apiService.updateAccessControlDevice(device.id, { access_methods: effective });
+      setDevice((prev) => (prev ? { ...prev, access_methods: effective } : prev));
+      setEditingAccessMethods(false);
+      addToast({ type: 'success', title: 'Access methods updated' });
+    } catch (e) {
+      console.error(e);
+      addToast({ type: 'error', title: 'Failed to update access methods' });
+    } finally {
+      setSavingAccessMethods(false);
+    }
+  };
+
+  const toggleAccessMethod = (method: AccessMethod) => {
+    setAccessMethodsDraft((prev) => {
+      const next = prev.includes(method) ? prev.filter((m) => m !== method) : [...prev, method];
+      return (next.length > 0 ? next : (['app'] as AccessMethod[])) as AccessMethod[];
+    });
+  };
 
   if (loading) {
     return (
@@ -439,10 +465,12 @@ export default function DeviceDetailsPage() {
               <button
                 disabled={
                   !canRequestRemoteUnlock(device.lock_status) ||
-                  isLockTransitionPending(device.lock_status)
+                  isLockTransitionPending(device.lock_status) ||
+                  (deviceCategory === 'access_control' && device.device_status !== 'online')
                 }
                 onClick={async () => {
                   if (!canRequestRemoteUnlock(device.lock_status)) return;
+                  if (deviceCategory === 'access_control' && device.device_status !== 'online') return;
                   try {
                     pendingRemoteUnlockRef.current = true;
                     scheduleUnlockWatch(() => deviceLockStatusRef.current, () => {
@@ -598,6 +626,81 @@ export default function DeviceDetailsPage() {
                   <p className="text-xs text-gray-500 dark:text-gray-400">No effective code assigned to this device.</p>
                 )}
               </div>
+            )}
+            {deviceCategory === 'access_control' && canManage && (
+              <div className="rounded-lg border border-gray-200 dark:border-gray-600 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">Access methods</p>
+                  {!editingAccessMethods ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditingAccessMethods(true)}
+                      className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                    >
+                      Edit
+                    </button>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={savingAccessMethods}
+                        onClick={() => void saveAccessMethods()}
+                        className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                      >
+                        {savingAccessMethods ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const m =
+                            device.access_methods && device.access_methods.length > 0
+                              ? device.access_methods
+                              : (['app'] as AccessMethod[]);
+                          setAccessMethodsDraft(m);
+                          setEditingAccessMethods(false);
+                        }}
+                        className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {!editingAccessMethods ? (
+                  <div className="flex flex-wrap gap-2">
+                    {(accessMethodsDraft.length > 0 ? accessMethodsDraft : ['app']).map((method) => (
+                      <span
+                        key={method}
+                        className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-1 text-xs font-medium text-primary-700 dark:text-primary-300 capitalize"
+                      >
+                        {method}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-3">
+                    {(['app', 'keypad', 'fob'] as const).map((method) => (
+                      <label
+                        key={method}
+                        className="inline-flex items-center gap-2 rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm text-gray-700 dark:text-gray-300"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={(accessMethodsDraft.length > 0 ? accessMethodsDraft : ['app']).includes(method)}
+                          onChange={() => toggleAccessMethod(method)}
+                        />
+                        <span className="capitalize">{method}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {(deviceCategory === 'access_control' || deviceCategory === 'blulok') &&
+              device.supports_remote_lock !== true && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Remote control from the cloud is unlock-only for this hardware. Re-lock on site.
+              </p>
             )}
             {/* Device Status */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -799,6 +902,99 @@ export default function DeviceDetailsPage() {
                 </p>
               </div>
             </div>
+
+            {isDevAdmin && device && (
+              <div className="mb-8 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/60 dark:bg-amber-950/25 p-5">
+                <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
+                  Gateway denylist commands (Dev Admin)
+                </h4>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
+                  Same flow as Facility Gateway → Dev Tools: sends signed DENYLIST_ADD / DENYLIST_REMOVE to this
+                  facility&apos;s connected gateway. Device IDs default to this lock; you can add more
+                  comma-separated IDs. Requires an active gateway WebSocket session for delivery.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const userId = window.prompt('Enter user ID to add to denylist:');
+                      if (!userId) return;
+                      const rawIds = window.prompt(
+                        'Enter device IDs (comma-separated):',
+                        device.id,
+                      );
+                      if (!rawIds) return;
+                      const targetDeviceIds = rawIds
+                        .split(',')
+                        .map((id) => id.trim())
+                        .filter(Boolean);
+                      if (targetDeviceIds.length === 0) return;
+                      try {
+                        const res = await apiService.sendGatewayCommand({
+                          facilityId: device.facility_id,
+                          command: 'DENYLIST_ADD',
+                          targetDeviceIds,
+                          userId,
+                        });
+                        addToast({ type: 'success', title: `DENYLIST_ADD sent: ${res.success}` });
+                        await loadDenylist();
+                      } catch (err: unknown) {
+                        const message =
+                          err && typeof err === 'object' && 'response' in err
+                            ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+                            : undefined;
+                        addToast({
+                          type: 'error',
+                          title: message || 'Failed to send DENYLIST_ADD',
+                        });
+                      }
+                    }}
+                    className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+                  >
+                    DENYLIST_ADD
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const userId = window.prompt('Enter user ID to remove from denylist:');
+                      if (!userId) return;
+                      const rawIds = window.prompt(
+                        'Enter device IDs (comma-separated):',
+                        device.id,
+                      );
+                      if (!rawIds) return;
+                      const targetDeviceIds = rawIds
+                        .split(',')
+                        .map((id) => id.trim())
+                        .filter(Boolean);
+                      if (targetDeviceIds.length === 0) return;
+                      try {
+                        const res = await apiService.sendGatewayCommand({
+                          facilityId: device.facility_id,
+                          command: 'DENYLIST_REMOVE',
+                          targetDeviceIds,
+                          userId,
+                        });
+                        addToast({ type: 'success', title: `DENYLIST_REMOVE sent: ${res.success}` });
+                        await loadDenylist();
+                      } catch (err: unknown) {
+                        const message =
+                          err && typeof err === 'object' && 'response' in err
+                            ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+                            : undefined;
+                        addToast({
+                          type: 'error',
+                          title: message || 'Failed to send DENYLIST_REMOVE',
+                        });
+                      }
+                    }}
+                    className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                  >
+                    DENYLIST_REMOVE
+                  </button>
+                </div>
+              </div>
+            )}
 
             {loadingDenylist ? (
               <div className="flex justify-center py-12">

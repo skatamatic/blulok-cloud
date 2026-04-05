@@ -1538,6 +1538,11 @@ jest.mock('../models/user-facility-association.model', () => ({
 }));
 
 jest.mock('../models/unit.model', () => {
+  const {
+    deriveEffectiveUnitStatus: actualDeriveEffectiveUnitStatus,
+    assertStoredStatusAllowedWithAssignments: actualAssertStoredStatusAllowedWithAssignments,
+  } = jest.requireActual('../models/unit.model') as typeof import('../models/unit.model');
+
   const mockUnits = [
     {
       id: '550e8400-e29b-41d4-a716-446655440011',
@@ -1608,6 +1613,8 @@ jest.mock('../models/unit.model', () => {
   ];
 
   return {
+    deriveEffectiveUnitStatus: actualDeriveEffectiveUnitStatus,
+    assertStoredStatusAllowedWithAssignments: actualAssertStoredStatusAllowedWithAssignments,
     UnitModel: jest.fn().mockImplementation(() => ({
       getUnitsListForUser: jest.fn().mockImplementation(async (userId: string, userRole: string, filters: any) => {
         // Security check: throw on null/undefined userId
@@ -1738,7 +1745,9 @@ jest.mock('../models/unit.model', () => {
         const actualId = idMap[unitId] || unitId;
         return mockUnits.find(u => u.id === actualId) || null;
       }),
-      
+
+      syncUnitOccupancyStatusFromAssignments: jest.fn().mockResolvedValue(undefined),
+
       findByPrimaryTenant: jest.fn().mockImplementation(async (tenantId: string) => {
         const assignments = mockUnitAssignments.filter(a => a.tenant_id === tenantId);
         const unitIds = assignments.map(a => a.unit_id);

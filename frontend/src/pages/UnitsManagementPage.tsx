@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
@@ -21,6 +21,7 @@ import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { UserFilter } from '@/components/Common/UserFilter';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -71,6 +72,7 @@ export default function UnitsManagementPage() {
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
+  const loadUnitsRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     loadUnits();
@@ -138,6 +140,20 @@ export default function UnitsManagementPage() {
     }
   };
 
+  loadUnitsRef.current = loadUnits;
+
+  useLockDeviceRealtime({
+    enabled: isTenant || !!selectedFacilityId,
+    facilityId:
+      !isTenant && selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+        ? selectedFacilityId
+        : undefined,
+    debouncedRefresh: () => {
+      void loadUnitsRef.current();
+    },
+    debounceMs: 500,
+  });
+
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
     setCurrentPage(1);
@@ -179,15 +195,14 @@ export default function UnitsManagementPage() {
 
 
 
-  const handleLockToggle = async (unit: Unit) => {
+  const handleRemoteUnlock = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;
-    
+    if (unit.blulok_device.lock_status !== 'locked') return;
     try {
-      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
-      await loadUnits(); // Refresh data
+      await apiService.updateLockStatus(unit.blulok_device.id, 'unlocked');
+      await loadUnits();
     } catch (error) {
-      console.error('Failed to toggle lock:', error);
+      console.error('Failed to unlock:', error);
     }
   };
 
@@ -625,20 +640,24 @@ export default function UnitsManagementPage() {
                       )}
                       {canManage && unit.blulok_device && (
                         <button
+                          type="button"
+                          title={
+                            unit.blulok_device.lock_status === 'locked'
+                              ? 'Unlock remotely'
+                              : 'Unlocked — re-lock manually on site'
+                          }
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleLockToggle(unit);
+                            void handleRemoteUnlock(unit);
                           }}
-                          className={`p-1 rounded transition-colors ${
+                          disabled={unit.blulok_device.lock_status !== 'locked'}
+                          className={`p-1 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                             unit.blulok_device.lock_status === 'locked'
                               ? 'text-green-600 hover:text-green-700'
-                              : 'text-red-600 hover:text-red-700'
+                              : 'text-gray-400 dark:text-gray-500'
                           }`}
                         >
-                          {unit.blulok_device.lock_status === 'locked' ? 
-                            <LockOpenIcon className="h-4 w-4" /> : 
-                            <LockClosedIcon className="h-4 w-4" />
-                          }
+                          <LockOpenIcon className="h-4 w-4" />
                         </button>
                       )}
                     </div>

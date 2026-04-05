@@ -2,8 +2,23 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+const DEFAULT_BACKEND_ORIGIN = 'http://localhost:3000';
+
+function backendOriginForProxy(envFromFile: Record<string, string>): string {
+  const raw = (process.env.VITE_API_URL || envFromFile.VITE_API_URL || '').trim();
+  if (raw) {
+    try {
+      return new URL(raw).origin;
+    } catch {
+      /* use default */
+    }
+  }
+  return DEFAULT_BACKEND_ORIGIN;
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const apiProxyTarget = backendOriginForProxy(env);
   return {
     plugins: [react()],
     resolve: {
@@ -16,7 +31,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       proxy: {
         '/api': {
-          target: 'http://localhost:3000',
+          target: apiProxyTarget,
           changeOrigin: true,
           secure: false,
         },

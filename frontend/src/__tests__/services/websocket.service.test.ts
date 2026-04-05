@@ -261,6 +261,61 @@ describe('WebSocketService', () => {
 
       expect(handler).toHaveBeenCalledWith({ critical: 2, low: 1, offline: 1 });
     });
+
+    it('should handle gateway_status_update messages', () => {
+      const handler = jest.fn();
+      websocketService.onMessage('gateway_status', handler);
+
+      const payload = {
+        gateways: [{ id: 'gw-1', facilityId: 'fac-1', name: 'Main', status: 'online', lastSeen: '2026-01-01T00:00:00.000Z' }],
+        updatedGatewayId: 'gw-1',
+        lastUpdated: '2026-01-01T00:00:01.000Z',
+      };
+
+      const messageData = JSON.stringify({
+        type: 'gateway_status_update',
+        subscriptionId: 'sub-1',
+        data: payload,
+      });
+
+      service.handleMessage({ data: messageData } as MessageEvent);
+
+      expect(handler).toHaveBeenCalledWith(payload);
+    });
+
+    it('should handle device_status_update messages', () => {
+      const handler = jest.fn();
+      websocketService.onMessage('device_status', handler);
+
+      const payload = {
+        devices: [{ id: 'dev-1', lock_status: 'unlocked', device_status: 'online' }],
+      };
+
+      const envelope = {
+        type: 'device_status_update',
+        subscriptionId: 'sub-1',
+        data: payload,
+      };
+
+      service.handleMessage({ data: JSON.stringify(envelope) } as MessageEvent);
+
+      expect(handler).toHaveBeenCalledWith(envelope);
+    });
+
+    it('should handle units_update messages', () => {
+      const handler = jest.fn();
+      websocketService.onMessage('units', handler);
+
+      const envelope = {
+        type: 'units_update',
+        subscriptionId: 'sub-1',
+        data: { reason: 'sync' },
+      };
+
+      service.handleMessage({ data: JSON.stringify(envelope) } as MessageEvent);
+
+      expect(handler).toHaveBeenCalledWith(envelope);
+    });
   });
 
   describe('Diagnostics', () => {

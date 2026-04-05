@@ -3,6 +3,7 @@ import { IGateway, IDeviceInfo, IDeviceStatus, ICommandResult, ProtocolVersion }
 import { GatewayModel, Gateway } from '../../models/gateway.model';
 import { GatewayFactory } from './gateways/gateway-factory';
 import { DatabaseService } from '@/services/database.service';
+import { logger } from '@/utils/logger';
 
 /**
  * Gateway Service
@@ -424,6 +425,87 @@ export class GatewayService extends EventEmitter {
   // simpleHash removed (no longer used)
 
   /**
+   * Value for the `device_id` claim in LOCK/UNLOCK command JWTs (matches route-pass audience
+   * convention: hardware serial, not internal UUID). HTTP/simulated gateway paths still use
+   * internal `lockId` for API compatibility.
+   */
+  public async resolveDeviceIdForLockCommandJwt(internalDeviceId: string): Promise<string> {
+    const blu = await this.db('blulok_devices')
+      .where('id', internalDeviceId)
+      .select('device_serial', 'serial')
+      .first();
+    if (blu) {
+      const fromSerial =
+        (blu.device_serial && String(blu.device_serial).trim()) ||
+        (blu.serial && String(blu.serial).trim());
+      if (fromSerial) {
+        return fromSerial;
+      }
+      logger.warn('BluLok device missing device_serial for command JWT; falling back to internal id', {
+        internalDeviceId,
+      });
+      return internalDeviceId;
+    }
+
+    const ac = await this.db('access_control_devices')
+      .where('id', internalDeviceId)
+      .select('metadata', 'device_settings')
+      .first();
+    if (ac) {
+      const meta = this.parseJsonObjectMaybe(ac.metadata);
+      const settings = this.parseJsonObjectMaybe(ac.device_settings);
+      const fromAc =
+        this.nonEmptyStringField(meta, 'device_serial') ||
+        this.nonEmptyStringField(meta, 'serial') ||
+        this.nonEmptyStringField(settings, 'device_serial') ||
+        this.nonEmptyStringField(settings, 'serial');
+      if (fromAc) {
+        return fromAc;
+      }
+      logger.warn(
+        'Access control device has no serial in metadata/device_settings for command JWT; falling back to internal id',
+        { internalDeviceId },
+      );
+      return internalDeviceId;
+    }
+
+    logger.warn('Lock command JWT: unknown internal device id; using value as-is', { internalDeviceId });
+    return internalDeviceId;
+  }
+
+  private parseJsonObjectMaybe(value: unknown): Record<string, unknown> | null {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
+  private nonEmptyStringField(obj: Record<string, unknown> | null, key: string): string | undefined {
+    if (!obj) {
+      return undefined;
+    }
+    const v = obj[key];
+    if (v == null || v === '') {
+      return undefined;
+    }
+    const s = String(v).trim();
+    return s || undefined;
+  }
+
+  /**
    * Send lock command (OPEN/CLOSE)
    *
    * When the facility has an active inbound `/ws/gateway` session, commands are delivered as
@@ -441,7 +523,8 @@ export class GatewayService extends EventEmitter {
       if (connected) {
         const { Ed25519Service } = await import('@/services/crypto/ed25519.service');
         const cmd_type = command === 'CLOSE' ? 'LOCK' : 'UNLOCK';
-        const jwt = await Ed25519Service.signCommandJwt({ cmd_type, device_id: lockId });
+        const jwtDeviceClaim = await this.resolveDeviceIdForLockCommandJwt(lockId);
+        const jwt = await Ed25519Service.signCommandJwt({ cmd_type, device_id: jwtDeviceClaim });
         GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
         return {
           success: true,

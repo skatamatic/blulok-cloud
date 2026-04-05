@@ -358,13 +358,17 @@ export class FacilityModel {
   }> {
     const knex = this.db.connection;
 
-    // Get unit occupancy statistics
-    const unitStats = await knex('units')
-      .where('facility_id', facilityId)
+    const assignmentAgg = knex('unit_assignments').select('unit_id').count('* as cnt').groupBy('unit_id').as('ua_cnt');
+
+    const unitStats = await knex('units as u')
+      .where('u.facility_id', facilityId)
+      .leftJoin(assignmentAgg, 'u.id', 'ua_cnt.unit_id')
       .select(
         knex.raw('COUNT(*) as total_units'),
-        knex.raw('SUM(CASE WHEN status = "occupied" THEN 1 ELSE 0 END) as occupied_units'),
-        knex.raw('SUM(CASE WHEN status = "available" THEN 1 ELSE 0 END) as available_units')
+        knex.raw('SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) > 0 THEN 1 ELSE 0 END) as occupied_units'),
+        knex.raw(
+          "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status IN ('available', 'occupied') THEN 1 ELSE 0 END) as available_units"
+        )
       )
       .first();
 

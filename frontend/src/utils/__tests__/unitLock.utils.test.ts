@@ -1,4 +1,4 @@
-import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { canRequestRemoteUnlock, canRequestRemoteLock, isLockTransitionPending } from '@/utils/unitLock.utils';
 
 describe('canRequestRemoteUnlock', () => {
   it('allows only locked', () => {
@@ -9,6 +9,15 @@ describe('canRequestRemoteUnlock', () => {
     expect(canRequestRemoteUnlock('error')).toBe(false);
     expect(canRequestRemoteUnlock('unknown')).toBe(false);
     expect(canRequestRemoteUnlock(undefined)).toBe(false);
+  });
+});
+
+describe('canRequestRemoteLock', () => {
+  it('allows only when flag is true and status is unlocked', () => {
+    expect(canRequestRemoteLock('unlocked', true)).toBe(true);
+    expect(canRequestRemoteLock('unlocked', false)).toBe(false);
+    expect(canRequestRemoteLock('unlocked', undefined)).toBe(false);
+    expect(canRequestRemoteLock('locked', true)).toBe(false);
   });
 });
 

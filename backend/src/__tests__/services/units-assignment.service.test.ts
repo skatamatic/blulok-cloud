@@ -24,6 +24,7 @@ describe('UnitsService - Tenant Assignment', () => {
     mockUnitModel = (unitsService as any).unitModel;
     mockAssignmentModel = (unitsService as any).unitAssignmentModel;
     mockEventService = (unitsService as any).eventService;
+    mockUnitModel.syncUnitOccupancyStatusFromAssignments = jest.fn().mockResolvedValue(undefined);
   });
 
   describe('assignTenant', () => {

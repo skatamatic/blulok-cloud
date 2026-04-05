@@ -109,7 +109,10 @@ export class GatewayModel {
 
   async findByFacilityId(facilityId: string): Promise<Gateway | null> {
     const knex = this.db.connection;
-    const gateway = await knex('gateways').where('facility_id', facilityId).first();
+    const gateway = await knex('gateways')
+      .where('facility_id', facilityId)
+      .orderBy('updated_at', 'desc')
+      .first();
     return gateway || null;
   }
 
@@ -207,10 +210,19 @@ export class GatewayModel {
 
   async updateStatus(id: string, status: Gateway['status']): Promise<void> {
     const knex = this.db.connection;
+    const updated_at = new Date();
+    if (status === 'online') {
+      await knex('gateways').where('id', id).update({
+        status,
+        last_seen: updated_at,
+        updated_at,
+      });
+      return;
+    }
+    // Offline / error / maintenance: preserve last_seen (last known good contact).
     await knex('gateways').where('id', id).update({
       status,
-      last_seen: status === 'online' ? new Date() : undefined,
-      updated_at: new Date()
+      updated_at,
     });
   }
 

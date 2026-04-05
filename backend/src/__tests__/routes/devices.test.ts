@@ -824,6 +824,26 @@ describe('Devices Routes', () => {
         expect(response.body).toHaveProperty('devices');
       });
 
+      it('should pass all assigned facility IDs when FACILITY_ADMIN omits facility_id (dashboard all-facilities scope)', async () => {
+        mockDeviceModel.findAccessControlDevices.mockClear();
+        mockDeviceModel.findBluLokDevices.mockClear();
+        mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+        mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+        mockDeviceModel.countAccessControlDevices.mockResolvedValue(0);
+        mockDeviceModel.countBluLokDevices.mockResolvedValue(0);
+
+        await request(app)
+          .get('/api/v1/devices?device_type=access_control')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(200);
+
+        expect(mockDeviceModel.findAccessControlDevices).toHaveBeenCalledWith(
+          expect.objectContaining({
+            facility_ids: testData.users.facilityAdmin.facilityIds,
+          })
+        );
+      });
+
       it('should prevent FACILITY_ADMIN from listing devices in other facilities', async () => {
         const response = await request(app)
           .get('/api/v1/devices?facility_id=facility-2')

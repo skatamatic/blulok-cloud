@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
 import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 
 const statusColors = {
   available: 'bg-green-500 border-green-600',
@@ -50,15 +51,14 @@ export default function SimpleSiteMapPage() {
     }
   };
 
-  const handleLockToggle = async (unit: Unit) => {
+  const handleRemoteUnlock = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;
-    
+    if (!canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
     try {
-      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
-      await loadUnits(); // Refresh data
+      await apiService.updateLockStatus(unit.blulok_device.id, 'unlocked');
+      await loadUnits();
     } catch (error) {
-      console.error('Failed to toggle lock:', error);
+      console.error('Failed to unlock:', error);
     }
   };
 
@@ -257,18 +257,28 @@ export default function SimpleSiteMapPage() {
                   
                   {selectedUnit.blulok_device && (
                     <button
-                      onClick={() => handleLockToggle(selectedUnit)}
-                      className={`w-full flex items-center justify-center space-x-2 py-2 px-4 text-sm font-medium rounded-lg transition-colors ${
-                        selectedUnit.blulok_device.lock_status === 'locked'
-                          ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                          : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
+                      type="button"
+                      onClick={() => void handleRemoteUnlock(selectedUnit)}
+                      disabled={
+                        isLockTransitionPending(selectedUnit.blulok_device.lock_status) ||
+                        !canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                      }
+                      className={`w-full flex items-center justify-center space-x-2 py-2 px-4 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                        isLockTransitionPending(selectedUnit.blulok_device.lock_status)
+                          ? 'bg-blue-600 text-white animate-pulse'
+                          : canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                            : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
                       }`}
                     >
-                      {selectedUnit.blulok_device.lock_status === 'locked' ? 
-                        <LockOpenIcon className="h-4 w-4" /> : 
-                        <LockClosedIcon className="h-4 w-4" />
-                      }
-                      <span>{selectedUnit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}</span>
+                      <LockOpenIcon className="h-4 w-4" />
+                      <span>
+                        {isLockTransitionPending(selectedUnit.blulok_device.lock_status)
+                          ? 'Unlocking…'
+                          : canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                            ? 'Unlock'
+                            : 'Unlocked'}
+                      </span>
                     </button>
                   )}
                 </div>

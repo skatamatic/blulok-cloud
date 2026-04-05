@@ -112,8 +112,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
   const [lastPingTs, setLastPingTs] = useState<number | null>(null);
   const [lastPongTs, setLastPongTs] = useState<number | null>(null);
   const gatewayWsUrl = useMemo(() => {
-    const base = getWsBaseUrl();
-    return `${base}/ws/gateway`;
+    const base = getWsBaseUrl().trim();
+    return base ? `${base}/ws/gateway` : '';
   }, []);
 
   /** REST API base for gateway env (`CLOUD_API`); matches deployed backend the UI talks to. */
@@ -446,7 +446,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
   /** Shown on Sync tab — mesh gateways all use inbound WSS + AUTH (see Overview for copy-paste URLs). */
   const renderGatewayModeInfo = () => {
     if (!gateway) return null;
-    const wsUrl = `${getWsBaseUrl()}/ws/gateway`;
+    const wsBase = getWsBaseUrl().trim();
+    const wsUrl = wsBase ? `${wsBase}/ws/gateway` : '(configure VITE_WS_URL or VITE_API_URL)';
     const authExample = `{"type":"AUTH","token":"<JWT from this API>","facilityId":"${facilityId}"}`;
     return (
       <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm space-y-3">
@@ -461,8 +462,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
             <code className="px-2 py-1 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 break-all">{wsUrl}</code>
             <button
               type="button"
-              onClick={() => copyToClipboard(wsUrl, 'Copied WebSocket URL')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              disabled={!wsBase}
+              onClick={() => wsBase && copyToClipboard(wsUrl, 'Copied WebSocket URL')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               aria-label="Copy WebSocket URL"
             >
               <DocumentDuplicateIcon className="h-4 w-4" />
@@ -565,12 +567,13 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">WebSocket URL (WSS)</div>
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                 <code className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-xs font-mono text-gray-900 dark:text-white break-all">
-                  {gatewayWsUrl}
+                  {gatewayWsUrl || '(configure VITE_WS_URL or VITE_API_URL)'}
                 </code>
                 <button
                   type="button"
-                  onClick={() => copyToClipboard(gatewayWsUrl, 'Copied WebSocket URL')}
-                  className="inline-flex shrink-0 items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  disabled={!gatewayWsUrl}
+                  onClick={() => gatewayWsUrl && copyToClipboard(gatewayWsUrl, 'Copied WebSocket URL')}
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                   aria-label="Copy WebSocket URL"
                 >
                   <DocumentDuplicateIcon className="h-4 w-4" />

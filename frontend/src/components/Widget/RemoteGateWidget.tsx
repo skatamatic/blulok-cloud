@@ -12,6 +12,7 @@ import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { AccessControlDevice } from '@/types/facility.types';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
@@ -27,6 +28,8 @@ interface GateDevice {
   facilityId: string;
   status: 'online' | 'offline' | 'error' | 'maintenance';
   isOpen: boolean;
+  /** When false, cloud must not send CLOSE / remote lock (close on site). */
+  supportsRemoteLock: boolean;
   lastActivity: Date;
   holdUntil?: Date;
   deviceType: 'gate' | 'elevator' | 'door';
@@ -53,6 +56,7 @@ const transformToGateDevice = (device: AccessControlDevice): GateDevice => {
     facilityId: device.facility_id ?? '',
     status: device.status,
     isOpen: !device.is_locked,
+    supportsRemoteLock: device.supports_remote_lock === true,
     lastActivity: device.last_activity ? new Date(device.last_activity) : new Date(),
     deviceType: device.device_type,
   };
@@ -75,10 +79,9 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [holdDuration, setHoldDuration] = useState<number>(5); // minutes
 
-  const { subscribe, unsubscribe, isConnected } = useWebSocket();
+  const { isConnected } = useWebSocket();
   const { addToast } = useToast();
   const loadGatesRef = useRef<() => Promise<void>>(async () => {});
-  const wsRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gateIdsRef = useRef<Set<string>>(new Set());
   const gatesRef = useRef<GateDevice[]>([]);
   gatesRef.current = gates;
@@ -140,35 +143,15 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     return () => clearInterval(interval);
   }, [loadGates]);
 
-  // Refresh device list when any device status is pushed (same pattern as Devices page)
-  useEffect(() => {
-    if (!isConnected) return;
-
-    const scheduleRefresh = () => {
-      if (wsRefreshDebounceRef.current) {
-        clearTimeout(wsRefreshDebounceRef.current);
-      }
-      wsRefreshDebounceRef.current = setTimeout(() => {
-        void loadGatesRef.current();
-      }, 450);
-    };
-
-    const onDeviceStatusMessage = (payload: unknown) => {
-      if (!shouldRefreshDeviceListForPayload(payload, gateIdsRef.current)) {
-        return;
-      }
-      scheduleRefresh();
-    };
-
-    const subscriptionId = subscribe('device_status', onDeviceStatusMessage, undefined);
-
-    return () => {
-      unsubscribe(subscriptionId);
-      if (wsRefreshDebounceRef.current) {
-        clearTimeout(wsRefreshDebounceRef.current);
-      }
-    };
-  }, [subscribe, unsubscribe, isConnected]);
+  useLockDeviceRealtime({
+    enabled: isConnected,
+    debouncedRefresh: () => {
+      void loadGatesRef.current();
+    },
+    debounceRefreshFilter: (p) => shouldRefreshDeviceListForPayload(p, gateIdsRef.current),
+    debounceMs: 450,
+    subscribeUnitsForRefresh: false,
+  });
 
   useEffect(() => {
     if (gates.length === 0) {
@@ -199,6 +182,14 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     const gate = gates.find(g => g.id === selectedGate);
     if (!gate || gate.status !== 'online') return;
     if ((operation === 'open' || operation === 'hold') && gate.isOpen) return;
+    if (operation === 'close' && !gate.supportsRemoteLock) {
+      addToast({
+        type: 'info',
+        title: 'Close manually',
+        message: 'Remote lock is not enabled for this device; close at the gate.',
+      });
+      return;
+    }
 
     setIsOperating(true);
     setError(null);
@@ -355,15 +346,28 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                 {selectedGateData.isOpen ? 'Open' : 'Closed'}
               </div>
               <button
-                onClick={() => handleGateOperation(selectedGateData.isOpen ? 'close' : 'open')}
-                disabled={isOperating}
+                onClick={() =>
+                  handleGateOperation(selectedGateData.isOpen ? 'close' : 'open')
+                }
+                disabled={
+                  isOperating ||
+                  (selectedGateData.isOpen && !selectedGateData.supportsRemoteLock)
+                }
                 className={`w-full py-2 px-3 text-xs font-medium rounded-lg transition-colors text-white ${
                   selectedGateData.isOpen
-                    ? 'bg-red-600 hover:bg-red-700 disabled:bg-gray-400'
+                    ? selectedGateData.supportsRemoteLock
+                      ? 'bg-red-600 hover:bg-red-700 disabled:bg-gray-400'
+                      : 'bg-gray-400 cursor-not-allowed'
                     : 'bg-green-600 hover:bg-green-700 disabled:bg-gray-400'
                 } disabled:cursor-not-allowed`}
               >
-                {isOperating ? '...' : (selectedGateData.isOpen ? 'Close' : 'Open')}
+                {isOperating
+                  ? '...'
+                  : selectedGateData.isOpen
+                    ? selectedGateData.supportsRemoteLock
+                      ? 'Close'
+                      : 'Closed (on site)'
+                    : 'Open'}
               </button>
             </div>
           ) : (
@@ -451,7 +455,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                   Unlocks the gate. Timer is a local reminder only; re-lock behavior depends on hardware.
                 </p>
 
-                {selectedGateData.isOpen && (
+                {selectedGateData.isOpen && selectedGateData.supportsRemoteLock && (
                   <button
                     onClick={() => handleGateOperation('close')}
                     disabled={isOperating}
@@ -460,6 +464,11 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                     <StopIcon className="h-4 w-4" />
                     <span>{isOperating ? 'Closing...' : 'Close Gate'}</span>
                   </button>
+                )}
+                {selectedGateData.isOpen && !selectedGateData.supportsRemoteLock && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                    Close manually at the gate — remote lock is not enabled for this hardware.
+                  </p>
                 )}
               </div>
             ) : (

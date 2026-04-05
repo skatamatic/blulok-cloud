@@ -10,19 +10,33 @@ const getRuntimeConfig = (): RuntimeConfig => {
 
 // Safely read Vite env in both browser and Jest/node without crashing when process is undefined
 const getViteEnv = (key: string): string | undefined => {
+  const readFromMetaEnv = (env: Record<string, unknown> | undefined): string | undefined => {
+    if (!env || env[key] === undefined || env[key] === null) return undefined;
+    const s = String(env[key]).trim();
+    return s === '' ? undefined : s;
+  };
+
   try {
     // Access import.meta via eval to avoid syntax errors in Jest/CommonJS
-    const meta = (0, eval)('import.meta') as any;
-    const env = meta?.env;
-    if (env && env[key] !== undefined) {
-      return env[key] as string;
-    }
+    const meta = (0, eval)('import.meta') as { env?: Record<string, unknown> };
+    const fromEval = readFromMetaEnv(meta?.env);
+    if (fromEval !== undefined) return fromEval;
   } catch {
     // ignore if import.meta is not available (e.g., Jest/node without ESM)
   }
-  // Fallback to process.env for Jest/node environments
-  if (typeof process !== 'undefined' && (process as any)?.env && (process as any).env[key] !== undefined) {
-    return (process as any).env[key] as string;
+
+  // Jest: src/test/setup.ts defines globalThis['import.meta'].env (eval('import.meta') may not see it)
+  try {
+    const gim = (globalThis as unknown as { 'import.meta'?: { env?: Record<string, unknown> } })['import.meta'];
+    const fromGlobal = readFromMetaEnv(gim?.env);
+    if (fromGlobal !== undefined) return fromGlobal;
+  } catch {
+    /* ignore */
+  }
+
+  if (typeof process !== 'undefined' && (process as { env?: Record<string, string> }).env?.[key] !== undefined) {
+    const v = String((process as { env: Record<string, string> }).env[key]).trim();
+    return v === '' ? undefined : v;
   }
   return undefined;
 };
@@ -43,6 +57,10 @@ export const getApiBaseUrl = (): string => {
   return (runtime.apiBaseUrl || viteApi || '').replace(/\/+$/, '');
 };
 
+/**
+ * WebSocket origin (no path). From, in order: runtime `wsBaseUrl`, `VITE_WS_URL`, or same host as `VITE_API_URL` / runtime `apiBaseUrl`.
+ * Returns empty string if none are set — configure `VITE_WS_URL` and/or `VITE_API_URL` (see `.env.example`).
+ */
 export const getWsBaseUrl = (): string => {
   const runtime = getRuntimeConfig();
   if (runtime.wsBaseUrl) return runtime.wsBaseUrl.replace(/\/+$/, '');
@@ -53,13 +71,12 @@ export const getWsBaseUrl = (): string => {
     try {
       const u = new URL(apiBase);
       u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
-      // return base (we will append /ws where needed)
       return u.origin;
     } catch {
       // fallthrough
     }
   }
-  return 'ws://localhost:3000';
+  return '';
 };
 
 

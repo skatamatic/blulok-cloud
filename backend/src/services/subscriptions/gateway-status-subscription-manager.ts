@@ -86,6 +86,9 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   }
 
   public async broadcastUpdate(facilityId?: string, gatewayId?: string): Promise<void> {
+    // Always drop cache before reads so HTTP/BaseGateway DB updates (and inbound WS) fan out fresh rows.
+    this.invalidateCache();
+
     try {
       const activeSubscriptions = Array.from(this.watchers.keys());
       if (activeSubscriptions.length === 0) return;
@@ -96,8 +99,17 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
         const client = this.clientContext.get(subscriptionId);
         if (!client) continue;
 
-        // If filtering by facilityId and client has facilityIds, skip if not in scope
-        if (facilityId && client.facilityIds && !client.facilityIds.includes(facilityId) && client.userRole !== UserRole.ADMIN && client.userRole !== UserRole.DEV_ADMIN) {
+        // Skip targeted broadcast only when the client has an explicit non-empty facility allow-list
+        // that excludes this facility. Empty [] must not skip (treat like "unscoped for this check";
+        // getScopedGateways still filters rows).
+        if (
+          facilityId &&
+          client.facilityIds &&
+          client.facilityIds.length > 0 &&
+          !client.facilityIds.includes(facilityId) &&
+          client.userRole !== UserRole.ADMIN &&
+          client.userRole !== UserRole.DEV_ADMIN
+        ) {
           continue;
         }
 

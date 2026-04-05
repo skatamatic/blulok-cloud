@@ -4,7 +4,6 @@ import { GatewayTransport } from './gateway-transport.interface';
 import { WebsocketGatewayTransport } from './websocket-gateway.transport';
 import { GatewayModel } from '@/models/gateway.model';
 import { WebSocketService } from '@/services/websocket.service';
-import { GatewayStatusSubscriptionManager } from '@/services/subscriptions/gateway-status-subscription-manager';
 
 /**
  * Gateway Client Information Interface
@@ -228,8 +227,6 @@ export class GatewayEventsService {
       }
 
       const wsService = WebSocketService.getInstance();
-      const mgr = wsService.getSubscriptionRegistry().getManager('gateway_status') as GatewayStatusSubscriptionManager | undefined;
-      mgr?.invalidateCache();
       await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
     } catch (error) {
       logger.warn(`syncGatewayDbWithInboundConnection failed facility=${facilityId}`, error);

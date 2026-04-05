@@ -28,6 +28,7 @@ const mockKnex = jest.fn((table: string) => {
     return buildJoinFirst({
       id: 'dev-1',
       lock_status: 'unlocked',
+      supports_remote_lock: true,
       gateway_id: 'gw-1',
       facility_id: 'fac-1',
     });
@@ -70,6 +71,26 @@ describe('LockCommandService', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it('rejects remote lock when supports_remote_lock is false', async () => {
+    knexInvocation = 0;
+    mockKnex.mockImplementationOnce(() =>
+      buildJoinFirst({
+        id: 'dev-1',
+        lock_status: 'unlocked',
+        supports_remote_lock: false,
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+      }),
+    );
+
+    const svc = LockCommandService.getInstance();
+    const res = await svc.issueLockCommand('dev-1', 'locked');
+
+    expect(res.success).toBe(false);
+    expect(res.message).toMatch(/remote lock is not enabled/i);
+    expect(sendLockCommand).not.toHaveBeenCalled();
   });
 
   it('returns failure when device/gateway row is not found', async () => {
@@ -121,6 +142,7 @@ describe('LockCommandService', () => {
         return buildJoinFirst({
           id: 'dev-1',
           lock_status: 'unlocked',
+          supports_remote_lock: true,
           gateway_id: 'gw-1',
           facility_id: 'fac-1',
         });
@@ -152,6 +174,7 @@ describe('LockCommandService', () => {
             id: 'ac-1',
             gateway_id: 'gw-1',
             is_locked: true,
+            supports_remote_lock: true,
           });
         }
         return buildJoinFirst(null);
@@ -183,6 +206,25 @@ describe('LockCommandService', () => {
       expect(res.success).toBe(true);
       expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'CLOSE');
       expect(mockUpdateAccessControlDevice).toHaveBeenCalledWith('ac-1', { is_locked: true });
+    });
+
+    it('rejects remote lock for access control when supports_remote_lock is false', async () => {
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'access_control_devices') {
+          return buildJoinFirst({
+            id: 'ac-1',
+            gateway_id: 'gw-1',
+            is_locked: false,
+            supports_remote_lock: false,
+          });
+        }
+        return buildJoinFirst(null);
+      });
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'locked');
+      expect(res.success).toBe(false);
+      expect(res.message).toMatch(/remote lock is not enabled/i);
+      expect(sendLockCommand).not.toHaveBeenCalled();
     });
 
     it('returns failure when gateway rejects command', async () => {

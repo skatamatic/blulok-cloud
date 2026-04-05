@@ -32,7 +32,15 @@ class WebSocketService implements IWebSocketService {
         return;
       }
 
-      const wsUrl = `${getWsBaseUrl()}/ws?token=${token}`;
+      const wsBase = getWsBaseUrl().trim();
+      if (!wsBase) {
+        console.warn(
+          'WebSocket: missing base URL. Set VITE_WS_URL or VITE_API_URL (see frontend .env.example).',
+        );
+        return;
+      }
+
+      const wsUrl = `${wsBase}/ws?token=${token}`;
 
       const socket = new WebSocket(wsUrl);
       this.ws = socket;

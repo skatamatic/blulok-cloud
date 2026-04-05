@@ -13,6 +13,10 @@ export interface Unit {
   
   // Device telemetry data (from joined blulok_devices table)
   lock_status?: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+  blulok_device?: {
+    id: string;
+    lock_status: string;
+  };
   device_status?: 'online' | 'offline' | 'error' | 'maintenance';
   signal_strength?: number;
   temperature?: number;

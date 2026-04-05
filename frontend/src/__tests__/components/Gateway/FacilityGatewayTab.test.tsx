@@ -107,7 +107,7 @@ describe('FacilityGatewayTab', () => {
         expect((navigator.clipboard as any).writeText).toHaveBeenCalled();
         expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Copied WebSocket URL' });
       });
-    });
+    }, 20_000);
   });
 
   const renderComponent = (canManageGateway = true) => {

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
@@ -29,8 +31,6 @@ import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityC
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
 import { withReturnPath } from '@/hooks/useBackNavigation';
-import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
-import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -110,31 +110,15 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
 
   // Ref to track the latest loadDevices function for WebSocket callback
   const loadDevicesRef = useRef<() => void>(() => {});
-  const wsRefreshDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const deviceIdsRef = useRef<Set<string>>(new Set());
+  deviceIdsRef.current = new Set(allDevices.map((d) => d.id));
 
-  // Device status subscription - refresh list on device state changes
-  useEffect(() => {
-    if (activeTab === 'commands') return; // Only skip when viewing commands tab
-    const subId = ws.subscribe(
-      'device_status',
-      () => {
-        // Debounce refresh to prevent excessive API calls
-        if (wsRefreshDebounceRef.current) {
-          clearTimeout(wsRefreshDebounceRef.current);
-        }
-        wsRefreshDebounceRef.current = setTimeout(() => {
-          loadDevicesRef.current();
-        }, 500);
-      },
-      undefined
-    );
-    return () => {
-      if (subId) ws.unsubscribe(subId);
-      if (wsRefreshDebounceRef.current) {
-        clearTimeout(wsRefreshDebounceRef.current);
-      }
-    };
-  }, [activeTab, ws]);
+  useLockDeviceRealtime({
+    enabled: activeTab !== 'commands',
+    debouncedRefresh: () => loadDevicesRef.current(),
+    debounceRefreshFilter: (p) => shouldRefreshDeviceListForPayload(p, deviceIdsRef.current),
+    debounceMs: 500,
+  });
 
   const loadDevices = useCallback(async () => {
     try {
@@ -214,74 +198,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   useEffect(() => {
     loadDevicesRef.current = loadDevices;
   });
-
-  const devicesDataRef = useRef<DeviceListItem[]>([]);
-  devicesDataRef.current = devices;
-  const unlockDeviceIdRef = useRef<string | null>(null);
-  const { scheduleUnlockWatch, cancelWatch } = useLockHardwareFeedback();
-
-  useEffect(() => {
-    if (!unlockDeviceIdRef.current) return;
-    const d = devices.find((x) => x.id === unlockDeviceIdRef.current);
-    const ls = d && d.device_category === 'blulok' ? (d as BluLokDevice).lock_status : undefined;
-    if (ls === 'unlocked') {
-      cancelWatch();
-      unlockDeviceIdRef.current = null;
-    }
-  }, [devices, cancelWatch]);
-
-  const handleBluLokListUnlock = useCallback(
-    async (d: BluLokDevice & { device_category: string }) => {
-      if (d.lock_status !== 'locked') return;
-      const patch = (list: DeviceListItem[]) =>
-        list.map((item) =>
-          item.id === d.id && item.device_category === 'blulok'
-            ? {
-                ...(item as BluLokDevice & { device_category: string }),
-                lock_status: 'unlocking' as const,
-              }
-            : item,
-        );
-      setDevices(patch);
-      setAllDevices(patch);
-      unlockDeviceIdRef.current = d.id;
-      scheduleUnlockWatch(
-        () => {
-          const cur = devicesDataRef.current.find((x) => x.id === d.id) as BluLokDevice | undefined;
-          return cur?.lock_status;
-        },
-        () => {
-          unlockDeviceIdRef.current = null;
-          void loadDevices();
-        },
-      );
-      try {
-        await apiService.updateLockStatus(d.id, 'unlocked');
-        addToast(lockHardwareFeedbackToasts.unlockCommandSent());
-        await loadDevices();
-      } catch {
-        cancelWatch();
-        unlockDeviceIdRef.current = null;
-        addToast(lockHardwareFeedbackToasts.couldNotUnlockDevice());
-        await loadDevices();
-      }
-    },
-    [addToast, loadDevices, scheduleUnlockWatch, cancelWatch],
-  );
-
-  const handleAccessControlListUnlock = useCallback(
-    async (d: AccessControlDevice & { device_category: string }) => {
-      if (!d.is_locked || d.status !== 'online') return;
-      try {
-        await apiService.updateAccessControlLockStatus(d.id, 'unlocked');
-        addToast(lockHardwareFeedbackToasts.unlockCommandSent());
-        await loadDevices();
-      } catch {
-        addToast(lockHardwareFeedbackToasts.couldNotUnlockDevice());
-      }
-    },
-    [addToast, loadDevices],
-  );
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
@@ -544,27 +460,13 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
               <BluLokDeviceCardShared
                 key={`blulok-${device.id}`}
                 device={device as BluLokDevice & { device_category: string }}
-                canManage={canManage}
-                onToggleLock={() => handleBluLokListUnlock(device as BluLokDevice & { device_category: string })}
                 onViewDevice={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
-                onViewUnit={('unit_id' in device && device.unit_id)
-                  ? () => navigate(`/units/${device.unit_id}`, { state: withReturnPath(location, { from: 'devices' }) })
-                  : undefined}
               />
             ) : (
               <ACDeviceCardShared
                 key={`access-${device.id}`}
                 device={device as AccessControlDevice & { device_category: string }}
                 onViewDevice={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
-                canManageAccessMethods={canManage}
-                onAccessMethodsUpdated={loadDevices}
-                onRequestUnlock={canManage ? () => handleAccessControlListUnlock(device as AccessControlDevice & { device_category: string }) : undefined}
-                onViewFacility={() => {
-                  const gatewayId = 'gateway_id' in device ? device.gateway_id : '';
-                  const facilityIndex = devices.findIndex(d => 'gateway_id' in d && d.gateway_id === gatewayId);
-                  const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
-                  navigateAndHighlight(navigate, { id: gatewayId, type: 'facility', page: calculatedPage });
-                }}
               />
             )
           ))}
@@ -606,6 +508,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                   <tr 
                     key={`${device.device_category}-${device.id}`}
                     id={generateHighlightId('device', device.id)}
+                    onClick={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
                     className="group transition-all duration-200 cursor-pointer hover:shadow-sm border-b border-gray-200 dark:border-gray-700 last:border-b-0"
                   >
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
@@ -648,7 +551,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                       <div className="flex items-center justify-end space-x-2">
                         {isBlulok && getFacilityId(device) && (
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               const facilityId = getFacilityId(device);
                               if (facilityId) {
                                 const facilityIndex = devices.findIndex(d => getFacilityId(d) === facilityId);
@@ -665,7 +569,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                         )}
                         {!isBlulok && device.gateway_id && (
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               const facilityIndex = devices.findIndex(d => d.gateway_id === device.gateway_id);
                               const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
                               navigateAndHighlight(navigate, { id: device.gateway_id, type: 'facility', page: calculatedPage });

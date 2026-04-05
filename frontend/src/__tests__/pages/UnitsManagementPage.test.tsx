@@ -51,6 +51,18 @@ jest.mock('@/contexts/GlobalFacilityContext', () => ({
   ALL_FACILITIES_ID: '__ALL_FACILITIES__',
 }));
 
+const mockSubscribe = jest.fn(() => 'sub-units-mgmt');
+const mockUnsubscribe = jest.fn();
+
+jest.mock('@/contexts/WebSocketContext', () => ({
+  useWebSocket: () => ({
+    subscribe: mockSubscribe,
+    unsubscribe: mockUnsubscribe,
+    isConnected: true,
+  }),
+  WebSocketProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 // Import after mocking
 import { apiService } from '@/services/api.service';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
@@ -93,6 +105,7 @@ const renderWithProviders = (component: React.ReactElement) => {
 describe('UnitsManagementPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSubscribe.mockReturnValue('sub-units-mgmt');
 
     // Mock global facility context
     (useGlobalFacility as jest.Mock).mockReturnValue(mockGlobalFacility);
@@ -170,6 +183,20 @@ describe('UnitsManagementPage', () => {
         const lastCall = calls[calls.length - 1];
         expect(lastCall[0]?.facility_id).toBeUndefined();
       }
+    });
+  });
+
+  describe('Realtime (useLockDeviceRealtime)', () => {
+    it('subscribes to facility-scoped device_status and units when a facility is selected', () => {
+      renderWithProviders(<UnitsManagementPage />);
+
+      expect(mockSubscribe).toHaveBeenCalledWith(
+        'device_status',
+        expect.any(Function),
+        undefined,
+        { facility_id: 'fac-1' }
+      );
+      expect(mockSubscribe).toHaveBeenCalledWith('units', expect.any(Function), undefined);
     });
   });
 });

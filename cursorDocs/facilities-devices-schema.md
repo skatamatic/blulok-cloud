@@ -4,6 +4,15 @@
 
 This document describes the comprehensive data model for BluLok's facility and device management system. The hierarchy follows this structure:
 
+### Device list API (`GET /api/devices`)
+
+For **facility-scoped** users (e.g. `FACILITY_ADMIN`), when the query **does not** include `facility_id`, the backend filters with **`facility_ids`** = all facilities assigned to that user (not only the first). This matches dashboard widgets such as **Remote Gate** when “All facilities” is selected so gates in every assigned facility are visible.
+
+### LOCK / UNLOCK command JWT (`device_id` claim)
+
+When the cloud delivers **LOCK** / **UNLOCK** over the inbound gateway WebSocket (`{ "type": "COMMAND", "jwt": "..." }`), the signed payload’s **`device_id` claim is the hardware serial**, not the internal UUID—same idea as route passes (`lock:<device_serial>`). Resolution: **BluLok** uses `blulok_devices.device_serial`, then optional `serial`; **access control** uses `metadata` / `device_settings` keys `device_serial` or `serial` if present; otherwise the code falls back to the internal id and logs a warning. Non-WebSocket paths (e.g. HTTP mesh `send-lock-command`) still pass the internal device id to the gateway API.
+
+
 ```
 Facility (Storage Facility)
 └── Gateway (Communication Hub - 1 per facility)
@@ -207,6 +216,8 @@ CREATE TABLE units (
 - **Rental Information**: Size, type, and monthly rate
 - **Feature Flags**: JSON array for unit features and amenities
 - **Status Tracking**: Available, occupied, maintenance, reserved
+- **Occupancy vs assignments**: The API treats a unit as **occupied** whenever it has **any** `unit_assignments` row (primary or shared). `UnitsService` updates `units.status` after assign/unassign so the column stays aligned; list/detail/stats queries also **derive** effective status from assignment counts so stale `available` rows cannot appear when tenants are still assigned.
+- **Manual status updates**: `PUT /units/:id` rejects `available` or `reserved` while any assignment exists; the response returns **effective** status (assignment-aware). DEV_ADMIN user hard-delete syncs affected units after removing that tenant’s assignments. Facility-level unit stats use the same assignment-based occupancy counts as global unit stats.
 
 ### 5. BluLok Devices
 

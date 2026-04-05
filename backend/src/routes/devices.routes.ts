@@ -155,18 +155,20 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
 
     // Restrict facility access based on user role
     let allowedFacilityId = facility_id as string | undefined;
-    
+    /** When dashboard omits facility_id, scoped users see devices across all assigned facilities (not only the first). */
+    let allowedFacilityIds: string[] | undefined;
+
     // For facility-scoped users, enforce facility restrictions
     if (AuthService.isFacilityScoped(user.role)) {
       if (facility_id && !user.facilityIds?.includes(facility_id as string)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });
         return;
       }
-      // If no facility specified, restrict to user's facilities
+      // If no facility specified, restrict to user's facilities (all of them)
       if (!facility_id) {
         const userFacilityIds = applyFacilityScope(req);
         if (userFacilityIds && userFacilityIds.length > 0) {
-          allowedFacilityId = userFacilityIds[0]; // Default to first facility
+          allowedFacilityIds = userFacilityIds;
         } else {
           // User has no facility access - return empty result
           res.json({ devices: [], total: 0 });
@@ -191,6 +193,8 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
     }
     if (allowedFacilityId) {
       (filters as any).facility_id = allowedFacilityId;
+    } else if (allowedFacilityIds && allowedFacilityIds.length > 0) {
+      (filters as any).facility_ids = allowedFacilityIds;
     }
 
     let devices: any[] = [];

@@ -67,6 +67,7 @@ describe('RemoteGateWidget', () => {
       relay_channel: 2,
       status: 'online',
       is_locked: false, // Open
+      supports_remote_lock: true,
       last_activity: new Date(Date.now() - 3600000).toISOString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -150,6 +151,30 @@ describe('RemoteGateWidget', () => {
       });
     });
 
+    it('omits facility_id when no facilityFilter (dashboard all-facilities scope; backend scopes by user)', async () => {
+      renderWithProviders(
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" />
+      );
+
+      await waitFor(() => {
+        expect(mockGetDevices).toHaveBeenCalledWith({
+          device_type: 'access_control',
+        });
+      });
+    });
+
+    it('lists gates from multiple facilities in the selector when API returns them (large widget)', async () => {
+      renderWithProviders(
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" initialSize="large" />
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole('option', { name: /Vehicle Gate - Warehouse District \(gate\)/ })
+        ).toBeInTheDocument();
+      });
+    });
+
     it('subscribes to websocket on mount', async () => {
       renderWithProviders(
         <RemoteGateWidget id="test-widget" title="Remote Gate Control" />
@@ -159,6 +184,7 @@ describe('RemoteGateWidget', () => {
         expect(mockSubscribe).toHaveBeenCalledWith(
           'device_status',
           expect.any(Function),
+          undefined,
           undefined
         );
       });

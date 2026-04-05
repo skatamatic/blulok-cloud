@@ -30,7 +30,7 @@ const envSchema = Joi.object({
   FALLBACK_IAT_SKEW_SECONDS: Joi.number().integer().min(0).default(10),
   
   // CORS
-  CORS_ORIGINS: Joi.string().default('http://localhost:3001,http://localhost:3002'),
+  CORS_ORIGINS: Joi.string().default('http://localhost:3001,http://localhost:5173,http://localhost:3002'),
   
   // Logging
   LOG_LEVEL: Joi.string()

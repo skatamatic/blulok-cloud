@@ -45,7 +45,7 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
     });
   });
 
-  it('updates physical gateway to online, invalidates cache, and broadcasts on connect', async () => {
+  it('updates physical gateway to online and broadcasts on connect', async () => {
     jest.spyOn(GatewayModel.prototype, 'findByFacilityId').mockResolvedValue({
       id: 'gw-physical-1',
       gateway_type: 'physical',
@@ -55,10 +55,6 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
 
     const ws = WebSocketService.getInstance();
     const broadcastSpy = jest.spyOn(ws, 'broadcastGatewayStatusUpdate').mockResolvedValue(undefined);
-    const invalidateSpy = jest.fn();
-    jest.spyOn(ws, 'getSubscriptionRegistry').mockReturnValue({
-      getManager: () => ({ invalidateCache: invalidateSpy }),
-    } as any);
 
     connectionCallback({
       facilityId: 'fac-1',
@@ -70,7 +66,6 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
     expect(GatewayModel.prototype.findByFacilityId).toHaveBeenCalledWith('fac-1');
     expect(onlineSpy).toHaveBeenCalledWith('gw-physical-1', 'online');
     expect(offlineSpy).not.toHaveBeenCalled();
-    expect(invalidateSpy).toHaveBeenCalled();
     expect(broadcastSpy).toHaveBeenCalledWith('fac-1', 'gw-physical-1');
   });
 
@@ -84,9 +79,6 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
 
     const ws = WebSocketService.getInstance();
     jest.spyOn(ws, 'broadcastGatewayStatusUpdate').mockResolvedValue(undefined);
-    jest.spyOn(ws, 'getSubscriptionRegistry').mockReturnValue({
-      getManager: () => ({ invalidateCache: jest.fn() }),
-    } as any);
 
     connectionCallback({
       facilityId: 'fac-1',
@@ -149,9 +141,6 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
 
     const ws = WebSocketService.getInstance();
     jest.spyOn(ws, 'broadcastGatewayStatusUpdate').mockResolvedValue(undefined);
-    jest.spyOn(ws, 'getSubscriptionRegistry').mockReturnValue({
-      getManager: () => ({ invalidateCache: jest.fn() }),
-    } as any);
 
     connectionCallback({
       facilityId: 'fac-sim',

@@ -53,6 +53,20 @@ If anything is wrong, the socket receives `ERROR` with codes such as `AUTH_FAILE
 
 On-site gateways typically call internal APIs through **`PROXY_REQUEST`** on the same WebSocket. The backend re-injects the caller identity and enforces facility scope (`ApiProxyService` + `FacilityGuardService`). Ensure `CLOUD_API` matches the deployment the JWT was issued for.
 
+### Lock status and unit telemetry (dashboard WebSocket, not gateway socket)
+
+Gateways **do not** push lock state over operator REST from the browser. They use **`/ws/gateway`** and **`PROXY_REQUEST`** to reach internal routes (for example device state sync). The backend persists changes, then broadcasts to **dashboard** clients on the app WebSocket (`/ws` / `WebSocketContext`) as **`device_status_update`** (payload includes `devices[]`) and **`units_update`** when unit summaries change.
+
+Any UI that shows BluLok lock or device telemetry should go through **`useLockDeviceRealtime`** and **`normalizeDeviceStatusWsPayload`** (`frontend/src/hooks/useLockDeviceRealtime.ts`, `frontend/src/utils/deviceStatusWs.utils.ts`) so subscription scope, debouncing, and payload parsing stay consistent.
+
+### Gateway status (`gateway_status_update`) — backend behavior
+
+- **`GatewayStatusSubscriptionManager.broadcastUpdate`** always **`invalidateCache()`** first, then loads gateways from the DB, so **HTTP polling** and **inbound `/ws/gateway`** both publish **current** rows (no stale 5s `findAll` cache).
+- **Targeted broadcasts** (`facilityId` set): skip a dashboard client only if **`facilityIds.length > 0`** and the facility is **not** in that list. An **empty `facilityIds` array** must **not** skip (JavaScript: `[]` is truthy; older logic mis-fired).
+- **`findByFacilityId`** uses **`orderBy('updated_at', 'desc')`** before `.first()` so inbound WS DB sync picks a **deterministic** row if multiple gateway rows ever share a facility (normally one per facility).
+- **`GatewayModel.updateStatus`** for non-**online** states updates **`status` + `updated_at` only** — **`last_seen`** stays as last known good contact.
+- **Heartbeat** (`websocket-gateway.transport.ts`): if a facility’s socket is **not OPEN**, the transport **removes** it and emits **`notifyConnectionChange(..., false, 'socket_not_open')`** so **`gateways.status`** can go **offline** like a normal disconnect.
+
 ## Google Cloud Run–specific issues
 
 ### 1. Multiple instances and in-memory gateway state
@@ -79,7 +93,7 @@ Use **`wss://`** to match **`https://`** on the same host. Mixed `ws` to `https`
 ## Local debugging
 
 1. Point `CLOUD_WS` / `CLOUD_API` at your machine:  
-   `ws://host.docker.internal:3000/ws/gateway` and `http://host.docker.internal:3000/api/v1` (adjust for your port).
+   `ws://host.docker.internal:3000/ws/gateway` and `http://host.docker.internal:3000/api/v1` on typical local dev (`PORT` in `backend/.env`; adjust if yours differs).
 2. Log in to the **same** backend, copy JWT + facility UUID, configure the mesh gateway to send `AUTH` as above.
 3. Backend logs: `Gateway WS upgrade`, `Gateway WS authenticated`, or `AUTH_FAILED` / `AUTH_FORBIDDEN`.
 
@@ -101,7 +115,10 @@ The dashboard shows **one** “Cloud connection” state derived from the **`gat
 ## Automated regression tests
 
 - **Inbound WS → DB status:** `backend/src/__tests__/services/gateway-events.service.inbound-db-sync.test.ts` — connect/disconnect updates `gateways.status` for physical/simulated, skips HTTP and missing rows; uses `jest.unmock('@/models/gateway.model')` because global `setup-mocks` replaces `GatewayModel` with a plain factory (no real prototype for `jest.spyOn`).
-- **Gateway status cache invalidation:** `backend/src/__tests__/services/gateway-status-subscription-manager.test.ts` — `invalidateCache()` clears the in-memory list/TTL so broadcasts after inbound WS use fresh DB rows.
+- **Gateway status cache:** `GatewayStatusSubscriptionManager.broadcastUpdate` always calls `invalidateCache()` before loading gateways so **HTTP/BaseGateway** DB updates and inbound WS both fan out **fresh** rows (not a stale 5s `findAll` cache). Tests live in `gateway-status-subscription-manager.test.ts`.
+- **Dashboard client parsing:** `frontend/src/__tests__/services/websocket.service.test.ts` covers `gateway_status_update`, `device_status_update`, and `units_update` dispatch to `onMessage` handlers (same path the app uses for lock + gateway UI).
+- **Units management realtime:** `frontend/src/__tests__/pages/UnitsManagementPage.test.tsx` mocks `WebSocketContext` and asserts facility-scoped `device_status` + `units` subscriptions (`useLockDeviceRealtime`).
+- **Live backend E2E:** `backend/npm run ws:e2e` (`scripts/ws-gateway-e2e.js`) exercises `/ws/gateway` PROXY → `devices/state`, then dashboard `/ws` subscriptions for **`device_status_update`**, **`units_update`**, and **`gateway_status_update`** (plus stress paths). While subscribed with **`device_id`** (same filter as `useLockDeviceRealtime` / the web app), it asserts **`lock_status`** after **HTTP** `PUT .../devices/blulok/:id/lock` and after **gateway** `devices/state` LOCKED/UNLOCKED, plus **`units_update`** after a gateway lock change. Defaults: read **`PORT`** from the **`backend/.env` file** (local dev template uses **3000**; not shell `PORT`, so another process cannot steal the port), then `127.0.0.1`. Override with **`E2E_API_PORT`** / **`BACKEND_PORT`**, or **`API_BASE_URL`** (WebSocket defaults follow the same host:port unless `WS_URL` / `UI_WS_URL` are set), or **`E2E_HOST`** for host-only.
 - **Facility Gateway tab UI:** `frontend/src/__tests__/components/Gateway/FacilityGatewayTab.test.tsx` — amber “Inbound WebSocket session is active” when `getGatewayWsStatus.connected` but no gateway row; “Gateway status (database)” when a row exists.
 
 ## Quick checklist

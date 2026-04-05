@@ -362,6 +362,11 @@ router.put('/:unitId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRol
         success: false,
         message: error.message
       });
+    } else if (error.message.includes('Cannot set unit to available or reserved')) {
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
     } else {
       res.status(500).json({
         success: false,

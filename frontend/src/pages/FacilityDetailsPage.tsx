@@ -44,6 +44,7 @@ import { withReturnPath } from '@/hooks/useBackNavigation';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 
 const DEVICES_PAGE_LIMIT = 30;
 const UNITS_PAGE_LIMIT = 20;
@@ -147,10 +148,7 @@ export default function FacilityDetailsPage() {
   const facilityUnitsRef = useRef<Unit[]>([]);
   facilityUnitsRef.current = facilityUnitsPageData;
 
-  const unlockBluLokDeviceIdRef = useRef<string | null>(null);
   const unitUnlockWatchIdRef = useRef<string | null>(null);
-  const { scheduleUnlockWatch: scheduleBluLokUnlockWatch, cancelWatch: cancelBluLokUnlockWatch } =
-    useLockHardwareFeedback();
   const { scheduleUnlockWatch: scheduleUnitUnlockWatch, cancelWatch: cancelUnitUnlockWatch } =
     useLockHardwareFeedback({
       timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
@@ -165,8 +163,6 @@ export default function FacilityDetailsPage() {
   // Refs for debouncing WebSocket-triggered refreshes
   const loadDevicesRef = useRef<() => void>(() => {});
   const loadUnitsRef = useRef<() => void>(() => {});
-  const wsDeviceDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const wsUnitsDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const hasInitialSyncRef = useRef(false);
 
   // Sync route ID with global context on initial mount only (one-way: route -> context)
@@ -238,68 +234,20 @@ export default function FacilityDetailsPage() {
     };
   }, [ws]);
 
-  // Subscribe to device status updates when on devices tab
-  useEffect(() => {
-    if (activeTab !== 'devices' || !facility?.id) return;
-    
-    const subscriptionId = ws.subscribe(
-      'device_status',
-      () => {
-        // Debounce refresh to prevent excessive API calls
-        if (wsDeviceDebounceRef.current) {
-          clearTimeout(wsDeviceDebounceRef.current);
-        }
-        wsDeviceDebounceRef.current = setTimeout(() => {
-          loadDevicesRef.current();
-        }, 500);
-      },
-      undefined,
-      { facility_id: facility.id }
-    );
-    
-    return () => {
-      if (subscriptionId) ws.unsubscribe(subscriptionId);
-      if (wsDeviceDebounceRef.current) {
-        clearTimeout(wsDeviceDebounceRef.current);
-      }
-    };
-  }, [activeTab, facility?.id, ws]);
+  useLockDeviceRealtime({
+    enabled: activeTab === 'devices' && !!facility?.id,
+    facilityId: facility?.id,
+    debouncedRefresh: () => loadDevicesRef.current(),
+    debounceMs: 500,
+    subscribeUnitsForRefresh: false,
+  });
 
-  // Subscribe to units updates when on units tab
-  useEffect(() => {
-    if (activeTab !== 'units' || !facility?.id) return;
-    
-    const subscriptionId = ws.subscribe(
-      'units',
-      () => {
-        // Debounce refresh to prevent excessive API calls
-        if (wsUnitsDebounceRef.current) {
-          clearTimeout(wsUnitsDebounceRef.current);
-        }
-        wsUnitsDebounceRef.current = setTimeout(() => {
-          loadUnitsRef.current();
-        }, 500);
-      },
-      undefined
-    );
-    
-    return () => {
-      if (subscriptionId) ws.unsubscribe(subscriptionId);
-      if (wsUnitsDebounceRef.current) {
-        clearTimeout(wsUnitsDebounceRef.current);
-      }
-    };
-  }, [activeTab, facility?.id, ws]);
-
-  useEffect(() => {
-    if (!unlockBluLokDeviceIdRef.current) return;
-    const item = facilityDevices.find((x) => x.id === unlockBluLokDeviceIdRef.current);
-    const ls = item && 'lock_status' in item ? (item as BluLokDevice).lock_status : undefined;
-    if (ls === 'unlocked') {
-      cancelBluLokUnlockWatch();
-      unlockBluLokDeviceIdRef.current = null;
-    }
-  }, [facilityDevices, cancelBluLokUnlockWatch]);
+  useLockDeviceRealtime({
+    enabled: activeTab === 'units' && !!facility?.id,
+    facilityId: facility?.id,
+    debouncedRefresh: () => loadUnitsRef.current(),
+    debounceMs: 500,
+  });
 
   useEffect(() => {
     if (!unitUnlockWatchIdRef.current) return;
@@ -440,55 +388,6 @@ export default function FacilityDetailsPage() {
     if (activeTab !== 'units') return;
     loadFacilityUnitsPageData();
   }, [activeTab, loadFacilityUnitsPageData]);
-
-  const handleLockToggle = async (device: BluLokDevice) => {
-    if (!canRequestRemoteUnlock(device.lock_status)) return;
-    setFacilityDevices((prev) =>
-      prev.map((item) =>
-        item.id === device.id && item.device_category === 'blulok'
-          ? {
-              ...(item as BluLokDevice & { device_category: string }),
-              lock_status: 'unlocking',
-            }
-          : item,
-      ),
-    );
-    unlockBluLokDeviceIdRef.current = device.id;
-    scheduleBluLokUnlockWatch(
-      () => {
-        const cur = facilityDevicesRef.current.find((x) => x.id === device.id) as BluLokDevice | undefined;
-        return cur?.lock_status;
-      },
-      () => {
-        unlockBluLokDeviceIdRef.current = null;
-        void loadFacilityDevices();
-      },
-    );
-    try {
-      await apiService.updateLockStatus(device.id, 'unlocked');
-      addToast(lockHardwareFeedbackToasts.unlockCommandSent());
-      await loadFacilityData();
-      await loadFacilityDevices();
-    } catch (error) {
-      cancelBluLokUnlockWatch();
-      unlockBluLokDeviceIdRef.current = null;
-      console.error('Failed to unlock device:', error);
-      addToast(lockHardwareFeedbackToasts.couldNotUnlockDevice());
-      await loadFacilityDevices();
-    }
-  };
-
-  const handleAccessControlUnlock = async (accessDevice: AccessControlDevice) => {
-    if (!accessDevice.is_locked || accessDevice.status !== 'online') return;
-    try {
-      await apiService.updateAccessControlLockStatus(accessDevice.id, 'unlocked');
-      addToast(lockHardwareFeedbackToasts.unlockCommandSent());
-      await loadFacilityDevices();
-    } catch (error) {
-      console.error('Failed to unlock access control device:', error);
-      addToast(lockHardwareFeedbackToasts.couldNotUnlockDevice());
-    }
-  };
 
   const handleFacilityUnitUnlock = async (unit: Unit) => {
     if (!unit.blulok_device || !canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
@@ -960,9 +859,25 @@ export default function FacilityDetailsPage() {
       {activeTab === 'devices' && (
         <div className="space-y-6">
           {canManage && (
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-600 dark:text-gray-400"/>
-              <div className="flex space-x-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <p className="text-sm text-gray-600 dark:text-gray-400 max-w-xl">
+                Physical endpoints for this facility: access control (gates, doors, elevators) and BluLok locks.
+                The{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('device-groups');
+                    const next = new URLSearchParams(location.search);
+                    next.set('tab', 'device-groups');
+                    navigate(`${location.pathname}?${next.toString()}`, { replace: true });
+                  }}
+                  className="text-primary-600 dark:text-primary-400 font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-primary-500 rounded"
+                >
+                  Device Groups
+                </button>{' '}
+                tab is where you organize those devices into zones or shared keypad code scopes (it does not replace adding hardware here).
+              </p>
+              <div className="flex shrink-0 space-x-2">
                 <button
                   onClick={() => {
                     setSelectedDeviceType('access_control');
@@ -1067,17 +982,9 @@ export default function FacilityDetailsPage() {
                       <BluLokDeviceCardShared
                         key={device.id}
                         device={bluLokDevice}
-                        canManage={canManage}
-                        onToggleLock={() => handleLockToggle(bluLokDevice)}
                         onViewDevice={() => navigate(`/devices/${device.id}`, {
                           state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
                         })}
-                        onViewUnit={bluLokDevice.unit_id ? () => {
-                          const currentTab = activeTab || 'overview';
-                          navigate(`/units/${bluLokDevice.unit_id}`, {
-                            state: withReturnPath(location, { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` }),
-                          });
-                        } : undefined}
                       />
                     );
                   }
@@ -1089,9 +996,6 @@ export default function FacilityDetailsPage() {
                       onViewDevice={() => navigate(`/devices/${device.id}`, {
                         state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
                       })}
-                      canManageAccessMethods={canManage}
-                      onAccessMethodsUpdated={loadFacilityDevices}
-                      onRequestUnlock={canManage ? () => handleAccessControlUnlock(device as AccessControlDevice) : undefined}
                       groupNames={groupNamesByDeviceId[device.id] || []}
                     />
                   );

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
 import { apiService } from '@/services/api.service';
 import { UserFilter } from '@/components/Common/UserFilter';
 import { EditUnitModal } from '@/components/Units/EditUnitModal';
@@ -31,6 +30,8 @@ import { useToast } from '@/contexts/ToastContext';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 
 interface UnitDetails {
   id: string;
@@ -119,7 +120,6 @@ export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const { subscribe, unsubscribe } = useWebSocket();
   const handleBack = useBackNavigation('/units');
   const [unit, setUnit] = useState<UnitDetails | null>(null);
   const [boundDeviceGroupNames, setBoundDeviceGroupNames] = useState<string[]>([]);
@@ -195,49 +195,50 @@ export default function UnitDetailsPage() {
     }
   }, [unitId]);
 
-  // Subscribe to real-time device status updates for this unit
-  const handleDeviceStatusUpdate = useCallback((data: any) => {
-    if (!unit?.blulok_device?.id || !data.devices) return;
-    
-    // Find device update matching our unit's device
-    const deviceUpdate = data.devices.find((d: any) => d.id === unit.blulok_device?.id);
-    if (deviceUpdate) {
-      setUnit(prev => {
-        if (!prev?.blulok_device) return prev;
-        return {
-          ...prev,
-          blulok_device: {
-            ...prev.blulok_device,
-            lock_status: deviceUpdate.lock_status || prev.blulok_device.lock_status,
-            device_status: deviceUpdate.device_status || prev.blulok_device.device_status,
-            battery_level: deviceUpdate.battery_level ?? prev.blulok_device.battery_level,
-            signal_strength: deviceUpdate.signal_strength ?? prev.blulok_device.signal_strength,
-            temperature: deviceUpdate.temperature ?? prev.blulok_device.temperature,
-            error_code: deviceUpdate.error_code !== undefined ? deviceUpdate.error_code : prev.blulok_device.error_code,
-            error_message: deviceUpdate.error_message !== undefined ? deviceUpdate.error_message : prev.blulok_device.error_message,
-            last_seen: deviceUpdate.last_seen || prev.blulok_device.last_seen,
-          },
-        };
-      });
-    }
-  }, [unit?.blulok_device?.id]);
+  const mergeBlulokFromSnapshots = useCallback((rows: LockDeviceSnapshot[]) => {
+    if (rows.length === 0) return;
+    const deviceUpdate = rows[0];
+    setUnit((prev) => {
+      if (!prev?.blulok_device) return prev;
+      return {
+        ...prev,
+        blulok_device: {
+          ...prev.blulok_device,
+          lock_status: (deviceUpdate.lock_status || prev.blulok_device.lock_status) as NonNullable<
+            UnitDetails['blulok_device']
+          >['lock_status'],
+          device_status: (deviceUpdate.device_status || prev.blulok_device.device_status) as NonNullable<
+            UnitDetails['blulok_device']
+          >['device_status'],
+          battery_level: deviceUpdate.battery_level ?? prev.blulok_device.battery_level,
+          signal_strength: deviceUpdate.signal_strength ?? prev.blulok_device.signal_strength,
+          temperature:
+            deviceUpdate.temperature !== undefined && deviceUpdate.temperature !== null
+              ? (() => {
+                  const temp =
+                    typeof deviceUpdate.temperature === 'number'
+                      ? deviceUpdate.temperature
+                      : Number(deviceUpdate.temperature);
+                  return Number.isNaN(temp) ? prev.blulok_device!.temperature : temp;
+                })()
+              : prev.blulok_device.temperature,
+          error_code: deviceUpdate.error_code !== undefined ? deviceUpdate.error_code : prev.blulok_device.error_code,
+          error_message:
+            deviceUpdate.error_message !== undefined ? deviceUpdate.error_message : prev.blulok_device.error_message,
+          firmware_version: deviceUpdate.firmware_version ?? prev.blulok_device.firmware_version,
+          last_activity: deviceUpdate.last_activity ?? prev.blulok_device.last_activity,
+          last_seen: deviceUpdate.last_seen || prev.blulok_device.last_seen,
+        },
+      };
+    });
+  }, []);
 
-  useEffect(() => {
-    if (!unit?.blulok_device?.id) return;
-
-    const subscriptionId = subscribe(
-      'device_status',
-      handleDeviceStatusUpdate,
-      (err) => console.error('Device status subscription error:', err),
-      { device_id: unit.blulok_device.id }
-    );
-
-    return () => {
-      if (subscriptionId) {
-        unsubscribe(subscriptionId);
-      }
-    };
-  }, [unit?.blulok_device?.id, subscribe, unsubscribe, handleDeviceStatusUpdate]);
+  useLockDeviceRealtime({
+    enabled: !!unit?.blulok_device?.id,
+    deviceId: unit?.blulok_device?.id,
+    onDeviceRows: mergeBlulokFromSnapshots,
+    subscribeUnitsForRefresh: false,
+  });
 
   const loadUnitDetails = async () => {
     if (!unitId) return;

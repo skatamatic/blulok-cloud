@@ -54,6 +54,8 @@ export interface AccessControlDevice {
   relay_channel: number;
   status: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked: boolean;
+  /** When true, cloud may send remote lock (CLOSE). Default false — unlock-only from cloud. */
+  supports_remote_lock?: boolean;
   last_activity?: string;
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -156,6 +158,8 @@ export interface BluLokDevice {
   serial?: string;
   firmware_version?: string;
   lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+  /** When true, cloud may send remote lock (CLOSE). Default false — unlock-only from cloud. */
+  supports_remote_lock?: boolean;
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   battery_level?: number;
   /** Wireless signal strength in dBm (e.g., -70 dBm) */
@@ -215,6 +219,8 @@ export interface Unit {
     device_serial: string;
     /** Remote toggle is only valid for locked/unlocked; transitional or error states are read-only. */
     lock_status: string;
+    /** When true, cloud may send remote lock. Default false — unlock-only from cloud. */
+    supports_remote_lock?: boolean;
     device_status: string;
     battery_level?: number;
   };
