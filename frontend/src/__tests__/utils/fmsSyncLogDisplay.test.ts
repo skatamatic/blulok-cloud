@@ -1,4 +1,4 @@
-import { FMSSyncLog } from '@/types/fms.types';
+import { FMSSyncLog, FMSSyncStatus } from '@/types/fms.types';
 import {
   getFmsSyncAppliedColumnText,
   getFmsSyncHistoryDetectedSuffix,
@@ -8,7 +8,7 @@ const base = (overrides: Partial<FMSSyncLog>): FMSSyncLog => ({
   id: 'log-1',
   facility_id: 'fac-1',
   fms_config_id: 'cfg-1',
-  sync_status: 'completed',
+  sync_status: FMSSyncStatus.COMPLETED,
   started_at: new Date().toISOString(),
   triggered_by: 'manual',
   changes_detected: 0,
