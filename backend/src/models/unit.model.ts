@@ -957,6 +957,21 @@ export class UnitModel {
   }
 
   /**
+   * Find many units by primary key (for bulk assignment and similar).
+   */
+  async findByIds(unitIds: string[]): Promise<Unit[]> {
+    if (unitIds.length === 0) return [];
+    const knex = this.db.connection;
+    try {
+      const rows = (await knex('units').whereIn('id', unitIds)) as Unit[];
+      return rows || [];
+    } catch (error) {
+      logger.error('Error finding units by IDs:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get unit details for a user with role-based access control
    */
   async getUnitDetailsForUser(unitId: string, userId: string, userRole: UserRole): Promise<any> {

@@ -132,7 +132,13 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
   - `ApiProxyService` handles loopback proxying with optional `GATEWAY_PROXY_BASE_URL` override.
   - `FacilityGuardService` centrally enforces facility scoping for FACILITY_ADMIN proxy calls.
 - Defaults and limits:
-  - `GATEWAY_MAX_MESSAGE_BYTES` (default 512KB), `GATEWAY_PING_INTERVAL_SEC` (25s), `GATEWAY_PONG_TIMEOUT_SEC` (20s).
+  - `GATEWAY_MAX_MESSAGE_BYTES` (default 512KB).
+  - Keepalive strategy (hardcoded best-practice values, not env-configurable):
+    - **RFC6455 `ping` frames every 20s** per connection: the primary defense against LB/NAT/Cloud Run idle timeouts (most intermediaries only track WebSocket control frames, not JSON payloads).
+    - **JSON `PING` after 10s idle**: application-level health check; gateway responds with JSON `PONG`.
+    - **Inactivity timeout 30s**: connection closed if no data, JSON `PONG`, or WS `pong` frame received.
+    - **Heartbeat sweep every 5s**: frequency at which server evaluates idle timeouts.
+    - **TCP keepalive 30s**: OS-level probes on the upgraded socket to detect silent half-open connections.
   - One active connection per facility (latest connection replaces previous).
 
 ### Dashboard & widget API scoping

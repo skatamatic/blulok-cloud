@@ -193,6 +193,12 @@ describe('FacilityFMSTab', () => {
       await waitFor(() => {
         expect(mockFmsService.triggerSync).toHaveBeenCalledWith(facilityId);
       });
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/No changes detected - system is in sync with FMS/i)
+        ).toBeInTheDocument();
+      });
     });
 
     it('should show pending changes alert when changes detected', async () => {

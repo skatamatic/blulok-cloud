@@ -152,6 +152,8 @@ export interface FMSSyncLog {
     units_synced: number;
     errors: string[];
     warnings: string[];
+    /** Set by server when changes were applied by facility auto-accept during this sync. */
+    changes_auto_applied?: boolean;
   };
   created_at: string;
   updated_at: string;

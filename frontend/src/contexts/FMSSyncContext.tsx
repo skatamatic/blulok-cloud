@@ -53,18 +53,30 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   const [syncState, setSyncState] = useState<FMSSyncState>(initialState);
   const { subscribe, unsubscribe } = useWebSocket();
   const progressSubIdRef = useRef<string | null>(null);
+  /** Avoid stale facilityId inside the long-lived WS handler (e.g. second sync same session). */
+  const facilityIdRef = useRef<string | null>(null);
 
-  const startSync = useCallback((facilityId: string, facilityName: string) => {
-    // Always reset to initial state when starting a new sync
-    setSyncState({
-      ...initialState,
-      isActive: true,
-      facilityId,
-      facilityName,
-      currentStep: 'connecting',
-      progressPercentage: 0,
-    });
-  }, []);
+  useEffect(() => {
+    facilityIdRef.current = syncState.facilityId;
+  }, [syncState.facilityId]);
+
+  const startSync = useCallback(
+    (facilityId: string, facilityName: string) => {
+      if (progressSubIdRef.current) {
+        unsubscribe(progressSubIdRef.current);
+        progressSubIdRef.current = null;
+      }
+      setSyncState({
+        ...initialState,
+        isActive: true,
+        facilityId,
+        facilityName,
+        currentStep: 'connecting',
+        progressPercentage: 0,
+      });
+    },
+    [unsubscribe]
+  );
 
   const updateStep = useCallback((step: SyncStep) => {
     const stepProgress: Record<SyncStep, number> = {
@@ -172,119 +184,133 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
 
       const handler = async (data: any): Promise<void> => {
         console.log('[FMSSyncContext] Received progress data:', data);
-        
-        // The WebSocket service already filtered by subscription type,
-        // so we just receive the data payload directly
+
         if (!data) {
           console.log('[FMSSyncContext] No data in message, ignoring');
           return;
         }
-        
-        if (data.facilityId !== syncState.facilityId) {
+
+        if (data.status === 'ready' && !data.step) {
+          return;
+        }
+
+        const expectedFacilityId = facilityIdRef.current;
+        if (data.facilityId !== expectedFacilityId) {
           console.log('[FMSSyncContext] Facility ID mismatch, ignoring:', {
-            expected: syncState.facilityId,
+            expected: expectedFacilityId,
             received: data.facilityId,
           });
           return;
         }
 
-        const step = data.step as SyncStep;
+        const step = data.step as string;
         const percent = typeof data.percent === 'number' ? data.percent : undefined;
 
         console.log('[FMSSyncContext] Processing progress update:', { step, percent });
 
-        // When sync completes, fetch the changes and show review modal
-        // Don't call updateStep('complete') - let completeSync() handle it
+        const clearProgressSub = () => {
+          if (progressSubIdRef.current) {
+            unsubscribe(progressSubIdRef.current);
+            progressSubIdRef.current = null;
+          }
+        };
+
+        if (step === 'failed' || step === 'cancelled') {
+          clearProgressSub();
+          cancelSync();
+          return;
+        }
+
+        // When sync completes, load pending changes by syncLogId (do not rely on history ordering).
         if (step === 'complete' && data.syncLogId) {
           console.log('[FMSSyncContext] Sync complete, fetching changes from sync log:', data.syncLogId);
-          
-          // Set progress to 100% immediately
+
           if (percent !== undefined) {
             setProgress(Math.max(0, Math.min(100, percent)));
           }
-          
+
           try {
             const { fmsService } = await import('../services/fms.service');
-            const history = await fmsService.getSyncHistory(syncState.facilityId!, { limit: 1 });
-            console.log('[FMSSyncContext] Fetched sync history:', {
-              count: history.logs.length,
-              expectedSyncLogId: data.syncLogId,
-              latestSyncId: history.logs[0]?.id,
-              latestSyncStatus: history.logs[0]?.sync_status,
-              changesDetectedCount: history.logs[0]?.changes_detected || 0
+            const pendingChanges = await fmsService.getPendingChanges(data.syncLogId);
+            const latestSync = await fmsService.getSyncDetails(data.syncLogId);
+            console.log('[FMSSyncContext] Fetched sync log and pending changes:', {
+              syncLogId: latestSync.id,
+              pendingCount: pendingChanges.length,
             });
 
-            if (history.logs.length > 0) {
-              const latestSync = history.logs[0];
-              if (latestSync.id === data.syncLogId) {
-                // Fetch the actual changes using the pending changes endpoint
-                const pendingChanges = await fmsService.getPendingChanges(data.syncLogId);
-                console.log('[FMSSyncContext] Found matching sync, fetched pending changes:', { count: pendingChanges.length });
-
-                // Calculate summary from changes
-                const summary = pendingChanges.reduce((acc, change) => {
-                  switch (change.change_type) {
-                    case 'tenant_added':
-                      acc.tenantsAdded++;
-                      break;
-                    case 'tenant_removed':
-                      acc.tenantsRemoved++;
-                      break;
-                    case 'tenant_updated':
-                      acc.tenantsUpdated++;
-                      break;
-                    case 'unit_added':
-                      acc.unitsAdded++;
-                      break;
-                    case 'unit_removed':
-                      acc.unitsRemoved++;
-                      break;
-                    case 'unit_updated':
-                      acc.unitsUpdated++;
-                      break;
-                  }
-                  return acc;
-                }, {
-                  tenantsAdded: 0,
-                  tenantsRemoved: 0,
-                  tenantsUpdated: 0,
-                  unitsAdded: 0,
-                  unitsRemoved: 0,
-                  unitsUpdated: 0,
-                  errors: [],
-                  warnings: []
-                });
-
-                // Create proper sync result matching FMSSyncResult interface
-                const syncResult: FMSSyncResult = {
-                  success: latestSync.sync_status === 'completed',
-                  syncLogId: latestSync.id,
-                  changesDetected: pendingChanges,
-                  summary,
-                  requiresReview: pendingChanges.length > 0
-                };
-
-                completeSync(pendingChanges, syncResult);
-              } else {
-                console.warn('[FMSSyncContext] Sync log ID mismatch:', {
-                  expected: data.syncLogId,
-                  got: latestSync.id
-                });
+            const summary = pendingChanges.reduce(
+              (acc, change) => {
+                switch (change.change_type) {
+                  case 'tenant_added':
+                    acc.tenantsAdded++;
+                    break;
+                  case 'tenant_removed':
+                    acc.tenantsRemoved++;
+                    break;
+                  case 'tenant_updated':
+                    acc.tenantsUpdated++;
+                    break;
+                  case 'unit_added':
+                    acc.unitsAdded++;
+                    break;
+                  case 'unit_removed':
+                    acc.unitsRemoved++;
+                    break;
+                  case 'unit_updated':
+                    acc.unitsUpdated++;
+                    break;
+                }
+                return acc;
+              },
+              {
+                tenantsAdded: 0,
+                tenantsRemoved: 0,
+                tenantsUpdated: 0,
+                unitsAdded: 0,
+                unitsRemoved: 0,
+                unitsUpdated: 0,
+                errors: [] as string[],
+                warnings: [] as string[],
               }
-            } else {
-              console.warn('[FMSSyncContext] No sync logs found in history');
-            }
+            );
+
+            const syncResult: FMSSyncResult = {
+              success: latestSync.sync_status === 'completed',
+              syncLogId: latestSync.id,
+              changesDetected: pendingChanges,
+              summary,
+              requiresReview: pendingChanges.length > 0,
+            };
+
+            completeSync(pendingChanges, syncResult);
           } catch (error) {
-            console.error('[FMSSyncContext] Error fetching changes:', error);
+            console.error('[FMSSyncContext] Error completing sync from WebSocket:', error);
+            const fallback: FMSSyncResult = {
+              success: true,
+              syncLogId: data.syncLogId,
+              changesDetected: [],
+              summary: {
+                tenantsAdded: 0,
+                tenantsRemoved: 0,
+                tenantsUpdated: 0,
+                unitsAdded: 0,
+                unitsRemoved: 0,
+                unitsUpdated: 0,
+                errors: [],
+                warnings: [],
+              },
+              requiresReview: false,
+            };
+            completeSync([], fallback);
           }
-        } else {
-          // For all other steps, update normally
-          if (step) {
-            updateStep(step);
-          }
-          if (percent !== undefined) {
-            setProgress(Math.max(0, Math.min(100, percent)));
-          }
+          return;
+        }
+
+        if (step && ['connecting', 'fetching', 'detecting', 'preparing', 'complete', 'cancelled'].includes(step)) {
+          updateStep(step as SyncStep);
+        }
+        if (percent !== undefined) {
+          setProgress(Math.max(0, Math.min(100, percent)));
         }
       };
 
@@ -299,7 +325,16 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
       // do not auto-unsubscribe here unless sync deactivates; handled above
       undefined;
     };
-  }, [syncState.isActive, syncState.facilityId, subscribe, unsubscribe, updateStep, setProgress]);
+  }, [
+    syncState.isActive,
+    syncState.facilityId,
+    subscribe,
+    unsubscribe,
+    updateStep,
+    setProgress,
+    completeSync,
+    cancelSync,
+  ]);
 
   const showReview = useCallback(() => {
     setSyncState(prev => ({

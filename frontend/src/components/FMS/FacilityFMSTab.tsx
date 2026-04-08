@@ -27,6 +27,7 @@ import {
 import { ProviderConfigForm } from './ProviderConfigForm';
 import { useToast } from '@/contexts/ToastContext';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
+import { getFmsSyncAppliedColumnText } from '@/utils/fmsSyncLogDisplay';
 
 interface FacilityFMSTabProps {
   facilityId: string;
@@ -37,7 +38,7 @@ interface FacilityFMSTabProps {
 
 export function FacilityFMSTab({ facilityId, facilityName, isDevMode = false, canEditFMS = true }: FacilityFMSTabProps) {
   const { addToast } = useToast();
-  const { canStartNewSync, startSync, completeSync, showReview } = useFMSSync();
+  const { canStartNewSync, startSync, completeSync, showReview, cancelSync } = useFMSSync();
   const [config, setConfig] = useState<FMSConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -153,6 +154,7 @@ export function FacilityFMSTab({ facilityId, facilityName, isDevMode = false, ca
           message: `Found ${result.changesDetected.length} changes that need review`,
         });
       } else {
+        completeSync([], result);
         addToast({
           type: 'success',
           title: 'Sync Completed',
@@ -162,6 +164,7 @@ export function FacilityFMSTab({ facilityId, facilityName, isDevMode = false, ca
 
       await loadSyncHistory();
     } catch (error: any) {
+      cancelSync();
       addToast({
         type: 'error',
         title: 'Sync Failed',
@@ -462,12 +465,7 @@ export function FacilityFMSTab({ facilityId, facilityName, isDevMode = false, ca
                       {log.changes_detected || 0}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                      {log.changes_applied === log.changes_detected && log.changes_pending === 0 && log.changes_detected > 0
-                        ? 'Auto Accepted'
-                        : log.changes_applied === log.changes_detected && log.changes_detected > 0
-                        ? 'All Applied'
-                        : (log.changes_applied || 0)
-                      }
+                      {getFmsSyncAppliedColumnText(log)}
                     </td>
                   </tr>
                 ))}

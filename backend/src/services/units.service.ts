@@ -341,13 +341,8 @@ export class UnitsService {
     if (unitIds.length === 0) return result;
 
     try {
-      // PERFORMANCE FIX: Pre-fetch all units in one query instead of N queries
-      const allUnitsResult = await this.unitModel.getUnitsListForUser(
-        'system',
-        'admin' as any,
-        { limit: unitIds.length * 2, offset: 0 }
-      );
-      const unitsById = new Map((allUnitsResult.units || []).map((u: any) => [u.id, u]));
+      const unitsList = await this.unitModel.findByIds(unitIds);
+      const unitsById = new Map(unitsList.map((u) => [u.id, u]));
 
       // PERFORMANCE FIX: Pre-fetch all existing assignments for this tenant
       const existingAssignments = await this.unitAssignmentModel.findByTenantId(tenantId);

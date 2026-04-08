@@ -437,6 +437,7 @@ export class FMSService {
           units_synced: fmsUnits.length,
           errors: applyResult.errors,
           warnings: [],
+          changes_auto_applied: true,
         });
       } else {
         await this.syncLogModel.markCompleted(syncLog.id, {
@@ -444,6 +445,7 @@ export class FMSService {
           units_synced: fmsUnits.length,
           errors: [],
           warnings: [],
+          changes_auto_applied: false,
         });
       }
 

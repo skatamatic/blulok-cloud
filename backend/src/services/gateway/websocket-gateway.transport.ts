@@ -1,4 +1,5 @@
 import { Server as HTTPServer } from 'http';
+import { Socket } from 'net';
 import WebSocket, { WebSocketServer } from 'ws';
 import { GatewayTransport } from './gateway-transport.interface';
 import { AuthService } from '@/services/auth.service';
@@ -38,11 +39,20 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   private wss?: WebSocketServer;
   private facilityToClient = new Map<string, AuthedClient>();
   private readonly path = '/ws/gateway';
-  // Heartbeat configuration:
-  // - pingIntervalMs: how long of inactivity before we proactively send a PING
-  // - inactivityTimeoutMs: maximum allowed silence (no messages or PONG) before we close
-  private readonly pingIntervalMs = (Number(process.env.GATEWAY_PING_INTERVAL_SEC) || 10) * 1000;
-  private readonly inactivityTimeoutMs = (Number(process.env.GATEWAY_PONG_TIMEOUT_SEC) || 20) * 1000;
+
+  // ── Keepalive / heartbeat constants ──
+  // RFC6455 ping frames every 20s: keeps NAT tables, LBs, and proxies alive
+  // (shortest common idle timeout is ~60s on AWS ALB; 300s on NATs; 600s on Cloud Run).
+  private static readonly WS_FRAME_PING_MS = 20_000;
+  // JSON PING sent after 10s of inactivity (application-level health check).
+  private static readonly JSON_PING_AFTER_IDLE_MS = 10_000;
+  // Close connection after 30s of total silence (no JSON PONG, no WS pong, no data).
+  private static readonly INACTIVITY_TIMEOUT_MS = 30_000;
+  // How often we sweep connections for timeouts.
+  private static readonly HEARTBEAT_SWEEP_MS = 5_000;
+  // TCP keepalive probe interval.
+  private static readonly TCP_KEEPALIVE_MS = 30_000;
+
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private connectionChangeListener?: (event: {
     facilityId: string;
@@ -206,8 +216,28 @@ export class WebsocketGatewayTransport implements GatewayTransport {
 
   private bindConnection(ws: RemoteWebSocket): void {
     let authed: AuthedClient | null = null;
+    let framePingTimer: ReturnType<typeof setInterval> | undefined;
+
+    const clearFramePingTimer = () => {
+      if (framePingTimer) {
+        clearInterval(framePingTimer);
+        framePingTimer = undefined;
+      }
+    };
+
+    // TCP keepalive: reduces silent drops behind Cloud Run / GLB / NAT.
+    try {
+      const sock = (ws as unknown as { _socket?: Socket })._socket;
+      if (sock) {
+        sock.setKeepAlive(true, WebsocketGatewayTransport.TCP_KEEPALIVE_MS);
+        sock.setNoDelay(true);
+      }
+    } catch {
+      /* ignore */
+    }
 
     const closeAndCleanup = (reason = 'socket_closed') => {
+      clearFramePingTimer();
       if (authed) {
         const current = this.facilityToClient.get(authed.facilityId);
         if (current?.ws === ws) {
@@ -229,6 +259,19 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       }
       try { ws.close(); } catch {}
     };
+
+    ws.on('pong', () => {
+      if (authed) {
+        authed.lastActivityAt = Date.now();
+      }
+    });
+
+    // RFC6455 ping frames on a fixed cadence — the single most effective keepalive for
+    // intermediaries (load balancers, NAT, Cloud Run ingress) that don't inspect app-level JSON.
+    framePingTimer = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try { ws.ping(); } catch { /* ignore */ }
+    }, WebsocketGatewayTransport.WS_FRAME_PING_MS);
 
     ws.on('message', async (raw: WebSocket.RawData) => {
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');
@@ -441,7 +484,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           continue;
         }
         const inactiveMs = now - client.lastActivityAt;
-        if (inactiveMs > this.inactivityTimeoutMs) {
+        if (inactiveMs > WebsocketGatewayTransport.INACTIVITY_TIMEOUT_MS) {
           logger.warn(`Gateway heartbeat inactivity timeout, closing facility ${facilityId}`);
           try { client.ws.close(4001, 'heartbeat timeout'); } catch {}
           this.facilityToClient.delete(facilityId);
@@ -454,8 +497,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           });
           continue;
         }
-        // Only send PING after a period of inactivity; any gateway message counts as activity.
-        if (inactiveMs >= this.pingIntervalMs) {
+        if (inactiveMs >= WebsocketGatewayTransport.JSON_PING_AFTER_IDLE_MS) {
           safeSend(client.ws, { type: 'PING' });
           GatewayDebugService.getInstance().publish({
             kind: 'ping_sent',
@@ -465,7 +507,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           });
         }
       }
-    }, this.pingIntervalMs);
+    }, WebsocketGatewayTransport.HEARTBEAT_SWEEP_MS);
   }
 
   /**

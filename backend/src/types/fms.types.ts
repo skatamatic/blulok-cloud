@@ -160,6 +160,8 @@ export interface FMSSyncLog {
     units_synced: number;
     errors: string[];
     warnings: string[];
+    /** True only when this sync run applied changes via facility auto-accept (not widget-only). */
+    changes_auto_applied?: boolean;
   };
   created_at: Date;
   updated_at: Date;

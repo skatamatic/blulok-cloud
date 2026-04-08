@@ -10,6 +10,11 @@ import { FMSProviderType, FMSAuthType } from '@/types/fms.types';
 // Mock fetch globally
 global.fetch = jest.fn();
 
+const emptyPagedUnits = () => ({
+  units: [] as unknown[],
+  meta: { pagination: { next_page: null as number | null } },
+});
+
 describe('StoredgeProvider', () => {
   let provider: StoredgeProvider;
   const facilityId = 'test-facility-123';
@@ -76,7 +81,9 @@ describe('StoredgeProvider', () => {
       
       expect(result).toBe(true);
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/units`,
+        expect.stringMatching(
+          new RegExp(`${baseUrl.replace(/\//g, '\\/')}/v1/${facilityId}/units\\?[^#]*page=1[^#]*per_page=1`)
+        ),
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({
@@ -151,14 +158,15 @@ describe('StoredgeProvider', () => {
         ],
       };
 
+      const paginateNull = { meta: { pagination: { next_page: null as number | null } } };
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => mockLedgersResponse,
+          json: async () => ({ ...mockLedgersResponse, ...paginateNull }),
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => mockTenantsResponse,
+          json: async () => ({ ...mockTenantsResponse, ...paginateNull }),
         });
 
       const tenants = await provider.fetchTenants();
@@ -188,20 +196,21 @@ describe('StoredgeProvider', () => {
       // Verify both API calls were made
       expect(global.fetch).toHaveBeenCalledTimes(2);
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/ledgers/current`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/ledgers/current`),
         expect.any(Object)
       );
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/tenants/current`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/tenants/current`),
         expect.any(Object)
       );
     });
 
     it('should handle tenant with no primary phone', async () => {
+      const endPage = { meta: { pagination: { next_page: null as number | null } } };
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ ledgers: [] }),
+          json: async () => ({ ledgers: [], ...endPage }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -214,6 +223,7 @@ describe('StoredgeProvider', () => {
               phone_numbers: [],
               active: true,
             }],
+            ...endPage,
           }),
         });
 
@@ -224,10 +234,11 @@ describe('StoredgeProvider', () => {
     });
 
     it('should handle inactive tenants', async () => {
+      const endPage = { meta: { pagination: { next_page: null as number | null } } };
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ ledgers: [] }),
+          json: async () => ({ ledgers: [], ...endPage }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -240,6 +251,7 @@ describe('StoredgeProvider', () => {
               phone_numbers: [],
               active: false,
             }],
+            ...endPage,
           }),
         });
 
@@ -277,7 +289,10 @@ describe('StoredgeProvider', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockUnitsResponse,
+        json: async () => ({
+          ...mockUnitsResponse,
+          meta: { pagination: { next_page: null as number | null } },
+        }),
       });
 
       const units = await provider.fetchUnits();
@@ -309,15 +324,40 @@ describe('StoredgeProvider', () => {
     it('should call correct API endpoint', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => ({
+          units: [],
+          meta: { pagination: { next_page: null as number | null } },
+        }),
       });
 
       await provider.fetchUnits();
 
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/units`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/units`),
         expect.any(Object)
       );
+    });
+
+    it('should merge multiple pages of units', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            units: [{ id: 'u1', name: '1', unit_type: { name: 't' }, size: '', status: 'vacant', price: 0 }],
+            meta: { pagination: { next_page: 2 } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            units: [{ id: 'u2', name: '2', unit_type: { name: 't' }, size: '', status: 'vacant', price: 0 }],
+            meta: { pagination: { next_page: null } },
+          }),
+        });
+
+      const units = await provider.fetchUnits();
+      expect(units).toHaveLength(2);
+      expect(units.map((u) => u.externalId)).toEqual(['u1', 'u2']);
     });
   });
 
@@ -346,7 +386,10 @@ describe('StoredgeProvider', () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => mockLedgers,
+          json: async () => ({
+            ...mockLedgers,
+            meta: { pagination: { next_page: null as number | null } },
+          }),
         });
 
       const tenant = await provider.fetchTenant('tenant-1');
@@ -468,7 +511,7 @@ describe('StoredgeProvider', () => {
     it('should include OAuth Authorization header in all requests', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => emptyPagedUnits(),
       });
 
       await provider.fetchUnits();
@@ -487,7 +530,7 @@ describe('StoredgeProvider', () => {
     it('should use HMAC-SHA1 signature method', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => emptyPagedUnits(),
       });
 
       await provider.fetchUnits();
@@ -502,11 +545,11 @@ describe('StoredgeProvider', () => {
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ units: [] }),
+          json: async () => emptyPagedUnits(),
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ units: [] }),
+          json: async () => emptyPagedUnits(),
         });
 
       await provider.fetchUnits();
@@ -560,13 +603,13 @@ describe('StoredgeProvider', () => {
     it('should use correct facility ID in API paths', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => emptyPagedUnits(),
       });
 
       await provider.fetchUnits();
 
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/units`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/units`),
         expect.any(Object)
       );
     });
@@ -579,7 +622,10 @@ describe('StoredgeProvider', () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ ledgers: [] }),
+          json: async () => ({
+            ledgers: [],
+            meta: { pagination: { next_page: null as number | null } },
+          }),
         });
 
       await provider.fetchTenant('tenant-123');

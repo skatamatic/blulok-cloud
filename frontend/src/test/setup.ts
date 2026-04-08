@@ -28,6 +28,7 @@ globalWithPolyfills.setImmediate = ((callback: (...args: unknown[]) => void, ...
 Object.defineProperty(globalThis, 'import.meta', {
   value: {
     env: {
+      DEV: false,
       VITE_API_URL: 'http://localhost:3000',
       VITE_WS_URL: 'ws://localhost:3000',
       VITE_GOOGLE_MAPS_API_KEY: 'test-api-key',

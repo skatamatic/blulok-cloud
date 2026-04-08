@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ArrowPathIcon,
   CheckCircleIcon,
@@ -16,6 +16,7 @@ import { apiService } from '@/services/api.service';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { FMSSyncLog } from '@/types/fms.types';
+import { getFmsSyncHistoryDetectedSuffix } from '@/utils/fmsSyncLogDisplay';
 
 interface FMSSyncStatus {
   facilityId: string;
@@ -52,9 +53,9 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const { startSync, completeSync, canStartNewSync } = useFMSSync();
+  const { startSync, completeSync, canStartNewSync, cancelSync } = useFMSSync();
   const { subscribe, unsubscribe } = useWebSocket();
-  const { selectedFacilityId, facilities } = useGlobalFacility();
+  const { selectedFacilityId, facilities, isLoading: facilitiesLoading } = useGlobalFacility();
   const [size, setSize] = useState<WidgetSize>(initialSize);
   
   // FMS state
@@ -98,8 +99,13 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     };
   }, [isAdminUser]);
 
-  // Use facilities from global context
-  const userFacilities = facilities.map(f => f.id);
+  // Stable list of facility IDs the user can access (for effects / FMS scope)
+  const userFacilityIds = useMemo(() => facilities.map((f) => f.id), [facilities]);
+  const userFacilityIdsKey = useMemo(
+    () => [...userFacilityIds].sort().join(','),
+    [userFacilityIds]
+  );
+  const restStatusProbeKeyRef = useRef<string | null>(null);
 
   // Create a mapping of facility ID to name
   const getFacilityName = (facilityId: string) => {
@@ -131,8 +137,88 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     return status && status.status !== 'not_configured';
   };
 
-  // Check if any facility has FMS configured
-  const hasAnyFMSConfigured = userFacilities.some(facilityId => hasFMSConfigured(facilityId));
+  /**
+   * Any facility with FMS enabled (not "not_configured").
+   * When the global facility list is still empty (loading), trust the WebSocket feed alone — it is
+   * already scoped server-side for facility admins. Previously we required an intersection with
+   * `facilities`, which stayed [] until after the WS timeout and produced a false "no FMS" state.
+   */
+  const hasAnyFMSConfigured = useMemo(() => {
+    const scoped = userFacilityIds.length > 0;
+    return fmsStatuses.some((s) => {
+      if (s.status === 'not_configured') return false;
+      if (!scoped) return true;
+      return userFacilityIds.includes(s.facilityId);
+    });
+  }, [fmsStatuses, userFacilityIds]);
+
+  // If WebSocket never shows enabled FMS for the user's facilities, confirm via REST (WS down, etc.)
+  useEffect(() => {
+    if (!authState.user || loading || facilitiesLoading || userFacilityIds.length === 0) {
+      if (userFacilityIds.length === 0) {
+        restStatusProbeKeyRef.current = null;
+      }
+      return;
+    }
+
+    const anyPositiveForUser = userFacilityIds.some((id) => {
+      const st = fmsStatuses.find((s) => s.facilityId === id);
+      return st && st.status !== 'not_configured';
+    });
+    if (anyPositiveForUser) return;
+
+    if (restStatusProbeKeyRef.current === userFacilityIdsKey) return;
+    restStatusProbeKeyRef.current = userFacilityIdsKey;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const updates: FMSSyncStatus[] = [];
+        for (const facilityId of userFacilityIds) {
+          const cfg = await fmsService.getConfig(facilityId);
+          if (cancelled) return;
+          if (cfg?.is_enabled) {
+            const name = facilities.find((f) => f.id === facilityId)?.name;
+            updates.push({
+              facilityId,
+              ...(name ? { facilityName: name } : {}),
+              lastSyncTime: null,
+              status: 'never_synced',
+            });
+          }
+        }
+        if (cancelled || updates.length === 0) return;
+        setFmsStatuses((prev) => {
+          const next = [...prev];
+          for (const u of updates) {
+            const i = next.findIndex((s) => s.facilityId === u.facilityId);
+            if (i >= 0) {
+              if (next[i].status === 'not_configured') {
+                next[i] = { ...next[i], ...u };
+              }
+            } else {
+              next.push(u);
+            }
+          }
+          return next;
+        });
+      } catch (e) {
+        console.error('[SyncFMSWidget] REST FMS status probe failed', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authState.user,
+    loading,
+    facilitiesLoading,
+    userFacilityIds,
+    userFacilityIdsKey,
+    fmsStatuses,
+    facilities,
+  ]);
 
   // Find facility with oldest sync time for tiny view
   const getOldestSyncFacility = () => {
@@ -141,7 +227,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     let oldestFacility = null;
     let oldestTime = new Date();
 
-    for (const facilityId of userFacilities) {
+    for (const facilityId of userFacilityIds) {
       const status = fmsStatuses.find(s => s.facilityId === facilityId);
       if (status && hasFMSConfigured(facilityId) && status.lastSyncTime) {
         const syncTime = new Date(status.lastSyncTime);
@@ -200,6 +286,8 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   // FMS is configured if we have a status for this facility that's not 'not_configured'
   const fmsConfigured = effectiveFacilityId ? hasFMSConfigured(effectiveFacilityId) : false;
 
+  const showBlockingSpinner =
+    loading || (!!authState.user && facilitiesLoading && userFacilityIds.length === 0);
 
   // Load sync history when facility changes
   useEffect(() => {
@@ -207,7 +295,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       if (!effectiveFacilityId) return;
 
       // If FMS is not configured, don't try to load history
-      if (!fmsConfigured && !loading) {
+      if (!fmsConfigured && !loading && !facilitiesLoading) {
         setSyncHistory([]);
         return;
       }
@@ -225,7 +313,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     };
 
     loadHistory();
-  }, [effectiveFacilityId, fmsConfigured, loading]);
+  }, [effectiveFacilityId, fmsConfigured, loading, facilitiesLoading]);
 
   const handleManualSync = async () => {
     if (!effectiveFacilityId) {
@@ -308,6 +396,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         setSyncHistory(history.logs);
       }
     } catch (error: any) {
+      cancelSync();
       addToast({
         type: 'error',
         title: 'Sync Failed',
@@ -372,7 +461,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     return `${diffDays}d ago`;
   };
 
-  if (loading) {
+  if (showBlockingSpinner) {
     return (
       <Widget
         id={id}
@@ -408,7 +497,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
             {effectiveFacilityId ? (
               <button
                 onClick={handleManualSync}
-                disabled={syncing || loading || !fmsConfigured}
+                disabled={syncing || showBlockingSpinner || !fmsConfigured}
                 className={`no-drag w-11 h-11 text-xs font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   fmsConfigured
                     ? 'bg-primary-600 hover:bg-primary-700 text-white'
@@ -480,7 +569,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               <button
                 type="button"
                 onClick={handleManualSync}
-                disabled={syncing || loading || !fmsConfigured}
+                disabled={syncing || showBlockingSpinner || !fmsConfigured}
                 className={`no-drag flex shrink-0 items-center justify-center rounded-lg p-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   fmsConfigured
                     ? 'bg-primary-600 text-white hover:bg-primary-700'
@@ -521,7 +610,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           )}
 
           {/* FMS Not Configured Messages */}
-          {!hasAnyFMSConfigured && !loading && (
+          {!hasAnyFMSConfigured && !loading && !facilitiesLoading && (
             <div className={`flex-1 flex flex-col items-center justify-center text-center ${size === 'small' ? 'p-2' : 'p-4'}`}>
               <CloudIcon className={`${size === 'small' ? 'h-8 w-8' : 'h-12 w-12'} text-gray-400 dark:text-gray-600 mb-2`} />
               <p className={`${size === 'small' ? 'text-xs' : 'text-sm'} font-medium text-gray-700 dark:text-gray-300 mb-1`}>
@@ -536,7 +625,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           )}
 
           {/* Show individual facility message only when some facilities have FMS but current one doesn't */}
-          {effectiveFacilityId && hasAnyFMSConfigured && !fmsConfigured && !loading && (
+          {effectiveFacilityId && hasAnyFMSConfigured && !fmsConfigured && !loading && !facilitiesLoading && (
             <div className={`flex-1 flex flex-col items-center justify-center text-center ${size === 'small' ? 'p-2' : 'p-4'}`}>
               <CloudIcon className={`${size === 'small' ? 'h-8 w-8' : 'h-12 w-12'} text-gray-400 dark:text-gray-600 mb-2`} />
               <p className={`${size === 'small' ? 'text-xs' : 'text-sm'} font-medium text-gray-700 dark:text-gray-300 mb-1`}>
@@ -628,14 +717,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
                       <span className="text-gray-500 dark:text-gray-400">
                         {sync.changes_detected || 0} detected
                         {sync.changes_applied !== undefined && sync.changes_applied !== null && (
-                          <span>
-                            {sync.changes_applied === sync.changes_detected && sync.changes_pending === 0
-                              ? ' • Auto Accepted'
-                              : sync.changes_applied === sync.changes_detected
-                              ? ' • All Applied'
-                              : ` • ${sync.changes_applied} applied`
-                            }
-                          </span>
+                          <span>{getFmsSyncHistoryDetectedSuffix(sync)}</span>
                         )}
                       </span>
                     </div>

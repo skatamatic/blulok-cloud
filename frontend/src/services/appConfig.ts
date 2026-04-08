@@ -41,14 +41,31 @@ const getViteEnv = (key: string): string | undefined => {
   return undefined;
 };
 
-/** True when running Vite dev server; false in production and in Jest unless import.meta is polyfilled. */
-export const isViteDev = (): boolean => {
-  try {
-    const meta = (0, eval)('import.meta') as { env?: { DEV?: boolean } };
-    return Boolean(meta?.env?.DEV);
-  } catch {
-    return false;
+declare global {
+  interface Window {
+    /** Set from `main.tsx` via `import.meta.env.DEV` so this module stays Jest-parseable (no `import.meta` here). */
+    __BLULOK_VITE_DEV__?: boolean;
   }
+}
+
+/**
+ * True when running the Vite dev server.
+ * Reads `window.__BLULOK_VITE_DEV__` set in `main.tsx` (indirect `eval('import.meta')` does not work in browsers).
+ * Jest: `src/test/setup.ts` polyfills `globalThis['import.meta'].env.DEV`.
+ */
+export const isViteDev = (): boolean => {
+  if (typeof window !== 'undefined' && typeof window.__BLULOK_VITE_DEV__ === 'boolean') {
+    return window.__BLULOK_VITE_DEV__;
+  }
+  try {
+    const gim = (globalThis as unknown as { 'import.meta'?: { env?: { DEV?: boolean } } })['import.meta'];
+    if (gim?.env && Object.prototype.hasOwnProperty.call(gim.env, 'DEV')) {
+      return Boolean(gim.env.DEV);
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
 };
 
 export const getApiBaseUrl = (): string => {

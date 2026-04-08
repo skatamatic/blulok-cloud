@@ -20,8 +20,9 @@ export const FMS_PROVIDERS: Record<FMSProviderType, FMSProviderMetadata> = {
         label: 'Storable Edge API URL',
         type: 'url',
         required: true,
-        placeholder: 'https://api.storedge.com',
-        helpText: 'Storable Edge API base URL',
+        placeholder: 'https://api.storedgefms.com',
+        helpText:
+          'Storable Edge API host only (no /v1 path). Must be exactly api.storedgefms.com (not storegdgefms — common typo). See Storable docs.',
       },
       {
         key: 'facilityId',

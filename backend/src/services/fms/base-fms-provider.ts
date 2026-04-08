@@ -130,6 +130,8 @@ export abstract class BaseFMSProvider {
   ): Promise<any> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      // Storable Edge and many FMS APIs expect Accept; without it some calls fail or misbehave.
+      Accept: 'application/json',
     };
 
     // Add authentication based on auth type

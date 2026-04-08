@@ -58,6 +58,18 @@ export class StoredgeProvider extends BaseFMSProvider {
   constructor(blulokFacilityId: string, config: FMSProviderConfig) {
     super(blulokFacilityId, config);
 
+    // Avoid double slashes in URLs (e.g. baseUrl ending with /) which can break signing or routing.
+    this.config.baseUrl = (this.config.baseUrl || '').trim().replace(/\/+$/, '');
+
+    // Common typo: api.storegdgefms.com (extra "g") → ENOTFOUND. Auto-correct; fix saved config in UI when possible.
+    const typoHost = /storegdgefms\.com/i;
+    if (typoHost.test(this.config.baseUrl)) {
+      logger.warn(
+        'FMS Storable Edge: API URL had hostname typo storegdgefms.com; using storedgefms.com. Update the facility FMS base URL in settings.'
+      );
+      this.config.baseUrl = this.config.baseUrl.replace(typoHost, 'storedgefms.com');
+    }
+
     // For Storable Edge, the facility ID comes from customSettings
     this.storedgeFacilityId = config.customSettings?.facilityId || blulokFacilityId;
 
@@ -82,11 +94,45 @@ export class StoredgeProvider extends BaseFMSProvider {
     };
   }
 
+  /**
+   * Storable Edge paginates collections (default 100 per page). Follow meta.pagination.next_page
+   * until exhausted so sync sees all units, tenants, and ledgers.
+   */
+  private async fetchAllPages(resourcePath: string, collectionKey: string): Promise<any[]> {
+    const aggregated: any[] = [];
+    let page = 1;
+    const perPage = 100;
+    const maxPages = 500;
+
+    for (let i = 0; i < maxPages; i++) {
+      const url = new URL(
+        `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/${resourcePath}`
+      );
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('per_page', String(perPage));
+
+      const data = await this.makeAuthenticatedRequest(url.toString());
+      const chunk = data[collectionKey];
+      if (Array.isArray(chunk) && chunk.length > 0) {
+        aggregated.push(...chunk);
+      }
+
+      const nextPage = data.meta?.pagination?.next_page;
+      if (nextPage == null) {
+        break;
+      }
+      page = nextPage;
+    }
+
+    return aggregated;
+  }
+
   async testConnection(): Promise<boolean> {
     try {
-      await this.makeAuthenticatedRequest(
-        `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units`
-      );
+      const url = new URL(`${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units`);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('per_page', '1');
+      await this.makeAuthenticatedRequest(url.toString());
       return true;
     } catch (error) {
       logger.error('Storedge connection test failed:', error);
@@ -95,13 +141,8 @@ export class StoredgeProvider extends BaseFMSProvider {
   }
 
   async fetchTenants(): Promise<FMSTenant[]> {
-    const ledgersUrl = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/ledgers/current`;
-    const ledgersData = await this.makeAuthenticatedRequest(ledgersUrl);
-    const ledgers = ledgersData.ledgers || [];
-
-    const tenantsUrl = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/tenants/current`;
-    const tenantsData = await this.makeAuthenticatedRequest(tenantsUrl);
-    const tenants = tenantsData.tenants || [];
+    const ledgers = await this.fetchAllPages('ledgers/current', 'ledgers');
+    const tenants = await this.fetchAllPages('tenants/current', 'tenants');
 
     return tenants.map((tenant: any) => {
       const tenantLedgers = ledgers.filter(
@@ -109,7 +150,7 @@ export class StoredgeProvider extends BaseFMSProvider {
       );
       const unitIds = tenantLedgers.map((ledger: any) => ledger.unit.id);
 
-      const primaryPhoneNumber = tenant.phone_numbers.find(
+      const primaryPhoneNumber = (tenant.phone_numbers || []).find(
         (pn: any) => pn.primary
       );
 
@@ -126,14 +167,12 @@ export class StoredgeProvider extends BaseFMSProvider {
   }
 
   async fetchUnits(): Promise<FMSUnit[]> {
-    const url = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units`;
-    const data = await this.makeAuthenticatedRequest(url);
-    const units = data.units || [];
+    const units = await this.fetchAllPages('units', 'units');
 
     return units.map((unit: any) => ({
       externalId: unit.id,
       unitNumber: unit.name,
-      unitType: unit.unit_type.name,
+      unitType: unit.unit_type?.name ?? '',
       size: unit.size,
       status: unit.status === 'vacant' ? 'available' : unit.status,
       tenantId: unit.current_tenant_id,
@@ -146,16 +185,14 @@ export class StoredgeProvider extends BaseFMSProvider {
         const url = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/tenants/${externalId}`;
         const tenant = await this.makeAuthenticatedRequest(url);
 
-        const ledgersUrl = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/ledgers/current`;
-        const ledgersData = await this.makeAuthenticatedRequest(ledgersUrl);
-        const ledgers = ledgersData.ledgers || [];
+        const ledgers = await this.fetchAllPages('ledgers/current', 'ledgers');
 
         const tenantLedgers = ledgers.filter(
             (ledger: any) => ledger.tenant.id === tenant.id
         );
         const unitIds = tenantLedgers.map((ledger: any) => ledger.unit.id);
 
-        const primaryPhoneNumber = tenant.phone_numbers.find(
+        const primaryPhoneNumber = (tenant.phone_numbers || []).find(
             (pn: any) => pn.primary
         );
 
@@ -181,7 +218,7 @@ export class StoredgeProvider extends BaseFMSProvider {
         return {
             externalId: unit.id,
             unitNumber: unit.name,
-            unitType: unit.unit_type.name,
+            unitType: unit.unit_type?.name ?? '',
             size: unit.size,
             status: unit.status === 'vacant' ? 'available' : unit.status,
             tenantId: unit.current_tenant_id,
