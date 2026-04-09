@@ -141,7 +141,29 @@ export class UserModel extends BaseModel {
       .where('role', role)
       .select('id', 'email', 'phone_number', 'first_name', 'last_name', 'login_identifier') as any;
   }
- 
+
+  /**
+   * Facility-scoped version of findByRoleMinimal.
+   * Only returns users associated with the given facility, avoiding a full-table scan.
+   */
+  public static async findByRoleMinimalForFacility(
+    role: UserRole,
+    facilityId: string,
+  ): Promise<Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier'>[]> {
+    return this.db('users')
+      .join('user_facility_associations', 'users.id', 'user_facility_associations.user_id')
+      .where('users.role', role)
+      .where('user_facility_associations.facility_id', facilityId)
+      .select(
+        'users.id',
+        'users.email',
+        'users.phone_number',
+        'users.first_name',
+        'users.last_name',
+        'users.login_identifier',
+      );
+  }
+
   public static async findByIds(ids: string[]): Promise<User[]> {
     if (ids.length === 0) return [];
     return this.query().whereIn('id', ids) as Promise<User[]>;

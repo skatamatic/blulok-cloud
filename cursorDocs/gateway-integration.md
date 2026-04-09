@@ -78,15 +78,50 @@ Mitigations:
 - Prefer **`--min-instances=1`** and/or **`--max-instances=1`** for the backend service **until** gateway routing is centralized (e.g. Redis pub/sub or a dedicated gateway service).
 - Or enable **session affinity** for the service so the same client tends to reach the same instance (still not a full substitute for shared state).
 
-### 2. Request timeout
+### 2. Request timeout (≈5 minute disconnects)
 
-Long-lived WebSockets may need an increased **`--timeout`** on the Cloud Run service (up to the platform max) so idle-but-open connections are not cut too aggressively.
+On Cloud Run, a WebSocket counts as **one HTTP request** for its whole lifetime. The service **`--timeout`** is a **wall-clock limit** from upgrade to close (default **300 seconds / 5 minutes**). **Ping/Pong and JSON heartbeats do not reset this timer** — only raising the timeout helps.
 
-### 3. Trust proxy (recommended)
+If gateway debug shows **`connection_closed` ~5 minutes after `connection_opened`** while pings still succeed, this is almost always the **default Cloud Run timeout**.
+
+**Fix:** set the backend service timeout to the max you need (platform max is **3600s / 60 minutes** today):
+
+```bash
+gcloud run services update blulok-backend --region=YOUR_REGION --timeout=3600
+```
+
+Or in **Console → Cloud Run → service → Edit & deploy new revision → Request timeout**.
+
+Repo **`cloudbuild.yaml`** deploys the backend with **`--timeout 3600`** so CI/CD matches this requirement. If you deploy manually, add the same flag.
+
+After **60 minutes** (or whatever you set), Cloud Run will still close the socket; the **Java gateway must reconnect** (you already see reconnects within a few seconds — that part is fine).
+
+### 3. “Permanent” persistence — what is actually possible
+
+**Fact:** On **Cloud Run**, a WebSocket is still a **single HTTP request**. Google enforces a **maximum request duration** (today **up to 3600 seconds / 1 hour**). There is **no setting** for an infinite connection. Heartbeats only help **middleboxes**, not this limit.
+
+So **permanent** in production means one of these:
+
+| Approach | What you get |
+|----------|----------------|
+| **A. Cloud Run + reconnect (typical)** | Set **`--timeout=3600`**. Treat disconnects as **normal**. Gateway **must** reconnect immediately (or with short backoff), re-**`AUTH`**, and the backend must **resume** anything that was in flight (firmware OTA, etc.). From the **product** side the link is “always on” if reconnect is **under a few seconds** and users don’t see wrong `offline` state. |
+| **B. Move `/ws/gateway` off serverless** | Run the WebSocket server on **GKE**, **Compute Engine**, or another host **without** Cloud Run’s hard request timeout. REST API can stay on Cloud Run; use **internal networking** or **Redis pub/sub** so API instances can **publish commands** to the WS process that holds the gateway connection. |
+| **C. Different transport** | **MQTT**, **polling**, or **outbound-only** from gateway — no eternal TCP through Cloud Run. Larger architectural change. |
+
+**Recommended path for BluLok today**
+
+1. **Deploy backend with `--timeout=3600`** (see `cloudbuild.yaml` and §2 above).
+2. **Gateway (Java):** ensure **automatic reconnect** on any close (`1006`, normal close, timeout), then **same AUTH flow**; avoid long sleeps before reconnect.
+3. **Backend:** keep **idempotent reconnect** behavior (you already resume firmware on `AUTH` for a facility — extend that mindset to any other long-lived work).
+4. **Stability:** **`--min-instances=1`** on the backend reduces cold starts when gateways reconnect; consider **`--max-instances=1`** until command routing is **not** purely in-memory (or add **Redis**/shared bus so any instance can reach the right connection).
+
+If you **must** avoid hourly disconnects entirely, plan **B** — a small always-on **gateway-connector** service (VM or GKE) that holds WebSockets and talks to the rest of BluLok over HTTPS — is the durable fix.
+
+### 4. Trust proxy (recommended)
 
 Behind Cloud Run’s load balancer, set **`TRUST_PROXY_DEPTH=1`** (or higher if you chain proxies) so `express` and any IP-based logic see correct client metadata. Configure via Cloud Run env vars.
 
-### 4. TLS
+### 5. TLS
 
 Use **`wss://`** to match **`https://`** on the same host. Mixed `ws` to `https` hosts will fail or be blocked.
 
@@ -127,7 +162,8 @@ The dashboard shows **one** “Cloud connection” state derived from the **`gat
 - [ ] JWT from **that** backend; not expired; role `facility_admin` | `admin` | `dev_admin`.
 - [ ] `facilityId` is a real facility UUID; for `facility_admin`, it appears in JWT `facilityIds`.
 - [ ] First message after connect is **`AUTH`** JSON (not query-string token).
-- [ ] If connections flap or commands never arrive on Cloud Run, check **instance count** and **timeouts**.
+- [ ] If connections flap or commands never arrive on Cloud Run, check **instance count** and **timeouts** (`--timeout=3600` for gateway WS).
+- [ ] For “always connected” behavior on Cloud Run: accept **hourly** TCP recycle and rely on **fast gateway reconnect** + **`min-instances`**. For **no** hard cap, plan a **non–Cloud Run** WebSocket tier (see §3).
 
 ## Troubleshooting (from production checks)
 

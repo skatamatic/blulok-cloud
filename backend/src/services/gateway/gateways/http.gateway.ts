@@ -141,6 +141,7 @@ export class HttpGateway extends BaseGateway {
     this.pollingInterval = setInterval(async () => {
       await this.pollAndSyncDevices();
     }, this.pollFrequencyMs);
+    this.pollingInterval.unref();
 
     console.log(`Started polling for gateway ${this.id} every ${this.pollFrequencyMs}ms`);
   }

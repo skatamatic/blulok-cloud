@@ -104,7 +104,8 @@ describe('DeviceSyncService', () => {
           autoCreated: true,
           createdFromGatewaySync: true,
           gatewayType: 'http'
-        })
+        }),
+        supports_remote_lock: true,
       }]);
     });
 
@@ -519,6 +520,7 @@ describe('DeviceSyncService', () => {
         device_settings: { lockNumber: 101 },
         metadata: { autoCreated: true, createdFromInventorySync: true },
         firmware_version: '1.0.0',
+        supports_remote_lock: true,
       }]);
     });
 

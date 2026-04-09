@@ -272,6 +272,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       if (ws.readyState !== WebSocket.OPEN) return;
       try { ws.ping(); } catch { /* ignore */ }
     }, WebsocketGatewayTransport.WS_FRAME_PING_MS);
+    framePingTimer.unref();
 
     ws.on('message', async (raw: WebSocket.RawData) => {
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');
@@ -508,6 +509,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         }
       }
     }, WebsocketGatewayTransport.HEARTBEAT_SWEEP_MS);
+    this.heartbeatTimer.unref();
   }
 
   /**

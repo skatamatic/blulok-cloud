@@ -1,37 +1,82 @@
+/**
+ * Real FMSService.applyTenantRemoved — global setup mocks FMSService by default, so we unmock here.
+ */
+jest.unmock('@/services/fms/fms.service');
+jest.mock('@/models/key-sharing.model', () => ({
+  KeySharingModel: jest.fn(),
+}));
+
 import { FMSService } from '@/services/fms/fms.service';
-import { KeySharingModel } from '@/models/key-sharing.model';
-import { UnitAssignmentModel } from '@/models/unit-assignment.model';
-import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { UserModel } from '@/models/user.model';
+import { KeySharingModel } from '@/models/key-sharing.model';
+import { UserRole } from '@/types/auth.types';
 
-jest.mock('@/models/key-sharing.model');
-jest.mock('@/models/unit-assignment.model');
-jest.mock('@/models/fms-sync-log.model');
-jest.mock('@/models/user.model');
+function emptyApplyResult() {
+  return {
+    success: true,
+    changesApplied: 0,
+    changesFailed: 0,
+    errors: [] as string[],
+    accessChanges: {
+      usersCreated: [] as string[],
+      usersDeactivated: [] as string[],
+      accessGranted: [] as { userId: string; unitId: string }[],
+      accessRevoked: [] as { userId: string; unitId: string }[],
+    },
+  };
+}
 
-describe('FMSService.applyTenantRemoved - shared keys safety', () => {
-  const svc = FMSService.getInstance() as any;
-
+describe('FMSService.applyTenantRemoved', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    (FMSService as any).instance = undefined;
+    (KeySharingModel as unknown as jest.Mock).mockImplementation(() => ({
+      getUserSharedUnits: jest.fn().mockResolvedValue([{ id: 'ks-1' }]),
+    }));
   });
 
-  it('does not deactivate user if they have active shared keys', async () => {
-    // Arrange mocked dependencies
-    (FMSSyncLogModel.prototype.findById as any) = jest.fn().mockResolvedValue({ id: 'sync-1', facility_id: 'fac-1', triggered_by_user_id: 'admin-1' });
-    (UserModel.findById as any) = jest.fn().mockResolvedValue({ id: 'tenant-1', role: 'tenant' });
-    (UnitAssignmentModel.prototype.findByTenantId as any) = jest.fn().mockResolvedValue([
-      { unit_id: 'u-other', tenant_id: 'tenant-1', is_primary: true },
-    ]);
-    (KeySharingModel as any).mockImplementation(() => ({ getUserSharedUnits: jest.fn().mockResolvedValue([ { id: 'ks-1' } ]) }));
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('does not deactivate when the user still has active shared keys (even if facility assignments cleared)', async () => {
+    const svc = FMSService.getInstance() as any;
+
+    svc.unitAssignmentModel = {
+      findByTenantId: jest.fn().mockResolvedValue([
+        { unit_id: 'u-fac1', tenant_id: 'tenant-1', is_primary: true },
+      ]),
+    };
+    svc.unitModel = {
+      findByIds: jest.fn().mockResolvedValue([{ id: 'u-fac1', facility_id: 'fac-1' }]),
+    };
+    svc.unitsService = {
+      unassignTenant: jest.fn().mockResolvedValue(undefined),
+    };
+
+    jest.spyOn(UserModel, 'findById').mockResolvedValue({
+      id: 'tenant-1',
+      role: UserRole.TENANT,
+    } as any);
     const deactivateSpy = jest.spyOn(UserModel, 'deactivateUser').mockResolvedValue(undefined as any);
 
-    // Act: call public method
-    await svc.applyTenantRemoved({ sync_log_id: 'sync-1', internal_id: 'tenant-1' }, { accessChanges: { accessRevoked: [], usersDeactivated: [] } });
+    const result = emptyApplyResult();
 
-    // Assert
+    await svc.applyTenantRemoved(
+      { sync_log_id: 'sync-1', internal_id: 'tenant-1' },
+      result,
+      { facilityId: 'fac-1', performedBy: 'admin-1' },
+    );
+
     expect(deactivateSpy).not.toHaveBeenCalled();
+    expect(svc.unitsService.unassignTenant).toHaveBeenCalledWith(
+      'u-fac1',
+      'tenant-1',
+      expect.objectContaining({
+        performedBy: 'admin-1',
+        source: 'fms_sync',
+        syncLogId: 'sync-1',
+      }),
+    );
+    expect(result.accessChanges.accessRevoked).toEqual([{ userId: 'tenant-1', unitId: 'u-fac1' }]);
   });
 });
-
-

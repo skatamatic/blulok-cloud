@@ -198,6 +198,15 @@ export interface FMSChangeApplicationResult {
 }
 
 /**
+ * Cached context passed through the apply-change pipeline to avoid
+ * redundant DB lookups for the same sync-log on every change.
+ */
+export interface FMSApplyContext {
+  facilityId: string;
+  performedBy: string;
+}
+
+/**
  * Webhook payload structure for FMS notifications
  */
 export interface FMSWebhookPayload {

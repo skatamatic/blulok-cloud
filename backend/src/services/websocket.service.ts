@@ -420,6 +420,7 @@ export class WebSocketService {
         }
       });
     }, 30000); // 30 seconds
+    this.heartbeatInterval.unref();
   }
 
   private stopHeartbeat(): void {

@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { createApp } from '@/app';
+import { GatewayService } from '@/services/gateway/gateway.service';
 import { createMockTestData, expectUnauthorized, expectForbidden, expectNotFound, expectConflict } from '@/__tests__/utils/mock-test-helpers';
 
 // Mock DeviceModel to prevent errors during gateway sync operations
@@ -25,6 +26,10 @@ describe('Gateway Routes', () => {
 
   beforeEach(() => {
     testData = createMockTestData();
+  });
+
+  afterAll(async () => {
+    await GatewayService.getInstance().shutdown().catch(() => undefined);
   });
 
   describe('Authentication Requirements', () => {

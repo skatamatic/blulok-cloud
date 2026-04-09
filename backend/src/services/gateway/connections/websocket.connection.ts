@@ -165,6 +165,7 @@ export class WebSocketConnection extends BaseConnection {
         }
       }
     }, this.heartbeatInterval);
+    this.heartbeatTimer.unref();
   }
 
   /**

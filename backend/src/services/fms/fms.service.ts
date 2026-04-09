@@ -42,6 +42,7 @@ import {
   FMSTenant,
   FMSUnit,
   FMSChangeApplicationResult,
+  FMSApplyContext,
   FMSConfiguration,
 } from '@/types/fms.types';
 import { UserRole } from '@/types/auth.types';
@@ -293,7 +294,7 @@ export class FMSService {
         facility_id: facilityId,
       });
 
-      // Step 1: Connect to FMS (min 2 seconds for UI visualization)
+      // Step 1: Connect to FMS
       logger.info(`[FMS] Connecting to ${config.provider_type} for facility ${facilityId}`);
       this.broadcastFMSSyncProgress({
         facilityId,
@@ -302,8 +303,6 @@ export class FMSService {
         percent: 5,
         message: 'Connecting to FMS provider',
       });
-      checkCancelled();
-      await new Promise(resolve => setTimeout(resolve, 2000));
       checkCancelled();
       
       const provider = this.getProvider(facilityId, config);
@@ -352,7 +351,7 @@ export class FMSService {
         facility_id: facilityId,
       });
 
-      // Step 3: Detect changes (min 2 seconds for UI visualization)
+      // Step 3: Detect changes
       logger.info(`[FMS] Detecting changes for facility ${facilityId}`);
       this.broadcastFMSSyncProgress({
         facilityId,
@@ -361,7 +360,6 @@ export class FMSService {
         percent: 60,
         message: 'Detecting changes',
       });
-      await new Promise(resolve => setTimeout(resolve, 2000));
       
       const changes = await this.detectChanges(facilityId, fmsTenants, fmsUnits, syncLog.id, userId, userRole, (percent: number, message?: string) => {
         // Progress callback for granular updates during detection
@@ -391,7 +389,7 @@ export class FMSService {
         },
       });
 
-      // Step 4: Prepare results (min 2 seconds for UI visualization)
+      // Step 4: Prepare results
       logger.info(`[FMS] Preparing results for facility ${facilityId}`);
       this.broadcastFMSSyncProgress({
         facilityId,
@@ -400,7 +398,6 @@ export class FMSService {
         percent: 85,
         message: 'Preparing results',
       });
-      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Progress: Updating sync log
       this.broadcastFMSSyncProgress({
@@ -573,19 +570,28 @@ export class FMSService {
   ): Promise<FMSChange[]> {
     const changes: FMSChange[] = [];
 
+    // Pre-fetch the facility unit list once — shared by both tenant and unit detection
+    const effectiveUserId = userId || 'system';
+    const effectiveUserRole = userRole || UserRole.ADMIN;
+    const allUnitsResult = await this.unitModel.getUnitsListForUser(
+      effectiveUserId, effectiveUserRole,
+      { facility_id: facilityId, limit: 10000, offset: 0 },
+    );
+    const sharedUnits = allUnitsResult.units || [];
+
     // Detect tenant changes (60% -> 70%)
-    const tenantChanges = await this.detectTenantChanges(facilityId, fmsTenants, syncLogId, (progress: number) => {
+    const tenantChanges = await this.detectTenantChanges(facilityId, fmsTenants, syncLogId, sharedUnits, (progress: number) => {
       if (onProgress) {
-        const percent = 60 + (progress / 100) * 10; // Map 0-100 to 60-70%
+        const percent = 60 + (progress / 100) * 10;
         onProgress(Math.round(percent), `Analyzing ${fmsTenants.length} tenants`);
       }
     });
     changes.push(...tenantChanges);
 
-    // Detect unit changes (70% -> 78%)
-    const unitChanges = await this.detectUnitChanges(facilityId, fmsUnits, syncLogId, userId, userRole, (progress: number) => {
+    // Detect unit changes (70% -> 78%) — reuse the same unit list
+    const unitChanges = await this.detectUnitChanges(facilityId, fmsUnits, syncLogId, sharedUnits, (progress: number) => {
       if (onProgress) {
-        const percent = 70 + (progress / 100) * 8; // Map 0-100 to 70-78%
+        const percent = 70 + (progress / 100) * 8;
         onProgress(Math.round(percent), `Analyzing ${fmsUnits.length} units`);
       }
     });
@@ -607,9 +613,9 @@ export class FMSService {
     facilityId: string,
     fmsTenants: FMSTenant[],
     syncLogId: string,
+    sharedUnits: any[],
     onProgress?: (percent: number) => void
   ): Promise<FMSChange[]> {
-    const changes: FMSChange[] = [];
     const total = fmsTenants.length;
     let processed = 0;
 
@@ -617,18 +623,28 @@ export class FMSService {
     const existingMappings = await this.entityMappingModel.findByFacility(facilityId, 'user');
     const mappingsByExternalId = new Map(existingMappings.map(m => [m.external_id, m]));
 
-    // SECURITY: Get all existing TENANT users ONLY (never admin/maintenance)
-    // PERFORMANCE FIX: Only select columns needed for comparison to prevent memory bloat
-    const existingUsers = await UserModel.findByRoleMinimal(UserRole.TENANT);
+    // PERFORMANCE: Facility-scoped tenant query avoids loading the entire tenant table.
+    // We also load by mapped internal IDs to catch users who may have lost their facility association.
+    const facilityUsers = await UserModel.findByRoleMinimalForFacility(UserRole.TENANT, facilityId);
+    const mappedInternalIds = new Set(existingMappings.map(m => m.internal_id));
+    const facilityUserIds = new Set(facilityUsers.map(u => u.id));
+
+    // Supplement with any mapped users not in the facility-scoped set (data-integrity safety net)
+    const missingMappedIds = [...mappedInternalIds].filter(id => !facilityUserIds.has(id));
+    let supplementUsers: typeof facilityUsers = [];
+    if (missingMappedIds.length > 0) {
+      supplementUsers = await UserModel.findByIds(missingMappedIds) as any;
+    }
+    const allRelevantUsers = [...facilityUsers, ...supplementUsers];
+
     const usersByEmail = new Map(
-      existingUsers
+      allRelevantUsers
         .filter((u: any) => typeof u.email === 'string' && u.email.trim().length > 0)
         .map((u: any) => [u.email.toLowerCase(), u])
     );
-    const usersById = new Map(existingUsers.map((u: any) => [u.id, u]));
+    const usersById = new Map(allRelevantUsers.map((u: any) => [u.id, u]));
 
-    // PERFORMANCE FIX: Pre-fetch all data needed for unit change detection to avoid N+1 queries
-    // 1. Fetch all unit assignments for this facility in one query
+    // Pre-fetch data for unit-change detection
     const allFacilityAssignments = await this.unitAssignmentModel.findByFacilityId(facilityId);
     const assignmentsByTenantId = new Map<string, typeof allFacilityAssignments>();
     for (const assignment of allFacilityAssignments) {
@@ -637,43 +653,29 @@ export class FMSService {
       assignmentsByTenantId.set(assignment.tenant_id, tenantAssignments);
     }
 
-    // 2. Fetch all unit entity mappings for this facility
     const unitMappings = await this.entityMappingModel.findByFacility(facilityId, 'unit');
     const unitMappingsByExternalId = new Map(unitMappings.map(m => [m.external_id, m]));
+    const unitsById = new Map(sharedUnits.map((u: any) => [u.id, u]));
 
-    // 3. Fetch all units for this facility
-    const allUnitsResult = await this.unitModel.getUnitsListForUser('system', UserRole.ADMIN, { facility_id: facilityId, limit: 10000, offset: 0 });
-    const allUnits = allUnitsResult.units || [];
-    const unitsById = new Map(allUnits.map((u: any) => [u.id, u]));
+    const unitChangeContext = { assignmentsByTenantId, unitMappingsByExternalId, unitsById };
 
-    // Create context object to pass to detectTenantUnitChanges
-    const unitChangeContext = {
-      assignmentsByTenantId,
-      unitMappingsByExternalId,
-      unitsById,
-    };
+    // Collect pending change rows in memory, then bulk-insert
+    const pendingInserts: Parameters<typeof this.changeModel.bulkCreate>[0] = [];
 
     for (const fmsTenant of fmsTenants) {
-      // Log every tenant we process
-      logger.info(`[FMS-TENANT] Processing tenant: externalId=${fmsTenant.externalId}, email="${fmsTenant.email}", firstName="${fmsTenant.firstName}", lastName="${fmsTenant.lastName}"`);
+      logger.debug(`[FMS-TENANT] Processing tenant: externalId=${fmsTenant.externalId}, email="${fmsTenant.email}"`);
       
-      // Validate tenant data
       const validationErrors: string[] = [];
       let isValid = true;
 
-      // Check for required username/email (treated as username requirement)
       if (!fmsTenant.email || (typeof fmsTenant.email === 'string' && fmsTenant.email.trim() === '')) {
         validationErrors.push('Missing or empty username (email)');
         isValid = false;
       }
-
-      // Check for required first name
       if (!fmsTenant.firstName || (typeof fmsTenant.firstName === 'string' && fmsTenant.firstName.trim() === '')) {
         validationErrors.push('Missing or empty first name');
         isValid = false;
       }
-
-      // Check for required last name
       if (!fmsTenant.lastName || (typeof fmsTenant.lastName === 'string' && fmsTenant.lastName.trim() === '')) {
         validationErrors.push('Missing or empty last name');
         isValid = false;
@@ -688,15 +690,13 @@ export class FMSService {
         ? usersById.get(mapping.internal_id)
         : (fmsTenant.email ? usersByEmail.get(fmsTenant.email.toLowerCase()) : null);
 
-      // Report progress every 10 items or at final item
       processed++;
       if (onProgress && (processed % 10 === 0 || processed === total)) {
         onProgress(Math.round((processed / total) * 100));
       }
 
       if (!existingUser) {
-        // New tenant - needs to be added
-        const changeData: any = {
+        pendingInserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_ADDED,
           entity_type: 'tenant',
@@ -706,138 +706,97 @@ export class FMSService {
           impact_summary: `New tenant: ${fmsTenant.firstName || 'Unknown'} ${fmsTenant.lastName || 'Unknown'} (${fmsTenant.email || 'no email'}) - Will be added to ${fmsTenant.unitIds.length} unit(s)`,
           is_valid: isValid,
           validation_errors: validationErrors,
-        };
-
-        const change = await this.changeModel.create(changeData);
-        logger.info(`[FMS-TENANT] Created TENANT_ADDED change: id=${change.id}, externalId=${fmsTenant.externalId}, is_valid=${change.is_valid}, errors=${JSON.stringify(change.validation_errors)}`);
-        changes.push(change);
+        });
       } else {
-        // Existing tenant - check for info changes
         const user = existingUser;
 
-        // CRITICAL: If user exists but has no mapping, this is a data integrity issue that needs repair
-        // This can happen if a user was created manually or if a previous sync failed to create the mapping
         if (!mapping) {
           logger.warn(`[FMS] User ${user.email} exists but has no FMS mapping. Creating mapping.`, {
-            fms_sync: true,
-            sync_log_id: syncLogId,
-            facility_id: facilityId,
-            user_id: user.id,
-            external_id: fmsTenant.externalId,
+            fms_sync: true, sync_log_id: syncLogId, facility_id: facilityId,
+            user_id: user.id, external_id: fmsTenant.externalId,
           });
 
-          // Create the missing mapping immediately during detection
-          // This is safe because it's a read-only operation from FMS perspective
           const config = await this.fmsConfigModel.findByFacilityId(facilityId);
           await this.entityMappingModel.ensureMapping({
-            facility_id: facilityId,
-            entity_type: 'user',
-            external_id: fmsTenant.externalId,
-            internal_id: user.id,
+            facility_id: facilityId, entity_type: 'user',
+            external_id: fmsTenant.externalId, internal_id: user.id,
             provider_type: config?.provider_type || 'generic_rest',
-            metadata: {
-              email: fmsTenant.email,
-              phone: fmsTenant.phone,
-              leaseStartDate: fmsTenant.leaseStartDate,
-              leaseEndDate: fmsTenant.leaseEndDate,
-            },
+            metadata: { email: fmsTenant.email, phone: fmsTenant.phone,
+              leaseStartDate: fmsTenant.leaseStartDate, leaseEndDate: fmsTenant.leaseEndDate },
           });
 
-          // Now that mapping is created, set it for the rest of this iteration
           const newMapping = await this.entityMappingModel.findByExternalId(facilityId, 'user', fmsTenant.externalId);
-          if (newMapping) {
-            mappingsByExternalId.set(fmsTenant.externalId, newMapping);
-          }
+          if (newMapping) mappingsByExternalId.set(fmsTenant.externalId, newMapping);
         }
         
-        // Get phone from entity mapping metadata (since it's not in users table)
         let currentPhone: string | undefined;
-        if (mapping) {
-          currentPhone = mapping.metadata?.phone as string | undefined;
-        }
+        if (mapping) currentPhone = mapping.metadata?.phone as string | undefined;
         
         const hasInfoChanges = 
           user.first_name !== fmsTenant.firstName ||
           user.last_name !== fmsTenant.lastName ||
           currentPhone !== fmsTenant.phone;
 
-        // Debug logging to trace tenant comparison
         if (hasInfoChanges) {
-          logger.info(`[FMS] Tenant ${fmsTenant.email} has changes`, {
-            fms_sync: true,
-            sync_log_id: syncLogId,
-            facility_id: facilityId,
-            has_mapping: !!mapping,
-            changes: {
-              firstName: { before: user.first_name, after: fmsTenant.firstName, changed: user.first_name !== fmsTenant.firstName },
-              lastName: { before: user.last_name, after: fmsTenant.lastName, changed: user.last_name !== fmsTenant.lastName },
-              phone: { before: currentPhone, after: fmsTenant.phone, changed: currentPhone !== fmsTenant.phone },
-            },
-          });
-        }
-
-        if (hasInfoChanges) {
-          const changeData: any = {
+          logger.debug(`[FMS] Tenant ${fmsTenant.email} has info changes`, { sync_log_id: syncLogId });
+          pendingInserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.TENANT_UPDATED,
             entity_type: 'tenant',
             external_id: fmsTenant.externalId,
             internal_id: user.id,
-            before_data: {
-              firstName: user.first_name,
-              lastName: user.last_name,
-              phone: currentPhone,
-            },
+            before_data: { firstName: user.first_name, lastName: user.last_name, phone: currentPhone },
             after_data: fmsTenant,
             required_actions: [FMSChangeAction.UPDATE_USER],
             impact_summary: `Updated tenant info for: ${fmsTenant.email || 'no email'}`,
             is_valid: isValid,
             validation_errors: validationErrors,
-          };
-
-          const change = await this.changeModel.create(changeData);
-          changes.push(change);
+          });
         }
 
-        // Check for unit assignment changes
-        // PERFORMANCE FIX: Pass pre-fetched context to avoid N+1 queries
-        const unitChanges = await this.detectTenantUnitChanges(facilityId, user.id, fmsTenant, syncLogId, unitChangeContext);
-        changes.push(...unitChanges);
+        // Unit assignment changes — these still use per-row detection but collect into pendingInserts
+        this.collectTenantUnitChanges(facilityId, user.id, fmsTenant, syncLogId, unitChangeContext, pendingInserts);
       }
     }
 
     // Check for removed tenants (mapped in our system but not in FMS)
     const fmsTenantExtIds = new Set(fmsTenants.map(t => t.externalId));
-    
     for (const mapping of existingMappings) {
       if (!fmsTenantExtIds.has(mapping.external_id)) {
         const user = usersById.get(mapping.internal_id);
         if (user) {
-          const change = await this.changeModel.create({
+          pendingInserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.TENANT_REMOVED,
             entity_type: 'tenant',
             external_id: mapping.external_id,
             internal_id: mapping.internal_id,
             before_data: user,
-            after_data: null,
+            after_data: null as any,
             required_actions: [FMSChangeAction.REMOVE_ACCESS, FMSChangeAction.DEACTIVATE_USER],
             impact_summary: `Tenant removed: ${user.email} - Will be deactivated and access revoked from all units`,
           });
-          changes.push(change);
         }
       }
     }
+
+    // Bulk-insert all detected changes in one round-trip
+    const changes = pendingInserts.length > 0
+      ? await this.changeModel.bulkCreate(pendingInserts)
+      : [];
+
+    logger.info(`[FMS] Tenant detection complete: ${changes.length} changes from ${total} tenants`, {
+      fms_sync: true, sync_log_id: syncLogId, facility_id: facilityId,
+    });
 
     return changes;
   }
 
   /**
-   * Detect unit assignment changes for a tenant
-   * 
-   * PERFORMANCE FIX: Accepts pre-fetched context to avoid N+1 queries when called in a loop
+   * Collect unit assignment change data for a tenant into the pending inserts array.
+   * Purely in-memory — no DB calls. All changes are bulk-inserted by the caller.
    */
-  private async detectTenantUnitChanges(
+  private collectTenantUnitChanges(
     facilityId: string,
     tenantId: string,
     fmsTenant: FMSTenant,
@@ -846,15 +805,12 @@ export class FMSService {
       assignmentsByTenantId: Map<string, any[]>;
       unitMappingsByExternalId: Map<string, any>;
       unitsById: Map<string, any>;
-    }
-  ): Promise<FMSChange[]> {
-    const changes: FMSChange[] = [];
-
-    // PERFORMANCE FIX: Use pre-fetched assignments instead of querying per tenant
+    },
+    pendingInserts: Parameters<typeof this.changeModel.bulkCreate>[0],
+  ): void {
     const currentAssignments = context.assignmentsByTenantId.get(tenantId) || [];
     const currentUnitIds = new Set(currentAssignments.map(a => a.unit_id));
 
-    // PERFORMANCE FIX: Use pre-fetched unit mappings instead of querying per unit
     const fmsUnitMappings = fmsTenant.unitIds
       .map(extId => context.unitMappingsByExternalId.get(extId))
       .filter(m => m !== undefined);
@@ -863,39 +819,12 @@ export class FMSService {
       fmsUnitMappings.filter(m => m !== null).map(m => m!.internal_id)
     );
 
-    // Detect units to add
     for (const mapping of fmsUnitMappings) {
       if (mapping && !currentUnitIds.has(mapping.internal_id)) {
-        // PERFORMANCE FIX: Use pre-fetched units instead of querying per unit
         const unit = context.unitsById.get(mapping.internal_id);
+        if (!unit || unit.facility_id !== facilityId) continue;
         
-        // Validate unit exists and belongs to the correct facility
-        if (!unit) {
-          logger.warn(`[FMS] Skipping tenant-unit assignment: unit ${mapping.internal_id} not found`, {
-            fms_sync: true,
-            sync_log_id: syncLogId,
-            facility_id: facilityId,
-            tenant_id: tenantId,
-            external_unit_id: mapping.external_id,
-            internal_unit_id: mapping.internal_id,
-          });
-          continue;
-        }
-        
-        if (unit.facility_id !== facilityId) {
-          logger.warn(`[FMS] Skipping tenant-unit assignment: unit ${mapping.internal_id} belongs to different facility`, {
-            fms_sync: true,
-            sync_log_id: syncLogId,
-            expected_facility_id: facilityId,
-            actual_facility_id: unit.facility_id,
-            tenant_id: tenantId,
-            unit_id: mapping.internal_id,
-            unit_number: unit.unit_number,
-          });
-          continue;
-        }
-        
-        const change = await this.changeModel.create({
+        pendingInserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_UNIT_CHANGED,
           entity_type: 'tenant',
@@ -906,32 +835,26 @@ export class FMSService {
           impact_summary: `Assign ${fmsTenant.email} to unit ${unit.unit_number} - Gateway access will be granted`,
           is_valid: true,
         });
-        changes.push(change);
       }
     }
 
-    // Detect units to remove
     for (const assignment of currentAssignments) {
       if (!fmsInternalUnitIds.has(assignment.unit_id)) {
-        // PERFORMANCE FIX: Use pre-fetched units instead of querying per unit
         const unit = context.unitsById.get(assignment.unit_id);
-        const change = await this.changeModel.create({
+        pendingInserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_UNIT_CHANGED,
           entity_type: 'tenant',
           external_id: fmsTenant.externalId,
           internal_id: tenantId,
           before_data: { action: 'unassign_unit', unitId: assignment.unit_id, unitNumber: unit?.unit_number },
-          after_data: null,
+          after_data: null as any,
           required_actions: [FMSChangeAction.UNASSIGN_UNIT, FMSChangeAction.REMOVE_ACCESS],
           impact_summary: `Remove ${fmsTenant.email} from unit ${unit?.unit_number || assignment.unit_id} - Gateway access will be revoked`,
           is_valid: true,
         });
-        changes.push(change);
       }
     }
-
-    return changes;
   }
 
   /**
@@ -941,48 +864,28 @@ export class FMSService {
     facilityId: string,
     fmsUnits: FMSUnit[],
     syncLogId: string,
-    userId?: string,
-    userRole?: UserRole,
+    sharedUnits: any[],
     onProgress?: (percent: number) => void
   ): Promise<FMSChange[]> {
-    const changes: FMSChange[] = [];
     const total = fmsUnits.length;
     let processed = 0;
 
-    // Get entity mappings for units
     const existingMappings = await this.entityMappingModel.findByFacility(facilityId, 'unit');
     const mappingsByExternalId = new Map(existingMappings.map(m => [m.external_id, m]));
 
-    // Get all units for this facility using the actual requesting user's credentials
-    // SECURITY: Use the user who initiated the sync, not hardcoded admin
-    // If no user provided, default to admin for system-initiated syncs
-    const effectiveUserId = userId || 'system';
-    const effectiveUserRole = userRole || UserRole.ADMIN;
-    
-    const result = await this.unitModel.getUnitsListForUser(
-      effectiveUserId,
-      effectiveUserRole,
-      { facility_id: facilityId, limit: 1000, offset: 0 }
-    );
-    const existingUnits = result.units || [];
+    const existingUnits = sharedUnits;
     const unitsByNumber = new Map(existingUnits.map((u: any) => [u.unit_number, u]));
     const unitsById = new Map(existingUnits.map((u: any) => [u.id, u]));
 
+    const pendingInserts: Parameters<typeof this.changeModel.bulkCreate>[0] = [];
+
     for (const fmsUnit of fmsUnits) {
       const mapping = mappingsByExternalId.get(fmsUnit.externalId);
-      
-      // If we have a mapping, validate that the unit it points to exists and belongs to this facility
       let existingUnit = mapping ? unitsById.get(mapping.internal_id) : null;
       
-      logger.info(`[FMS] Checking unit ${fmsUnit.unitNumber}`, {
-        fms_sync: true,
-        sync_log_id: syncLogId,
-        facility_id: facilityId,
-        external_id: fmsUnit.externalId,
-        has_mapping: !!mapping,
-        mapping_internal_id: mapping?.internal_id,
-        found_by_mapping: !!existingUnit,
-        unit_count: unitsById.size,
+      logger.debug(`[FMS] Checking unit ${fmsUnit.unitNumber}`, {
+        fms_sync: true, sync_log_id: syncLogId, external_id: fmsUnit.externalId,
+        has_mapping: !!mapping, found_by_mapping: !!existingUnit,
       });
       
       // If mapping points to a unit from a different facility (stale mapping), ignore it and lookup by unit number
@@ -1035,18 +938,11 @@ export class FMSService {
       }
 
       if (!existingUnit) {
-        // New unit - needs to be added
-        logger.info(`[FMS] Detected new unit to add`, {
-          fms_sync: true,
-          sync_log_id: syncLogId,
-          facility_id: facilityId,
-          unit_number: fmsUnit.unitNumber,
-          external_id: fmsUnit.externalId,
-          has_mapping: !!mapping,
-          mapping_internal_id: mapping?.internal_id,
+        logger.debug(`[FMS] Detected new unit to add: ${fmsUnit.unitNumber}`, {
+          fms_sync: true, sync_log_id: syncLogId, external_id: fmsUnit.externalId,
         });
         
-        const change = await this.changeModel.create({
+        pendingInserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.UNIT_ADDED,
           entity_type: 'unit',
@@ -1056,7 +952,6 @@ export class FMSService {
           impact_summary: `New unit: ${fmsUnit.unitNumber} - Will be added to facility`,
           is_valid: true,
         });
-        changes.push(change);
       } else if (!mapping || mapping.internal_id !== (existingUnit).id) {
         // With the simplified approach, don't mutate or emit mapping-only changes during detection.
         const reason = !mapping ? 'no mapping' : 'stale mapping';
@@ -1077,53 +972,31 @@ export class FMSService {
           unit.status !== fmsUnit.status ||
           unit.unit_type !== fmsUnit.unitType;
 
-        logger.info(`[FMS] Unit ${fmsUnit.unitNumber} change detection`, {
-          fms_sync: true,
-          sync_log_id: syncLogId,
-          facility_id: facilityId,
-          unit_id: unit.id,
-          unit_status_in_db: unit.status,
-          fms_status: fmsUnit.status,
-          unit_type_in_db: unit.unit_type,
-          fms_unit_type: fmsUnit.unitType,
-          has_changes: hasChanges,
-        });
-
         if (hasChanges) {
-          logger.info(`[FMS] Unit ${fmsUnit.unitNumber} has data changes`, {
-            fms_sync: true,
-            sync_log_id: syncLogId,
-            facility_id: facilityId,
-            unit_id: unit.id,
-            unit_status_in_db: unit.status,
-            fms_status: fmsUnit.status,
-            unit_type_in_db: unit.unit_type,
-            fms_unit_type: fmsUnit.unitType,
-            changes: {
-              status: { before: unit.status, after: fmsUnit.status, changed: unit.status !== fmsUnit.status },
-              unitType: { before: unit.unit_type, after: fmsUnit.unitType, changed: unit.unit_type !== fmsUnit.unitType },
-            },
-          });
-
-          const change = await this.changeModel.create({
+          logger.debug(`[FMS] Unit ${fmsUnit.unitNumber} has data changes`, { sync_log_id: syncLogId });
+          pendingInserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.UNIT_UPDATED,
             entity_type: 'unit',
             external_id: fmsUnit.externalId,
             internal_id: unit.id,
-            before_data: {
-              status: unit.status,
-              unitType: unit.unit_type,
-            },
+            before_data: { status: unit.status, unitType: unit.unit_type },
             after_data: fmsUnit,
             required_actions: [],
             impact_summary: `Update unit ${fmsUnit.unitNumber}`,
             is_valid: true,
           });
-          changes.push(change);
         }
       }
     }
+
+    const changes = pendingInserts.length > 0
+      ? await this.changeModel.bulkCreate(pendingInserts)
+      : [];
+
+    logger.info(`[FMS] Unit detection complete: ${changes.length} changes from ${total} units`, {
+      fms_sync: true, sync_log_id: syncLogId, facility_id: facilityId,
+    });
 
     return changes;
   }
@@ -1215,18 +1088,29 @@ export class FMSService {
         return priorityA - priorityB;
       });
 
+    // Load the sync log once and cache context for all sub-methods
+    const syncLog = await this.syncLogModel.findById(syncLogId);
+    if (!syncLog) throw new Error(`Sync log ${syncLogId} not found`);
+
+    const ctx: FMSApplyContext = {
+      facilityId: syncLog.facility_id,
+      performedBy: syncLog.triggered_by_user_id || 'fms-system',
+    };
+
     logger.info(`[FMS] Applying ${changes.length} changes in dependency order`, {
       fms_sync: true,
       sync_log_id: syncLogId,
       order: changes.map(c => c.change_type),
     });
 
+    const appliedIds: string[] = [];
+
     for (const change of changes) {
       if (!change) continue;
 
       try {
-        await this.applyChange(change, result);
-        await this.changeModel.markApplied(change.id);
+        await this.applyChange(change, result, ctx);
+        appliedIds.push(change.id);
         result.changesApplied++;
       } catch (error) {
         logger.error(`Failed to apply change ${change.id}:`, error);
@@ -1239,16 +1123,15 @@ export class FMSService {
       }
     }
 
-    // Update sync log
+    if (appliedIds.length > 0) {
+      await this.changeModel.bulkMarkApplied(appliedIds);
+    }
+
     await this.syncLogModel.update(syncLogId, {
       changes_applied: result.changesApplied,
     });
 
-    // Get facility ID from sync log to broadcast update
-    const syncLog = await this.syncLogModel.findById(syncLogId);
-    if (syncLog) {
-      this.broadcastFMSSyncUpdate(syncLog.facility_id);
-    }
+    this.broadcastFMSSyncUpdate(ctx.facilityId);
 
     return result;
   }
@@ -1258,31 +1141,32 @@ export class FMSService {
    */
   private async applyChange(
     change: FMSChange,
-    result: FMSChangeApplicationResult
+    result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
   ): Promise<void> {
     switch (change.change_type) {
       case FMSChangeType.TENANT_ADDED:
-        await this.applyTenantAdded(change, result);
+        await this.applyTenantAdded(change, result, ctx);
         break;
 
       case FMSChangeType.TENANT_REMOVED:
-        await this.applyTenantRemoved(change, result);
+        await this.applyTenantRemoved(change, result, ctx);
         break;
 
       case FMSChangeType.TENANT_UPDATED:
-        await this.applyTenantUpdated(change, result);
+        await this.applyTenantUpdated(change, result, ctx);
         break;
 
       case FMSChangeType.TENANT_UNIT_CHANGED:
-        await this.applyTenantUnitChanged(change, result);
+        await this.applyTenantUnitChanged(change, result, ctx);
         break;
 
       case FMSChangeType.UNIT_ADDED:
-        await this.applyUnitAdded(change, result);
+        await this.applyUnitAdded(change, result, ctx);
         break;
 
       case FMSChangeType.UNIT_UPDATED:
-        await this.applyUnitUpdated(change, result);
+        await this.applyUnitUpdated(change, result, ctx);
         break;
 
       default:
@@ -1297,17 +1181,12 @@ export class FMSService {
    */
   private async applyTenantAdded(
     change: FMSChange,
-    result: FMSChangeApplicationResult
+    result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
   ): Promise<void> {
     const tenantData = change.after_data as FMSTenant;
-    const syncLog = await this.syncLogModel.findById(change.sync_log_id);
-    
-    if (!syncLog) {
-      throw new Error('Sync log not found');
-    }
-
-    const facilityId = syncLog.facility_id;
-    const performedBy = syncLog.triggered_by_user_id || 'fms-system';
+    const facilityId = ctx.facilityId;
+    const performedBy = ctx.performedBy;
     const config = await this.fmsConfigModel.findByFacilityId(facilityId);
 
     // Determine preferred login identifier: email (preferred) or normalized phone
@@ -1509,21 +1388,26 @@ export class FMSService {
    */
   public async applyTenantRemoved(
     change: FMSChange,
-    result: FMSChangeApplicationResult
+    result: FMSChangeApplicationResult,
+    ctx?: FMSApplyContext,
   ): Promise<void> {
     if (!change.internal_id) {
       throw new Error('Internal user ID not found');
     }
 
-    const syncLog = await this.syncLogModel.findById(change.sync_log_id);
-    if (!syncLog) {
-      throw new Error('Sync log not found');
+    // Support both cached context and legacy standalone calls
+    let facilityId: string;
+    let performedBy: string;
+    if (ctx) {
+      facilityId = ctx.facilityId;
+      performedBy = ctx.performedBy;
+    } else {
+      const syncLog = await this.syncLogModel.findById(change.sync_log_id);
+      if (!syncLog) throw new Error('Sync log not found');
+      facilityId = syncLog.facility_id;
+      performedBy = syncLog.triggered_by_user_id || 'fms-system';
     }
 
-    const facilityId = syncLog.facility_id;
-    const performedBy = syncLog.triggered_by_user_id || 'fms-system';
-
-    // SECURITY: Verify this is a TENANT user (never remove admin/maintenance users)
     const user = await UserModel.findById(change.internal_id);
     if (!user) {
       throw new Error('User not found');
@@ -1531,25 +1415,23 @@ export class FMSService {
     
     if ((user as any).role !== UserRole.TENANT) {
       logger.error(`[FMS] Security violation: Attempted to remove non-tenant user`, {
-        user_id: change.internal_id,
-        user_role: (user as any).role,
-        sync_log_id: change.sync_log_id,
-        facility_id: facilityId,
+        user_id: change.internal_id, user_role: (user as any).role,
+        sync_log_id: change.sync_log_id, facility_id: facilityId,
       });
       throw new Error(`Security violation: FMS can only modify TENANT users, found ${(user as any).role}`);
     }
 
-    // Get all unit assignments for this tenant
     const allAssignments = await this.unitAssignmentModel.findByTenantId(change.internal_id);
 
-    // SECURITY: Only remove assignments for units in THIS facility
-    const assignments = [];
-    for (const assignment of allAssignments) {
-      const unit = await this.unitModel.findById(assignment.unit_id);
-      if (unit && unit.facility_id === facilityId) {
-        assignments.push(assignment);
-      }
-    }
+    // PERFORMANCE FIX: Batch-load units instead of N+1 per-assignment lookups
+    const unitIds = allAssignments.map(a => a.unit_id);
+    const units = unitIds.length > 0 ? await this.unitModel.findByIds(unitIds) : [];
+    const unitsMap = new Map(units.map((u: any) => [u.id, u]));
+
+    const assignments = allAssignments.filter(assignment => {
+      const unit = unitsMap.get(assignment.unit_id);
+      return unit && unit.facility_id === facilityId;
+    });
 
     // Remove unit assignments using UnitsService (which will emit events)
     for (const assignment of assignments) {
@@ -1606,19 +1488,15 @@ export class FMSService {
    */
   private async applyTenantUpdated(
     change: FMSChange,
-    _result: FMSChangeApplicationResult
+    _result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
   ): Promise<void> {
     if (!change.internal_id) {
       throw new Error('Internal user ID not found');
     }
 
-    const syncLog = await this.syncLogModel.findById(change.sync_log_id);
-    if (!syncLog) {
-      throw new Error('Sync log not found');
-    }
-
-    const facilityId = syncLog.facility_id;
-    const performedBy = syncLog.triggered_by_user_id || 'fms-system';
+    const facilityId = ctx.facilityId;
+    const performedBy = ctx.performedBy;
     const tenantData = change.after_data as FMSTenant;
 
     // SECURITY: Verify this is a TENANT user (never update admin/maintenance users)
@@ -1705,19 +1583,15 @@ export class FMSService {
    */
   private async applyTenantUnitChanged(
     change: FMSChange,
-    result: FMSChangeApplicationResult
+    result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
   ): Promise<void> {
     if (!change.internal_id) {
       throw new Error('Internal tenant ID not found');
     }
 
-    const syncLog = await this.syncLogModel.findById(change.sync_log_id);
-    if (!syncLog) {
-      throw new Error('Sync log not found');
-    }
-
-    const facilityId = syncLog.facility_id;
-    const performedBy = syncLog.triggered_by_user_id || 'fms-system';
+    const facilityId = ctx.facilityId;
+    const performedBy = ctx.performedBy;
     const actionData = (change.after_data || change.before_data);
 
     if (change.after_data && actionData.action === 'assign_unit') {
@@ -1803,22 +1677,16 @@ export class FMSService {
    */
   private async applyUnitAdded(
     change: FMSChange,
-    _result: FMSChangeApplicationResult
+    _result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
   ): Promise<void> {
     const unitData = change.after_data as FMSUnit;
-    const syncLog = await this.syncLogModel.findById(change.sync_log_id);
-    
-    if (!syncLog) {
-      throw new Error('Sync log not found');
-    }
+    const facilityId = ctx.facilityId;
+    const performedBy = ctx.performedBy;
 
-    const facilityId = syncLog.facility_id;
-    const performedBy = syncLog.triggered_by_user_id || 'fms-system';
-
-    // Get the user's role for proper authorization
-    let userRole = UserRole.ADMIN; // Default fallback
-    if (syncLog.triggered_by_user_id) {
-      const triggeringUser = await UserModel.findById(syncLog.triggered_by_user_id);
+    let userRole = UserRole.ADMIN;
+    if (performedBy && performedBy !== 'fms-system') {
+      const triggeringUser = await UserModel.findById(performedBy);
       if (triggeringUser) {
         userRole = (triggeringUser as any).role;
       }
@@ -1985,21 +1853,16 @@ export class FMSService {
    */
   private async applyUnitUpdated(
     change: FMSChange,
-    _result: FMSChangeApplicationResult
+    _result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
   ): Promise<void> {
     if (!change.internal_id) {
       throw new Error('Internal unit ID not found');
     }
 
     const unitData = change.after_data as FMSUnit;
-    const syncLog = await this.syncLogModel.findById(change.sync_log_id);
-    
-    if (!syncLog) {
-      throw new Error('Sync log not found');
-    }
-
-    const facilityId = syncLog.facility_id;
-    const performedBy = syncLog.triggered_by_user_id || 'fms-system';
+    const facilityId = ctx.facilityId;
+    const performedBy = ctx.performedBy;
 
     // SECURITY: Validate unit belongs to this facility
     const unit = await this.unitModel.findById(change.internal_id);
@@ -2017,10 +1880,9 @@ export class FMSService {
       throw new Error(`Security violation: Unit ${change.internal_id} does not belong to facility ${facilityId}`);
     }
 
-    // Get the user's role for proper authorization
-    let userRole = UserRole.ADMIN; // Default fallback
-    if (syncLog.triggered_by_user_id) {
-      const triggeringUser = await UserModel.findById(syncLog.triggered_by_user_id);
+    let userRole = UserRole.ADMIN;
+    if (performedBy && performedBy !== 'fms-system') {
+      const triggeringUser = await UserModel.findById(performedBy);
       if (triggeringUser) {
         userRole = (triggeringUser as any).role;
       }
@@ -2116,46 +1978,28 @@ export class FMSService {
       unit_number: unitData.unitNumber,
     });
 
-    try {
-      const updateResult = await this.unitsService.updateUnit(
+    await this.unitsService.updateUnit(
       change.internal_id,
       {
         unit_type: unitData.unitType,
-        // size_sqft: not updated from FMS - it's a DECIMAL column but FMS gives us strings like "10x15"
         status: unitData.status,
         monthly_rate: unitData.monthlyRate,
         metadata: {
           fms_synced: true,
           fms_external_id: unitData.externalId,
-          fms_size: unitData.size, // Store dimensional size string here
+          fms_size: unitData.size,
           fms_custom_fields: unitData.customFields,
           last_fms_sync: new Date(),
         },
       },
-      performedBy, // Use the user who triggered the sync
-        userRole // Use the actual user's role for proper authorization
-      );
-
-      logger.info(`[FMS] Unit ${change.internal_id} updated successfully`, {
-        fms_sync: true,
-        sync_log_id: change.sync_log_id,
-        facility_id: facilityId,
-        before_status: change.before_data?.status || 'unknown',
-        after_status: unitData.status,
-        update_result_status: updateResult.status,
-      });
-
-      _result.changesApplied++;
-    } catch (updateError) {
-      logger.error(`[FMS] Failed to update unit ${change.internal_id}:`, updateError);
-      _result.changesFailed++;
-      _result.errors.push(`Unit update failed for ${change.external_id}: ${(updateError as Error).message}`);
-      return;
-    }
+      performedBy,
+      userRole,
+    );
 
     logger.info(`[FMS] Updated unit ${change.internal_id} by ${performedBy}: status=${unitData.status}, type=${unitData.unitType}`, {
       fms_sync: true,
       sync_log_id: change.sync_log_id,
+      facility_id: facilityId,
     });
   }
 

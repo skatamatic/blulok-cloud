@@ -82,7 +82,7 @@ export class FMSChangeModel {
           external_id: data.external_id,
           internal_id: data.internal_id,
           before_data: data.before_data ? JSON.stringify(data.before_data) : null,
-          after_data: JSON.stringify(data.after_data),
+          after_data: data.after_data != null ? JSON.stringify(data.after_data) : null,
           required_actions: JSON.stringify(data.required_actions),
           impact_summary: data.impact_summary,
           is_reviewed: false,
@@ -218,6 +218,78 @@ export class FMSChangeModel {
     return this.update(id, {
       applied_at: new Date(),
     });
+  }
+
+  /**
+   * Mark multiple changes as applied in a single query.
+   */
+  async bulkMarkApplied(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    try {
+      return await this.db('fms_changes')
+        .whereIn('id', ids)
+        .update({ applied_at: this.db.fn.now() });
+    } catch (error) {
+      logger.error('Error bulk marking FMS changes applied:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Insert many change records in a single batch query and return them.
+   * Falls back to sequential create if the batch is empty.
+   */
+  async bulkCreate(items: Array<{
+    sync_log_id: string;
+    change_type: FMSChangeType;
+    entity_type: 'tenant' | 'unit';
+    external_id: string;
+    internal_id?: string;
+    before_data?: any;
+    after_data: any;
+    required_actions: FMSChangeAction[];
+    impact_summary: string;
+    is_valid?: boolean;
+    validation_errors?: string[];
+  }>): Promise<FMSChange[]> {
+    if (items.length === 0) return [];
+    try {
+      const ids: string[] = [];
+      const rows = items.map(data => {
+        const id = randomUUID();
+        ids.push(id);
+        return {
+          id,
+          sync_log_id: data.sync_log_id,
+          change_type: data.change_type,
+          entity_type: data.entity_type,
+          external_id: data.external_id,
+          internal_id: data.internal_id,
+          before_data: data.before_data ? JSON.stringify(data.before_data) : null,
+          after_data: data.after_data != null ? JSON.stringify(data.after_data) : null,
+          required_actions: JSON.stringify(data.required_actions),
+          impact_summary: data.impact_summary,
+          is_reviewed: false,
+          is_valid: data.is_valid,
+          validation_errors: data.validation_errors ? JSON.stringify(data.validation_errors) : null,
+          created_at: this.db.fn.now(),
+        };
+      });
+
+      const BATCH_SIZE = 500;
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        await this.db('fms_changes').insert(rows.slice(i, i + BATCH_SIZE));
+      }
+
+      const records = await this.db('fms_changes')
+        .whereIn('id', ids)
+        .orderByRaw(`FIELD(id, ${ids.map(() => '?').join(',')})`, ids);
+
+      return records.map((r: any) => this.mapToModel(r));
+    } catch (error) {
+      logger.error('Error bulk creating FMS changes:', error);
+      throw error;
+    }
   }
 
   /**

@@ -609,6 +609,7 @@ gcloud run deploy blulok-backend \
   --cpu=1 \
   --max-instances=100 \
   --concurrency=80 \
+  --timeout=3600 \
   --set-env-vars="NODE_ENV=production,DB_HOST=/cloudsql/PROJECT:REGION:INSTANCE" \
   --set-secrets="DB_PASSWORD=blulok-db-password:latest,JWT_SECRET=blulok-jwt-secret:latest" \
   --add-cloudsql-instances=PROJECT:REGION:INSTANCE

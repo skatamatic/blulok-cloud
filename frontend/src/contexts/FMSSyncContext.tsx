@@ -4,6 +4,13 @@ import { FMSChange, FMSSyncResult } from '@/types/fms.types';
 
 export type SyncStep = 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'complete' | 'cancelled';
 
+/**
+ * Minimum time (ms) each progress step is shown in the UI.
+ * Prevents flash-of-content when the backend completes steps faster than a human can read.
+ * Only applies to intermediate steps — 'complete' and 'cancelled' are never delayed.
+ */
+const MIN_STEP_DISPLAY_MS = 1200;
+
 export interface FMSSyncState {
   isActive: boolean;
   isMinimized: boolean;
@@ -56,9 +63,19 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   /** Avoid stale facilityId inside the long-lived WS handler (e.g. second sync same session). */
   const facilityIdRef = useRef<string | null>(null);
 
+  // Client-side minimum step display time tracking
+  const lastStepTimeRef = useRef<number>(0);
+  const stepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     facilityIdRef.current = syncState.facilityId;
   }, [syncState.facilityId]);
+
+  useEffect(() => {
+    return () => {
+      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
+    };
+  }, []);
 
   const startSync = useCallback(
     (facilityId: string, facilityName: string) => {
@@ -66,6 +83,11 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
         unsubscribe(progressSubIdRef.current);
         progressSubIdRef.current = null;
       }
+      if (stepTimerRef.current) {
+        clearTimeout(stepTimerRef.current);
+        stepTimerRef.current = null;
+      }
+      lastStepTimeRef.current = Date.now();
       setSyncState({
         ...initialState,
         isActive: true,
@@ -78,7 +100,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
     [unsubscribe]
   );
 
-  const updateStep = useCallback((step: SyncStep) => {
+  const applyStepUpdate = useCallback((step: SyncStep) => {
     const stepProgress: Record<SyncStep, number> = {
       connecting: 20,
       fetching: 40,
@@ -88,8 +110,8 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
       cancelled: 0,
     };
 
+    lastStepTimeRef.current = Date.now();
     setSyncState(prev => {
-      // Don't update step if already completed manually
       if (prev.currentStep === 'complete') {
         return prev;
       }
@@ -100,6 +122,34 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
       };
     });
   }, []);
+
+  const updateStep = useCallback((step: SyncStep) => {
+    // Terminal steps are never delayed
+    if (step === 'complete' || step === 'cancelled') {
+      if (stepTimerRef.current) {
+        clearTimeout(stepTimerRef.current);
+        stepTimerRef.current = null;
+      }
+      applyStepUpdate(step);
+      return;
+    }
+
+    const elapsed = Date.now() - lastStepTimeRef.current;
+    const remaining = MIN_STEP_DISPLAY_MS - elapsed;
+
+    if (remaining <= 0) {
+      applyStepUpdate(step);
+    } else {
+      // Queue the step change so the current step stays visible long enough
+      if (stepTimerRef.current) {
+        clearTimeout(stepTimerRef.current);
+      }
+      stepTimerRef.current = setTimeout(() => {
+        stepTimerRef.current = null;
+        applyStepUpdate(step);
+      }, remaining);
+    }
+  }, [applyStepUpdate]);
 
   const setProgress = useCallback((percentage: number) => {
     setSyncState(prev => ({

@@ -134,7 +134,7 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 - Defaults and limits:
   - `GATEWAY_MAX_MESSAGE_BYTES` (default 512KB).
   - Keepalive strategy (hardcoded best-practice values, not env-configurable):
-    - **RFC6455 `ping` frames every 20s** per connection: the primary defense against LB/NAT/Cloud Run idle timeouts (most intermediaries only track WebSocket control frames, not JSON payloads).
+    - **RFC6455 `ping` frames every 20s** per connection: helps **LB/NAT/proxy idle** paths (many only count WebSocket control frames, not JSON). **Does not** reset **Cloud Run’s per-request `timeout`** (default 300s); raise `--timeout` on the backend service (see `cursorDocs/gateway-integration.md`).
     - **JSON `PING` after 10s idle**: application-level health check; gateway responds with JSON `PONG`.
     - **Inactivity timeout 30s**: connection closed if no data, JSON `PONG`, or WS `pong` frame received.
     - **Heartbeat sweep every 5s**: frequency at which server evaluates idle timeouts.

@@ -893,6 +893,8 @@ jest.mock('../models/fms-change.model', () => ({
     update: jest.fn().mockResolvedValue(null),
     reviewChange: jest.fn().mockResolvedValue(null),
     markApplied: jest.fn().mockResolvedValue(null),
+    bulkMarkApplied: jest.fn().mockResolvedValue(0),
+    bulkCreate: jest.fn().mockResolvedValue([]),
     bulkReview: jest.fn().mockResolvedValue(0),
     deleteBySyncLogId: jest.fn().mockResolvedValue(0),
     getStatsBySyncLogId: jest.fn().mockResolvedValue({
@@ -1419,6 +1421,14 @@ jest.mock('../models/user.model', () => {
         return Promise.resolve(activeUsers);
       }),
       findByRole: jest.fn().mockImplementation((role: string) => {
+        const users = Array.from(mockUsers.values()).filter(u => u.role === role);
+        return Promise.resolve(users);
+      }),
+      findByRoleMinimalForFacility: jest.fn().mockImplementation((role: string, _facilityId: string) => {
+        const users = Array.from(mockUsers.values()).filter(u => u.role === role);
+        return Promise.resolve(users);
+      }),
+      findByRoleMinimal: jest.fn().mockImplementation((role: string) => {
         const users = Array.from(mockUsers.values()).filter(u => u.role === role);
         return Promise.resolve(users);
       }),

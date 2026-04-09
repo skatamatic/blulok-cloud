@@ -40,6 +40,7 @@ module.exports = {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
+  setupFiles: ['<rootDir>/src/__tests__/jest-preload-env.cjs'],
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup-mocks.ts'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',

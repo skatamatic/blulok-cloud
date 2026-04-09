@@ -552,6 +552,7 @@ export abstract class BaseGateway extends EventEmitter implements IGateway {
         this.sendHeartbeat();
       }
     }, interval);
+    this.heartbeatTimer.unref();
   }
 
   /**
