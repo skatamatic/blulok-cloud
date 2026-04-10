@@ -118,11 +118,12 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
       clearDebounce();
       subscriptionIds.forEach((id) => unsubscribe(id));
     };
+    // Note: do not list params.debouncedRefresh — parents often pass inline `() => ref.current()`
+    // which would re-run this effect every render and spam subscribe/unsubscribe.
   }, [
     params.enabled,
     params.deviceId,
     params.facilityId,
-    params.debouncedRefresh,
     params.subscribeUnitsForRefresh,
     params.subscribeDeviceStatusForRefresh,
     subscribe,

@@ -172,8 +172,8 @@ export default function FacilityDetailsPage() {
   const [facilityUnitsPageData, setFacilityUnitsPageData] = useState<Unit[]>([]);
   const [unitLoading, setUnitLoading] = useState(false);
   const [unitsInitialLoad, setUnitsInitialLoad] = useState(true);
-  const [deviceViewMode, setDeviceViewMode] = useState<ListViewMode>('grid');
-  const [unitViewMode, setUnitViewMode] = useState<ListViewMode>('grid');
+  const [deviceViewMode, setDeviceViewMode] = useState<ListViewMode>('table');
+  const [unitViewMode, setUnitViewMode] = useState<ListViewMode>('table');
   const [deviceGroups, setDeviceGroups] = useState<DeviceGroup[]>([]);
   const [groupNamesByDeviceId, setGroupNamesByDeviceId] = useState<Record<string, string[]>>({});
 
@@ -195,8 +195,8 @@ export default function FacilityDetailsPage() {
   const canDelete = ['admin', 'dev_admin'].includes(authState.user?.role || '');
 
   // Refs for debouncing WebSocket-triggered refreshes
-  const loadDevicesRef = useRef<() => void>(() => {});
-  const loadUnitsRef = useRef<() => void>(() => {});
+  const loadDevicesRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
+  const loadUnitsRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
   const hasInitialSyncRef = useRef(false);
 
   // Sync route ID with global context on initial mount only (one-way: route -> context)
@@ -268,10 +268,18 @@ export default function FacilityDetailsPage() {
     };
   }, [ws]);
 
+  const debouncedFacilityDevicesWsRefresh = useCallback(() => {
+    void loadDevicesRef.current({ background: true });
+  }, []);
+
+  const debouncedFacilityUnitsWsRefresh = useCallback(() => {
+    void loadUnitsRef.current({ background: true });
+  }, []);
+
   useLockDeviceRealtime({
     enabled: activeTab === 'devices' && !!facility?.id,
     facilityId: facility?.id,
-    debouncedRefresh: () => loadDevicesRef.current(),
+    debouncedRefresh: debouncedFacilityDevicesWsRefresh,
     debounceMs: 500,
     subscribeUnitsForRefresh: false,
   });
@@ -279,7 +287,7 @@ export default function FacilityDetailsPage() {
   useLockDeviceRealtime({
     enabled: activeTab === 'units' && !!facility?.id,
     facilityId: facility?.id,
-    debouncedRefresh: () => loadUnitsRef.current(),
+    debouncedRefresh: debouncedFacilityUnitsWsRefresh,
     debounceMs: 500,
   });
 
@@ -322,10 +330,12 @@ export default function FacilityDetailsPage() {
     }
   }, [id, selectedFacilityId, loadFacilityData]);
 
-  const loadFacilityDevices = useCallback(async () => {
+  const loadFacilityDevices = useCallback(async (options?: { background?: boolean }) => {
     if (!facility?.id) return;
     try {
-      setDeviceLoading(true);
+      if (!options?.background) {
+        setDeviceLoading(true);
+      }
       const cardSort =
         deviceViewMode === 'grid' ? { sortBy: 'name' as const, sortOrder: 'asc' as const } : {};
       const params = sanitizeFilters({
@@ -350,10 +360,12 @@ export default function FacilityDetailsPage() {
     }
   }, [facility?.id, deviceFilters, devicePage, deviceViewMode]);
 
-  const loadFacilityUnitsPageData = useCallback(async () => {
+  const loadFacilityUnitsPageData = useCallback(async (options?: { background?: boolean }) => {
     if (!facility?.id) return;
     try {
-      setUnitLoading(true);
+      if (!options?.background) {
+        setUnitLoading(true);
+      }
       const cardSort =
         unitViewMode === 'grid' ? { sortBy: 'unit_number' as const, sortOrder: 'asc' as const } : {};
       const params = sanitizeFilters({
@@ -1010,7 +1022,7 @@ export default function FacilityDetailsPage() {
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Showing {facilityDevices.length} of {deviceTotal} devices
             </p>
-            <ViewModeToggle value={deviceViewMode} onChange={setDeviceViewMode} />
+            <ViewModeToggle value={deviceViewMode} onChange={setDeviceViewMode} showText={false} />
           </div>
 
           {deviceLoading && devicesInitialLoad ? (
@@ -1344,7 +1356,7 @@ export default function FacilityDetailsPage() {
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Showing {facilityUnitsPageData.length} of {unitTotal} units
             </p>
-            <ViewModeToggle value={unitViewMode} onChange={setUnitViewMode} />
+            <ViewModeToggle value={unitViewMode} onChange={setUnitViewMode} showText={false} />
           </div>
 
           {unitLoading && unitsInitialLoad ? (

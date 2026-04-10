@@ -198,7 +198,7 @@ describe('UnitsPage', () => {
       });
 
       const lockBtn = screen.getByRole('button', {
-        name: /Unlock unavailable — no device on this unit/i,
+        name: /Unlock unavailable — no device/i,
       });
       expect(lockBtn).toBeDisabled();
     });

@@ -70,7 +70,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, []); // Empty dependency array
 
   const subscribe = useCallback((type: string, onMessage: (data: any) => void, onError?: (error: string) => void, filters?: Record<string, any>) => {
-    console.log('🔌 WebSocketContext subscribe:', { type, isConnected, filters });
+    console.log('🔌 WebSocketContext subscribe:', {
+      type,
+      isConnected: websocketService.isWebSocketConnected(),
+      filters,
+    });
 
     // Generate unique subscription ID using a format that's easy to parse
     const subscriptionId = `sub_${type}_${Date.now()}_${subscriptionCounter.current++}`;
@@ -111,7 +115,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Return the unique subscription ID
     return subscriptionId;
-  }, [isConnected]);
+  }, []);
 
   const unsubscribe = useCallback((subscriptionId: string) => {
     // Get stored metadata for this subscription

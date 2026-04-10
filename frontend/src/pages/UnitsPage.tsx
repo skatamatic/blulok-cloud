@@ -76,7 +76,7 @@ export default function UnitsPage() {
     sortOrder: 'asc',
     limit: 20
   });
-  const [viewMode, setViewMode] = useState<ListViewMode>('grid');
+  const [viewMode, setViewMode] = useState<ListViewMode>('table');
   const [lockPendingUnitId, setLockPendingUnitId] = useState<string | null>(null);
 
   const unitsDataRef = useRef<Unit[]>([]);
@@ -89,18 +89,21 @@ export default function UnitsPage() {
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
 
-  // Ref to track the latest loadUnits function for WebSocket callback
-  const loadUnitsRef = useRef<() => void>(() => {});
+  // Ref to track the latest loadUnits for WebSocket debounced refresh (stable callback below).
+  const loadUnitsRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
 
   useEffect(() => {
     loadUsers();
   }, []);
 
+  const debouncedWsUnitsRefresh = useCallback(() => {
+    void loadUnitsRef.current({ background: true });
+  }, []);
+
   useLockDeviceRealtime({
-    debouncedRefresh: () => loadUnitsRef.current(),
+    debouncedRefresh: debouncedWsUnitsRefresh,
     debounceMs: 500,
   });
-
 
   const loadUsers = async () => {
     try {
@@ -120,7 +123,7 @@ export default function UnitsPage() {
     }
   };
 
-  const loadUnits = useCallback(async () => {
+  const loadUnits = useCallback(async (options?: { background?: boolean }) => {
     // For non-tenants, require facility selection (unless "All Facilities" is selected)
     if (!isTenant && !selectedFacilityId) {
       setLoading(false);
@@ -131,7 +134,9 @@ export default function UnitsPage() {
     }
 
     try {
-      setLoading(true);
+      if (!options?.background) {
+        setLoading(true);
+      }
       const cardSortOverlay =
         !isTenant && viewMode === 'grid'
           ? { sortBy: 'unit_number' as const, sortOrder: 'asc' as const }
@@ -197,12 +202,11 @@ export default function UnitsPage() {
   }, [filters, currentPage, selectedFacilityId, isTenant, viewMode]);
 
   useEffect(() => {
-    void loadUnits();
+    loadUnitsRef.current = loadUnits;
   }, [loadUnits]);
 
-  // Keep ref updated for WebSocket callback
   useEffect(() => {
-    loadUnitsRef.current = loadUnits;
+    void loadUnits();
   }, [loadUnits]);
 
   useEffect(() => {
@@ -641,7 +645,7 @@ export default function UnitsPage() {
           </p>
         </div>
         <div className="flex items-center space-x-3">
-          {!isTenant && <ViewModeToggle value={viewMode} onChange={setViewMode} />}
+          {!isTenant && <ViewModeToggle value={viewMode} onChange={setViewMode} showText={false} />}
           {canManage && (
             <button
               onClick={() => setShowAddModal(true)}

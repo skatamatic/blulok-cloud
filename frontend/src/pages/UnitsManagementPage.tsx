@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
@@ -67,18 +67,18 @@ export default function UnitsManagementPage() {
       (filters.lock_status && filters.lock_status !== 'all')
     );
   };
-  const [viewMode, setViewMode] = useState<ListViewMode | 'sitemap'>('grid');
+  const [viewMode, setViewMode] = useState<ListViewMode | 'sitemap'>('table');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
-  const loadUnitsRef = useRef<() => Promise<void>>(async () => {});
+  const loadUnitsRef = useRef<(opts?: { background?: boolean }) => Promise<void>>(async () => {});
 
-  useEffect(() => {
-    loadUnits();
-  }, [filters, currentPage, selectedFacilityId, viewMode]);
+  const debouncedWsUnitsManagementRefresh = useCallback(() => {
+    void loadUnitsRef.current({ background: true });
+  }, []);
 
-  const loadUnits = async () => {
+  const loadUnits = useCallback(async (options?: { background?: boolean }) => {
     // For non-tenants, require facility selection (unless "All Facilities" is selected)
     if (!isTenant && !selectedFacilityId) {
       setLoading(false);
@@ -89,7 +89,9 @@ export default function UnitsManagementPage() {
     }
 
     try {
-      setLoading(true);
+      if (!options?.background) {
+        setLoading(true);
+      }
       const cardSortOverlay =
         viewMode === 'grid' ? { sortBy: 'unit_number' as const, sortOrder: 'asc' as const } : {};
       const queryFilters: any = {
@@ -142,9 +144,15 @@ export default function UnitsManagementPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, currentPage, selectedFacilityId, viewMode, isTenant]);
 
-  loadUnitsRef.current = loadUnits;
+  useEffect(() => {
+    loadUnitsRef.current = loadUnits;
+  }, [loadUnits]);
+
+  useEffect(() => {
+    void loadUnits();
+  }, [loadUnits]);
 
   useLockDeviceRealtime({
     enabled: isTenant || !!selectedFacilityId,
@@ -152,9 +160,7 @@ export default function UnitsManagementPage() {
       !isTenant && selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
         ? selectedFacilityId
         : undefined,
-    debouncedRefresh: () => {
-      void loadUnitsRef.current();
-    },
+    debouncedRefresh: debouncedWsUnitsManagementRefresh,
     debounceMs: 500,
   });
 

@@ -100,7 +100,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     offset: 0
   });
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'grid' | 'table' | 'commands'>(initialCommandQueue ? 'commands' : 'grid');
+  const [activeTab, setActiveTab] = useState<'grid' | 'table' | 'commands'>(initialCommandQueue ? 'commands' : 'table');
   const [commandQueue, setCommandQueue] = useState<{ items: CommandQueueItem[]; total: number } | null>(initialCommandQueue || null);
   const [cmdFilters, setCmdFilters] = useState<{ status: string }>({ status: '' });
   const [showUnassignConfirm, setShowUnassignConfirm] = useState<{ deviceId: string; deviceSerial: string } | null>(null);
@@ -108,21 +108,27 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
 
-  // Ref to track the latest loadDevices function for WebSocket callback
-  const loadDevicesRef = useRef<() => void>(() => {});
+  // Ref to track the latest loadDevices for WebSocket debounced refresh (stable callback below).
+  const loadDevicesRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
   const deviceIdsRef = useRef<Set<string>>(new Set());
   deviceIdsRef.current = new Set(allDevices.map((d) => d.id));
 
+  const debouncedWsDevicesRefresh = useCallback(() => {
+    void loadDevicesRef.current({ background: true });
+  }, []);
+
   useLockDeviceRealtime({
     enabled: activeTab !== 'commands',
-    debouncedRefresh: () => loadDevicesRef.current(),
+    debouncedRefresh: debouncedWsDevicesRefresh,
     debounceRefreshFilter: (p) => shouldRefreshDeviceListForPayload(p, deviceIdsRef.current),
     debounceMs: 500,
   });
 
-  const loadDevices = useCallback(async () => {
+  const loadDevices = useCallback(async (options?: { background?: boolean }) => {
     try {
-      setLoading(true);
+      if (!options?.background) {
+        setLoading(true);
+      }
       const normalize = (obj: Record<string, unknown>) => {
         const out: Record<string, unknown> = {};
         Object.entries(obj).forEach(([k, v]) => {
@@ -176,7 +182,11 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   }, [filters, currentPage, selectedFacilityId, activeTab]);
 
   useEffect(() => {
-    loadDevices();
+    loadDevicesRef.current = loadDevices;
+  }, [loadDevices]);
+
+  useEffect(() => {
+    void loadDevices();
   }, [loadDevices]);
 
   // Command queue subscription
@@ -198,11 +208,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       if (subId) ws.unsubscribe(subId);
     };
   }, [activeTab, cmdFilters.status, ws]);
-
-  // Keep ref updated for WebSocket callback
-  useEffect(() => {
-    loadDevicesRef.current = loadDevices;
-  });
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
