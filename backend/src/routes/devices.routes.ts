@@ -66,6 +66,29 @@ import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/database.service';
 import { AccessCodeService } from '@/services/access-code.service';
 import { validate } from '@/middleware/validator.middleware';
+import {
+  normalizeDeviceListSortKey,
+  sortMergedDeviceList,
+  needsInMemoryDeviceSort,
+} from '@/utils/merged-device-list.utils';
+
+const DEFAULT_DEVICE_LIST_LIMIT = 30;
+const MAX_DEVICE_LIST_LIMIT = 200;
+
+function parseListOffset(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === '') return 0;
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+/** Returns validated limit in [1, max] or undefined if absent/invalid. */
+function parseListLimit(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n < 1) return undefined;
+  return Math.min(Math.floor(n), MAX_DEVICE_LIST_LIMIT);
+}
 
 const router = Router();
 /** Used by devices route tests so knex mocks apply to the same instance the router holds. */
@@ -128,10 +151,15 @@ const listQuerySchema = Joi.object({
   status: Joi.string().optional(),
   search: Joi.string().max(200).optional(),
   sortBy: Joi.string().optional(),
+  sort_by: Joi.string().optional(),
   sortOrder: Joi.string().valid('asc', 'desc').optional(),
+  sort_order: Joi.string().valid('asc', 'desc').optional(),
   limit: Joi.number().integer().min(1).max(200).optional(),
   offset: Joi.number().integer().min(0).optional(),
-}).unknown(true);
+  projection: Joi.string().valid('id').optional(),
+})
+  .unknown(true)
+  .prefs({ convert: true });
 
 // Simple XSS sanitization function
 const sanitizeHtml = (input: string): string => {
@@ -151,7 +179,14 @@ router.use(authenticateToken);
 router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const { facility_id, device_type, status, search, sortBy, sortOrder, limit, offset } = req.query;
+    const q = req.query as Record<string, unknown>;
+    const { facility_id, device_type, status, search } = q;
+    const sortByParam = (q.sortBy ?? q.sort_by) as string | undefined;
+    const sortOrderParam = (q.sortOrder ?? q.sort_order) as string | undefined;
+    const projectionRaw = q.projection as string | undefined;
+    const projectionId = projectionRaw === 'id';
+    const limitParsed = parseListLimit(q.limit);
+    const offsetNum = parseListOffset(q.offset);
 
     // Restrict facility access based on user role
     let allowedFacilityId = facility_id as string | undefined;
@@ -177,55 +212,97 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
       }
     }
 
-    const filters: DeviceFilters = {
+    const sortKey = normalizeDeviceListSortKey(sortByParam);
+    const order: 'asc' | 'desc' = sortOrderParam === 'desc' ? 'desc' : 'asc';
+
+    const baseFilters: DeviceFilters = {
       device_type: device_type as any,
       status: status as string,
       search: search as string,
-      sortBy: sortBy as any,
-      sortOrder: sortOrder as any,
     };
-    
-    if (limit) {
-      filters.limit = parseInt(limit as string);
-    }
-    if (offset) {
-      filters.offset = parseInt(offset as string);
-    }
     if (allowedFacilityId) {
-      (filters as any).facility_id = allowedFacilityId;
+      (baseFilters as any).facility_id = allowedFacilityId;
     } else if (allowedFacilityIds && allowedFacilityIds.length > 0) {
-      (filters as any).facility_ids = allowedFacilityIds;
+      (baseFilters as any).facility_ids = allowedFacilityIds;
     }
 
     let devices: any[] = [];
     let total = 0;
 
-    if (!device_type || device_type === 'all') {
-      // Get both types
-      const [accessControlDevices, blulokDevices] = await Promise.all([
-        deviceModel.findAccessControlDevices(filters),
-        deviceModel.findBluLokDevices(filters)
-      ]);
-      
-      devices = [
-        ...accessControlDevices.map(d => ({ ...d, device_category: 'access_control' })),
-        ...blulokDevices.map(d => ({ ...d, device_category: 'blulok' }))
-      ];
-      
-      // Get total count for both types
-      const [accessControlTotal, blulokTotal] = await Promise.all([
-        deviceModel.countAccessControlDevices(filters),
-        deviceModel.countBluLokDevices(filters)
-      ]);
-      total = accessControlTotal + blulokTotal;
-    } else if (device_type === 'access_control') {
-      const accessControlDevices = await deviceModel.findAccessControlDevices(filters);
-      devices = accessControlDevices.map(d => ({ ...d, device_category: 'access_control' }));
-      total = await deviceModel.countAccessControlDevices(filters);
-    } else if (device_type === 'blulok') {
-      const blulokDevices = await deviceModel.findBluLokDevices(filters);
-      devices = blulokDevices.map(d => ({ ...d, device_category: 'blulok' }));
-      total = await deviceModel.countBluLokDevices(filters);
+    const dt = device_type as string | undefined;
+
+    if (needsInMemoryDeviceSort(dt, sortKey)) {
+      const fetchFilters: DeviceFilters = {
+        ...baseFilters,
+        sortBy: 'created_at',
+        sortOrder: 'asc',
+        ...(projectionId ? { skipPrimaryTenantEnrichment: true } : {}),
+      };
+
+      if (!dt || dt === 'all') {
+        const [accessControlDevices, blulokDevices] = await Promise.all([
+          deviceModel.findAccessControlDevices(fetchFilters),
+          deviceModel.findBluLokDevices(fetchFilters),
+        ]);
+        devices = [
+          ...accessControlDevices.map((d) => ({ ...d, device_category: 'access_control' })),
+          ...blulokDevices.map((d) => ({ ...d, device_category: 'blulok' })),
+        ];
+      } else if (dt === 'access_control') {
+        const accessControlDevices = await deviceModel.findAccessControlDevices(fetchFilters);
+        devices = accessControlDevices.map((d) => ({ ...d, device_category: 'access_control' }));
+      } else {
+        const blulokDevices = await deviceModel.findBluLokDevices(fetchFilters);
+        devices = blulokDevices.map((d) => ({ ...d, device_category: 'blulok' }));
+      }
+
+      sortMergedDeviceList(devices, sortKey, order);
+      total = devices.length;
+      let pageSize: number;
+      if (limitParsed !== undefined) {
+        pageSize = limitParsed;
+      } else if (projectionId) {
+        pageSize = total;
+      } else {
+        pageSize = Math.min(DEFAULT_DEVICE_LIST_LIMIT, total);
+      }
+      devices = devices.slice(offsetNum, offsetNum + pageSize);
+    } else {
+      const filters: DeviceFilters = {
+        ...baseFilters,
+        sortBy: sortKey as any,
+        sortOrder: order,
+        ...(projectionId ? { skipPrimaryTenantEnrichment: true } : {}),
+      };
+
+      const allowUnboundedDb = projectionId && limitParsed === undefined;
+
+      if (!allowUnboundedDb) {
+        if (limitParsed !== undefined) {
+          filters.limit = limitParsed;
+        } else {
+          filters.limit = DEFAULT_DEVICE_LIST_LIMIT;
+        }
+      }
+      filters.offset = offsetNum;
+
+      // device_type === 'all' always uses the in-memory merge path above.
+      if (dt === 'access_control') {
+        const accessControlDevices = await deviceModel.findAccessControlDevices(filters);
+        devices = accessControlDevices.map((d) => ({ ...d, device_category: 'access_control' }));
+        total = await deviceModel.countAccessControlDevices(baseFilters);
+      } else {
+        const blulokDevices = await deviceModel.findBluLokDevices(filters);
+        devices = blulokDevices.map((d) => ({ ...d, device_category: 'blulok' }));
+        total = await deviceModel.countBluLokDevices(baseFilters);
+      }
+    }
+
+    if (projectionId) {
+      devices = devices.map((d) => ({
+        id: d.id,
+        device_category: d.device_category,
+      }));
     }
 
     res.json({ success: true, devices, total });
@@ -698,7 +775,12 @@ router.get('/blulok/:id/denylist', asyncHandler(async (req: AuthenticatedRequest
 router.get('/unassigned', requireAdminOrFacilityAdmin, validate(listQuerySchema, 'query'), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const { facility_id, status, search, sortBy, sortOrder, limit, offset } = req.query;
+    const q = req.query as Record<string, unknown>;
+    const { facility_id, status, search } = q;
+    const sortByRaw = (q.sortBy ?? q.sort_by) as string | undefined;
+    const sortOrderRaw = (q.sortOrder ?? q.sort_order) as string | undefined;
+    const limitParsed = parseListLimit(q.limit);
+    const offsetNum = parseListOffset(q.offset);
 
     // Restrict facility access based on user role
     let allowedFacilityId = facility_id as string | undefined;
@@ -726,16 +808,16 @@ router.get('/unassigned', requireAdminOrFacilityAdmin, validate(listQuerySchema,
       device_type: 'blulok',
       status: status as string,
       search: search as string,
-      sortBy: sortBy as any,
-      sortOrder: sortOrder as any,
+      sortBy: sortByRaw as any,
+      sortOrder: sortOrderRaw === 'desc' ? 'desc' : 'asc',
     };
-    
-    if (limit) {
-      filters.limit = parseInt(limit as string);
+
+    if (limitParsed !== undefined) {
+      filters.limit = limitParsed;
+    } else {
+      filters.limit = DEFAULT_DEVICE_LIST_LIMIT;
     }
-    if (offset) {
-      filters.offset = parseInt(offset as string);
-    }
+    filters.offset = offsetNum;
     if (allowedFacilityId) {
       filters.facility_id = allowedFacilityId;
     }

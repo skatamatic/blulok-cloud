@@ -25,6 +25,9 @@ describe('FallbackService', () => {
       if (table === 'user_devices') {
         return { where: () => ({ select: () => ({ first: () => Promise.resolve({ public_key: jwkPub.x }) }) }) } as any;
       }
+      if (table === 'users') {
+        return { where: () => ({ select: () => ({ first: () => Promise.resolve({ role: 'tenant' }) }) }) } as any;
+      }
       return {} as any;
     });
 
@@ -33,6 +36,9 @@ describe('FallbackService', () => {
     const service = new FallbackService();
     const routePass = await service.processFallbackJwt(jwt);
     expect(routePass).toBe('route-pass-token');
+    expect(PassesService.issueRoutePass).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1', userRole: 'tenant' }),
+    );
   });
 });
 

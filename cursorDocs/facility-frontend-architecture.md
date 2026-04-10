@@ -43,6 +43,7 @@ Facility
 **Purpose**: Comprehensive facility management with tabbed interface
 **Features**:
 - Tabbed interface (Overview, Devices, Units)
+- **Devices** and **Units** tabs: **Cards** vs **Table** toggle (shared `ViewModeToggle`); table columns are sortable and use the same list APIs as global Devices/Units pages (including pagination).
 - Gateway status monitoring
 - Device hierarchy visualization
 - Unit management interface
@@ -59,7 +60,7 @@ Facility
 
 **Purpose**: Unified device monitoring across all facilities
 **Features**:
-- Grid and list view modes
+- **Cards** and **Table** view modes; cards force name-ascending fetch; table supports per-column sort with server-side ordering. Combined device types (`all`) use merge-then-sort-then-paginate on the backend (`merged-device-list.utils`).
 - Device type filtering (Access Control, BluLok)
 - Status monitoring and filtering
 - Real-time lock controls
@@ -76,7 +77,7 @@ Facility
 
 **Purpose**: Comprehensive unit and tenant management
 **Features**:
-- Grid and table view modes
+- Cards, table, and site-map entry points; cards force `unit_number` ascending with **natural** numeric ordering (e.g. Unit 2 before Unit 10). Table columns are sortable (`tenant_last_name`, `lock_status`, `battery_level`, etc.) via whitelisted `sortBy` on the units API.
 - Tenant assignment visualization
 - Lock status and control
 - Unit filtering and search

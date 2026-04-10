@@ -175,6 +175,7 @@ export class RoutePassOrchestrator {
       devicePublicKey: device.public_key,
       audiences,
       schedule,
+      userRole: ctx.role,
     });
 
     // Log issuance

@@ -330,30 +330,32 @@ function startMockFmsServer(dataset) {
       if (req.method === 'GET' && req.url.startsWith('/health')) {
         res.statusCode = 200; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true })); return;
       }
+      // Node's req.url includes the query string; StoredgeProvider uses ?page=&per_page= on list endpoints.
+      const pathname = (req.url || '').split('?')[0];
       // Storedge-like routes:
       // GET /v1/:facility/units -> { units: [...] }
       // GET /v1/:facility/tenants/current -> { tenants: [...] }
       // GET /v1/:facility/ledgers/current -> { ledgers: [...] }
       // GET /v1/:facility/tenants/:id -> single tenant
       // GET /v1/:facility/units/:id -> single unit
-      const mUnits = req.url.match(/^\/v1\/[^/]+\/units$/);
+      const mUnits = pathname.match(/^\/v1\/[^/]+\/units$/);
       if (req.method === 'GET' && mUnits) {
         res.statusCode = 200; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ units: dataset.units })); return;
       }
-      const mTenantsCurrent = req.url.match(/^\/v1\/[^/]+\/tenants\/current$/);
+      const mTenantsCurrent = pathname.match(/^\/v1\/[^/]+\/tenants\/current$/);
       if (req.method === 'GET' && mTenantsCurrent) {
         res.statusCode = 200; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ tenants: dataset.tenants })); return;
       }
-      const mLedgersCurrent = req.url.match(/^\/v1\/[^/]+\/ledgers\/current$/);
+      const mLedgersCurrent = pathname.match(/^\/v1\/[^/]+\/ledgers\/current$/);
       if (req.method === 'GET' && mLedgersCurrent) {
         res.statusCode = 200; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ledgers: dataset.ledgers })); return;
       }
-      const mTenantById = req.url.match(/^\/v1\/[^/]+\/tenants\/([^/?]+)$/);
+      const mTenantById = pathname.match(/^\/v1\/[^/]+\/tenants\/([^/]+)$/);
       if (req.method === 'GET' && mTenantById) {
         const t = dataset.tenants.find(x => String(x.id) === mTenantById[1]);
         res.statusCode = t ? 200 : 404; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(t || { error: 'not found' })); return;
       }
-      const mUnitById = req.url.match(/^\/v1\/[^/]+\/units\/([^/?]+)$/);
+      const mUnitById = pathname.match(/^\/v1\/[^/]+\/units\/([^/]+)$/);
       if (req.method === 'GET' && mUnitById) {
         const u = dataset.units.find(x => String(x.id) === mUnitById[1]);
         res.statusCode = u ? 200 : 404; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(u || { error: 'not found' })); return;
@@ -396,6 +398,20 @@ function decodeJwtClaims(jwt) {
     return claims;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Route pass JWTs must include `user_role`: lowercase, underscore-separated (matches cloud UserRole).
+ * @param {object|null} claims
+ * @param {string} expectedLowerSnake e.g. 'tenant', 'facility_admin'
+ */
+function assertRoutePassUserRole(claims, expectedLowerSnake) {
+  if (!claims || typeof claims.user_role !== 'string' || claims.user_role.length === 0) {
+    throw new Error('Route pass JWT must include non-empty user_role claim');
+  }
+  if (claims.user_role !== expectedLowerSnake) {
+    throw new Error(`Route pass user_role expected "${expectedLowerSnake}", got "${claims.user_role}"`);
   }
 }
 
@@ -3333,6 +3349,7 @@ async function run() {
     // Assert shared-key audience for share2
     const share2Claims = decodeJwtClaims(share2Pass);
     if (!share2Claims || !Array.isArray(share2Claims.aud)) throw new Error('Invalid route pass payload for share2');
+    assertRoutePassUserRole(share2Claims, 'tenant');
     const expectedSharedAud2 = `shared_key:${primaryId}:${remainingSerial}`;
     if (!share2Claims.aud.includes(expectedSharedAud2)) {
       throw new Error(`Missing expected aud for share2: ${expectedSharedAud2}`);
@@ -3347,6 +3364,7 @@ async function run() {
     const share1Pass = await requestRoutePass(share1Token, share1AppDevId);
     const share1Claims = decodeJwtClaims(share1Pass);
     if (!share1Claims || !Array.isArray(share1Claims.aud)) throw new Error('Invalid route pass payload for share1');
+    assertRoutePassUserRole(share1Claims, 'tenant');
     const expectedSharedAud1 = `shared_key:${primaryId}:${remainingSerial}`;
     if (!share1Claims.aud.includes(expectedSharedAud1)) {
       throw new Error(`Missing expected aud for share1: ${expectedSharedAud1}`);
@@ -3362,6 +3380,7 @@ async function run() {
     const primaryPass = await requestRoutePass(primaryToken, primaryAppDevId);
     const primaryClaims = decodeJwtClaims(primaryPass);
     if (!primaryClaims || !Array.isArray(primaryClaims.aud)) throw new Error('Invalid route pass payload for primary');
+    assertRoutePassUserRole(primaryClaims, 'tenant');
     const expectedPrimaryAud = `lock:${remainingSerial}`;
     if (!primaryClaims.aud.includes(expectedPrimaryAud)) {
       throw new Error(`Missing expected aud for primary: ${expectedPrimaryAud}`);
@@ -3990,7 +4009,8 @@ async function run() {
     if (rpParts.length !== 3) throw new Error(`Route pass JWT has ${rpParts.length} parts, expected 3`);
     const rpPayload = JSON.parse(Buffer.from(rpParts[1], 'base64').toString());
     if (!rpPayload.schedule) throw new Error('Route pass does not include schedule data');
-    ok('Route pass includes schedule data');
+    assertRoutePassUserRole(rpPayload, 'tenant');
+    ok('Route pass includes schedule data and user_role');
 
     // Test schedule usage endpoint
     step('Testing schedule usage endpoint');
@@ -5490,8 +5510,27 @@ async function run() {
       if (!hasAppAudience) {
         throw new Error('Expected route pass to include at least one access_control:* audience for zone-linked app entry');
       }
-      ok('Facility-scoped route pass includes app-entry access_control audience');
+      assertRoutePassUserRole(payload, 'tenant');
+      ok('Facility-scoped route pass includes app-entry access_control audience and user_role');
     }
+
+    step('Verifying facility_admin route pass includes user_role=facility_admin');
+    const faRouteDevId = `e2e-fa-rp-${Date.now()}`;
+    const faRoutePub = Buffer.alloc(32, 7).toString('base64');
+    await registerUserDevice(created.facilityAdminToken, faRouteDevId, faRoutePub);
+    const faPassResp = await axios.post(
+      `${API_BASE}/passes/request`,
+      { facility_id: created.facilityId },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}`, 'X-App-Device-Id': faRouteDevId } },
+    );
+    if (!faPassResp.data?.success) {
+      throw new Error(`Facility admin route pass request failed: ${JSON.stringify(faPassResp.data)}`);
+    }
+    const faPassToken = faPassResp.data.routePass;
+    if (!faPassToken) throw new Error('Facility admin route pass missing routePass');
+    const faRpClaims = decodeJwtClaims(faPassToken);
+    assertRoutePassUserRole(faRpClaims, 'facility_admin');
+    ok('Facility admin route pass includes user_role=facility_admin');
 
     const getEffectiveCodesMap = async () => {
       const effectiveResp = await axios.get(

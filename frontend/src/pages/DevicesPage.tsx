@@ -21,8 +21,6 @@ import {
   WrenchScrewdriverIcon,
   BuildingOfficeIcon,
   ArrowTopRightOnSquareIcon,
-  Squares2X2Icon,
-  ListBulletIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { AccessControlDevice, BluLokDevice, DeviceFilters } from '@/types/facility.types';
@@ -31,6 +29,8 @@ import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityC
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
 import { withReturnPath } from '@/hooks/useBackNavigation';
+import { ViewModeToggle } from '@/components/Common/ViewModeToggle';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -82,7 +82,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const { addToast } = useToast();
   const { selectedFacilityId } = useGlobalFacility();
   const [devices, setDevices] = useState<DeviceListItem[]>([]);
-  const [allDevices, setAllDevices] = useState<DeviceListItem[]>([]); // Store full dataset for pagination calculations
+  /** Full ordered ids for highlight / pagination math; may be id-only from API when projection=id. */
+  const [allDevices, setAllDevices] = useState<Array<{ id: string; device_category?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
@@ -98,9 +99,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     limit: 30,
     offset: 0
   });
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'grid' | 'list' | 'commands'>(initialCommandQueue ? 'commands' : 'grid');
+  const [activeTab, setActiveTab] = useState<'grid' | 'table' | 'commands'>(initialCommandQueue ? 'commands' : 'grid');
   const [commandQueue, setCommandQueue] = useState<{ items: CommandQueueItem[]; total: number } | null>(initialCommandQueue || null);
   const [cmdFilters, setCmdFilters] = useState<{ status: string }>({ status: '' });
   const [showUnassignConfirm, setShowUnassignConfirm] = useState<{ deviceId: string; deviceSerial: string } | null>(null);
@@ -134,8 +134,11 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
         return out;
       };
 
+      const cardSortOverlay =
+        activeTab === 'grid' ? { sortBy: 'name' as const, sortOrder: 'asc' as const } : {};
       const queryFilters = normalize({
         ...filters,
+        ...cardSortOverlay,
         offset: (currentPage - 1) * (filters.limit || 30),
         // Add facility_id from global context if not "All Facilities"
         ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
@@ -149,6 +152,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       try {
         const fullDatasetFilters = normalize({
           ...filters,
+          ...cardSortOverlay,
+          projection: 'id' as const,
           // Remove pagination parameters to get all data
           offset: undefined,
           limit: undefined,
@@ -168,7 +173,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     } finally {
       setLoading(false);
     }
-  }, [filters, currentPage, selectedFacilityId]);
+  }, [filters, currentPage, selectedFacilityId, activeTab]);
 
   useEffect(() => {
     loadDevices();
@@ -216,6 +221,16 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
+  };
+
+  const handleDeviceColumnSort = (columnKey: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      sortBy: columnKey as DeviceFilters['sortBy'],
+      sortOrder:
+        prev.sortBy === columnKey ? (prev.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
+    setCurrentPage(1);
   };
 
   const getFacilityId = (device: DeviceListItem): string | undefined => {
@@ -268,34 +283,23 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           </p>
         </div>
         <div className="flex items-center space-x-3">
-          <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+          <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+            <ViewModeToggle
+              value={activeTab === 'table' ? 'table' : 'grid'}
+              onChange={(m) => setActiveTab(m)}
+              showText={false}
+              noneSelected={activeTab === 'commands'}
+            />
             <button
-              onClick={() => { setActiveTab('grid'); setViewMode('grid'); }}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'grid'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <Squares2X2Icon className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => { setActiveTab('list'); setViewMode('list'); }}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'list'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <ListBulletIcon className="h-4 w-4" />
-            </button>
-            <button
+              type="button"
               onClick={() => setActiveTab('commands')}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                 activeTab === 'commands'
                   ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
+              title="Command queue"
+              aria-label="Command queue"
             >
               <KeyIcon className="h-4 w-4" />
             </button>
@@ -426,7 +430,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           </table>
         </div>
       ) : loading ? (
-        <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
+        <div className={activeTab === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
           {[...Array(6)].map((_, i) => (
             <div key={i} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 animate-pulse">
               <div className="flex items-center space-x-4 mb-4">
@@ -453,7 +457,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
               : 'No devices are configured yet.'}
           </p>
         </div>
-      ) : viewMode === 'grid' ? (
+      ) : activeTab === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {devices.map((device) => (
             device.device_category === 'blulok' ? (
@@ -476,21 +480,41 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-900">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Device
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Type
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Location
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Last Activity
-                </th>
+                <SortableTableTh
+                  label="Device"
+                  columnKey="name"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Type"
+                  columnKey="device_type"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Status"
+                  columnKey="status"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Location"
+                  columnKey="facility_name"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Last Activity"
+                  columnKey="last_activity"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Actions
                 </th>
@@ -542,7 +566,9 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      {isBlulok ? blulokDevice.facility_name : accessDevice.location_description || 'N/A'}
+                      {isBlulok
+                        ? blulokDevice.facility_name || 'N/A'
+                        : accessDevice.facility_name || accessDevice.location_description || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       {device.last_activity ? new Date(device.last_activity).toLocaleDateString() : 'Never'}

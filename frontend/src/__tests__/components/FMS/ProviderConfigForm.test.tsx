@@ -341,7 +341,7 @@ describe('ProviderConfigForm', () => {
     it('should show helpful placeholder text for each field', () => {
       renderComponent(FMSProviderType.STOREDGE);
 
-      expect(screen.getByPlaceholderText('https://api.storedge.com')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('https://api.storedgefms.com')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('your-facility-id')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('Enter your OAuth consumer key')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('Enter your OAuth consumer secret')).toBeInTheDocument();

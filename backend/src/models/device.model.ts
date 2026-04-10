@@ -241,10 +241,20 @@ export interface DeviceFilters {
   sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  /** When true, skip per-row primary-tenant lookup in BluLok list (lighter payloads, e.g. id-only projection). */
+  skipPrimaryTenantEnrichment?: boolean;
 }
 
-// Valid columns for sorting access control devices
-const VALID_ACCESS_CONTROL_SORT_COLUMNS = ['name', 'device_type', 'status', 'last_activity', 'created_at'];
+// Valid columns for sorting access control devices (facility/gateway use joined tables)
+const VALID_ACCESS_CONTROL_SORT_COLUMNS = [
+  'name',
+  'device_type',
+  'status',
+  'last_activity',
+  'created_at',
+  'facility_name',
+  'gateway_name',
+];
 
 export class DeviceModel {
   private db = DatabaseService.getInstance();
@@ -286,7 +296,8 @@ export class DeviceModel {
       .select(
         'access_control_devices.*',
         'gateways.facility_id as facility_id',
-        'facilities.name as facility_name'
+        'facilities.name as facility_name',
+        'gateways.name as gateway_name'
       )
       .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
       .leftJoin('facilities', 'gateways.facility_id', 'facilities.id');
@@ -318,11 +329,17 @@ export class DeviceModel {
     }
 
     // Validate sortBy to prevent column injection
-    const sortBy = filters.sortBy && VALID_ACCESS_CONTROL_SORT_COLUMNS.includes(filters.sortBy) 
-      ? filters.sortBy 
+    const sortBy = filters.sortBy && VALID_ACCESS_CONTROL_SORT_COLUMNS.includes(filters.sortBy)
+      ? filters.sortBy
       : 'name';
     const sortOrder = filters.sortOrder || 'asc';
-    query = query.orderBy(`access_control_devices.${sortBy}`, sortOrder);
+    if (sortBy === 'facility_name') {
+      query = query.orderBy('facilities.name', sortOrder);
+    } else if (sortBy === 'gateway_name') {
+      query = query.orderBy('gateways.name', sortOrder);
+    } else {
+      query = query.orderBy(`access_control_devices.${sortBy}`, sortOrder);
+    }
 
     // Apply pagination
     if (filters.limit) {
@@ -407,13 +424,15 @@ export class DeviceModel {
     }
 
     const results = await query;
-    
-    // Get primary tenant data separately for each device
+
+    const enrichTenant = filters.skipPrimaryTenantEnrichment !== true;
+
+    // Get primary tenant data separately for each device (unless skipped for lightweight list)
     const mapped: DeviceWithContext[] = [];
     for (const row of results) {
       // Get primary tenant for this unit (only if unit_id is not null)
       let primaryTenant = null;
-      if (row.unit_id) {
+      if (enrichTenant && row.unit_id) {
         primaryTenant = await knex('unit_assignments')
           .select(
             'users.id',

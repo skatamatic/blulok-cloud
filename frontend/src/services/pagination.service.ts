@@ -108,10 +108,11 @@ export class PaginationService {
         }
           
         case 'device': {
-          const devicesResponse = await apiService.getDevices({ 
-            ...filters, 
-            offset: undefined, 
-            limit: undefined 
+          const devicesResponse = await apiService.getDevices({
+            ...filters,
+            offset: undefined,
+            limit: undefined,
+            projection: 'id',
           });
           data = devicesResponse.devices || [];
           break;

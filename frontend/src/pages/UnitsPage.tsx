@@ -31,6 +31,8 @@ import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
+import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -74,7 +76,7 @@ export default function UnitsPage() {
     sortOrder: 'asc',
     limit: 20
   });
-  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const [viewMode, setViewMode] = useState<ListViewMode>('grid');
   const [lockPendingUnitId, setLockPendingUnitId] = useState<string | null>(null);
 
   const unitsDataRef = useRef<Unit[]>([]);
@@ -130,8 +132,13 @@ export default function UnitsPage() {
 
     try {
       setLoading(true);
+      const cardSortOverlay =
+        !isTenant && viewMode === 'grid'
+          ? { sortBy: 'unit_number' as const, sortOrder: 'asc' as const }
+          : {};
       const queryFilters: any = {
         ...filters,
+        ...cardSortOverlay,
         // Map user_id to tenant_id for backend compatibility
         tenant_id: filters.tenant_id,
         user_id: undefined, // Remove user_id as backend expects tenant_id
@@ -156,6 +163,7 @@ export default function UnitsPage() {
         try {
           const fullDatasetFilters: any = {
             ...filters,
+            ...cardSortOverlay,
             tenant_id: filters.tenant_id,
             user_id: undefined,
             // Remove pagination parameters to get all data
@@ -186,7 +194,7 @@ export default function UnitsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters, currentPage, selectedFacilityId, isTenant]);
+  }, [filters, currentPage, selectedFacilityId, isTenant, viewMode]);
 
   useEffect(() => {
     void loadUnits();
@@ -229,6 +237,16 @@ export default function UnitsPage() {
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
+  };
+
+  const handleUnitColumnSort = (columnKey: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      sortBy: columnKey as UnitFilters['sortBy'],
+      sortOrder:
+        prev.sortBy === columnKey ? (prev.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
+    setCurrentPage(1);
   };
 
   // Handle highlighting when page loads - use allUnits for proper pagination calculation
@@ -511,27 +529,35 @@ export default function UnitsPage() {
         </td>
         <td className="px-6 py-4 whitespace-nowrap">
           {unit.blulok_device ? (
-            <div className="flex items-center space-x-2">
-              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors] || statusColors.unknown}`}>
-                {unit.blulok_device.lock_status === 'locked' ? 
-                  <LockClosedIcon className="h-3 w-3 mr-1" /> : 
-                  unit.blulok_device.lock_status === 'unlocked' ?
-                  <LockOpenIcon className="h-3 w-3 mr-1" /> :
-                  <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />
-                }
-                {unit.blulok_device.lock_status}
-              </span>
-              {unit.blulok_device.battery_level && (
-                <span className={`text-xs font-medium ${
-                  unit.blulok_device.battery_level < 20 ? 'text-red-500' : 
-                  unit.blulok_device.battery_level < 50 ? 'text-yellow-500' : 'text-green-500'
-                }`}>
-                  {unit.blulok_device.battery_level}%
-                </span>
+            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors] || statusColors.unknown}`}>
+              {unit.blulok_device.lock_status === 'locked' ? (
+                <LockClosedIcon className="h-3 w-3 mr-1" />
+              ) : unit.blulok_device.lock_status === 'unlocked' ? (
+                <LockOpenIcon className="h-3 w-3 mr-1" />
+              ) : (
+                <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />
               )}
-            </div>
+              {unit.blulok_device.lock_status}
+            </span>
           ) : (
             <span className="text-gray-400 dark:text-gray-500">No device</span>
+          )}
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap text-sm">
+          {unit.blulok_device?.battery_level != null ? (
+            <span
+              className={`font-medium ${
+                unit.blulok_device.battery_level < 20
+                  ? 'text-red-500'
+                  : unit.blulok_device.battery_level < 50
+                    ? 'text-yellow-500'
+                    : 'text-green-500'
+              }`}
+            >
+              {unit.blulok_device.battery_level}%
+            </span>
+          ) : (
+            <span className="text-gray-400 dark:text-gray-500">—</span>
           )}
         </td>
         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -615,30 +641,7 @@ export default function UnitsPage() {
           </p>
         </div>
         <div className="flex items-center space-x-3">
-          {!isTenant && (
-            <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  viewMode === 'grid'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                Grid
-              </button>
-              <button
-                onClick={() => setViewMode('table')}
-                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  viewMode === 'table'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                Table
-              </button>
-            </div>
-          )}
+          {!isTenant && <ViewModeToggle value={viewMode} onChange={setViewMode} />}
           {canManage && (
             <button
               onClick={() => setShowAddModal(true)}
@@ -781,19 +784,42 @@ export default function UnitsPage() {
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-900">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Unit
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Tenant
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Device
-                </th>
-                <th className="relative px-6 py-3">
+                <SortableTableTh
+                  label="Unit"
+                  columnKey="unit_number"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Status"
+                  columnKey="status"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Tenant"
+                  columnKey="tenant_last_name"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Lock"
+                  columnKey="lock_status"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Battery"
+                  columnKey="battery_level"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <th className="relative px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>

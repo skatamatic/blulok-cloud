@@ -235,6 +235,118 @@ describe('Devices Routes', () => {
         expect(response.body).toHaveProperty('devices');
         expect(Array.isArray(response.body.devices)).toBe(true);
       });
+
+      it('should cap merged device_type=all list when limit is omitted', async () => {
+        const rows = Array.from({ length: 40 }, (_, i) => ({
+          id: `ac-${i}`,
+          name: `Device ${i}`,
+          device_type: 'gate',
+          status: 'online',
+          facility_name: 'F',
+          gateway_name: 'G',
+          last_activity: null as string | null,
+          created_at: '2020-01-01T00:00:00.000Z',
+        }));
+        mockDeviceModel.findAccessControlDevices.mockResolvedValue(rows);
+        mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_type=all')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.total).toBe(40);
+        expect(response.body.devices.length).toBe(30);
+      });
+
+      it('should paginate merged device_type=all with natural name order (page 2)', async () => {
+        mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+          {
+            id: 'g2',
+            name: 'Gate 2',
+            device_type: 'gate',
+            status: 'online',
+            facility_name: 'F',
+            gateway_name: 'G',
+            last_activity: null,
+            created_at: '2020-01-01T00:00:00.000Z',
+          },
+          {
+            id: 'g10',
+            name: 'Gate 10',
+            device_type: 'gate',
+            status: 'online',
+            facility_name: 'F',
+            gateway_name: 'G',
+            last_activity: null,
+            created_at: '2020-01-01T00:00:00.000Z',
+          },
+          {
+            id: 'g1',
+            name: 'Gate 1',
+            device_type: 'gate',
+            status: 'online',
+            facility_name: 'F',
+            gateway_name: 'G',
+            last_activity: null,
+            created_at: '2020-01-01T00:00:00.000Z',
+          },
+        ]);
+        mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_type=all&sort_by=name&sort_order=asc&limit=1&offset=1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.devices).toHaveLength(1);
+        expect(response.body.devices[0].id).toBe('g2');
+      });
+
+      it('should return id projection and skip BluLok tenant enrichment when projection=id', async () => {
+        mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+          {
+            id: 'ac-1',
+            name: 'Gate A',
+            device_type: 'gate',
+            status: 'online',
+            facility_name: 'F',
+            gateway_name: 'G',
+            last_activity: null,
+            created_at: '2020-01-01T00:00:00.000Z',
+          },
+        ]);
+        mockDeviceModel.findBluLokDevices.mockResolvedValue([
+          {
+            id: 'bl-1',
+            unit_number: '101',
+            device_serial: 'S1',
+            status: 'online',
+            facility_name: 'F',
+            gateway_name: 'G',
+            last_activity: null,
+            created_at: '2020-01-01T00:00:00.000Z',
+          },
+        ]);
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_type=all&projection=id')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.total).toBe(2);
+        for (const d of response.body.devices as Array<Record<string, unknown>>) {
+          expect(Object.keys(d).sort()).toEqual(['device_category', 'id'].sort());
+          expect(typeof d.id).toBe('string');
+          expect(typeof d.device_category).toBe('string');
+        }
+        expect(mockDeviceModel.findBluLokDevices).toHaveBeenCalledWith(
+          expect.objectContaining({ skipPrimaryTenantEnrichment: true })
+        );
+      });
     });
 
     describe('GET /api/v1/devices/facility/:facilityId/hierarchy - Get Facility Device Hierarchy', () => {

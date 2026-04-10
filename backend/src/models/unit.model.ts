@@ -3,6 +3,28 @@ import { DatabaseService } from '@/services/database.service';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { FacilityAccessService } from '@/services/facility-access.service';
+import { compareNaturalStrings } from '@/utils/natural-string-compare';
+
+/** Allowed GET /units sort_by values (query param may be camelCase sortBy from clients). */
+const UNIT_LIST_SORT_WHITELIST = [
+  'unit_number',
+  'status',
+  'unit_type',
+  'created_at',
+  'facility_name',
+  'tenant_last_name',
+  'lock_status',
+  'battery_level',
+] as const;
+type UnitListSortKey = (typeof UNIT_LIST_SORT_WHITELIST)[number];
+
+function normalizeUnitListSortKey(raw: unknown): UnitListSortKey {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s && (UNIT_LIST_SORT_WHITELIST as readonly string[]).includes(s)) {
+    return s as UnitListSortKey;
+  }
+  return 'unit_number';
+}
 
 /**
  * Unit Entity Interface
@@ -569,10 +591,18 @@ export class UnitModel {
       // We'll calculate the total after deduplication
 
     // Apply sorting (effective status matches deriveEffectiveUnitStatus / API payload)
-    const sortBy = filters.sortBy || 'unit_number';
-    const sortOrder = filters.sortOrder || 'asc';
-    if (sortBy === 'status') {
-      const dir = sortOrder === 'desc' ? 'DESC' : 'ASC';
+    const sortBy = normalizeUnitListSortKey(
+      (filters as { sortBy?: string; sort_by?: string }).sortBy ??
+        (filters as { sort_by?: string }).sort_by
+    );
+    const sortOrderRaw = (filters.sortOrder || filters.sort_order || 'asc') as string;
+    const sortOrderNorm = sortOrderRaw === 'desc' ? 'desc' : 'asc';
+
+    if (sortBy === 'unit_number') {
+      // Stable SQL order; natural sort applied in memory after deduplication.
+      query = query.orderBy('u.id', 'asc');
+    } else if (sortBy === 'status') {
+      const dir = sortOrderNorm === 'desc' ? 'DESC' : 'ASC';
       query = query.orderByRaw(
         `FIELD(
           CASE
@@ -583,8 +613,24 @@ export class UnitModel {
           'available', 'reserved', 'maintenance', 'occupied'
         ) ${dir}`
       );
+      query = query.orderBy('u.id', 'asc');
+    } else if (sortBy === 'facility_name') {
+      query = query.orderBy('f.name', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'tenant_last_name') {
+      const dir = sortOrderNorm === 'desc' ? 'DESC' : 'ASC';
+      query = query.orderByRaw(
+        `(CASE WHEN users.last_name IS NULL AND users.first_name IS NULL THEN 1 ELSE 0 END) ASC, users.last_name ${dir}, users.first_name ${dir}, u.id ASC`
+      );
+    } else if (sortBy === 'lock_status') {
+      query = query.orderBy('bd.lock_status', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'battery_level') {
+      query = query.orderBy('bd.battery_level', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'unit_type') {
+      query = query.orderBy('u.unit_type', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'created_at') {
+      query = query.orderBy('u.created_at', sortOrderNorm).orderBy('u.id', 'asc');
     } else {
-      query = query.orderBy(sortBy, sortOrder);
+      query = query.orderBy('u.id', 'asc');
     }
 
     // Get all results first (without pagination)
@@ -597,7 +643,14 @@ export class UnitModel {
         uniqueUnits.set(row.id, row);
       }
     });
-    const deduplicatedResults = Array.from(uniqueUnits.values());
+    const deduplicatedResults: any[] = Array.from(uniqueUnits.values());
+
+    if (sortBy === 'unit_number') {
+      const mult = sortOrderNorm === 'desc' ? -1 : 1;
+      deduplicatedResults.sort(
+        (a, b) => mult * compareNaturalStrings(String(a.unit_number ?? ''), String(b.unit_number ?? ''))
+      );
+    }
     
     // Apply pagination after deduplication
     const limit = parseInt(filters.limit as string) || 20;

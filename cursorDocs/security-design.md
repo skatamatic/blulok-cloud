@@ -18,7 +18,7 @@ This document summarizes the new centralized trust model implemented in the back
 - Flow G (Keypad Access Codes): Cloud resolves active keypad access codes per relay target, signs `ACCESS_CODE_UPDATE` command JWT, and unicasts to the facility gateway; gateway can also poll the same resolved code mappings via internal route.
 
 ### Data Artifacts
-- Route Pass (JWT, Ed25519): `iss`, `sub`, `aud[]`, `iat`, `exp`, `jti`, `device_pubkey`.
+- Route Pass (JWT, Ed25519): `iss`, `sub`, `aud[]`, `iat`, `exp`, `jti`, `device_pubkey`, `user_role` (lowercase underscore-separated role, e.g. `facility_admin`, aligned with `UserRole`).
 - Gateway Commands (JWT, Ed25519): All cloud-to-gateway commands are standard JWTs with embedded signature.
   - Common claims: `iss: 'BluCloud:Root'`, `iat`, `cmd_type` (CAPS_CASE)
   - DENYLIST_ADD: `{ cmd_type:'DENYLIST_ADD', denylist_add:[{ sub, exp }], target: ['deviceId1', ...] }`

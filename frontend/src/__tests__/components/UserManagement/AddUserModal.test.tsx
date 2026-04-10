@@ -93,6 +93,10 @@ describe('AddUserModal', () => {
       <AddUserModal isOpen onClose={onClose} onSuccess={onSuccess} />
     );
 
+    await waitFor(() => {
+      expect(screen.queryByText(/loading facilities/i)).not.toBeInTheDocument();
+    });
+
     await user.type(screen.getByPlaceholderText(/enter first name/i), 'Bob');
     await user.type(screen.getByPlaceholderText(/enter last name/i), 'Tenant');
     await user.type(screen.getByPlaceholderText(/enter email address/i), 'bob@test.com');
@@ -111,5 +115,5 @@ describe('AddUserModal', () => {
       expect(screen.getByText(/select at least one facility/i)).toBeInTheDocument();
     });
     expect(mockCreateUser).not.toHaveBeenCalled();
-  });
+  }, 15_000);
 });

@@ -130,6 +130,7 @@ describe('RemoteGateWidget', () => {
       await waitFor(() => {
         expect(mockGetDevices).toHaveBeenCalledWith({
           device_type: 'access_control',
+          limit: 200,
         });
       });
     });
@@ -146,6 +147,7 @@ describe('RemoteGateWidget', () => {
       await waitFor(() => {
         expect(mockGetDevices).toHaveBeenCalledWith({
           device_type: 'access_control',
+          limit: 200,
           facility_id: 'facility-123',
         });
       });
@@ -159,6 +161,7 @@ describe('RemoteGateWidget', () => {
       await waitFor(() => {
         expect(mockGetDevices).toHaveBeenCalledWith({
           device_type: 'access_control',
+          limit: 200,
         });
       });
     });

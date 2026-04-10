@@ -108,6 +108,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     try {
       const response = await apiService.getDevices({
         device_type: 'access_control',
+        limit: 200,
         ...(facilityFilter ? { facility_id: facilityFilter } : {}),
       });
 

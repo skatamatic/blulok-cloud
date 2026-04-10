@@ -111,6 +111,7 @@ describe('Route Pass Integration', () => {
     const payload = await Ed25519Service.verifyJwt(res.body.routePass);
     expect(payload.sub).toBe(testData.users.tenant.id);
     expect(payload.device_pubkey).toBe(devicePublicKeyB64);
+    expect(payload.user_role).toBe('tenant');
     expect(Array.isArray(payload.aud)).toBe(true);
     expect(payload.aud).toEqual(['lock:serial-1', 'lock:serial-2']);
 

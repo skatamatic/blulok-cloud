@@ -21,6 +21,9 @@ import {
   KeyIcon,
   RectangleGroupIcon,
   CpuChipIcon,
+  CheckCircleIcon,
+  ArrowTopRightOnSquareIcon,
+  WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
@@ -41,14 +44,43 @@ import { useToast } from '@/contexts/ToastContext';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { withReturnPath } from '@/hooks/useBackNavigation';
+import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
 const DEVICES_PAGE_LIMIT = 30;
 const UNITS_PAGE_LIMIT = 20;
 const DEFAULT_UNIT_TYPES = ['Small', 'Medium', 'Large', 'Extra Large', 'XL', 'XXL'];
+
+const deviceTypeIcons = {
+  gate: BoltIcon,
+  elevator: CubeIcon,
+  door: KeyIcon,
+  blulok: LockClosedIcon,
+};
+
+const deviceListStatusIcons = {
+  online: CheckCircleIcon,
+  offline: ExclamationTriangleIcon,
+  error: ExclamationTriangleIcon,
+  maintenance: WrenchScrewdriverIcon,
+  low_battery: ExclamationTriangleIcon,
+};
+
+const deviceListStatusColors: Record<string, string> = {
+  online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
+  offline: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
+  error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
+  maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
+  low_battery: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
+  locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+  unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
+  unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
+};
 
 const statusColors = {
   active: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -140,6 +172,8 @@ export default function FacilityDetailsPage() {
   const [facilityUnitsPageData, setFacilityUnitsPageData] = useState<Unit[]>([]);
   const [unitLoading, setUnitLoading] = useState(false);
   const [unitsInitialLoad, setUnitsInitialLoad] = useState(true);
+  const [deviceViewMode, setDeviceViewMode] = useState<ListViewMode>('grid');
+  const [unitViewMode, setUnitViewMode] = useState<ListViewMode>('grid');
   const [deviceGroups, setDeviceGroups] = useState<DeviceGroup[]>([]);
   const [groupNamesByDeviceId, setGroupNamesByDeviceId] = useState<Record<string, string[]>>({});
 
@@ -292,8 +326,11 @@ export default function FacilityDetailsPage() {
     if (!facility?.id) return;
     try {
       setDeviceLoading(true);
+      const cardSort =
+        deviceViewMode === 'grid' ? { sortBy: 'name' as const, sortOrder: 'asc' as const } : {};
       const params = sanitizeFilters({
         ...deviceFilters,
+        ...cardSort,
         facility_id: facility.id,
         limit: DEVICES_PAGE_LIMIT,
         offset: (devicePage - 1) * DEVICES_PAGE_LIMIT,
@@ -311,14 +348,17 @@ export default function FacilityDetailsPage() {
     } finally {
       setDeviceLoading(false);
     }
-  }, [facility?.id, deviceFilters, devicePage]);
+  }, [facility?.id, deviceFilters, devicePage, deviceViewMode]);
 
   const loadFacilityUnitsPageData = useCallback(async () => {
     if (!facility?.id) return;
     try {
       setUnitLoading(true);
+      const cardSort =
+        unitViewMode === 'grid' ? { sortBy: 'unit_number' as const, sortOrder: 'asc' as const } : {};
       const params = sanitizeFilters({
         ...unitFilters,
+        ...cardSort,
         facility_id: facility.id,
         limit: UNITS_PAGE_LIMIT,
         offset: (facilityUnitsPageNumber - 1) * UNITS_PAGE_LIMIT,
@@ -336,7 +376,7 @@ export default function FacilityDetailsPage() {
     } finally {
       setUnitLoading(false);
     }
-  }, [facility?.id, unitFilters, facilityUnitsPageNumber]);
+  }, [facility?.id, unitFilters, facilityUnitsPageNumber, unitViewMode]);
 
   const loadDeviceGroups = useCallback(async () => {
     if (!facility?.id || !canManage) return;
@@ -471,6 +511,16 @@ export default function FacilityDetailsPage() {
     setDevicePage(1);
   };
 
+  const handleFacilityDeviceColumnSort = (columnKey: string) => {
+    setDeviceFilters((prev) => ({
+      ...prev,
+      sortBy: columnKey as DeviceFilters['sortBy'],
+      sortOrder:
+        prev.sortBy === columnKey ? (prev.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
+    setDevicePage(1);
+  };
+
   const handleUnitSearch = (value: string) => {
     setUnitFilters(prev => ({ ...prev, search: value }));
     setFacilityUnitsPageNumber(1);
@@ -483,6 +533,16 @@ export default function FacilityDetailsPage() {
 
   const handleUnitTypeFilter = (type: string) => {
     setUnitFilters(prev => ({ ...prev, unit_type: type }));
+    setFacilityUnitsPageNumber(1);
+  };
+
+  const handleFacilityUnitColumnSort = (columnKey: string) => {
+    setUnitFilters((prev) => ({
+      ...prev,
+      sortBy: columnKey as UnitFilters['sortBy'],
+      sortOrder:
+        prev.sortBy === columnKey ? (prev.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
     setFacilityUnitsPageNumber(1);
   };
 
@@ -946,10 +1006,11 @@ export default function FacilityDetailsPage() {
             ]}
           />
 
-          <div className="flex items-center justify-between mt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Showing {facilityDevices.length} of {deviceTotal} devices
             </p>
+            <ViewModeToggle value={deviceViewMode} onChange={setDeviceViewMode} />
           </div>
 
           {deviceLoading && devicesInitialLoad ? (
@@ -974,33 +1035,194 @@ export default function FacilityDetailsPage() {
                   <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
                 </div>
               )}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {facilityDevices.map((device) => {
-                  if (device.device_category === 'blulok') {
-                    const bluLokDevice = device as BluLokDevice;
+              {deviceViewMode === 'grid' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {facilityDevices.map((device) => {
+                    if (device.device_category === 'blulok') {
+                      const bluLokDevice = device as BluLokDevice;
+                      return (
+                        <BluLokDeviceCardShared
+                          key={device.id}
+                          device={bluLokDevice}
+                          onViewDevice={() => navigate(`/devices/${device.id}`, {
+                            state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
+                          })}
+                        />
+                      );
+                    }
+
                     return (
-                      <BluLokDeviceCardShared
+                      <ACDeviceCardShared
                         key={device.id}
-                        device={bluLokDevice}
+                        device={device as AccessControlDevice}
                         onViewDevice={() => navigate(`/devices/${device.id}`, {
                           state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
                         })}
+                        groupNames={groupNamesByDeviceId[device.id] || []}
                       />
                     );
-                  }
-
-                  return (
-                    <ACDeviceCardShared
-                      key={device.id}
-                      device={device as AccessControlDevice}
-                      onViewDevice={() => navigate(`/devices/${device.id}`, {
-                        state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
+                  })}
+                </div>
+              ) : (
+                <div className="bg-white dark:bg-gray-800 shadow overflow-hidden sm:rounded-md border border-gray-200 dark:border-gray-700">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead className="bg-gray-50 dark:bg-gray-900">
+                      <tr>
+                        <SortableTableTh
+                          label="Device"
+                          columnKey="name"
+                          sortBy={deviceFilters.sortBy || 'name'}
+                          sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityDeviceColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Type"
+                          columnKey="device_type"
+                          sortBy={deviceFilters.sortBy || 'name'}
+                          sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityDeviceColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Status"
+                          columnKey="status"
+                          sortBy={deviceFilters.sortBy || 'name'}
+                          sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityDeviceColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Location"
+                          columnKey="facility_name"
+                          sortBy={deviceFilters.sortBy || 'name'}
+                          sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityDeviceColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Gateway"
+                          columnKey="gateway_name"
+                          sortBy={deviceFilters.sortBy || 'name'}
+                          sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityDeviceColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Last Activity"
+                          columnKey="last_activity"
+                          sortBy={deviceFilters.sortBy || 'name'}
+                          sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityDeviceColumnSort}
+                        />
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                      {facilityDevices.map((device) => {
+                        const isBlulok = device.device_category === 'blulok';
+                        const accessDevice = device as AccessControlDevice & { device_category: string };
+                        const blulokDevice = device as BluLokDevice & { device_category: string };
+                        const DeviceIcon = isBlulok
+                          ? LockClosedIcon
+                          : deviceTypeIcons[accessDevice.device_type as keyof typeof deviceTypeIcons] || ServerIcon;
+                        const st = isBlulok ? blulokDevice.device_status : accessDevice.status;
+                        const StatusIcon =
+                          deviceListStatusIcons[st as keyof typeof deviceListStatusIcons] || CheckCircleIcon;
+                        const groups = groupNamesByDeviceId[device.id] || [];
+                        const groupsLabel = groups.length ? groups.slice(0, 2).join(', ') + (groups.length > 2 ? '…' : '') : '—';
+                        const facilityId =
+                          typeof (device as { facility_id?: string }).facility_id === 'string'
+                            ? (device as { facility_id: string }).facility_id
+                            : undefined;
+                        return (
+                          <tr
+                            key={`${device.device_category}-${device.id}`}
+                            className="cursor-pointer hover:bg-blue-50/50 dark:hover:bg-blue-900/10"
+                            onClick={() =>
+                              navigate(`/devices/${device.id}`, {
+                                state: withReturnPath(location, { from: 'facility', facilityId: facility.id }),
+                              })
+                            }
+                          >
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="flex items-center">
+                                <div className={`p-2 rounded-lg ${isBlulok ? 'bg-blue-100 dark:bg-blue-900/20' : 'bg-primary-100 dark:bg-primary-900/20'}`}>
+                                  <DeviceIcon className={`h-4 w-4 ${isBlulok ? 'text-blue-600 dark:text-blue-400' : 'text-primary-600 dark:text-primary-400'}`} />
+                                </div>
+                                <div className="ml-3">
+                                  <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                    {isBlulok ? `Unit ${blulokDevice.unit_number ?? blulokDevice.device_serial}` : accessDevice.name}
+                                  </div>
+                                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                                    {isBlulok ? blulokDevice.device_serial : accessDevice.location_description || '—'}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                isBlulok ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' : 'bg-primary-100 text-primary-800 dark:bg-primary-900/20 dark:text-primary-400'
+                              }`}>
+                                {isBlulok ? 'BluLok' : accessDevice.device_type?.replace('_', ' ') || '—'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${deviceListStatusColors[st] || deviceListStatusColors.unknown}`}>
+                                <StatusIcon className="h-3 w-3 mr-1" />
+                                {st}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                              {isBlulok
+                                ? blulokDevice.facility_name || '—'
+                                : accessDevice.facility_name || accessDevice.location_description || '—'}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-300 max-w-[10rem] truncate" title={groups.join(', ')}>
+                              {groupsLabel}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                              {device.last_activity ? new Date(device.last_activity).toLocaleString() : 'Never'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm" onClick={(e) => e.stopPropagation()}>
+                              {isBlulok && facilityId && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const idx = facilityDevices.findIndex(
+                                      (d) =>
+                                        (typeof (d as { facility_id?: string }).facility_id === 'string'
+                                          ? (d as { facility_id: string }).facility_id
+                                          : undefined) === facilityId
+                                    );
+                                    const page = idx !== -1 ? calculatePageForItem(idx, DEVICES_PAGE_LIMIT) : 1;
+                                    navigateAndHighlight(navigate, { id: facilityId, type: 'facility', page });
+                                  }}
+                                  className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
+                                >
+                                  <BuildingOfficeIcon className="h-4 w-4" />
+                                  Facility
+                                </button>
+                              )}
+                              {!isBlulok && accessDevice.gateway_id && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const idx = facilityDevices.findIndex((d) => d.gateway_id === accessDevice.gateway_id);
+                                    const page = idx !== -1 ? calculatePageForItem(idx, DEVICES_PAGE_LIMIT) : 1;
+                                    navigateAndHighlight(navigate, { id: accessDevice.gateway_id, type: 'facility', page });
+                                  }}
+                                  className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
+                                >
+                                  <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                                  Gateway
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
                       })}
-                      groupNames={groupNamesByDeviceId[device.id] || []}
-                    />
-                  );
-                })}
-              </div>
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
@@ -1118,10 +1340,11 @@ export default function FacilityDetailsPage() {
             ]}
           />
 
-          <div className="flex items-center justify-between mt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Showing {facilityUnitsPageData.length} of {unitTotal} units
             </p>
+            <ViewModeToggle value={unitViewMode} onChange={setUnitViewMode} />
           </div>
 
           {unitLoading && unitsInitialLoad ? (
@@ -1136,11 +1359,147 @@ export default function FacilityDetailsPage() {
                   <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
                 </div>
               )}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {facilityUnitsPageData.map((unit) => (
-                  <UnitCard key={unit.id} unit={unit} />
-                ))}
-              </div>
+              {unitViewMode === 'grid' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {facilityUnitsPageData.map((unit) => (
+                    <UnitCard key={unit.id} unit={unit} />
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-white dark:bg-gray-800 shadow overflow-hidden sm:rounded-md border border-gray-200 dark:border-gray-700">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead className="bg-gray-50 dark:bg-gray-900">
+                      <tr>
+                        <SortableTableTh
+                          label="Unit"
+                          columnKey="unit_number"
+                          sortBy={unitFilters.sortBy || 'unit_number'}
+                          sortOrder={unitFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityUnitColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Status"
+                          columnKey="status"
+                          sortBy={unitFilters.sortBy || 'unit_number'}
+                          sortOrder={unitFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityUnitColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Tenant"
+                          columnKey="tenant_last_name"
+                          sortBy={unitFilters.sortBy || 'unit_number'}
+                          sortOrder={unitFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityUnitColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Lock"
+                          columnKey="lock_status"
+                          sortBy={unitFilters.sortBy || 'unit_number'}
+                          sortOrder={unitFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityUnitColumnSort}
+                        />
+                        <SortableTableTh
+                          label="Battery"
+                          columnKey="battery_level"
+                          sortBy={unitFilters.sortBy || 'unit_number'}
+                          sortOrder={unitFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                          onSort={handleFacilityUnitColumnSort}
+                        />
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Open
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                      {facilityUnitsPageData.map((unit) => (
+                        <tr
+                          key={unit.id}
+                          className="cursor-pointer hover:bg-blue-50/50 dark:hover:bg-blue-900/10"
+                          onClick={() => {
+                            const currentTab = activeTab || 'units';
+                            navigate(`/units/${unit.id}`, {
+                              state: withReturnPath(location, {
+                                returnTab: currentTab,
+                                returnPath: `${location.pathname}?tab=${currentTab}`,
+                              }),
+                            });
+                          }}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                            Unit {unit.unit_number}
+                            <div className="text-gray-500 dark:text-gray-400 font-normal">{unit.unit_type}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[unit.status]}`}>
+                              {unit.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                            {unit.primary_tenant ? (
+                              <>
+                                <div className="font-medium">
+                                  {unit.primary_tenant.first_name} {unit.primary_tenant.last_name}
+                                </div>
+                                <div className="text-gray-500 dark:text-gray-400 text-xs">{unit.primary_tenant.email}</div>
+                              </>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            {unit.blulok_device ? (
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors] || statusColors.unknown}`}>
+                                {unit.blulok_device.lock_status === 'locked' ? (
+                                  <LockClosedIcon className="h-3 w-3 mr-1" />
+                                ) : (
+                                  <LockOpenIcon className="h-3 w-3 mr-1" />
+                                )}
+                                {unit.blulok_device.lock_status}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            {unit.blulok_device?.battery_level != null ? (
+                              <span
+                                className={
+                                  unit.blulok_device.battery_level < 20
+                                    ? 'text-red-500 font-medium'
+                                    : unit.blulok_device.battery_level < 50
+                                      ? 'text-yellow-500 font-medium'
+                                      : 'text-green-500 font-medium'
+                                }
+                              >
+                                {unit.blulok_device.battery_level}%
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const currentTab = activeTab || 'units';
+                                navigate(`/units/${unit.id}`, {
+                                  state: withReturnPath(location, {
+                                    returnTab: currentTab,
+                                    returnPath: `${location.pathname}?tab=${currentTab}`,
+                                  }),
+                                });
+                              }}
+                              className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           ) : !unitLoading ? (
             <div className="text-center py-12">

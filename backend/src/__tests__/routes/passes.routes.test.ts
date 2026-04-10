@@ -129,6 +129,7 @@ describe('Passes Routes', () => {
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
       expect(payload.sub).toBe(testData.users.tenant.id);
       expect(payload.device_pubkey).toBe('cHVibGlj');
+      expect(payload.user_role).toBe('tenant');
       expect(Array.isArray(payload.aud)).toBe(true);
     });
 
@@ -265,6 +266,7 @@ describe('Passes Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
+      expect(payload.user_role).toBe('tenant');
       expect(payload.aud).toEqual(expect.arrayContaining(['lock:serial-assigned', 'shared_key:owner-123:serial-shared']));
     });
   });
@@ -286,6 +288,7 @@ describe('Passes Routes', () => {
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
       expect(payload.sub).toBe(testData.users.admin.id);
+      expect(payload.user_role).toBe('admin');
       expect(payload.aud).toEqual(['lock:serial-all-1', 'lock:serial-all-2', 'lock:serial-all-3']);
     });
   });
@@ -306,6 +309,7 @@ describe('Passes Routes', () => {
 
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
+      expect(payload.user_role).toBe('facility_admin');
       expect(payload.aud).toEqual(['lock:serial-fac-1']);
     });
   });

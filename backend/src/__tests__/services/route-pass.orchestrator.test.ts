@@ -67,6 +67,7 @@ describe('RoutePassOrchestrator', () => {
       userId: 'u1',
       devicePublicKey: 'pubkey',
       audiences: ['lock:serial-1'],
+      userRole: UserRole.ADMIN,
     }));
   });
 
@@ -111,15 +112,18 @@ describe('RoutePassOrchestrator', () => {
       'phone-1',
     );
 
-    expect(PassesService.issueRoutePass).toHaveBeenCalledWith(expect.objectContaining({
-      schedule: {
-        facility_id: 'fac-1',
-        time_windows: [
-          { day_of_week: 1, start_time: '09:00:00', end_time: '12:00:00' },
-          { day_of_week: 2, start_time: '13:00:00', end_time: '15:00:00' },
-        ],
-      },
-    }));
+    expect(PassesService.issueRoutePass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userRole: UserRole.TENANT,
+        schedule: {
+          facility_id: 'fac-1',
+          time_windows: [
+            { day_of_week: 1, start_time: '09:00:00', end_time: '12:00:00' },
+            { day_of_week: 2, start_time: '13:00:00', end_time: '15:00:00' },
+          ],
+        },
+      }),
+    );
   });
 
   it('uses requested facility scope for schedule resolution', async () => {
@@ -161,6 +165,9 @@ describe('RoutePassOrchestrator', () => {
     );
 
     expect(UserFacilityScheduleModel.getUserScheduleForFacilityWithDetails).toHaveBeenCalledWith('u1', 'fac-2');
+    expect(PassesService.issueRoutePass).toHaveBeenCalledWith(
+      expect.objectContaining({ userRole: UserRole.ADMIN }),
+    );
   });
 });
 

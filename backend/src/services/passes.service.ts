@@ -1,6 +1,22 @@
 import { randomUUID } from 'crypto';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import type { SerializedSchedule } from '@/services/schedules/schedule-serialization.service';
+import type { UserRole } from '@/types/auth.types';
+
+/**
+ * Canonical role string embedded in route pass JWTs: lowercase, underscore-separated
+ * (e.g. facility_admin, dev_admin). Matches {@link UserRole} enum values and normalizes
+ * legacy string forms from storage.
+ */
+export function normalizeRoutePassUserRole(role: UserRole | string): string {
+  const raw = typeof role === 'string' ? role : String(role);
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
 
 /**
  * Route Pass Claims Interface
@@ -36,6 +52,10 @@ export interface RoutePassClaims {
   jti: string;
   /** Device-bound public key for challenge-response verification */
   device_pubkey: string;
+  /**
+   * User role for device-side policy (lowercase, underscore-separated; e.g. facility_admin).
+   */
+  user_role: string;
   /**
    * Schedule data for time-based access control
    * Maps facility IDs to their schedule time windows
@@ -75,6 +95,7 @@ export class PassesService {
    * @param params.userId - ID of the user requesting access
    * @param params.devicePublicKey - Public key of the user's registered device
    * @param params.audiences - Array of access audiences (e.g. lock:{device_serial})
+   * @param params.userRole - User role; embedded as normalized `user_role` claim for device policy
    * @returns Promise resolving to the signed Route Pass JWT string
    *
    * @throws Error if JWT signing fails or parameters are invalid
@@ -84,14 +105,21 @@ export class PassesService {
     devicePublicKey: string;
     audiences: string[];
     schedule?: SerializedSchedule;
+    userRole: UserRole | string;
   }): Promise<string> {
+    const user_role = normalizeRoutePassUserRole(params.userRole);
+    if (!user_role) {
+      throw new Error('Route pass requires a non-empty user_role');
+    }
+
     const claims: RoutePassClaims = {
       iss: 'BluCloud:Root',
       sub: params.userId,
       aud: params.audiences,
       jti: randomUUID(),
       device_pubkey: params.devicePublicKey,
-    } as RoutePassClaims;
+      user_role,
+    };
 
     // Include schedule if provided
     if (params.schedule) {

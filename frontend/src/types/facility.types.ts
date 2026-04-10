@@ -263,10 +263,20 @@ export interface DeviceFilters {
   device_type?: 'access_control' | 'blulok' | 'all';
   status?: string;
   search?: string;
-  sortBy?: 'name' | 'device_type' | 'status' | 'last_activity' | 'created_at';
+  sortBy?:
+    | 'name'
+    | 'unit_number'
+    | 'device_type'
+    | 'status'
+    | 'facility_name'
+    | 'gateway_name'
+    | 'last_activity'
+    | 'created_at';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  /** Backend returns only id + device_category (ordered like the full list). */
+  projection?: 'id';
 }
 
 export interface UnitFilters {
@@ -276,7 +286,15 @@ export interface UnitFilters {
   unit_type?: string;
   tenant_id?: string;
   lock_status?: 'locked' | 'unlocked' | 'all' | 'unknown';
-  sortBy?: 'unit_number' | 'unit_type' | 'status' | 'created_at';
+  sortBy?:
+    | 'unit_number'
+    | 'unit_type'
+    | 'status'
+    | 'created_at'
+    | 'facility_name'
+    | 'tenant_last_name'
+    | 'lock_status'
+    | 'battery_level';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
