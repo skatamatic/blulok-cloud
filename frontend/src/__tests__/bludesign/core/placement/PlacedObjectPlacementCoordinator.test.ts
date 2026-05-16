@@ -54,9 +54,10 @@ function placedObject(overrides: Partial<PlacedObject> = {}): PlacedObject {
 describe('PlacedObjectPlacementCoordinator', () => {
   function makeCoordinator() {
     const scene = new THREE.Scene();
+    const gridToWorld = jest.fn((_pos: { x: number; z: number; y?: number }) => new THREE.Vector3(10, 0, 20));
     const gridSystem = {
       getGridSize: jest.fn(() => 1),
-      gridToWorld: jest.fn(() => new THREE.Vector3(10, 0, 20)),
+      gridToWorld,
       getFootprintCenterWorld: jest.fn(),
       getGridAlignment: jest.fn(() => null),
       markOccupied: jest.fn(() => null as string | null),
@@ -64,7 +65,7 @@ describe('PlacedObjectPlacementCoordinator', () => {
     };
     gridSystem.getFootprintCenterWorld.mockImplementation(
       (anchor: { x: number; z: number; y?: number }, _fp: { x: number; z: number }) =>
-        gridSystem.gridToWorld({
+        gridToWorld({
           x: anchor.x + _fp.x / 2,
           z: anchor.z + _fp.z / 2,
           y: anchor.y,

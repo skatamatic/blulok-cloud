@@ -1,6 +1,15 @@
+import * as THREE from 'three';
 import { clearFacilityEditorScene } from '../../../../components/bludesign/core/persistence/clearFacilityEditorScene';
 import { exportFacilitySceneData } from '../../../../components/bludesign/core/persistence/exportFacilitySceneData';
-import { AssetCategory, Orientation } from '../../../../components/bludesign/core/types';
+import {
+  AssetCategory,
+  CameraMode,
+  EditorMode,
+  EditorTool,
+  GridSize,
+  IsometricAngle,
+  Orientation,
+} from '../../../../components/bludesign/core/types';
 import type { Building, EditorState, PlacedObject } from '../../../../components/bludesign/core/types';
 
 jest.mock('../../../../components/bludesign/core/ThemeManager', () => ({
@@ -11,14 +20,19 @@ jest.mock('../../../../components/bludesign/core/ThemeManager', () => ({
 
 function minimalState(overrides: Partial<EditorState> = {}): EditorState {
   return {
+    mode: EditorMode.EDIT,
+    activeTool: EditorTool.SELECT,
     activeFloor: 0,
     isFloorMode: false,
-    activeTool: 'select' as EditorState['activeTool'],
+    activeAssetId: null,
+    activeOrientation: Orientation.NORTH,
+    placementPreview: null,
+    buildings: [],
     camera: {
-      mode: 'perspective' as EditorState['camera']['mode'],
-      isometricAngle: 0,
-      position: { x: 1, y: 2, z: 3 },
-      target: { x: 0, y: 0, z: 0 },
+      mode: CameraMode.FREE,
+      isometricAngle: IsometricAngle.NORTH_EAST,
+      position: new THREE.Vector3(1, 2, 3),
+      target: new THREE.Vector3(0, 0, 0),
       zoom: 1,
     },
     selection: {
@@ -26,10 +40,16 @@ function minimalState(overrides: Partial<EditorState> = {}): EditorState {
       hoveredId: null,
       isMultiSelect: false,
     },
-    snap: { gridSize: 'medium' as EditorState['snap']['gridSize'] },
-    ui: { showGrid: true },
+    snap: { enabled: true, gridSize: GridSize.MEDIUM },
+    ui: {
+      showGrid: true,
+      showCallouts: false,
+      showBoundingBoxes: false,
+      panelsCollapsed: {},
+      gridAlignment: null,
+    },
     ...overrides,
-  } as EditorState;
+  };
 }
 
 describe('exportFacilitySceneData', () => {
@@ -61,7 +81,11 @@ describe('exportFacilitySceneData', () => {
       id: 'b1',
       name: 'B',
       footprints: [{ minX: 0, maxX: 1, minZ: 0, maxZ: 1 }],
-      floors: [{ level: 0, height: 3 }],
+      floors: [{ level: 0, height: 3, groundTileIds: [] }],
+      walls: [],
+      interiorWalls: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
     };
 
     const out = exportFacilitySceneData({

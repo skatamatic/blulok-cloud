@@ -42,13 +42,14 @@ describe('objectTransformApply', () => {
 
     const clearOccupied = jest.fn();
     const markOccupied = jest.fn(() => null as string | null);
-    const gridToWorld = jest.fn(() => new THREE.Vector3(10, 0, 20));
-    const getFootprintCenterWorld = jest.fn((anchor: { x: number; z: number; y?: number }, fp: { x: number; z: number }) =>
-      gridToWorld({
-        x: anchor.x + fp.x / 2,
-        z: anchor.z + fp.z / 2,
-        y: anchor.y,
-      })
+    const gridToWorld = jest.fn((_pos: { x: number; z: number; y?: number }) => new THREE.Vector3(10, 0, 20));
+    const getFootprintCenterWorld = jest.fn(
+      (anchor: { x: number; z: number; y?: number }, fp: { x: number; z: number }) =>
+        gridToWorld({
+          x: anchor.x + fp.x / 2,
+          z: anchor.z + fp.z / 2,
+          y: anchor.y,
+        }),
     );
 
     moveObjectInternal('o1', { x: 5, z: 7, y: 0 }, Orientation.EAST, undefined, undefined, {
@@ -91,13 +92,14 @@ describe('objectTransformApply', () => {
 
     const clearOccupied = jest.fn();
     const markOccupied = jest.fn();
-    const gridToWorld = jest.fn(() => new THREE.Vector3(0, 0, 0));
-    const getFootprintCenterWorld = jest.fn((anchor: { x: number; z: number; y?: number }, fp: { x: number; z: number }) =>
-      gridToWorld({
-        x: anchor.x + fp.x / 2,
-        z: anchor.z + fp.z / 2,
-        y: anchor.y,
-      })
+    const gridToWorld = jest.fn((_pos: { x: number; z: number; y?: number }) => new THREE.Vector3(0, 0, 0));
+    const getFootprintCenterWorld = jest.fn(
+      (anchor: { x: number; z: number; y?: number }, fp: { x: number; z: number }) =>
+        gridToWorld({
+          x: anchor.x + fp.x / 2,
+          z: anchor.z + fp.z / 2,
+          y: anchor.y,
+        }),
     );
     const onComplete = jest.fn();
 

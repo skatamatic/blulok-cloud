@@ -1,6 +1,20 @@
 import * as THREE from 'three';
 import { computeWorkingGridAlignmentFromPlacedMesh } from '../../../../components/bludesign/core/placement/computeWorkingGridAlignment';
-import { Orientation, type PlacedObject } from '../../../../components/bludesign/core/types';
+import { AssetCategory, Orientation, type AssetMetadata, type PlacedObject } from '../../../../components/bludesign/core/types';
+
+function testAsset(overrides: Partial<AssetMetadata> = {}): AssetMetadata {
+  return {
+    id: 'a1',
+    name: 'U',
+    category: AssetCategory.STORAGE_UNIT,
+    gridUnits: { x: 1, z: 1 },
+    dimensions: { width: 1, height: 1, depth: 1 },
+    isSmart: false,
+    canRotate: true,
+    canStack: false,
+    ...overrides,
+  };
+}
 
 function placed(overrides: Partial<PlacedObject>): PlacedObject {
   return {
@@ -12,10 +26,7 @@ function placed(overrides: Partial<PlacedObject>): PlacedObject {
     canStack: false,
     floor: 0,
     properties: {},
-    assetMetadata: {
-      gridUnits: { x: 1, z: 1 },
-      category: 'unit',
-    } as PlacedObject['assetMetadata'],
+    assetMetadata: testAsset(),
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -57,7 +68,7 @@ describe('computeWorkingGridAlignmentFromPlacedMesh', () => {
     const po = placed({
       orientation: Orientation.NORTH,
       position: { x: 999, z: 888 },
-      assetMetadata: { gridUnits: { x: 2, z: 3 }, category: 'unit' } as PlacedObject['assetMetadata'],
+      assetMetadata: testAsset({ gridUnits: { x: 2, z: 3 } }),
     });
     const a = computeWorkingGridAlignmentFromPlacedMesh(mesh, po, gs);
 
@@ -97,7 +108,7 @@ describe('computeWorkingGridAlignmentFromPlacedMesh', () => {
 
     const po = placed({
       orientation: Orientation.EAST,
-      assetMetadata: { gridUnits: { x: 2, z: 4 }, category: 'unit' } as PlacedObject['assetMetadata'],
+      assetMetadata: testAsset({ gridUnits: { x: 2, z: 4 } }),
     });
     const a = computeWorkingGridAlignmentFromPlacedMesh(mesh, po, gs);
 

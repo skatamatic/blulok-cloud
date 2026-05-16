@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import { createFacilityImportServices } from '../../../../components/bludesign/core/persistence/buildFacilityImportServices';
-import { CameraMode } from '../../../../components/bludesign/core/types';
+import {
+  CameraMode,
+  EditorMode,
+  EditorTool,
+  GridSize,
+  IsometricAngle,
+  Orientation,
+} from '../../../../components/bludesign/core/types';
 import type { EditorState } from '../../../../components/bludesign/core/types';
 
 jest.mock('../../../../components/bludesign/core/OptimizationManager', () => ({
@@ -16,19 +23,45 @@ jest.mock('../../../../components/bludesign/core/ThemeManager', () => ({
   }),
 }));
 
+function minimalEditorState(cameraOverrides: Partial<EditorState['camera']> = {}): EditorState {
+  return {
+    mode: EditorMode.EDIT,
+    activeTool: EditorTool.SELECT,
+    activeFloor: 0,
+    isFloorMode: false,
+    activeAssetId: null,
+    activeOrientation: Orientation.NORTH,
+    placementPreview: null,
+    buildings: [],
+    camera: {
+      mode: CameraMode.FREE,
+      isometricAngle: IsometricAngle.NORTH_EAST,
+      position: new THREE.Vector3(),
+      target: new THREE.Vector3(),
+      zoom: 1,
+      ...cameraOverrides,
+    },
+    selection: {
+      selectedIds: [],
+      hoveredId: null,
+      isMultiSelect: false,
+    },
+    snap: { enabled: true, gridSize: GridSize.MEDIUM },
+    ui: {
+      showGrid: true,
+      showCallouts: false,
+      showBoundingBoxes: false,
+      panelsCollapsed: {},
+      gridAlignment: null,
+    },
+  };
+}
+
 describe('createFacilityImportServices', () => {
   it('restoreCamera updates state and controller mode', () => {
     const setMode = jest.fn();
     const setIso = jest.fn();
-    const state: EditorState = {
-      camera: {
-        mode: CameraMode.PERSPECTIVE,
-        isometricAngle: 0,
-        position: new THREE.Vector3(),
-        target: new THREE.Vector3(),
-        zoom: 1,
-      },
-    } as EditorState;
+    const state = minimalEditorState();
 
     const s = createFacilityImportServices({
       getState: () => state,
@@ -50,14 +83,14 @@ describe('createFacilityImportServices', () => {
 
     s.restoreCamera({
       mode: CameraMode.ISOMETRIC,
-      isometricAngle: 45,
-      position: { x: 1, y: 2, z: 3 },
-      target: { x: 0, y: 0, z: 0 },
+      isometricAngle: IsometricAngle.NORTH_EAST,
+      position: new THREE.Vector3(1, 2, 3),
+      target: new THREE.Vector3(0, 0, 0),
       zoom: 10,
     });
 
     expect(setMode).toHaveBeenCalledWith(CameraMode.ISOMETRIC);
-    expect(setIso).toHaveBeenCalledWith(45);
+    expect(setIso).toHaveBeenCalledWith(IsometricAngle.NORTH_EAST);
     expect(state.camera.zoom).toBe(10);
   });
 });
