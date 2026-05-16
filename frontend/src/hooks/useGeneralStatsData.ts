@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
+import { getScopedFacilityId } from '@/utils/globalFacilityScope.utils';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
 import type { ScopedGeneralStatsData } from '@/types/dashboard.types';
@@ -15,8 +16,7 @@ export type { ScopedGeneralStatsData } from '@/types/dashboard.types';
 export const useGeneralStatsData = () => {
   const { authState } = useAuth();
   const { selectedFacilityId } = useGlobalFacility();
-  const scopedFacilityId =
-    selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : undefined;
+  const scopedFacilityId = getScopedFacilityId(selectedFacilityId);
   const [stats, setStats] = useState<ScopedGeneralStatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

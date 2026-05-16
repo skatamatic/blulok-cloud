@@ -7,11 +7,13 @@ import { Unit } from '@/types/units.types';
 
 // Mock the API service
 const mockGetMyUnits = jest.fn();
+const mockGetUnits = jest.fn();
 const mockUpdateLockStatus = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getMyUnits: (...args: unknown[]) => mockGetMyUnits(...args),
+    getUnits: (...args: unknown[]) => mockGetUnits(...args),
     updateLockStatus: (...args: unknown[]) => mockUpdateLockStatus(...args),
   },
 }));
@@ -28,6 +30,17 @@ jest.mock('@/contexts/WebSocketContext', () => ({
     isConnected: true,
   }),
   WebSocketProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+const mockUseGlobalFacility = jest.fn();
+
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  ...jest.requireActual('@/contexts/GlobalFacilityContext'),
+  useGlobalFacility: () => mockUseGlobalFacility(),
+}));
+
+jest.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({ addToast: jest.fn() }),
 }));
 
 // Mock auth context
@@ -109,7 +122,19 @@ describe('LockStatusWidget', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseGlobalFacility.mockReturnValue({
+      selectedFacilityId: '__ALL_FACILITIES__',
+      isAllFacilitiesSelected: true,
+      isLoading: false,
+    });
+    mockGetMyUnits.mockReset();
+    mockGetUnits.mockReset();
+    mockUpdateLockStatus.mockReset();
     mockGetMyUnits.mockResolvedValue({
+      units: mockUnits,
+      total: mockUnits.length,
+    });
+    mockGetUnits.mockResolvedValue({
       units: mockUnits,
       total: mockUnits.length,
     });
@@ -127,22 +152,69 @@ describe('LockStatusWidget', () => {
     });
 
     it('displays loading state initially', () => {
-      mockGetMyUnits.mockImplementation(() => new Promise(() => {}));
-      
+      mockGetUnits.mockImplementation(() => new Promise(() => {}));
+
       renderWithProviders(
         <LockStatusWidget currentSize="medium" onSizeChange={() => {}} />
       );
-      
+
       expect(screen.getByText('Loading...')).toBeInTheDocument();
     });
 
-    it('calls API on mount', async () => {
+    it('waits for global facility context before fetching units', async () => {
+      mockUseGlobalFacility.mockReturnValue({
+        selectedFacilityId: 'fac-pending',
+        isAllFacilitiesSelected: false,
+        isLoading: true,
+      });
+
       renderWithProviders(
         <LockStatusWidget currentSize="medium" onSizeChange={() => {}} />
       );
-      
+
+      expect(mockGetUnits).not.toHaveBeenCalled();
+    });
+
+    it('calls GET /units for admin users (not tenant-only /units/my)', async () => {
+      renderWithProviders(
+        <LockStatusWidget currentSize="medium" onSizeChange={() => {}} />
+      );
+
       await waitFor(() => {
-        expect(mockGetMyUnits).toHaveBeenCalled();
+        expect(mockGetUnits).toHaveBeenCalledWith({ limit: 500 });
+      });
+      expect(mockGetMyUnits).not.toHaveBeenCalled();
+    });
+
+    it('scopes staff fetch to global facility selector when a facility is selected', async () => {
+      mockUseGlobalFacility.mockReturnValue({
+        selectedFacilityId: 'fac-from-context',
+        isAllFacilitiesSelected: false,
+        isLoading: false,
+      });
+
+      renderWithProviders(
+        <LockStatusWidget currentSize="medium" onSizeChange={() => {}} />
+      );
+
+      await waitFor(() => {
+        expect(mockGetUnits).toHaveBeenCalledWith({ limit: 500, facility_id: 'fac-from-context' });
+      });
+    });
+
+    it('does not pass facility_id when All Facilities is selected', async () => {
+      mockUseGlobalFacility.mockReturnValue({
+        selectedFacilityId: '__ALL_FACILITIES__',
+        isAllFacilitiesSelected: true,
+        isLoading: false,
+      });
+
+      renderWithProviders(
+        <LockStatusWidget currentSize="medium" onSizeChange={() => {}} />
+      );
+
+      await waitFor(() => {
+        expect(mockGetUnits).toHaveBeenCalledWith({ limit: 500 });
       });
     });
 
@@ -219,7 +291,7 @@ describe('LockStatusWidget', () => {
     }, 20000);
 
     it('handles empty data gracefully', async () => {
-      mockGetMyUnits.mockResolvedValue({
+      mockGetUnits.mockResolvedValue({
         units: [],
         total: 0,
       });
@@ -234,7 +306,7 @@ describe('LockStatusWidget', () => {
     });
 
     it('shows error state on API failure', async () => {
-      mockGetMyUnits.mockRejectedValue(new Error('Network error'));
+      mockGetUnits.mockRejectedValue(new Error('Network error'));
       
       renderWithProviders(
         <LockStatusWidget currentSize="medium" onSizeChange={() => {}} />
@@ -463,7 +535,7 @@ describe('LockStatusWidget', () => {
         last_seen: new Date().toISOString(),
       };
       
-      mockGetMyUnits.mockResolvedValue({
+      mockGetUnits.mockResolvedValue({
         units: [recentUnit],
         total: 1,
       });
@@ -483,7 +555,7 @@ describe('LockStatusWidget', () => {
         last_seen: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
       };
       
-      mockGetMyUnits.mockResolvedValue({
+      mockGetUnits.mockResolvedValue({
         units: [olderUnit],
         total: 1,
       });

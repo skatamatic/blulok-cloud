@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
+import { getScopedFacilityId } from '@/utils/globalFacilityScope.utils';
 import { UserRole } from '@/types/auth.types';
 import { Layout } from 'react-grid-layout';
 import { WidgetGrid, WidgetLayout } from '@/components/Widget/WidgetGrid';
@@ -40,8 +41,7 @@ export default function DashboardPage() {
   const { authState } = useAuth();
   const { selectedFacilityId } = useGlobalFacility();
   /** When "All facilities" is selected, widgets aggregate across allowed scope (no facility_id filter) */
-  const effectiveFacilityId =
-    selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : undefined;
+  const effectiveFacilityId = getScopedFacilityId(selectedFacilityId);
   const [isLoading, setIsLoading] = useState(true);
   const { stats: generalStats, loading: statsLoading, error: statsError, canAccess, getHandlers } = useGeneralStatsData();
 

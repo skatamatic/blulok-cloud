@@ -1,13 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit } from '@/types/units.types';
+import { UserRole } from '@/types/auth.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
+import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
+import { getApiErrorMessage } from '@/utils/apiError.utils';
+import { getScopedFacilityId } from '@/utils/globalFacilityScope.utils';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 
 interface LockStatusWidgetProps {
@@ -16,38 +21,86 @@ interface LockStatusWidgetProps {
   onRemove?: () => void;
 }
 
+/** GET /units/my is tenant-only; admin list rows use device_status / last_activity field names */
+function normalizeUnitForLockWidget(unit: Unit & { last_activity?: string }): Unit {
+  const deviceStatus =
+    unit.device_status ??
+    (unit.blulok_device as { device_status?: Unit['device_status'] } | undefined)?.device_status;
+  const isOnline =
+    unit.is_online ??
+    (deviceStatus === 'online' || deviceStatus === 'low_battery');
+  return {
+    ...unit,
+    is_online: Boolean(isOnline),
+    last_seen: unit.last_seen ?? unit.last_activity,
+    lock_status: (unit.lock_status ?? unit.blulok_device?.lock_status) as Unit['lock_status'],
+  };
+}
+
 export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   currentSize,
   onSizeChange,
   onRemove,
 }) => {
   const { authState } = useAuth();
+  const { selectedFacilityId, isLoading: facilitiesLoading } = useGlobalFacility();
+  const scopedFacilityId = getScopedFacilityId(selectedFacilityId);
+  const { addToast } = useToast();
   const { isConnected } = useWebSocket();
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const availableSizes: WidgetSize[] = ['small', 'medium', 'large', 'medium-tall'];
+  const fetchRequestIdRef = useRef(0);
 
-  const fetchUnits = useCallback(async () => {
+  const fetchUnits = useCallback(async (opts?: { background?: boolean }) => {
+    const requestId = ++fetchRequestIdRef.current;
+
     try {
-      setLoading(true);
+      if (!opts?.background) {
+        setLoading(true);
+      }
       setError(null);
-      
-      // Get units based on user role
-      const response = await apiService.getMyUnits();
-      setUnits(response.units || []);
+
+      const role = authState.user?.role;
+      const isTenant = role === UserRole.TENANT;
+
+      // /units/my is restricted to tenants (requireRoles TENANT). Staff use GET /units with RBAC in UnitsService.
+      const response = isTenant
+        ? await apiService.getMyUnits()
+        : await apiService.getUnits({
+            limit: 500,
+            ...(scopedFacilityId ? { facility_id: scopedFacilityId } : {}),
+          });
+
+      if (requestId !== fetchRequestIdRef.current) return;
+
+      let rows = (response.units || []) as Array<Unit & { last_activity?: string }>;
+      if (isTenant && scopedFacilityId) {
+        rows = rows.filter((u) => u.facility_id === scopedFacilityId);
+      }
+      setUnits(rows.map(normalizeUnitForLockWidget));
     } catch (err) {
+      if (requestId !== fetchRequestIdRef.current) return;
       console.error('Error fetching units:', err);
-      setError('Failed to load units');
+      if (!opts?.background) {
+        setError('Failed to load units');
+      }
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestIdRef.current && !opts?.background) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [authState.user?.role, scopedFacilityId]);
+
+  const fetchUnitsRef = useRef(fetchUnits);
+  fetchUnitsRef.current = fetchUnits;
 
   useEffect(() => {
-    fetchUnits();
-  }, [fetchUnits, authState.user]);
+    if (facilitiesLoading) return;
+    void fetchUnits();
+  }, [fetchUnits, facilitiesLoading]);
 
   const mergeLockSnapshots = useCallback((updates: LockDeviceSnapshot[]) => {
     if (updates.length === 0) return;
@@ -102,8 +155,17 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
 
   useLockDeviceRealtime({
     enabled: isConnected,
+    facilityId: scopedFacilityId ?? null,
     onDeviceRows: mergeLockSnapshots,
-    subscribeUnitsForRefresh: false,
+    debouncedRefresh: () => {
+      void fetchUnitsRef.current({ background: true });
+    },
+    debounceRefreshFilter: (payload) =>
+      typeof payload === 'object' &&
+      payload !== null &&
+      (payload as { source?: string }).source === 'units_update',
+    subscribeUnitsForRefresh: true,
+    subscribeDeviceStatusForRefresh: false,
   });
 
   const getMaxItems = (size: WidgetSize): number => {
@@ -177,6 +239,11 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
       );
     } catch (err) {
       console.error('Error unlocking:', err);
+      addToast({
+        type: 'error',
+        title: 'Could not update lock',
+        message: getApiErrorMessage(err, 'Try again in a moment.'),
+      });
     } finally {
       setActionLoading(null);
     }

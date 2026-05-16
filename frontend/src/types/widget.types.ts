@@ -157,7 +157,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
+    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'shared-keys': {
     type: 'shared-keys',
