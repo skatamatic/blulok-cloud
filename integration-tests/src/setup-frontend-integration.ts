@@ -21,14 +21,15 @@ const mockLocation = {
   reload: jest.fn(),
 };
 
-// Set up global mocks
-Object.defineProperty(window, 'localStorage', {
-  value: localStorageMock,
-});
+// Set up global mocks (only when running in jsdom / browser-like env)
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'localStorage', {
+    value: localStorageMock,
+  });
 
-// Mock location more carefully
-delete (window as any).location;
-(window as any).location = mockLocation;
+  delete (window as any).location;
+  (window as any).location = mockLocation;
+}
 
 // Mock console methods to reduce noise during tests
 const originalConsole = console;

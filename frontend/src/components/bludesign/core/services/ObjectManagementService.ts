@@ -1,13 +1,7 @@
 /**
- * Object Management Service
- * 
- * Handles object manipulation operations including:
- * - Object deletion
- * - Object updates (position, rotation, skin)
- * - Simulation state changes
- * - Selection management coordination
- * 
- * This service is part of the SOLID refactoring of BluDesignEngine.
+ * Smart-object helpers: delete, skin updates, and simulation state for bound assets.
+ * Used by unit tests and callable from tooling; the live editor’s orchestration,
+ * history, and grid rules remain in {@link BluDesignEngine}.
  */
 
 import * as THREE from 'three';

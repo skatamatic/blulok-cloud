@@ -39,6 +39,8 @@ describe('FallbackService', () => {
     expect(PassesService.issueRoutePass).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'user-1', userRole: 'tenant' }),
     );
+    const issueArg = (PassesService.issueRoutePass as jest.Mock).mock.calls[0][0];
+    expect(issueArg.schedules).toBeUndefined();
   });
 });
 

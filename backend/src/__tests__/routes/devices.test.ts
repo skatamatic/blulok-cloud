@@ -1940,6 +1940,90 @@ describe('Devices Routes', () => {
       });
     });
 
+    describe('DELETE /api/v1/devices/blulok/:deviceId - Remove BluLok from cloud inventory', () => {
+      beforeEach(() => {
+        const mockDevicesService = {
+          removeBluLokDeviceFromCloudInventory: jest.fn().mockResolvedValue({
+            gatewayId: 'gateway-1',
+            facilityId: 'facility-1',
+            hadUnit: false,
+            unitId: null,
+          }),
+        };
+        (DevicesService.getInstance as jest.Mock).mockReturnValue(mockDevicesService);
+      });
+
+      it('should require authentication', async () => {
+        const response = await request(app).delete('/api/v1/devices/blulok/device-1');
+        expectUnauthorized(response);
+      });
+
+      it('should forbid FACILITY_ADMIN', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('should remove inventory for ADMIN', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.success).toBe(true);
+        expect(response.body.removed).toMatchObject({ gatewayId: 'gateway-1' });
+        const mockSvc = DevicesService.getInstance() as any;
+        expect(mockSvc.removeBluLokDeviceFromCloudInventory).toHaveBeenCalledWith(
+          'device-1',
+          expect.objectContaining({ performedBy: expect.any(String) }),
+        );
+      });
+
+      it('should remove inventory for DEV_ADMIN', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.success).toBe(true);
+      });
+
+      it('should return 404 when device not found', async () => {
+        const mockSvc = DevicesService.getInstance() as any;
+        mockSvc.removeBluLokDeviceFromCloudInventory.mockRejectedValueOnce(new Error('Device not found'));
+
+        const response = await request(app)
+          .delete('/api/v1/devices/blulok/missing')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('should return 403 for TENANT', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('should return 403 for MAINTENANCE', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+    });
+
     describe('Device Assignment - Change Device Flow', () => {
       let mockDevicesService: any;
 

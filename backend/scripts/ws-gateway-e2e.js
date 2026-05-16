@@ -918,6 +918,32 @@ async function assignDeviceToUnit(token, deviceId, unitId) {
   });
 }
 
+async function removeBluLokFromCloudInventory(token, deviceId) {
+  const res = await axios.delete(`${API_BASE}/devices/blulok/${deviceId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.data?.success) {
+    throw new Error(`Remove BluLok from cloud inventory failed: ${res.data?.message || res.status}`);
+  }
+  return res.data;
+}
+
+async function getBluLokDeviceHttp(token, deviceId) {
+  return axios.get(`${API_BASE}/devices/blulok/${deviceId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+async function resolveUnassignedDeviceIdBySerial(token, facilityId, serial) {
+  const res = await axios.get(`${API_BASE}/devices/unassigned`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { facility_id: facilityId, limit: 50 },
+  });
+  const list = res.data?.devices || [];
+  const match = list.find((d) => (d.device_serial || '').toLowerCase() === serial.toLowerCase());
+  return match?.id || null;
+}
+
 function normalizeCmd(msg) {
   let p = msg;
   try { p = typeof msg === 'string' ? JSON.parse(msg) : msg; } catch {}
@@ -2183,6 +2209,145 @@ async function run() {
     }));
     await waitForProxyResponse(ws, reqInventoryCleanup);
     ok('Inventory test devices cleaned up');
+
+    heading('Device commissioning — HTTP unassign and cloud inventory removal');
+    const disposableSerial = `GW-E2E-HTTP-REMOVE-${Date.now()}`;
+    step('Gateway sync: add disposable lock for commissioning API tests');
+    const reqDisposableSync = 'req-disposable-sync';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqDisposableSync,
+      method: 'POST',
+      path: `/internal/gateway/device-sync`,
+      body: {
+        facility_id: facilityId,
+        devices: [{
+          serial: disposableSerial,
+          firmwareVersion: '3A0-001',
+          online: true,
+          locked: false,
+          batteryLevel: 3400,
+        }],
+      },
+    }));
+    const respDisposableSync = await waitForProxyResponse(ws, reqDisposableSync);
+    if (respDisposableSync.status !== 200 || !respDisposableSync.body?.success) {
+      throw new Error(`Disposable device sync failed: ${respDisposableSync.status}`);
+    }
+    let disposableDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, disposableSerial);
+    if (!disposableDeviceId) throw new Error(`Disposable device ${disposableSerial} not found after sync`);
+    ok(`Disposable device ${disposableDeviceId} (${disposableSerial}) ready`);
+
+    step('POST assign + DELETE unassign — lock leaves unit but stays in facility inventory');
+    await assignDeviceToUnit(token, disposableDeviceId, unitId);
+    const resUnitWithLock = await axios.get(`${API_BASE}/units/${unitId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (resUnitWithLock.data?.unit?.blulok_device?.id !== disposableDeviceId) {
+      throw new Error('Disposable device not linked to unit after assign');
+    }
+    ok('Disposable lock assigned to unit');
+    const unassignRes = await axios.delete(`${API_BASE}/devices/blulok/${disposableDeviceId}/unassign`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!unassignRes.data?.success) {
+      throw new Error(`HTTP unassign failed: ${unassignRes.data?.message || unassignRes.status}`);
+    }
+    const resUnitAfterUnassign = await axios.get(`${API_BASE}/units/${unitId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (resUnitAfterUnassign.data?.unit?.blulok_device?.id === disposableDeviceId) {
+      throw new Error('Disposable device still on unit after HTTP unassign');
+    }
+    disposableDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, disposableSerial);
+    if (!disposableDeviceId) throw new Error('Disposable device missing from unassigned list after unassign');
+    ok('HTTP unassign cleared unit link; device remains in facility inventory');
+
+    step('DELETE /devices/blulok/:id — dev admin removes lock from cloud inventory');
+    await removeBluLokFromCloudInventory(token, disposableDeviceId);
+    ok('DELETE cloud inventory succeeded');
+
+    step('GET /devices/blulok/:id — removed lock is not retrievable');
+    try {
+      await getBluLokDeviceHttp(token, disposableDeviceId);
+      throw new Error('Expected GET BluLok device to fail after cloud inventory removal');
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status !== 404) {
+        throw new Error(`Expected 404 after removal, got ${status}: ${JSON.stringify(err?.response?.data)}`);
+      }
+    }
+    ok('Removed lock returns 404 on GET');
+
+    if (created.facilityAdminToken) {
+      const rbacSerial = `GW-E2E-FA-FORBID-${Date.now()}`;
+      step('Facility admin forbidden from DELETE /devices/blulok/:id');
+      const reqRbacSync = 'req-rbac-disposable-sync';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqRbacSync,
+        method: 'POST',
+        path: `/internal/gateway/device-sync`,
+        body: {
+          facility_id: facilityId,
+          devices: [{ serial: rbacSerial, firmwareVersion: '3A0-001', online: true, locked: false }],
+        },
+      }));
+      const respRbacSync = await waitForProxyResponse(ws, reqRbacSync);
+      if (respRbacSync.status !== 200 || !respRbacSync.body?.success) {
+        throw new Error(`RBAC disposable sync failed: ${respRbacSync.status}`);
+      }
+      const rbacDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, rbacSerial);
+      if (!rbacDeviceId) throw new Error('RBAC disposable device not found');
+      try {
+        await removeBluLokFromCloudInventory(created.facilityAdminToken, rbacDeviceId);
+        throw new Error('Facility admin should not remove cloud inventory');
+      } catch (err) {
+        if (err?.response?.status !== 403) {
+          throw new Error(`Expected 403 for facility admin DELETE, got ${err?.response?.status}`);
+        }
+      }
+      ok('Facility admin correctly denied cloud inventory removal');
+      await removeBluLokFromCloudInventory(token, rbacDeviceId);
+      ok('Dev admin cleaned up RBAC disposable device');
+    } else {
+      warn('Skipped facility admin cloud-inventory RBAC check (no facilityAdminToken)');
+    }
+
+    // Commissioning tests assign disposable locks to the shared unit; restore the primary lock.
+    step('Restoring primary device on unit after commissioning tests');
+    let primaryDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, remainingSerial);
+    if (!primaryDeviceId) {
+      const reqRestorePrimary = 'req-restore-primary-sync';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqRestorePrimary,
+        method: 'POST',
+        path: `/internal/gateway/device-sync`,
+        body: {
+          facility_id: facilityId,
+          devices: [{
+            serial: remainingSerial,
+            firmwareVersion: '3A0-001',
+            online: true,
+            locked: false,
+            batteryLevel: 3450,
+          }],
+        },
+      }));
+      const respRestorePrimary = await waitForProxyResponse(ws, reqRestorePrimary);
+      if (respRestorePrimary.status !== 200 || !respRestorePrimary.body?.success) {
+        throw new Error(`Primary device re-sync failed: ${respRestorePrimary.status}`);
+      }
+      primaryDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, remainingSerial);
+      if (!primaryDeviceId) {
+        throw new Error(`Primary device ${remainingSerial} not found after re-sync`);
+      }
+    }
+    deviceId = primaryDeviceId;
+    created.deviceId = deviceId;
+    await assignDeviceToUnit(token, deviceId, unitId);
+    ok(`Primary device ${deviceId} restored on unit for downstream tests`);
 
     // PROXY: Update device status to "online" then fetch device details
     const reqStatus = 'req-device-status';
@@ -4008,9 +4173,19 @@ async function run() {
     const rpParts = routePassResp.data.routePass.split('.');
     if (rpParts.length !== 3) throw new Error(`Route pass JWT has ${rpParts.length} parts, expected 3`);
     const rpPayload = JSON.parse(Buffer.from(rpParts[1], 'base64').toString());
-    if (!rpPayload.schedule) throw new Error('Route pass does not include schedule data');
+    if (!Array.isArray(rpPayload.schedules) || rpPayload.schedules.length === 0) {
+      throw new Error('Route pass does not include non-empty schedules claim');
+    }
+    const schedForFac = rpPayload.schedules.find((s) => s.f === created.facilityId);
+    if (!schedForFac || !Array.isArray(schedForFac.w) || schedForFac.w.length === 0) {
+      throw new Error('Route pass schedules missing compact entry for facility');
+    }
+    const expectedBand = [[[[1, 2]], '09:00', '17:00']];
+    if (JSON.stringify(schedForFac.w) !== JSON.stringify(expectedBand)) {
+      throw new Error(`Unexpected compact schedule bands: ${JSON.stringify(schedForFac.w)}`);
+    }
     assertRoutePassUserRole(rpPayload, 'tenant');
-    ok('Route pass includes schedule data and user_role');
+    ok('Route pass includes schedules claim and user_role');
 
     // Test schedule usage endpoint
     step('Testing schedule usage endpoint');
@@ -5511,6 +5686,14 @@ async function run() {
         throw new Error('Expected route pass to include at least one access_control:* audience for zone-linked app entry');
       }
       assertRoutePassUserRole(payload, 'tenant');
+      const scopedSched = payload.schedules;
+      if (Array.isArray(scopedSched) && scopedSched.length > 0) {
+        if (!scopedSched.some((s) => s.f === created.facilityId)) {
+          throw new Error(
+            'When schedules claim is present, expected facility-scoped route pass to include that facility',
+          );
+        }
+      }
       ok('Facility-scoped route pass includes app-entry access_control audience and user_role');
     }
 
@@ -5530,6 +5713,9 @@ async function run() {
     if (!faPassToken) throw new Error('Facility admin route pass missing routePass');
     const faRpClaims = decodeJwtClaims(faPassToken);
     assertRoutePassUserRole(faRpClaims, 'facility_admin');
+    if (Object.prototype.hasOwnProperty.call(faRpClaims, 'schedule') && faRpClaims.schedule != null) {
+      throw new Error('Unexpected legacy schedule claim on facility_admin route pass');
+    }
     ok('Facility admin route pass includes user_role=facility_admin');
 
     const getEffectiveCodesMap = async () => {

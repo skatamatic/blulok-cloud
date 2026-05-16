@@ -542,6 +542,12 @@ class ApiService {
     return response.data;
   }
 
+  /** Admin / dev admin: delete BluLok cloud inventory row (unit link, group memberships, denylist); lock may re-sync from gateway. */
+  async removeBluLokDeviceFromCloudInventory(deviceId: string) {
+    const response = await this.api.delete(`/devices/blulok/${deviceId}`);
+    return response.data;
+  }
+
   // Units Management
   async getUnits(filters?: object) {
     const response = await this.api.get('/units', { params: filters });

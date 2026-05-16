@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
-import type { SerializedSchedule } from '@/services/schedules/schedule-serialization.service';
+import type { RoutePassFacilitySchedule } from '@/services/passes/route-pass-schedules';
 import type { UserRole } from '@/types/auth.types';
 
 /**
@@ -57,10 +57,10 @@ export interface RoutePassClaims {
    */
   user_role: string;
   /**
-   * Schedule data for time-based access control
-   * Maps facility IDs to their schedule time windows
+   * Per-facility compact schedules for time-based access (see route-pass-schedules).
+   * Omitted for global admin roles and when no enforceable windows exist.
    */
-  schedule?: SerializedSchedule;
+  schedules?: RoutePassFacilitySchedule[];
 }
 
 /**
@@ -95,6 +95,7 @@ export class PassesService {
    * @param params.userId - ID of the user requesting access
    * @param params.devicePublicKey - Public key of the user's registered device
    * @param params.audiences - Array of access audiences (e.g. lock:{device_serial})
+   * @param params.schedules - Optional per-facility compact schedules (omitted for global admins)
    * @param params.userRole - User role; embedded as normalized `user_role` claim for device policy
    * @returns Promise resolving to the signed Route Pass JWT string
    *
@@ -104,7 +105,7 @@ export class PassesService {
     userId: string;
     devicePublicKey: string;
     audiences: string[];
-    schedule?: SerializedSchedule;
+    schedules?: RoutePassFacilitySchedule[];
     userRole: UserRole | string;
   }): Promise<string> {
     const user_role = normalizeRoutePassUserRole(params.userRole);
@@ -121,9 +122,8 @@ export class PassesService {
       user_role,
     };
 
-    // Include schedule if provided
-    if (params.schedule) {
-      claims.schedule = params.schedule;
+    if (params.schedules && params.schedules.length > 0) {
+      claims.schedules = params.schedules;
     }
 
     return await Ed25519Service.signJwt(claims as any);

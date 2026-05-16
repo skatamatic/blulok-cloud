@@ -343,10 +343,6 @@ export class GeometryOptimizer {
         return { x, z, key };
       });
       
-      // #region agent log
-      // const iterationStartTime = performance.now();
-      // #endregion
-      
       // Find the largest rectangle starting from any remaining cell
       // OPTIMIZATION: Use aggressive seed limiting for performance
       // Try only a small number of seeds - this trades some optimality for speed

@@ -47,6 +47,18 @@ export interface GridPosition {
   y?: number; // For multi-floor support
 }
 
+/**
+ * When set, grid indices (GridPosition) are interpreted in a rotated frame on XZ:
+ * world = origin + R_y(yaw) * (ix * cellSize, 0, iz * cellSize) with orthonormal U/V matching unaligned axes at yaw 0.
+ * Session-only editor state (not persisted in facility manifests by default).
+ */
+export interface GridAlignment {
+  /** World-space Y rotation (rad) added to cardinal placement rotation; see BluDesignEngine.alignGridToSelection */
+  yaw: number;
+  originX: number;
+  originZ: number;
+}
+
 /** Snap configuration */
 export interface SnapConfig {
   enabled: boolean;
@@ -690,6 +702,8 @@ export interface EditorState {
     showCallouts: boolean;
     showBoundingBoxes: boolean;
     panelsCollapsed: Record<string, boolean>;
+    /** Rotated working grid (session-only); null = world axes */
+    gridAlignment: GridAlignment | null;
   };
 }
 

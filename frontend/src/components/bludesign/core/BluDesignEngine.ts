@@ -13,10 +13,8 @@ import {
   DEFAULT_GRID_CONFIG,
   DARK_THEME_GRID_CONFIG,
   EngineEventType,
-  EngineEvent,
   EngineEventHandler,
   EditorState,
-  EditorMode,
   EditorTool,
   CameraMode,
   IsometricAngle,
@@ -25,22 +23,14 @@ import {
   Orientation,
   PlacedObject,
   AssetMetadata,
-  AssetCategory,
   FacilityData,
-  SerializedPlacedObject,
-  SerializedBuilding,
-  FLOOR_HEIGHT,
   LegacyFacilityData,
-  DeviceState,
   EntityBinding,
   SimulationState,
   Building,
   DataSourceConfig,
-  BuildingSkinType,
-  BuildingMaterials,
+  GridAlignment,
 } from './types';
-import { AssetRegistry } from '../assets/AssetRegistry';
-import { AssetService, AssetDefinition } from '../services/AssetService';
 import { SceneManager } from './SceneManager';
 import { CameraController } from './CameraController';
 import { SelectionManager } from './SelectionManager';
@@ -51,31 +41,108 @@ import { BuildingManager } from './BuildingManager';
 import { FloorManager } from './FloorManager';
 import { SkinManager } from './SkinManager';
 import { AssetFactory } from '../assets/AssetFactory';
-import { 
-  ActionHistory, 
-  HistoryAction, 
-  PlaceActionData, 
-  DeleteActionData, 
-  MoveActionData,
-  RotateActionData,
-  BuildingCreateActionData,
-  BuildingDeleteActionData,
-  BuildingMoveActionData,
-  FloorAddActionData,
-  FloorDeleteActionData,
-  FloorInsertActionData,
-} from './ActionHistory';
+import { ActionHistory, HistoryAction } from './ActionHistory';
 import { ClipboardManager } from './ClipboardManager';
 import { TranslateGizmo, GizmoAxis } from './TranslateGizmo';
 import { RotateGizmo } from './RotateGizmo';
-import { InputCoordinator, InputPriority, InputEventType } from './InputCoordinator';
+import { InputCoordinator } from './InputCoordinator';
 import { getThemeManager, Theme } from './ThemeManager';
-import { getSkinRegistry, CategorySkin } from './SkinRegistry';
+import { getSkinRegistry } from './SkinRegistry';
 import { WindowManager } from './WindowManager';
 import { GroundTileManager } from './GroundTileManager';
 import { RenderingSettingsManager } from './RenderingSettingsManager';
-import { EditorPreferences } from './Preferences';
 import { OptimizationManager } from './OptimizationManager';
+import { applyBluDesignRenderingSettings } from './rendering';
+import {
+  isLegacyFacilityFormat,
+  collectUniqueSerializedAssetIds,
+} from './serialization/facilityImportHelpers';
+import { resolveClipboardCopyContents } from './clipboard/resolveClipboardCopyContents';
+import { tryStartClipboardPastePreview } from './clipboard/startClipboardPastePreview';
+import {
+  collectSelectableObjectIds,
+  PendingSelectionMoveCoordinator,
+  runDeleteSelection,
+} from './selection';
+import { applyFullBluDesignSceneTheme } from './theme';
+import {
+  BluDesignEventBus,
+  FacilityDraftStorage,
+  DEFAULT_AUTOSAVE_STORAGE_KEY,
+  createEditorInitialState,
+  CachedTextureLoader,
+} from './engine';
+import type { DraftAutoSaveScheduler } from './engine/DraftAutoSaveScheduler';
+import { initializeBluDesignEditorSubsystems } from './engine/initializeBluDesignEditorSubsystems';
+import {
+  FloorObjectReplication,
+  FloorViewCoordinator,
+  FloorStructureOperations,
+  FloorHistoryOperations,
+} from './floors';
+import { registerBluDesignInputHandlers } from './input/registerBluDesignInputHandlers';
+import {
+  PlacedObjectPlacementCoordinator,
+  PlacementCompletionService,
+  moveObjectInternal,
+  applyRotationState,
+  getPlacedObjectIdsAtGridCell,
+  collectMeshesForSelectionRotation,
+  applySelectionRotationByAngle,
+} from './placement';
+import {
+  storeDefaultMaterials,
+  resetToDefaultMaterials,
+} from './skins';
+import { createPlacedObjectSkinApplicator } from './skins/placedObjectSkinApplicator';
+import { HistoryActionApplier } from './history';
+import {
+  clearFacilityEditorScene,
+  exportFacilitySceneData,
+  importFacilitySceneData,
+  preloadFacilityCustomAssets,
+  type FacilityImportHost,
+} from './persistence/index.ts';
+import {
+  BuildingMovePreviewController,
+  applyBuildingTranslation,
+  keyboardDirectionToGridDelta,
+  validatePlacedObjectMove,
+} from './manipulation';
+import {
+  EditorGizmoController,
+  EditorRotationCoordinator,
+  computeSelectionGridCenter,
+  computeSelectionCenterWorld,
+} from './gizmos';
+import { rotationForGizmoIndicator } from './gizmos/selectionGizmoPlacement';
+import {
+  computeBluDesignSceneBounds,
+  computeFocusOrbitForPlacedObjectMesh,
+  computeFocusOrbitForBuilding,
+  computeSelectedObjectsScreenBounds,
+  getHoveredPlacedObjectRotation,
+} from './viewport/editorViewport';
+import { captureSceneThumbnailJpeg } from './viewport/captureSceneThumbnail';
+import { applyEditorToolChange } from './editor/applyEditorToolChange';
+import {
+  updatePlacedObjectBinding,
+  updatePlacedObjectSkin,
+  updatePlacedObjectSimulationState,
+} from './placedObject/placedObjectPropertyUpdates';
+import { applyEngineSelectionChangeFromManager } from './editor/engineSelectionSync';
+import { createBuildingManagerLifecycleCallbacks } from './building/buildingManagerLifecycleCallbacks';
+import {
+  createTranslateGizmoCallbacks,
+  createRotateGizmoCallbacks,
+} from './gizmos/gizmoEngineCallbacks';
+import { attachOptimizationProgressEmitter } from './editor/optimizationProgressBridge';
+import {
+  removePlacedObjectWithoutHistory,
+  removeGroundTilesAtCells as removeGroundTilesAtCellsFromCells,
+  deleteBuildingWithContentsFromScene,
+} from './editor/editorObjectDeletion';
+import { computeWorkingGridAlignmentFromPlacedMesh } from './placement/computeWorkingGridAlignment';
 
 export interface BluDesignEngineOptions {
   container: HTMLElement;
@@ -83,12 +150,9 @@ export interface BluDesignEngineOptions {
   readonly?: boolean;
 }
 
-// Local storage key for auto-save drafts
-const AUTOSAVE_STORAGE_KEY = 'bludesign-autosave-draft';
 const AUTOSAVE_DEBOUNCE_MS = 1000; // Wait 1 second after last change before saving
 
-// Special skin ID for restoring original asset materials (useful for imported GLBs)
-export const ORIGINAL_MATERIALS_SKIN_ID = 'skin-original-materials';
+export { ORIGINAL_MATERIALS_SKIN_ID } from './placement';
 
 export class BluDesignEngine {
   // Core Three.js objects
@@ -106,6 +170,9 @@ export class BluDesignEngine {
   private placementManager: PlacementManager;
   private buildingManager: BuildingManager;
   private floorManager: FloorManager;
+  private floorObjectReplication!: FloorObjectReplication;
+  private floorViewCoordinator!: FloorViewCoordinator;
+  private floorStructureOperations!: FloorStructureOperations;
   private skinManager: SkinManager;
   private actionHistory: ActionHistory;
   private clipboardManager: ClipboardManager;
@@ -114,25 +181,22 @@ export class BluDesignEngine {
   private inputCoordinator: InputCoordinator;
   private windowManager: WindowManager;
   private groundTileManager: GroundTileManager;
-  
-// Gizmo mode: 'translate' or 'rotate' (Alt key switches between them)
-  private gizmoMode: 'translate' | 'rotate' = 'translate';
-  
-  // Rotation state tracking for undo/redo
-  private rotationStartStates: Map<string, {
-    position: GridPosition;
-    rotation: number | undefined;
-    orientation: Orientation;
-    exactMeshPos?: { x: number; z: number };
-  }> | null = null;
-  
+  private placementCoordinator: PlacedObjectPlacementCoordinator;
+  private placementCompletion!: PlacementCompletionService;
+  private floorHistoryOperations!: FloorHistoryOperations;
+  private historyActionApplier!: HistoryActionApplier;
+  private gizmoController!: EditorGizmoController;
+  private rotationCoordinator!: EditorRotationCoordinator;
+
   // Reusable raycaster for hover detection (avoids creating new instances)
   private raycaster: THREE.Raycaster = new THREE.Raycaster();
+  private pointerNdc: THREE.Vector2 = new THREE.Vector2();
 
-  // Texture loader for skins with textures
-  private textureLoader: THREE.TextureLoader;
-  private textureCache: Map<string, THREE.Texture> = new Map();
-  
+  private readonly cachedTextures = new CachedTextureLoader();
+  private readonly placedObjectSkinApplicator = createPlacedObjectSkinApplicator({
+    loadTexture: (url) => this.cachedTextures.load(url),
+  });
+
   // State
   private container: HTMLElement;
   private isRunning: boolean = false;
@@ -142,14 +206,8 @@ export class BluDesignEngine {
   // Placement state
   private currentPlacementAsset: AssetMetadata | null = null;
   
-  // Auto-naming counters for smart objects (assetId -> count)
-  private objectNameCounters: Map<string, number> = new Map();
-  
-  // Auto-save state
-  private autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastAutoSaveTime: number = 0;
-  
-  
+  private draftAutoSave!: DraftAutoSaveScheduler;
+
   // Theme subscription cleanup
   private themeUnsubscribe: (() => void) | null = null;
   
@@ -160,35 +218,11 @@ export class BluDesignEngine {
   // External data source config (set from EditorCanvas for facility linking)
   private dataSourceConfig: DataSourceConfig | null = null;
   
-  // Pending move state for smooth visual feedback
-  private pendingMove: {
-    originalPositions: Map<string, { position: GridPosition; orientation: Orientation; rotation?: number; exactMeshPos?: { x: number; z: number } }>;
-    accumulatedDelta: { x: number; z: number };
-    commitTimer: ReturnType<typeof setTimeout> | null;
-    isBuildingMove: boolean;
-    buildingId: string | null;
-    buildingOriginalFootprints?: { minX: number; maxX: number; minZ: number; maxZ: number }[];
-    // Window-specific: track windows being dragged along walls
-    windowDragData?: Map<string, {
-      wallId: string;
-      originalWallPosition: number;
-      currentWallPosition: number;
-      wallStart: THREE.Vector3;
-      wallEnd: THREE.Vector3;
-      wallDirection: THREE.Vector3;
-      wallLength: number;
-    }>;
-  } | null = null;
-  private readonly MOVE_COMMIT_DELAY = 150; // ms to wait before committing move
+  private buildingMovePreviewController!: BuildingMovePreviewController;
+  private pendingMoveCoordinator!: PendingSelectionMoveCoordinator;
   
-  // Building move preview mesh (low-cost visual indicator during drag)
-  private buildingMovePreview: THREE.InstancedMesh | null = null;
-  private buildingMovePreviewOutline: THREE.LineSegments | null = null;
-  private readonly BUILDING_PREVIEW_COLOR = 0x147fd4; // Primary blue
-  private readonly BUILDING_PREVIEW_OUTLINE_COLOR = 0x0e5ba3; // Darker blue
-  
-  // Event system
-  private eventHandlers: Map<EngineEventType, Set<EngineEventHandler>> = new Map();
+  private readonly eventBus = new BluDesignEventBus();
+  private readonly draftStorage: FacilityDraftStorage;
   
   // Editor state
   private state: EditorState;
@@ -196,6 +230,7 @@ export class BluDesignEngine {
   constructor(options: BluDesignEngineOptions) {
     this.container = options.container;
     this.readonly = options.readonly ?? false;
+    this.draftStorage = new FacilityDraftStorage(DEFAULT_AUTOSAVE_STORAGE_KEY, localStorage);
     
     const config = { ...DEFAULT_RENDERER_CONFIG, ...options.rendererConfig };
     
@@ -229,7 +264,7 @@ export class BluDesignEngine {
     this.clock = new THREE.Clock();
     
     // Initialize state
-    this.state = this.createInitialState();
+    this.state = createEditorInitialState(this.readonly);
     
     // Initialize subsystems
     this.sceneManager = new SceneManager(this.scene);
@@ -251,30 +286,13 @@ export class BluDesignEngine {
       this.cameraController.getCamera(),
       this.container,
       (selection) => {
-        // Update 3D highlight state on selection change
-        this.updateSelectionHighlights(this.state.selection.selectedIds, selection.selectedIds);
-        
-        // Check if the actual selected IDs changed (not just hover)
-        const oldIds = new Set(this.state.selection.selectedIds);
-        const newIds = new Set(selection.selectedIds);
-        const selectionChanged = oldIds.size !== newIds.size || 
-          [...oldIds].some(id => !newIds.has(id));
-        
-        // Only clear building selection when actual selection changes
-        // (not on hover changes). selectBuilding will re-set this after calling selectMultipleUnfiltered
-        if (selectionChanged) {
-          this.state.selection.selectedBuildingId = undefined;
-        }
-        
-        // Preserve selectedBuildingId through the update
-        const preservedBuildingId = this.state.selection.selectedBuildingId;
-        this.state.selection = { ...selection, selectedBuildingId: preservedBuildingId };
-        this.emit('selection-changed', this.state.selection);
-        
-        // Update gizmo visibility based on selection (only if selection changed)
-        if (selectionChanged) {
-          this.updateGizmoVisibility();
-        }
+        applyEngineSelectionChangeFromManager(selection, {
+          state: this.state,
+          updateSelectionHighlights: (prev, next) =>
+            this.updateSelectionHighlights(prev, next),
+          emitSelectionChanged: (sel) => this.emit('selection-changed', sel),
+          updateGizmoVisibility: () => this.updateGizmoVisibility(),
+        });
       }
     );
     
@@ -303,20 +321,17 @@ export class BluDesignEngine {
         this.emit('state-updated', this.state);
       },
       (placedObject) => {
-        // Handle single asset placement
-        this.handleAssetPlaced(placedObject);
+        this.placementCompletion.handleAssetPlaced(placedObject);
       },
       (objectId) => {
         // Handle right-click delete during placement
         this.deleteObject(objectId);
       },
       (objects) => {
-        // Handle batch asset placement (e.g., ground tiles)
-        this.handleBatchAssetPlaced(objects);
+        void this.placementCompletion.handleBatchAssetPlaced(objects);
       },
       (footprint) => {
-        // Handle building placement
-        this.handleBuildingPlaced(footprint);
+        void this.placementCompletion.handleBuildingPlaced(footprint);
       }
     );
     
@@ -329,8 +344,12 @@ export class BluDesignEngine {
     });
     
     // Set up hover rotation matching callback
-    this.placementManager.setHoveredAssetRotationCallback((worldPos) => {
-      return this.getHoveredAssetRotation(worldPos);
+    this.placementManager.setHoveredAssetRotationCallback((worldPos, event) => {
+      return this.getHoveredAssetRotation(worldPos, event);
+    });
+
+    this.placementManager.setOnBuildingPlacementBlocked(() => {
+      this.emit('placement-blocked', { reason: 'aligned-grid' });
     });
     
     // Initialize action history
@@ -341,67 +360,7 @@ export class BluDesignEngine {
     
     // Initialize clipboard manager
     this.clipboardManager = new ClipboardManager();
-    
-    // Initialize building manager
-    this.buildingManager = new BuildingManager(
-      this.scene,
-      this.gridSystem,
-      AssetFactory,
-      {
-        onBuildingCreated: (building) => {
-          this.state.buildings.push(building);
-          this.emit('state-updated', this.state);
-          // Apply current theme to the new building's materials
-          const activeTheme = getThemeManager().getActiveSkinTheme();
-          this.applyThemeToScene(activeTheme);
-        },
-        onBuildingsMerged: (oldIds, newBuilding) => {
-          this.state.buildings = this.state.buildings.filter(b => !oldIds.includes(b.id));
-          this.state.buildings.push(newBuilding);
-          this.emit('state-updated', this.state);
-          // Apply current theme to the merged building's materials
-          const activeTheme = getThemeManager().getActiveSkinTheme();
-          this.applyThemeToScene(activeTheme);
-        },
-        onBuildingDeleted: (buildingId) => {
-          this.state.buildings = this.state.buildings.filter(b => b.id !== buildingId);
-          // Exit floor mode if no buildings left
-          if (this.state.buildings.length === 0) {
-            this.state.isFloorMode = false;
-            this.state.activeFloor = 0;
-            this.floorManager.clear();
-            this.selectionManager.setFloorMode(false, 0);
-            this.gridSystem.setGridY(0);
-          }
-          this.emit('state-updated', this.state);
-        },
-        onBuildingModified: (building) => {
-          // Update building in state
-          const idx = this.state.buildings.findIndex(b => b.id === building.id);
-          if (idx >= 0) {
-            this.state.buildings[idx] = building;
-          }
-          this.emit('state-updated', this.state);
-        },
-        onWallCreated: () => {
-          // Wall mesh is already added to scene by BuildingManager
-        },
-        onFloorTileCreated: () => {
-          // Floor tile mesh is already added to scene by BuildingManager
-        },
-      }
-    );
-    
-    // Connect building manager callbacks
-    // Remove any ground tiles (grass, pavement, etc.) when building is placed
-    this.buildingManager.setOnRemoveGroundTiles((cells) => {
-      this.removeGroundTilesAtCells(cells);
-    });
-    
-    // Connect building manager to placement manager for smart door/window placement
-    this.placementManager.setBuildingManager(this.buildingManager);
-    
-    // Initialize floor manager
+
     this.floorManager = new FloorManager(
       this.scene,
       this.gridSystem,
@@ -416,18 +375,100 @@ export class BluDesignEngine {
         },
       }
     );
+
+    // Initialize building manager
+    this.buildingManager = new BuildingManager(
+      this.scene,
+      this.gridSystem,
+      AssetFactory,
+      createBuildingManagerLifecycleCallbacks({
+        state: this.state,
+        applyThemeToScene: (theme) => this.applyThemeToScene(theme),
+        getActiveSkinTheme: () => getThemeManager().getActiveSkinTheme(),
+        floorManager: this.floorManager,
+        selectionManager: this.selectionManager,
+        gridSystem: this.gridSystem,
+        emitStateUpdated: () => this.emit('state-updated', this.state),
+      })
+    );
+    
+    // Connect building manager callbacks
+    // Remove any ground tiles (grass, pavement, etc.) when building is placed
+    this.buildingManager.setOnRemoveGroundTiles((cells) => {
+      this.removeGroundTilesAtCells(cells);
+    });
+    
+    // Connect building manager to placement manager for smart door/window placement
+    this.placementManager.setBuildingManager(this.buildingManager);
+
+    this.buildingMovePreviewController = new BuildingMovePreviewController({
+      scene: this.scene,
+      gridSystem: this.gridSystem,
+      getFloorY: (floor) => this.floorManager.getFloorY(floor),
+    });
     
     // Initialize skin manager
     this.skinManager = new SkinManager();
-    
-    // Initialize texture loader for skin textures
-    this.textureLoader = new THREE.TextureLoader();
     
     // Initialize window manager for instanced window rendering and wall-constrained dragging
     this.windowManager = new WindowManager(this.scene, this.gridSystem);
     
     // Initialize ground tile manager for instanced ground tile rendering
     this.groundTileManager = new GroundTileManager(this.scene, this.gridSystem);
+
+    this.placementCoordinator = new PlacedObjectPlacementCoordinator({
+      gridSystem: this.gridSystem,
+      scene: this.scene,
+      sceneManager: this.sceneManager,
+      buildingManager: this.buildingManager,
+      groundTileManager: this.groundTileManager,
+      floorManager: this.floorManager,
+      materials: {
+        storeDefaultMaterials: (m) => storeDefaultMaterials(m),
+        resetToDefaultMaterials: (g) =>
+          resetToDefaultMaterials(g, {
+            getEnvironmentMap: () => this.sceneManager.getEnvironmentMap(),
+          }),
+        applySkinToObject: (o, s) =>
+          this.placedObjectSkinApplicator.applySkinToObject(o, s),
+        applyActiveThemeSkin: (o, d) =>
+          this.placedObjectSkinApplicator.applyActiveThemeSkin(o, d),
+      },
+      getSkinById: (id) => getSkinRegistry().getSkin(id) ?? undefined,
+    });
+
+    this.placementCompletion = new PlacementCompletionService({
+      getStateSlice: () => ({
+        isFloorMode: this.state.isFloorMode,
+        buildings: this.state.buildings,
+      }),
+      getCurrentPlacementAsset: () => this.currentPlacementAsset,
+      setStateBuildings: (buildings) => {
+        this.state.buildings = buildings;
+      },
+      afterNewBuildingCreated: () => {
+        this.state.isFloorMode = true;
+        this.state.activeFloor = 0;
+        this.floorManager.registerFloor(0);
+        this.floorManager.setFloor(0);
+        this.selectionManager.setFloorMode(true, 0);
+      },
+      cancelPlacement: () => this.placementManager.cancelPlacement(),
+      placementCoordinator: this.placementCoordinator,
+      scene: this.scene,
+      sceneManager: this.sceneManager,
+      gridSystem: this.gridSystem,
+      groundTileManager: this.groundTileManager,
+      buildingManager: this.buildingManager,
+      floorManager: this.floorManager,
+      actionHistory: this.actionHistory,
+      emitObjectPlaced: (o) => this.emit('object-placed', o),
+      emitProgressUpdated: (payload) => this.emit('progress-updated', payload),
+      emitProgressComplete: (payload) => this.emit('progress-complete', payload),
+      emitObjectsPlaced: (placed) => this.emit('objects-placed', placed),
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+      scheduleAutoSave: () => this.scheduleAutoSave(),
+    });
     
     // Set optimization references for ground tile selection performance
     this.selectionManager.setOptimizationReferences(this.gridSystem, this.groundTileManager);
@@ -435,23 +476,11 @@ export class BluDesignEngine {
     // Set up optimization progress callback
     // Optimization progress is mapped from 30-100% (batch placement uses 0-30%)
     const optimizationManager = OptimizationManager.getInstance();
-    optimizationManager.setProgressCallback((progress) => {
-      // OptimizationManager now reports progress based on completed contexts
-      // Progress is already mapped to 30-100% range
-      this.emit('progress-updated', {
-        percentage: progress.percentage,
-        message: progress.message,
-        operation: 'processing', // Unified operation name
-      });
-      
-      // Emit completion when we reach 100% (only once, when all optimizations complete)
-      if (progress.percentage >= 100) {
-        // Small delay to ensure 100% is visible before hiding
-        setTimeout(() => {
-          this.emit('progress-complete', { operation: 'processing' });
-        }, 300);
-      }
-    });
+    attachOptimizationProgressEmitter(
+      optimizationManager,
+      (payload) => this.emit('progress-updated', payload),
+      (payload) => this.emit('progress-complete', payload)
+    );
     
     // Initialize rendering settings manager
     this.renderingSettings = RenderingSettingsManager.getInstance();
@@ -477,44 +506,15 @@ export class BluDesignEngine {
       this.cameraController.getCamera(),
       this.container,
       this.gridSystem,
-      {
-        onDragStart: (axis) => {
-          console.log('[TranslateGizmo] Drag started:', axis);
-          // Disable camera controls during gizmo drag
-          this.cameraController.setControlsEnabled(false);
-          // Disable selection during gizmo drag
-          this.selectionManager.setEnabled(false);
-        },
-        onDrag: (deltaX, deltaZ, axis) => {
-          this.handleGizmoDrag(deltaX, deltaZ, axis);
-        },
-        onDragEnd: (axis) => {
-          console.log('[TranslateGizmo] Drag ended:', axis);
-          // Commit any pending move immediately
-          this.commitPendingMoveNow();
-          // Re-enable camera controls
-          this.cameraController.setControlsEnabled(true);
-          // Re-enable selection (if in select mode)
-          const isSelectionTool = this.state.activeTool === EditorTool.SELECT || 
-                                   this.state.activeTool === EditorTool.SELECT_BUILDING;
-          const isViewTool = this.state.activeTool === EditorTool.VIEW;
-          this.selectionManager.setEnabled(isSelectionTool || isViewTool);
-          // Update drag selection enabled state
-          // VIEW tool: no drag selection (clicks only)
-          this.selectionManager.setDragSelectionEnabled(isSelectionTool);
-          // Re-show gizmo at new position
-          this.updateGizmoPosition();
-        },
-        onHoverChange: (isHovered) => {
-          // When hovering over gizmo, temporarily disable camera to prevent conflicts
-          if (isHovered) {
-            this.cameraController.setControlsEnabled(false);
-          } else if (!this.translateGizmo.isDraggingGizmo()) {
-            // Only re-enable if not currently dragging
-            this.cameraController.setControlsEnabled(true);
-          }
-        },
-      }
+      createTranslateGizmoCallbacks({
+        cameraController: this.cameraController,
+        selectionManager: this.selectionManager,
+        getActiveTool: () => this.state.activeTool,
+        onGridDelta: (dx, dz, axis) => this.handleGizmoDrag(dx, dz, axis),
+        commitPendingMoveNow: () => this.commitPendingMoveNow(),
+        updateGizmoPosition: () => this.updateGizmoPosition(),
+        getTranslateGizmo: () => this.translateGizmo,
+      })
     );
     
     // Initialize rotate gizmo for Y-axis rotation
@@ -522,47 +522,68 @@ export class BluDesignEngine {
       this.scene,
       this.cameraController.getCamera(),
       this.container,
-      {
-        onDragStart: () => {
-          console.log('[RotateGizmo] Drag started');
-          this.cameraController.setControlsEnabled(false);
-          this.selectionManager.setEnabled(false);
-          // Capture start state for undo
-          this.captureRotationStartState();
-        },
-        onDrag: (deltaAngle) => {
-          this.handleRotateGizmoDrag(deltaAngle);
-        },
-        onDragEnd: () => {
-          console.log('[RotateGizmo] Drag ended');
-          // Record rotation to history before re-enabling controls
-          this.recordRotationToHistory();
-          this.cameraController.setControlsEnabled(true);
-          const isSelectionTool = this.state.activeTool === EditorTool.SELECT || 
-                                   this.state.activeTool === EditorTool.SELECT_BUILDING;
-          const isViewTool = this.state.activeTool === EditorTool.VIEW;
-          this.selectionManager.setEnabled(isSelectionTool || isViewTool);
-          this.selectionManager.setDragSelectionEnabled(isSelectionTool);
-          this.updateGizmoVisibility();
-        },
-        onHoverChange: (isHovered) => {
-          if (isHovered) {
-            this.cameraController.setControlsEnabled(false);
-          } else if (!this.rotateGizmo.isDraggingGizmo()) {
-            this.cameraController.setControlsEnabled(true);
-          }
-        },
-      }
+      this.gridSystem,
+      createRotateGizmoCallbacks({
+        cameraController: this.cameraController,
+        selectionManager: this.selectionManager,
+        getActiveTool: () => this.state.activeTool,
+        onRotateDelta: (deltaAngle) => this.handleRotateGizmoDrag(deltaAngle),
+        captureRotationUndoStart: () => this.rotationCoordinator.captureStartState(),
+        recordRotationUndoEnd: () => this.rotationCoordinator.recordToHistory(),
+        updateGizmoVisibility: () => this.updateGizmoVisibility(),
+        getRotateGizmo: () => this.rotateGizmo,
+      })
     );
-    
+
+    this.gizmoController = new EditorGizmoController(this.translateGizmo, this.rotateGizmo, {
+      isReadonly: () => this.readonly,
+      getSelectedIds: () => this.state.selection.selectedIds,
+      getFloorY: () => this.floorManager.getCurrentFloorY(),
+      getSelectionGridCenter: () => this.getSelectionCenter(),
+      getSelectionGizmoPivotXZ: () => this.getSelectionGizmoPivotXZ(),
+      getFirstSelectedPlacedObject: () => {
+        const id = this.state.selection.selectedIds[0];
+        return id ? this.sceneManager.getObjectData(id) : undefined;
+      },
+    });
+
+    this.rotationCoordinator = new EditorRotationCoordinator({
+      getSelectedIds: () => this.state.selection.selectedIds,
+      getActiveTool: () => this.state.activeTool,
+      isPlacementActive: () => this.placementManager.isActive(),
+      hasGridAlignment: () => !!this.gridSystem.getGridAlignment(),
+      applyFinePlacementRotationDelta: (delta) =>
+        this.placementManager.applyFineRotationDelta(delta),
+      rotateSelectionByAngle: (delta) => this.rotateSelectionByAngle(delta),
+      getObjectData: (id) => this.sceneManager.getObjectData(id) ?? undefined,
+      pushRotateHistory: (before, after) => this.actionHistory.pushRotate(before, after),
+    });
+
+    this.pendingMoveCoordinator = new PendingSelectionMoveCoordinator({
+      getSelectedIds: () => this.state.selection.selectedIds,
+      getSelectedBuildingId: () => this.state.selection.selectedBuildingId,
+      getActiveFloor: () => this.state.activeFloor,
+      gridSystem: this.gridSystem,
+      sceneManager: this.sceneManager,
+      buildingManager: this.buildingManager,
+      buildingMovePreviewController: this.buildingMovePreviewController,
+      selectionHighlightManager: this.selectionHighlightManager,
+      gizmoController: this.gizmoController,
+      actionHistory: this.actionHistory,
+      validateMove: (obj, newPos, exclude) => this.validateMovePosition(obj, newPos, exclude),
+      translateBuilding: (id, dx, dz) => this.translateBuilding(id, dx, dz),
+      refreshWallSelectionAfterBuildingMove: () => this.updateSelectionHighlightsForBuilding(),
+      scheduleAutoSave: () => this.scheduleAutoSave(),
+    });
+
     // Set up Alt key callbacks for gizmo switching
     this.inputCoordinator.setAltKeyCallbacks({
       onAltDown: () => this.onAltKeyDown(),
       onAltUp: () => this.onAltKeyUp(),
-      onAltQ: (holdStartTime) => this.handleAltQRotation(holdStartTime),
-      onAltE: (holdStartTime) => this.handleAltERotation(holdStartTime),
-      onQUp: () => this.onRotationKeyUp(),
-      onEUp: () => this.onRotationKeyUp(),
+      onAltQ: (holdStartTime) => this.rotationCoordinator.handleAltQHold(holdStartTime),
+      onAltE: (holdStartTime) => this.rotationCoordinator.handleAltEHold(holdStartTime),
+      onQUp: () => this.rotationCoordinator.onRotationKeyUp(),
+      onEUp: () => this.rotationCoordinator.onRotationKeyUp(),
     });
     
     // Attach to DOM
@@ -580,212 +601,107 @@ export class BluDesignEngine {
     this.sceneManager.setupLighting();
     this.sceneManager.setupEnvironmentMap(this.renderer);
     this.gridSystem.create();
-    
-    // Register input handlers with priority system
+
+    this.initializeEditorSubsystems();
+
     this.registerInputHandlers();
+
+    this.setTool(this.state.activeTool);
+
+    this.floorHistoryOperations = new FloorHistoryOperations({
+      buildingManager: this.buildingManager,
+      floorManager: this.floorManager,
+      sceneManager: this.sceneManager,
+      gridSystem: this.gridSystem,
+      placeObjectInternal: (o) => this.placeObjectInternal(o),
+      deleteObjectInternal: (id) => this.deleteObjectInternal(id),
+      syncBuildingsState: () => {
+        this.state.buildings = this.buildingManager.getAllBuildings();
+      },
+      applyThemeToScene: (theme) => this.applyThemeToScene(theme),
+      getActiveSkinTheme: () => getThemeManager().getActiveSkinTheme(),
+      floorObjectReplication: this.floorObjectReplication,
+      setFloorLevel: (level) => this.setFloor(level),
+    });
+
+    this.historyActionApplier = new HistoryActionApplier({
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+      deleteObjectInternal: (id) => this.deleteObjectInternal(id),
+      placeObjectInternal: (o) => this.placeObjectInternal(o),
+      moveObjectInternal: (objectId, position, orientation, rotation, exactMeshPos) =>
+        moveObjectInternal(objectId, position, orientation, rotation, exactMeshPos, {
+          sceneManager: this.sceneManager,
+          gridSystem: this.gridSystem,
+        }),
+      applyRotationState: (states) =>
+        applyRotationState(states, {
+          sceneManager: this.sceneManager,
+          gridSystem: this.gridSystem,
+          floorManager: this.floorManager,
+          onComplete: () => this.updateGizmoVisibility(),
+        }),
+      removeBuildingInternal: (id) => this.removeBuildingInternal(id),
+      recreateBuildingInternal: (b) => this.recreateBuildingInternal(b),
+      translateBuilding: (buildingId, deltaX, deltaZ) => this.translateBuilding(buildingId, deltaX, deltaZ),
+      onBuildingMoveSelectionSync: (buildingId) => {
+        if (this.state.selection.selectedBuildingId === buildingId) {
+          this.updateSelectionHighlightsForBuilding();
+        }
+      },
+      undoFloorAdd: (data) => this.floorHistoryOperations.undoFloorAdd(data),
+      redoFloorAdd: (data) => this.floorHistoryOperations.redoFloorAdd(data),
+      undoFloorDelete: (data) => this.floorHistoryOperations.undoFloorDelete(data),
+      redoFloorDelete: (data) => this.floorHistoryOperations.redoFloorDelete(data),
+      undoFloorInsert: (data) => this.floorHistoryOperations.undoFloorInsert(data),
+      redoFloorInsert: (data) => this.floorHistoryOperations.redoFloorInsert(data),
+    });
   }
 
   /**
    * Register input handlers with the InputCoordinator
    */
   private registerInputHandlers(): void {
-    // Get handler methods from managers
-    const selectionHandlers = this.selectionManager.getInputHandlers();
-    const placementHandlers = this.placementManager.getInputHandlers();
-    
-    // Gizmo handler (highest priority) - blocks other handlers when active
-    this.inputCoordinator.registerHandler({
-      id: 'gizmo',
-      priority: InputPriority.GIZMO,
-      enabled: true,
-      handle: (event: Event, eventType: InputEventType): boolean => {
-        // Never block wheel events - camera zoom should always work
-        if (eventType === 'wheel') return false;
-        // Only block left-click events when gizmo is active
-        if (event instanceof MouseEvent && event.button === 0) {
-          const translateActive = this.translateGizmo.isDraggingGizmo() || this.translateGizmo.isHovered();
-          const rotateActive = this.rotateGizmo.isDraggingGizmo() || this.rotateGizmo.isGizmoHovered();
-          return translateActive || rotateActive;
-        }
-        return false;
-      },
-      wantsInput: () => {
-        const translateActive = this.translateGizmo.isHovered() || this.translateGizmo.isDraggingGizmo();
-        const rotateActive = this.rotateGizmo.isGizmoHovered() || this.rotateGizmo.isDraggingGizmo();
-        return translateActive || rotateActive;
-      },
-      // Gizmo handles its own events via direct listeners on its meshes
+    registerBluDesignInputHandlers({
+      inputCoordinator: this.inputCoordinator,
+      getActiveTool: () => this.state.activeTool,
+      placementManager: this.placementManager,
+      selectionManager: this.selectionManager,
+      cameraController: this.cameraController,
+      translateGizmo: this.translateGizmo,
+      rotateGizmo: this.rotateGizmo,
     });
-
-    // Placement handler - routes events to PlacementManager
-    this.inputCoordinator.registerHandler({
-      id: 'placement',
-      priority: InputPriority.PLACEMENT,
-      enabled: this.state.activeTool === EditorTool.PLACE,
-      handle: (event: Event, eventType: InputEventType): boolean => {
-        // When Ctrl is held, let camera handle rotation - don't block
-        if (event instanceof MouseEvent && event.ctrlKey) {
-          return false;
-        }
-        // Block lower priority handlers for left-click when placing
-        if (this.placementManager.isActive() && event instanceof MouseEvent && event.button === 0) {
-          if (eventType === 'mousedown' || eventType === 'mousemove') {
-            return true;
-          }
-        }
-        return false;
-      },
-      wantsInput: () => this.state.activeTool === EditorTool.PLACE,
-      // Route events to PlacementManager
-      onMouseDown: (e: MouseEvent) => {
-        // Skip if Ctrl is held (camera rotation)
-        if (e.ctrlKey) return;
-        placementHandlers.onMouseDown?.(e);
-      },
-      onMouseUp: placementHandlers.onMouseUp,
-      onMouseMove: (e: MouseEvent) => {
-        // Always update ghost position, even during camera rotation
-        placementHandlers.onMouseMove?.(e);
-      },
-      onContextMenu: placementHandlers.onContextMenu,
-      onKeyDown: (e: KeyboardEvent) => {
-        // Handle Ctrl for camera rotation
-        if (e.key === 'Control' || e.key === 'Meta') {
-          this.cameraController.setRotationEnabled(true);
-        }
-        placementHandlers.onKeyDown?.(e);
-      },
-      onKeyUp: (e: KeyboardEvent) => {
-        // Handle Ctrl release
-        if (e.key === 'Control' || e.key === 'Meta') {
-          this.cameraController.setRotationEnabled(false);
-        }
-        placementHandlers.onKeyUp?.(e);
-      },
-    });
-
-    // Selection handler - routes events to SelectionManager
-    this.inputCoordinator.registerHandler({
-      id: 'selection',
-      priority: InputPriority.SELECTION,
-      enabled: this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.VIEW,
-      handle: (event: Event, eventType: InputEventType): boolean => {
-        // When Ctrl is held, let camera handle rotation - don't block
-        if (event instanceof MouseEvent && event.ctrlKey) {
-          return false;
-        }
-        // For VIEW tool, don't block mousedown/mousemove (allow camera to handle drags for rotation)
-        // VIEW tool only handles clicks (not drags) - clicks are handled via onClick
-        if (this.state.activeTool === EditorTool.VIEW) {
-          // Don't block mousedown or mousemove - let camera handler process drags for rotation
-          // Selection will still get the click event for single-click selection
-          if (eventType === 'mousedown' || eventType === 'mousemove') {
-            return false;
-          }
-          // Only block click events if we want to handle them (but we'll let them through for single-click selection)
-          return false;
-        }
-        // Block lower priority handlers for left-click when selecting (SELECT and SELECT_BUILDING tools)
-        if (this.selectionManager.getEnabled() && event instanceof MouseEvent && event.button === 0) {
-          if (eventType === 'mousedown' || eventType === 'mousemove') {
-            return true;
-          }
-        }
-        return false;
-      },
-      wantsInput: () => this.state.activeTool === EditorTool.SELECT || this.state.activeTool === EditorTool.SELECT_BUILDING || this.state.activeTool === EditorTool.VIEW,
-      // Route events to SelectionManager
-      onMouseDown: (e: MouseEvent) => {
-        // Skip if Ctrl is held (camera rotation)
-        if (e.ctrlKey) return;
-        // For VIEW tool, still track mousedown so we can detect clicks vs drags
-        // But we won't block camera - camera will handle the drag
-        selectionHandlers.onMouseDown?.(e);
-      },
-      onMouseUp: selectionHandlers.onMouseUp,
-      onMouseMove: (e: MouseEvent) => {
-        // For VIEW tool, still track mousemove so SelectionManager can detect if it's a click or drag
-        // But we won't block camera - camera will handle the drag rotation
-        selectionHandlers.onMouseMove?.(e);
-      },
-      onClick: selectionHandlers.onClick,
-      onDoubleClick: selectionHandlers.onDoubleClick,
-      onKeyDown: (e: KeyboardEvent) => {
-        // Handle Ctrl for camera rotation
-        if (e.key === 'Control' || e.key === 'Meta') {
-          this.cameraController.setRotationEnabled(true);
-        }
-        selectionHandlers.onKeyDown?.(e);
-      },
-      onKeyUp: (e: KeyboardEvent) => {
-        // Handle Ctrl release
-        if (e.key === 'Control' || e.key === 'Meta') {
-          this.cameraController.setRotationEnabled(false);
-        }
-        selectionHandlers.onKeyUp?.(e);
-      },
-    });
-
-    // Camera handler (lowest priority) - OrbitControls handles right-click pan and wheel zoom
-    this.inputCoordinator.registerHandler({
-      id: 'camera',
-      priority: InputPriority.CAMERA,
-      enabled: true,
-      handle: (): boolean => {
-        // Never block - camera is lowest priority
-        return false;
-      },
-      wantsInput: () => false,
-    });
-    
-    // Subscribe to theme changes
-    const themeManager = getThemeManager();
-    this.themeUnsubscribe = themeManager.onThemeChange((theme) => {
-      this.applyThemeToScene(theme);
-    });
-    
-    // Apply initial theme immediately
-    const initialTheme = themeManager.getActiveSkinTheme();
-    this.applyThemeToScene(initialTheme);
-    
-    // Configure the initial tool (this sets up SelectionManager properly)
-    // This is critical for readonly mode to ensure VIEW tool is active and configured
-    this.setTool(this.state.activeTool);
   }
 
-  private createInitialState(): EditorState {
-    return {
-      mode: this.readonly ? EditorMode.VIEW : EditorMode.EDIT,
-      activeTool: this.readonly ? EditorTool.VIEW : EditorTool.SELECT,
-      camera: {
-        mode: CameraMode.FREE,
-        isometricAngle: IsometricAngle.SOUTH_WEST,
-        position: new THREE.Vector3(30, 30, 30),
-        target: new THREE.Vector3(0, 0, 0),
-        zoom: 1,
-      },
-      selection: {
-        selectedIds: [],
-        hoveredId: null,
-        isMultiSelect: false,
-      },
-      snap: {
-        enabled: true,
-        gridSize: GridSize.TINY,
-      },
-      activeAssetId: null,
-      activeOrientation: Orientation.NORTH,
-      placementPreview: null,
-      activeFloor: 0,
-      isFloorMode: false,
-      buildings: [],
-      ui: {
-        showGrid: true,
-        showCallouts: true,
-        showBoundingBoxes: false,
-        panelsCollapsed: {},
-      },
-    };
+  /**
+   * Theme subscription, floor coordinators, draft autosave — runs before input registration and initial tool.
+   */
+  private initializeEditorSubsystems(): void {
+    const sub = initializeBluDesignEditorSubsystems({
+      debounceMs: AUTOSAVE_DEBOUNCE_MS,
+      readonly: this.readonly,
+      state: this.state,
+      draftStorage: this.draftStorage,
+      sceneManager: this.sceneManager,
+      buildingManager: this.buildingManager,
+      floorManager: this.floorManager,
+      selectionManager: this.selectionManager,
+      placementManager: this.placementManager,
+      placementCompletion: this.placementCompletion,
+      actionHistory: this.actionHistory,
+      applyThemeToScene: (theme) => this.applyThemeToScene(theme),
+      exportSceneData: () => this.exportSceneData(),
+      emitObjectPlaced: (o) => this.emit('object-placed', o),
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+      emitAutosaveComplete: (payload) => this.emit('autosave-complete', payload),
+      setWorkingGridAlignment: (a) => this.setWorkingGridAlignment(a),
+      deleteObjectInternal: (id) => this.deleteObjectInternal(id),
+      scheduleAutoSave: () => this.scheduleAutoSave(),
+    });
+    this.themeUnsubscribe = sub.themeUnsubscribe;
+    this.floorObjectReplication = sub.floorObjectReplication;
+    this.floorViewCoordinator = sub.floorViewCoordinator;
+    this.floorStructureOperations = sub.floorStructureOperations;
+    this.draftAutoSave = sub.draftAutoSave;
   }
 
   private setupResizeObserver(): void {
@@ -857,7 +773,14 @@ export class BluDesignEngine {
   // ==========================================================================
 
   getState(): EditorState {
-    return { ...this.state };
+    // Single source of truth for working grid: GridSystem (avoid ui vs engine drift)
+    return {
+      ...this.state,
+      ui: {
+        ...this.state.ui,
+        gridAlignment: this.gridSystem.getGridAlignment(),
+      },
+    };
   }
 
   getScene(): THREE.Scene {
@@ -899,34 +822,10 @@ export class BluDesignEngine {
     this.state.selection.selectedIds = [objectId];
     this.emit('selection-changed', this.state.selection);
     
-    // Calculate object center and size
-    const box = new THREE.Box3().setFromObject(mesh);
-    const center = new THREE.Vector3();
-    const size = new THREE.Vector3();
-    box.getCenter(center);
-    box.getSize(size);
-    
-    // Get the maximum dimension of the object
-    const maxDim = Math.max(size.x, size.y, size.z);
-    
-    // Calculate distance to make object ~25% of screen
-    // For isometric camera, we need to adjust zoom/position
-    // A multiplier of ~2.0 will make the object about 25% of the view
-    const targetDistance = maxDim * 2.0;
-    
-    // Use current camera angle to calculate new position
-    const camera = this.cameraController.getCamera();
-    const currentDir = new THREE.Vector3();
-    camera.getWorldDirection(currentDir);
-    
-    // Calculate the offset from center to new camera position
-    // Keep the same angle but move further back
-    const offset = currentDir.negate().multiplyScalar(Math.max(targetDistance, 12)); // Minimum distance of 12 units
-    offset.y = Math.max(offset.y, targetDistance * 0.5); // Ensure some elevation
-    
-    const newCameraPos = center.clone().add(offset);
-    
-    // Animate camera to focus on object center with zoom
+    const { center, newCameraPos } = computeFocusOrbitForPlacedObjectMesh(
+      mesh,
+      this.cameraController.getCamera()
+    );
     this.cameraController.focusOnWithDistance(center, newCameraPos, true);
   }
 
@@ -944,53 +843,16 @@ export class BluDesignEngine {
       this.toggleFullBuildingView();
     }
     
-    // Select the building
     this.selectBuilding(buildingId);
-    
-    // Calculate building bounds
-    const footprints = building.footprints;
-    if (footprints.length === 0) return;
-    
-    // Find overall bounds
-    let minX = Infinity, maxX = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-    for (const fp of footprints) {
-      minX = Math.min(minX, fp.minX);
-      maxX = Math.max(maxX, fp.maxX);
-      minZ = Math.min(minZ, fp.minZ);
-      maxZ = Math.max(maxZ, fp.maxZ);
-    }
-    
-    // Calculate center and size
-    const gridSize = this.gridSystem.getGridSize();
-    const centerX = ((minX + maxX) / 2) * gridSize;
-    const centerZ = ((minZ + maxZ) / 2) * gridSize;
-    const height = building.floors.length * FLOOR_HEIGHT * gridSize;
-    const centerY = height / 2;
-    
-    const center = new THREE.Vector3(centerX, centerY, centerZ);
-    
-    // Calculate building dimensions
-    const width = (maxX - minX + 1) * gridSize;
-    const depth = (maxZ - minZ + 1) * gridSize;
-    const maxDim = Math.max(width, depth, height);
-    
-    // Calculate distance to fit building in view (about 60% of screen)
-    const targetDistance = maxDim * 1.8;
-    
-    // Use current camera angle to calculate new position
-    const camera = this.cameraController.getCamera();
-    const currentDir = new THREE.Vector3();
-    camera.getWorldDirection(currentDir);
-    
-    // Calculate the offset from center to new camera position
-    const offset = currentDir.negate().multiplyScalar(Math.max(targetDistance, 15));
-    offset.y = Math.max(offset.y, targetDistance * 0.5);
-    
-    const newCameraPos = center.clone().add(offset);
-    
-    // Animate camera to focus on building
-    this.cameraController.focusOnWithDistance(center, newCameraPos, true);
+
+    const orbit = computeFocusOrbitForBuilding(
+      building,
+      this.gridSystem.getGridSize(),
+      this.cameraController.getCamera()
+    );
+    if (!orbit) return;
+
+    this.cameraController.focusOnWithDistance(orbit.center, orbit.newCameraPos, true);
   }
 
   getSelectionManager(): SelectionManager {
@@ -1045,258 +907,27 @@ export class BluDesignEngine {
    * Update an object's binding to real-world data
    */
   updateObjectBinding(id: string, binding: EntityBinding | undefined): void {
-    const obj = this.sceneManager.getObject(id);
-    if (obj) {
-      const placedObj = this.sceneManager.getObjectData(id);
-      if (placedObj) {
-        if (binding) {
-          // Map entity types to the binding's expected types
-          let entityType: 'unit' | 'device' | 'facility' = 'unit';
-          if (binding.entityType === 'gate' || binding.entityType === 'elevator' || binding.entityType === 'door' || binding.entityType === 'device') {
-            entityType = 'device';
-          } else if (binding.entityType === 'unit') {
-            entityType = 'unit';
-          }
-          
-          placedObj.binding = {
-            entityType,
-            entityId: binding.entityId,
-            currentState: placedObj.binding?.currentState ?? DeviceState.UNKNOWN,
-          };
-        } else {
-          placedObj.binding = undefined;
-        }
-        this.emit('state-updated', this.state);
-      }
-    }
+    updatePlacedObjectBinding(id, binding, {
+      getObject: (oid) => this.sceneManager.getObject(oid),
+      getObjectData: (oid) => this.sceneManager.getObjectData(oid),
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+    });
   }
 
   /**
    * Update an object's skin override
    */
   updateObjectSkin(id: string, skinId: string | undefined): void {
-    const obj = this.sceneManager.getObject(id);
-    if (obj) {
-      const placedObj = this.sceneManager.getObjectData(id);
-      if (placedObj) {
-        if (skinId) {
-          // Store skinId at the top level of PlacedObject for consistent access
-          placedObj.skinId = skinId;
-          
-          // Check if this is the special "original materials" skin
-          if (skinId === ORIGINAL_MATERIALS_SKIN_ID) {
-            // Store default materials if not already stored
-            this.storeDefaultMaterials(obj as THREE.Group);
-            // Restore original materials (from imported GLB, etc.)
-            this.resetToDefaultMaterials(obj as THREE.Group);
-            console.log(`[updateObjectSkin] Restored original materials for object ${id}`);
-          } else {
-            // Store default materials if not already stored
-            this.storeDefaultMaterials(obj as THREE.Group);
-            // Apply the skin from SkinRegistry (contains both built-in and custom skins)
-            const skinRegistry = getSkinRegistry();
-            const skin = skinRegistry.getSkin(skinId);
-            if (skin) {
-              console.log(`[updateObjectSkin] Applying skin "${skin.name}" to object ${id}`);
-              this.applySkinToObject(obj as THREE.Group, skin);
-            } else {
-              console.warn(`[updateObjectSkin] Skin "${skinId}" not found in registry`);
-            }
-          }
-        } else {
-          delete placedObj.skinId;
-          // Reset to default materials, then apply current theme
-          this.resetToDefaultMaterials(obj as THREE.Group);
-          // Re-apply theme since skin override is removed
-          this.applyActiveThemeSkin(obj as THREE.Group, placedObj);
-        }
-        this.emit('state-updated', this.state);
-        this.scheduleAutoSave();
-      }
-    }
-  }
-
-  /**
-   * Store default material properties before applying a skin
-   * Stores materials for ALL meshes (not just those with partName) to support imported GLBs
-   * We store CLONES of materials on the MESH (not the material) since materials get replaced by skins
-   */
-  private storeDefaultMaterials(object: THREE.Object3D): void {
-    const group = object as THREE.Group;
-    group.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        // Skip if already stored on the mesh
-        if (child.userData.originalMaterialsStored) return;
-        
-        // Handle both single materials and material arrays
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        const clonedMaterials: THREE.Material[] = [];
-        
-        for (let i = 0; i < materials.length; i++) {
-          const mat = materials[i] as THREE.MeshStandardMaterial;
-          if (mat) {
-            try {
-              // Clone the ENTIRE material to preserve all properties
-              const clonedMat = mat.clone();
-              clonedMaterials.push(clonedMat);
-              console.log(`[storeDefaultMaterials] Stored clone on mesh: color=${clonedMat.color?.getHexString()}, metalness=${clonedMat.metalness}, roughness=${clonedMat.roughness}`);
-            } catch (e) {
-              console.warn('[storeDefaultMaterials] Failed to clone material:', e);
-              clonedMaterials.push(mat); // Store reference as fallback
-            }
-          }
-        }
-        
-        // Store on the MESH, not the material (materials get replaced by skins)
-        child.userData.originalMaterialClones = clonedMaterials;
-        child.userData.originalMaterialsStored = true;
-        
-        // Also store basic properties for backward compatibility (for partName-based meshes)
-        if (child.userData.partName && !child.userData.defaultMaterial) {
-          const mat = materials[0] as THREE.MeshStandardMaterial;
-          if (mat) {
-            child.userData.defaultMaterial = {
-              color: mat.color ? '#' + mat.color.getHexString() : '#ffffff',
-              metalness: mat.metalness ?? 0,
-              roughness: mat.roughness ?? 1,
-              emissive: mat.emissive ? '#' + mat.emissive.getHexString() : '#000000',
-              emissiveIntensity: mat.emissiveIntensity ?? 0,
-              transparent: mat.transparent ?? false,
-              opacity: mat.opacity ?? 1,
-            };
-          }
-        }
-      }
-    });
-  }
-
-  /**
-   * Check if a texture is valid and can be used by the renderer
-   * A valid texture must have a matrix property with elements array
-   */
-  private isValidTexture(texture: THREE.Texture | null | undefined): texture is THREE.Texture {
-    if (!texture) return false;
-    // Check that this is actually a Texture instance
-    if (!(texture instanceof THREE.Texture)) return false;
-    // Check that the texture has the required matrix property for UV transforms
-    // This is what Three.js accesses in refreshTransformUniform
-    if (!texture.matrix) {
-      // Try to fix the texture by creating a new matrix
-      try {
-        texture.matrix = new THREE.Matrix3();
-        console.warn('[isValidTexture] Fixed missing matrix on texture');
-      } catch {
-        return false;
-      }
-    }
-    if (!texture.matrix.elements) return false;
-    return true;
-  }
-
-  /**
-   * Reset mesh materials to their stored defaults
-   * Uses the cloned original materials stored on the MESH (not material userData)
-   * This survives material replacement from skin application
-   */
-  private resetToDefaultMaterials(group: THREE.Group): void {
-    group.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        // BEST: Use the cloned materials stored on the mesh
-        const originalClones = child.userData.originalMaterialClones as THREE.MeshStandardMaterial[] | undefined;
-        if (originalClones && originalClones.length > 0) {
-          const isArray = Array.isArray(child.material);
-          const newMaterials: THREE.Material[] = [];
-          
-          for (let i = 0; i < originalClones.length; i++) {
-            const originalClone = originalClones[i];
-            if (!originalClone) continue;
-            
-            try {
-              console.log(`[resetToDefaultMaterials] Restoring from mesh-stored clone: color=${originalClone.color?.getHexString()}, metalness=${originalClone.metalness}, roughness=${originalClone.roughness}`);
-              // Create a fresh clone from the stored original
-              const freshClone = originalClone.clone();
-              // Ensure the material can use scene environment for reflections
-              if (!freshClone.envMap && this.sceneManager) {
-                const sceneEnvMap = this.sceneManager.getEnvironmentMap();
-                if (sceneEnvMap) {
-                  freshClone.envMap = sceneEnvMap;
-                  console.log(`[resetToDefaultMaterials] Applied scene environment map`);
-                }
-              }
-              freshClone.needsUpdate = true;
-              console.log(`[resetToDefaultMaterials] Fresh clone ready: color=${freshClone.color?.getHexString()}, metalness=${freshClone.metalness}`);
-              newMaterials.push(freshClone);
-            } catch (e) {
-              console.warn('[resetToDefaultMaterials] Failed to clone original material:', e);
-              newMaterials.push(originalClone); // Use original as fallback
-            }
-          }
-          
-          // Apply the restored materials
-          if (newMaterials.length > 0) {
-            if (isArray) {
-              child.material = newMaterials;
-            } else {
-              child.material = newMaterials[0];
-            }
-          }
-          return; // Skip fallback paths since we restored from mesh-stored clones
-        }
-        
-        // FALLBACK for legacy data: restore from material userData or mesh userData
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        for (const mat of materials) {
-          if (!(mat instanceof THREE.MeshStandardMaterial)) continue;
-          
-          // Try material userData
-          const originalMaterial = mat.userData.originalMaterial;
-          if (originalMaterial && originalMaterial.color) {
-            try {
-              mat.color.setStyle(originalMaterial.color);
-              mat.metalness = originalMaterial.metalness ?? 0;
-              mat.roughness = originalMaterial.roughness ?? 1;
-              if (originalMaterial.emissive && mat.emissive) {
-                mat.emissive.setStyle(originalMaterial.emissive);
-              }
-              mat.emissiveIntensity = originalMaterial.emissiveIntensity ?? 0;
-              mat.transparent = originalMaterial.transparent ?? false;
-              mat.opacity = originalMaterial.opacity ?? 1;
-              mat.envMapIntensity = originalMaterial.envMapIntensity ?? 1;
-              if (!mat.envMap && this.sceneManager) {
-                const sceneEnvMap = this.sceneManager.getEnvironmentMap();
-                if (sceneEnvMap) mat.envMap = sceneEnvMap;
-              }
-              mat.needsUpdate = true;
-              continue;
-            } catch (e) {
-              console.warn('[resetToDefaultMaterials] Error restoring material properties:', e);
-            }
-          }
-          
-          // Try mesh userData
-          if (child.userData.defaultMaterial) {
-            const defaults = child.userData.defaultMaterial;
-            try {
-              if (defaults.color) mat.color.setStyle(defaults.color);
-              mat.metalness = defaults.metalness ?? 0;
-              mat.roughness = defaults.roughness ?? 1;
-              if (defaults.emissive && mat.emissive) {
-                mat.emissive.setStyle(defaults.emissive);
-              }
-              mat.emissiveIntensity = defaults.emissiveIntensity ?? 0;
-              mat.transparent = defaults.transparent ?? false;
-              mat.opacity = defaults.opacity ?? 1;
-              if (!mat.envMap && this.sceneManager) {
-                const sceneEnvMap = this.sceneManager.getEnvironmentMap();
-                if (sceneEnvMap) mat.envMap = sceneEnvMap;
-              }
-              mat.needsUpdate = true;
-            } catch (e) {
-              console.warn('[resetToDefaultMaterials] Error restoring default material:', e);
-            }
-          }
-        }
-      }
+    updatePlacedObjectSkin(id, skinId, {
+      getObject: (oid) => this.sceneManager.getObject(oid),
+      getObjectData: (oid) => this.sceneManager.getObjectData(oid),
+      getEnvironmentMap: () => this.sceneManager.getEnvironmentMap(),
+      applySkinToObject: (o, s) =>
+        this.placedObjectSkinApplicator.applySkinToObject(o, s),
+      applyActiveThemeSkin: (o, d) =>
+        this.placedObjectSkinApplicator.applyActiveThemeSkin(o, d),
+      scheduleAutoSave: () => this.scheduleAutoSave(),
+      emitStateUpdated: () => this.emit('state-updated', this.state),
     });
   }
 
@@ -1304,47 +935,11 @@ export class BluDesignEngine {
    * Simulate an object's state for preview purposes
    */
   simulateObjectState(id: string, simState: SimulationState): void {
-    const obj = this.sceneManager.getObject(id);
-    if (obj) {
-      const placedObj = this.sceneManager.getObjectData(id);
-      if (placedObj && placedObj.assetMetadata?.isSmart) {
-        if (simState.isSimulating && simState.simulatedState) {
-          // Store original state if starting simulation
-          if (!placedObj.properties._originalState && placedObj.binding) {
-            placedObj.properties._originalState = placedObj.binding.currentState;
-          }
-          // Update to simulated state
-          if (placedObj.binding) {
-            placedObj.binding.currentState = simState.simulatedState;
-          } else {
-            placedObj.binding = {
-              entityType: 'unit',
-              currentState: simState.simulatedState,
-            };
-          }
-          // Update visual appearance based on state
-          this.updateAssetVisualState(obj as THREE.Group, simState.simulatedState);
-        } else {
-          // Restore original state
-          if (placedObj.properties._originalState && placedObj.binding) {
-            placedObj.binding.currentState = placedObj.properties._originalState as DeviceState;
-            delete placedObj.properties._originalState;
-            this.updateAssetVisualState(obj as THREE.Group, placedObj.binding.currentState);
-          }
-        }
-        this.emit('state-updated', this.state);
-      }
-    }
-  }
-
-  /**
-   * Update visual appearance of a smart asset based on state
-   * This updates both the state-dependent materials (body, door) AND indicator lights
-   */
-  private updateAssetVisualState(group: THREE.Group, state: DeviceState): void {
-    // Use AssetFactory to properly update all state-dependent materials
-    // This handles body colors, door colors, and indicator lights
-    AssetFactory.updateAssetState(group, state);
+    updatePlacedObjectSimulationState(id, simState, {
+      getObject: (oid) => this.sceneManager.getObject(oid),
+      getObjectData: (oid) => this.sceneManager.getObjectData(oid),
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+    });
   }
 
   // ==========================================================================
@@ -1355,17 +950,7 @@ export class BluDesignEngine {
    * Set the active floor
    */
   setFloor(level: number): void {
-    this.state.activeFloor = level;
-    this.floorManager.setFloor(level);
-    // Update selection manager with floor mode and level for proper floor filtering
-    this.selectionManager.setFloorMode(this.state.isFloorMode, level);
-    
-    // Update placement manager floor Y and level for placement at correct height
-    const floorY = this.floorManager.getCurrentFloorY();
-    this.placementManager.setFloorY(floorY, level);
-    
-    this.sceneManager.applyFloorGhosting(level, !this.state.isFloorMode);
-    this.emit('state-updated', this.state);
+    this.floorViewCoordinator.setActiveFloor(level);
   }
 
   /**
@@ -1374,169 +959,14 @@ export class BluDesignEngine {
    * @param copyFromFloor If provided, copy all objects from this floor to the new floor
    */
   addFloor(level: number, copyFromFloor?: number): void {
-    const buildings = this.buildingManager.getAllBuildings();
-    if (buildings.length > 0) {
-      const building = buildings[0];
-      const newFloor = this.buildingManager.addFloor(building.id, level);
-      this.floorManager.registerFloor(level);
-      
-      // Record in history
-      this.actionHistory.pushFloorAdd(building.id, newFloor);
-      
-      // Update state
-      this.state.buildings = this.buildingManager.getAllBuildings();
-      
-      // Add vertical shaft objects to the new floor (elevators, stairwells)
-      this.addVerticalShaftObjectsToFloor(level, building);
-      
-      // Copy objects from source floor if specified
-      if (copyFromFloor !== undefined) {
-        this.copyFloorContents(copyFromFloor, level);
-      }
-      
-      // Apply current theme to ensure new floor tiles have correct materials
-      const activeTheme = getThemeManager().getActiveSkinTheme();
-      this.applyThemeToScene(activeTheme);
-      
-      this.setFloor(level);
-      
-      // Auto-save draft
-      this.scheduleAutoSave();
-    }
+    this.floorStructureOperations.addFloor(level, copyFromFloor);
   }
   
-  /**
-   * Copy all objects from one floor to another
-   * Excludes vertical shaft objects (elevators/stairwells) as they're handled separately
-   */
-  private copyFloorContents(sourceFloor: number, targetFloor: number): void {
-    const allObjects = this.sceneManager.getAllObjects();
-    const objectsToCopy: PlacedObject[] = [];
-    
-    // Find all objects on the source floor
-    for (const [id] of allObjects) {
-      const objData = this.sceneManager.getObjectData(id);
-      if (!objData) continue;
-      
-      // Skip objects on different floors
-      if (objData.floor !== sourceFloor) continue;
-      
-      // Skip vertical shaft objects (they're already handled by addVerticalShaftObjectsToFloor)
-      if (objData.verticalShaftId) continue;
-      
-      objectsToCopy.push(objData);
-    }
-    
-    // Create copies on the target floor
-    const placedCopies: PlacedObject[] = [];
-    
-    for (const sourceObj of objectsToCopy) {
-      const asset = sourceObj.assetMetadata;
-      if (!asset) continue;
-      
-      // Create new object for target floor
-      const newObject: PlacedObject = {
-        ...sourceObj,
-        id: `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        floor: targetFloor,
-        name: sourceObj.name 
-          ? sourceObj.name.replace(/\(F\d+\)/, `(F${targetFloor})`)
-          : sourceObj.name,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      // Place the new object
-      this.placeSingleObject(newObject, asset);
-      placedCopies.push(newObject);
-      
-      this.emit('object-placed', newObject);
-    }
-    
-    // Record all copies as a batch action
-    if (placedCopies.length > 0) {
-      this.actionHistory.pushBatchPlace(placedCopies);
-    }
-  }
-  
-  /**
-   * Add vertical shaft objects (elevators, stairwells) to a new floor
-   * Copies objects from an existing floor that have spansAllFloors metadata
-   */
-  private addVerticalShaftObjectsToFloor(newLevel: number, building: Building): void {
-    void building;
-    // Get all placed objects
-    const allObjects = this.sceneManager.getAllObjects();
-    
-    // Find objects that belong to vertical shafts
-    const verticalShaftObjects = new Map<string, PlacedObject>();
-    
-    for (const [id] of allObjects) {
-      const objData = this.sceneManager.getObjectData(id);
-      if (!objData || !objData.verticalShaftId || objData.disableVerticalShaft) continue;
-      
-      // Check if this shaft already has an object on the new floor
-      const shaftId = objData.verticalShaftId;
-      if (!verticalShaftObjects.has(shaftId)) {
-        verticalShaftObjects.set(shaftId, objData);
-      }
-    }
-    
-    // Create copies for the new floor
-    for (const [shaftId, sourceObj] of verticalShaftObjects) {
-      const asset = sourceObj.assetMetadata;
-      if (!asset) continue;
-      
-      // Check if this floor already has this shaft
-      let existingOnFloor = false;
-      for (const [objId] of allObjects) {
-        const data = this.sceneManager.getObjectData(objId);
-        if (data?.verticalShaftId === shaftId && data?.floor === newLevel) {
-          existingOnFloor = true;
-          break;
-        }
-      }
-      
-      if (existingOnFloor) continue;
-      
-      // Create new object for this floor
-      const newObject: PlacedObject = {
-        ...sourceObj,
-        id: `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        floor: newLevel,
-        verticalShaftId: shaftId,
-        name: sourceObj.name 
-          ? sourceObj.name.replace(/\(F\d+\)/, `(F${newLevel})`)
-          : undefined,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      // Place the new object
-      this.placeSingleObject(newObject, asset);
-      
-      // Record in history (as part of floor add)
-      this.actionHistory.pushPlace(newObject);
-      
-      this.emit('object-placed', newObject);
-    }
-  }
-
   /**
    * Toggle between floor mode and full building view
    */
   toggleFullBuildingView(): void {
-    this.state.isFloorMode = !this.state.isFloorMode;
-    
-    // When entering full view mode, reset to ground floor
-    if (!this.state.isFloorMode) {
-      this.state.activeFloor = 0;
-    }
-    
-    this.floorManager.setFullBuildingView(!this.state.isFloorMode);
-    this.selectionManager.setFloorMode(this.state.isFloorMode, this.state.activeFloor);
-    this.sceneManager.applyFloorGhosting(this.state.activeFloor, !this.state.isFloorMode);
-    this.emit('state-updated', this.state);
+    this.floorViewCoordinator.toggleFullBuildingView();
   }
 
   // ==========================================================================
@@ -1544,63 +974,18 @@ export class BluDesignEngine {
   // ==========================================================================
 
   setTool(tool: EditorTool): void {
-    // In readonly mode, force VIEW tool and prevent any changes
-    if (this.readonly) {
-      tool = EditorTool.VIEW;
-    }
-    
-    // In edit mode, don't allow VIEW tool (it's readonly-only)
-    if (!this.readonly && tool === EditorTool.VIEW) {
-      tool = EditorTool.SELECT;
-    }
-    
-    // Cancel placement if switching away from PLACE tool
-    if (this.state.activeTool === EditorTool.PLACE && tool !== EditorTool.PLACE) {
-      this.placementManager.cancelPlacement();
-      this.state.activeAssetId = null;
-    }
-    
-    this.state.activeTool = tool;
-    
-    // Determine tool behavior
-    const isSelectionTool = tool === EditorTool.SELECT || tool === EditorTool.SELECT_BUILDING;
-    const isViewTool = tool === EditorTool.VIEW;
-    const isMoveTool = tool === EditorTool.MOVE;
-    
-    // Enable SelectionManager for selection tools and VIEW tool (VIEW allows single-click selection)
-    this.selectionManager.setEnabled(isSelectionTool || isViewTool);
-    
-    // Drag selection: enabled only for SELECT and SELECT_BUILDING tools
-    // VIEW tool allows single-click selection but not drag selection
-    // MOVE tool has no selection at all
-    this.selectionManager.setDragSelectionEnabled(isSelectionTool);
-    
-    // VIEW tool: only smart objects, single click only (no multi-select)
-    if (isViewTool) {
-      this.selectionManager.setSmartOnlySelection(true);
-      this.selectionManager.setSingleSelectOnly(true);
-    } else {
-      this.selectionManager.setSmartOnlySelection(false);
-      this.selectionManager.setSingleSelectOnly(false);
-    }
-    
-    // In normal SELECT mode, ignore buildings (can't select them)
-    // In SELECT_BUILDING mode, allow building selection
-    this.selectionManager.setIgnoreBuildings(tool !== EditorTool.SELECT_BUILDING);
-    
-    // MOVE and VIEW tools: rotation enabled by default for full camera control
-    // SELECT, SELECT_BUILDING, PLACE: rotation disabled by default (requires Ctrl+drag)
-    if (isMoveTool || isViewTool) {
-      this.cameraController.setRotationEnabled(true);
-    } else {
-      this.cameraController.setRotationEnabled(false);
-    }
-    
-    // Update InputCoordinator handler states
-    this.inputCoordinator.setHandlerEnabled('placement', tool === EditorTool.PLACE);
-    this.inputCoordinator.setHandlerEnabled('selection', isSelectionTool || isViewTool);
-    
-    this.emit('tool-changed', tool);
+    applyEditorToolChange(
+      {
+        readonly: this.readonly,
+        placementManager: this.placementManager,
+        selectionManager: this.selectionManager,
+        cameraController: this.cameraController,
+        inputCoordinator: this.inputCoordinator,
+        emitToolChanged: (t) => this.emit('tool-changed', t),
+        state: this.state,
+      },
+      tool
+    );
   }
 
   setCameraMode(mode: CameraMode): void {
@@ -1622,38 +1007,13 @@ export class BluDesignEngine {
    * Public so viewers can use it for framing operations
    */
   calculateSceneBounds(): THREE.Box3 {
-    const bounds = new THREE.Box3();
-    
-    // Include all placed objects
-    for (const obj of this.sceneManager.getAllPlacedObjects()) {
-      const mesh = this.sceneManager.getObject(obj.id);
-      if (mesh) {
-        const objBounds = new THREE.Box3().setFromObject(mesh);
-        bounds.union(objBounds);
-      }
-    }
-    
-    // Include all buildings
-    const buildings = this.buildingManager.getAllBuildings();
-    for (const building of buildings) {
-      const gridSize = this.gridSystem.getGridSize();
-      for (const fp of building.footprints) {
-        const minWorld = this.gridSystem.gridToWorld({ x: fp.minX, z: fp.minZ, y: 0 });
-        const maxWorld = this.gridSystem.gridToWorld({ x: fp.maxX + 1, z: fp.maxZ + 1, y: 0 });
-        const height = building.floors.length * FLOOR_HEIGHT * gridSize;
-        
-        bounds.expandByPoint(new THREE.Vector3(minWorld.x, 0, minWorld.z));
-        bounds.expandByPoint(new THREE.Vector3(maxWorld.x, height, maxWorld.z));
-      }
-    }
-    
-    // If bounds are empty or invalid, use default bounds around origin
-    if (bounds.isEmpty()) {
-      bounds.expandByPoint(new THREE.Vector3(-10, 0, -10));
-      bounds.expandByPoint(new THREE.Vector3(10, 10, 10));
-    }
-    
-    return bounds;
+    return computeBluDesignSceneBounds({
+      getAllPlacedObjects: () => this.sceneManager.getAllPlacedObjects(),
+      getObjectMesh: (id) => this.sceneManager.getObject(id),
+      getAllBuildings: () => this.buildingManager.getAllBuildings(),
+      gridToWorld: (p) => this.gridSystem.gridToWorld(p),
+      getGridSize: () => this.gridSystem.getGridSize(),
+    });
   }
 
   setRotationEnabled(enabled: boolean): void {
@@ -1728,752 +1088,11 @@ export class BluDesignEngine {
   }
 
   /**
-   * Generate a default name for a smart object
-   */
-  private generateObjectName(asset: AssetMetadata): string {
-    const count = (this.objectNameCounters.get(asset.id) ?? 0) + 1;
-    this.objectNameCounters.set(asset.id, count);
-    return `${asset.name} ${count}`;
-  }
-  
-  /**
-   * Check if an asset category is considered "smart" (bindable to data)
-   */
-  private isSmartAssetCategory(category: AssetCategory): boolean {
-    const smartCategories = [
-      AssetCategory.STORAGE_UNIT,
-      AssetCategory.GATE,
-      AssetCategory.DOOR,
-      AssetCategory.ELEVATOR,
-      AssetCategory.ACCESS_CONTROL,
-    ];
-    return smartCategories.includes(category);
-  }
-  
-  /**
-   * Handle asset placement completion
-   */
-  private handleAssetPlaced(placedObject: PlacedObject): void {
-    // Block placement in full building view mode (safety net)
-    if (!this.state.isFloorMode && this.state.buildings.length > 0) {
-      console.warn('Cannot place assets in full building view. Switch to a specific floor first.');
-      this.placementManager.cancelPlacement();
-      return;
-    }
-    
-    // Use the current placement asset metadata
-    if (!this.currentPlacementAsset) {
-      console.error('No active placement asset');
-      return;
-    }
-    
-    const asset = this.currentPlacementAsset;
-    
-    // Check if this asset should span all floors (elevators, stairwells)
-    if (asset.spansAllFloors && this.state.buildings.length > 0) {
-      this.handleVerticalShaftPlacement(placedObject, asset);
-      return;
-    }
-    
-    // Standard single-floor placement
-    this.placeSingleObject(placedObject, asset);
-    
-    // Record in history
-    this.actionHistory.pushPlace(placedObject);
-    
-    // Emit event
-    this.emit('object-placed', placedObject);
-    
-    // Auto-save draft
-    this.scheduleAutoSave();
-  }
-  
-  /**
-   * Handle placement of vertical shaft objects (elevators, stairwells)
-   * These are automatically placed on all floors of the building
-   */
-  private handleVerticalShaftPlacement(placedObject: PlacedObject, asset: AssetMetadata): void {
-    const buildings = this.state.buildings;
-    if (buildings.length === 0) return;
-    
-    const building = buildings[0]; // Currently supporting single building
-    const floors = building.floors || [];
-    
-    if (floors.length === 0) {
-      // No floors defined, just place on current floor
-      this.placeSingleObject(placedObject, asset);
-      this.actionHistory.pushPlace(placedObject);
-      this.emit('object-placed', placedObject);
-      this.scheduleAutoSave();
-      return;
-    }
-    
-    // Generate a shared vertical shaft ID
-    const verticalShaftId = `shaft-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Determine which floors to place on
-    // Place on all floors
-    const floorsToPlace = floors;
-    
-    const placedObjects: PlacedObject[] = [];
-    
-    // Place on each floor
-    for (const floor of floorsToPlace) {
-      const floorObject: PlacedObject = {
-        ...placedObject,
-        id: floor.level === placedObject.floor 
-          ? placedObject.id 
-          : `asset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        floor: floor.level,
-        verticalShaftId,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      // Auto-generate name for smart objects with floor suffix
-      if (this.isSmartAssetCategory(asset.category)) {
-        const baseName = this.generateObjectName(asset);
-        floorObject.name = floors.length > 1 
-          ? `${baseName} (F${floor.level})` 
-          : baseName;
-      }
-      
-      this.placeSingleObject(floorObject, asset);
-      placedObjects.push(floorObject);
-    }
-    
-    // Record all placements as a single undo action
-    if (placedObjects.length > 0) {
-      this.actionHistory.pushBatchPlace(placedObjects);
-      
-      // Emit events
-      for (const obj of placedObjects) {
-        this.emit('object-placed', obj);
-      }
-      
-      this.scheduleAutoSave();
-    }
-  }
-  
-  /**
-   * Place a single object on a specific floor
-   */
-  private placeSingleObject(placedObject: PlacedObject, asset: AssetMetadata): void {
-    // Auto-generate name for smart objects if not already set
-    if (!placedObject.name && this.isSmartAssetCategory(asset.category)) {
-      placedObject.name = this.generateObjectName(asset);
-    }
-    
-    // Check if this is a ground tile category - use instanced rendering
-    if (this.groundTileManager.isGroundTileCategory(asset.category)) {
-      // Use instanced ground tile manager for performance
-      const marker = this.groundTileManager.addTile(
-        placedObject.id,
-        asset.category,
-        placedObject.position
-      );
-      
-      // Add marker to scene for selection/raycasting
-      this.scene.add(marker);
-      this.sceneManager.addObject(placedObject.id, marker, placedObject);
-      
-      // Mark grid as occupied
-      const size = { x: asset.gridUnits.x, z: asset.gridUnits.z };
-      const replacedGroundId = this.gridSystem.markOccupied(
-        placedObject.id, 
-        placedObject.position, 
-        size, 
-        asset.canStack,
-        asset.category,
-        placedObject.floor ?? 0
-      );
-      
-      // If ground was replaced, remove it properly
-      if (replacedGroundId) {
-        this.groundTileManager.removeTile(replacedGroundId);
-        this.sceneManager.removeObject(replacedGroundId);
-      }
-      
-      // Optimization is handled automatically by GroundTileManager
-      return;
-    }
-    
-    // Standard placement for non-ground tiles
-    const mesh = AssetFactory.createAssetMesh(asset);
-    const gridSize = this.gridSystem.getGridSize();
-    
-    // Calculate Y position based on floor
-    const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
-    
-    // Preserve existing offsets from CustomAssetLoader (centering + grounding + positionOffset)
-    // Store them in userData so we can use them during moves
-    const existingXOffset = mesh.position.x;
-    const existingYOffset = mesh.position.y;
-    const existingZOffset = mesh.position.z;
-    mesh.userData.internalXOffset = existingXOffset;
-    mesh.userData.internalYOffset = existingYOffset;
-    mesh.userData.internalZOffset = existingZOffset;
-    
-    // Position the mesh
-    if (placedObject.exactMeshPos) {
-      // EXACT mesh position from ghost preview - use directly, no calculation needed
-      // This is the exact position the ghost was displayed at
-      mesh.position.set(
-        placedObject.exactMeshPos.x,
-        floorY + existingYOffset,
-        placedObject.exactMeshPos.z
-      );
-    } else {
-      // Grid-based positioning (centered on grid cells, accounting for rotation)
-      const worldPos = this.gridSystem.gridToWorld(placedObject.position);
-      
-      // Swap grid units for 90° and 270° rotations
-      const isRotated90 = placedObject.orientation === Orientation.EAST || 
-                          placedObject.orientation === Orientation.WEST;
-      const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-      const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
-      
-      const centerOffsetX = (effectiveGridX * gridSize) / 2;
-      const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
-      
-      // Position at center of grid footprint, adding internal offsets
-      mesh.position.set(
-        worldPos.x + centerOffsetX + existingXOffset,
-        floorY + existingYOffset,
-        worldPos.z + centerOffsetZ + existingZOffset
-      );
-    }
-    
-    // Store floor info and asset metadata in mesh userData
-    mesh.userData.floor = placedObject.floor ?? 0;
-    mesh.userData.selectable = true;
-    mesh.userData.verticalShaftId = placedObject.verticalShaftId;
-    mesh.userData.assetId = asset.id;
-    mesh.userData.category = asset.category;
-    mesh.userData.isSmart = asset.isSmart;
-    mesh.userData.id = placedObject.id;
-    mesh.userData.gridPosition = placedObject.position;
-
-    // If attached to a wall, snap to the wall center and offset flush to the wall plane
-    if (placedObject.wallAttachment?.wallId) {
-      const wall = this.buildingManager.getWall(placedObject.wallAttachment.wallId);
-      if (wall) {
-        const startWorld = this.gridSystem.gridToWorld(wall.startPos);
-        const endWorld = this.gridSystem.gridToWorld(wall.endPos);
-        const cx = (startWorld.x + endWorld.x) / 2;
-        const cz = (startWorld.z + endWorld.z) / 2;
-        mesh.position.x = cx;
-        mesh.position.z = cz;
-
-        const dx = endWorld.x - startWorld.x;
-        const dz = endWorld.z - startWorld.z;
-        const len = Math.hypot(dx, dz);
-        if (len > 0.0001) {
-          // Normal pointing outward from wall (perpendicular)
-          const nx = -dz / len;
-          const nz = dx / len;
-          const wallThickness = 0.2;
-          const offset = wallThickness * 0.5 - 0.01; // nudge slightly into the wall for flush fit
-          mesh.position.x += nx * offset;
-          mesh.position.z += nz * offset;
-        }
-      }
-    }
-    
-    // Apply rotation - prefer arbitrary rotation, fall back to orientation
-    mesh.rotation.y = this.getEffectiveRotation(placedObject);
-    
-    // Add to scene
-    this.sceneManager.addObject(placedObject.id, mesh, placedObject);
-    
-    // Store original materials FIRST (before applying any skin/theme)
-    // This allows restoring original materials from imported GLBs
-    this.storeDefaultMaterials(mesh);
-    
-    // Apply skin or theme
-    if (placedObject.skinId) {
-      if (placedObject.skinId === ORIGINAL_MATERIALS_SKIN_ID) {
-        // Special case: restore original materials
-        this.resetToDefaultMaterials(mesh as THREE.Group);
-      } else {
-        const skinRegistry = getSkinRegistry();
-        const skin = skinRegistry.getSkin(placedObject.skinId);
-        if (skin) {
-          this.applySkinToObject(mesh as THREE.Group, skin);
-        } else {
-          this.applyActiveThemeSkin(mesh, placedObject);
-        }
-      }
-    } else {
-      this.applyActiveThemeSkin(mesh, placedObject);
-    }
-    
-    // Apply correct floor-based opacity to newly placed object
-    this.floorManager.applyGhostingToObject(mesh);
-    
-    // Mark grid as occupied (handles ground layer replacement) - floor-aware
-    const size = { x: asset.gridUnits.x, z: asset.gridUnits.z };
-    const replacedGroundId = this.gridSystem.markOccupied(
-      placedObject.id, 
-      placedObject.position, 
-      size, 
-      asset.canStack,
-      asset.category,
-      placedObject.floor ?? 0
-    );
-    
-    // If ground was replaced, remove the old ground mesh
-    if (replacedGroundId) {
-      // Also remove from ground tile manager if it was a ground tile
-      this.groundTileManager.removeTile(replacedGroundId);
-      this.sceneManager.removeObject(replacedGroundId);
-    }
-  }
-
-  /**
-   * Handle batch asset placement (e.g., ground tiles)
-   * All objects are placed as a single undo action
-   */
-  private async handleBatchAssetPlaced(objects: PlacedObject[]): Promise<void> {
-    if (objects.length === 0) return;
-    
-    // Use the current placement asset metadata
-    if (!this.currentPlacementAsset) {
-      console.error('No active placement asset');
-      return;
-    }
-    
-    const asset = this.currentPlacementAsset;
-    const gridSize = this.gridSystem.getGridSize();
-    
-    // Only show progress overlay for operations that will actually take time
-    // We check both batch size and whether optimization will run
-    const LARGE_BATCH_THRESHOLD = 100; // Only show for batches of 100+ items
-    const OPTIMIZATION_CELL_THRESHOLD = 500; // Optimization shows progress for 500+ cells
-    
-    // Separate ground tiles from other objects for batch processing
-    const groundTiles: PlacedObject[] = [];
-    const otherObjects: PlacedObject[] = [];
-    
-    for (const placedObject of objects) {
-      if (this.groundTileManager.isGroundTileCategory(placedObject.assetMetadata.category)) {
-        groundTiles.push(placedObject);
-      } else {
-        otherObjects.push(placedObject);
-      }
-    }
-    
-    // Check if ground tiles will trigger optimization progress
-    let willOptimizeWithProgress = false;
-    const optimizationManager = OptimizationManager.getInstance();
-    if (optimizationManager.isEnabled() && groundTiles.length > 0) {
-      // Check if adding these tiles will result in >= 500 cells total for any category
-      const tilesByCategory = new Map<AssetCategory, number>();
-      groundTiles.forEach(tile => {
-        const count = tilesByCategory.get(tile.assetMetadata.category) || 0;
-        tilesByCategory.set(tile.assetMetadata.category, count + 1);
-      });
-      
-      // For each category, check if total (existing + new) will be >= threshold
-      tilesByCategory.forEach((newCount, category) => {
-        const existingIds = this.groundTileManager.getTileIds(category);
-        const totalCells = existingIds.length + newCount;
-        if (totalCells >= OPTIMIZATION_CELL_THRESHOLD) {
-          willOptimizeWithProgress = true;
-        }
-      });
-    }
-    
-    // Show progress only if batch is large enough OR optimization will show progress
-    const shouldShowProgress = objects.length >= LARGE_BATCH_THRESHOLD || willOptimizeWithProgress;
-    
-    if (shouldShowProgress) {
-      // Show overlay immediately - this is the start of the operation
-      this.emit('progress-updated', {
-        percentage: 0,
-        message: `Placing ${objects.length} items...`,
-        operation: 'processing',
-      });
-    }
-    
-    const totalItems = groundTiles.length + otherObjects.length;
-    let processedItems = 0;
-    
-    // Process ground tiles in a batch (much more efficient - only one optimization request per category)
-    if (groundTiles.length > 0) {
-      const tileData = groundTiles.map(obj => ({
-        objectId: obj.id,
-        category: obj.assetMetadata.category,
-        position: obj.position
-      }));
-      
-      const markers = this.groundTileManager.addTilesBatch(tileData);
-      
-      // Optimize: Batch scene.add() operations by collecting all markers first
-      const markersToAdd: THREE.Object3D[] = [];
-      const BATCH_SIZE = 50; // Process 50 tiles, then yield
-      
-      for (let i = 0; i < groundTiles.length; i++) {
-        const placedObject = groundTiles[i];
-        const marker = markers[i];
-        
-        // Collect markers for batch addition
-        markersToAdd.push(marker);
-        this.sceneManager.addObject(placedObject.id, marker, placedObject);
-
-        const size = { x: placedObject.assetMetadata.gridUnits.x, z: placedObject.assetMetadata.gridUnits.z };
-        const replacedGroundId = this.gridSystem.markOccupied(
-          placedObject.id, 
-          placedObject.position, 
-          size, 
-          placedObject.assetMetadata.canStack,
-          placedObject.assetMetadata.category,
-          placedObject.floor ?? 0
-        );
-
-        if (replacedGroundId) {
-          this.groundTileManager.removeTile(replacedGroundId);
-          this.sceneManager.removeObject(replacedGroundId);
-        }
-        
-        processedItems++;
-        
-        // Report progress and yield every BATCH_SIZE items
-        if (shouldShowProgress && (i % BATCH_SIZE === BATCH_SIZE - 1 || i === groundTiles.length - 1)) {
-          const progress = Math.round((processedItems / totalItems) * 30);
-          this.emit('progress-updated', {
-            percentage: progress,
-            message: `Placing ${processedItems} of ${totalItems} items...`,
-            operation: 'processing',
-          });
-          
-          // Yield control to allow React to render progress updates
-          if (i < groundTiles.length - 1) {
-            await new Promise<void>((resolve) => {
-              setTimeout(resolve, 0);
-            });
-          }
-        }
-      }
-      
-      // Batch add all markers to scene at once (more efficient than individual adds)
-      markersToAdd.forEach(marker => this.scene.add(marker));
-    }
-    
-    // Process other objects normally
-    for (const placedObject of otherObjects) {
-
-      // Non-ground: create mesh using asset
-      const mesh = AssetFactory.createAssetMesh(asset);
-      const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
-
-      // Preserve existing offsets from CustomAssetLoader (centering + grounding + positionOffset)
-      // Store them in userData so we can use them during moves
-      const existingXOffset = mesh.position.x;
-      const existingYOffset = mesh.position.y;
-      const existingZOffset = mesh.position.z;
-      mesh.userData.internalXOffset = existingXOffset;
-      mesh.userData.internalYOffset = existingYOffset;
-      mesh.userData.internalZOffset = existingZOffset;
-      
-      // Position the mesh
-      if (placedObject.exactMeshPos) {
-        // EXACT mesh position from ghost preview - use directly
-        mesh.position.set(
-          placedObject.exactMeshPos.x,
-          floorY + existingYOffset,
-          placedObject.exactMeshPos.z
-        );
-      } else {
-        // Grid-based positioning
-        const worldPos = this.gridSystem.gridToWorld(placedObject.position);
-        const isRotated90 = placedObject.orientation === Orientation.EAST || 
-                            placedObject.orientation === Orientation.WEST;
-        const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-        const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
-        const centerOffsetX = (effectiveGridX * gridSize) / 2;
-        const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
-        
-        mesh.position.set(
-          worldPos.x + centerOffsetX + existingXOffset,
-          floorY + existingYOffset,
-          worldPos.z + centerOffsetZ + existingZOffset
-        );
-      }
-
-      mesh.userData.floor = placedObject.floor ?? 0;
-      mesh.userData.selectable = true;
-
-      // Apply rotation - prefer arbitrary rotation, fall back to orientation
-      mesh.rotation.y = this.getEffectiveRotation(placedObject);
-
-      this.sceneManager.addObject(placedObject.id, mesh, placedObject);
-
-      // Store original materials FIRST (before applying any skin/theme)
-      this.storeDefaultMaterials(mesh);
-
-      // Apply skin/theme
-      if (placedObject.skinId) {
-        if (placedObject.skinId === ORIGINAL_MATERIALS_SKIN_ID) {
-          // Special case: restore original materials
-          this.resetToDefaultMaterials(mesh as THREE.Group);
-        } else {
-          const skinRegistry = getSkinRegistry();
-          const skin = skinRegistry.getSkin(placedObject.skinId);
-          if (skin) {
-            this.applySkinToObject(mesh as THREE.Group, skin);
-          } else {
-            this.applyActiveThemeSkin(mesh, placedObject);
-          }
-        }
-      } else {
-        this.applyActiveThemeSkin(mesh, placedObject);
-      }
-
-      this.floorManager.applyGhostingToObject(mesh);
-
-      const size = { x: asset.gridUnits.x, z: asset.gridUnits.z };
-      const replacedGroundId = this.gridSystem.markOccupied(
-        placedObject.id, 
-        placedObject.position, 
-        size, 
-        asset.canStack,
-        asset.category,
-        placedObject.floor ?? 0
-      );
-
-      if (replacedGroundId) {
-        this.sceneManager.removeObject(replacedGroundId);
-      }
-      
-      processedItems++;
-      if (shouldShowProgress && processedItems % 10 === 0) {
-        // Batch placement takes 0-30% of progress (optimization will be 30-100%)
-        const progress = Math.round((processedItems / totalItems) * 30);
-        this.emit('progress-updated', {
-          percentage: progress,
-          message: `Placing ${processedItems} of ${totalItems} items...`,
-          operation: 'processing',
-        });
-      }
-    }
-    
-    // Complete batch placement phase (30% progress)
-    if (shouldShowProgress) {
-      // Check if optimization will actually show progress
-      // If optimization doesn't show progress (below 500 cells threshold or disabled),
-      // we should complete immediately since no progress updates will come
-      const optimizationManager = OptimizationManager.getInstance();
-      const willShowProgress = optimizationManager.willShowOptimizationProgress();
-      
-      if (willShowProgress) {
-        // Optimization will show progress - it will continue from 30-100%
-        // (OptimizationManager will emit progress updates via callback)
-        this.emit('progress-updated', {
-          percentage: 30,
-          message: 'Optimizing geometry...',
-          operation: 'processing',
-        });
-      } else {
-        // No optimization progress will be shown - complete immediately
-        // (Optimization may still run in the background, but won't show progress)
-        this.emit('progress-updated', {
-          percentage: 100,
-          message: 'Complete',
-          operation: 'processing',
-        });
-        setTimeout(() => {
-          this.emit('progress-complete', { operation: 'processing' });
-        }, 200);
-      }
-    }
-    
-    // Note: Ground tile optimization is handled automatically by GroundTileManager
-    // after tiles are added (with debouncing)
-    // The optimization will continue progress from 30-100%
-    // If optimization shows progress, it will complete normally
-    // If not, the timeout above will complete it
-    
-    // Record ALL objects as a single undo action
-    this.actionHistory.pushBatchPlace(objects);
-    
-    // Emit event for each object (or a batch event)
-    this.emit('objects-placed', objects);
-    
-    // Auto-save draft
-    this.scheduleAutoSave();
-  }
-
-  /**
-   * Get rotation from orientation
-   */
-  private getRotationFromOrientation(orientation: Orientation): number {
-    switch (orientation) {
-      case Orientation.NORTH:
-        return 0;
-      case Orientation.EAST:
-        return Math.PI / 2;
-      case Orientation.SOUTH:
-        return Math.PI;
-      case Orientation.WEST:
-        return -Math.PI / 2;
-      default:
-        return 0;
-    }
-  }
-
-  /**
-   * Get effective rotation for a placed object
-   * Prefers the arbitrary rotation field if set, otherwise falls back to orientation
-   */
-  private getEffectiveRotation(obj: PlacedObject): number {
-    if (obj.rotation !== undefined) {
-      return obj.rotation;
-    }
-    return this.getRotationFromOrientation(obj.orientation);
-  }
-
-  /**
-   * Handle building placement
-   */
-  private async handleBuildingPlaced(footprint: { minX: number; maxX: number; minZ: number; maxZ: number }): Promise<void> {
-    // Calculate building size (cells)
-    const cellCount = (footprint.maxX - footprint.minX + 1) * (footprint.maxZ - footprint.minZ + 1);
-    const BUILDING_CELL_THRESHOLD = 500; // Show progress for buildings with 500+ cells
-    
-    // Check if optimization will show progress
-    const optimizationManager = OptimizationManager.getInstance();
-    const willShowOptimizationProgress = optimizationManager.isEnabled() && 
-                                         optimizationManager.willShowOptimizationProgress();
-    
-    // Show progress if building is large enough OR optimization will show progress
-    const shouldShowProgress = cellCount >= BUILDING_CELL_THRESHOLD || willShowOptimizationProgress;
-    
-    if (shouldShowProgress) {
-      // Show overlay immediately
-      this.emit('progress-updated', {
-        percentage: 0,
-        message: 'Creating building...',
-        operation: 'processing',
-      });
-    }
-    
-    // Check for overlapping buildings
-    const overlapping = this.buildingManager.findOverlappingBuildings(footprint);
-    
-    let building;
-    if (overlapping.length > 0) {
-      // Merge with existing buildings
-      building = await this.buildingManager.createBuilding(footprint);
-      this.buildingManager.mergeBuildings([...overlapping, building.id]);
-      // Note: Building ID may change after merge, get the updated building
-      const buildings = this.buildingManager.getAllBuildings();
-      if (buildings.length > 0) {
-        building = buildings[buildings.length - 1];
-      }
-    } else {
-      // Create new building
-      building = await this.buildingManager.createBuilding(footprint);
-    }
-    
-    // Building creation phase complete (0-30% of progress)
-    if (shouldShowProgress) {
-      this.emit('progress-updated', {
-        percentage: 30,
-        message: 'Optimizing geometry...',
-        operation: 'processing',
-      });
-      
-      // If optimization won't show progress, complete immediately
-      if (!willShowOptimizationProgress) {
-        this.emit('progress-updated', {
-          percentage: 100,
-          message: 'Complete',
-          operation: 'processing',
-        });
-        setTimeout(() => {
-          this.emit('progress-complete', { operation: 'processing' });
-        }, 200);
-      }
-      // Otherwise, OptimizationManager will continue progress from 30-100%
-    }
-    
-    // Record in history
-    if (building) {
-      this.actionHistory.pushBuildingCreate(building);
-      
-      // Update state
-      this.state.buildings = this.buildingManager.getAllBuildings();
-    }
-    
-    // Enter floor mode
-    this.state.isFloorMode = true;
-    this.state.activeFloor = 0;
-    this.floorManager.registerFloor(0);
-    this.floorManager.setFloor(0); // Apply ghosting for floor mode
-    this.selectionManager.setFloorMode(true, 0);
-    this.emit('state-updated', this.state);
-    
-    // Auto-save draft
-    this.scheduleAutoSave();
-  }
-
-  /**
    * Delete a floor from a building
    * Removes all objects on that floor and shifts higher floors down
    */
   deleteFloor(level: number): void {
-    const buildings = this.buildingManager.getAllBuildings();
-    if (buildings.length === 0) return;
-    
-    const building = buildings[0]; // Currently supporting single building
-    const floor = this.buildingManager.getFloor(building.id, level);
-    if (!floor) return;
-    
-    // Get all objects on this floor before deletion
-    const objectsOnFloor: PlacedObject[] = [];
-    for (const objData of this.sceneManager.getAllPlacedObjects()) {
-      if (objData.floor === level) {
-        objectsOnFloor.push(objData);
-      }
-    }
-    
-    // Delete all objects on this floor
-    objectsOnFloor.forEach(obj => {
-      this.deleteObjectInternal(obj.id);
-    });
-    
-    // Remove the floor from the building
-    const removedFloor = this.buildingManager.removeFloor(building.id, level);
-    if (!removedFloor) return;
-    
-    // Shift floors above down by 1
-    this.buildingManager.shiftFloorLevels(building.id, level + 1, -1);
-    
-    // Shift objects on higher floors down
-    const shiftedObjects = this.floorManager.shiftObjectFloors(level + 1, -1);
-    
-    // Also update the PlacedObject data for shifted objects
-    shiftedObjects.forEach(shifted => {
-      const objData = this.sceneManager.getObjectData(shifted.id);
-      if (objData) {
-        objData.floor = shifted.newFloor;
-      }
-    });
-    
-    // Update floor manager
-    this.floorManager.unregisterFloor(level);
-    this.floorManager.shiftFloors(level + 1, -1);
-    
-    // Record in history
-    this.actionHistory.pushFloorDelete(building.id, removedFloor, objectsOnFloor);
-    
-    // Update state
-    this.state.buildings = this.buildingManager.getAllBuildings();
-    this.emit('state-updated', this.state);
-    
-    // Auto-save draft
-    this.scheduleAutoSave();
+    this.floorStructureOperations.deleteFloor(level);
   }
 
   /**
@@ -2481,51 +1100,7 @@ export class BluDesignEngine {
    * Shifts all floors at or above that level up by 1
    */
   insertFloor(atLevel: number): void {
-    const buildings = this.buildingManager.getAllBuildings();
-    if (buildings.length === 0) return;
-    
-    const building = buildings[0]; // Currently supporting single building
-    
-    // Shift floors at or above atLevel up by 1
-    this.buildingManager.shiftFloorLevels(building.id, atLevel, 1);
-    
-    // Shift objects on floors at or above atLevel up
-    const shiftedObjects = this.floorManager.shiftObjectFloors(atLevel, 1);
-    
-    // Also update the PlacedObject data for shifted objects
-    shiftedObjects.forEach(shifted => {
-      const objData = this.sceneManager.getObjectData(shifted.id);
-      if (objData) {
-        objData.floor = shifted.newFloor;
-      }
-    });
-    
-    // Update floor manager
-    this.floorManager.shiftFloors(atLevel, 1);
-    
-    // Add the new floor
-    const newFloor = this.buildingManager.addFloor(building.id, atLevel);
-    this.floorManager.registerFloor(atLevel);
-    
-    // Add vertical shaft objects (elevators, stairwells) to the new floor
-    this.addVerticalShaftObjectsToFloor(atLevel, building);
-    
-    // Record in history
-    this.actionHistory.pushFloorInsert(building.id, newFloor, atLevel, shiftedObjects);
-    
-    // Apply current theme to ensure new floor tiles have correct materials
-    const activeTheme = getThemeManager().getActiveSkinTheme();
-    this.applyThemeToScene(activeTheme);
-    
-    // Navigate to the new floor
-    this.setFloor(atLevel);
-    
-    // Update state
-    this.state.buildings = this.buildingManager.getAllBuildings();
-    this.emit('state-updated', this.state);
-    
-    // Auto-save draft
-    this.scheduleAutoSave();
+    this.floorStructureOperations.insertFloor(atLevel);
   }
 
   /**
@@ -2550,457 +1125,37 @@ export class BluDesignEngine {
    */
   applyThemeToScene(theme: Theme): void {
     const skinRegistry = getSkinRegistry();
-    
-    // Update building materials through BuildingManager
-    const buildingMaterials = this.getBuildingMaterials(theme);
-    const isGlassTheme =
-      theme.buildingSkin === BuildingSkinType.GLASS ||
-      (theme.buildingSkinId ? this.isGlassBuildingSkin(theme.buildingSkinId) : false);
-    this.buildingManager.applyBuildingMaterials(buildingMaterials, isGlassTheme);
-    
-    // Update all placed objects using SceneManager's data
-    const allObjects = this.sceneManager.getAllObjects();
-    
-    for (const [id, object] of allObjects) {
-      // Skip system objects
-      if (object.userData.isGrid || object.userData.isGround) {
-        continue;
-      }
-      
-      // Get the object data to check for skin override
-      const objectData = this.sceneManager.getObjectData(id);
-      
-      // Determine the category - can come from objectData or userData
-      const category = objectData?.assetMetadata?.category || object.userData.category;
-      
-      // Apply theme to placed assets - check for either userData.assetId OR objectData
-      if ((object.userData.assetId || objectData) && category) {
-        // Check for per-object skin override first
-        if (objectData?.skinId) {
-          // Apply the specific skin override
-          const skin = skinRegistry.getSkin(objectData.skinId);
-          if (skin) {
-            this.applySkinToObject(object as THREE.Group, skin);
-          } else {
-            // Fall back to theme skin
-            const skinId = theme.categorySkins[category as AssetCategory];
-            if (skinId) {
-              const fallbackSkin = skinRegistry.getSkin(skinId);
-              if (fallbackSkin) {
-                this.applySkinToObject(object as THREE.Group, fallbackSkin);
-              }
-            }
-          }
-        } else {
-          // No override - use theme's skin for this category
-          const skinId = theme.categorySkins[category as AssetCategory];
-          if (skinId) {
-            const skin = skinRegistry.getSkin(skinId);
-            if (skin) {
-              this.applySkinToObject(object as THREE.Group, skin);
-            }
-          } else {
-            // No skin assigned for this category in theme - try default skin
-            const normalizedCategory = String(category).replace(/_/g, '-');
-            const defaultSkinId = `skin-${normalizedCategory}-default`;
-            const defaultSkin = skinRegistry.getSkin(defaultSkinId);
-            if (defaultSkin) {
-              this.applySkinToObject(object as THREE.Group, defaultSkin);
-            }
-          }
-        }
-      }
-    }
-    
-    // Update ground/grass color from theme environment
-    const ground = this.scene.children.find(c => c.userData.isGround);
-    if (ground && ground instanceof THREE.Mesh) {
-      const mat = ground.material as THREE.MeshStandardMaterial;
-      if (mat && theme.environment?.grass) {
-        mat.color.setStyle(theme.environment.grass.color);
-        mat.metalness = theme.environment.grass.metalness;
-        mat.roughness = theme.environment.grass.roughness;
-        mat.needsUpdate = true;
-      }
-    }
-    
-    // Update instanced ground tile materials
-    if (theme.environment) {
-      if (theme.environment.pavement) {
-        this.groundTileManager.updateMaterial(AssetCategory.PAVEMENT, theme.environment.pavement);
-      }
-      if (theme.environment.grass) {
-        this.groundTileManager.updateMaterial(AssetCategory.GRASS, theme.environment.grass);
-      }
-      if (theme.environment.gravel) {
-        this.groundTileManager.updateMaterial(AssetCategory.GRAVEL, theme.environment.gravel);
-      }
-    }
-    
-    // IMPORTANT: Refresh floor ghosting/opacities after material changes
-    // This ensures transparent materials get correct ghosting treatment
-    if (this.state.isFloorMode) {
-      this.floorManager.applyGhosting();
-    }
-    
-    this.emit('scene-theme-applied', theme);
-  }
-  
-  /**
-   * Get building materials based on the theme's buildingSkin type
-   */
-  private getBuildingMaterials(theme: Theme): BuildingMaterials {
-    // If a custom building skin is specified, use it first
-    if (theme.buildingSkinId) {
-      const skin = getSkinRegistry().getSkin(theme.buildingSkinId);
-      if (skin && skin.category === AssetCategory.BUILDING) {
-        const wallMat = skin.partMaterials['wall'];
-        const floorMat = skin.partMaterials['floor'];
-        const roofMat = skin.partMaterials['roof'];
-        return {
-          wall: wallMat,
-          floor: floorMat,
-          roof: roofMat,
-        } as BuildingMaterials;
-      }
-    }
+    const getSkin = (id: string) => skinRegistry.getSkin(id) ?? undefined;
 
-    // Define materials based on buildingSkin type
-    switch (theme.buildingSkin) {
-      case BuildingSkinType.GLASS:
-        return {
-          wall: {
-            color: '#b4d4e8',
-            metalness: 0.1,
-            roughness: 0.05,
-            transparent: true,
-            opacity: 0.35,
-          },
-          roof: {
-            color: '#c4e4f8',
-            metalness: 0.1,
-            roughness: 0.1,
-            transparent: true,
-            opacity: 0.4,
-          },
-          floor: {
-            color: '#c8c8c8',
-            metalness: 0.1,
-            roughness: 0.6,
-          },
-        };
-        
-      case BuildingSkinType.BRICK:
-        return {
-          wall: {
-            color: '#a85e4d',
-            metalness: 0.0,
-            roughness: 0.9,
-          },
-          roof: {
-            color: '#5a4a3a',
-            metalness: 0.05,
-            roughness: 0.85,
-          },
-          floor: {
-            color: '#808080',
-            metalness: 0.05,
-            roughness: 0.8,
-          },
-        };
-        
-      case BuildingSkinType.CONCRETE:
-        return {
-          wall: {
-            color: '#9a9a9a',
-            metalness: 0.05,
-            roughness: 0.85,
-          },
-          roof: {
-            color: '#7a7a7a',
-            metalness: 0.1,
-            roughness: 0.8,
-          },
-          floor: {
-            color: '#888888',
-            metalness: 0.1,
-            roughness: 0.75,
-          },
-        };
-        
-      case BuildingSkinType.METAL:
-        return {
-          wall: {
-            color: '#6a7a8a',
-            metalness: 0.7,
-            roughness: 0.4,
-          },
-          roof: {
-            color: '#5a6a7a',
-            metalness: 0.75,
-            roughness: 0.35,
-          },
-          floor: {
-            color: '#707070',
-            metalness: 0.3,
-            roughness: 0.6,
-          },
-        };
-        
-      case BuildingSkinType.DEFAULT:
-      default:
-        // Clean white/gray default building
-        return {
-          wall: {
-            color: '#e8e4dc',
-            metalness: 0.0,
-            roughness: 0.7,
-          },
-          roof: {
-            color: '#5a5552',
-            metalness: 0.1,
-            roughness: 0.8,
-          },
-          floor: {
-            color: '#909090',
-            metalness: 0.05,
-            roughness: 0.85,
-          },
-        };
-    }
-  }
-
-  private isGlassBuildingSkin(skinId: string): boolean {
-    const skin = getSkinRegistry().getSkin(skinId);
-    if (!skin || skin.category !== AssetCategory.BUILDING) return false;
-    const wall = skin.partMaterials['wall'];
-    return !!(wall?.transparent || wall?.shader === 'paned-glass' || wall?.shader === 'glass-floor' || wall?.shader === 'glass-roof');
-  }
-  
-  /**
-   * Apply the active theme's skin to an object based on its category
-   */
-  private applyActiveThemeSkin(object: THREE.Object3D, objectData?: PlacedObject): void {
-    const group = object as THREE.Group;
-    const themeManager = getThemeManager();
-    const theme = themeManager.getActiveSkinTheme();
-    const skinRegistry = getSkinRegistry();
-    
-    const category = objectData?.assetMetadata?.category || object.userData.category;
-    if (!category) {
-      return;
-    }
-    
-    // Try to get skin from theme first
-    const skinId = theme.categorySkins[category as AssetCategory];
-    
-    if (skinId) {
-      const skin = skinRegistry.getSkin(skinId);
-      if (skin) {
-        this.applySkinToObject(group, skin);
-        return;
-      }
-    }
-    
-    // Try default skin for this category
-    // Handle categories with underscores (e.g., storage_unit -> skin-storage-unit-default)
-    const normalizedCategory = String(category).replace(/_/g, '-');
-    const defaultSkinId = `skin-${normalizedCategory}-default`;
-    const defaultSkin = skinRegistry.getSkin(defaultSkinId);
-    if (defaultSkin) {
-      this.applySkinToObject(group, defaultSkin);
-    }
-  }
-  
-  /**
-   * Apply a skin's materials to an object
-   * This method is robust - it will attempt multiple fallback strategies for matching materials
-   */
-  private applySkinToObject(object: THREE.Object3D, skin: CategorySkin): void {
-    const group = object as THREE.Group;
-    
-    // Get all available part material keys from the skin for fallback
-    const skinPartKeys = Object.keys(skin.partMaterials);
-    const defaultMaterial = skin.partMaterials['body'] || 
-                            skin.partMaterials['surface'] || 
-                            Object.values(skin.partMaterials)[0];
-    
-    group.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        const partName = child.userData.partName as string;
-        
-        // Get material - handle both single and array materials
-        let mat = child.material as THREE.MeshStandardMaterial;
-        
-        // If material is an array, use first one
-        if (Array.isArray(child.material)) {
-          mat = child.material[0] as THREE.MeshStandardMaterial;
-        }
-        
-        // Skip if no material or no color property
-        if (!mat) {
-          return;
-        }
-        
-        // Skip emissive materials (indicator lights) - these should keep their color
-        // Check if the emissive color is actually set (not black) AND intensity is high
-        const isEmissive = mat.emissive && 
-                           mat.emissiveIntensity > 0.3 && 
-                           (mat.emissive.r > 0.1 || mat.emissive.g > 0.1 || mat.emissive.b > 0.1);
-        if (isEmissive) {
-          return;
-        }
-        
-        // Find matching material in skin with multiple fallback strategies:
-        // 1. Exact partName match
-        // 2. Partial partName match (e.g., 'body' matches 'body-main')
-        // 3. Default 'body' or 'surface' material
-        // 4. First available material in skin
-        let skinMaterial = partName ? skin.partMaterials[partName] : null;
-        
-        // Try partial match if exact match fails
-        if (!skinMaterial && partName) {
-          // Check if any skin key starts with or contains the partName
-          for (const key of skinPartKeys) {
-            if (key.includes(partName) || partName.includes(key)) {
-              skinMaterial = skin.partMaterials[key];
-              break;
-            }
-          }
-        }
-        
-        // Fallback to default material
-        if (!skinMaterial) {
-          skinMaterial = defaultMaterial;
-        }
-        
-        if (skinMaterial) {
-          // CLONE the material to ensure this mesh has its own instance
-          // This is critical for skinning to work independently per object
-          if (!mat.userData.isClonedForSkin) {
-            const clonedMat = mat.clone();
-            clonedMat.userData.isClonedForSkin = true;
-            child.material = clonedMat;
-            mat = clonedMat;
-          }
-          
-          // Now apply the skin color
-          mat.color.setStyle(skinMaterial.color);
-          if (skinMaterial.metalness !== undefined) mat.metalness = skinMaterial.metalness;
-          if (skinMaterial.roughness !== undefined) mat.roughness = skinMaterial.roughness;
-          
-          // Handle texture (diffuse/color map)
-          if (skinMaterial.textureUrl) {
-            const texture = this.loadTexture(skinMaterial.textureUrl);
-            // Only assign if texture is valid
-            mat.map = this.isValidTexture(texture) ? texture : null;
-          } else {
-            mat.map = null;
-          }
-          
-          // Handle normal map
-          if (skinMaterial.normalMapUrl) {
-            const normalMap = this.loadTexture(skinMaterial.normalMapUrl);
-            mat.normalMap = this.isValidTexture(normalMap) ? normalMap : null;
-          } else {
-            mat.normalMap = null;
-          }
-          
-          // Handle roughness map
-          if (skinMaterial.roughnessMapUrl) {
-            const roughnessMap = this.loadTexture(skinMaterial.roughnessMapUrl);
-            mat.roughnessMap = this.isValidTexture(roughnessMap) ? roughnessMap : null;
-          } else {
-            mat.roughnessMap = null;
-          }
-          
-          // Handle shader hints
-          if (skinMaterial.shader === 'wireframe') {
-            mat.wireframe = true;
-          } else {
-            mat.wireframe = false;
-          }
-          
-          // Handle transparency
-          if (skinMaterial.transparent) {
-            const baseOpacity = skinMaterial.opacity ?? 0.5;
-            mat.transparent = true;
-            mat.opacity = baseOpacity;
-            mat.depthWrite = false;
-            mat.side = THREE.DoubleSide;
-            // Store base opacity for ghosting calculations
-            mat.userData.baseOpacity = baseOpacity;
-            mat.userData.isNaturallyTransparent = true;
-          } else {
-            mat.transparent = false;
-            mat.opacity = 1;
-            mat.depthWrite = true;
-            mat.userData.baseOpacity = 1.0;
-            mat.userData.isNaturallyTransparent = false;
-          }
-          
-          mat.needsUpdate = true;
-        }
-      }
+    applyFullBluDesignSceneTheme(theme, {
+      getSkin,
+      buildingManager: this.buildingManager,
+      sceneManager: this.sceneManager,
+      groundTileManager: this.groundTileManager,
+      scene: this.scene,
+      isFloorMode: this.state.isFloorMode,
+      floorManager: this.floorManager,
+      applySkinToObject: (obj, skin) =>
+        this.placedObjectSkinApplicator.applySkinToObject(obj, skin),
     });
-    
-  }
-  
-  /**
-   * Load a texture from URL with caching
-   */
-  private loadTexture(url: string): THREE.Texture {
-    // Check cache first
-    if (this.textureCache.has(url)) {
-      return this.textureCache.get(url)!;
-    }
-    
-    // Load texture
-    const texture = this.textureLoader.load(url);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    
-    // Cache it
-    this.textureCache.set(url, texture);
-    
-    return texture;
+
+    this.emit('scene-theme-applied', theme);
   }
 
   // ==========================================================================
-  // Event System
+  // Event System (delegates to BluDesignEventBus)
   // ==========================================================================
 
   on<T = unknown>(eventType: EngineEventType, handler: EngineEventHandler<T>): () => void {
-    if (!this.eventHandlers.has(eventType)) {
-      this.eventHandlers.set(eventType, new Set());
-    }
-    this.eventHandlers.get(eventType)!.add(handler as EngineEventHandler);
-    
-    // Return unsubscribe function
-    return () => {
-      this.eventHandlers.get(eventType)?.delete(handler as EngineEventHandler);
-    };
+    return this.eventBus.on(eventType, handler);
   }
 
   off<T = unknown>(eventType: EngineEventType, handler: EngineEventHandler<T>): void {
-    this.eventHandlers.get(eventType)?.delete(handler as EngineEventHandler);
+    this.eventBus.off(eventType, handler);
   }
 
   private emit<T = unknown>(eventType: EngineEventType, data: T): void {
-    const event: EngineEvent<T> = {
-      type: eventType,
-      data,
-      timestamp: Date.now(),
-    };
-    
-    this.eventHandlers.get(eventType)?.forEach((handler) => {
-      try {
-        handler(event as EngineEvent);
-      } catch (error) {
-        console.error(`Error in event handler for ${eventType}:`, error);
-      }
-    });
+    this.eventBus.emit(eventType, data);
   }
 
   // ==========================================================================
@@ -3008,177 +1163,17 @@ export class BluDesignEngine {
   // ==========================================================================
 
   /**
-   * Export current scene data for saving (optimized - minimal data)
-   */
-  /**
-   * Export current scene data for saving (optimized - minimal data)
+   * Export current scene data for saving (optimized - minimal data).
    * Only stores essential data; runtime data is reconstructed on load.
+   * Serialization shape is defined in `serialization/facilitySerialization.ts`.
    */
   exportSceneData(): FacilityData {
-    // Get all placed objects from scene manager
-    const fullPlacedObjects = this.sceneManager.getAllPlacedObjects();
-    
-    // Convert to optimized serialized format (strip out assetMetadata, etc.)
-    // Only include non-default values to minimize size
-    const serializedObjects: SerializedPlacedObject[] = fullPlacedObjects.map(obj => {
-      const serialized: SerializedPlacedObject = {
-        id: obj.id,
-        assetId: obj.assetId,
-        position: {
-          x: Math.round(obj.position.x),
-          z: Math.round(obj.position.z),
-        },
-        orientation: obj.orientation,
-      };
-      
-      // Only include optional fields if they have non-default values
-      if (obj.floor && obj.floor !== 0) {
-        serialized.floor = obj.floor;
-      }
-      if (obj.buildingId) {
-        serialized.buildingId = obj.buildingId;
-      }
-      if (obj.name) {
-        serialized.name = obj.name;
-      }
-      if (obj.wallAttachment) {
-        serialized.wallAttachment = obj.wallAttachment;
-      }
-      if (obj.binding?.entityId) {
-        serialized.binding = {
-          entityType: obj.binding.entityType,
-          entityId: obj.binding.entityId,
-        };
-      }
-      if (obj.properties && Object.keys(obj.properties).length > 0) {
-        serialized.properties = obj.properties;
-      }
-if (obj.skinId) {
-        serialized.skinId = obj.skinId;
-      }
-      if (obj.rotation !== undefined) {
-        serialized.rotation = obj.rotation;
-      }
-      if (obj.exactMeshPos) {
-        serialized.exactMeshPos = obj.exactMeshPos;
-      }
-
-      return serialized;
+    return exportFacilitySceneData({
+      placedObjects: this.sceneManager.getAllPlacedObjects(),
+      state: this.state,
+      buildings: this.buildingManager.getAllBuildings(),
+      dataSourceConfig: this.dataSourceConfig,
     });
-    
-    // Serialize camera state with plain objects (not THREE.Vector3 instances)
-    // Round to 2 decimal places to reduce size
-    const camera = {
-      mode: this.state.camera.mode,
-      isometricAngle: this.state.camera.isometricAngle,
-      position: {
-        x: Math.round(this.state.camera.position.x * 100) / 100,
-        y: Math.round(this.state.camera.position.y * 100) / 100,
-        z: Math.round(this.state.camera.position.z * 100) / 100,
-      },
-      target: {
-        x: Math.round(this.state.camera.target.x * 100) / 100,
-        y: Math.round(this.state.camera.target.y * 100) / 100,
-        z: Math.round(this.state.camera.target.z * 100) / 100,
-      },
-      zoom: Math.round(this.state.camera.zoom * 100) / 100,
-    };
-
-    // Get buildings from building manager and serialize (strip runtime data)
-    const buildings = this.buildingManager.getAllBuildings();
-    const serializedBuildings: SerializedBuilding[] = buildings.map(b => ({
-      id: b.id,
-      name: b.name,
-      footprints: b.footprints.map(fp => ({
-        minX: fp.minX,
-        maxX: fp.maxX,
-        minZ: fp.minZ,
-        maxZ: fp.maxZ,
-      })),
-      floors: b.floors.map(f => ({ level: f.level, height: f.height })),
-    }));
-    
-    // Get active skin mappings ONLY for objects that have skin overrides
-    // Don't iterate all assets - only include skins that are actually in use
-    const activeSkins: Record<string, string> = {};
-    fullPlacedObjects.forEach(obj => {
-      if (obj.skinId) {
-        activeSkins[obj.assetId] = obj.skinId;
-      }
-    });
-
-    // Get the active theme ID from ThemeManager
-    const themeManager = getThemeManager();
-    const activeThemeId = themeManager.getActiveThemeId();
-
-    return {
-      name: '', // Will be set when saving
-      version: '2.0.0', // New optimized format
-      camera: camera as FacilityData['camera'],
-      placedObjects: serializedObjects,
-      buildings: serializedBuildings,
-      activeFloor: this.state.activeFloor,
-      activeSkins,
-      activeThemeId,
-      gridSize: this.state.snap.gridSize,
-      showGrid: this.state.ui.showGrid,
-      // Include data source config for facility linking persistence
-      dataSource: this.dataSourceConfig || undefined,
-    };
-  }
-
-  /**
-   * Convert AssetDefinition (from backend) to AssetMetadata (for engine use)
-   */
-  private assetDefinitionToMetadata(def: AssetDefinition): AssetMetadata {
-    return {
-      id: def.id,
-      name: def.name,
-      category: def.category as AssetCategory,
-      description: def.description,
-      dimensions: def.dimensions,
-      gridUnits: def.gridUnits,
-      isSmart: def.isSmart,
-      canRotate: def.canRotate,
-      canStack: def.canStack,
-      thumbnail: def.thumbnail,
-      // Include metadata for custom models
-      metadata: {
-        modelType: def.modelType,
-        globalModelId: def.globalModelId,
-        positionOffset: def.positionOffset,
-        lockerSpec: def.lockerSpec,
-      },
-    };
-  }
-
-  /**
-   * Pre-fetch and register any custom assets that are not in AssetRegistry
-   */
-  private async preloadCustomAssets(assetIds: string[]): Promise<void> {
-    const registry = AssetRegistry.getInstance();
-    const missingIds = assetIds.filter(id => !registry.getAsset(id));
-    
-    if (missingIds.length === 0) return;
-    
-    console.log(`[BluDesignEngine] Pre-loading ${missingIds.length} custom assets...`);
-    
-    // Fetch all custom asset definitions
-    const fetchPromises = missingIds.map(async (id) => {
-      try {
-        const definition = await AssetService.getAssetDefinition(id);
-        if (definition) {
-          // Convert to AssetMetadata and register
-          const metadata = this.assetDefinitionToMetadata(definition);
-          registry.registerAsset(metadata);
-          console.log(`[BluDesignEngine] ✓ Loaded custom asset: ${definition.name}`);
-        }
-      } catch (error) {
-        console.warn(`[BluDesignEngine] Failed to load custom asset ${id}:`, error);
-      }
-    });
-    
-    await Promise.allSettled(fetchPromises);
   }
 
   /**
@@ -3186,20 +1181,12 @@ if (obj.skinId) {
    * This is the async version that pre-fetches custom assets
    */
   async importSceneDataAsync(data: FacilityData | LegacyFacilityData): Promise<void> {
-    // Pre-fetch any custom assets that aren't in the registry
     if (data.placedObjects && data.placedObjects.length > 0) {
-      const isLegacyFormat = data.version === '1.0.0' || 
-        (data.placedObjects.length > 0 && 'assetMetadata' in data.placedObjects[0]);
-      
-      if (!isLegacyFormat) {
-        // New format - extract asset IDs and pre-load missing ones
-        const assetIds = (data.placedObjects as SerializedPlacedObject[]).map(obj => obj.assetId);
-        const uniqueIds = [...new Set(assetIds)];
-        await this.preloadCustomAssets(uniqueIds);
+      if (!isLegacyFacilityFormat(data)) {
+        const uniqueIds = collectUniqueSerializedAssetIds(data);
+        await preloadFacilityCustomAssets(uniqueIds);
       }
     }
-    
-    // Now call the synchronous import
     this.importSceneData(data);
   }
 
@@ -3208,350 +1195,45 @@ if (obj.skinId) {
    * Use importSceneDataAsync for projects with custom assets
    */
   importSceneData(data: FacilityData | LegacyFacilityData): void {
-    // Clear current scene
-    this.sceneManager.clearObjects();
-    this.buildingManager.clear();
-    
-    // Detect format version
-    const isLegacyFormat = data.version === '1.0.0' || 
-      (data.placedObjects.length > 0 && 'assetMetadata' in data.placedObjects[0]);
-    
-    
-    // Restore camera state
-    if (data.camera) {
-      this.state.camera = {
-        ...this.state.camera,
-        mode: data.camera.mode,
-        isometricAngle: data.camera.isometricAngle,
-        position: new THREE.Vector3(
-          data.camera.position.x,
-          data.camera.position.y,
-          data.camera.position.z
-        ),
-        target: new THREE.Vector3(
-          data.camera.target.x,
-          data.camera.target.y,
-          data.camera.target.z
-        ),
-        zoom: data.camera.zoom,
-      };
-      // Restore camera mode and angle
-      this.cameraController.setMode(data.camera.mode);
-      if (data.camera.mode === CameraMode.ISOMETRIC) {
-        this.cameraController.setIsometricAngle(data.camera.isometricAngle);
-      }
-    }
-    
-    // Restore buildings - use restoreBuilding to properly handle merged buildings
-    if (data.buildings && data.buildings.length > 0) {
-      data.buildings.forEach(building => {
-        // Restore building with all its footprints at once (preserves merged state)
-        this.buildingManager.restoreBuilding(
-          building.id,
-          building.footprints,
-          building.floors,
-          building.name
-        );
-        
-        // Register all floors with the floor manager
-        building.floors.forEach(floor => {
-          this.floorManager.registerFloor(floor.level);
-        });
-      });
-      
-      // Enter floor mode since we have buildings
-      this.state.isFloorMode = true;
-    }
-    
-    // Restore placed objects
-    if (data.placedObjects) {
-      if (isLegacyFormat) {
-        // Legacy format: objects have full assetMetadata
-        (data.placedObjects as PlacedObject[]).forEach(obj => {
-          this.placeObjectFromSavedData(obj);
-        });
-      } else {
-        // New optimized format: reconstruct from AssetRegistry
-        (data.placedObjects as SerializedPlacedObject[]).forEach(serialized => {
-          this.placeObjectFromSerializedData(serialized);
-        });
-      }
-    }
-    
-    // Restore floor state
-    if (data.activeFloor !== undefined) {
-      this.state.activeFloor = data.activeFloor;
-      this.floorManager.setFloor(data.activeFloor);
-    }
-    
-    // Restore skins (legacy format has skins array, new format has activeSkins map)
-    if ('skins' in data && data.skins) {
-      this.skinManager.loadFacilitySkins(data.skins);
-    }
-    if ('activeSkins' in data && data.activeSkins) {
-      // Restore active skin selections from map (category -> skinId)
-      Object.entries(data.activeSkins).forEach(([category, skinId]) => {
-        this.skinManager.setActiveSkin(category as AssetCategory, skinId);
-      });
-    }
-    
-    // Restore grid settings
-    if (data.gridSize) {
-      this.state.snap.gridSize = data.gridSize;
-    }
-    
-    // Optimize all ground tile categories after loading
-    // This ensures tiles loaded from saved data are optimized
-    // Use centralized OptimizationManager
-    const optimizationManager = OptimizationManager.getInstance();
-    optimizationManager.optimizeAll(true);
-    if (data.showGrid !== undefined) {
-      this.state.ui.showGrid = data.showGrid;
-      this.gridSystem.setVisible(data.showGrid);
-    }
-    
-    // Restore theme - check if it exists
-    if ('activeThemeId' in data && data.activeThemeId) {
-      const themeManager = getThemeManager();
-      const theme = themeManager.getTheme(data.activeThemeId);
-      
-      if (theme) {
-        // Theme exists, apply it
-        themeManager.setActiveTheme(data.activeThemeId);
-      } else {
-        // Theme doesn't exist - emit event for UI to handle
-        console.warn(`[BluDesignEngine] Theme not found: ${data.activeThemeId}, falling back to default`);
-        themeManager.setActiveTheme('theme-default');
-        this.emit('theme-missing', { 
-          missingThemeId: data.activeThemeId,
-        });
-      }
-    }
-    
-    // Restore data source configuration (for facility linking)
-    if ('dataSource' in data && data.dataSource) {
-      this.dataSourceConfig = data.dataSource;
-    } else {
-      this.dataSourceConfig = null;
-    }
-    
-    this.emit('state-updated', this.state);
+    importFacilitySceneData(data, this.getFacilityImportHost());
   }
 
-  /**
-   * Place an object from optimized serialized data (reconstructs metadata from registry)
-   */
-  private placeObjectFromSerializedData(serialized: SerializedPlacedObject): void {
-    try {
-      // Look up asset metadata from registry
-      const assetMetadata = AssetRegistry.getInstance().getAsset(serialized.assetId);
-      if (!assetMetadata) {
-        console.warn(`Asset not found in registry: ${serialized.assetId}`);
-        return;
-      }
-      
-      // Reconstruct full PlacedObject
-      const placedObject: PlacedObject = {
-        id: serialized.id,
-        assetId: serialized.assetId,
-        assetMetadata,
-        position: serialized.position,
-        orientation: serialized.orientation,
-        rotation: serialized.rotation, // Restore arbitrary rotation
-        exactMeshPos: serialized.exactMeshPos, // Restore exact mesh position for angled placement
-        canStack: assetMetadata.canStack,
-        floor: serialized.floor ?? 0,
-        buildingId: serialized.buildingId,
-        name: serialized.name, // Restore user-defined name
-        wallAttachment: serialized.wallAttachment,
-        binding: serialized.binding ? {
-          entityType: serialized.binding.entityType,
-          entityId: serialized.binding.entityId,
-          currentState: DeviceState.UNKNOWN,
-        } : undefined,
-        skinId: serialized.skinId, // Restore skin override
-        properties: serialized.properties || {},
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      this.placeObjectFromSavedData(placedObject);
-    } catch (error) {
-      console.error('Failed to place object from serialized data:', serialized.id, error);
-    }
+  private getFacilityImportHost(): FacilityImportHost {
+    return {
+      getState: () => this.state,
+      sceneManager: this.sceneManager,
+      buildingManager: this.buildingManager,
+      floorManager: this.floorManager,
+      cameraController: this.cameraController,
+      placementCoordinator: this.placementCoordinator,
+      skinManager: this.skinManager,
+      gridSystem: this.gridSystem,
+      resetWorkingGridAlignment: () => this.setWorkingGridAlignment(null),
+      setDataSourceConfig: (config: DataSourceConfig | null) => {
+        this.dataSourceConfig = config;
+      },
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+      emitThemeMissing: (payload: { missingThemeId: string }) =>
+        this.emit('theme-missing', payload),
+    };
   }
-
-  /**
-   * Place an object from saved data
-   * Handles rotation, floor positioning, wall-attached assets (doors/windows), and skins
-   */
-  private placeObjectFromSavedData(obj: PlacedObject): void {
-    try {
-      const mesh = AssetFactory.createAssetMesh(obj.assetMetadata);
-      
-      const gridSize = this.gridSystem.getGridSize();
-      const worldPos = this.gridSystem.gridToWorld(obj.position);
-      const floorY = (obj.floor ?? 0) * FLOOR_HEIGHT * gridSize;
-      
-      // Calculate effective dimensions accounting for rotation
-      const isRotated90 = obj.orientation === Orientation.EAST || obj.orientation === Orientation.WEST;
-      const effectiveWidth = isRotated90 ? obj.assetMetadata.gridUnits.z : obj.assetMetadata.gridUnits.x;
-      const effectiveDepth = isRotated90 ? obj.assetMetadata.gridUnits.x : obj.assetMetadata.gridUnits.z;
-      
-      // Check if this is a wall-attached asset (door/window)
-      const isWallAttached = (obj.assetMetadata.category === 'door' || obj.assetMetadata.category === 'window') 
-                             && obj.wallAttachment;
-      
-      if (isWallAttached && obj.wallAttachment) {
-        // Position flush with the wall
-        const wallMesh = this.buildingManager.getWallMesh(obj.wallAttachment.wallId);
-        if (wallMesh) {
-          // Position asset at wall center, flush with wall surface
-          const wallPos = wallMesh.position.clone();
-          mesh.position.copy(wallPos);
-          mesh.position.y = floorY;
-          
-          // Apply rotation - prefer arbitrary rotation, fall back to orientation
-          mesh.rotation.y = this.getEffectiveRotation(obj);
-          
-          // Create wall opening for this door/window (restore from saved data)
-          const opening = {
-            id: `opening-${obj.id}`,
-            type: obj.assetMetadata.category as 'door' | 'window',
-            objectId: obj.id,
-            position: obj.wallAttachment.position ?? 0.5,
-            width: Math.max(obj.assetMetadata.gridUnits.x, obj.assetMetadata.gridUnits.z),
-          };
-          this.buildingManager.addWallOpening(obj.wallAttachment.wallId, opening);
-        } else {
-          // Fallback: place at grid position if wall not found
-          // Still preserve internal Y offset for custom models
-          const existingYOffset = mesh.position.y;
-          mesh.position.set(
-            worldPos.x + (effectiveWidth * gridSize) / 2,
-            floorY + existingYOffset,
-            worldPos.z + (effectiveDepth * gridSize) / 2
-          );
-          mesh.rotation.y = this.getEffectiveRotation(obj);
-        }
-      } else {
-        // Standard positioning for non-wall-attached assets
-        // IMPORTANT: Custom models already have internal Y offset (grounding + positionOffset)
-        // from CustomAssetLoader. We must preserve that offset, not overwrite it.
-        const existingXOffset = mesh.position.x;
-        const existingYOffset = mesh.position.y;
-        const existingZOffset = mesh.position.z;
-        
-        // Store internal offsets in userData
-        mesh.userData.internalXOffset = existingXOffset;
-        mesh.userData.internalYOffset = existingYOffset;
-        mesh.userData.internalZOffset = existingZOffset;
-        
-        if (obj.exactMeshPos) {
-          // Use exact mesh position for angled/off-grid placement
-          mesh.position.set(
-            obj.exactMeshPos.x,
-            floorY + existingYOffset,
-            obj.exactMeshPos.z
-          );
-        } else {
-          // Grid-based positioning
-          mesh.position.set(
-            worldPos.x + (effectiveWidth * gridSize) / 2 + existingXOffset,
-            floorY + existingYOffset,
-            worldPos.z + (effectiveDepth * gridSize) / 2 + existingZOffset
-          );
-        }
-        mesh.rotation.y = this.getEffectiveRotation(obj);
-      }
-      
-      // Store internal Y offset in userData for use during moves (if not already set)
-      if (mesh.userData.internalYOffset === undefined) {
-        mesh.userData.internalYOffset = mesh.position.y - floorY;
-      }
-      
-      // Set user data
-      mesh.userData.id = obj.id;
-      mesh.userData.assetId = obj.assetId;
-      mesh.userData.gridPosition = obj.position;
-      mesh.userData.isSmart = obj.assetMetadata.isSmart;
-      mesh.userData.category = obj.assetMetadata.category;
-      mesh.userData.floor = obj.floor ?? 0;
-      mesh.userData.selectable = true;
-      
-      this.sceneManager.addObject(obj.id, mesh, obj);
-      
-      // Store original materials FIRST (before applying any skin/theme)
-      this.storeDefaultMaterials(mesh);
-      
-      // Apply skin or theme based on object's saved state
-      if (obj.skinId) {
-        if (obj.skinId === ORIGINAL_MATERIALS_SKIN_ID) {
-          // Special case: restore original materials
-          this.resetToDefaultMaterials(mesh as THREE.Group);
-        } else {
-          // Object has a specific skin override - apply that skin from SkinRegistry
-          const skinRegistry = getSkinRegistry();
-          const skin = skinRegistry.getSkin(obj.skinId);
-          if (skin) {
-            this.applySkinToObject(mesh as THREE.Group, skin);
-          } else {
-            console.warn(`[placeObjectFromSavedData] Skin "${obj.skinId}" not found, falling back to theme`);
-            this.applyActiveThemeSkin(mesh as THREE.Group, obj);
-          }
-        }
-      } else {
-        // No skin override - apply theme's skin for this category
-        this.applyActiveThemeSkin(mesh as THREE.Group, obj);
-      }
-      
-      // Apply correct floor-based opacity
-      this.floorManager.applyGhostingToObject(mesh);
-    } catch (error) {
-      console.error(`Failed to place object ${obj.id}:`, error);
-    }
-  }
-
 
   /**
    * Clear all placed objects and buildings from the scene
    */
   clearScene(): void {
-    // Clear all placed objects
-    const placedObjects = this.sceneManager.getAllPlacedObjects();
-    for (const obj of placedObjects) {
-      this.sceneManager.removeObject(obj.id);
-      this.gridSystem.clearOccupied(obj.id);
-    }
-
-    // Clear all buildings
-    this.buildingManager.clear();
-    this.state.buildings = [];
-    
-    // Exit floor mode
-    this.state.isFloorMode = false;
-    this.state.activeFloor = 0;
-    this.floorManager.clear();
-    this.selectionManager.setFloorMode(false, 0);
-    
-    // Reset grid to ground level
-    this.gridSystem.setGridY(0);
-
-    // Clear selection
-    this.selectionManager.clearSelection();
-    this.state.selection = {
-      selectedIds: [],
-      hoveredId: null,
-      isMultiSelect: false,
-    };
-    
-    // Clear action history for fresh start
-    this.actionHistory.clear();
-
-    this.emit('state-updated', this.state);
-    
-    // Clear the auto-save draft since we're starting fresh
-    this.clearDraft();
+    clearFacilityEditorScene({
+      getState: () => this.state,
+      setWorkingGridAlignment: () => this.setWorkingGridAlignment(null),
+      sceneManager: this.sceneManager,
+      gridSystem: this.gridSystem,
+      buildingManager: this.buildingManager,
+      floorManager: this.floorManager,
+      selectionManager: this.selectionManager,
+      actionHistory: this.actionHistory,
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+      clearDraft: () => this.clearDraft(),
+    });
   }
 
   // ==========================================================================
@@ -3563,40 +1245,14 @@ if (obj.skinId) {
    * Call this after any major state change
    */
   scheduleAutoSave(): void {
-    if (this.readonly) return;
-    
-    // Clear any pending auto-save
-    if (this.autoSaveTimer) {
-      clearTimeout(this.autoSaveTimer);
-    }
-    
-    // Schedule new auto-save
-    this.autoSaveTimer = setTimeout(() => {
-      this.saveToLocalStorage();
-    }, AUTOSAVE_DEBOUNCE_MS);
+    this.draftAutoSave.schedule();
   }
 
   /**
    * Immediately save current state to local storage
    */
   saveToLocalStorage(): void {
-    if (this.readonly) return;
-    
-    try {
-      const data = this.exportSceneData();
-      const draft = {
-        timestamp: Date.now(),
-        data,
-      };
-      
-      localStorage.setItem(AUTOSAVE_STORAGE_KEY, JSON.stringify(draft));
-      this.lastAutoSaveTime = Date.now();
-      
-      console.log('[AutoSave] Draft saved to local storage');
-      this.emit('autosave-complete', { timestamp: this.lastAutoSaveTime });
-    } catch (error) {
-      console.error('[AutoSave] Failed to save draft:', error);
-    }
+    this.draftAutoSave.saveNow();
   }
 
   /**
@@ -3605,16 +1261,15 @@ if (obj.skinId) {
    */
   async loadFromLocalStorageAsync(): Promise<boolean> {
     try {
-      const stored = localStorage.getItem(AUTOSAVE_STORAGE_KEY);
-      if (!stored) return false;
-      
-      const draft = JSON.parse(stored);
-      if (!draft.data) return false;
-      
-      console.log(`[AutoSave] Found draft from ${new Date(draft.timestamp).toLocaleString()}`);
-      
-      // Use async import to pre-load any custom assets
-      await this.importSceneDataAsync(draft.data);
+      const data = this.draftStorage.loadFacilityData();
+      if (!data) return false;
+
+      const info = this.draftStorage.peekDraftInfo();
+      if (info.timestamp) {
+        console.log(`[AutoSave] Found draft from ${new Date(info.timestamp).toLocaleString()}`);
+      }
+
+      await this.importSceneDataAsync(data);
       return true;
     } catch (error) {
       console.error('[AutoSave] Failed to load draft:', error);
@@ -3628,15 +1283,15 @@ if (obj.skinId) {
    */
   loadFromLocalStorage(): boolean {
     try {
-      const stored = localStorage.getItem(AUTOSAVE_STORAGE_KEY);
-      if (!stored) return false;
-      
-      const draft = JSON.parse(stored);
-      if (!draft.data) return false;
-      
-      console.log(`[AutoSave] Found draft from ${new Date(draft.timestamp).toLocaleString()}`);
-      
-      this.importSceneData(draft.data);
+      const data = this.draftStorage.loadFacilityData();
+      if (!data) return false;
+
+      const info = this.draftStorage.peekDraftInfo();
+      if (info.timestamp) {
+        console.log(`[AutoSave] Found draft from ${new Date(info.timestamp).toLocaleString()}`);
+      }
+
+      this.importSceneData(data);
       return true;
     } catch (error) {
       console.error('[AutoSave] Failed to load draft:', error);
@@ -3649,14 +1304,7 @@ if (obj.skinId) {
    */
   hasDraft(): { exists: boolean; timestamp?: number } {
     try {
-      const stored = localStorage.getItem(AUTOSAVE_STORAGE_KEY);
-      if (!stored) return { exists: false };
-      
-      const draft = JSON.parse(stored);
-      return { 
-        exists: !!draft.data, 
-        timestamp: draft.timestamp 
-      };
+      return this.draftStorage.peekDraftInfo();
     } catch {
       return { exists: false };
     }
@@ -3668,7 +1316,7 @@ if (obj.skinId) {
    */
   clearDraft(): void {
     try {
-      localStorage.removeItem(AUTOSAVE_STORAGE_KEY);
+      this.draftStorage.clear();
       console.log('[AutoSave] Draft cleared');
     } catch (error) {
       console.error('[AutoSave] Failed to clear draft:', error);
@@ -3679,7 +1327,7 @@ if (obj.skinId) {
    * Get the last auto-save timestamp
    */
   getLastAutoSaveTime(): number {
-    return this.lastAutoSaveTime;
+    return this.draftAutoSave.getLastSaveTime();
   }
 
   /**
@@ -3688,56 +1336,12 @@ if (obj.skinId) {
    * Grid is automatically hidden for cleaner thumbnails
    */
   async captureScreenshot(maxSize: number = 256): Promise<string> {
-    // Remember current grid state and hide it for clean thumbnail
-    const wasGridVisible = this.state.ui.showGrid;
-    if (wasGridVisible) {
-      this.gridSystem.setVisible(false);
-    }
-    
-    // Render current frame (without grid)
-    this.render();
-
-    // Create an offscreen canvas for resizing
-    const originalCanvas = this.renderer.domElement;
-    const offscreen = document.createElement('canvas');
-    
-    // Calculate scaled dimensions maintaining aspect ratio
-    const aspect = originalCanvas.width / originalCanvas.height;
-    let width: number, height: number;
-    
-    if (aspect > 1) {
-      width = maxSize;
-      height = Math.round(maxSize / aspect);
-    } else {
-      height = maxSize;
-      width = Math.round(maxSize * aspect);
-    }
-    
-    offscreen.width = width;
-    offscreen.height = height;
-    
-    const ctx = offscreen.getContext('2d');
-    if (!ctx) {
-      // Restore grid before returning
-      if (wasGridVisible) {
-        this.gridSystem.setVisible(true);
-        this.render();
-      }
-      // Fallback to smaller PNG if canvas context fails
-      return originalCanvas.toDataURL('image/jpeg', 0.7);
-    }
-    
-    // Draw scaled image
-    ctx.drawImage(originalCanvas, 0, 0, width, height);
-    
-    // Restore grid visibility
-    if (wasGridVisible) {
-      this.gridSystem.setVisible(true);
-      this.render();
-    }
-    
-    // Return compressed JPEG (much smaller than PNG)
-    return offscreen.toDataURL('image/jpeg', 0.7);
+    return captureSceneThumbnailJpeg(maxSize, {
+      wasGridVisible: this.state.ui.showGrid,
+      setGridVisible: (visible) => this.gridSystem.setVisible(visible),
+      render: () => this.render(),
+      getSourceCanvas: () => this.renderer.domElement,
+    });
   }
 
   // ==========================================================================
@@ -3790,355 +1394,48 @@ if (obj.skinId) {
    * Apply an undo action (reverse the action)
    */
   private applyUndoAction(action: HistoryAction): void {
-    switch (action.type) {
-      case 'place': {
-        // Undo place = delete the object
-        const data = action.data as PlaceActionData;
-        this.deleteObjectInternal(data.object.id);
-        break;
-      }
-      case 'delete': {
-        // Undo delete = place the object back
-        const data = action.data as DeleteActionData;
-        this.placeObjectInternal(data.object);
-        break;
-      }
-      case 'move': {
-        // Undo move = move back to original position with full state
-        const data = action.data as MoveActionData;
-        this.moveObjectInternal(
-          data.objectId, 
-          data.fromPosition, 
-          data.fromOrientation,
-          data.fromRotation,
-          data.fromExactMeshPos
-        );
-        break;
-      }
-      case 'rotate': {
-        // Undo rotate = restore before states
-        const data = action.data as RotateActionData;
-        this.applyRotationState(data.beforeStates);
-        break;
-      }
-      case 'batch': {
-        // Undo batch = undo each action in reverse order
-        const batchData = action.data as { actions: HistoryAction[] };
-        for (let i = batchData.actions.length - 1; i >= 0; i--) {
-          this.applyUndoAction(batchData.actions[i]);
-        }
-        break;
-      }
-      case 'building-create': {
-        // Undo building create = remove the building
-        const data = action.data as BuildingCreateActionData;
-        this.removeBuildingInternal(data.building.id);
-        break;
-      }
-      case 'building-delete': {
-        // Undo building delete = recreate the building
-        const data = action.data as BuildingDeleteActionData;
-        this.recreateBuildingInternal(data.building);
-        break;
-      }
-      case 'building-move': {
-        // Undo building move = translate in the opposite direction
-        const data = action.data as BuildingMoveActionData;
-        this.translateBuilding(data.buildingId, -data.deltaX, -data.deltaZ);
-        // Update selection highlights if this building is selected
-        if (this.state.selection.selectedBuildingId === data.buildingId) {
-          this.updateSelectionHighlightsForBuilding();
-        }
-        break;
-      }
-      case 'floor-add': {
-        // Undo floor add = remove the floor
-        const data = action.data as FloorAddActionData;
-        this.buildingManager.removeFloor(data.buildingId, data.floor.level);
-        this.floorManager.unregisterFloor(data.floor.level);
-        this.state.buildings = this.buildingManager.getAllBuildings();
-        break;
-      }
-      case 'floor-delete': {
-        // Undo floor delete = recreate the floor and restore objects
-        const data = action.data as FloorDeleteActionData;
-        this.undoFloorDelete(data);
-        break;
-      }
-      case 'floor-insert': {
-        // Undo floor insert = remove inserted floor and shift back down
-        const data = action.data as FloorInsertActionData;
-        this.undoFloorInsert(data);
-        break;
-      }
-    }
-    this.emit('state-updated', this.state);
+    this.historyActionApplier.applyUndo(action);
   }
 
   /**
    * Apply a redo action (re-apply the action)
    */
   private applyRedoAction(action: HistoryAction): void {
-    switch (action.type) {
-      case 'place': {
-        // Redo place = place the object
-        const data = action.data as PlaceActionData;
-        this.placeObjectInternal(data.object);
-        break;
-      }
-      case 'delete': {
-        // Redo delete = delete the object
-        const data = action.data as DeleteActionData;
-        this.deleteObjectInternal(data.object.id);
-        break;
-      }
-      case 'move': {
-        // Redo move = move to new position with full state
-        const data = action.data as MoveActionData;
-        this.moveObjectInternal(
-          data.objectId, 
-          data.toPosition, 
-          data.toOrientation,
-          data.toRotation,
-          data.toExactMeshPos
-        );
-        break;
-      }
-      case 'rotate': {
-        // Redo rotate = restore after states
-        const data = action.data as RotateActionData;
-        this.applyRotationState(data.afterStates);
-        break;
-      }
-      case 'batch': {
-        // Redo batch = redo each action in order
-        const batchData = action.data as { actions: HistoryAction[] };
-        for (const batchAction of batchData.actions) {
-          this.applyRedoAction(batchAction);
-        }
-        break;
-      }
-      case 'building-create': {
-        // Redo building create = recreate the building
-        const data = action.data as BuildingCreateActionData;
-        this.recreateBuildingInternal(data.building);
-        break;
-      }
-      case 'building-delete': {
-        // Redo building delete = remove the building
-        const data = action.data as BuildingDeleteActionData;
-        this.removeBuildingInternal(data.building.id);
-        break;
-      }
-      case 'building-move': {
-        // Redo building move = translate in the same direction
-        const data = action.data as BuildingMoveActionData;
-        this.translateBuilding(data.buildingId, data.deltaX, data.deltaZ);
-        // Update selection highlights if this building is selected
-        if (this.state.selection.selectedBuildingId === data.buildingId) {
-          this.updateSelectionHighlightsForBuilding();
-        }
-        break;
-      }
-      case 'floor-add': {
-        // Redo floor add = add the floor back
-        const data = action.data as FloorAddActionData;
-        this.buildingManager.addFloor(data.buildingId, data.floor.level);
-        this.floorManager.registerFloor(data.floor.level);
-        this.state.buildings = this.buildingManager.getAllBuildings();
-        // Add vertical shaft objects to the new floor
-        const building = this.state.buildings.find(b => b.id === data.buildingId);
-        if (building) {
-          this.addVerticalShaftObjectsToFloor(data.floor.level, building);
-        }
-        // Apply current theme to new floor
-        const activeTheme = getThemeManager().getActiveSkinTheme();
-        this.applyThemeToScene(activeTheme);
-        break;
-      }
-      case 'floor-delete': {
-        // Redo floor delete = delete the floor again
-        const data = action.data as FloorDeleteActionData;
-        this.redoFloorDelete(data);
-        break;
-      }
-      case 'floor-insert': {
-        // Redo floor insert = insert the floor again
-        const data = action.data as FloorInsertActionData;
-        this.redoFloorInsert(data);
-        break;
-      }
-    }
-    this.emit('state-updated', this.state);
+    this.historyActionApplier.applyRedo(action);
   }
 
   /**
    * Place an object without recording in history (for undo/redo)
    */
   private placeObjectInternal(placedObject: PlacedObject): void {
-    const asset = placedObject.assetMetadata;
-    if (!asset) {
-      console.error('Asset metadata not found for:', placedObject.assetId);
-      return;
-    }
-    
-    // Check if this is a ground tile category - use instanced rendering
-    if (this.groundTileManager.isGroundTileCategory(asset.category)) {
-      const marker = this.groundTileManager.addTile(
-        placedObject.id,
-        asset.category,
-        placedObject.position
-      );
-      
-      this.scene.add(marker);
-      this.sceneManager.addObject(placedObject.id, marker, placedObject);
-      
-      this.gridSystem.markOccupied(
-        placedObject.id,
-        placedObject.position,
-        { x: asset.gridUnits.x, z: asset.gridUnits.z },
-        asset.canStack,
-        asset.category,
-        placedObject.floor ?? 0
-      );
-      return;
-    }
-    
-    // Standard placement for non-ground tiles
-    const mesh = AssetFactory.createAssetMesh(asset);
-    const gridSize = this.gridSystem.getGridSize();
-    const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
-    
-    // Preserve existing offsets from CustomAssetLoader (centering + grounding + positionOffset)
-    // Store them in userData so we can use them during moves
-    const existingXOffset = mesh.position.x;
-    const existingYOffset = mesh.position.y;
-    const existingZOffset = mesh.position.z;
-    mesh.userData.internalXOffset = existingXOffset;
-    mesh.userData.internalYOffset = existingYOffset;
-    mesh.userData.internalZOffset = existingZOffset;
-    
-    // Position the mesh
-    if (placedObject.exactMeshPos) {
-      // Exact mesh position for angled/off-grid placement
-      // This is the EXACT position the ghost used - no calculation needed
-      mesh.position.set(
-        placedObject.exactMeshPos.x,
-        floorY + existingYOffset,
-        placedObject.exactMeshPos.z
-      );
-    } else {
-      // Grid-based positioning for standard placement
-      const worldPos = this.gridSystem.gridToWorld(placedObject.position);
-      
-      // Swap grid units for 90° and 270° rotations
-      const isRotated90 = placedObject.orientation === Orientation.EAST || 
-                          placedObject.orientation === Orientation.WEST;
-      const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-      const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
-      
-      const centerOffsetX = (effectiveGridX * gridSize) / 2;
-      const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
-      
-      mesh.position.set(
-        worldPos.x + centerOffsetX + existingXOffset,
-        floorY + existingYOffset,
-        worldPos.z + centerOffsetZ + existingZOffset
-      );
-    }
-    mesh.rotation.y = this.getEffectiveRotation(placedObject);
-    
-    // Store floor info in mesh userData
-    mesh.userData.floor = placedObject.floor ?? 0;
-    mesh.userData.selectable = true;
-    
-    this.sceneManager.addObject(placedObject.id, mesh, placedObject);
-    
-    // Apply current theme (unless object has a skin override)
-    if (!placedObject.skinId) {
-      this.applyActiveThemeSkin(mesh, placedObject);
-    }
-    
-    // Apply correct floor-based opacity
-    this.floorManager.applyGhostingToObject(mesh);
-    
-    this.gridSystem.markOccupied(
-      placedObject.id,
-      placedObject.position,
-      { x: asset.gridUnits.x, z: asset.gridUnits.z },
-      asset.canStack,
-      asset.category,
-      placedObject.floor ?? 0
-    );
+    this.placementCoordinator.placeForHistory(placedObject);
   }
 
   /**
    * Delete an object without recording in history (for undo/redo)
    */
   private deleteObjectInternal(objectId: string): void {
-    // Check if this object has a wall attachment (door/window)
-    // If so, we need to remove the wall opening to restore the wall
-    const objectData = this.sceneManager.getObjectData(objectId);
-    if (objectData?.wallAttachment) {
-      const openingId = `opening-${objectId}`;
-      this.buildingManager.removeWallOpening(objectData.wallAttachment.wallId, openingId);
-    }
-    
-    // Remove from ground tile manager if it's a ground tile
-    this.groundTileManager.removeTile(objectId);
-    
-    this.sceneManager.removeObject(objectId);
-    this.gridSystem.clearOccupied(objectId);
-    
-    // Remove from selection if selected
-    const selectionIndex = this.state.selection.selectedIds.indexOf(objectId);
-    if (selectionIndex >= 0) {
-      this.state.selection.selectedIds.splice(selectionIndex, 1);
-      this.emit('selection-changed', this.state.selection);
-    }
+    removePlacedObjectWithoutHistory({
+      objectId,
+      sceneManager: this.sceneManager,
+      buildingManager: this.buildingManager,
+      groundTileManager: this.groundTileManager,
+      gridSystem: this.gridSystem,
+      state: this.state,
+      emitSelectionChanged: (sel) => this.emit('selection-changed', sel),
+    });
   }
   
   /**
    * Remove ground tiles (grass, pavement, gravel) at specified cells
    * Called when buildings are placed to override any existing ground materials
    */
-  private removeGroundTilesAtCells(cells: Array<{x: number, z: number}>): void {
-    const groundCategories = [
-      AssetCategory.PAVEMENT,
-      AssetCategory.GRASS,
-      AssetCategory.GRAVEL,
-    ];
-    
-    // Get all placed objects
-    const allObjects = this.sceneManager.getAllPlacedObjects();
-    const objectsToRemove: string[] = [];
-    
-    for (const obj of allObjects) {
-      // Check if it's a ground-type object
-      if (!groundCategories.includes(obj.assetMetadata.category)) continue;
-      
-      // Only remove ground floor items
-      if ((obj.floor ?? 0) !== 0) continue;
-      
-      // Check if the object overlaps any of the cells
-      const objPos = obj.position;
-      const objWidth = obj.assetMetadata.gridUnits.x;
-      const objDepth = obj.assetMetadata.gridUnits.z;
-      
-      for (const cell of cells) {
-        // Check if this cell is within the object's footprint
-        if (cell.x >= objPos.x && cell.x < objPos.x + objWidth &&
-            cell.z >= objPos.z && cell.z < objPos.z + objDepth) {
-          objectsToRemove.push(obj.id);
-          break; // No need to check other cells for this object
-        }
-      }
-    }
-    
-    // Remove the ground tiles
-    for (const objectId of objectsToRemove) {
-      this.deleteObjectInternal(objectId);
-    }
+  private removeGroundTilesAtCells(cells: Array<{ x: number; z: number }>): void {
+    removeGroundTilesAtCellsFromCells({
+      cells,
+      sceneManager: this.sceneManager,
+      deleteObjectInternal: (id) => this.deleteObjectInternal(id),
+    });
   }
 
   /**
@@ -4176,94 +1473,6 @@ if (obj.skinId) {
     }
   }
   
-  /**
-   * Move an object without recording in history (for undo/redo)
-   * Now supports restoring rotation and exactMeshPos for angled objects
-   */
-  private moveObjectInternal(
-    objectId: string, 
-    newPosition: GridPosition, 
-    newOrientation: Orientation,
-    newRotation?: number,
-    newExactMeshPos?: { x: number; z: number }
-  ): void {
-    const placedObject = this.sceneManager.getObjectData(objectId);
-    const mesh = this.sceneManager.getObject(objectId);
-    
-    if (!placedObject || !mesh) {
-      console.error('Object not found:', objectId);
-      return;
-    }
-    
-    const asset = placedObject.assetMetadata;
-    if (!asset) return;
-    
-    // Clear old occupancy
-    this.gridSystem.clearOccupied(objectId);
-    
-    const gridSize = this.gridSystem.getGridSize();
-    const floorY = (placedObject.floor ?? 0) * FLOOR_HEIGHT * gridSize;
-    
-    // Use stored internal offsets
-    const internalXOffset = mesh.userData.internalXOffset ?? 0;
-    const internalYOffset = mesh.userData.internalYOffset ?? 0;
-    const internalZOffset = mesh.userData.internalZOffset ?? 0;
-    
-    if (newExactMeshPos) {
-      // Use exact mesh position for angled objects
-      mesh.position.set(
-        newExactMeshPos.x,
-        floorY + internalYOffset,
-        newExactMeshPos.z
-      );
-      placedObject.exactMeshPos = { ...newExactMeshPos };
-    } else {
-      // Grid-based positioning
-      const worldPos = this.gridSystem.gridToWorld(newPosition);
-      
-      // Swap grid units for 90° and 270° rotations
-      const isRotated90 = newOrientation === Orientation.EAST || 
-                          newOrientation === Orientation.WEST;
-      const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-      const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
-      
-      const centerOffsetX = (effectiveGridX * gridSize) / 2;
-      const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
-      
-      mesh.position.set(
-        worldPos.x + centerOffsetX + internalXOffset,
-        floorY + internalYOffset,
-        worldPos.z + centerOffsetZ + internalZOffset
-      );
-      placedObject.exactMeshPos = undefined;
-    }
-    
-    // Apply rotation
-    if (newRotation !== undefined) {
-      mesh.rotation.y = newRotation;
-      placedObject.rotation = newRotation;
-    } else {
-      mesh.rotation.y = this.getRotationFromOrientation(newOrientation);
-      placedObject.rotation = undefined;
-    }
-    
-    // Update data
-    placedObject.position = newPosition;
-    placedObject.orientation = newOrientation;
-    // Clear arbitrary rotation when orientation is explicitly set (90-degree rotations)
-    placedObject.rotation = undefined;
-    
-    // Mark new occupancy on the object's floor
-    this.gridSystem.markOccupied(
-      objectId,
-      newPosition,
-      { x: asset.gridUnits.x, z: asset.gridUnits.z },
-      asset.canStack,
-      asset.category,
-      placedObject.floor ?? 0
-    );
-  }
-
   /**
    * Remove a building without recording in history (for undo/redo)
    */
@@ -4322,143 +1531,6 @@ if (obj.skinId) {
   }
 
   /**
-   * Undo a floor delete operation
-   */
-  private undoFloorDelete(data: FloorDeleteActionData): void {
-    // Shift floors back up
-    this.buildingManager.shiftFloorLevels(data.buildingId, data.floor.level, 1);
-    this.floorManager.shiftFloors(data.floor.level, 1);
-    
-    // Shift objects back up
-    this.floorManager.shiftObjectFloors(data.floor.level, 1);
-    
-    // Update PlacedObject data for shifted objects
-    for (const objData of this.sceneManager.getAllPlacedObjects()) {
-      if (objData.floor !== undefined && objData.floor >= data.floor.level) {
-        objData.floor += 1;
-      }
-    }
-    
-    // Recreate the floor
-    this.buildingManager.addFloor(data.buildingId, data.floor.level);
-    this.floorManager.registerFloor(data.floor.level);
-    
-    // Restore deleted objects
-    for (const obj of data.deletedObjects) {
-      this.placeObjectInternal(obj);
-    }
-    
-    // Update state
-    this.state.buildings = this.buildingManager.getAllBuildings();
-    
-    // Apply current theme to restored floor
-    const activeTheme = getThemeManager().getActiveSkinTheme();
-    this.applyThemeToScene(activeTheme);
-  }
-
-  /**
-   * Redo a floor delete operation
-   */
-  private redoFloorDelete(data: FloorDeleteActionData): void {
-    // Delete objects on the floor first
-    for (const obj of data.deletedObjects) {
-      this.deleteObjectInternal(obj.id);
-    }
-    
-    // Remove the floor
-    this.buildingManager.removeFloor(data.buildingId, data.floor.level);
-    this.floorManager.unregisterFloor(data.floor.level);
-    
-    // Shift floors down
-    this.buildingManager.shiftFloorLevels(data.buildingId, data.floor.level + 1, -1);
-    this.floorManager.shiftFloors(data.floor.level + 1, -1);
-    
-    // Shift objects down
-    this.floorManager.shiftObjectFloors(data.floor.level + 1, -1);
-    
-    // Update PlacedObject data for shifted objects
-    for (const objData of this.sceneManager.getAllPlacedObjects()) {
-      if (objData.floor !== undefined && objData.floor > data.floor.level) {
-        objData.floor -= 1;
-      }
-    }
-    
-    // Update state
-    this.state.buildings = this.buildingManager.getAllBuildings();
-  }
-
-  /**
-   * Undo a floor insert operation
-   */
-  private undoFloorInsert(data: FloorInsertActionData): void {
-    // Remove the inserted floor
-    this.buildingManager.removeFloor(data.buildingId, data.insertLevel);
-    this.floorManager.unregisterFloor(data.insertLevel);
-    
-    // Shift floors back down
-    this.buildingManager.shiftFloorLevels(data.buildingId, data.insertLevel + 1, -1);
-    this.floorManager.shiftFloors(data.insertLevel + 1, -1);
-    
-    // Shift objects back to original floors
-    for (const shifted of data.shiftedObjects) {
-      const mesh = this.sceneManager.getObject(shifted.id);
-      const objData = this.sceneManager.getObjectData(shifted.id);
-      
-      if (mesh && objData) {
-        const gridSize = this.gridSystem.getGridSize();
-        objData.floor = shifted.oldFloor;
-        mesh.userData.floor = shifted.oldFloor;
-        mesh.position.y = shifted.oldFloor * FLOOR_HEIGHT * gridSize;
-      }
-    }
-    
-    // Update state
-    this.state.buildings = this.buildingManager.getAllBuildings();
-  }
-
-  /**
-   * Redo a floor insert operation
-   */
-  private redoFloorInsert(data: FloorInsertActionData): void {
-    // Shift floors up
-    this.buildingManager.shiftFloorLevels(data.buildingId, data.insertLevel, 1);
-    this.floorManager.shiftFloors(data.insertLevel, 1);
-    
-    // Shift objects to new floors
-    for (const shifted of data.shiftedObjects) {
-      const mesh = this.sceneManager.getObject(shifted.id);
-      const objData = this.sceneManager.getObjectData(shifted.id);
-      
-      if (mesh && objData) {
-        const gridSize = this.gridSystem.getGridSize();
-        objData.floor = shifted.newFloor;
-        mesh.userData.floor = shifted.newFloor;
-        mesh.position.y = shifted.newFloor * FLOOR_HEIGHT * gridSize;
-      }
-    }
-    
-    // Add the new floor
-    this.buildingManager.addFloor(data.buildingId, data.insertLevel);
-    this.floorManager.registerFloor(data.insertLevel);
-    
-    // Update state
-    this.state.buildings = this.buildingManager.getAllBuildings();
-    
-    // Add vertical shaft objects to the new floor
-    const building = this.state.buildings.find(b => b.id === data.buildingId);
-    if (building) {
-      this.addVerticalShaftObjectsToFloor(data.insertLevel, building);
-    }
-    
-    // Apply current theme to new floor
-    const activeTheme = getThemeManager().getActiveSkinTheme();
-    this.applyThemeToScene(activeTheme);
-    
-    // Navigate to the new floor
-    this.setFloor(data.insertLevel);
-  }
-
-  /**
    * Delete an object (with history recording)
    */
   deleteObject(objectId: string): void {
@@ -4496,136 +1568,31 @@ if (obj.skinId) {
   deleteSelected(): void {
     const selectedIds = [...this.state.selection.selectedIds];
     if (selectedIds.length === 0) return;
-    
-    // Check if a whole building was selected (via double-click)
-    if (this.state.selection.selectedBuildingId) {
-      this.deleteBuildingWithContents(this.state.selection.selectedBuildingId);
-      
-      // Clear selection
-      this.updateSelectionHighlights(selectedIds, []);
-      this.state.selection.selectedIds = [];
-      this.state.selection.selectedBuildingId = undefined;
-      this.emit('selection-changed', this.state.selection);
-      this.emit('state-updated', this.state);
-      
-      // Hide gizmo since nothing is selected
-      this.updateGizmoVisibility();
-      
-      // Auto-save draft
-      this.scheduleAutoSave();
-      return;
-    }
-    
-    // Separate building elements from regular placed objects
-    const buildingCellsToRemove: Map<string, Array<{ x: number; z: number }>> = new Map();
-    const buildingsToDeleteViaWalls: Set<string> = new Set();
-    const regularObjectIds: string[] = [];
-    
-    for (const id of selectedIds) {
-      // Check if it's a wall (from visual selection)
-      if (id.startsWith('wall-')) {
-        // Wall selected means whole building deletion
-        const mesh = this.buildingManager.getWallMesh(id);
-        if (mesh?.userData.buildingId) {
-          buildingsToDeleteViaWalls.add(mesh.userData.buildingId);
-        }
-      }
-      // Check if it's a building floor tile
-      else if (id.startsWith('floor-tile-')) {
-        // Parse the tile ID: floor-tile-{buildingId}-{floorLevel}-{x}-{z}
-        const parts = id.split('-');
-        if (parts.length >= 6) {
-          const buildingId = parts.slice(2, -3).join('-'); // Handle UUIDs with dashes
-          const x = parseInt(parts[parts.length - 2], 10);
-          const z = parseInt(parts[parts.length - 1], 10);
-          
-          if (!buildingCellsToRemove.has(buildingId)) {
-            buildingCellsToRemove.set(buildingId, []);
-          }
-          buildingCellsToRemove.get(buildingId)!.push({ x, z });
-        }
-      }
-      // Regular placed object
-      else {
-        const obj = this.sceneManager.getObjectData(id);
-        if (obj) {
-          regularObjectIds.push(id);
-        }
-      }
-    }
-    
-    // Delete buildings where walls were selected
-    for (const buildingId of buildingsToDeleteViaWalls) {
-      this.deleteBuildingWithContents(buildingId);
-    }
-    
-    // Handle partial building deletions (floor tiles selected)
-    for (const [buildingId, cells] of buildingCellsToRemove) {
-      // Skip if building was already marked for deletion via walls
-      if (buildingsToDeleteViaWalls.has(buildingId)) continue;
-      
-      const building = this.buildingManager.getAllBuildings().find(b => b.id === buildingId);
-      if (building) {
-        const allCells = this.buildingManager.getBuildingCells(buildingId);
-        const selectedCellCount = cells.length;
-        
-        // If all cells are selected, delete the whole building
-        if (selectedCellCount >= allCells.size) {
-          this.deleteBuildingWithContents(buildingId);
-        } else {
-          // Remove only selected cells
-          this.buildingManager.removeCellsFromBuilding(buildingId, cells);
-          
-          // Also delete any placed objects on those cells
-          cells.forEach(cell => {
-            const objectsAtCell = this.getObjectsAtCell(cell.x, cell.z, this.state.activeFloor);
-            objectsAtCell.forEach(objId => {
-              if (!regularObjectIds.includes(objId)) {
-                regularObjectIds.push(objId);
-              }
-            });
-          });
-        }
-      }
-    }
-    
-    // Handle regular placed objects
-    if (regularObjectIds.length > 0) {
-      const deleteActions: HistoryAction[] = [];
-      for (const id of regularObjectIds) {
-        const obj = this.sceneManager.getObjectData(id);
-        if (obj) {
-          deleteActions.push({
-            type: 'delete',
-            data: { object: obj } as DeleteActionData,
-            timestamp: Date.now(),
-          });
-        }
-      }
-      
-      // Record batch in history
-      if (deleteActions.length > 1) {
-        this.actionHistory.pushBatch(deleteActions);
-      } else if (deleteActions.length === 1) {
-        this.actionHistory.push(deleteActions[0]);
-      }
-      
-      // Delete all regular objects
-      for (const id of regularObjectIds) {
-        this.deleteObjectInternal(id);
-      }
-    }
-    
-    // Clear selection (unhighlight first)
+
+    const hadSelectedBuilding = !!this.state.selection.selectedBuildingId;
+
+    runDeleteSelection(selectedIds, this.state.selection.selectedBuildingId, this.state.activeFloor, {
+      deleteBuildingWithContents: (buildingId) => this.deleteBuildingWithContents(buildingId),
+      getWallMesh: (id) => this.buildingManager.getWallMesh(id),
+      getObjectData: (id) => this.sceneManager.getObjectData(id) ?? undefined,
+      getAllBuildings: () => this.buildingManager.getAllBuildings(),
+      getBuildingCells: (id) => this.buildingManager.getBuildingCells(id),
+      removeCellsFromBuilding: (buildingId, cells) =>
+        this.buildingManager.removeCellsFromBuilding(buildingId, cells),
+      getObjectsAtCell: (x, z, floor) => this.getObjectsAtCell(x, z, floor),
+      deleteObjectInternal: (id) => this.deleteObjectInternal(id),
+      pushDeleteHistoryBatch: (actions) => this.actionHistory.pushBatch(actions),
+      pushDeleteHistorySingle: (action) => this.actionHistory.push(action),
+    });
+
     this.updateSelectionHighlights(selectedIds, []);
     this.state.selection.selectedIds = [];
+    if (hadSelectedBuilding) {
+      this.state.selection.selectedBuildingId = undefined;
+    }
     this.emit('selection-changed', this.state.selection);
     this.emit('state-updated', this.state);
-    
-    // Hide gizmo since nothing is selected
     this.updateGizmoVisibility();
-    
-    // Auto-save draft
     this.scheduleAutoSave();
   }
 
@@ -4633,47 +1600,16 @@ if (obj.skinId) {
    * Delete a building and all objects placed within it
    */
   deleteBuildingWithContents(buildingId: string): void {
-    const building = this.buildingManager.getAllBuildings().find(b => b.id === buildingId);
-    if (!building) return;
-    
-    // Get all cells in the building
-    const buildingCells = this.buildingManager.getBuildingCells(buildingId);
-    
-    // Find and delete all placed objects within the building's cells
-    const placedObjects = this.sceneManager.getAllPlacedObjects();
-    const objectsToDelete: PlacedObject[] = [];
-    
-    for (const obj of placedObjects) {
-      const objCellKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
-      if (buildingCells.has(objCellKey) || obj.buildingId === buildingId) {
-        objectsToDelete.push(obj);
-      }
-    }
-    
-    // Delete placed objects
-    for (const obj of objectsToDelete) {
-      this.deleteObjectInternal(obj.id);
-    }
-    
-    // Delete the building itself
-    this.buildingManager.deleteBuilding(buildingId);
-    
-    // Update state
-    this.state.buildings = this.buildingManager.getAllBuildings();
-    
-    // Exit floor mode if no buildings left
-    if (this.state.buildings.length === 0) {
-      this.state.isFloorMode = false;
-      this.state.activeFloor = 0;
-      this.floorManager.clear();
-      this.floorManager.clearGhosting(); // Reset all objects to full opacity
-      this.selectionManager.setFloorMode(false, 0);
-    } else {
-      // Re-apply ghosting for remaining buildings
-      this.floorManager.applyGhosting();
-    }
-    
-    this.emit('state-updated', this.state);
+    deleteBuildingWithContentsFromScene({
+      buildingId,
+      buildingManager: this.buildingManager,
+      sceneManager: this.sceneManager,
+      floorManager: this.floorManager,
+      selectionManager: this.selectionManager,
+      state: this.state,
+      emitStateUpdated: () => this.emit('state-updated', this.state),
+      deleteObjectInternal: (id) => this.deleteObjectInternal(id),
+    });
   }
 
   /**
@@ -4705,20 +1641,7 @@ if (obj.skinId) {
    * Get placed objects at a specific cell
    */
   private getObjectsAtCell(x: number, z: number, floor: number): string[] {
-    const result: string[] = [];
-    const placedObjects = this.sceneManager.getAllPlacedObjects();
-    
-    for (const obj of placedObjects) {
-      if (obj.floor === floor) {
-        const objX = Math.floor(obj.position.x);
-        const objZ = Math.floor(obj.position.z);
-        if (objX === x && objZ === z) {
-          result.push(obj.id);
-        }
-      }
-    }
-    
-    return result;
+    return getPlacedObjectIdsAtGridCell(x, z, floor, this.sceneManager.getAllPlacedObjects());
   }
 
   // ==========================================================================
@@ -4731,37 +1654,16 @@ if (obj.skinId) {
   copy(): void {
     const selectedIds = this.state.selection.selectedIds;
     if (selectedIds.length === 0) return;
-    
-    const objects: PlacedObject[] = [];
-    const buildings: Building[] = [];
-    
-    // Check if a building is selected
-    if (this.state.selection.selectedBuildingId) {
-      const building = this.buildingManager.getBuilding(this.state.selection.selectedBuildingId);
-      if (building) {
-        buildings.push(building);
-        
-        // Also copy objects inside the building
-        const buildingCells = this.buildingManager.getBuildingCells(building.id);
-        const placedObjects = this.sceneManager.getAllPlacedObjects();
-        
-        for (const obj of placedObjects) {
-          const objCellKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
-          if (buildingCells.has(objCellKey) || obj.buildingId === building.id) {
-            objects.push(obj);
-          }
-        }
-      }
-    } else {
-      // Copy regular selected objects
-      for (const id of selectedIds) {
-        const obj = this.sceneManager.getObjectData(id);
-        if (obj) {
-          objects.push(obj);
-        }
-      }
-    }
-    
+
+    const { objects, buildings } = resolveClipboardCopyContents({
+      selectedIds,
+      selectedBuildingId: this.state.selection.selectedBuildingId,
+      getBuilding: (id) => this.buildingManager.getBuilding(id),
+      getBuildingCells: (id) => this.buildingManager.getBuildingCells(id),
+      getAllPlacedObjects: () => this.sceneManager.getAllPlacedObjects(),
+      getObjectData: (id) => this.sceneManager.getObjectData(id) ?? undefined,
+    });
+
     this.clipboardManager.copy(objects, buildings);
     this.emit('state-updated', this.state);
   }
@@ -4785,18 +1687,12 @@ if (obj.skinId) {
    */
   paste(targetPosition?: GridPosition): void {
     void targetPosition;
-    if (!this.clipboardManager.hasContent()) return;
-    
-    // Get objects from clipboard
-    const objects = this.clipboardManager.getObjects();
-    if (objects.length === 0) return;
-    
-    // Start paste preview mode
-    this.placementManager.startPastePreview(objects);
-    this.setTool(EditorTool.PLACE);
-    
-    // TODO: Handle building paste
-    // const buildings = this.clipboardManager.getBuildings();
+    tryStartClipboardPastePreview({
+      hasClipboardContent: () => this.clipboardManager.hasContent(),
+      getClipboardObjects: () => this.clipboardManager.getObjects(),
+      startPastePreview: (objects) => this.placementManager.startPastePreview(objects),
+      activatePlaceTool: () => this.setTool(EditorTool.PLACE),
+    });
   }
 
   /**
@@ -4810,13 +1706,8 @@ if (obj.skinId) {
    * Select all objects in scene (including building elements)
    */
   selectAll(): void {
-    const allIds: string[] = [];
-    // Get all selectable objects including building walls and floor tiles
-    this.sceneManager.getAllSelectableObjectsMap().forEach((mesh: THREE.Object3D, id: string) => {
-      void mesh;
-      allIds.push(id);
-    });
-    
+    const allIds = collectSelectableObjectIds(this.sceneManager.getAllSelectableObjectsMap());
+
     const oldSelection = [...this.state.selection.selectedIds];
     this.updateSelectionHighlights(oldSelection, allIds);
     this.state.selection.selectedIds = allIds;
@@ -4825,110 +1716,35 @@ if (obj.skinId) {
   }
 
   // ==========================================================================
-  // Translate Gizmo
+  // Gizmos (orchestrated by EditorGizmoController; meshes in TranslateGizmo / RotateGizmo)
   // ==========================================================================
 
   /**
    * Update gizmo visibility based on current selection
    * In readonly mode, gizmo is never shown
    */
-private updateGizmoVisibility(): void {
-    // Never show gizmo in readonly mode
-    if (this.readonly) {
-      this.translateGizmo.hide();
-      this.rotateGizmo.hide();
-      return;
-    }
-
-    const selectedIds = this.state.selection.selectedIds;
-
-    if (selectedIds.length === 0) {
-      this.translateGizmo.hide();
-      this.rotateGizmo.hide();
-      return;
-    }
-
-    // Calculate selection center in world coordinates
-    const centerWorld = this.getSelectionCenterWorld();
-    if (centerWorld) {
-      const floorY = this.floorManager.getCurrentFloorY();
-      const gridCenter = this.getSelectionCenter();
-      
-      if (this.gizmoMode === 'translate' && gridCenter) {
-        this.rotateGizmo.hide();
-        this.translateGizmo.show(gridCenter, floorY);
-      } else if (this.gizmoMode === 'rotate') {
-        this.translateGizmo.hide();
-        // Get current rotation of first selected object for indicator
-        const firstId = selectedIds[0];
-        const placedObject = this.sceneManager.getObjectData(firstId);
-        const currentRotation = placedObject?.rotation ?? this.getRotationFromOrientation(placedObject?.orientation ?? Orientation.NORTH);
-        // Position rotate gizmo at ground level (X/Z from center, Y from floor)
-        this.rotateGizmo.show({ x: centerWorld.x, z: centerWorld.z }, floorY, currentRotation);
-      }
-    } else {
-      this.translateGizmo.hide();
-      this.rotateGizmo.hide();
-    }
+  private updateGizmoVisibility(): void {
+    this.gizmoController.updateVisibility();
   }
-  
-/**
-   * Get the center of selection in world coordinates
-   * Uses logical world positions (accounting for internal offsets) for consistent rotation behavior
+
+  /**
+   * Shared world XZ for translate/rotate gizmos.
+   * Uses actual mesh-derived centers so pivots stay correct when the working grid is aligned
+   * to a selection (stored {@link PlacedObject.position} indices may not match that frame).
+   * Falls back to grid-index center → gridToWorld when no mesh center is available.
    */
-  private getSelectionCenterWorld(): THREE.Vector3 | null {
-    const selectedIds = this.state.selection.selectedIds;
-    if (selectedIds.length === 0) return null;
-
-    let minX = Infinity, maxX = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-    let sumY = 0;
-    let count = 0;
-
-    for (const id of selectedIds) {
-      const mesh = this.sceneManager.getObject(id);
-      const placedObject = this.sceneManager.getObjectData(id);
-
-      if (mesh && placedObject) {
-        const internalXOffset = mesh.userData?.internalXOffset || 0;
-        const internalZOffset = mesh.userData?.internalZOffset || 0;
-        
-        // Get logical center (world position without internal offsets)
-        // Grid-placed objects use UNROTATED offsets, angled-placed use ROTATED offsets
-        let worldX: number, worldZ: number;
-        
-        if (placedObject.exactMeshPos) {
-          // For angled-placed objects: subtract rotated offset
-          const currentRotation = placedObject.rotation ?? 
-            this.getRotationFromOrientation(placedObject.orientation);
-          const cos = Math.cos(currentRotation);
-          const sin = Math.sin(currentRotation);
-          const rotatedXOffset = internalXOffset * cos - internalZOffset * sin;
-          const rotatedZOffset = internalXOffset * sin + internalZOffset * cos;
-          worldX = mesh.position.x - rotatedXOffset;
-          worldZ = mesh.position.z - rotatedZOffset;
-        } else {
-          // For grid-placed objects: subtract unrotated offset
-          worldX = mesh.position.x - internalXOffset;
-          worldZ = mesh.position.z - internalZOffset;
-        }
-
-        minX = Math.min(minX, worldX);
-        maxX = Math.max(maxX, worldX);
-        minZ = Math.min(minZ, worldZ);
-        maxZ = Math.max(maxZ, worldZ);
-        sumY += mesh.position.y;
-        count++;
-      }
+  private getSelectionGizmoPivotXZ(): { x: number; z: number } | null {
+    const world = computeSelectionCenterWorld({
+      selectedIds: this.state.selection.selectedIds,
+      sceneManager: this.sceneManager,
+    });
+    if (world) {
+      return { x: world.x, z: world.z };
     }
-
-    if (count === 0) return null;
-
-    return new THREE.Vector3(
-      (minX + maxX) / 2,
-      sumY / count,
-      (minZ + maxZ) / 2
-    );
+    const gc = this.getSelectionCenter();
+    if (!gc) return null;
+    const w = this.gridSystem.gridToWorld({ x: gc.x, z: gc.z, y: 0 });
+    return { x: w.x, z: w.z };
   }
 
   /**
@@ -4937,49 +1753,70 @@ private updateGizmoVisibility(): void {
    * 
    * Performance: Uses cached objects map instead of scene traversal
    */
-  private getHoveredAssetRotation(worldPos: THREE.Vector3): number | null {
-    // Raycast from camera through the world position to find assets
-    const cameraPos = this.cameraController.getCamera().position;
-    const direction = worldPos.clone().sub(cameraPos).normalize();
-    
-    // Reuse raycaster with proper settings
-    this.raycaster.set(cameraPos, direction);
-    this.raycaster.near = 0.1;
-    this.raycaster.far = 1000;
-    
-    // Use cached objects from SceneManager - O(n) where n is tracked objects,
-    // not entire scene graph. Only check top-level selectable objects.
+  private getHoveredAssetRotation(worldPos: THREE.Vector3, mouseEvent?: MouseEvent): number | null {
     const objects = this.sceneManager.getAllObjects();
     const selectableMeshes: THREE.Object3D[] = [];
-    
     for (const [, obj] of objects) {
       if (obj.userData.selectable) {
         selectableMeshes.push(obj);
       }
     }
-    
-    // Early exit if no selectable objects
-    if (selectableMeshes.length === 0) return null;
-    
-    const intersects = this.raycaster.intersectObjects(selectableMeshes, true);
-    
-    if (intersects.length > 0) {
-      // Find the parent with the id
-      let obj: THREE.Object3D | null = intersects[0].object;
-      while (obj && !obj.userData.id) {
-        obj = obj.parent;
-      }
-      
-      if (obj && obj.userData.id) {
-        const placedObject = this.sceneManager.getObjectData(obj.userData.id);
-        if (placedObject) {
-          // Return the rotation (prefer arbitrary rotation, fallback to orientation)
-          return placedObject.rotation ?? this.getRotationFromOrientation(placedObject.orientation);
-        }
-      }
+    return getHoveredPlacedObjectRotation({
+      gridAlignment: this.gridSystem.getGridAlignment(),
+      raycaster: this.raycaster,
+      pointerNdc: this.pointerNdc,
+      camera: this.cameraController.getCamera(),
+      containerRect: this.container.getBoundingClientRect(),
+      worldPos,
+      mouseEvent,
+      selectableMeshes,
+      getPlacedObject: (id) => this.sceneManager.getObjectData(id),
+    });
+  }
+
+  /**
+   * GridSystem holds the working grid; this keeps placement ghost in sync when it changes.
+   */
+  private setWorkingGridAlignment(alignment: GridAlignment | null): void {
+    this.gridSystem.setGridAlignment(alignment);
+    if (this.placementManager.isActive()) {
+      this.placementManager.setOrientation(this.state.activeOrientation);
     }
-    
-    return null;
+    this.updateGizmoPosition();
+    this.updateGizmoVisibility();
+  }
+
+  /**
+   * Align the working placement grid to the selected object's facing (session-only).
+   */
+  alignGridToSelection(): boolean {
+    if (this.readonly) return false;
+    const ids = this.state.selection.selectedIds;
+    if (ids.length !== 1) return false;
+    const id = ids[0];
+    if (id.startsWith('floor-tile-') || id.startsWith('wall-')) return false;
+
+    const mesh = this.sceneManager.getObject(id);
+    const po = this.sceneManager.getObjectData(id);
+    if (!mesh || !po) return false;
+    if ((po.floor ?? 0) !== this.state.activeFloor) return false;
+
+    const alignment = computeWorkingGridAlignmentFromPlacedMesh(
+      mesh,
+      po,
+      this.gridSystem.getGridSize()
+    );
+    this.setWorkingGridAlignment(alignment);
+    this.emit('state-updated', this.state);
+    return true;
+  }
+
+  /**
+   * Restore world-axis grid snapping and visuals.
+   */
+  resetGridAlignment(): void {
+    this.setWorkingGridAlignment(null);
+    this.emit('state-updated', this.state);
   }
 
   /**
@@ -4987,27 +1824,7 @@ private updateGizmoVisibility(): void {
    * Skips update if gizmo is being dragged (to allow smooth mouse following)
    */
   private updateGizmoPosition(): void {
-    if (this.state.selection.selectedIds.length === 0) {
-      this.translateGizmo.hide();
-      this.rotateGizmo.hide();
-      return;
-    }
-    
-    // Don't update gizmo position during drag - the gizmo tracks the mouse directly
-    if (this.translateGizmo.isDraggingGizmo() || this.rotateGizmo.isDraggingGizmo()) {
-      return;
-    }
-    
-    const center = this.getSelectionCenter();
-    const centerWorld = this.getSelectionCenterWorld();
-    const floorY = this.floorManager.getCurrentFloorY();
-
-    if (this.gizmoMode === 'translate' && center) {
-      this.translateGizmo.setPosition(center, floorY);
-    } else if (this.gizmoMode === 'rotate' && centerWorld) {
-      // Position rotate gizmo at ground level (X/Z from center, Y from floor)
-      this.rotateGizmo.setPosition({ x: centerWorld.x, z: centerWorld.z }, floorY);
-    }
+    this.gizmoController.updatePosition();
   }
   
   /**
@@ -5016,13 +1833,7 @@ private updateGizmoVisibility(): void {
   private onAltKeyDown(): void {
     // Notify PlacementManager for Alt+drag angled placement
     this.placementManager.setAltKeyPressed(true);
-    
-    // Handle gizmo switching only if we have selection
-    if (this.state.selection.selectedIds.length === 0) return;
-    if (this.gizmoMode === 'rotate') return; // Already in rotate mode
-    
-    this.gizmoMode = 'rotate';
-    this.updateGizmoVisibility();
+    this.gizmoController.onAltPressed();
   }
   
   /**
@@ -5031,11 +1842,7 @@ private updateGizmoVisibility(): void {
   private onAltKeyUp(): void {
     // Notify PlacementManager
     this.placementManager.setAltKeyPressed(false);
-    
-    if (this.gizmoMode === 'translate') return; // Already in translate mode
-    
-    this.gizmoMode = 'translate';
-    this.updateGizmoVisibility();
+    this.gizmoController.onAltReleased();
   }
   
   /**
@@ -5044,127 +1851,18 @@ private updateGizmoVisibility(): void {
   private handleRotateGizmoDrag(deltaAngle: number): void {
     this.rotateSelectionByAngle(deltaAngle);
   }
-  
-  /**
-   * Handle Alt+Q rotation - counter-clockwise
-   */
-  private handleAltQRotation(holdStartTime: number): void {
-    // Capture start state on first frame of rotation
-    if (!this.rotationStartStates) {
-      this.captureRotationStartState();
-    }
-    const deltaAngle = this.calculateRotationDelta(holdStartTime, -1);
-    this.rotateSelectionByAngle(deltaAngle);
-  }
-  
-  /**
-   * Handle Alt+E rotation - clockwise
-   */
-  private handleAltERotation(holdStartTime: number): void {
-    // Capture start state on first frame of rotation
-    if (!this.rotationStartStates) {
-      this.captureRotationStartState();
-    }
-    const deltaAngle = this.calculateRotationDelta(holdStartTime, 1);
-    this.rotateSelectionByAngle(deltaAngle);
-  }
-  
-  /**
-   * Handle rotation key release - record rotation to history
-   */
-  private onRotationKeyUp(): void {
-    this.recordRotationToHistory();
-  }
-  
-  /**
-   * Calculate rotation delta based on hold time and direction
-   * Starts at ~5 deg/sec, accelerates to 45 deg/sec after 1.5 seconds
-   */
-  private calculateRotationDelta(holdStartTime: number, direction: number): number {
-    const holdDuration = Date.now() - holdStartTime;
-    const accelerationTime = 1500; // 1.5 seconds to reach max speed
-    
-    // Start at 5 degrees per second, accelerate to 45 degrees per second
-    const minDegreesPerSecond = 5;
-    const maxDegreesPerSecond = 45;
-    
-    // Use time-based rotation (assuming ~60fps gives ~16.67ms per frame)
-    const frameTime = 1 / 60; // seconds per frame
-    
-    // Linear interpolation based on hold time
-    const t = Math.min(holdDuration / accelerationTime, 1);
-    const degreesPerSecond = minDegreesPerSecond + (maxDegreesPerSecond - minDegreesPerSecond) * t;
-    const degreesPerFrame = degreesPerSecond * frameTime;
-    
-    return (degreesPerFrame * Math.PI / 180) * direction;
-  }
 
   /**
    * Get the center position of the current selection (in grid coordinates)
    */
   private getSelectionCenter(): { x: number; z: number } | null {
-    const selectedIds = this.state.selection.selectedIds;
-    if (selectedIds.length === 0) return null;
-    
-    // If building is selected, use building center
-    if (this.state.selection.selectedBuildingId) {
-      const building = this.buildingManager.getAllBuildings().find(b => b.id === this.state.selection.selectedBuildingId);
-      if (building) {
-        let minX = Infinity, maxX = -Infinity;
-        let minZ = Infinity, maxZ = -Infinity;
-        
-        building.footprints.forEach(fp => {
-          minX = Math.min(minX, fp.minX);
-          maxX = Math.max(maxX, fp.maxX);
-          minZ = Math.min(minZ, fp.minZ);
-          maxZ = Math.max(maxZ, fp.maxZ);
-        });
-        
-        return {
-          x: Math.floor((minX + maxX) / 2),
-          z: Math.floor((minZ + maxZ) / 2),
-        };
-      }
-    }
-    
-    // Calculate center from selected objects
-    let minX = Infinity, maxX = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-    
-    for (const id of selectedIds) {
-      // Check if it's a floor tile
-      if (id.startsWith('floor-tile-')) {
-        const mesh = this.scene.getObjectByProperty('userData', { id }) as THREE.Mesh;
-        if (mesh?.userData.gridX !== undefined && mesh?.userData.gridZ !== undefined) {
-          const x = mesh.userData.gridX;
-          const z = mesh.userData.gridZ;
-          minX = Math.min(minX, x);
-          maxX = Math.max(maxX, x);
-          minZ = Math.min(minZ, z);
-          maxZ = Math.max(maxZ, z);
-        }
-      } else {
-        // Regular placed object
-        const obj = this.sceneManager.getObjectData(id);
-        if (obj) {
-          const asset = obj.assetMetadata;
-          const width = asset?.gridUnits?.x ?? 1;
-          const depth = asset?.gridUnits?.z ?? 1;
-          
-          minX = Math.min(minX, obj.position.x);
-          maxX = Math.max(maxX, obj.position.x + width);
-          minZ = Math.min(minZ, obj.position.z);
-          maxZ = Math.max(maxZ, obj.position.z + depth);
-        }
-      }
-    }
-    
-    if (minX === Infinity) return null;
-    
-    return {
-      x: Math.floor((minX + maxX) / 2),
-      z: Math.floor((minZ + maxZ) / 2),
-    };
+    return computeSelectionGridCenter({
+      selectedIds: this.state.selection.selectedIds,
+      selectedBuildingId: this.state.selection.selectedBuildingId,
+      getAllBuildings: () => this.buildingManager.getAllBuildings(),
+      getObjectData: (id) => this.sceneManager.getObjectData(id),
+      scene: this.scene,
+    });
   }
 
   /**
@@ -5174,378 +1872,7 @@ private updateGizmoVisibility(): void {
   private handleGizmoDrag(deltaX: number, deltaZ: number, axis: GizmoAxis): void {
     void axis;
     if (deltaX === 0 && deltaZ === 0) return;
-    
-    // Accumulate and update visual positions
-    this.updatePendingMove(deltaX, deltaZ);
-  }
-
-  /**
-   * Initialize or update pending move state
-   * For regular objects: updates visual positions immediately
-   * For buildings: shows a low-cost preview instead of actually moving
-   * For windows: constrains movement along their attached wall
-   */
-  private updatePendingMove(deltaX: number, deltaZ: number): void {
-    const selectedIds = this.state.selection.selectedIds;
-    const buildingId = this.state.selection.selectedBuildingId;
-    
-    // Initialize pending move if not started
-    if (!this.pendingMove) {
-      this.pendingMove = {
-        originalPositions: new Map(),
-        accumulatedDelta: { x: 0, z: 0 },
-        commitTimer: null,
-        isBuildingMove: !!buildingId,
-        buildingId: buildingId ?? null,
-        windowDragData: new Map(),
-      };
-      
-      // Store original positions
-      if (buildingId) {
-        // For building, store the original footprints for preview
-        const building = this.buildingManager.getAllBuildings().find(b => b.id === buildingId);
-        if (building) {
-          this.pendingMove.buildingOriginalFootprints = building.footprints.map(fp => ({
-            minX: fp.minX,
-            maxX: fp.maxX,
-            minZ: fp.minZ,
-            maxZ: fp.maxZ,
-          }));
-        }
-      } else {
-        for (const id of selectedIds) {
-          if (id.startsWith('floor-tile-') || id.startsWith('wall-')) continue;
-          const obj = this.sceneManager.getObjectData(id);
-          if (obj) {
-            this.pendingMove.originalPositions.set(id, {
-              position: { ...obj.position },
-              orientation: obj.orientation,
-              rotation: obj.rotation,
-              exactMeshPos: obj.exactMeshPos ? { ...obj.exactMeshPos } : undefined,
-            });
-            
-            // Check if this is a window with wall attachment - set up wall-constrained dragging
-            if (obj.assetMetadata.category === AssetCategory.WINDOW && obj.wallAttachment) {
-              const wallId = obj.wallAttachment.wallId;
-              const wall = this.buildingManager.getWall(wallId);
-              if (wall && wall.startPos && wall.endPos) {
-                const startWorld = this.gridSystem.gridToWorld({ x: wall.startPos.x, z: wall.startPos.z, y: 0 });
-                const endWorld = this.gridSystem.gridToWorld({ x: wall.endPos.x, z: wall.endPos.z, y: 0 });
-                const direction = new THREE.Vector3().subVectors(endWorld, startWorld).normalize();
-                const length = startWorld.distanceTo(endWorld);
-                
-                this.pendingMove.windowDragData?.set(id, {
-                  wallId: wallId,
-                  originalWallPosition: obj.wallAttachment.position ?? 0.5,
-                  currentWallPosition: obj.wallAttachment.position ?? 0.5,
-                  wallStart: startWorld,
-                  wallEnd: endWorld,
-                  wallDirection: direction,
-                  wallLength: length,
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // Accumulate delta
-    this.pendingMove.accumulatedDelta.x += deltaX;
-    this.pendingMove.accumulatedDelta.z += deltaZ;
-    
-    // Update visual feedback
-    if (this.pendingMove.isBuildingMove && this.pendingMove.buildingId) {
-      // For buildings, show a low-cost preview instead of actual movement
-      // This avoids expensive wall/floor/roof regeneration during drag
-      this.showBuildingMovePreview(
-        this.pendingMove.buildingOriginalFootprints ?? [],
-        this.pendingMove.accumulatedDelta.x,
-        this.pendingMove.accumulatedDelta.z
-      );
-      // Update gizmo position to follow the preview
-      this.updateGizmoPositionForPreview(
-        this.pendingMove.accumulatedDelta.x,
-        this.pendingMove.accumulatedDelta.z
-      );
-    } else {
-      // For regular objects, move meshes visually (low cost)
-      // Windows are special-cased inside updateVisualPositions for wall-constrained movement
-      this.updateVisualPositions(deltaX, deltaZ);
-      this.updateGizmoPosition();
-    }
-    
-    // Reset commit timer (for non-building moves)
-    if (this.pendingMove.commitTimer) {
-      clearTimeout(this.pendingMove.commitTimer);
-    }
-    
-    // Don't use auto-commit for building moves - wait for explicit drag end
-    if (!this.pendingMove.isBuildingMove) {
-      this.pendingMove.commitTimer = setTimeout(() => {
-        this.commitPendingMove();
-      }, this.MOVE_COMMIT_DELAY);
-    }
-  }
-
-  /**
-   * Show building move preview - a low-cost grid of colored cells showing destination
-   * Includes filled tiles and an outline for better visibility
-   */
-  private showBuildingMovePreview(
-    originalFootprints: { minX: number; maxX: number; minZ: number; maxZ: number }[],
-    deltaX: number,
-    deltaZ: number
-  ): void {
-    // Calculate all cells that will be occupied
-    const cells: { x: number; z: number }[] = [];
-    for (const fp of originalFootprints) {
-      for (let x = fp.minX + deltaX; x <= fp.maxX + deltaX; x++) {
-        for (let z = fp.minZ + deltaZ; z <= fp.maxZ + deltaZ; z++) {
-          cells.push({ x, z });
-        }
-      }
-    }
-    
-    if (cells.length === 0) {
-      this.hideBuildingMovePreview();
-      return;
-    }
-    
-    // Create or update instanced mesh
-    const gridSize = this.gridSystem.getGridSize();
-    const tileHeight = 0.08;
-    
-    // Dispose old preview if exists and wrong size
-    if (this.buildingMovePreview && this.buildingMovePreview.count !== cells.length) {
-      this.scene.remove(this.buildingMovePreview);
-      this.buildingMovePreview.geometry.dispose();
-      (this.buildingMovePreview.material as THREE.Material).dispose();
-      this.buildingMovePreview = null;
-    }
-    
-    // Create new preview mesh if needed
-    if (!this.buildingMovePreview) {
-      const geometry = new THREE.BoxGeometry(gridSize * 0.95, tileHeight, gridSize * 0.95);
-      const material = new THREE.MeshStandardMaterial({
-        color: this.BUILDING_PREVIEW_COLOR,
-        transparent: true,
-        opacity: 0.4,
-        depthWrite: false,
-        emissive: this.BUILDING_PREVIEW_COLOR,
-        emissiveIntensity: 0.3,
-      });
-      this.buildingMovePreview = new THREE.InstancedMesh(geometry, material, cells.length);
-      this.buildingMovePreview.userData.isPreview = true;
-      this.buildingMovePreview.userData.selectable = false;
-      this.buildingMovePreview.renderOrder = 100;
-      this.scene.add(this.buildingMovePreview);
-    }
-    
-    // Update instance positions
-    const matrix = new THREE.Matrix4();
-    const floorY = this.floorManager.getFloorY(this.state.activeFloor);
-    
-    for (let i = 0; i < cells.length; i++) {
-      const worldPos = this.gridSystem.gridToWorld({ x: cells[i].x, z: cells[i].z, y: 0 });
-      matrix.setPosition(
-        worldPos.x + gridSize / 2,
-        floorY + tileHeight / 2 + 0.01,
-        worldPos.z + gridSize / 2
-      );
-      this.buildingMovePreview.setMatrixAt(i, matrix);
-    }
-    this.buildingMovePreview.instanceMatrix.needsUpdate = true;
-    this.buildingMovePreview.visible = true;
-    
-    // Create or update outline showing building bounds
-    this.updateBuildingMovePreviewOutline(originalFootprints, deltaX, deltaZ, floorY);
-  }
-  
-  /**
-   * Update the outline around the building move preview
-   */
-  private updateBuildingMovePreviewOutline(
-    originalFootprints: { minX: number; maxX: number; minZ: number; maxZ: number }[],
-    deltaX: number,
-    deltaZ: number,
-    floorY: number
-  ): void {
-    // Dispose old outline
-    if (this.buildingMovePreviewOutline) {
-      this.scene.remove(this.buildingMovePreviewOutline);
-      this.buildingMovePreviewOutline.geometry.dispose();
-      (this.buildingMovePreviewOutline.material as THREE.Material).dispose();
-      this.buildingMovePreviewOutline = null;
-    }
-    
-    const outlineHeight = 0.15;
-    
-    // Calculate overall bounding box of all footprints with delta applied
-    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-    for (const fp of originalFootprints) {
-      minX = Math.min(minX, fp.minX + deltaX);
-      maxX = Math.max(maxX, fp.maxX + deltaX);
-      minZ = Math.min(minZ, fp.minZ + deltaZ);
-      maxZ = Math.max(maxZ, fp.maxZ + deltaZ);
-    }
-    
-    // Convert to world coordinates
-    const worldMin = this.gridSystem.gridToWorld({ x: minX, z: minZ, y: 0 });
-    const worldMax = this.gridSystem.gridToWorld({ x: maxX + 1, z: maxZ + 1, y: 0 });
-    
-    // Create outline vertices (rectangular perimeter)
-    const y = floorY + outlineHeight;
-    const vertices = new Float32Array([
-      // Bottom rectangle
-      worldMin.x, y, worldMin.z,
-      worldMax.x, y, worldMin.z,
-      
-      worldMax.x, y, worldMin.z,
-      worldMax.x, y, worldMax.z,
-      
-      worldMax.x, y, worldMax.z,
-      worldMin.x, y, worldMax.z,
-      
-      worldMin.x, y, worldMax.z,
-      worldMin.x, y, worldMin.z,
-    ]);
-    
-    const outlineGeometry = new THREE.BufferGeometry();
-    outlineGeometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    
-    const outlineMaterial = new THREE.LineBasicMaterial({
-      color: this.BUILDING_PREVIEW_OUTLINE_COLOR,
-      linewidth: 2, // Note: linewidth > 1 only works with certain renderers
-      depthWrite: false,
-      transparent: true,
-      opacity: 0.9,
-    });
-    
-    this.buildingMovePreviewOutline = new THREE.LineSegments(outlineGeometry, outlineMaterial);
-    this.buildingMovePreviewOutline.userData.isPreview = true;
-    this.buildingMovePreviewOutline.userData.selectable = false;
-    this.buildingMovePreviewOutline.renderOrder = 101;
-    this.scene.add(this.buildingMovePreviewOutline);
-  }
-
-  /**
-   * Hide the building move preview (tiles and outline)
-   */
-  private hideBuildingMovePreview(): void {
-    if (this.buildingMovePreview) {
-      this.buildingMovePreview.visible = false;
-    }
-    if (this.buildingMovePreviewOutline) {
-      this.buildingMovePreviewOutline.visible = false;
-    }
-  }
-
-  /**
-   * Dispose the building move preview mesh and outline
-   */
-  private disposeBuildingMovePreview(): void {
-    if (this.buildingMovePreview) {
-      this.scene.remove(this.buildingMovePreview);
-      this.buildingMovePreview.geometry.dispose();
-      (this.buildingMovePreview.material as THREE.Material).dispose();
-      this.buildingMovePreview = null;
-    }
-    if (this.buildingMovePreviewOutline) {
-      this.scene.remove(this.buildingMovePreviewOutline);
-      this.buildingMovePreviewOutline.geometry.dispose();
-      (this.buildingMovePreviewOutline.material as THREE.Material).dispose();
-      this.buildingMovePreviewOutline = null;
-    }
-  }
-
-  /**
-   * Update gizmo position for building preview (based on accumulated delta)
-   */
-  private updateGizmoPositionForPreview(deltaX: number, deltaZ: number): void {
-    const buildingId = this.state.selection.selectedBuildingId;
-    if (!buildingId) return;
-    
-    const building = this.buildingManager.getAllBuildings().find(b => b.id === buildingId);
-    if (!building || building.footprints.length === 0) return;
-    
-    // Get original center from stored footprints
-    const originalFootprints = this.pendingMove?.buildingOriginalFootprints;
-    if (!originalFootprints || originalFootprints.length === 0) return;
-    
-    // Calculate center of original footprints + delta
-    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-    for (const fp of originalFootprints) {
-      minX = Math.min(minX, fp.minX);
-      maxX = Math.max(maxX, fp.maxX);
-      minZ = Math.min(minZ, fp.minZ);
-      maxZ = Math.max(maxZ, fp.maxZ);
-    }
-    
-    const centerX = Math.floor((minX + maxX) / 2) + deltaX;
-    const centerZ = Math.floor((minZ + maxZ) / 2) + deltaZ;
-    const floorY = this.floorManager.getFloorY(this.state.activeFloor);
-    
-    this.translateGizmo.setPosition({ x: centerX, z: centerZ }, floorY);
-  }
-
-  /**
-   * Update visual positions of selected objects without committing
-   * Windows are constrained to their attached wall
-   */
-  private updateVisualPositions(deltaX: number, deltaZ: number): void {
-    const selectedIds = this.state.selection.selectedIds;
-    const gridSize = this.gridSystem.getGridSize();
-    
-    for (const id of selectedIds) {
-      if (id.startsWith('floor-tile-') || id.startsWith('wall-')) continue;
-      
-      const mesh = this.sceneManager.getObject(id);
-      if (!mesh) continue;
-      
-      // Check if this is a window with wall-constrained dragging
-      const windowDragData = this.pendingMove?.windowDragData?.get(id);
-      if (windowDragData) {
-        // Window: constrain movement along the wall
-        const worldDeltaX = deltaX * gridSize;
-        const worldDeltaZ = deltaZ * gridSize;
-        
-        // Project the world delta onto the wall direction
-        const projectedDelta = windowDragData.wallDirection.x * worldDeltaX + 
-                               windowDragData.wallDirection.z * worldDeltaZ;
-        
-        // Calculate new position along wall (0-1)
-        const currentWorldPos = mesh.position.clone();
-        const distFromStart = currentWorldPos.clone().sub(windowDragData.wallStart).dot(windowDragData.wallDirection);
-        const newDist = distFromStart + projectedDelta;
-        
-        // Clamp to wall bounds with margin
-        const margin = gridSize * 0.5; // Half grid cell margin
-        const clampedDist = Math.max(margin, Math.min(windowDragData.wallLength - margin, newDist));
-        const newWallPosition = clampedDist / windowDragData.wallLength;
-        
-        // Update tracked position
-        windowDragData.currentWallPosition = newWallPosition;
-        
-        // Calculate new world position
-        const newX = windowDragData.wallStart.x + windowDragData.wallDirection.x * clampedDist;
-        const newZ = windowDragData.wallStart.z + windowDragData.wallDirection.z * clampedDist;
-        
-        mesh.position.x = newX;
-        mesh.position.z = newZ;
-        // Y position stays the same (floor height)
-      } else {
-        // Regular object: free movement
-        mesh.position.x += deltaX * gridSize;
-        mesh.position.z += deltaZ * gridSize;
-      }
-    }
-    
-    // Update selection highlights to follow objects
-    this.selectionHighlightManager.updatePositions(selectedIds, (id) => {
-      const mesh = this.sceneManager.getObject(id);
-      return mesh ?? null;
-    });
+    this.pendingMoveCoordinator.applyGridDelta(deltaX, deltaZ);
   }
 
   /**
@@ -5576,231 +1903,10 @@ private updateGizmoVisibility(): void {
   }
 
   /**
-   * Commit the pending move - validate and finalize positions
-   */
-  private commitPendingMove(): void {
-    if (!this.pendingMove) return;
-    
-    const { originalPositions, accumulatedDelta, isBuildingMove, buildingId } = this.pendingMove;
-    
-    // Clear timer
-    if (this.pendingMove.commitTimer) {
-      clearTimeout(this.pendingMove.commitTimer);
-    }
-    
-    // Hide building preview (always)
-    this.hideBuildingMovePreview();
-    
-    if (isBuildingMove && buildingId) {
-      // Now actually translate the building (was only preview during drag)
-      if (accumulatedDelta.x !== 0 || accumulatedDelta.z !== 0) {
-        // Record to history for undo/redo
-        this.actionHistory.pushBuildingMove(buildingId, accumulatedDelta.x, accumulatedDelta.z);
-        
-        this.translateBuilding(buildingId, accumulatedDelta.x, accumulatedDelta.z);
-        this.updateSelectionHighlightsForBuilding();
-      }
-      this.pendingMove = null;
-      this.scheduleAutoSave();
-      return;
-    }
-    
-    // For regular objects, validate the final position
-    const objectsToMove: PlacedObject[] = [];
-    for (const [id] of originalPositions) {
-      const obj = this.sceneManager.getObjectData(id);
-      if (obj) {
-        objectsToMove.push(obj);
-      }
-    }
-    
-    if (objectsToMove.length === 0) {
-      this.pendingMove = null;
-      return;
-    }
-    
-    // Calculate final positions from original + accumulated delta
-    const newPositions = objectsToMove.map(obj => {
-      const original = originalPositions.get(obj.id);
-      return {
-        id: obj.id,
-        obj,
-        newPosition: {
-          x: (original?.position.x ?? obj.position.x) + accumulatedDelta.x,
-          z: (original?.position.z ?? obj.position.z) + accumulatedDelta.z,
-          y: original?.position.y ?? obj.position.y,
-        } as GridPosition,
-      };
-    });
-    
-    // Validate all new positions
-    const movingIds = new Set(objectsToMove.map(o => o.id));
-    const allValid = newPositions.every(({ obj, newPosition }) => 
-      this.validateMovePosition(obj, newPosition, movingIds)
-    );
-    
-    if (allValid) {
-      // Record moves to history for undo/redo support
-      const moveActions: HistoryAction[] = [];
-      
-      // Commit the move - update internal positions
-      for (const { id, newPosition } of newPositions) {
-        const obj = this.sceneManager.getObjectData(id);
-        if (obj) {
-          // Update grid occupancy and internal state
-          const asset = obj.assetMetadata;
-          if (!asset) continue;
-          
-          // Check if this is a window with wall-constrained position
-          const windowDragData = this.pendingMove?.windowDragData?.get(id);
-          if (windowDragData && obj.wallAttachment) {
-            // For windows: update wall attachment position instead of grid position
-            obj.wallAttachment.position = windowDragData.currentWallPosition;
-            // Don't update grid position for wall-attached windows
-            continue;
-          }
-          
-          // Get original position for history
-          const original = originalPositions.get(id);
-          const fromPosition = original?.position ?? obj.position;
-          const fromOrientation = original?.orientation ?? obj.orientation;
-          
-          // Calculate new exactMeshPos if object has one
-          let toExactMeshPos: { x: number; z: number } | undefined;
-          if (obj.exactMeshPos) {
-            // Apply the same grid delta to exactMeshPos
-            const gridDeltaX = newPosition.x - fromPosition.x;
-            const gridDeltaZ = newPosition.z - fromPosition.z;
-            toExactMeshPos = {
-              x: obj.exactMeshPos.x + gridDeltaX,
-              z: obj.exactMeshPos.z + gridDeltaZ,
-            };
-            // Update the object's exactMeshPos
-            obj.exactMeshPos = toExactMeshPos;
-          }
-          
-          // Record this move action with full state
-          moveActions.push({
-            type: 'move',
-            data: {
-              objectId: id,
-              fromPosition: { ...fromPosition },
-              toPosition: { ...newPosition },
-              fromOrientation,
-              toOrientation: obj.orientation,
-              fromRotation: obj.rotation,
-              toRotation: obj.rotation, // Rotation doesn't change during translation
-              fromExactMeshPos: original?.exactMeshPos ? { ...original.exactMeshPos } : undefined,
-              toExactMeshPos,
-            } as MoveActionData,
-            timestamp: Date.now(),
-          });
-          
-          // Clear old occupancy
-          this.gridSystem.clearOccupied(id);
-          
-          // Update data
-          obj.position = newPosition;
-          
-          // Mark new occupancy
-          const isRotated90 = obj.orientation === Orientation.EAST || obj.orientation === Orientation.WEST;
-          const size = {
-            x: isRotated90 ? asset.gridUnits.z : asset.gridUnits.x,
-            z: isRotated90 ? asset.gridUnits.x : asset.gridUnits.z,
-          };
-          this.gridSystem.markOccupied(id, newPosition, size, asset.canStack ?? false, asset.category, obj.floor ?? 0);
-        }
-      }
-      
-      // Push to history - batch if multiple objects, single if one
-      if (moveActions.length === 1) {
-        const data = moveActions[0].data as MoveActionData;
-        this.actionHistory.pushMove(
-          data.objectId,
-          data.fromPosition,
-          data.toPosition,
-          data.fromOrientation,
-          data.toOrientation
-        );
-      } else if (moveActions.length > 1) {
-        this.actionHistory.pushBatch(moveActions);
-      }
-      
-      this.scheduleAutoSave();
-    } else {
-      // Invalid move - revert to original positions
-      this.revertPendingMove();
-    }
-    
-    this.pendingMove = null;
-  }
-
-  /**
-   * Revert a pending move to original positions
-   */
-  private revertPendingMove(): void {
-    if (!this.pendingMove) return;
-    
-    const { originalPositions, windowDragData } = this.pendingMove;
-    const gridSize = this.gridSystem.getGridSize();
-    
-    for (const [id, original] of originalPositions) {
-      const obj = this.sceneManager.getObjectData(id);
-      const mesh = this.sceneManager.getObject(id);
-      
-      if (obj && mesh && obj.assetMetadata) {
-        const asset = obj.assetMetadata;
-        
-        // Check if this is a window - revert to original wall position
-        const windowData = windowDragData?.get(id);
-        if (windowData && obj.wallAttachment) {
-          // Revert wall position
-          const originalWallPos = windowData.originalWallPosition;
-          const x = windowData.wallStart.x + windowData.wallDirection.x * (originalWallPos * windowData.wallLength);
-          const z = windowData.wallStart.z + windowData.wallDirection.z * (originalWallPos * windowData.wallLength);
-          mesh.position.x = x;
-          mesh.position.z = z;
-          continue;
-        }
-        
-        // Revert mesh position for regular objects
-        const worldPos = this.gridSystem.gridToWorld(original.position);
-        const isRotated90 = original.orientation === Orientation.EAST || original.orientation === Orientation.WEST;
-        const effectiveGridX = isRotated90 ? asset.gridUnits.z : asset.gridUnits.x;
-        const effectiveGridZ = isRotated90 ? asset.gridUnits.x : asset.gridUnits.z;
-        
-        const centerOffsetX = (effectiveGridX * gridSize) / 2;
-        const centerOffsetZ = (effectiveGridZ * gridSize) / 2;
-        const floorY = (obj.floor ?? 0) * FLOOR_HEIGHT * gridSize;
-        
-        // Use stored internal Y offset (grounding + positionOffset from CustomAssetLoader)
-        const internalYOffset = mesh.userData.internalYOffset ?? 0;
-        mesh.position.set(
-          worldPos.x + centerOffsetX,
-          floorY + internalYOffset,
-          worldPos.z + centerOffsetZ
-        );
-      }
-    }
-    
-    // Update gizmo and selection highlights
-    this.updateGizmoPosition();
-    const selectedIds = Array.from(originalPositions.keys());
-    this.selectionHighlightManager.updatePositions(selectedIds, (id) => {
-      return this.sceneManager.getObject(id) ?? null;
-    });
-  }
-
-  /**
    * Force commit any pending move (e.g., on gizmo drag end)
    */
   commitPendingMoveNow(): void {
-    if (this.pendingMove) {
-      if (this.pendingMove.commitTimer) {
-        clearTimeout(this.pendingMove.commitTimer);
-      }
-      this.commitPendingMove();
-    }
+    this.pendingMoveCoordinator.commitNow();
   }
 
   /**
@@ -5811,189 +1917,26 @@ private updateGizmoVisibility(): void {
    * @param excludeIds - IDs to exclude from collision checks (the objects being moved)
    */
   private validateMovePosition(obj: PlacedObject, newPosition: GridPosition, excludeIds: Set<string>): boolean {
-    if (!obj.assetMetadata) return false;
-    
-    const category = obj.assetMetadata.category;
-    const floor = obj.floor ?? 0;
-    
-    // Account for rotation when calculating size
-    const isRotated90 = obj.orientation === Orientation.EAST || obj.orientation === Orientation.WEST;
-    const size = {
-      x: isRotated90 ? obj.assetMetadata.gridUnits.z : obj.assetMetadata.gridUnits.x,
-      z: isRotated90 ? obj.assetMetadata.gridUnits.x : obj.assetMetadata.gridUnits.z,
-    };
-    
-    // Check if object can stack (walls, fences)
-    const canStack = category === AssetCategory.WALL || category === AssetCategory.FENCE;
-    
-    // Check grid occupancy (excluding the objects being moved)
-    if (this.gridSystem.isOccupiedExcluding(newPosition, size, canStack, category, floor, excludeIds)) {
-      return false;
-    }
-    
-    // Ground materials cannot be placed on building floors
-    const isGroundMaterial = 
-      category === AssetCategory.PAVEMENT ||
-      category === AssetCategory.GRASS ||
-      category === AssetCategory.GRAVEL;
-    
-    if (isGroundMaterial) {
-      for (let dx = 0; dx < size.x; dx++) {
-        for (let dz = 0; dz < size.z; dz++) {
-          if (this.buildingManager.getBuildingAtCell(newPosition.x + dx, newPosition.z + dz)) {
-            return false;
-          }
-        }
-      }
-    }
-    
-    // Skip wall crossing check for ground tiles and walls/fences
-    const skipWallCrossing = 
-      category === AssetCategory.FLOOR ||
-      category === AssetCategory.PAVEMENT ||
-      category === AssetCategory.GRASS ||
-      category === AssetCategory.GRAVEL ||
-      category === AssetCategory.WALL ||
-      category === AssetCategory.FENCE;
-    
-    // Check wall crossing
-    if (!skipWallCrossing && this.checkWallCrossingForMove(newPosition, size, floor)) {
-      return false;
-    }
-    
-    // NEW RULE: Non-ground floor objects must be inside a building
-    // Exceptions: windows, building, stairwell
-    if (floor !== 0) {
-      const isException = 
-        category === AssetCategory.WINDOW ||
-        category === AssetCategory.BUILDING ||
-        category === AssetCategory.STAIRWELL;
-      
-      if (!isException) {
-        // Check if ALL cells of this object are inside a building
-        for (let dx = 0; dx < size.x; dx++) {
-          for (let dz = 0; dz < size.z; dz++) {
-            const cellX = newPosition.x + dx;
-            const cellZ = newPosition.z + dz;
-            if (!this.buildingManager.getBuildingAtCell(cellX, cellZ)) {
-              return false; // At least one cell is outside a building
-            }
-          }
-        }
-      }
-    }
-    
-    return true;
-  }
-
-  /**
-   * Check if a move would cross a building wall
-   */
-  private checkWallCrossingForMove(gridPos: GridPosition, size: { x: number; z: number }, floor: number): boolean {
-    // Get all wall meshes on this floor
-    const wallMeshes: THREE.Object3D[] = [];
-    this.scene.traverse((child) => {
-      if (child.userData.isBuildingWall && 
-          (child.userData.floor === floor || child.userData.floor === undefined)) {
-        wallMeshes.push(child);
-      }
+    return validatePlacedObjectMove(obj, newPosition, excludeIds, {
+      gridSystem: this.gridSystem,
+      buildingManager: this.buildingManager,
+      sceneRoot: this.scene,
     });
-    
-    if (wallMeshes.length === 0) return false;
-    
-    const gridSize = this.gridSystem.getGridSize();
-    
-    // Check each edge of the object's bounding box for wall intersections
-    const objectMinX = gridPos.x * gridSize;
-    const objectMaxX = (gridPos.x + size.x) * gridSize;
-    const objectMinZ = gridPos.z * gridSize;
-    const objectMaxZ = (gridPos.z + size.z) * gridSize;
-    
-    for (const wall of wallMeshes) {
-      if (!(wall instanceof THREE.Mesh)) continue;
-      
-      const wallPos = wall.position;
-      const wallOrientation = wall.userData.wallOrientation;
-      
-      // Wall thickness
-      const wallThickness = 0.15 * gridSize;
-      
-      if (wallOrientation === 'north-south') {
-        // Wall runs along Z axis
-        const wallX = wallPos.x;
-        const wallMinZ = wallPos.z - gridSize / 2;
-        const wallMaxZ = wallPos.z + gridSize / 2;
-        
-        // Check if object crosses this wall
-        if (objectMinX < wallX + wallThickness / 2 && 
-            objectMaxX > wallX - wallThickness / 2) {
-          // X range overlaps with wall - check Z
-          if (objectMinZ < wallMaxZ && objectMaxZ > wallMinZ) {
-            // Object would cross this wall
-            // But only if the wall is actually in the middle of the object (not at edge)
-            const wallRelativeX = wallX - objectMinX;
-            if (wallRelativeX > wallThickness && wallRelativeX < (objectMaxX - objectMinX) - wallThickness) {
-              return true;
-            }
-          }
-        }
-      } else if (wallOrientation === 'east-west') {
-        // Wall runs along X axis
-        const wallZ = wallPos.z;
-        const wallMinX = wallPos.x - gridSize / 2;
-        const wallMaxX = wallPos.x + gridSize / 2;
-        
-        // Check if object crosses this wall
-        if (objectMinZ < wallZ + wallThickness / 2 && 
-            objectMaxZ > wallZ - wallThickness / 2) {
-          // Z range overlaps with wall - check X
-          if (objectMinX < wallMaxX && objectMaxX > wallMinX) {
-            // Object would cross this wall
-            const wallRelativeZ = wallZ - objectMinZ;
-            if (wallRelativeZ > wallThickness && wallRelativeZ < (objectMaxZ - objectMinZ) - wallThickness) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    
-    return false;
   }
 
   /**
    * Translate a building and all its contents
    */
   private translateBuilding(buildingId: string, deltaX: number, deltaZ: number): void {
-    // Get all cells currently in the building
-    const oldCells = this.buildingManager.getBuildingCells(buildingId);
-    
-    // Find all placed objects inside the building
-    const objectsToMove: PlacedObject[] = [];
-    const placedObjects = this.sceneManager.getAllPlacedObjects();
-    
-    for (const obj of placedObjects) {
-      const objCellKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
-      if (oldCells.has(objCellKey) || obj.buildingId === buildingId) {
-        objectsToMove.push(obj);
-      }
-    }
-    
-    // Translate the building
-    this.buildingManager.translateBuilding(buildingId, deltaX, deltaZ);
-    
-    // Move all objects that were inside
-    for (const obj of objectsToMove) {
-      const newPosition: GridPosition = {
-        x: obj.position.x + deltaX,
-        z: obj.position.z + deltaZ,
-        y: obj.position.y,
-      };
-      
-      this.moveObjectInternal(obj.id, newPosition, obj.orientation);
-    }
-    
-    // Update state
+    applyBuildingTranslation(buildingId, deltaX, deltaZ, {
+      buildingManager: this.buildingManager,
+      sceneManager: this.sceneManager,
+      movePlacedObjectForTranslate: (objectId, newPosition, orientation) =>
+        moveObjectInternal(objectId, newPosition, orientation, undefined, undefined, {
+          sceneManager: this.sceneManager,
+          gridSystem: this.gridSystem,
+        }),
+    });
     this.state.buildings = this.buildingManager.getAllBuildings();
     this.emit('state-updated', this.state);
   }
@@ -6010,18 +1953,8 @@ private updateGizmoVisibility(): void {
     // Need either regular selection or building selection
     if (selectedIds.length === 0 && !hasBuildingSelection) return;
     
-    // Calculate delta based on direction (in grid units)
-    let deltaX = 0;
-    let deltaZ = 0;
-    switch (direction) {
-      case 'up': deltaZ = -1; break;    // -Z is forward/up in isometric view
-      case 'down': deltaZ = 1; break;   // +Z is back/down
-      case 'left': deltaX = -1; break;  // -X is left
-      case 'right': deltaX = 1; break;  // +X is right
-    }
-    
-    // Use smooth movement with debounced commit
-    this.updatePendingMove(deltaX, deltaZ);
+    const { deltaX, deltaZ } = keyboardDirectionToGridDelta(direction);
+    this.pendingMoveCoordinator.applyGridDelta(deltaX, deltaZ);
   }
   
   /**
@@ -6031,17 +1964,13 @@ private updateGizmoVisibility(): void {
   rotateSelection(direction: 'cw' | 'ccw'): void {
     const selectedIds = this.state.selection.selectedIds;
     if (selectedIds.length === 0) return;
-    
-    // Capture start state for undo
-    this.captureRotationStartState();
-    
-    // Rotate by 90 degrees using the angle-based rotation
-    // This preserves exactMeshPos for angled assets
+
+    this.rotationCoordinator.captureStartState();
+
     const deltaAngle = direction === 'cw' ? Math.PI / 2 : -Math.PI / 2;
     this.rotateSelectionByAngle(deltaAngle);
-    
-    // Record to history
-    this.recordRotationToHistory();
+
+    this.rotationCoordinator.recordToHistory();
   }
   
   /**
@@ -6059,319 +1988,31 @@ private updateGizmoVisibility(): void {
   rotateSelectionByAngle(deltaAngle: number): void {
     const selectedIds = this.state.selection.selectedIds;
     if (selectedIds.length === 0) return;
-    
-    const isMultiSelection = selectedIds.length > 1;
-    
-    // Collect valid meshes and their data
-    const meshesToRotate: { mesh: THREE.Object3D; placedObject: PlacedObject; asset: AssetMetadata | null }[] = [];
-    
-    for (const id of selectedIds) {
-      if (id.startsWith('floor-tile-') || id.startsWith('wall-')) continue;
-      
-      const placedObject = this.sceneManager.getObjectData(id);
-      const mesh = this.sceneManager.getObject(id);
-      
-      if (placedObject && mesh) {
-        meshesToRotate.push({ 
-          mesh, 
-          placedObject, 
-          asset: placedObject.assetMetadata 
-        });
-      }
-    }
-    
-    if (meshesToRotate.length === 0) return;
-    
-    if (isMultiSelection) {
-      // GROUP ROTATION using THREE.js parenting
-      // This guarantees correct world-space transforms
-      
-      // Calculate centroid from mesh positions
-      let sumX = 0, sumZ = 0, sumY = 0;
-      for (const { mesh } of meshesToRotate) {
-        sumX += mesh.position.x;
-        sumZ += mesh.position.z;
-        sumY += mesh.position.y;
-      }
-      const centroid = new THREE.Vector3(
-        sumX / meshesToRotate.length,
-        sumY / meshesToRotate.length,
-        sumZ / meshesToRotate.length
-      );
-      
-      // Create temporary pivot at centroid
-      const pivot = new THREE.Object3D();
-      pivot.position.copy(centroid);
-      this.scene.add(pivot);
-      
-      // Parent all meshes to pivot, preserving world position
-      for (const { mesh } of meshesToRotate) {
-        // Store current world position and rotation
-        const worldPos = new THREE.Vector3();
-        mesh.getWorldPosition(worldPos);
-        const worldRotY = mesh.rotation.y;
-        
-        // Remove from scene, add to pivot
-        this.scene.remove(mesh);
-        pivot.add(mesh);
-        
-        // Convert world position to local position relative to pivot
-        mesh.position.set(
-          worldPos.x - centroid.x,
-          worldPos.y - centroid.y,
-          worldPos.z - centroid.z
-        );
-        mesh.rotation.y = worldRotY;
-      }
-      
-      // Rotate the pivot
-      pivot.rotation.y = deltaAngle;
-      
-      // Update pivot's world matrix
-      pivot.updateMatrixWorld(true);
-      
-      // Unparent meshes back to scene, preserving world transforms
-      for (const { mesh, placedObject, asset } of meshesToRotate) {
-        // Get world position and rotation after pivot rotation
-        const worldPos = new THREE.Vector3();
-        mesh.getWorldPosition(worldPos);
-        const worldRotY = mesh.rotation.y + pivot.rotation.y;
-        
-        // Remove from pivot, add back to scene
-        pivot.remove(mesh);
-        this.scene.add(mesh);
-        
-        // Set world position and rotation
-        mesh.position.copy(worldPos);
-        mesh.rotation.y = worldRotY;
-        
-        // Clear old grid occupancy
-        if (asset) {
-          this.gridSystem.clearOccupied(placedObject.id);
+
+    const meshesToRotate = collectMeshesForSelectionRotation(
+      selectedIds,
+      (id) => this.sceneManager.getObjectData(id),
+      (id) => this.sceneManager.getObject(id)
+    );
+
+    applySelectionRotationByAngle(deltaAngle, selectedIds, meshesToRotate, {
+      scene: this.scene,
+      grid: this.gridSystem,
+      syncRotateGizmoFromSelectionCenter: () => {
+        const p = this.getSelectionGizmoPivotXZ();
+        if (p) {
+          const floorY = this.floorManager.getCurrentFloorY();
+          const id = this.state.selection.selectedIds[0];
+          const po = id ? this.sceneManager.getObjectData(id) : undefined;
+          const rot = rotationForGizmoIndicator(po);
+          this.rotateGizmo.setPosition({ x: p.x, z: p.z }, floorY, rot);
         }
-        
-        // Update PlacedObject data
-        placedObject.exactMeshPos = { x: mesh.position.x, z: mesh.position.z };
-        placedObject.rotation = worldRotY;
-        
-        // Update grid position for collision detection
-        const gridPos = this.gridSystem.worldToGrid(worldPos);
-        placedObject.position = { x: gridPos.x, z: gridPos.z };
-        
-        // Mark new grid occupancy
-        if (asset) {
-          this.gridSystem.markOccupied(
-            placedObject.id,
-            placedObject.position,
-            { x: asset.gridUnits.x, z: asset.gridUnits.z },
-            asset.canStack ?? false,
-            asset.category,
-            placedObject.floor ?? 0
-          );
-        }
-        
-        // Sync orientation to nearest 90 degrees
-        this.syncOrientationFromRotation(placedObject, worldRotY);
-      }
-      
-      // Clean up pivot
-      this.scene.remove(pivot);
-      
-      // Update gizmo position
-      const newCentroid = this.getSelectionCenterWorld();
-      if (newCentroid) {
-        const floorY = this.floorManager.getCurrentFloorY();
-        // Position rotate gizmo at ground level (X/Z from center, Y from floor)
-        this.rotateGizmo.setPosition({ x: newCentroid.x, z: newCentroid.z }, floorY);
-      }
-    } else {
-      // SINGLE SELECTION - just rotate in place
-      const { mesh, placedObject } = meshesToRotate[0];
-      const currentRotation = placedObject.rotation ?? 
-        this.getRotationFromOrientation(placedObject.orientation);
-      const newRotation = currentRotation + deltaAngle;
-      
-      mesh.rotation.y = newRotation;
-      placedObject.rotation = newRotation;
-      placedObject.exactMeshPos = { x: mesh.position.x, z: mesh.position.z };
-      
-      this.syncOrientationFromRotation(placedObject, newRotation);
-    }
-    
+      },
+    });
+
     this.scheduleAutoSave();
   }
-  
-  /**
-   * Sync orientation enum to nearest 90 degrees from rotation
-   */
-  private syncOrientationFromRotation(placedObject: PlacedObject, rotation: number): void {
-    const normalizedRotation = ((rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    if (normalizedRotation < Math.PI / 4 || normalizedRotation >= 7 * Math.PI / 4) {
-      placedObject.orientation = Orientation.NORTH;
-    } else if (normalizedRotation < 3 * Math.PI / 4) {
-      placedObject.orientation = Orientation.EAST;
-    } else if (normalizedRotation < 5 * Math.PI / 4) {
-      placedObject.orientation = Orientation.SOUTH;
-    } else {
-      placedObject.orientation = Orientation.WEST;
-    }
-  }
-  
-  /**
-   * Capture the current state of selected objects before rotation
-   * Called at the start of a rotation operation
-   */
-  private captureRotationStartState(): void {
-    const selectedIds = this.state.selection.selectedIds;
-    if (selectedIds.length === 0) return;
-    
-    this.rotationStartStates = new Map();
-    
-    for (const id of selectedIds) {
-      // Skip building elements
-      if (id.startsWith('floor-tile-') || id.startsWith('wall-')) continue;
-      
-      const placedObject = this.sceneManager.getObjectData(id);
-      if (!placedObject) continue;
-      
-      this.rotationStartStates.set(id, {
-        position: { ...placedObject.position },
-        rotation: placedObject.rotation,
-        orientation: placedObject.orientation,
-        exactMeshPos: placedObject.exactMeshPos ? { ...placedObject.exactMeshPos } : undefined,
-      });
-    }
-  }
-  
-  /**
-   * Record rotation to history and clear start states
-   * Called at the end of a rotation operation
-   */
-  private recordRotationToHistory(): void {
-    if (!this.rotationStartStates || this.rotationStartStates.size === 0) {
-      this.rotationStartStates = null;
-      return;
-    }
-    
-    // Capture end states
-    const afterStates = new Map<string, {
-      position: GridPosition;
-      rotation: number | undefined;
-      orientation: Orientation;
-      exactMeshPos?: { x: number; z: number };
-    }>();
-    
-    let hasChanges = false;
-    
-    for (const [id, beforeState] of this.rotationStartStates) {
-      const placedObject = this.sceneManager.getObjectData(id);
-      if (!placedObject) continue;
-      
-      // Check if anything changed
-      const posChanged = placedObject.position.x !== beforeState.position.x || 
-                         placedObject.position.z !== beforeState.position.z;
-      const rotChanged = placedObject.rotation !== beforeState.rotation;
-      const exactPosChanged = placedObject.exactMeshPos?.x !== beforeState.exactMeshPos?.x ||
-                              placedObject.exactMeshPos?.z !== beforeState.exactMeshPos?.z;
-      
-      if (posChanged || rotChanged || exactPosChanged) {
-        hasChanges = true;
-      }
-      
-      afterStates.set(id, {
-        position: { ...placedObject.position },
-        rotation: placedObject.rotation,
-        orientation: placedObject.orientation,
-        exactMeshPos: placedObject.exactMeshPos ? { ...placedObject.exactMeshPos } : undefined,
-      });
-    }
-    
-    // Only record if something actually changed
-    if (hasChanges) {
-      this.actionHistory.pushRotate(this.rotationStartStates, afterStates);
-    }
-    
-    this.rotationStartStates = null;
-  }
-  
-  /**
-   * Apply a rotation state to objects (used for undo/redo)
-   * Restores position, rotation, and orientation for each object
-   */
-private applyRotationState(
-    states: Map<string, { position: GridPosition; rotation: number | undefined; orientation: Orientation; exactMeshPos?: { x: number; z: number } }>
-  ): void {
-    for (const [id, state] of states) {
-      const placedObject = this.sceneManager.getObjectData(id);
-      const mesh = this.sceneManager.getObject(id);
-      
-      if (!placedObject || !mesh) continue;
-      
-      const asset = placedObject.assetMetadata;
-      
-      // Clear old grid occupancy
-      if (asset) {
-        this.gridSystem.clearOccupied(id);
-      }
-      
-      // Restore position
-      placedObject.position = { ...state.position };
-      placedObject.exactMeshPos = state.exactMeshPos ? { ...state.exactMeshPos } : undefined;
 
-      const internalYOffset = mesh.userData.internalYOffset ?? 0;
-      const floorY = this.floorManager.getCurrentFloorY();
-      
-      // Position mesh using exact mesh pos if available, otherwise grid-based
-      if (state.exactMeshPos) {
-        // Exact mesh position - use directly, no calculation needed
-        mesh.position.set(
-          state.exactMeshPos.x,
-          floorY + internalYOffset,
-          state.exactMeshPos.z
-        );
-      } else {
-        // Grid-based positioning
-        const worldPos = this.gridSystem.gridToWorld(placedObject.position);
-        const gridSize = this.gridSystem.getGridSize();
-        const internalXOffset = mesh.userData.internalXOffset || 0;
-        const internalZOffset = mesh.userData.internalZOffset || 0;
-        
-        // Get the asset dimensions for proper centering
-        const assetWidth = asset ? asset.gridUnits.x * gridSize : gridSize;
-        const assetDepth = asset ? asset.gridUnits.z * gridSize : gridSize;
-        
-        mesh.position.set(
-          worldPos.x + assetWidth / 2 + internalXOffset,
-          floorY + internalYOffset,
-          worldPos.z + assetDepth / 2 + internalZOffset
-        );
-      }
-      
-      // Restore rotation
-      placedObject.rotation = state.rotation;
-      placedObject.orientation = state.orientation;
-      
-      // Apply rotation to mesh
-      const effectiveRotation = state.rotation ?? this.getRotationFromOrientation(state.orientation);
-      mesh.rotation.y = effectiveRotation;
-      
-      // Mark new grid occupancy
-      if (asset) {
-        this.gridSystem.markOccupied(
-          id,
-          placedObject.position,
-          { x: asset.gridUnits.x, z: asset.gridUnits.z },
-          asset.canStack ?? false,
-          asset.category,
-          placedObject.floor ?? 0
-        );
-      }
-    }
-    
-    // Update gizmo if objects are selected
-    this.updateGizmoVisibility();
-  }
-  
   /**
    * Rotate the camera view by 90 degrees around the current focal point
    * Works in any camera mode with smooth animation
@@ -6395,67 +2036,13 @@ private applyRotationState(
    * Returns an array of bounding rectangles in screen coordinates
    */
   getSelectedObjectsScreenBounds(): Array<{ id: string; bounds: { left: number; top: number; width: number; height: number } }> {
-    const selectedIds = this.state.selection.selectedIds;
-    if (selectedIds.length === 0) return [];
-    
-    const camera = this.cameraController.getCamera();
-    const width = this.container.clientWidth;
-    const height = this.container.clientHeight;
-    
-    const results: Array<{ id: string; bounds: { left: number; top: number; width: number; height: number } }> = [];
-    
-    for (const id of selectedIds) {
-      const object = this.sceneManager.getObject(id);
-      if (!object) continue;
-      
-      // Calculate bounding box in world space
-      const box = new THREE.Box3().setFromObject(object);
-      
-      // Get the 8 corners of the bounding box
-      const corners = [
-        new THREE.Vector3(box.min.x, box.min.y, box.min.z),
-        new THREE.Vector3(box.min.x, box.min.y, box.max.z),
-        new THREE.Vector3(box.min.x, box.max.y, box.min.z),
-        new THREE.Vector3(box.min.x, box.max.y, box.max.z),
-        new THREE.Vector3(box.max.x, box.min.y, box.min.z),
-        new THREE.Vector3(box.max.x, box.min.y, box.max.z),
-        new THREE.Vector3(box.max.x, box.max.y, box.min.z),
-        new THREE.Vector3(box.max.x, box.max.y, box.max.z),
-      ];
-      
-      // Project each corner to screen space and find min/max
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let minY = Infinity;
-      let maxY = -Infinity;
-      
-      for (const corner of corners) {
-        const projected = corner.clone().project(camera);
-        // Convert from normalized device coordinates (-1 to 1) to screen coordinates
-        const screenX = (projected.x + 1) / 2 * width;
-        const screenY = (-projected.y + 1) / 2 * height;
-        
-        minX = Math.min(minX, screenX);
-        maxX = Math.max(maxX, screenX);
-        minY = Math.min(minY, screenY);
-        maxY = Math.max(maxY, screenY);
-      }
-      
-      // Add padding for visibility
-      const padding = 4;
-      
-      results.push({
-        id,
-        bounds: {
-          left: minX - padding,
-          top: minY - padding,
-          width: maxX - minX + padding * 2,
-          height: maxY - minY + padding * 2,
-        },
-      });
-    }
-    
-    return results;
+    return computeSelectedObjectsScreenBounds(
+      this.state.selection.selectedIds,
+      (id) => this.sceneManager.getObject(id),
+      this.cameraController.getCamera(),
+      this.container.clientWidth,
+      this.container.clientHeight
+    );
   }
 
   // ==========================================================================
@@ -6463,106 +2050,23 @@ private applyRotationState(
   // ==========================================================================
 
   /**
-   * Apply all rendering settings
-   * Called on init and when settings change
+   * Apply all rendering settings (delegates to `applyBluDesignRenderingSettings`).
+   * Called on init and when settings change.
    */
   private async applyRenderingSettings(): Promise<void> {
     const settings = this.renderingSettings.getSettings();
-    
-    // Apply in order of dependency
-    this.applyAntialiasingSettings(settings);
-    this.applyShadowSettings(settings);
-    this.applyInstancingSettings(settings);
-    await this.applyOptimizerSettings(settings);
-    this.applyFrustumCullingSettings(settings);
-  }
-  
-  private applyAntialiasingSettings(settings: EditorPreferences['rendering']): void {
-    if (settings.antialiasingEnabled) {
-      this.renderer.setPixelRatio(
-        Math.min(window.devicePixelRatio, settings.antialiasingLevel || 2)
-      );
-    } else {
-      this.renderer.setPixelRatio(1);
-    }
-  }
-  
-  private applyShadowSettings(settings: EditorPreferences['rendering']): void {
-    // Renderer
-    this.renderer.shadowMap.enabled = settings.shadowsEnabled;
-    
-    // Directional light
-    const dirLight = this.sceneManager.getDirectionalLight();
-    if (dirLight) {
-      dirLight.castShadow = settings.shadowsEnabled;
-      if (settings.shadowsEnabled) {
-        dirLight.shadow.mapSize.width = settings.shadowMapSize;
-        dirLight.shadow.mapSize.height = settings.shadowMapSize;
-        dirLight.shadow.camera.far = settings.shadowDistance || 500;
-        dirLight.shadow.needsUpdate = true;
-      }
-    }
-    
-    // Update all meshes (one-time traversal)
-    this.updateMeshShadows(settings.shadowsEnabled);
-  }
-  
-  private updateMeshShadows(enabled: boolean): void {
-    // Traverse scene once, update all meshes
-    // Skip markers, ghosts, selectors
-    this.scene.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        if (object.userData.selectable !== false && 
-            !object.userData.isGhost &&
-            !object.userData.isSelector &&
-            !object.userData.isInstanceMarker) {
-          object.castShadow = enabled;
-          object.receiveShadow = enabled;
-        }
-      } else if (object instanceof THREE.InstancedMesh) {
-        object.castShadow = enabled;
-        object.receiveShadow = enabled;
-      }
-    });
-  }
-  
-  private applyInstancingSettings(settings: EditorPreferences['rendering']): void {
-    this.buildingManager?.setInstancingEnabled(settings.instancingEnabled);
-    this.groundTileManager?.setInstancingEnabled(settings.instancingEnabled);
-  }
-  
-  private async applyOptimizerSettings(settings: EditorPreferences['rendering']): Promise<void> {
-    // Use centralized OptimizationManager
-    const optimizationManager = OptimizationManager.getInstance();
-    await optimizationManager.setEnabled(settings.optimizerEnabled);
-    optimizationManager.setReadonlyMode(this.readonly);
-    
-    // setEnabled will handle the rebuild:
-    // - When disabled: calls onOptimizationInvalidated() which rebuilds without optimization
-    // - When enabled: calls optimizeAll() which triggers re-optimization
-    // No need to manually trigger rebuilds here - setEnabled handles it
-  }
-  
-  private applyFrustumCullingSettings(settings: EditorPreferences['rendering']): void {
-    this.updateFrustumCulling(settings.frustumCullingEnabled);
-  }
-  
-  private updateFrustumCulling(enabled: boolean): void {
-    this.scene.traverse((object) => {
-      if (object instanceof THREE.InstancedMesh) {
-        // Only update batched meshes (not individual objects)
-        if (object.userData.isBatchedWalls ||
-            object.userData.isBatchedRoofTiles ||
-            object.userData.isGroundTileBatch ||
-            object.userData.isBatchedFloorTiles) {
-          object.frustumCulled = enabled;
-        }
-      }
-    });
-    
-    // Store flag for future meshes
-    this.buildingManager?.setFrustumCullingEnabled(enabled);
-    this.groundTileManager?.setFrustumCullingEnabled(enabled);
+    await applyBluDesignRenderingSettings(
+      {
+        renderer: this.renderer,
+        scene: this.scene,
+        getDirectionalLight: () => this.sceneManager.getDirectionalLight(),
+        buildingManager: this.buildingManager,
+        groundTileManager: this.groundTileManager,
+        optimizationManager: OptimizationManager.getInstance(),
+        readonly: this.readonly,
+      },
+      settings
+    );
   }
 
   // ==========================================================================
@@ -6584,11 +2088,9 @@ private applyRotationState(
       this.settingsUnsubscribe = null;
     }
     
-    // Clear auto-save timer
-    if (this.autoSaveTimer) {
-      clearTimeout(this.autoSaveTimer);
-      this.autoSaveTimer = null;
-    }
+    this.draftAutoSave.dispose();
+
+    this.pendingMoveCoordinator.dispose();
     
     // Dispose subsystems
     this.sceneManager.dispose();
@@ -6603,8 +2105,7 @@ private applyRotationState(
     this.windowManager.dispose();
     this.groundTileManager.dispose();
     
-    // Dispose building move preview
-    this.disposeBuildingMovePreview();
+    this.buildingMovePreviewController.dispose();
     
     // Dispose Three.js objects
     this.renderer.dispose();
@@ -6613,8 +2114,7 @@ private applyRotationState(
     this.container.removeChild(this.renderer.domElement);
     this.container.removeChild(this.labelRenderer.domElement);
     
-    // Clear event handlers
-    this.eventHandlers.clear();
+    this.eventBus.clear();
   }
 }
 

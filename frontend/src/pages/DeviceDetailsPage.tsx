@@ -24,6 +24,7 @@ import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constan
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
+import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 
 interface DeviceDetails {
   id: string;
@@ -122,6 +123,10 @@ export default function DeviceDetailsPage() {
   const [accessMethodsDraft, setAccessMethodsDraft] = useState<AccessMethod[]>(['app']);
   const [editingAccessMethods, setEditingAccessMethods] = useState(false);
   const [savingAccessMethods, setSavingAccessMethods] = useState(false);
+  const [showUnassignFromUnitConfirm, setShowUnassignFromUnitConfirm] = useState(false);
+  const [unassigningFromUnit, setUnassigningFromUnit] = useState(false);
+  const [showRemoveInventoryConfirm, setShowRemoveInventoryConfirm] = useState(false);
+  const [removingFromInventory, setRemovingFromInventory] = useState(false);
 
   const deviceLockStatusRef = useRef<DeviceDetails['lock_status'] | undefined>(undefined);
   const pendingRemoteUnlockRef = useRef(false);
@@ -383,6 +388,8 @@ export default function DeviceDetailsPage() {
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isDevAdmin = authState.user?.role === UserRole.DEV_ADMIN;
+  const isGlobalAdmin =
+    authState.user?.role === UserRole.ADMIN || authState.user?.role === UserRole.DEV_ADMIN;
 
   const saveAccessMethods = async () => {
     if (!device || deviceCategory !== 'access_control') return;
@@ -612,6 +619,63 @@ export default function DeviceDetailsPage() {
                 </p>
               )}
             </div>
+            {deviceCategory === 'blulok' && canManage && (
+              <div className="rounded-lg border border-gray-200 dark:border-gray-600 p-4 space-y-3">
+                <p className="text-sm font-medium text-gray-900 dark:text-white">Unit assignment</p>
+                {device.unit_id && device.unit_number ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      This lock is assigned to unit <span className="font-medium">{device.unit_number}</span>.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowUnassignFromUnitConfirm(true)}
+                      className="rounded-md border border-red-300 dark:border-red-800 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    >
+                      Unassign from unit
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-600 dark:text-gray-300">
+                    This lock is not assigned to a unit. Assign it from the unit&apos;s page when ready.
+                  </p>
+                )}
+              </div>
+            )}
+            {deviceCategory === 'blulok' && isGlobalAdmin && (
+              <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
+                <p className="text-sm font-medium text-red-900 dark:text-red-200">Remove from facility (cloud inventory)</p>
+                <p className="text-sm text-red-800/90 dark:text-red-100/90">
+                  Deletes this lock&apos;s cloud record for the current gateway: unit link (if any), device group
+                  memberships, and denylist entries. Route passes already issued expire on schedule. If the hardware
+                  still reports on the gateway, it can reappear after the next device sync.
+                  {device.unit_id ? (
+                    <>
+                      {' '}
+                      This lock is still assigned to a unit — consider{' '}
+                      <span className="font-medium">Unassign from unit</span> first if it should remain in this facility.
+                    </>
+                  ) : null}{' '}
+                  To bind the{' '}
+                  <span className="font-medium">gateway</span> to another facility, use the facility{' '}
+                  <button
+                    type="button"
+                    className="font-medium text-red-900 dark:text-red-100 underline"
+                    onClick={() => navigate(`/facilities/${device.facility_id}?tab=gateway`)}
+                  >
+                    Gateway
+                  </button>{' '}
+                  tab (admin reassignment).
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowRemoveInventoryConfirm(true)}
+                  className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
+                >
+                  Remove lock from cloud inventory…
+                </button>
+              </div>
+            )}
             {deviceCategory === 'access_control' && (
               <div>
                 <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Current Effective Access Code</p>
@@ -1092,6 +1156,75 @@ export default function DeviceDetailsPage() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={showUnassignFromUnitConfirm}
+        onClose={() => setShowUnassignFromUnitConfirm(false)}
+        onConfirm={() => {
+          void (async () => {
+            if (!device?.id) return;
+            setUnassigningFromUnit(true);
+            try {
+              await apiService.unassignDeviceFromUnit(device.id);
+              addToast({ type: 'success', title: 'Device unassigned from unit successfully' });
+              setShowUnassignFromUnitConfirm(false);
+              await loadDeviceDetails();
+            } catch (err: unknown) {
+              const apiErr = err as { response?: { data?: { message?: string } } };
+              addToast({
+                type: 'error',
+                title: apiErr?.response?.data?.message || 'Failed to unassign lock from unit',
+              });
+            } finally {
+              setUnassigningFromUnit(false);
+            }
+          })();
+        }}
+        title="Unassign lock from unit?"
+        message={`Remove this lock from unit ${device.unit_number ?? ''}? It will show as unassigned in this facility and can be linked to another unit. The gateway record is unchanged.`}
+        confirmText="Unassign"
+        variant="warning"
+        isLoading={unassigningFromUnit}
+      />
+
+      <ConfirmModal
+        isOpen={showRemoveInventoryConfirm}
+        onClose={() => setShowRemoveInventoryConfirm(false)}
+        onConfirm={() => {
+          void (async () => {
+            if (!device?.id) return;
+            const facilityId = device.facility_id;
+            setRemovingFromInventory(true);
+            try {
+              await apiService.removeBluLokDeviceFromCloudInventory(device.id);
+              addToast({ type: 'success', title: 'Lock removed from cloud inventory' });
+              setShowRemoveInventoryConfirm(false);
+              navigate(`/facilities/${facilityId}?tab=devices`);
+            } catch (err: unknown) {
+              const apiErr = err as { response?: { data?: { message?: string }; status?: number } };
+              const message = apiErr?.response?.data?.message || 'Failed to remove lock from inventory';
+              addToast({ type: 'error', title: message });
+              if (apiErr?.response?.status === 404) {
+                setShowRemoveInventoryConfirm(false);
+                if (facilityId) {
+                  navigate(`/facilities/${facilityId}?tab=devices`);
+                }
+              }
+            } finally {
+              setRemovingFromInventory(false);
+            }
+          })();
+        }}
+        title="Remove lock from cloud inventory?"
+        message={
+          device.unit_id
+            ? `This permanently deletes the lock row (including its assignment to unit ${device.unit_number ?? ''}), group memberships, and denylist entries. Route passes already issued expire on schedule. Continue only if you are recommissioning or correcting a wrong facility attachment.`
+            : 'This permanently deletes the lock row, group memberships, and denylist entries in the database. Route passes already issued expire on schedule. Continue only if you are recommissioning or correcting a wrong facility attachment.'
+        }
+        confirmText="Remove from inventory"
+        variant="danger"
+        isLoading={removingFromInventory}
+      />
     </div>
   );
 }

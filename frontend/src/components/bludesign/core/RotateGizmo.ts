@@ -6,6 +6,12 @@
  */
 
 import * as THREE from 'three';
+import type { GridSystem } from './GridSystem';
+
+/** Local indicator angle vs working-grid yaw (same convention as translate gizmo). */
+function relativeYawForIndicator(worldYawRad: number, gridYawRad: number): number {
+  return ((worldYawRad - gridYawRad + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+}
 
 export interface RotateGizmoCallbacks {
   onDragStart: () => void;
@@ -19,6 +25,7 @@ export class RotateGizmo {
   private scene: THREE.Scene;
   private camera: THREE.Camera;
   private container: HTMLElement;
+  private gridSystem: GridSystem;
   private callbacks: RotateGizmoCallbacks;
   
   // Gizmo components
@@ -61,11 +68,13 @@ export class RotateGizmo {
     scene: THREE.Scene,
     camera: THREE.Camera,
     container: HTMLElement,
+    gridSystem: GridSystem,
     callbacks: RotateGizmoCallbacks
   ) {
     this.scene = scene;
     this.camera = camera;
     this.container = container;
+    this.gridSystem = gridSystem;
     this.callbacks = callbacks;
     
     this.raycaster = new THREE.Raycaster();
@@ -169,12 +178,15 @@ export class RotateGizmo {
       floorY + 0.1, // Slightly above floor
       worldPosition.z
     );
+
+    const align = this.gridSystem.getGridAlignment();
+    const yaw = align?.yaw ?? 0;
+    this.gizmoGroup.rotation.set(0, yaw, 0);
+    this.currentAngle = align ? relativeYawForIndicator(initialRotation, yaw) : initialRotation;
     
     // Ensure all children render on top
     this.ensureRenderOnTop(this.gizmoGroup);
     
-    // Set initial rotation indicator
-    this.currentAngle = initialRotation;
     this.updateIndicator();
     
     this.gizmoGroup.visible = true;
@@ -227,7 +239,11 @@ export class RotateGizmo {
   /**
    * Update gizmo position (X/Z) and floor Y level
    */
-  setPosition(worldPosition: { x: number; z: number }, floorY: number): void {
+  setPosition(
+    worldPosition: { x: number; z: number },
+    floorY: number,
+    objectWorldRotationRad?: number
+  ): void {
     if (!this.gizmoGroup || !this.isVisible) return;
     
     this.gizmoGroup.position.set(
@@ -235,6 +251,16 @@ export class RotateGizmo {
       floorY + 0.1, // Slightly above floor
       worldPosition.z
     );
+
+    const align = this.gridSystem.getGridAlignment();
+    const gridYaw = align?.yaw ?? 0;
+    this.gizmoGroup.rotation.set(0, gridYaw, 0);
+    if (objectWorldRotationRad !== undefined) {
+      this.currentAngle = align
+        ? relativeYawForIndicator(objectWorldRotationRad, gridYaw)
+        : objectWorldRotationRad;
+      this.updateIndicator();
+    }
   }
 
   /**

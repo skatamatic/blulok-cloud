@@ -27,7 +27,24 @@ import { BuildingSkinType } from './core/types';
 import { getThemeManager } from './core/ThemeManager';
 import { LoadingOverlay } from './ui/LoadingOverlay';
 import { ProgressOverlay, ProgressState } from './ui/ProgressOverlay';
-import { FloatingPanel, PanelState } from './ui/FloatingPanel';
+import { FloatingPanel } from './ui/FloatingPanel';
+import { DockRegion, type DockTabItem } from './ui/DockRegion';
+import {
+  ALL_PANEL_IDS,
+  type PanelId,
+  type PanelLayoutStateV9,
+  type ExtendedPanelStateV9,
+  mergeLayoutWithDefaultsV9,
+  defaultDockSideState,
+  dockPanel,
+  floatPanel,
+  setDockActive,
+  setDockExpanded,
+  setDockWidth,
+  DOCK_EDGE_ZONE_PX,
+  DOCK_STACK_WIDTH_PX,
+  reorderDockPanelIds,
+} from './ui/panelLayoutV9';
 import { MenuBar } from './ui/MenuBar';
 import { HotkeyOverlay } from './ui/HotkeyOverlay';
 import { SelectionOverlay } from './ui/SelectionOverlay';
@@ -60,6 +77,7 @@ import {
   AdjustmentsHorizontalIcon,
   CubeIcon,
   CpuChipIcon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 
 interface EditorCanvasProps {
@@ -69,37 +87,17 @@ interface EditorCanvasProps {
   initialFacilityId?: string; // If provided, load this facility on mount
 }
 
-// Extended panel state with visibility and relative positioning
-interface ExtendedPanelState extends PanelState {
-  visible: boolean;
-  // Relative position (0-1) for responsive positioning
-  relX?: number; // 0 = left edge, 1 = right edge
-  relY?: number; // 0 = top edge, 1 = bottom edge
-}
+type ExtendedPanelState = ExtendedPanelStateV9;
 
-// Panel layout configuration
-interface PanelLayoutState {
-  tools: ExtendedPanelState;
-  assets: ExtendedPanelState;
-  view: ExtendedPanelState;
-  properties: ExtendedPanelState;
-  floors: ExtendedPanelState;
-  skins: ExtendedPanelState;
-  datasource: ExtendedPanelState;
-  smartobjects: ExtendedPanelState;
-  buildingSkin: ExtendedPanelState;
-}
+type PanelLayoutState = PanelLayoutStateV9;
 
-// v8: Fixed default layout with cleaner panel organization
-const LAYOUT_STORAGE_KEY = 'bludesign-panel-layout-v8';
+// v9: adds dock-left / dock-right placement + docks
+const LAYOUT_STORAGE_KEY = 'bludesign-panel-layout-v9';
+const LAYOUT_STORAGE_KEY_LEGACY_V8 = 'bludesign-panel-layout-v8';
 // Key for user's custom default layout
 const CUSTOM_DEFAULT_LAYOUT_KEY = 'bludesign-custom-default-layout';
 // Key for panel z-order (most recently used at end of array)
 const PANEL_ZORDER_KEY = 'bludesign-panel-zorder';
-
-// All panel IDs for z-order management
-const ALL_PANEL_IDS = ['tools', 'assets', 'smartobjects', 'view', 'properties', 'floors', 'skins', 'datasource', 'buildingSkin'] as const;
-type PanelId = typeof ALL_PANEL_IDS[number];
 
 // Base z-index for floating panels
 const PANEL_BASE_ZINDEX = 30;
@@ -155,7 +153,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, 
       relX: 0, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // Assets panel - below tools
@@ -166,7 +165,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, 
       relX: 0, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // ============ RIGHT COLUMN ============
@@ -177,7 +177,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, 
       relX: 1, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // View panel - below smart objects
@@ -187,7 +188,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, 
       relX: 1, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // Properties panel - below view
@@ -197,7 +199,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, 
       relX: 1, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // Floors panel - below properties
@@ -207,7 +210,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, 
       relX: 1, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // ============ FLOATING PANELS ============
@@ -218,7 +222,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, 
       relX: 0.5, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // Data Source panel - hidden by default, shows on right when enabled
@@ -228,7 +233,8 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: false, 
       relX: 1, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
     },
     
     // Building Style panel - appears when building is selected, positioned near properties
@@ -238,39 +244,15 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       collapsed: false, 
       visible: true, // Visibility controlled by building selection, not this flag
       relX: 1, 
-      relY: 0 
+      relY: 0,
+      placement: 'float',
+    },
+
+    docks: {
+      left: defaultDockSideState(),
+      right: defaultDockSideState(),
     },
   };
-};
-
-/**
- * Validate and merge loaded layout with defaults
- * Ensures all panels exist and have valid positions
- */
-const mergeLayoutWithDefaults = (
-  loaded: Partial<PanelLayoutState>,
-  defaults: PanelLayoutState
-): PanelLayoutState => {
-  const result: PanelLayoutState = { ...defaults };
-  
-  for (const key of Object.keys(defaults) as (keyof PanelLayoutState)[]) {
-    if (loaded[key]) {
-      // Validate that loaded panel has required properties
-      const loadedPanel = loaded[key];
-      if (
-        typeof loadedPanel.x === 'number' &&
-        typeof loadedPanel.y === 'number' &&
-        typeof loadedPanel.visible === 'boolean'
-      ) {
-        result[key] = {
-          ...defaults[key],
-          ...loadedPanel,
-        };
-      }
-    }
-  }
-  
-  return result;
 };
 
 export const EditorCanvas: React.FC<EditorCanvasProps> = ({
@@ -385,24 +367,29 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [dataSourceConfig, setDataSourceConfig] = useState<DataSourceConfig>({ type: 'none' });
   const [simulationMode, setSimulationMode] = useState(false);
 
-  // Panel layout state - with migration to ensure all panels exist
+  // Panel layout state — v9 (docks); falls back to legacy v8 JSON
   const [panelLayout, setPanelLayout] = useState<PanelLayoutState>(() => {
     const containerWidth = window.innerWidth - 300;
     const defaultLayout = getDefaultLayout(containerWidth);
-    
+
     try {
-      const saved = localStorage.getItem(LAYOUT_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Use robust merge function to handle version migration
-        return mergeLayoutWithDefaults(parsed, defaultLayout);
+      const v9 = localStorage.getItem(LAYOUT_STORAGE_KEY);
+      if (v9) {
+        return mergeLayoutWithDefaultsV9(JSON.parse(v9), defaultLayout);
+      }
+      const v8 = localStorage.getItem(LAYOUT_STORAGE_KEY_LEGACY_V8);
+      if (v8) {
+        return mergeLayoutWithDefaultsV9(JSON.parse(v8), defaultLayout);
       }
     } catch (e) {
       console.warn('Failed to load panel layout, using defaults', e);
     }
-    
+
     return defaultLayout;
   });
+
+  /** Edge drop hint while dragging a floating panel header */
+  const [dockDropTarget, setDockDropTarget] = useState<'left' | 'right' | null>(null);
 
   // Auto-save layout when it changes (debounced to avoid excessive writes)
   useEffect(() => {
@@ -481,7 +468,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       if (customDefault) {
         const parsed = JSON.parse(customDefault);
         // Merge with built-in defaults for robustness (in case new panels were added)
-        layoutToApply = mergeLayoutWithDefaults(parsed, builtInDefault);
+        layoutToApply = mergeLayoutWithDefaultsV9(parsed, builtInDefault);
         console.log('[Layout] Reset to custom default');
       } else {
         console.log('[Layout] Reset to built-in default');
@@ -501,34 +488,39 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }
   }, []);
 
-  // Update individual panel state
-  const updatePanelState = useCallback((panelId: keyof PanelLayoutState, updates: Partial<ExtendedPanelState>) => {
-    setPanelLayout(prev => ({
-      ...prev,
-      [panelId]: { ...prev[panelId], ...updates },
-    }));
-    
-    // Clear resize width when assets panel resize completes
-    if (panelId === 'assets' && updates.width !== undefined) {
-      setAssetsResizeWidth(null);
-    }
-  }, []);
+  // Update individual panel state (not `docks`)
+  const updatePanelState = useCallback(
+    (panelId: keyof Omit<PanelLayoutState, 'docks'>, updates: Partial<ExtendedPanelState>) => {
+      setPanelLayout((prev) => ({
+        ...prev,
+        [panelId]: { ...prev[panelId], ...updates },
+      }));
+
+      if (panelId === 'assets' && updates.width !== undefined) {
+        setAssetsResizeWidth(null);
+      }
+    },
+    []
+  );
 
   // Toggle panel visibility
-  const togglePanelVisibility = useCallback((panelId: keyof PanelLayoutState, visible?: boolean) => {
-    setPanelLayout(prev => ({
-      ...prev,
-      [panelId]: { ...prev[panelId], visible: visible ?? !prev[panelId].visible },
-    }));
-  }, []);
+  const togglePanelVisibility = useCallback(
+    (panelId: keyof Omit<PanelLayoutState, 'docks'>, visible?: boolean) => {
+      setPanelLayout((prev) => ({
+        ...prev,
+        [panelId]: { ...prev[panelId], visible: visible ?? !prev[panelId].visible },
+      }));
+    },
+    []
+  );
 
   // Show all panels (for reset)
   const showAllPanels = useCallback(() => {
-    setPanelLayout(prev => {
+    setPanelLayout((prev) => {
       const updated = { ...prev };
-      (Object.keys(updated) as (keyof PanelLayoutState)[]).forEach(key => {
-        updated[key] = { ...updated[key], visible: true };
-      });
+      for (const id of ALL_PANEL_IDS) {
+        updated[id] = { ...updated[id], visible: true };
+      }
       return updated;
     });
   }, []);
@@ -702,12 +694,26 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       if (engine) {
         const inPlacement = state?.activeTool === EditorTool.PLACE && state?.activeAssetId;
         const inSelection = state?.activeTool === EditorTool.SELECT;
-        
+
         if (inPlacement || inSelection) {
           engine.setRotationEnabled(isHeld);
         }
       }
     }, [engine, state?.activeTool, state?.activeAssetId]),
+    onAlignGridToSelection: useCallback(() => {
+      if (!engine) return;
+      const ok = engine.alignGridToSelection();
+      if (!ok) {
+        addToast({
+          type: 'info',
+          title: 'Align grid',
+          message: 'Select a single object on this floor, then try again.',
+        });
+      }
+    }, [engine, addToast]),
+    onResetGridAlignment: useCallback(() => {
+      engine?.resetGridAlignment();
+    }, [engine]),
   });
 
   // Safe state for rendering (fallback when engine not ready)
@@ -726,7 +732,13 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       },
       snap: { gridSize: 1, enabled: true },
       selection: { selectedIds: [] as string[], hoveredId: null as string | null, isMultiSelect: false, selectedBuildingId: null as string | null },
-      ui: { showGrid: true, showCallouts: true, showBoundingBoxes: false, panelsCollapsed: {} as Record<string, boolean> },
+      ui: {
+        showGrid: true,
+        showCallouts: true,
+        showBoundingBoxes: false,
+        panelsCollapsed: {} as Record<string, boolean>,
+        gridAlignment: null,
+      },
       buildings: [] as Building[],
       activeFloor: 0,
       isFloorMode: false,
@@ -957,6 +969,35 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       engine.off('theme-missing', handleThemeMissing);
     };
   }, [engine]);
+
+  useEffect(() => {
+    if (!engine) return;
+
+    const handlePlacementBlocked = (event: { data: { reason?: string } }) => {
+      const reason = event.data?.reason;
+      if (reason === 'full-view-mode') {
+        addToast({
+          type: 'info',
+          title: 'Placement',
+          message: 'Open a floor in the floor panel to place assets in this building.',
+        });
+        return;
+      }
+      if (reason === 'aligned-grid') {
+        addToast({
+          type: 'info',
+          title: 'Building footprint',
+          message: 'Reset the grid to world axes (Ctrl+Alt+R) before drawing a building outline.',
+        });
+      }
+    };
+
+    engine.on('placement-blocked', handlePlacementBlocked);
+
+    return () => {
+      engine.off('placement-blocked', handlePlacementBlocked);
+    };
+  }, [engine, addToast]);
   
   // Sync fullViewOpacity from engine when ready
   useEffect(() => {
@@ -1309,6 +1350,391 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     return 'radial-gradient(circle at 20% 20%, rgba(100,150,220,0.15), transparent 40%), radial-gradient(circle at 80% 10%, rgba(120,160,230,0.12), transparent 35%), linear-gradient(135deg, #f1f5f9, #e2e8f0)';
   }, [isDark]);
 
+  /** Hit-test all dock roots for this side (empty-strip placeholders + real {@link DockRegion}). */
+  const pointerInDockShell = useCallback(
+    (root: HTMLElement, side: 'left' | 'right', clientX: number, clientY: number) => {
+      const nodes = root.querySelectorAll(`[data-bludesign-dock-side="${side}"]`);
+      for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i] as HTMLElement;
+        const r = el.getBoundingClientRect();
+        if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+          return true;
+        }
+      }
+      return false;
+    },
+    []
+  );
+
+  const updateDockDropTargetFromPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const el = canvasAreaRef.current;
+      if (!el) return;
+      const bounds = el.getBoundingClientRect();
+      if (pointerInDockShell(el, 'left', clientX, clientY)) {
+        setDockDropTarget('left');
+        return;
+      }
+      if (pointerInDockShell(el, 'right', clientX, clientY)) {
+        setDockDropTarget('right');
+        return;
+      }
+      if (clientX - bounds.left <= DOCK_EDGE_ZONE_PX) setDockDropTarget('left');
+      else if (bounds.right - clientX <= DOCK_EDGE_ZONE_PX) setDockDropTarget('right');
+      else setDockDropTarget(null);
+    },
+    [pointerInDockShell]
+  );
+
+  const handleFloatingPanelDragMove = useCallback(
+    (clientX: number, clientY: number) => {
+      updateDockDropTargetFromPointer(clientX, clientY);
+    },
+    [updateDockDropTargetFromPointer]
+  );
+
+  /** Float header drag-end and dock-tab undock release: dock if pointer is over a dock shell or edge band. */
+  const commitFloatPanelAtDockZones = useCallback(
+    (panelId: PanelId, clientX: number, clientY: number) => {
+      setDockDropTarget(null);
+      const el = canvasAreaRef.current;
+      if (!el) return;
+      const bounds = el.getBoundingClientRect();
+
+      if (pointerInDockShell(el, 'left', clientX, clientY)) {
+        setPanelLayout((prev) => dockPanel(prev, panelId, 'left'));
+        return;
+      }
+      if (pointerInDockShell(el, 'right', clientX, clientY)) {
+        setPanelLayout((prev) => dockPanel(prev, panelId, 'right'));
+        return;
+      }
+
+      if (clientX - bounds.left <= DOCK_EDGE_ZONE_PX) {
+        setPanelLayout((prev) => dockPanel(prev, panelId, 'left'));
+        return;
+      }
+      if (bounds.right - clientX <= DOCK_EDGE_ZONE_PX) {
+        setPanelLayout((prev) => dockPanel(prev, panelId, 'right'));
+      }
+    },
+    [pointerInDockShell]
+  );
+
+  const makeFloatDragEnd = useCallback(
+    (panelId: PanelId) =>
+      (payload: {
+        clientX: number;
+        clientY: number;
+        panelX: number;
+        panelY: number;
+      }) => {
+        commitFloatPanelAtDockZones(panelId, payload.clientX, payload.clientY);
+      },
+    [commitFloatPanelAtDockZones]
+  );
+
+  const handleUndockAt = useCallback(
+    (panelId: PanelId, clientX: number, clientY: number) => {
+      const el = canvasAreaRef.current;
+      if (!el) return;
+      const bounds = el.getBoundingClientRect();
+      setPanelLayout((prev) => {
+        const w =
+          prev[panelId].width ??
+          (panelId === 'assets' ? getAssetsPanelWidth(4) : PANEL_WIDTH_WIDE);
+        const header = 44;
+        let x = clientX - bounds.left - w / 2;
+        let y = clientY - bounds.top - header / 2;
+        x = Math.max(0, Math.min(x, bounds.width - w));
+        y = Math.max(0, Math.min(y, bounds.height - 100));
+        return floatPanel(prev, panelId, {
+          x,
+          y,
+          width: prev[panelId].width,
+          height: prev[panelId].height,
+        });
+      });
+      bringPanelToFront(panelId);
+    },
+    [bringPanelToFront]
+  );
+
+  /** While pointer is still down after dock undock — keep float panel under cursor. */
+  const handleUndockDrag = useCallback(
+    (panelId: PanelId, clientX: number, clientY: number) => {
+      updateDockDropTargetFromPointer(clientX, clientY);
+      const el = canvasAreaRef.current;
+      if (!el) return;
+      const bounds = el.getBoundingClientRect();
+      setPanelLayout((prev) => {
+        const p = prev[panelId];
+        const w =
+          p.width ??
+          (panelId === 'assets' ? getAssetsPanelWidth(4) : PANEL_WIDTH_WIDE);
+        const header = 44;
+        let x = clientX - bounds.left - w / 2;
+        let y = clientY - bounds.top - header / 2;
+        x = Math.max(0, Math.min(x, bounds.width - w));
+        y = Math.max(0, Math.min(y, bounds.height - 100));
+        return { ...prev, [panelId]: { ...p, x, y } };
+      });
+    },
+    [updateDockDropTargetFromPointer]
+  );
+
+  useEffect(() => {
+    if (safeState.selection?.selectedBuildingId) return;
+    setPanelLayout((prev) => {
+      if (prev.buildingSkin.placement === 'float') return prev;
+      return floatPanel(prev, 'buildingSkin', {
+        x: prev.buildingSkin.x,
+        y: prev.buildingSkin.y,
+        width: prev.buildingSkin.width,
+        height: prev.buildingSkin.height,
+      });
+    });
+  }, [safeState.selection?.selectedBuildingId]);
+
+  const filterDockIds = useCallback(
+    (ids: PanelId[]) =>
+      ids.filter((id) => {
+        if (!panelLayout[id].visible) return false;
+        if (id === 'buildingSkin' && !safeState.selection?.selectedBuildingId) return false;
+        return true;
+      }),
+    [panelLayout, safeState.selection?.selectedBuildingId]
+  );
+
+  const leftDockIds = useMemo(
+    () => filterDockIds(panelLayout.docks.left.panelIds),
+    [panelLayout.docks.left.panelIds, filterDockIds]
+  );
+  const rightDockIds = useMemo(
+    () => filterDockIds(panelLayout.docks.right.panelIds),
+    [panelLayout.docks.right.panelIds, filterDockIds]
+  );
+
+  const leftDockActive: PanelId | null = useMemo(() => {
+    const a = panelLayout.docks.left.activeId;
+    if (a && leftDockIds.includes(a)) return a;
+    return leftDockIds[0] ?? null;
+  }, [panelLayout.docks.left.activeId, leftDockIds]);
+
+  const rightDockActive: PanelId | null = useMemo(() => {
+    const a = panelLayout.docks.right.activeId;
+    if (a && rightDockIds.includes(a)) return a;
+    return rightDockIds[0] ?? null;
+  }, [panelLayout.docks.right.activeId, rightDockIds]);
+
+  const dockAssetsInnerWidth = (side: 'left' | 'right') => {
+    const d = panelLayout.docks[side];
+    if (!d.expanded) return getAssetsPanelWidth(4);
+    return Math.max(200, d.widthPx - DOCK_STACK_WIDTH_PX - 24);
+  };
+
+  const renderPanelBody = (id: PanelId, assetsInnerWidth?: number): React.ReactNode => {
+    const assetsW =
+      assetsInnerWidth ??
+      assetsResizeWidth ??
+      panelLayout.assets.width ??
+      getAssetsPanelWidth(4);
+    const assetColumns = Math.max(
+      2,
+      Math.round((assetsW - PANEL_PADDING + ASSET_GRID_GAP) / ASSET_COLUMN_WIDTH)
+    );
+
+    switch (id) {
+      case 'tools':
+        return (
+          <ToolboxPanel
+            activeTool={safeState.activeTool}
+            onToolChange={handleToolChange}
+            selectionFilter={selectionFilter}
+            onFilterChange={handleSelectionFilterChange}
+          />
+        );
+      case 'assets':
+        return (
+          <AssetBrowserPanel
+            assets={availableAssets}
+            activeAssetId={safeState.activeAssetId}
+            onSelectAsset={handleSelectAsset}
+            columns={assetColumns}
+          />
+        );
+      case 'view':
+        return (
+          <ViewControlsPanel
+            cameraMode={safeState.camera.mode}
+            isometricAngle={safeState.camera.isometricAngle}
+            showGrid={safeState.ui.showGrid}
+            showCallouts={showCallouts}
+            onCameraModeChange={handleCameraModeChange}
+            onRotateIsometric={handleRotateIsometric}
+            onToggleGrid={handleToggleGrid}
+            onToggleCallouts={handleToggleCallouts}
+            onResetCamera={handleResetCamera}
+          />
+        );
+      case 'properties':
+        return (
+          <PropertiesPanel
+            selectedObjects={selectedObjects}
+            onDelete={handleDeleteSelection}
+            onDuplicate={handleDuplicateSelection}
+            onRotate={handleRotateSelection}
+            onUpdateProperty={handleUpdateProperty}
+            onRename={(rid, newName) => engine?.renameObject(rid, newName)}
+            onUpdateBinding={handleUpdateBinding}
+            onUpdateSkin={handleUpdateSkin}
+            onSimulateState={handleSimulateState}
+            dataSourceFacilityId={dataSourceConfig.facilityId}
+            availableSkins={
+              selectedObjects.length > 0 && selectedObjects[0]?.assetId
+                ? engine
+                    ?.getSkinManager()
+                    ?.getSkins(selectedObjects[0].assetMetadata.category)
+                    .map((skin) => ({
+                      id: skin.id,
+                      name: skin.name,
+                      assetId: selectedObjects[0].assetId,
+                    })) ?? []
+                : []
+            }
+          />
+        );
+      case 'buildingSkin':
+        return (
+          <BuildingSkinPanel
+            building={
+              safeState.buildings?.find((b) => b.id === safeState.selection?.selectedBuildingId) ?? null
+            }
+            onSkinChange={handleBuildingSkinChange}
+            onRename={(buildingId, newName) => engine?.renameBuilding(buildingId, newName)}
+            onDelete={(buildingId) => {
+              engine?.deleteBuildingWithContents(buildingId);
+              if (engine) {
+                engine.getSelectionManager()?.clearSelection();
+              }
+            }}
+          />
+        );
+      case 'floors':
+        return (
+          <FloorsPanel
+            currentFloor={safeState.activeFloor ?? 0}
+            availableFloors={engine?.getFloorManager()?.getAvailableFloors() ?? [0]}
+            isFullBuildingView={!safeState.isFloorMode}
+            fullViewOpacity={fullViewOpacity}
+            hasBuildings={(safeState.buildings?.length ?? 0) > 0}
+            onFloorChange={(floor) => engine?.setFloor(floor)}
+            onAddFloorAbove={(copyFromCurrent?: boolean) =>
+              engine?.addFloor(
+                (safeState.activeFloor ?? 0) + 1,
+                copyFromCurrent ? (safeState.activeFloor ?? 0) : undefined
+              )
+            }
+            onAddFloorBelow={(copyFromCurrent?: boolean) =>
+              engine?.addFloor(
+                (safeState.activeFloor ?? 0) - 1,
+                copyFromCurrent ? (safeState.activeFloor ?? 0) : undefined
+              )
+            }
+            onToggleFullView={() => engine?.toggleFullBuildingView()}
+            onFullViewOpacityChange={(opacity) => {
+              setFullViewOpacity(opacity);
+              engine?.getFloorManager()?.setGhostingConfig({ fullBuildingViewOpacity: opacity });
+              if (!safeState.isFloorMode) {
+                engine?.getFloorManager()?.applyFullBuildingGhosting();
+              }
+            }}
+            onDeleteFloor={(floor) => engine?.deleteFloor(floor)}
+            onInsertFloor={(atLevel) => engine?.insertFloor(atLevel)}
+          />
+        );
+      case 'skins':
+        return (
+          <ThemeSelectorPanel
+            activeThemeId={activeThemeId}
+            onSelectTheme={handleThemeChange}
+            onCreateTheme={() => {
+              window.open('/bludesign/assets?tab=themes', '_blank');
+            }}
+          />
+        );
+      case 'datasource':
+        return (
+          <DataSourcePanel
+            config={dataSourceConfig}
+            onConfigChange={handleDataSourceChange}
+            onSimulationModeChange={handleSimulationModeChange}
+            simulationMode={simulationMode}
+          />
+        );
+      case 'smartobjects':
+        return (
+          <SmartObjectsPanel
+            objects={engine?.getSceneManager()?.getAllPlacedObjects() ?? []}
+            buildings={safeState.buildings ?? []}
+            selectedIds={safeState.selection.selectedIds}
+            selectedBuildingId={safeState.selection.selectedBuildingId ?? null}
+            onSelectObject={(objectId) => {
+              engine?.getSelectionManager()?.clearSelection();
+              engine?.getSelectionManager()?.select(objectId);
+            }}
+            onSelectBuilding={(buildingId) => {
+              engine?.selectBuilding(buildingId);
+            }}
+            onFocusObject={(objectId, floor) => {
+              engine?.focusOnObject(objectId, floor);
+            }}
+            onFocusBuilding={(buildingId) => {
+              engine?.focusOnBuilding(buildingId);
+            }}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  const dockTabMeta = (id: PanelId): { title: string; icon?: React.ReactNode } => {
+    switch (id) {
+      case 'tools':
+        return { title: 'Tools', icon: <CursorArrowRaysIcon className="w-4 h-4" /> };
+      case 'assets':
+        return { title: 'Assets', icon: <CubeIcon className="w-4 h-4" /> };
+      case 'view':
+        return { title: 'View', icon: <EyeIcon className="w-4 h-4" /> };
+      case 'properties':
+        return { title: 'Properties', icon: <AdjustmentsHorizontalIcon className="w-4 h-4" /> };
+      case 'buildingSkin':
+        return { title: 'Building Style' };
+      case 'floors':
+        return { title: 'Floors' };
+      case 'skins':
+        return { title: 'Scene Theme' };
+      case 'datasource':
+        return { title: 'Data Source' };
+      case 'smartobjects':
+        return { title: 'Smart Objects', icon: <CpuChipIcon className="w-4 h-4" /> };
+      default:
+        return { title: id };
+    }
+  };
+
+  const buildDockTabs = (ids: PanelId[]): DockTabItem[] =>
+    ids.map((pid) => {
+      const m = dockTabMeta(pid);
+      return {
+        id: pid,
+        title: m.title,
+        icon: m.icon,
+        visible: true,
+      };
+    });
+
   return (
     <div className={`relative w-full h-full flex flex-col ${className} ${isDark ? 'bg-gray-900' : 'bg-gray-100'}`}>
       {/* Menu Bar */}
@@ -1345,7 +1771,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           datasource: panelLayout.datasource?.visible ?? false,
           buildingSkin: panelLayout.buildingSkin?.visible ?? true,
         }}
-        onTogglePanelVisibility={(panel) => togglePanelVisibility(panel as keyof PanelLayoutState)}
+        onTogglePanelVisibility={(panel) =>
+          togglePanelVisibility(panel as keyof Omit<PanelLayoutState, 'docks'>)
+        }
         onOpenPreferences={() => setPreferencesOpen(true)}
       />
 
@@ -1407,11 +1835,129 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           />
         )}
 
-        {/* Floating Panels - only show when ready and initial load complete */}
+        {/* Dock drop hints + dock regions + floating panels */}
         {isReady && initialLoadComplete && (
           <>
-            {/* Tools Panel - Left Side */}
-            {panelLayout.tools?.visible && (
+            {dockDropTarget && (
+              <div
+                className="pointer-events-none absolute inset-0 z-[55]"
+                aria-hidden
+              >
+                {dockDropTarget === 'left' && !panelLayout.docks.left.expanded && (
+                  <div
+                    className="absolute left-0 top-0 bottom-0 bg-primary-500/20"
+                    style={{ width: DOCK_EDGE_ZONE_PX }}
+                  />
+                )}
+                {dockDropTarget === 'right' && !panelLayout.docks.right.expanded && (
+                  <div
+                    className="absolute right-0 top-0 bottom-0 bg-primary-500/20"
+                    style={{ width: DOCK_EDGE_ZONE_PX }}
+                  />
+                )}
+              </div>
+            )}
+
+            {leftDockIds.length === 0 && (
+              <div
+                data-bludesign-dock="true"
+                data-bludesign-dock-side="left"
+                data-bludesign-dock-empty="true"
+                className="pointer-events-none absolute top-0 bottom-0 left-0 z-[34]"
+                style={{ width: DOCK_EDGE_ZONE_PX }}
+                aria-hidden
+              />
+            )}
+            {rightDockIds.length === 0 && (
+              <div
+                data-bludesign-dock="true"
+                data-bludesign-dock-side="right"
+                data-bludesign-dock-empty="true"
+                className="pointer-events-none absolute top-0 bottom-0 right-0 z-[34]"
+                style={{ width: DOCK_EDGE_ZONE_PX }}
+                aria-hidden
+              />
+            )}
+
+            {leftDockIds.length > 0 && leftDockActive && (
+              <DockRegion
+                side="left"
+                dock={panelLayout.docks.left}
+                dropHighlight={dockDropTarget === 'left'}
+                tabs={buildDockTabs(leftDockIds)}
+                activeId={leftDockActive}
+                onSelect={(pid) =>
+                  setPanelLayout((prev) => {
+                    let next = prev;
+                    if (!prev.docks.left.expanded) {
+                      next = setDockExpanded(next, 'left', true);
+                    }
+                    return setDockActive(next, 'left', pid);
+                  })
+                }
+                onToggleExpanded={() =>
+                  setPanelLayout((prev) =>
+                    setDockExpanded(prev, 'left', !prev.docks.left.expanded)
+                  )
+                }
+                onResizeWidth={(w) =>
+                  setPanelLayout((prev) => setDockWidth(prev, 'left', w))
+                }
+                onUndockAt={handleUndockAt}
+                onUndockDrag={handleUndockDrag}
+                onUndockGestureEnd={commitFloatPanelAtDockZones}
+                onReorder={(from, to) =>
+                  setPanelLayout((prev) => reorderDockPanelIds(prev, 'left', from, to))
+                }
+                zIndex={36}
+              >
+                {renderPanelBody(
+                  leftDockActive,
+                  leftDockActive === 'assets' ? dockAssetsInnerWidth('left') : undefined
+                )}
+              </DockRegion>
+            )}
+
+            {rightDockIds.length > 0 && rightDockActive && (
+              <DockRegion
+                side="right"
+                dock={panelLayout.docks.right}
+                dropHighlight={dockDropTarget === 'right'}
+                tabs={buildDockTabs(rightDockIds)}
+                activeId={rightDockActive}
+                onSelect={(pid) =>
+                  setPanelLayout((prev) => {
+                    let next = prev;
+                    if (!prev.docks.right.expanded) {
+                      next = setDockExpanded(next, 'right', true);
+                    }
+                    return setDockActive(next, 'right', pid);
+                  })
+                }
+                onToggleExpanded={() =>
+                  setPanelLayout((prev) =>
+                    setDockExpanded(prev, 'right', !prev.docks.right.expanded)
+                  )
+                }
+                onResizeWidth={(w) =>
+                  setPanelLayout((prev) => setDockWidth(prev, 'right', w))
+                }
+                onUndockAt={handleUndockAt}
+                onUndockDrag={handleUndockDrag}
+                onUndockGestureEnd={commitFloatPanelAtDockZones}
+                onReorder={(from, to) =>
+                  setPanelLayout((prev) => reorderDockPanelIds(prev, 'right', from, to))
+                }
+                zIndex={36}
+              >
+                {renderPanelBody(
+                  rightDockActive,
+                  rightDockActive === 'assets' ? dockAssetsInnerWidth('right') : undefined
+                )}
+              </DockRegion>
+            )}
+
+            {panelLayout.tools?.visible && panelLayout.tools.placement === 'float' && (
               <FloatingPanel
                 key={`tools-${panelLayout.tools?.x ?? 0}-${panelLayout.tools?.y ?? 0}`}
                 id="tools"
@@ -1427,18 +1973,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 closable={true}
                 onStateChange={(updates) => updatePanelState('tools', updates)}
                 onClose={() => togglePanelVisibility('tools', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('tools')}
+                dockHoverTarget={dockDropTarget}
               >
-                <ToolboxPanel
-                  activeTool={safeState.activeTool}
-                  onToolChange={handleToolChange}
-                  selectionFilter={selectionFilter}
-                  onFilterChange={handleSelectionFilterChange}
-                />
+                {renderPanelBody('tools')}
               </FloatingPanel>
             )}
 
-            {/* Assets Panel - Left Side (below Tools), resizable width and height */}
-            {panelLayout.assets?.visible && (
+            {panelLayout.assets?.visible && panelLayout.assets.placement === 'float' && (
               <FloatingPanel
                 key={`assets-${panelLayout.assets?.x ?? 0}-${panelLayout.assets?.y ?? 0}`}
                 id="assets"
@@ -1456,17 +1999,19 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 onBringToFront={() => bringPanelToFront('assets')}
                 resizable={true}
                 resizableHeight={true}
-                // Snap slightly larger than a single column to reduce trailing gaps
                 resizeSnapWidth={ASSET_COLUMN_WIDTH + 6}
                 boundsRef={canvasAreaRef}
                 closable={true}
                 onStateChange={(updates) => updatePanelState('assets', updates)}
                 onResizing={(width) => setAssetsResizeWidth(width)}
                 onClose={() => togglePanelVisibility('assets', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('assets')}
+                dockHoverTarget={dockDropTarget}
               >
                 {() => {
-                  const currentWidth = assetsResizeWidth ?? (panelLayout.assets?.width ?? getAssetsPanelWidth(4));
-                  // Round to nearest column count to avoid large right-side gaps
+                  const currentWidth =
+                    assetsResizeWidth ?? (panelLayout.assets?.width ?? getAssetsPanelWidth(4));
                   const columns = Math.max(
                     2,
                     Math.round((currentWidth - PANEL_PADDING + ASSET_GRID_GAP) / ASSET_COLUMN_WIDTH)
@@ -1483,8 +2028,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
               </FloatingPanel>
             )}
 
-            {/* View Panel - Right Side */}
-            {panelLayout.view?.visible && (
+            {panelLayout.view?.visible && panelLayout.view.placement === 'float' && (
               <FloatingPanel
                 key={`view-${panelLayout.view?.x ?? 0}-${panelLayout.view?.y ?? 0}`}
                 id="view"
@@ -1500,23 +2044,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 closable={true}
                 onStateChange={(updates) => updatePanelState('view', updates)}
                 onClose={() => togglePanelVisibility('view', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('view')}
+                dockHoverTarget={dockDropTarget}
               >
-                <ViewControlsPanel
-                  cameraMode={safeState.camera.mode}
-                  isometricAngle={safeState.camera.isometricAngle}
-                  showGrid={safeState.ui.showGrid}
-                  showCallouts={showCallouts}
-                  onCameraModeChange={handleCameraModeChange}
-                  onRotateIsometric={handleRotateIsometric}
-                  onToggleGrid={handleToggleGrid}
-                  onToggleCallouts={handleToggleCallouts}
-                  onResetCamera={handleResetCamera}
-                />
+                {renderPanelBody('view')}
               </FloatingPanel>
             )}
 
-            {/* Properties Panel - Right Side (below View) */}
-            {panelLayout.properties?.visible && (
+            {panelLayout.properties?.visible && panelLayout.properties.placement === 'float' && (
               <FloatingPanel
                 key={`properties-${panelLayout.properties?.x ?? 0}-${panelLayout.properties?.y ?? 0}`}
                 id="properties"
@@ -1532,66 +2068,41 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 closable={true}
                 onStateChange={(updates) => updatePanelState('properties', updates)}
                 onClose={() => togglePanelVisibility('properties', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('properties')}
+                dockHoverTarget={dockDropTarget}
               >
-                <PropertiesPanel
-                  selectedObjects={selectedObjects}
-                  onDelete={handleDeleteSelection}
-                  onDuplicate={handleDuplicateSelection}
-                  onRotate={handleRotateSelection}
-                  onUpdateProperty={handleUpdateProperty}
-                  onRename={(id, newName) => engine?.renameObject(id, newName)}
-                  onUpdateBinding={handleUpdateBinding}
-                  onUpdateSkin={handleUpdateSkin}
-                  onSimulateState={handleSimulateState}
-                  dataSourceFacilityId={dataSourceConfig.facilityId}
-                  availableSkins={selectedObjects.length > 0 && selectedObjects[0]?.assetId
-                    ? engine?.getSkinManager()?.getSkins(selectedObjects[0].assetMetadata.category).map(skin => ({
-                        id: skin.id,
-                        name: skin.name,
-                        assetId: selectedObjects[0].assetId
-                      })) ?? []
-                    : []}
-                />
+                {renderPanelBody('properties')}
               </FloatingPanel>
             )}
 
-            {/* Building Skin Panel - Appears when building is selected */}
-            {safeState.selection?.selectedBuildingId && (
-              <FloatingPanel
-                key={`building-skin-${panelLayout.buildingSkin?.x ?? 0}-${panelLayout.buildingSkin?.y ?? 0}`}
-                id="building-skin"
-                title="Building Style"
-                position={panelLayout.buildingSkin ?? getDefaultLayout(0).buildingSkin}
-                anchor="right"
-                defaultWidth={240}
-                maxHeight={400}
-                zIndex={getPanelZIndex('buildingSkin')}
-                boundsRef={canvasAreaRef}
-                closable={true}
-                onBringToFront={() => bringPanelToFront('buildingSkin')}
-                onStateChange={(updates) => updatePanelState('buildingSkin', updates)}
-                onClose={() => {
-                  // When closed, just deselect the building
-                  engine?.getSelectionManager()?.clearSelection();
-                }}
-              >
-                <BuildingSkinPanel
-                  building={safeState.buildings?.find(b => b.id === safeState.selection?.selectedBuildingId) ?? null}
-                  onSkinChange={handleBuildingSkinChange}
-                  onRename={(buildingId, newName) => engine?.renameBuilding(buildingId, newName)}
-                  onDelete={(buildingId) => {
-                    engine?.deleteBuildingWithContents(buildingId);
-                    // Clear building selection after delete
-                    if (engine) {
-                      engine.getSelectionManager()?.clearSelection();
-                    }
+            {safeState.selection?.selectedBuildingId &&
+              panelLayout.buildingSkin.placement === 'float' && (
+                <FloatingPanel
+                  key={`building-skin-${panelLayout.buildingSkin?.x ?? 0}-${panelLayout.buildingSkin?.y ?? 0}`}
+                  id="building-skin"
+                  title="Building Style"
+                  position={panelLayout.buildingSkin ?? getDefaultLayout(0).buildingSkin}
+                  anchor="right"
+                  defaultWidth={240}
+                  maxHeight={400}
+                  zIndex={getPanelZIndex('buildingSkin')}
+                  boundsRef={canvasAreaRef}
+                  closable={true}
+                  onBringToFront={() => bringPanelToFront('buildingSkin')}
+                  onStateChange={(updates) => updatePanelState('buildingSkin', updates)}
+                  onClose={() => {
+                    engine?.getSelectionManager()?.clearSelection();
                   }}
-                />
-              </FloatingPanel>
-            )}
+                  onDragMove={handleFloatingPanelDragMove}
+                  onDragEnd={makeFloatDragEnd('buildingSkin')}
+                  dockHoverTarget={dockDropTarget}
+                >
+                  {renderPanelBody('buildingSkin')}
+                </FloatingPanel>
+              )}
 
-            {/* Floors Panel - Right Side (below Properties) */}
-            {panelLayout.floors?.visible && (
+            {panelLayout.floors?.visible && panelLayout.floors.placement === 'float' && (
               <FloatingPanel
                 key={`floors-${panelLayout.floors?.x ?? 0}-${panelLayout.floors?.y ?? 0}`}
                 id="floors"
@@ -1609,41 +2120,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 onBringToFront={() => bringPanelToFront('floors')}
                 onStateChange={(updates) => updatePanelState('floors', updates)}
                 onClose={() => togglePanelVisibility('floors', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('floors')}
+                dockHoverTarget={dockDropTarget}
               >
-                <FloorsPanel
-                  currentFloor={safeState.activeFloor ?? 0}
-                  availableFloors={engine?.getFloorManager()?.getAvailableFloors() ?? [0]}
-                  isFullBuildingView={!safeState.isFloorMode}
-                  fullViewOpacity={fullViewOpacity}
-                  hasBuildings={(safeState.buildings?.length ?? 0) > 0}
-                  onFloorChange={(floor) => engine?.setFloor(floor)}
-                  onAddFloorAbove={(copyFromCurrent?: boolean) => engine?.addFloor(
-                    (safeState.activeFloor ?? 0) + 1,
-                    copyFromCurrent ? (safeState.activeFloor ?? 0) : undefined
-                  )}
-                  onAddFloorBelow={(copyFromCurrent?: boolean) => engine?.addFloor(
-                    (safeState.activeFloor ?? 0) - 1,
-                    copyFromCurrent ? (safeState.activeFloor ?? 0) : undefined
-                  )}
-                  onToggleFullView={() => engine?.toggleFullBuildingView()}
-                  onFullViewOpacityChange={(opacity) => {
-                    // Update local state for immediate UI response
-                    setFullViewOpacity(opacity);
-                    // Update engine
-                    engine?.getFloorManager()?.setGhostingConfig({ fullBuildingViewOpacity: opacity });
-                    // Re-apply to update scene
-                    if (!safeState.isFloorMode) {
-                      engine?.getFloorManager()?.applyFullBuildingGhosting();
-                    }
-                  }}
-                  onDeleteFloor={(floor) => engine?.deleteFloor(floor)}
-                  onInsertFloor={(atLevel) => engine?.insertFloor(atLevel)}
-                />
+                {renderPanelBody('floors')}
               </FloatingPanel>
             )}
 
-            {/* Theme Selector Panel - Left Side (below Assets) */}
-            {panelLayout.skins?.visible && (
+            {panelLayout.skins?.visible && panelLayout.skins.placement === 'float' && (
               <FloatingPanel
                 key={`themes-${panelLayout.skins?.x ?? 0}-${panelLayout.skins?.y ?? 0}`}
                 id="themes"
@@ -1661,20 +2146,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 onBringToFront={() => bringPanelToFront('skins')}
                 onStateChange={(updates) => updatePanelState('skins', updates)}
                 onClose={() => togglePanelVisibility('skins', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('skins')}
+                dockHoverTarget={dockDropTarget}
               >
-                <ThemeSelectorPanel
-                  activeThemeId={activeThemeId}
-                  onSelectTheme={handleThemeChange}
-                  onCreateTheme={() => {
-                    // Open assets page in new tab for theme management
-                    window.open('/bludesign/assets?tab=themes', '_blank');
-                  }}
-                />
+                {renderPanelBody('skins')}
               </FloatingPanel>
             )}
 
-            {/* Data Source Panel - Right Side */}
-            {panelLayout.datasource?.visible && (
+            {panelLayout.datasource?.visible && panelLayout.datasource.placement === 'float' && (
               <FloatingPanel
                 key={`datasource-${panelLayout.datasource?.x ?? 0}-${panelLayout.datasource?.y ?? 0}`}
                 id="datasource"
@@ -1689,18 +2169,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 onBringToFront={() => bringPanelToFront('datasource')}
                 onStateChange={(updates) => updatePanelState('datasource', updates)}
                 onClose={() => togglePanelVisibility('datasource', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('datasource')}
+                dockHoverTarget={dockDropTarget}
               >
-                <DataSourcePanel
-                  config={dataSourceConfig}
-                  onConfigChange={handleDataSourceChange}
-                  onSimulationModeChange={handleSimulationModeChange}
-                  simulationMode={simulationMode}
-                />
+                {renderPanelBody('datasource')}
               </FloatingPanel>
             )}
 
-            {/* Smart Objects Panel - Lists all smart objects by floor */}
-            {panelLayout.smartobjects?.visible && (
+            {panelLayout.smartobjects?.visible && panelLayout.smartobjects.placement === 'float' && (
               <FloatingPanel
                 key={`smartobjects-${panelLayout.smartobjects?.x ?? 0}-${panelLayout.smartobjects?.y ?? 0}`}
                 id="smartobjects"
@@ -1719,26 +2196,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 closable={true}
                 onStateChange={(updates) => updatePanelState('smartobjects', updates)}
                 onClose={() => togglePanelVisibility('smartobjects', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('smartobjects')}
+                dockHoverTarget={dockDropTarget}
               >
-                <SmartObjectsPanel
-                  objects={engine?.getSceneManager()?.getAllPlacedObjects() ?? []}
-                  buildings={safeState.buildings ?? []}
-                  selectedIds={safeState.selection.selectedIds}
-                  selectedBuildingId={safeState.selection.selectedBuildingId ?? null}
-                  onSelectObject={(objectId) => {
-                    engine?.getSelectionManager()?.clearSelection();
-                    engine?.getSelectionManager()?.select(objectId);
-                  }}
-                  onSelectBuilding={(buildingId) => {
-                    engine?.selectBuilding(buildingId);
-                  }}
-                  onFocusObject={(objectId, floor) => {
-                    engine?.focusOnObject(objectId, floor);
-                  }}
-                  onFocusBuilding={(buildingId) => {
-                    engine?.focusOnBuilding(buildingId);
-                  }}
-                />
+                {renderPanelBody('smartobjects')}
               </FloatingPanel>
             )}
           </>
@@ -1809,6 +2271,52 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                   <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v4M21 10l-4 4M21 10l-4-4" />
                 </svg>
               </button>
+
+              {!readonly && (
+                <>
+                  <div className={`w-px h-6 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+                  <button
+                    type="button"
+                    title={
+                      safeState.ui.gridAlignment
+                        ? 'Turn off aligned grid — restore world axes (Ctrl+Alt+R)'
+                        : 'Align snap grid to selected object — select one object first (Ctrl+Alt+A)'
+                    }
+                    aria-label={
+                      safeState.ui.gridAlignment
+                        ? 'Reset placement grid to world axes'
+                        : 'Align placement grid to selected object'
+                    }
+                    aria-pressed={!!safeState.ui.gridAlignment}
+                    onClick={() => {
+                      if (!engine) return;
+                      if (safeState.ui.gridAlignment) {
+                        engine.resetGridAlignment();
+                        return;
+                      }
+                      const ok = engine.alignGridToSelection();
+                      if (!ok) {
+                        addToast({
+                          type: 'info',
+                          title: 'Align grid',
+                          message: 'Select a single object on this floor, then try again.',
+                        });
+                      }
+                    }}
+                    className={`flex h-10 w-10 items-center justify-center rounded-lg border transition-all duration-200 ease-out ${
+                      safeState.ui.gridAlignment
+                        ? isDark
+                          ? 'border-[#147fd4] bg-[#147fd4]/25 text-[#6ec3ff] ring-1 ring-[#147fd4]/40'
+                          : 'border-[#147fd4] bg-[#147fd4]/12 text-[#0b5fa8] ring-1 ring-[#147fd4]/30'
+                        : isDark
+                          ? 'border-gray-700 bg-gray-800 text-gray-300 hover:border-primary-500 hover:bg-primary-600/20'
+                          : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-primary-400 hover:bg-primary-500/10'
+                    } hover:scale-105 hover:shadow-lg active:scale-95`}
+                  >
+                    <Squares2X2Icon className="h-5 w-5" aria-hidden />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}

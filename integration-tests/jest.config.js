@@ -1,6 +1,6 @@
 module.exports = {
   preset: 'ts-jest',
-  testEnvironment: 'jsdom', // Changed from 'node' to 'jsdom' for frontend integration
+  testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
   testPathIgnorePatterns: [
@@ -10,7 +10,7 @@ module.exports = {
     '^.+\\.ts$': 'ts-jest',
   },
   transformIgnorePatterns: [
-    'node_modules/(?!(uuid)/)'
+    'node_modules/(?!(uuid)/)',
   ],
   collectCoverageFrom: [
     'src/**/*.ts',
@@ -27,6 +27,8 @@ module.exports = {
   // Suppress console logs during tests to reduce noise
   silent: false,
   verbose: false,
+  // Polyfills before test modules load (supertest/formidable needs TextEncoder)
+  setupFiles: ['<rootDir>/src/setup-polyfills.ts'],
   // Setup files to run before tests
   setupFilesAfterEnv: ['<rootDir>/src/setup-mocks.ts', '<rootDir>/src/setup-frontend-integration.ts'],
   // Clear mocks between tests

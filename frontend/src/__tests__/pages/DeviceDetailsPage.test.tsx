@@ -33,6 +33,27 @@ jest.mock('react-router-dom', () => ({
   useParams: () => ({ deviceId: 'device-1' }),
 }));
 
+jest.mock('@/components/Modal/ConfirmModal', () => ({
+  ConfirmModal: ({ isOpen, onClose, onConfirm, title, confirmText }: {
+    isOpen: boolean;
+    onClose: () => void;
+    onConfirm: () => void;
+    title: string;
+    confirmText?: string;
+  }) =>
+    isOpen ? (
+      <div data-testid="confirm-modal" role="dialog">
+        <h2>{title}</h2>
+        <button type="button" onClick={onConfirm} data-testid="confirm-button">
+          {confirmText || 'Confirm'}
+        </button>
+        <button type="button" onClick={onClose} data-testid="cancel-button">
+          Cancel
+        </button>
+      </div>
+    ) : null,
+}));
+
 const mockDevice = {
   id: 'device-1',
   device_serial: 'SN123456',
@@ -110,6 +131,16 @@ describe('DeviceDetailsPage', () => {
       success: true,
       entries: [],
     });
+    mockApiService.getDeviceGroups.mockResolvedValue({ data: [] } as never);
+    mockApiService.getDeviceGroup.mockResolvedValue({ data: { members: [] } } as never);
+    mockApiService.unassignDeviceFromUnit.mockResolvedValue({
+      success: true,
+      message: 'Device unassigned from unit successfully',
+    } as never);
+    mockApiService.removeBluLokDeviceFromCloudInventory.mockResolvedValue({
+      success: true,
+      message: 'Lock removed from cloud inventory',
+    } as never);
   });
 
   it('renders device overview tab by default', async () => {
@@ -126,8 +157,89 @@ describe('DeviceDetailsPage', () => {
     });
 
     expect(screen.getByText('SN123456')).toBeInTheDocument();
+    expect(screen.getByText('Unit assignment')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Unassign from unit/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Remove lock from cloud inventory/i })).toBeInTheDocument();
     const matches = screen.getAllByText((_, node) => node?.textContent?.includes('Unit A-101') || false);
     expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it('hides cloud inventory removal for facility_admin', async () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      authState: {
+        user: { id: 'fa-1', email: 'fa@example.com', role: 'facility_admin' },
+        isAuthenticated: true,
+        isLoading: false,
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Unit assignment')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /Remove lock from cloud inventory/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Remove from facility \(cloud inventory\)/i)).not.toBeInTheDocument();
+  });
+
+  it('unassigns lock from unit after confirmation', async () => {
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Unassign from unit/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Unassign from unit/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('confirm-modal')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('confirm-button'));
+
+    await waitFor(() => {
+      expect(mockApiService.unassignDeviceFromUnit).toHaveBeenCalledWith('device-1');
+    });
+  });
+
+  it('removes lock from cloud inventory after confirmation and navigates to facility devices', async () => {
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Remove lock from cloud inventory/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove lock from cloud inventory/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Remove lock from cloud inventory\?/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove from inventory/i }));
+
+    await waitFor(() => {
+      expect(mockApiService.removeBluLokDeviceFromCloudInventory).toHaveBeenCalledWith('device-1');
+      expect(mockNavigate).toHaveBeenCalledWith('/facilities/facility-1?tab=devices');
+    });
   });
 
   it('switches to denylist tab and loads entries', async () => {

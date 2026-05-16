@@ -56,7 +56,7 @@
 import { Router, Response } from 'express';
 import Joi from 'joi';
 import { DeviceModel, type DeviceFilters } from '../models/device.model';
-import { authenticateToken, requireNotTenant, requireAdminOrFacilityAdmin, applyFacilityScope, requireRoles } from '../middleware/auth.middleware';
+import { authenticateToken, requireNotTenant, requireAdmin, requireAdminOrFacilityAdmin, applyFacilityScope, requireRoles } from '../middleware/auth.middleware';
 import { UserRole } from '../types/auth.types';
 import { AuthenticatedRequest } from '../types/auth.types';
 import { DevicesService } from '../services/devices.service';
@@ -892,6 +892,42 @@ router.post('/blulok/:deviceId/assign', requireAdminOrFacilityAdmin, asyncHandle
     res.status(500).json({
       success: false,
       message: 'Failed to assign device to unit'
+    });
+  }
+}));
+
+// DELETE /api/devices/blulok/:deviceId - Remove BluLok device from cloud inventory (admin / dev admin)
+router.delete('/blulok/:deviceId', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+  const { deviceId } = req.params;
+
+  if (!deviceId) {
+    res.status(400).json({
+      success: false,
+      message: 'deviceId is required',
+    });
+    return;
+  }
+
+  try {
+    const devicesService = DevicesService.getInstance();
+    const summary = await devicesService.removeBluLokDeviceFromCloudInventory(deviceId, {
+      performedBy: user.userId,
+    });
+
+    res.status(200).json({
+      success: true,
+      message:
+        'Lock removed from cloud inventory. If the hardware still reports on the gateway, it may reappear after sync. To attach the gateway to another facility, use Gateway reassignment on the facility page.',
+      removed: summary,
+    });
+  } catch (error: any) {
+    logger.error('Error removing BluLok device from inventory:', error);
+    const message = error?.message || 'Failed to remove device from inventory';
+    const status = /not found/i.test(message) ? 404 : 500;
+    res.status(status).json({
+      success: false,
+      message,
     });
   }
 }));

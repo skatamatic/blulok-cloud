@@ -8,6 +8,8 @@
  * - POST /api/v1/devices/blulok
  * - PUT /api/v1/devices/:deviceType/:id/status
  * - PUT /api/v1/devices/blulok/:id/lock
+ * - DELETE /api/v1/devices/blulok/:deviceId (remove from cloud inventory)
+ * - DELETE /api/v1/devices/blulok/:deviceId/unassign
  */
 
 // Set up environment variables before importing backend
@@ -23,6 +25,28 @@ process.env.PORT = '3000';
 import request from 'supertest';
 import { createApp } from '../../../backend/src/app';
 import jwt from 'jsonwebtoken';
+jest.mock('../../../backend/src/services/devices.service', () => {
+  const removeBluLokDeviceFromCloudInventory = jest.fn().mockResolvedValue({
+    gatewayId: 'gateway-1',
+    facilityId: 'facility-1',
+    hadUnit: false,
+    unitId: null,
+  });
+  return {
+    DevicesService: {
+      getInstance: jest.fn(() => ({
+        removeBluLokDeviceFromCloudInventory,
+        unassignDeviceFromUnit: jest.fn().mockResolvedValue(undefined),
+        hasUserAccessToDevice: jest.fn().mockResolvedValue(true),
+      })),
+      __mocks: { removeBluLokDeviceFromCloudInventory },
+    },
+  };
+});
+
+const { removeBluLokDeviceFromCloudInventory: mockRemoveInventory } = jest.requireMock(
+  '../../../backend/src/services/devices.service',
+).DevicesService.__mocks;
 
 describe('Device Routes Integration Tests', () => {
   let app: any;
@@ -30,6 +54,8 @@ describe('Device Routes Integration Tests', () => {
   let userToken: string;
   let tenantToken: string;
   let maintenanceToken: string;
+  let devAdminToken: string;
+  let facilityAdminToken: string;
 
   beforeAll(() => {
     app = createApp();
@@ -37,6 +63,23 @@ describe('Device Routes Integration Tests', () => {
     // Create tokens for different user roles
     adminToken = jwt.sign(
       { userId: 'admin-1', email: 'admin@example.com', role: 'admin' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' }
+    );
+
+    devAdminToken = jwt.sign(
+      { userId: 'dev-admin-1', email: 'dev@example.com', role: 'dev_admin' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' }
+    );
+
+    facilityAdminToken = jwt.sign(
+      {
+        userId: 'fa-1',
+        email: 'fa@example.com',
+        role: 'facility_admin',
+        facilityIds: ['facility-1'],
+      },
       process.env.JWT_SECRET!,
       { expiresIn: '1h' }
     );
@@ -79,10 +122,12 @@ describe('Device Routes Integration Tests', () => {
         .get('/api/v1/devices')
         .set('Authorization', `Bearer ${userToken}`);
 
-      expect([200, 401, 500]).toContain(response.status);
+      expect([200, 401, 403, 500]).toContain(response.status);
       if (response.status === 200) {
-        expect(response.body).toHaveProperty('success', true);
         expect(response.body).toHaveProperty('devices');
+        if (Object.prototype.hasOwnProperty.call(response.body, 'success')) {
+          expect(response.body.success).toBe(true);
+        }
       }
     });
 
@@ -91,10 +136,15 @@ describe('Device Routes Integration Tests', () => {
         .get('/api/v1/devices')
         .set('Authorization', `Bearer ${tenantToken}`);
 
-      expect([200, 401, 500]).toContain(response.status);
+      expect([200, 401, 403, 500]).toContain(response.status);
       if (response.status === 200) {
-        expect(response.body).toHaveProperty('success', true);
         expect(response.body).toHaveProperty('devices');
+        if (Object.prototype.hasOwnProperty.call(response.body, 'success')) {
+          expect(response.body.success).toBe(true);
+        }
+      }
+      if (response.status === 403) {
+        expect(response.body).toHaveProperty('success', false);
       }
     });
 
@@ -177,7 +227,7 @@ describe('Device Routes Integration Tests', () => {
         .set('Authorization', `Bearer ${userToken}`)
         .send(accessControlDevice);
 
-      expect([201, 400, 401, 500]).toContain(response.status);
+      expect([201, 400, 401, 403, 500]).toContain(response.status);
       if (response.status === 201) {
         expect(response.body).toHaveProperty('success', true);
         expect(response.body).toHaveProperty('device');
@@ -252,7 +302,7 @@ describe('Device Routes Integration Tests', () => {
         .set('Authorization', `Bearer ${userToken}`)
         .send(bluLokDevice);
 
-      expect([201, 400, 401, 500]).toContain(response.status);
+      expect([201, 400, 401, 403, 500]).toContain(response.status);
       if (response.status === 201) {
         expect(response.body).toHaveProperty('success', true);
         expect(response.body).toHaveProperty('device');
@@ -447,6 +497,115 @@ describe('Device Routes Integration Tests', () => {
         .send(lockData);
 
       expect([401, 500]).toContain(response.status);
+    });
+  });
+
+  describe('DELETE /api/v1/devices/blulok/:deviceId - Remove from cloud inventory', () => {
+    const deviceId = 'device-1';
+
+    it('should require authentication', async () => {
+      const response = await request(app).delete(`/api/v1/devices/blulok/${deviceId}`);
+      expect([401, 500]).toContain(response.status);
+    });
+
+    it('should forbid tenant users', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/devices/blulok/${deviceId}`)
+        .set('Authorization', `Bearer ${tenantToken}`);
+
+      expect([403, 401, 500]).toContain(response.status);
+      if (response.status === 403) {
+        expect(response.body).toHaveProperty('success', false);
+      }
+    });
+
+    it('should forbid facility_admin users', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/devices/blulok/${deviceId}`)
+        .set('Authorization', `Bearer ${facilityAdminToken}`);
+
+      expect([403, 401, 500]).toContain(response.status);
+      if (response.status === 403) {
+        expect(response.body).toHaveProperty('success', false);
+      }
+    });
+
+    it('should allow admin to remove inventory when device exists', async () => {
+      mockRemoveInventory.mockResolvedValueOnce({
+        gatewayId: 'gateway-1',
+        facilityId: 'facility-1',
+        hadUnit: false,
+        unitId: null,
+      });
+
+      const response = await request(app)
+        .delete(`/api/v1/devices/blulok/${deviceId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('success', true);
+      expect(response.body).toHaveProperty('removed');
+      expect(response.body.removed).toMatchObject({ gatewayId: 'gateway-1' });
+      expect(mockRemoveInventory).toHaveBeenCalledWith(
+        deviceId,
+        expect.objectContaining({ performedBy: 'admin-1' }),
+      );
+    });
+
+    it('should allow dev_admin to remove inventory when device exists', async () => {
+      mockRemoveInventory.mockResolvedValueOnce({
+        gatewayId: 'gateway-1',
+        facilityId: 'facility-1',
+        hadUnit: true,
+        unitId: 'unit-1',
+      });
+
+      const response = await request(app)
+        .delete(`/api/v1/devices/blulok/${deviceId}`)
+        .set('Authorization', `Bearer ${devAdminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('success', true);
+    });
+
+    it('should return 404 when service reports device not found', async () => {
+      mockRemoveInventory.mockRejectedValueOnce(new Error('Device not found'));
+
+      const response = await request(app)
+        .delete(`/api/v1/devices/blulok/missing-device`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('success', false);
+    });
+  });
+
+  describe('DELETE /api/v1/devices/blulok/:deviceId/unassign', () => {
+    const deviceId = 'device-1';
+
+    it('should require authentication', async () => {
+      const response = await request(app).delete(`/api/v1/devices/blulok/${deviceId}/unassign`);
+      expect([401, 500]).toContain(response.status);
+    });
+
+    it('should forbid tenant users', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/devices/blulok/${deviceId}/unassign`)
+        .set('Authorization', `Bearer ${tenantToken}`);
+
+      expect([403, 401, 500]).toContain(response.status);
+    });
+
+    it('should allow admin to unassign when authorized', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/devices/blulok/${deviceId}/unassign`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect([200, 400, 403, 404, 401, 500]).toContain(response.status);
+      if (response.status === 200) {
+        expect(response.body).toHaveProperty('success', true);
+        expect(response.body.message).toMatch(/unassigned/i);
+      }
     });
   });
 

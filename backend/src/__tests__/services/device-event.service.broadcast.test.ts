@@ -99,6 +99,38 @@ describe('DeviceEventService broadcast listeners', () => {
     expect(mockBroadcastUnitsUpdate).toHaveBeenCalledTimes(1);
   });
 
+  it('after initialize, DEVICE_UNASSIGNED broadcasts units update', async () => {
+    const svc = DeviceEventService.getInstance();
+    svc.initialize();
+
+    svc.emitDeviceUnassigned({
+      deviceId: 'dev-unassign-1',
+      unitId: 'unit-1',
+      facilityId: 'fac-1',
+    });
+
+    await flushEventListeners();
+
+    expect(mockBroadcastUnitsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockBroadcastDeviceStatusUpdate).not.toHaveBeenCalled();
+  });
+
+  it('after initialize, DEVICE_REMOVED broadcasts units update', async () => {
+    const svc = DeviceEventService.getInstance();
+    svc.initialize();
+
+    svc.emitDeviceRemoved({
+      deviceId: 'dev-removed-1',
+      deviceType: 'blulok',
+      gatewayId: 'gw-1',
+    });
+
+    await flushEventListeners();
+
+    expect(mockBroadcastUnitsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockBroadcastDeviceStatusUpdate).not.toHaveBeenCalled();
+  });
+
   it('exposes DeviceEvent enum used by listeners', () => {
     expect(DeviceEvent.DEVICE_TELEMETRY_UPDATED).toBe('deviceTelemetryUpdated');
   });

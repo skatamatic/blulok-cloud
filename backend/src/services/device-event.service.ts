@@ -132,7 +132,7 @@ export interface DeviceUnassignedEvent {
   metadata?: {
     source?: 'manual' | 'fms_sync' | 'api';
     performedBy?: string;
-    reason?: 'manual' | 'reassigned' | 'unit_deleted';
+    reason?: 'manual' | 'reassigned' | 'unit_deleted' | 'inventory_removed';
   };
 }
 
@@ -242,6 +242,26 @@ export class DeviceEventService extends EventEmitter {
       this.logDeviceStatusActivity(event).catch(err =>
         logger.error('Failed to log device status activity:', err)
       );
+    });
+
+    this.on(DeviceEvent.DEVICE_UNASSIGNED, async () => {
+      try {
+        if (this.wsService) {
+          await this.wsService.broadcastUnitsUpdate();
+        }
+      } catch (error) {
+        console.error('Failed to broadcast units update after device unassigned:', error);
+      }
+    });
+
+    this.on(DeviceEvent.DEVICE_REMOVED, async () => {
+      try {
+        if (this.wsService) {
+          await this.wsService.broadcastUnitsUpdate();
+        }
+      } catch (error) {
+        console.error('Failed to broadcast units update after device removed:', error);
+      }
     });
 
     // Broadcast updates when telemetry changes (battery, signal, temperature, errors)

@@ -220,19 +220,19 @@ export class TranslateGizmo {
   }
 
   /**
-   * Show gizmo at a position
+   * Show gizmo at a world XZ position (pivot from mesh-derived or gridToWorld — not raw grid indices alone).
    */
-  show(gridPosition: { x: number; z: number }, floorY: number = 0): void {
+  show(worldXZ: { x: number; z: number }, floorY: number = 0): void {
     if (!this.gizmoGroup) return;
-    
-    const worldPos = this.gridSystem.gridToWorld({ x: gridPosition.x, z: gridPosition.z, y: 0 });
-    const gridSize = this.gridSystem.getGridSize();
-    
+
     this.gizmoGroup.position.set(
-      worldPos.x + gridSize / 2,
-      floorY + 0.05, // Slightly above floor
-      worldPos.z + gridSize / 2
+      worldXZ.x,
+      floorY + 0.05,
+      worldXZ.z
     );
+    
+    const alignment = this.gridSystem.getGridAlignment();
+    this.gizmoGroup.rotation.set(0, alignment ? alignment.yaw : 0, 0);
     
     // Ensure all children render on top
     this.ensureRenderOnTop(this.gizmoGroup);
@@ -285,19 +285,37 @@ export class TranslateGizmo {
   }
 
   /**
-   * Update gizmo position
+   * Move gizmo to a world XZ pivot (same frame as {@link show}).
    */
-  setPosition(gridPosition: { x: number; z: number }, floorY: number = 0): void {
+  setPosition(worldXZ: { x: number; z: number }, floorY: number = 0): void {
     if (!this.gizmoGroup || !this.isVisible) return;
-    
-    const worldPos = this.gridSystem.gridToWorld({ x: gridPosition.x, z: gridPosition.z, y: 0 });
-    const gridSize = this.gridSystem.getGridSize();
-    
+
     this.gizmoGroup.position.set(
-      worldPos.x + gridSize / 2,
+      worldXZ.x,
       floorY + 0.05,
-      worldPos.z + gridSize / 2
+      worldXZ.z
     );
+
+    const alignment = this.gridSystem.getGridAlignment();
+    this.gizmoGroup.rotation.set(0, alignment ? alignment.yaw : 0, 0);
+  }
+
+  /**
+   * Move gizmo using continuous grid indices (e.g. building move preview).
+   */
+  setPositionFromGrid(gridPosition: { x: number; z: number }, floorY: number = 0): void {
+    if (!this.gizmoGroup || !this.isVisible) return;
+
+    const worldPos = this.gridSystem.gridToWorld({ x: gridPosition.x, z: gridPosition.z, y: 0 });
+
+    this.gizmoGroup.position.set(
+      worldPos.x,
+      floorY + 0.05,
+      worldPos.z
+    );
+
+    const alignment = this.gridSystem.getGridAlignment();
+    this.gizmoGroup.rotation.set(0, alignment ? alignment.yaw : 0, 0);
   }
 
   /**
@@ -434,59 +452,70 @@ export class TranslateGizmo {
   private handleDrag(): void {
     if (!this.isDragging || !this.dragAxis || !this.gizmoGroup || !this.currentGridPosition) return;
     
-    // Raycast to drag plane
     this.raycaster.setFromCamera(this.mouse, this.camera);
     
-    // Set drag plane at gizmo Y position
     this.dragPlane.constant = -this.gizmoGroup.position.y;
     
     const intersectPoint = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.dragPlane, intersectPoint)) {
-      // Apply axis constraint to world position for smooth gizmo movement
+      const alignment = this.gridSystem.getGridAlignment();
+      
       let smoothX = intersectPoint.x;
       let smoothZ = intersectPoint.z;
       
-      if (this.dragAxis === 'x') {
-        // Lock Z to starting position (use gizmo's current locked Z)
-        smoothZ = this.gizmoGroup.position.z;
-      } else if (this.dragAxis === 'z') {
-        // Lock X to starting position (use gizmo's current locked X)
-        smoothX = this.gizmoGroup.position.x;
+      if (this.dragAxis === 'x' || this.dragAxis === 'z') {
+        const gx = this.gizmoGroup.position.x;
+        const gz = this.gizmoGroup.position.z;
+        const dx = intersectPoint.x - gx;
+        const dz = intersectPoint.z - gz;
+        
+        if (alignment) {
+          const yaw = alignment.yaw;
+          const c = Math.cos(yaw);
+          const s = Math.sin(yaw);
+          // Grid U axis in world: (cos, -sin); V axis: (sin, cos)  [Three.js Y-rotation convention]
+          if (this.dragAxis === 'x') {
+            const projU = dx * c - dz * s;
+            smoothX = gx + projU * c;
+            smoothZ = gz - projU * s;
+          } else {
+            const projV = dx * s + dz * c;
+            smoothX = gx + projV * s;
+            smoothZ = gz + projV * c;
+          }
+        } else {
+          if (this.dragAxis === 'x') {
+            smoothZ = this.gizmoGroup.position.z;
+          } else {
+            smoothX = this.gizmoGroup.position.x;
+          }
+        }
       }
-      // For 'xz', both axes follow mouse
       
-      // Update gizmo position smoothly (follows mouse, not grid-snapped)
       this.gizmoGroup.position.x = smoothX;
       this.gizmoGroup.position.z = smoothZ;
       
-      // Convert to grid position for object snapping
       const gridPos = this.gridSystem.worldToGrid(
-        new THREE.Vector3(intersectPoint.x, 0, intersectPoint.z)
+        new THREE.Vector3(smoothX, 0, smoothZ)
       );
       
-      // Apply axis constraint for grid position
       let newGridX = gridPos.x;
       let newGridZ = gridPos.z;
       
       if (this.dragAxis === 'x') {
-        newGridZ = this.currentGridPosition.z; // Lock Z to current
+        newGridZ = this.currentGridPosition.z;
       } else if (this.dragAxis === 'z') {
-        newGridX = this.currentGridPosition.x; // Lock X to current
+        newGridX = this.currentGridPosition.x;
       }
-      // For 'xz', both axes are free
       
-      // Check if grid position changed from CURRENT position (not start)
       if (newGridX !== this.currentGridPosition.x || 
           newGridZ !== this.currentGridPosition.z) {
         
-        // Calculate INCREMENTAL delta from current position
         const deltaX = newGridX - this.currentGridPosition.x;
         const deltaZ = newGridZ - this.currentGridPosition.z;
         
-        // Update current position BEFORE emitting callback
         this.currentGridPosition = { x: newGridX, z: newGridZ };
         
-        // Emit incremental delta (objects will snap to grid)
         this.callbacks.onDrag(deltaX, deltaZ, this.dragAxis);
       }
     }

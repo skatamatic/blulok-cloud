@@ -26,14 +26,14 @@ interface HotkeyOverlayProps {
 interface HotkeyItem {
   key: string;
   description: string;
-  modifier?: 'ctrl' | 'shift' | 'ctrl+shift';
+  modifier?: 'ctrl' | 'shift' | 'alt' | 'ctrl+shift' | 'ctrl+alt';
 }
 
 // Key icon component
 const KeyIcon: React.FC<{ 
   keyName: string; 
   isDark: boolean;
-  modifier?: 'ctrl' | 'shift' | 'ctrl+shift';
+  modifier?: 'ctrl' | 'shift' | 'alt' | 'ctrl+shift' | 'ctrl+alt';
 }> = ({ keyName, isDark, modifier }) => {
   const renderKey = (name: string) => (
     <span className={`
@@ -50,11 +50,16 @@ const KeyIcon: React.FC<{
 
   if (modifier) {
     const modifierParts = modifier.split('+');
+    const labelFor = (mod: string) => {
+      if (mod === 'ctrl') return 'Ctrl';
+      if (mod === 'alt') return 'Alt';
+      return 'Shift';
+    };
     return (
       <span className="inline-flex items-center gap-0.5">
         {modifierParts.map((mod, i) => (
           <React.Fragment key={mod}>
-            {renderKey(mod === 'ctrl' ? 'Ctrl' : 'Shift')}
+            {renderKey(labelFor(mod))}
             {i < modifierParts.length - 1 && <span className={isDark ? 'text-gray-500' : 'text-gray-400'}>+</span>}
           </React.Fragment>
         ))}
@@ -105,7 +110,8 @@ export const HotkeyOverlay: React.FC<HotkeyOverlayProps> = ({
         { key: 'Q', description: 'Rotate Left' },
         { key: 'E', description: 'Rotate Right' },
         { key: 'Click', description: 'Place Asset' },
-        { key: 'Drag', description: 'Paint/Fill Area' },
+        { key: 'Drag', description: 'Line paint / fill area' },
+        { key: 'Drag', description: 'Angled row (hold Alt)', modifier: 'alt' },
         { key: 'R-Click', description: 'Delete Object' },
         { key: 'Esc', description: 'Cancel' },
       );
@@ -153,6 +159,11 @@ export const HotkeyOverlay: React.FC<HotkeyOverlayProps> = ({
         { key: '←/→', description: 'Orbit 90°', modifier: 'ctrl' },
       );
     }
+
+    items.push(
+      { key: 'A', description: 'Align grid to selection', modifier: 'ctrl+alt' },
+      { key: 'R', description: 'Reset grid to world axes', modifier: 'ctrl+alt' },
+    );
 
     return items;
   }, [activeTool, isPlacing, hasSelection, hasClipboard]);

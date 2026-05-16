@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDownIcon, ChevronUpIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { startUICapture, endUICapture } from './UICapture';
+import { DOCK_STACK_WIDTH_PX } from './panelLayoutV9';
 
 export type AnchorPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'left' | 'right' | 'none';
 
@@ -49,6 +50,17 @@ interface FloatingPanelProps {
   onResizing?: (width: number, height?: number) => void; // Real-time feedback during resize
   onClose?: () => void; // Called when X button clicked
   onBringToFront?: () => void; // Called when panel should be brought to front (click/drag)
+  /** During header drag — for edge dock hints. */
+  onDragMove?: (clientX: number, clientY: number) => void;
+  /** After header drag ends (committed position). */
+  onDragEnd?: (payload: {
+    clientX: number;
+    clientY: number;
+    panelX: number;
+    panelY: number;
+  }) => void;
+  /** While dragging: cursor is over a dock drop zone — morph panel toward icon scale. */
+  dockHoverTarget?: 'left' | 'right' | null;
 }
 
 export const FloatingPanel: React.FC<FloatingPanelProps> = ({
@@ -74,6 +86,9 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   onResizing,
   onClose,
   onBringToFront,
+  onDragMove,
+  onDragEnd,
+  dockHoverTarget = null,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -99,6 +114,11 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   // Drag state refs
   const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
   const resizeStartRef = useRef({ x: 0, y: 0, width: 0, height: 0 });
+  const dragPointerRef = useRef({ clientX: 0, clientY: 0 });
+  const onDragMoveRef = useRef(onDragMove);
+  const onDragEndRef = useRef(onDragEnd);
+  onDragMoveRef.current = onDragMove;
+  onDragEndRef.current = onDragEnd;
 
   // Computed values (track any resize state)
   const isResizing = isResizingWidth || isResizingHeight || isResizingBoth;
@@ -110,6 +130,8 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   const currentHeight = defaultHeight 
     ? (position.height ?? defaultHeight) + (isResizing ? resizeHeightOffset : 0)
     : undefined;
+
+  const dockMorph = isDragging && !!dockHoverTarget;
 
   // Get bounds for constraining
   const getBounds = useCallback(() => {
@@ -131,6 +153,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     // React's stopPropagation only affects synthetic events, not native DOM events
     e.nativeEvent.stopImmediatePropagation();
     startUICapture(`panel-drag-${id}`);
+    dragPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
     setIsDragging(true);
     setIsFocused(true);
     didDragRef.current = false;
@@ -200,6 +223,9 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     if (!isDragging) return;
 
     const handleMouseMove = (e: MouseEvent) => {
+      dragPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
+      onDragMoveRef.current?.(e.clientX, e.clientY);
+
       const deltaX = e.clientX - dragStartRef.current.x;
       const deltaY = e.clientY - dragStartRef.current.y;
       
@@ -229,11 +255,19 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       // Commit the final position
       const finalX = position.x + dragOffset.x;
       const finalY = position.y + dragOffset.y;
-      
+      const { clientX, clientY } = dragPointerRef.current;
+
       setIsDragging(false);
       setDragOffset({ x: 0, y: 0 });
       endUICapture();
       onStateChange({ x: finalX, y: finalY });
+
+      onDragEndRef.current?.({
+        clientX,
+        clientY,
+        panelX: finalX,
+        panelY: finalY,
+      });
       
       if (didDragRef.current) {
         if (dragPreventClickTimeoutRef.current) {
@@ -463,6 +497,19 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     return <ChevronUpIcon className="w-4 h-4" />;
   };
 
+  /** While morphing toward dock chip: center chip on pointer (not panel top-left) so it tracks the cursor. */
+  const boundsRect = boundsRef?.current?.getBoundingClientRect();
+  const ptr = dragPointerRef.current;
+  const chipPx = DOCK_STACK_WIDTH_PX;
+  let panelLeft = currentX;
+  let panelTop = currentY;
+  if (dockMorph && boundsRect && isDragging) {
+    panelLeft = ptr.clientX - boundsRect.left - chipPx / 2;
+    panelTop = ptr.clientY - boundsRect.top - chipPx / 2;
+    panelLeft = Math.max(0, Math.min(panelLeft, boundsRect.width - chipPx));
+    panelTop = Math.max(0, Math.min(panelTop, boundsRect.height - chipPx));
+  }
+
   return (
     <div
       ref={panelRef}
@@ -474,21 +521,30 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         backdrop-blur-md
         rounded-lg
         shadow-2xl
-        transition-shadow duration-200
+        border
         ${isDark 
           ? 'bg-gray-900/95 border-gray-700/60' 
           : 'bg-white/95 border-gray-300/60'
         }
-        border
-        ${isDragging ? 'shadow-xl shadow-primary-500/20' : ''}
-        ${isFocused ? 'ring-1 ring-primary-500/30' : ''}
+        ${dockMorph ? 'shadow-2xl shadow-primary-500/30 ring-2 ring-primary-500/40 rounded-xl overflow-hidden flex flex-col' : 'transition-shadow duration-200'}
+        ${isDragging && !dockMorph ? 'shadow-xl shadow-primary-500/20' : ''}
+        ${isFocused && !dockMorph ? 'ring-1 ring-primary-500/30' : ''}
       `}
       style={{
-        left: currentX,
-        top: currentY,
-        width: currentWidth, // Always maintain width, even when collapsed
-        minWidth: minWidth,
+        left: panelLeft,
+        top: panelTop,
+        width: dockMorph ? chipPx : currentWidth,
+        minWidth: dockMorph ? chipPx : minWidth,
+        maxWidth: dockMorph ? chipPx : maxWidth,
+        height: dockMorph ? chipPx : undefined,
+        maxHeight: dockMorph ? chipPx : undefined,
+        minHeight: dockMorph ? chipPx : undefined,
         zIndex: isDragging || isResizing ? zIndex + 10 : (isFocused ? zIndex + 5 : zIndex),
+        boxSizing: 'border-box',
+        transition: dockMorph
+          ? 'width 240ms cubic-bezier(0.2, 0.85, 0.25, 1), height 240ms cubic-bezier(0.2, 0.85, 0.25, 1), max-height 240ms cubic-bezier(0.2, 0.85, 0.25, 1), box-shadow 240ms ease, opacity 240ms ease'
+          : 'transform 240ms cubic-bezier(0.2, 0.85, 0.25, 1), opacity 240ms ease',
+        opacity: dockMorph ? 0.95 : 1,
       }}
       onClick={handlePanelClick}
       onMouseDown={handleMouseDown}
@@ -497,13 +553,12 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       <div
         ref={headerRef}
         className={`
-          flex items-center justify-between
-          px-3 py-2
-          border-b
-          rounded-t-lg
+          flex items-center
+          ${dockMorph ? 'justify-center flex-1 min-h-0 border-b-0 rounded-xl px-1.5 py-2' : 'justify-between px-3 py-2 border-b rounded-t-lg'}
           ${!position.collapsed ? 'cursor-grab' : 'cursor-pointer'}
           ${isDragging ? 'cursor-grabbing' : ''}
           select-none
+          transition-[padding,opacity] duration-[240ms] ease-out
           ${isDark
             ? 'bg-gray-800/60 border-gray-700/40'
             : 'bg-gray-100/80 border-gray-200/60'
@@ -511,18 +566,30 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         `}
         onClick={handleHeaderClick}
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className={`flex items-center gap-2 min-w-0 ${dockMorph ? 'justify-center w-full' : ''}`}>
           {icon && (
-            <span className="flex-shrink-0 text-primary-500">
+            <span
+              className={`flex-shrink-0 text-primary-500 transition-transform duration-[240ms] ease-out ${
+                dockMorph ? 'scale-125' : ''
+              }`}
+            >
               {icon}
             </span>
           )}
-          <span className={`text-sm font-medium truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
+          <span
+            className={`text-sm font-medium truncate transition-opacity duration-200 ease-out ${
+              isDark ? 'text-gray-200' : 'text-gray-800'
+            } ${dockMorph ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}
+          >
             {title}
           </span>
         </div>
         
-        <div className="flex items-center gap-0.5">
+        <div
+          className={`flex items-center gap-0.5 shrink-0 transition-opacity duration-200 ease-out ${
+            dockMorph ? 'opacity-0 w-0 overflow-hidden pointer-events-none' : ''
+          }`}
+        >
           <button
             className={`p-1 rounded transition-colors ${
               isDark 
@@ -562,23 +629,27 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       <div
         className={`
           transition-all duration-200 ease-out
-          ${position.collapsed ? 'max-h-0 opacity-0 pointer-events-none overflow-hidden' : 'opacity-100 overflow-y-auto overflow-x-hidden'}
+          ${dockMorph ? 'hidden' : ''}
+          ${!dockMorph && position.collapsed ? 'max-h-0 opacity-0 pointer-events-none overflow-hidden' : ''}
+          ${!dockMorph && !position.collapsed ? 'overflow-y-auto overflow-x-hidden opacity-100' : ''}
         `}
-        style={{ 
-          // Use explicit height if resizable and set, otherwise max-height
-          ...(currentHeight && !position.collapsed ? {
-            height: currentHeight - 44, // Subtract header height (~44px)
-          } : {
-            maxHeight: position.collapsed ? 0 : maxHeight,
-          }),
-          // Themed scrollbar styling
-          ...(!position.collapsed && {
-            scrollbarWidth: 'thin',
-            scrollbarColor: isDark 
-              ? 'rgba(156, 163, 175, 0.5) rgba(31, 41, 55, 0.3)'
-              : 'rgba(107, 114, 128, 0.5) rgba(229, 231, 235, 0.5)',
-          }),
-        }}
+        style={
+          dockMorph
+            ? undefined
+            : {
+                ...(currentHeight && !position.collapsed ? {
+                  height: currentHeight - 44, // Subtract header height (~44px)
+                } : {
+                  maxHeight: position.collapsed ? 0 : maxHeight,
+                }),
+                ...(!position.collapsed && {
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: isDark 
+                    ? 'rgba(156, 163, 175, 0.5) rgba(31, 41, 55, 0.3)'
+                    : 'rgba(107, 114, 128, 0.5) rgba(229, 231, 235, 0.5)',
+                }),
+              }
+        }
       >
         <div className="p-3">
           {typeof children === 'function' ? children(currentWidth, currentHeight ?? maxHeight) : children}
@@ -586,7 +657,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       </div>
       
       {/* Webkit scrollbar styles */}
-      {!position.collapsed && (
+      {!position.collapsed && !dockMorph && (
         <style>{`
           #panel-${id} > div:nth-child(2)::-webkit-scrollbar {
             width: 8px;
@@ -606,7 +677,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       )}
 
       {/* Horizontal resize handle (right edge) */}
-      {resizable && !position.collapsed && (
+      {resizable && !position.collapsed && !dockMorph && (
         <div
           className={`
             absolute right-0 top-0 w-2 cursor-ew-resize
@@ -618,7 +689,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       )}
       
       {/* Vertical resize handle (bottom edge) */}
-      {resizableHeight && !position.collapsed && (
+      {resizableHeight && !position.collapsed && !dockMorph && (
         <div
           className={`
             absolute bottom-0 left-0 h-2 cursor-ns-resize
@@ -630,7 +701,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       )}
       
       {/* Corner resize handle (both) */}
-      {resizable && resizableHeight && !position.collapsed && (
+      {resizable && resizableHeight && !position.collapsed && !dockMorph && (
         <div
           className={`
             absolute right-0 bottom-0 w-3 h-3 cursor-nwse-resize

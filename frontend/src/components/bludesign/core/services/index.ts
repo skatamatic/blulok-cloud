@@ -1,14 +1,20 @@
 /**
- * BluDesign Core Services
- * 
- * Modular services extracted from BluDesignEngine following SOLID principles.
- * Each service handles a specific domain of functionality.
+ * BluDesign services — curated exports.
+ *
+ * Facility save/load shape lives in `../serialization` (pure functions). The engine
+ * delegates to that module for a single source of truth.
+ *
+ * `ObjectManagementService` handles smart-object simulation/skin updates and is
+ * covered by unit tests; the main editor coordinates lifecycle through BluDesignEngine.
  */
 
-export { ObjectPlacementService, type PlacementContext, type PlacementResult } from './ObjectPlacementService';
-export { ObjectManagementService, type ManagementContext } from './ObjectManagementService';
-export { FloorService, type FloorContext, type FloorOperationResult } from './FloorService';
-export { HistoryService, type HistoryAction, type ActionType } from './HistoryService';
-export { SerializationService, type SerializationContext } from './SerializationService';
-export type { SerializedBuilding, SerializedPlacedObject } from '../types';
+export {
+  serializePlacedObjectForFacility,
+  serializeBuildingForFacility,
+  buildActiveSkinsRecordFromPlacedObjects,
+  validateFacilityImportData,
+  parseFacilityDataJson,
+  estimateFacilityDataSizeBytes,
+} from '../serialization';
 
+export { ObjectManagementService, type ManagementContext } from './ObjectManagementService';

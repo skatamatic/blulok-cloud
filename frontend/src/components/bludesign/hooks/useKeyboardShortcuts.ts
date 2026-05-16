@@ -34,6 +34,8 @@ interface KeyboardShortcutsOptions {
   activeTool?: EditorTool; // To know if we're in placement mode
   hasSelection?: boolean; // To know if we have objects selected
   onCtrlChange?: (isHeld: boolean) => void; // For controlling camera rotation during placement
+  onAlignGridToSelection?: () => void;
+  onResetGridAlignment?: () => void;
 }
 
 export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): void {
@@ -64,6 +66,8 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     activeTool,
     hasSelection,
     onCtrlChange,
+    onAlignGridToSelection,
+    onResetGridAlignment,
   } = options;
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
@@ -244,6 +248,19 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
           break;
       }
     }
+
+    if (isCtrl && isAlt && !isShift) {
+      switch (key) {
+        case 'a':
+          onAlignGridToSelection?.();
+          event.preventDefault();
+          break;
+        case 'r':
+          onResetGridAlignment?.();
+          event.preventDefault();
+          break;
+      }
+    }
   }, [
     enabled,
     onToolChange,
@@ -270,6 +287,8 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     onLoad,
     activeTool,
     hasSelection,
+    onAlignGridToSelection,
+    onResetGridAlignment,
   ]);
 
   // Handle Ctrl key changes for placement mode camera rotation

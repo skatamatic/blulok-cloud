@@ -1,12 +1,11 @@
 import { Knex } from 'knex';
 import { DatabaseService } from '@/services/database.service';
 import { AudienceResolver } from '@/services/passes/audience-resolver.service';
-import { PassesService } from '@/services/passes.service';
+import { PassesService, normalizeRoutePassUserRole } from '@/services/passes.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { UserRole } from '@/types/auth.types';
-import { UserFacilityScheduleModel } from '@/models/user-facility-schedule.model';
-import { serializeScheduleForTransport, type SerializedSchedule } from '@/services/schedules/schedule-serialization.service';
+import { resolveRoutePassSchedulesForAudiences, type RoutePassFacilitySchedule } from '@/services/passes/route-pass-schedules';
 
 export class RoutePassError extends Error {
   public status: number;
@@ -95,77 +94,12 @@ export class RoutePassOrchestrator {
       facilityId: requestedFacilityId,
     });
 
-    // Fetch user's schedule for the first facility they have access to
-    // For shared keys, we'll inherit from primary tenant (handled below)
-    let schedule: SerializedSchedule | undefined;
-
-    // Get facility IDs if not already available
-    let effectiveFacilityIds = facilityIds;
-    if (!effectiveFacilityIds || effectiveFacilityIds.length === 0) {
-      if (ctx.role === UserRole.TENANT || ctx.role === UserRole.MAINTENANCE || ctx.role === UserRole.FACILITY_ADMIN) {
-        effectiveFacilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
-      }
-    }
-
-    // Resolve schedule for requested facility first; otherwise use first accessible facility.
-    const scheduleFacilityId = requestedFacilityId || (effectiveFacilityIds && effectiveFacilityIds.length > 0 ? effectiveFacilityIds[0] : undefined);
-    if (scheduleFacilityId) {
-      const userSchedule = await UserFacilityScheduleModel.getUserScheduleForFacilityWithDetails(
-        userId,
-        scheduleFacilityId
-      );
-
-      if (userSchedule && userSchedule.schedule.time_windows.length > 0) {
-        schedule = serializeScheduleForTransport({
-          facilityId: scheduleFacilityId,
-          timeWindows: userSchedule.schedule.time_windows,
-        });
-      }
-    }
-
-    // For shared key audiences, inherit schedule from primary tenant
-    // Extract unique primary tenant IDs from shared_key audiences
-    const sharedKeyPrimaryTenantIds = new Set<string>();
-    audiences.forEach(aud => {
-      if (aud.startsWith('shared_key:')) {
-        const parts = aud.split(':');
-        if (parts.length >= 3) {
-          sharedKeyPrimaryTenantIds.add(parts[1]);
-        }
-      }
-    });
-
-    // If we have shared keys and no schedule yet, try to get schedule from primary tenant
-    if (sharedKeyPrimaryTenantIds.size > 0 && !schedule) {
-      const sharedAudience = audiences.find(aud => aud.startsWith('shared_key:'));
-      if (sharedAudience) {
-        const parts = sharedAudience.split(':');
-        const primaryTenantId = parts[1];
-        const lockSerial = parts[2];
-        let sharedFacilityId = requestedFacilityId;
-
-        if (!sharedFacilityId) {
-          const lockRow = await db('blulok_devices as bd')
-            .join('units as u', 'bd.unit_id', 'u.id')
-            .where('bd.device_serial', lockSerial)
-            .select('u.facility_id')
-            .first();
-          sharedFacilityId = lockRow?.facility_id as string | undefined;
-        }
-
-        if (sharedFacilityId) {
-          const primaryTenantSchedule = await UserFacilityScheduleModel.getUserScheduleForFacilityWithDetails(
-            primaryTenantId,
-            sharedFacilityId
-          );
-
-          if (primaryTenantSchedule && primaryTenantSchedule.schedule.time_windows.length > 0) {
-            schedule = serializeScheduleForTransport({
-              facilityId: sharedFacilityId,
-              timeWindows: primaryTenantSchedule.schedule.time_windows,
-            });
-          }
-        }
+    const roleNorm = normalizeRoutePassUserRole(ctx.role);
+    let schedules: RoutePassFacilitySchedule[] | undefined;
+    if (roleNorm !== 'admin' && roleNorm !== 'dev_admin') {
+      const resolved = await resolveRoutePassSchedulesForAudiences(db, userId, audiences);
+      if (resolved.length > 0) {
+        schedules = resolved;
       }
     }
 
@@ -174,7 +108,7 @@ export class RoutePassOrchestrator {
       userId,
       devicePublicKey: device.public_key,
       audiences,
-      schedule,
+      schedules,
       userRole: ctx.role,
     });
 
@@ -202,5 +136,3 @@ export class RoutePassOrchestrator {
     return routePass;
   }
 }
-
-

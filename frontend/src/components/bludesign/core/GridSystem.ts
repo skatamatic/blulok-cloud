@@ -13,6 +13,8 @@ import {
   GridPosition,
   AssetCategory,
   GRID_UNIT_METERS,
+  GridAlignment,
+  Orientation,
 } from './types';
 
 // Layer types for tile occupancy
@@ -54,17 +56,30 @@ const gridFragmentShader = `
   uniform float uOpacity;
   uniform vec3 uCameraPosition;
   uniform float uSecondaryOpacity; // Additional control for fine grid visibility
+  uniform float uUseAlignment;
+  uniform vec2 uAlignOrigin;
+  uniform float uAlignYaw;
+  uniform float uSnapCellSize;
   
   varying vec3 vWorldPosition;
   
-  float getGrid(float size, float thickness) {
-    vec2 r = vWorldPosition.xz / size;
+  float getGrid(vec2 coord, float size, float thickness) {
+    vec2 r = coord / size;
     vec2 grid = abs(fract(r - 0.5) - 0.5) / fwidth(r);
     float line = min(grid.x, grid.y);
     return 1.0 - min(line, 1.0);
   }
   
   void main() {
+    vec2 coord = vWorldPosition.xz;
+    if (uUseAlignment > 0.5) {
+      // rel is vec2 (world Δx, Δz) — use .y for dz, not .z
+      vec2 rel = vWorldPosition.xz - uAlignOrigin;
+      float c = cos(uAlignYaw);
+      float s = sin(uAlignYaw);
+      coord = vec2(rel.x * c - rel.y * s, rel.x * s + rel.y * c);
+    }
+
     // Distance from camera (horizontal only)
     float dist = length(vWorldPosition.xz - uCameraPosition.xz);
     
@@ -74,11 +89,14 @@ const gridFragmentShader = `
     float fadeEnd = uFadeDistance * 1.3;
     float fade = 1.0 - smoothstep(fadeStart, fadeEnd, dist);
     
+    // Use exact snap cell size when alignment is active to match asset placement
+    float cellSize = (uUseAlignment > 0.5 && uSnapCellSize > 0.0) ? uSnapCellSize : uSize / uDivisions;
+    
     // Primary grid (large)
-    float grid1 = getGrid(uSize / uDivisions * 10.0, 2.0);
+    float grid1 = getGrid(coord, cellSize * 10.0, 2.0);
     
     // Secondary grid (small)
-    float grid2 = getGrid(uSize / uDivisions, 1.0);
+    float grid2 = getGrid(coord, cellSize, 1.0);
     
     // Combine grids - increased fine grid visibility
     vec3 color = mix(uSecondaryColor, uPrimaryColor, grid1);
@@ -91,6 +109,21 @@ const gridFragmentShader = `
   }
 `;
 
+function cardinalRotationRad(orientation: Orientation): number {
+  switch (orientation) {
+    case Orientation.NORTH:
+      return 0;
+    case Orientation.EAST:
+      return Math.PI / 2;
+    case Orientation.SOUTH:
+      return Math.PI;
+    case Orientation.WEST:
+      return -Math.PI / 2;
+    default:
+      return 0;
+  }
+}
+
 export class GridSystem {
   private scene: THREE.Scene;
   private gridMesh: THREE.Mesh | null = null;
@@ -98,6 +131,8 @@ export class GridSystem {
   private groundMesh: THREE.Mesh | null = null;
   private config: GridConfig;
   private currentGridSize: GridSize = GridSize.TINY;
+  /** When set, grid snapping uses a rotated XZ frame (session-only) */
+  private gridAlignment: GridAlignment | null = null;
   
   // Two-layer grid occupancy tracking (floor-aware)
   // Each cell can have a ground layer (grass, pavement, etc.) and an object layer (units, walls, etc.)
@@ -146,6 +181,10 @@ export class GridSystem {
         uOpacity: { value: this.config.opacity },
         uCameraPosition: { value: new THREE.Vector3() },
         uSecondaryOpacity: { value: secondaryOpacity },
+        uUseAlignment: { value: 0 },
+        uAlignOrigin: { value: new THREE.Vector2(0, 0) },
+        uAlignYaw: { value: 0 },
+        uSnapCellSize: { value: 0 },
       },
       transparent: true,
       side: THREE.FrontSide, // Only render top face of grid
@@ -176,6 +215,7 @@ export class GridSystem {
     
     this.scene.add(this.gridMesh);
     this.scene.add(this.groundMesh);
+    this.applyAlignmentToGridMesh();
   }
 
   /**
@@ -219,6 +259,7 @@ export class GridSystem {
       // When y=0 (ground floor), grid should be at 0, not negative (to stay above ground mesh)
       // For upper floors, offset slightly below floor level
       this.gridMesh.position.y = y;
+      this.applyAlignmentToGridMesh();
     }
     // Ground mesh stays at y=-0.01 always - don't move it
   }
@@ -261,38 +302,270 @@ export class GridSystem {
   }
 
   /**
+   * Active working grid alignment (null = world axes)
+   */
+  getGridAlignment(): GridAlignment | null {
+    return this.gridAlignment;
+  }
+
+  /**
+   * Set rotated working grid for snapping (or null to restore world axes).
+   * Updates visual grid orientation/pivot.
+   */
+  setGridAlignment(alignment: GridAlignment | null): void {
+    this.gridAlignment = alignment;
+    this.applyAlignmentToGridMesh();
+  }
+
+  private applyAlignmentToGridMesh(): void {
+    if (!this.gridMesh) return;
+    const y = this.gridMesh.position.y;
+    if (this.gridAlignment) {
+      this.gridMesh.position.set(this.gridAlignment.originX, y, this.gridAlignment.originZ);
+      // Yaw is applied only via uAlignYaw + gridToWorld math; rotating the mesh would double-apply it vs snapping.
+      this.gridMesh.rotation.set(0, 0, 0);
+    } else {
+      this.gridMesh.position.set(0, y, 0);
+      this.gridMesh.rotation.set(0, 0, 0);
+    }
+    this.syncGridShaderAlignmentUniforms();
+  }
+
+  /**
+   * Fragment shader draws lines in world XZ; rotate pattern into the working frame when alignment is active.
+   */
+  private syncGridShaderAlignmentUniforms(): void {
+    if (!this.gridMaterial) return;
+    if (this.gridAlignment) {
+      this.gridMaterial.uniforms.uUseAlignment.value = 1;
+      this.gridMaterial.uniforms.uAlignOrigin.value.set(
+        this.gridAlignment.originX,
+        this.gridAlignment.originZ
+      );
+      this.gridMaterial.uniforms.uAlignYaw.value = this.gridAlignment.yaw;
+      this.gridMaterial.uniforms.uSnapCellSize.value = this.getGridSize();
+    } else {
+      this.gridMaterial.uniforms.uUseAlignment.value = 0;
+      this.gridMaterial.uniforms.uAlignOrigin.value.set(0, 0);
+      this.gridMaterial.uniforms.uAlignYaw.value = 0;
+      this.gridMaterial.uniforms.uSnapCellSize.value = 0;
+    }
+  }
+
+  /** World XZ → local U/V (horizontal) relative to alignment origin */
+  private worldDeltaToLocalUV(dx: number, dz: number): { u: number; v: number } {
+    if (!this.gridAlignment) {
+      return { u: dx, v: dz };
+    }
+    const { yaw } = this.gridAlignment;
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    return {
+      u: dx * c - dz * s,
+      v: dx * s + dz * c,
+    };
+  }
+
+  private localUVToWorldDelta(u: number, v: number): { x: number; z: number } {
+    if (!this.gridAlignment) {
+      return { x: u, z: v };
+    }
+    const { yaw } = this.gridAlignment;
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    return {
+      x: u * c + v * s,
+      z: -u * s + v * c,
+    };
+  }
+
+  /** Convert a grid-frame delta (in cells) to a world XZ delta, accounting for alignment rotation. */
+  gridDeltaToWorldDelta(deltaU: number, deltaV: number): { x: number; z: number } {
+    const gs = this.getGridSize();
+    return this.localUVToWorldDelta(deltaU * gs, deltaV * gs);
+  }
+
+  /**
+   * World-space indices on the default world grid (always axis-aligned), for building/occupancy that use world cells.
+   */
+  worldToWorldGrid(worldPos: THREE.Vector3): GridPosition {
+    const size = this.getGridSize();
+    return {
+      x: Math.round(worldPos.x / size),
+      z: Math.round(worldPos.z / size),
+      y: worldPos.y,
+    };
+  }
+
+  /**
+   * Combined placement mesh rotation: alignment base + cardinal orientation (matches PlacementManager convention).
+   */
+  getPlacementWorldRotation(orientation: Orientation): number {
+    const card = cardinalRotationRad(orientation);
+    if (!this.gridAlignment) {
+      return card;
+    }
+    return this.gridAlignment.yaw + card;
+  }
+
+  /**
+   * World-axis cells used for occupancy when the working grid is rotated.
+   * Maps each aligned sub-cell to the world cell containing that sub-cell's center (via {@link worldToWorldGrid}).
+   * The previous AABB-over-union approach inflated footprints and blocked flush adjacent placements.
+   */
+  collectWorldCellsCoveringAlignedFootprint(
+    anchorAligned: GridPosition,
+    footprint: { x: number; z: number }
+  ): Array<{ x: number; z: number }> {
+    const seen = new Set<string>();
+    const out: Array<{ x: number; z: number }> = [];
+    const y = anchorAligned.y ?? 0;
+
+    for (let du = 0; du < footprint.x; du++) {
+      for (let dv = 0; dv < footprint.z; dv++) {
+        const center = this.gridToWorld({
+          x: anchorAligned.x + du + 0.5,
+          z: anchorAligned.z + dv + 0.5,
+          y,
+        });
+        const g = this.worldToWorldGrid(center);
+        const key = `${g.x},${g.z}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ x: g.x, z: g.z });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Axis-aligned world XZ bounds covering a footprint expressed in the current grid frame.
+   */
+  getFootprintWorldAabb(
+    anchor: GridPosition,
+    footprint: { x: number; z: number }
+  ): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    const c = [
+      this.gridToWorld({ x: anchor.x, z: anchor.z, y: 0 }),
+      this.gridToWorld({ x: anchor.x + footprint.x, z: anchor.z, y: 0 }),
+      this.gridToWorld({ x: anchor.x, z: anchor.z + footprint.z, y: 0 }),
+      this.gridToWorld({ x: anchor.x + footprint.x, z: anchor.z + footprint.z, y: 0 }),
+    ];
+    return {
+      minX: Math.min(...c.map((p) => p.x)),
+      maxX: Math.max(...c.map((p) => p.x)),
+      minZ: Math.min(...c.map((p) => p.z)),
+      maxZ: Math.max(...c.map((p) => p.z)),
+    };
+  }
+
+  /**
+   * True if any world cell overlapping the aligned footprint is occupied.
+   */
+  isOccupiedAlignedFootprint(
+    anchorAligned: GridPosition,
+    footprint: { x: number; z: number },
+    canStack: boolean,
+    category: AssetCategory | string | undefined,
+    floor: number
+  ): boolean {
+    const cells = this.collectWorldCellsCoveringAlignedFootprint(anchorAligned, footprint);
+    for (const { x, z } of cells) {
+      if (this.isOccupied({ x, z, y: 0 }, { x: 1, z: 1 }, canStack, category, floor)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Mark world cells covering an aligned footprint (delegates to 1×1 markOccupied per cell).
+   */
+  markOccupiedAlignedFootprint(
+    objectId: string,
+    anchorAligned: GridPosition,
+    footprint: { x: number; z: number },
+    canStack: boolean,
+    category: AssetCategory | string | undefined,
+    floor: number
+  ): string | null {
+    const cells = this.collectWorldCellsCoveringAlignedFootprint(anchorAligned, footprint);
+    let replacedGroundId: string | null = null;
+    for (const { x, z } of cells) {
+      const r = this.markOccupied(
+        objectId,
+        { x, z, y: 0 },
+        { x: 1, z: 1 },
+        canStack,
+        category,
+        floor
+      );
+      if (r && !replacedGroundId) replacedGroundId = r;
+    }
+    return replacedGroundId;
+  }
+
+  /**
    * Snap a world position to the grid
    */
   snapToGrid(position: THREE.Vector3): GridPosition {
-    const size = this.getGridSize(); // Size in meters
-
+    const g = this.worldToGrid(new THREE.Vector3(position.x, position.y, position.z));
+    const corner = this.gridToWorld(g);
     return {
-      x: Math.round(position.x / size) * size,
-      z: Math.round(position.z / size) * size,
+      x: corner.x,
+      z: corner.z,
       y: position.y,
     };
   }
 
   /**
-   * Convert grid position to world position
+   * World XZ center of a footprint whose min-corner cell is `anchor` (grid indices, may be fractional).
+   * Matches mesh placement when pivot is at footprint center (see PlacementManager / placement coordinator).
    */
-  gridToWorld(gridPos: GridPosition): THREE.Vector3 {
-    const size = this.getGridSize(); // Size in meters
-    return new THREE.Vector3(
-      gridPos.x * size,
-      gridPos.y ?? 0,
-      gridPos.z * size
-    );
+  getFootprintCenterWorld(
+    anchor: GridPosition,
+    footprintCells: { x: number; z: number }
+  ): THREE.Vector3 {
+    return this.gridToWorld({
+      x: anchor.x + footprintCells.x / 2,
+      z: anchor.z + footprintCells.z / 2,
+      y: anchor.y,
+    });
   }
 
   /**
-   * Convert world position to grid position
+   * Convert grid position to world position (min corner of cell in current frame)
+   */
+  gridToWorld(gridPos: GridPosition): THREE.Vector3 {
+    const size = this.getGridSize();
+    const lu = gridPos.x * size;
+    const lv = gridPos.z * size;
+    if (!this.gridAlignment) {
+      return new THREE.Vector3(lu, gridPos.y ?? 0, lv);
+    }
+    const { originX, originZ } = this.gridAlignment;
+    const w = this.localUVToWorldDelta(lu, lv);
+    return new THREE.Vector3(originX + w.x, gridPos.y ?? 0, originZ + w.z);
+  }
+
+  /**
+   * Convert world position to grid position (indices in current frame)
    */
   worldToGrid(worldPos: THREE.Vector3): GridPosition {
-    const size = this.getGridSize(); // Size in meters
+    const size = this.getGridSize();
+    if (!this.gridAlignment) {
+      return {
+        x: Math.round(worldPos.x / size),
+        z: Math.round(worldPos.z / size),
+        y: worldPos.y,
+      };
+    }
+    const dx = worldPos.x - this.gridAlignment.originX;
+    const dz = worldPos.z - this.gridAlignment.originZ;
+    const { u, v } = this.worldDeltaToLocalUV(dx, dz);
     return {
-      x: Math.round(worldPos.x / size),
-      z: Math.round(worldPos.z / size),
+      x: Math.round(u / size),
+      z: Math.round(v / size),
       y: worldPos.y,
     };
   }
@@ -390,6 +663,7 @@ export class GridSystem {
       this.gridMaterial.uniforms.uOpacity.value = config.opacity;
       this.gridMaterial.uniforms.uSecondaryOpacity.value = config.secondaryOpacity ?? 0.5;
       this.gridMaterial.uniforms.uFadeDistance.value = config.fadeDistance;
+      this.syncGridShaderAlignmentUniforms();
     }
   }
 

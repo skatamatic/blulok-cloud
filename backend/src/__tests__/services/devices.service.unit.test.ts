@@ -30,11 +30,22 @@ jest.mock('@/models/device-group.model', () => ({
 
 const mockEmitAssigned = jest.fn();
 const mockEmitUnassigned = jest.fn();
+const mockEmitRemoved = jest.fn();
 jest.mock('@/services/device-event.service', () => ({
   DeviceEventService: {
     getInstance: jest.fn(() => ({
       emitDeviceAssigned: mockEmitAssigned,
       emitDeviceUnassigned: mockEmitUnassigned,
+      emitDeviceRemoved: mockEmitRemoved,
+    })),
+  },
+}));
+
+const mockPushCodesToGateway = jest.fn().mockResolvedValue(undefined);
+jest.mock('@/services/access-code.service', () => ({
+  AccessCodeService: {
+    getInstance: jest.fn(() => ({
+      pushCodesToGateway: mockPushCodesToGateway,
     })),
   },
 }));
@@ -98,6 +109,63 @@ function makeKnexForUnassign(deviceRow: { id: string; gateway_id: string; unit_i
     chain.first = jest.fn().mockResolvedValue(null);
     return chain;
   });
+}
+
+/** Transaction knex for removeBluLokDeviceFromCloudInventory */
+function makeKnexForRemoveInventory(opts: {
+  device: { id: string; gateway_id: string; unit_id: string | null } | null;
+  gateway: { id: string; facility_id: string | null } | null;
+  deleteRows?: number;
+  accessCodeGroupMember?: Record<string, unknown> | null;
+}) {
+  const groupMemberDel = jest.fn().mockResolvedValue(1);
+
+  const makeTrxTable = (table: string) => {
+    if (table.includes('device_group_members')) {
+      return {
+        join: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        first: jest.fn().mockResolvedValue(opts.accessCodeGroupMember ?? null),
+        del: groupMemberDel,
+      };
+    }
+
+    const chain: { where: jest.Mock; first: jest.Mock; del: jest.Mock; andWhere: jest.Mock } = {
+      where: jest.fn(),
+      first: jest.fn(),
+      del: jest.fn().mockResolvedValue(1),
+      andWhere: jest.fn().mockReturnThis(),
+    };
+
+    chain.where.mockImplementation((colOrObj: string | Record<string, unknown>, val?: unknown) => {
+      if (table === 'blulok_devices') {
+        if (typeof colOrObj === 'string' && colOrObj === 'id') {
+          chain.first = jest.fn().mockResolvedValue(opts.device);
+          chain.del = jest.fn().mockResolvedValue(opts.deleteRows ?? (opts.device ? 1 : 0));
+        }
+      }
+      if (table === 'gateways' && colOrObj === 'id') {
+        chain.first = jest.fn().mockResolvedValue(opts.gateway);
+      }
+      return chain;
+    });
+
+    chain.first = jest.fn().mockResolvedValue(null);
+    return chain;
+  };
+
+  const trx = jest.fn((table: string) => makeTrxTable(table)) as jest.Mock & {
+    transaction: jest.Mock;
+  };
+
+  const connection = Object.assign(trx, {
+    transaction: jest.fn().mockImplementation(async (callback: (t: typeof trx) => Promise<unknown>) =>
+      callback(trx),
+    ),
+  });
+
+  return connection;
 }
 
 function makeKnexForAccess(opts: {
@@ -283,6 +351,7 @@ describe('DevicesService (unit)', () => {
       await svc.unassignDeviceFromUnit('dev-1', { performedBy: 'fa-1', source: 'manual' });
 
       expect(mockUnassignDeviceFromUnit).toHaveBeenCalledWith('dev-1');
+      expect(mockSyncUnitLinkedMembers).toHaveBeenCalledWith('unit-1', 'dev-1');
       expect(mockEmitUnassigned).toHaveBeenCalledWith(
         expect.objectContaining({
           deviceId: 'dev-1',
@@ -291,6 +360,104 @@ describe('DevicesService (unit)', () => {
           metadata: expect.objectContaining({ source: 'manual', performedBy: 'fa-1' }),
         })
       );
+    });
+  });
+
+  describe('removeBluLokDeviceFromCloudInventory', () => {
+    beforeEach(() => {
+      mockEmitRemoved.mockClear();
+      mockEmitUnassigned.mockClear();
+      mockPushCodesToGateway.mockClear();
+    });
+
+    it('throws when device not found', async () => {
+      const connection = makeKnexForRemoveInventory({ device: null, gateway: null, deleteRows: 0 });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: connection as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      await expect(
+        svc.removeBluLokDeviceFromCloudInventory('missing', { performedBy: 'admin-1' }),
+      ).rejects.toThrow('Device not found');
+      expect(mockEmitRemoved).not.toHaveBeenCalled();
+    });
+
+    it('deletes inventory, emits unassign then removed when device had a unit', async () => {
+      const connection = makeKnexForRemoveInventory({
+        device: { id: 'dev-1', gateway_id: 'gw-1', unit_id: 'unit-1' },
+        gateway: { id: 'gw-1', facility_id: 'fac-1' },
+        deleteRows: 1,
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: connection as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      const summary = await svc.removeBluLokDeviceFromCloudInventory('dev-1', { performedBy: 'admin-1' });
+
+      expect(summary).toEqual({
+        gatewayId: 'gw-1',
+        facilityId: 'fac-1',
+        hadUnit: true,
+        unitId: 'unit-1',
+      });
+      expect(mockEmitUnassigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'dev-1',
+          unitId: 'unit-1',
+          facilityId: 'fac-1',
+          metadata: expect.objectContaining({ reason: 'inventory_removed' }),
+        }),
+      );
+      expect(mockEmitRemoved).toHaveBeenCalledWith({
+        deviceId: 'dev-1',
+        deviceType: 'blulok',
+        gatewayId: 'gw-1',
+      });
+      expect(mockPushCodesToGateway).not.toHaveBeenCalled();
+    });
+
+    it('pushes access codes when removal touches an access_code group', async () => {
+      const connection = makeKnexForRemoveInventory({
+        device: { id: 'dev-1', gateway_id: 'gw-1', unit_id: null },
+        gateway: { id: 'gw-1', facility_id: 'fac-1' },
+        deleteRows: 1,
+        accessCodeGroupMember: { group_type: 'access_code' },
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: connection as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      await svc.deleteBluLokFromInventory('dev-1', { source: 'gateway_sync' });
+
+      expect(mockPushCodesToGateway).toHaveBeenCalledWith('fac-1');
+      expect(mockEmitUnassigned).not.toHaveBeenCalled();
+    });
+
+    it('skips unit-linked group cleanup when device has no unit', async () => {
+      const connection = makeKnexForRemoveInventory({
+        device: { id: 'dev-2', gateway_id: 'gw-2', unit_id: null },
+        gateway: { id: 'gw-2', facility_id: null },
+        deleteRows: 1,
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: connection as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      const summary = await svc.removeBluLokDeviceFromCloudInventory('dev-2', { performedBy: 'admin-1' });
+
+      expect(summary.hadUnit).toBe(false);
+      expect(summary.facilityId).toBeNull();
+      expect(summary.unitId).toBeNull();
+      expect(mockEmitRemoved).toHaveBeenCalled();
+      expect(mockEmitUnassigned).not.toHaveBeenCalled();
     });
   });
 

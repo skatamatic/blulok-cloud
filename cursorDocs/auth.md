@@ -4,6 +4,8 @@
 
 BluLok Cloud implements a comprehensive role-based access control (RBAC) system designed for secure management of storage facility locking systems. The authentication system uses JWT tokens with bcrypt password hashing and provides granular access control based on user roles.
 
+**Route passes (device-bound access JWT):** payload shape, `aud` formats, and the compact **`schedules`** claim are documented in [route-pass-jwt.md](./route-pass-jwt.md).
+
 ## User Roles & Permissions
 
 ### Role Hierarchy

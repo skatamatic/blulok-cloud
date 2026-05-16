@@ -2,9 +2,23 @@ import { DeviceSyncService, GatewayDeviceData } from '../../../src/services/devi
 import { DeviceModel, DeviceWithContext } from '../../../src/models/device.model';
 import { DeviceEventService } from '../../../src/services/device-event.service';
 
+const mockDeleteBluLokFromInventory = jest.fn().mockResolvedValue({
+  gatewayId: 'gateway-123',
+  facilityId: 'facility-1',
+  hadUnit: false,
+  unitId: null,
+});
+
 // Mock dependencies
 jest.mock('../../../src/models/device.model');
 jest.mock('../../../src/services/device-event.service');
+jest.mock('../../../src/services/devices.service', () => ({
+  DevicesService: {
+    getInstance: jest.fn(() => ({
+      deleteBluLokFromInventory: mockDeleteBluLokFromInventory,
+    })),
+  },
+}));
 
 // Helper function to create DeviceWithContext objects
 const createDeviceWithContext = (overrides: Partial<DeviceWithContext> = {}): DeviceWithContext => ({
@@ -38,6 +52,12 @@ describe('DeviceSyncService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDeleteBluLokFromInventory.mockResolvedValue({
+      gatewayId: 'gateway-123',
+      facilityId: 'facility-1',
+      hadUnit: false,
+      unitId: null,
+    });
 
     // Create mock instances
     mockDeviceModel = {
@@ -121,18 +141,11 @@ describe('DeviceSyncService', () => {
       const gatewayDevices: GatewayDeviceData[] = []; // No devices on gateway
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
-      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
 
-      // Execute
       await deviceSyncService.syncGatewayDevices(gatewayId, gatewayDevices);
 
-      // Verify - now uses bulk delete
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-1']);
-      expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledWith({
-        deviceId: 'device-1',
-        deviceType: 'blulok',
-        gatewayId: gatewayId
-      });
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-1', { source: 'gateway_sync' });
+      expect(mockEventService.emitDeviceRemoved).not.toHaveBeenCalled();
     });
 
     it('should handle mixed add/remove/update scenarios', async () => {
@@ -172,15 +185,10 @@ describe('DeviceSyncService', () => {
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
       mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
-      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
-
-      // Execute
       await deviceSyncService.syncGatewayDevices(gatewayId, gatewayDevices);
 
-      // Verify - now uses bulk operations
       expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledTimes(1);
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledTimes(1);
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-2']);
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-2', { source: 'gateway_sync' });
     });
 
     it('should handle devices with different identifier formats', async () => {
@@ -445,14 +453,11 @@ describe('DeviceSyncService', () => {
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(existingDevices);
       // Bulk delete fails, then fall back to individual delete which also fails
-      mockDeviceModel.bulkDeleteBluLokDevices.mockRejectedValue(new Error('Bulk delete error'));
-      mockDeviceModel.deleteBluLokDevice.mockRejectedValue(new Error('Database error'));
+      mockDeleteBluLokFromInventory.mockRejectedValue(new Error('Inventory delete error'));
 
-      // Execute - should not throw (catches errors internally)
       await expect(deviceSyncService.syncGatewayDevices('gateway-123', gatewayDevices)).resolves.not.toThrow();
 
-      // Verify bulk delete was attempted first
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-1']);
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-1', { source: 'gateway_sync' });
     });
 
     it('should handle errors when updating device status', async () => {
@@ -529,8 +534,6 @@ describe('DeviceSyncService', () => {
         createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
         createDeviceWithContext({ id: 'device-2', device_serial: 'LOCK-2' }),
       ]);
-      // Mock bulk delete to return count of deleted devices
-      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
 
       const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
         { lock_id: 'LOCK-1' },
@@ -539,8 +542,7 @@ describe('DeviceSyncService', () => {
       expect(result.added).toBe(0);
       expect(result.removed).toBe(1);
       expect(result.unchanged).toBe(1);
-      // Now uses bulk delete instead of individual delete
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-2']);
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-2', { source: 'gateway_sync' });
     });
 
     it('should update firmware_version for existing devices', async () => {
@@ -591,16 +593,14 @@ describe('DeviceSyncService', () => {
       mockDeviceModel.findBluLokDevices.mockResolvedValue([
         createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
       ]);
-      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
 
       const result = await deviceSyncService.syncDeviceInventory(gatewayId, []);
 
       expect(result.removed).toBe(1);
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalled();
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-1', { source: 'gateway_sync' });
     });
 
     it('should remove device that is assigned to a unit', async () => {
-      // Device assigned to a unit should be removable
       const deviceWithUnit = createDeviceWithContext({
         id: 'device-1',
         device_serial: 'LOCK-1',
@@ -608,18 +608,11 @@ describe('DeviceSyncService', () => {
       });
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue([deviceWithUnit]);
-      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(1);
 
       const result = await deviceSyncService.syncDeviceInventory(gatewayId, []);
 
       expect(result.removed).toBe(1);
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-1']);
-      // Verify device removed event is emitted
-      expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledWith({
-        deviceId: 'device-1',
-        deviceType: 'blulok',
-        gatewayId: gatewayId,
-      });
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-1', { source: 'gateway_sync' });
     });
 
     it('should remove multiple devices including ones with unit assignments', async () => {
@@ -630,19 +623,15 @@ describe('DeviceSyncService', () => {
       ];
 
       mockDeviceModel.findBluLokDevices.mockResolvedValue(devices);
-      mockDeviceModel.bulkDeleteBluLokDevices.mockResolvedValue(2);
 
-      // Keep only LOCK-1, remove others
       const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
         { lock_id: 'LOCK-1' },
       ]);
 
       expect(result.removed).toBe(2);
       expect(result.unchanged).toBe(1);
-      // Now uses bulk delete
-      expect(mockDeviceModel.bulkDeleteBluLokDevices).toHaveBeenCalledWith(['device-2', 'device-3']);
-      // Both devices should emit removal events
-      expect(mockEventService.emitDeviceRemoved).toHaveBeenCalledTimes(2);
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-2', { source: 'gateway_sync' });
+      expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-3', { source: 'gateway_sync' });
     });
   });
 

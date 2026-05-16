@@ -1,5 +1,6 @@
 import { DeviceModel, BluLokDevice, CreateBluLokDeviceData, DeviceStateUpdate } from '../models/device.model';
 import { DeviceEventService } from './device-event.service';
+import { DevicesService } from './devices.service';
 
 /**
  * Gateway Device Data Interface
@@ -262,28 +263,16 @@ export class DeviceSyncService {
         }
       }
 
-      // PERFORMANCE FIX: Bulk remove devices instead of sequential deletes
       if (devicesToRemove.length > 0) {
-        const deviceIdsToRemove = devicesToRemove.map(d => d.id);
-        try {
-          const count = await this.deviceModel.bulkDeleteBluLokDevices(deviceIdsToRemove);
-          console.log(`[DEVICE-SYNC] Bulk removed ${count} devices from gateway ${gatewayId}`);
-          
-          // Emit device removed events
-          for (const device of devicesToRemove) {
-            this.eventService.emitDeviceRemoved({
-              deviceId: device.id,
-              deviceType: 'blulok',
-              gatewayId: device.gateway_id
-            });
-          }
-        } catch (error) {
-          console.error(`Failed to bulk remove devices for gateway ${gatewayId}:`, error);
-          // Fall back to individual deletes on bulk failure
-          for (const device of devicesToRemove) {
-            await this.removeGatewayDevice(device);
+        const devicesService = DevicesService.getInstance();
+        for (const device of devicesToRemove) {
+          try {
+            await devicesService.deleteBluLokFromInventory(device.id, { source: 'gateway_sync' });
+          } catch (error) {
+            console.error(`Failed to remove device ${device.device_serial} from gateway ${gatewayId}:`, error);
           }
         }
+        console.log(`[DEVICE-SYNC] Removed ${devicesToRemove.length} devices from gateway ${gatewayId}`);
       }
 
     } catch (error) {
@@ -338,20 +327,11 @@ export class DeviceSyncService {
       const logMessage = device.unit_id
         ? `[DEVICE-SYNC] Device ${device.device_serial} (assigned to unit ${device.unit_id}) no longer exists on gateway ${device.gateway_id}, removing from database`
         : `[DEVICE-SYNC] Device ${device.device_serial} no longer exists on gateway ${device.gateway_id}, removing from database`;
-      
+
       console.log(logMessage);
-      
-      // Delete the device (foreign key constraint will handle unit_id relationship)
-      await this.deviceModel.deleteBluLokDevice(device.id);
 
-      // Emit device removed event
-      this.eventService.emitDeviceRemoved({
-        deviceId: device.id,
-        deviceType: 'blulok',
-        gatewayId: device.gateway_id
-      });
+      await DevicesService.getInstance().deleteBluLokFromInventory(device.id, { source: 'gateway_sync' });
 
-      // Log if device was assigned to a unit (for visibility)
       if (device.unit_id) {
         console.log(`[DEVICE-SYNC] Note: Unit ${device.unit_id} no longer has an associated device after removal`);
       }
@@ -550,32 +530,16 @@ export class DeviceSyncService {
       }
 
       if (devicesToRemove.length > 0) {
-        try {
-          const deviceIds = devicesToRemove.map(d => d.id);
-          const count = await this.deviceModel.bulkDeleteBluLokDevices(deviceIds);
-          result.removed = count;
-          console.log(`[DEVICE-SYNC] Bulk removed ${count} devices from inventory sync`);
-          
-          // Emit device removed events
-          for (const device of devicesToRemove) {
-            this.eventService.emitDeviceRemoved({
-              deviceId: device.id,
-              deviceType: 'blulok',
-              gatewayId: device.gateway_id
-            });
-          }
-        } catch (error: any) {
-          result.errors.push(`Bulk remove failed: ${error.message}`);
-          // Fall back to individual deletes
-          for (const device of devicesToRemove) {
-            try {
-              await this.removeGatewayDevice(device);
-              result.removed++;
-            } catch (err: any) {
-              result.errors.push(`Failed to remove device ${device.device_serial}: ${err.message}`);
-            }
+        const devicesService = DevicesService.getInstance();
+        for (const device of devicesToRemove) {
+          try {
+            await devicesService.deleteBluLokFromInventory(device.id, { source: 'gateway_sync' });
+            result.removed++;
+          } catch (err: any) {
+            result.errors.push(`Failed to remove device ${device.device_serial}: ${err.message}`);
           }
         }
+        console.log(`[DEVICE-SYNC] Removed ${result.removed} devices from inventory sync`);
       }
 
       console.log(
