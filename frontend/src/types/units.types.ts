@@ -17,7 +17,7 @@ export interface Unit {
     id: string;
     lock_status: string;
   };
-  device_status?: 'online' | 'offline' | 'error' | 'maintenance';
+  device_status?: 'online' | 'offline' | 'low_battery' | 'error' | 'maintenance';
   signal_strength?: number;
   temperature?: number;
   error_code?: string | null;
