@@ -1,31 +1,61 @@
 import {
-  WIDGET_SIZE_TO_GRID,
-  sizeToGrid,
-  gridToSize,
-  getAvailableSizes,
-  isValidSize,
+  orderSizesForPlacement,
+  snapGridToAllowedSize,
+  gridBoundsForAllowedSizes,
+  deriveContentTierFromGrid,
+  isDockSize,
 } from '@/utils/widget-size.utils';
-import { WidgetSize } from '@/types/widget.types';
 
 describe('widget-size.utils', () => {
-  it('WIDGET_SIZE_TO_GRID has every size key', () => {
-    expect(WIDGET_SIZE_TO_GRID.tiny).toEqual({ w: 1, h: 1 });
-    expect(WIDGET_SIZE_TO_GRID['mega-tall']).toEqual({ w: 3, h: 6 });
+  it('orderSizesForPlacement puts preferred first then smaller sizes', () => {
+    expect(
+      orderSizesForPlacement('large', ['tiny', 'small', 'medium', 'large'])
+    ).toEqual(['large', 'tiny', 'small', 'medium']);
   });
 
-  it('sizeToGrid returns mapping or fallback', () => {
-    expect(sizeToGrid('small')).toEqual({ w: 2, h: 1 });
-    expect(sizeToGrid('unknown' as WidgetSize)).toEqual({ w: 3, h: 2 });
+  it('snapGridToAllowedSize picks exact preset when dimensions match', () => {
+    expect(snapGridToAllowedSize(2, 2, ['tiny', 'small', 'medium'])).toBe('small');
   });
 
-  it('gridToSize finds exact match then closest by area', () => {
-    expect(gridToSize(1, 1)).toBe('tiny');
-    expect(gridToSize(3, 2)).toBe('medium');
+  it('snapGridToAllowedSize picks nearest area among allowed presets', () => {
+    expect(snapGridToAllowedSize(3, 2, ['tiny', 'small', 'medium'])).toBe('medium');
   });
 
-  it('getAvailableSizes and isValidSize', () => {
-    expect(getAvailableSizes()).toContain('large');
-    expect(isValidSize('medium')).toBe(true);
-    expect(isValidSize('nope')).toBe(false);
+  it('snapGridToAllowedSize prefers matching width/height over area-only match', () => {
+    const notificationSizes = [
+      'medium',
+      'medium-tall',
+      'large',
+      'large-wide',
+      'huge',
+      'huge-wide',
+    ] as const;
+    expect(snapGridToAllowedSize(3, 4, [...notificationSizes])).toBe('medium-tall');
+    expect(snapGridToAllowedSize(4, 3, [...notificationSizes])).toBe('large');
+  });
+
+  it('gridBoundsForAllowedSizes uses full grid for max, smallest preset for min', () => {
+    expect(gridBoundsForAllowedSizes(['tiny', 'large'])).toEqual({
+      minW: 1,
+      minH: 1,
+      maxW: 12,
+      maxH: 6,
+    });
+  });
+
+  it('deriveContentTierFromGrid preserves standard tier on dock-shaped free grids', () => {
+    const tier = deriveContentTierFromGrid('units-manager', 12, 3, 'large-wide');
+    expect(isDockSize(tier)).toBe(false);
+    expect(tier).toBe('large-wide');
+  });
+
+  it('deriveContentTierFromGrid snaps when grid leaves dock-shaped footprint', () => {
+    expect(deriveContentTierFromGrid('units-manager', 4, 3, 'large-wide')).toBe('large');
+  });
+
+  it('deriveContentTierFromGrid preserves explicit dock size', () => {
+    expect(deriveContentTierFromGrid('units-manager', 12, 3, 'dock-bottom')).toBe(
+      'dock-bottom'
+    );
   });
 });

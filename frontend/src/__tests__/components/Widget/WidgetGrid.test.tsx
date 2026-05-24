@@ -40,7 +40,29 @@ describe('WidgetGrid', () => {
     jest.restoreAllMocks();
   });
 
-  it('persists layouts to localStorage when layout changes', async () => {
+  it('persists layouts to localStorage when persistToLocalStorage is enabled', async () => {
+    const onLayoutChange = jest.fn();
+    const layouts = {
+      lg: [{ i: 'w1', x: 0, y: 0, w: 3, h: 2 }],
+      md: [],
+      sm: [],
+    };
+
+    await act(async () => {
+      render(
+        <WidgetGrid layouts={layouts} onLayoutChange={onLayoutChange} persistToLocalStorage>
+          <div key="w1">A</div>
+        </WidgetGrid>
+      );
+    });
+
+    expect(onLayoutChange).toHaveBeenCalled();
+    const stored = localStorage.getItem('blulok-widget-layouts');
+    expect(stored).toBeTruthy();
+    expect(JSON.parse(stored!)).toHaveProperty('lg');
+  });
+
+  it('does not persist to localStorage by default (v2 dashboard owns persistence)', async () => {
     const onLayoutChange = jest.fn();
     const layouts = {
       lg: [{ i: 'w1', x: 0, y: 0, w: 3, h: 2 }],
@@ -57,9 +79,7 @@ describe('WidgetGrid', () => {
     });
 
     expect(onLayoutChange).toHaveBeenCalled();
-    const stored = localStorage.getItem('blulok-widget-layouts');
-    expect(stored).toBeTruthy();
-    expect(JSON.parse(stored!)).toHaveProperty('lg');
+    expect(localStorage.getItem('blulok-widget-layouts')).toBeNull();
   });
 
   it('debounces onLayoutSave after non-initial layout change', async () => {

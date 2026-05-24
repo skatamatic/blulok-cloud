@@ -18,7 +18,8 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
-import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import { DetailsPageHeader } from '@/components/Common/DetailsPageLayout';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 
@@ -64,7 +65,7 @@ interface FacilityLayout {
 export default function FacilitySiteMapPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
-  const handleBack = useBackNavigation('/units');
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/units' });
   // const stageRef = useRef<any>(null);
   
   const [layout, setLayout] = useState<FacilityLayout>({
@@ -282,44 +283,36 @@ export default function FacilitySiteMapPage() {
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={handleBack}
-              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
-              <ArrowLeftIcon className="h-5 w-5" />
-            </button>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Facility Site Map</h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{layout.name}</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center space-x-3">
-            {canManage && (
+        <DetailsPageHeader
+          onBack={showBack ? goBack : undefined}
+          backLabel={backLabel}
+          title="Facility Site Map"
+          subtitle={layout.name}
+          actions={
+            <>
+              {canManage && (
+                <button
+                  onClick={() => setIsEditing(!isEditing)}
+                  className={`inline-flex items-center px-4 py-2 border text-sm font-medium rounded-lg transition-colors ${
+                    isEditing
+                      ? 'border-primary-300 text-primary-700 bg-primary-50 dark:border-primary-600 dark:text-primary-400 dark:bg-primary-900/20'
+                      : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <PencilIcon className="h-4 w-4 mr-2" />
+                  {isEditing ? 'Exit Edit' : 'Edit Layout'}
+                </button>
+              )}
               <button
-                onClick={() => setIsEditing(!isEditing)}
-                className={`inline-flex items-center px-4 py-2 border text-sm font-medium rounded-lg transition-colors ${
-                  isEditing
-                    ? 'border-primary-300 text-primary-700 bg-primary-50 dark:border-primary-600 dark:text-primary-400 dark:bg-primary-900/20'
-                    : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700'
-                }`}
+                onClick={() => navigate('/units')}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
-                <PencilIcon className="h-4 w-4 mr-2" />
-                {isEditing ? 'Exit Edit' : 'Edit Layout'}
+                <EyeIcon className="h-4 w-4 mr-2" />
+                List View
               </button>
-            )}
-            
-            <button
-              onClick={() => navigate('/units')}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              <EyeIcon className="h-4 w-4 mr-2" />
-              List View
-            </button>
-          </div>
-        </div>
+            </>
+          }
+        />
       </div>
 
       <div className="flex-1 flex">
@@ -432,11 +425,11 @@ export default function FacilitySiteMapPage() {
                   For now, use the grid and table views in the Units page.
                 </p>
                 <button
-                  onClick={handleBack}
+                  onClick={goBack}
                   className="inline-flex items-center px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   <ArrowLeftIcon className="h-4 w-4 mr-2" />
-                  Back to Units
+                  {backLabel ?? 'Back'}
                 </button>
               </div>
             </div>

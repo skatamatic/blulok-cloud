@@ -431,7 +431,9 @@ export default function UnitsPage() {
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/facilities/${unit.facility_id}`, { state: { tab: 'units' } });
+                navigate(`/facilities/${unit.facility_id}`, {
+                  state: withReturnPath(location, { tab: 'units' }),
+                });
               }}
               className="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >

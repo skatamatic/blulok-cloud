@@ -9,8 +9,10 @@ import {
   ArrowPathIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { getWidgetLayoutProfile, WIDGET_BODY_CLASS } from '@/utils/widget-layout.utils';
 
 interface HistogramData {
   date: string;
@@ -23,9 +25,12 @@ interface HistogramWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   /** Single facility from global selector; when set, stats are limited to this facility */
   facilityFilter?: string;
 }
@@ -54,13 +59,20 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   id,
   title,
   initialSize = 'medium',
+  currentSize,
   availableSizes = ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
   facilityFilter,
 }) => {
   const { authState } = useAuth();
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('month');
   const [userFacilities, setUserFacilities] = useState<{ id: string; name: string }[]>([]);
   const [selectedFacilities, setSelectedFacilities] = useState<string[]>([]);
@@ -236,8 +248,14 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     await loadActivityStats();
   };
 
-  const isCompactSize = size === 'tiny' || size === 'small' || size === 'medium';
-  const chartHeight = isCompactSize ? 'h-32' : 'h-48';
+  const layout = getWidgetLayoutProfile(size);
+  const chartAreaClass = layout.isDock
+    ? 'h-24 flex-shrink-0'
+    : layout.isTall
+      ? 'flex-1 min-h-0'
+      : layout.density === 'micro' || layout.density === 'compact'
+        ? 'h-32 flex-shrink-0'
+        : 'h-48 flex-shrink-0';
 
   return (
     <Widget 
@@ -245,9 +263,10 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
       title={title} 
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       className="group"
       enhancedMenu={
         <div className="space-y-3">
@@ -341,7 +360,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
         </div>
       }
     >
-      <div className="h-full flex flex-col">
+      <div className={WIDGET_BODY_CLASS}>
         {/* Loading State */}
         {isLoading && histogramData.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
@@ -369,7 +388,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
         ) : (
           <>
             {/* Chart Area */}
-            <div className={`flex-1 ${chartHeight} relative`}>
+            <div className={`${chartAreaClass} relative`}>
               <div className="absolute inset-0 flex items-end justify-between px-1 pb-6">
                 {Object.entries(groupedData).slice(-20).map(([date, dayData], index) => {
                   return (

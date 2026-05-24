@@ -97,6 +97,7 @@ export const deviceModel = new DeviceModel();
 // Validation schemas
 const accessControlDeviceSchema = Joi.object({
   gateway_id: Joi.string().required(),
+  device_serial: Joi.string().trim().min(1).max(100).required(),
   name: Joi.string().required(),
   device_type: Joi.string().valid('door', 'gate', 'elevator').required(),
   location_description: Joi.string().required(),
@@ -107,6 +108,7 @@ const accessControlDeviceSchema = Joi.object({
 const updateAccessControlDeviceSchema = Joi.object({
   name: Joi.string().optional(),
   location_description: Joi.string().optional(),
+  device_serial: Joi.string().trim().min(1).max(100).optional(),
   relay_channel: Joi.number().integer().min(1).max(8).optional(),
   status: Joi.string().valid('online', 'offline', 'error', 'maintenance').optional(),
   is_locked: Joi.boolean().optional(),

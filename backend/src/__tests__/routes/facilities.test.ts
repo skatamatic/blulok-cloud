@@ -304,6 +304,17 @@ describe('Facilities Routes', () => {
 
       expectForbidden(response);
     });
+
+    it('should return 409 when creating a facility with a duplicate name', async () => {
+      const response = await request(app)
+        .post('/api/v1/facilities')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ ...validFacilityData, name: 'Test Facility 1' })
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toMatch(/name already exists/i);
+    });
   });
 
   describe('PUT /api/v1/facilities/:id - Update Facility', () => {
@@ -385,6 +396,27 @@ describe('Facilities Routes', () => {
         .expect(403);
 
       expectForbidden(response);
+    });
+
+    it('should return 409 when renaming to an existing facility name', async () => {
+      const response = await request(app)
+        .put('/api/v1/facilities/facility-1')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ name: 'Test Facility 2' })
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toMatch(/name already exists/i);
+    });
+
+    it('should allow keeping the same facility name on update', async () => {
+      const response = await request(app)
+        .put('/api/v1/facilities/facility-1')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ name: 'Test Facility 1', description: 'Same name, new description' })
+        .expect(200);
+
+      expectSuccess(response);
     });
   });
 

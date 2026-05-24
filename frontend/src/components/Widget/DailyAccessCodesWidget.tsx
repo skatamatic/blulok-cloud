@@ -21,14 +21,16 @@ interface DailyAccessCodeEntry extends UserAccessCode {
 
 interface DailyAccessCodesWidgetProps {
   currentSize: WidgetSize;
-  onSizeChange: (size: WidgetSize) => void;
+  onSizeChange?: (size: WidgetSize) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
 }
 
 export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
   currentSize,
   onSizeChange,
   onRemove,
+  readOnly = false,
 }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
@@ -153,6 +155,7 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex h-full items-center justify-center text-gray-500 dark:text-gray-400">
           Loading...
@@ -170,6 +173,7 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex h-full flex-col items-center justify-center gap-3 text-red-500">
           <ExclamationTriangleIcon className="h-8 w-8" />
@@ -195,6 +199,7 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
       onSizeChange={onSizeChange}
       availableSizes={availableSizes}
       onRemove={onRemove}
+      readOnly={readOnly}
     >
       <div className="flex h-full flex-col">
         <div className="mb-3 flex items-center justify-between">

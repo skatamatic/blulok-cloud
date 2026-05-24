@@ -79,11 +79,13 @@ describe('FacilityDetailsPage - Delete flow', () => {
   });
 
   it('shows Delete button for admin, loads impact, and deletes on confirm', async () => {
-    renderWithProviders(<FacilityDetailsPage />);
+    renderWithProviders(<FacilityDetailsPage />, '/facilities/fac-1?tab=facility');
 
-    await waitFor(() => expect(screen.getByText('Test Facility')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 1, name: 'Test Facility' })).toBeInTheDocument()
+    );
 
-    const deleteBtn = screen.getByRole('button', { name: /delete/i });
+    const deleteBtn = screen.getByRole('button', { name: /^delete facility$/i });
     expect(deleteBtn).toBeInTheDocument();
 
     fireEvent.click(deleteBtn);
@@ -93,8 +95,8 @@ describe('FacilityDetailsPage - Delete flow', () => {
     // Confirm modal content rendered
     await waitFor(() => expect(screen.getByText(/This will permanently delete this facility/i)).toBeInTheDocument());
 
-    const confirm = screen.getByRole('button', { name: /delete facility/i });
-    fireEvent.click(confirm);
+    const confirmButtons = screen.getAllByRole('button', { name: /delete facility/i });
+    fireEvent.click(confirmButtons[confirmButtons.length - 1]);
 
     await waitFor(() => expect(mockApi.deleteFacility).toHaveBeenCalledWith('fac-1'));
 

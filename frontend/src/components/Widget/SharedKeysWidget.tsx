@@ -5,17 +5,20 @@ import { KeyIcon, UserGroupIcon, ClockIcon, CheckCircleIcon, XCircleIcon, Exclam
 import { apiService } from '@/services/api.service';
 import { KeySharing } from '@/types/access-history.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface SharedKeysWidgetProps {
   currentSize: WidgetSize;
-  onSizeChange: (size: WidgetSize) => void;
+  onSizeChange?: (size: WidgetSize) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
 }
 
 export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
   currentSize,
   onSizeChange,
   onRemove,
+  readOnly = false,
 }) => {
   const { authState } = useAuth();
   const [sharedKeys, setSharedKeys] = useState<KeySharing[]>([]);
@@ -46,15 +49,7 @@ export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
     fetchSharedKeys();
   }, [authState.user]);
 
-  const getMaxItems = (size: WidgetSize): number => {
-    switch (size) {
-      case 'small': return 2;
-      case 'medium': return 3;
-      case 'medium-tall': return 4;
-      case 'large': return 5;
-      default: return 3;
-    }
-  };
+  const layout = getWidgetLayoutProfile(currentSize);
 
   const formatExpiration = (dateString: string | null): string => {
     if (!dateString) return 'No expiration';
@@ -104,7 +99,7 @@ export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
     return 'Unknown User';
   };
 
-  const maxItems = getMaxItems(currentSize);
+  const maxItems = layout.listCap;
   const displayKeys = sharedKeys.slice(0, maxItems);
 
   if (loading) {
@@ -116,6 +111,7 @@ export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full">
           <div className="text-gray-500 dark:text-gray-400">Loading...</div>
@@ -133,6 +129,7 @@ export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full">
           <div className="text-red-500 text-center">
@@ -152,6 +149,7 @@ export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
       onSizeChange={onSizeChange}
       availableSizes={availableSizes}
       onRemove={onRemove}
+      readOnly={readOnly}
     >
       <div className="space-y-2 h-full flex flex-col">
         {sharedKeys.length === 0 ? (
@@ -178,7 +176,7 @@ export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
           </div>
         ) : (
           // Full view for larger sizes
-          <div className="space-y-3 flex-1 overflow-y-auto">
+          <div className={`space-y-2 ${WIDGET_LIST_SCROLL_CLASS}`}>
             {displayKeys.map((sharing) => (
               <div key={sharing.id} className="p-3 rounded-md bg-gray-50 dark:bg-gray-700">
                 <div className="flex items-center justify-between mb-2">

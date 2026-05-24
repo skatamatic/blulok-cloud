@@ -143,7 +143,7 @@ function App() {
                         {/* Protected routes */}
                         <Route path="/dashboard" element={
                           <ProtectedRoute>
-                            <DashboardLayout>
+                            <DashboardLayout lockViewport>
                               <DashboardPage />
                             </DashboardLayout>
                           </ProtectedRoute>
@@ -166,7 +166,7 @@ function App() {
                         } />
 
                         <Route path="/settings" element={
-                          <ProtectedRoute requireAdmin>
+                          <ProtectedRoute requireSettingsAccess>
                             <DashboardLayout>
                               <SettingsPage />
                             </DashboardLayout>
@@ -203,7 +203,7 @@ function App() {
                         } />
 
                         <Route path="/facilities/:id/edit" element={
-                          <ProtectedRoute requireAdmin>
+                          <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]}>
                             <DashboardLayout>
                               <EditFacilityPage />
                             </DashboardLayout>

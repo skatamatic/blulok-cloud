@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import { renderHook, act } from '@testing-library/react';
-import { useBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
+import { useBackNavigation, withReturnPath, useDetailsBackNavigation } from '@/hooks/useBackNavigation';
 
 const mockNavigate = jest.fn();
 
@@ -98,5 +98,56 @@ describe('useBackNavigation', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('/fallback', { replace: true });
+  });
+});
+
+describe('useDetailsBackNavigation', () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+    (useLocation as jest.Mock).mockReset();
+  });
+
+  it('uses fromPath for label and shows back', () => {
+    (useLocation as jest.Mock).mockReturnValue({
+      pathname: '/devices/device-1',
+      search: '',
+      hash: '',
+      state: { fromPath: '/facilities/f1?tab=devices' },
+      key: 'k',
+    });
+
+    const { result } = renderHook(() =>
+      useDetailsBackNavigation({ fallbackPath: '/devices', showWithoutFromPath: false }),
+    );
+
+    expect(result.current.showBack).toBe(true);
+    expect(result.current.backLabel).toBe('Back to Facility');
+
+    act(() => {
+      result.current.goBack();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/facilities/f1?tab=devices');
+  });
+
+  it('hides back when showWithoutFromPath is false and no fromPath', () => {
+    (useLocation as jest.Mock).mockReturnValue({
+      pathname: '/facilities/f1',
+      search: '',
+      hash: '',
+      state: null,
+      key: 'k',
+    });
+    Object.defineProperty(window, 'history', {
+      value: { length: 3, state: { idx: 2 } },
+      configurable: true,
+    });
+
+    const { result } = renderHook(() =>
+      useDetailsBackNavigation({ showWithoutFromPath: false }),
+    );
+
+    expect(result.current.showBack).toBe(false);
+    expect(result.current.backLabel).toBeUndefined();
   });
 });

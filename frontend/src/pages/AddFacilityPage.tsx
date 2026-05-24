@@ -12,9 +12,12 @@ import { apiService } from '@/services/api.service';
 import { CreateFacilityData } from '@/types/facility.types';
 import { AddressAutocomplete } from '@/components/GoogleMaps/AddressAutocomplete';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
+import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import { DetailsPageHeader, DetailsPageShell } from '@/components/Common/DetailsPageLayout';
 
 export default function AddFacilityPage() {
   const navigate = useNavigate();
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/settings' });
   const [formData, setFormData] = useState<CreateFacilityData>({
     name: '',
     description: '',
@@ -132,13 +135,13 @@ export default function AddFacilityPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-white">Add Facility</h1>
-        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-          Create a new facility and optionally provision its gateway.
-        </p>
-      </div>
+    <DetailsPageShell>
+      <DetailsPageHeader
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+        title="Add facility"
+        subtitle="Create a new facility and optionally provision its gateway."
+      />
 
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm">
         <div className="px-8 py-6 border-b border-gray-200 dark:border-gray-700">
@@ -421,6 +424,6 @@ export default function AddFacilityPage() {
           </div>
         )}
       </div>
-    </div>
+    </DetailsPageShell>
   );
 }

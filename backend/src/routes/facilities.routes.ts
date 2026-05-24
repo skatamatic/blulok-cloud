@@ -247,6 +247,12 @@ router.post('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), async (req:
     }
 
     const facilityData = value;
+    const duplicate = await facilityModel.findByName(facilityData.name);
+    if (duplicate) {
+      res.status(409).json({ success: false, message: 'A facility with this name already exists' });
+      return;
+    }
+
     const facility = await facilityModel.create(facilityData);
     
     res.status(201).json({ success: true, facility });
@@ -284,6 +290,15 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
     }
 
     const facilityData = value;
+
+    if (facilityData.name) {
+      const duplicate = await facilityModel.findByName(facilityData.name, String(id));
+      if (duplicate) {
+        res.status(409).json({ success: false, message: 'A facility with this name already exists' });
+        return;
+      }
+    }
+
     const facility = await facilityModel.update(String(id), facilityData);
     
     if (!facility) {

@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosError, AxiosRequestConfig } from 'axios';
 import { getApiBaseUrl } from './appConfig';
 import { LoginCredentials, LoginResponse } from '@/types/auth.types';
-import { AccessCode, AccessCodeConfig, AccessCodeGroupConfig, DeviceGroup, EffectiveAccessCode, UserAccessCode } from '@/types/facility.types';
+import { AccessCode, AccessCodeConfig, AccessCodeGroupConfig, DeviceGroup, EffectiveAccessCode, UserAccessCode, AccessControlDevice, CreateAccessControlDevicePayload, UpdateAccessControlDevicePayload } from '@/types/facility.types';
 import type { ScopedGeneralStatsData } from '@/types/dashboard.types';
 import type { UserNotificationApi } from '@/types/notifications.types';
 
@@ -156,8 +156,10 @@ class ApiService {
   }
 
   // Widget layout endpoints
-  async getWidgetLayouts() {
-    const response = await this.api.get('/widget-layouts');
+  async getWidgetLayouts(activeFacilityId?: string | null) {
+    const response = await this.api.get('/widget-layouts', {
+      params: activeFacilityId ? { activeFacilityId } : undefined,
+    });
     return response.data;
   }
 
@@ -173,17 +175,42 @@ class ApiService {
     return response.data;
   }
 
-  async updateWidget(widgetId: string, data: {
-    layoutConfig?: unknown;
-    isVisible?: boolean;
-    displayOrder?: number;
-  }) {
-    const response = await this.api.put(`/widget-layouts/${widgetId}`, data);
+  async saveDashboard(pages: Array<{
+    id?: string;
+    name?: string;
+    pageOrder: number;
+    widgets: Array<{
+      widgetId: string;
+      widgetType?: string;
+      config?: Record<string, unknown>;
+      layoutConfig: unknown;
+      displayOrder: number;
+      isVisible?: boolean;
+    }>;
+  }>, activePageId?: string) {
+    const response = await this.api.post('/widget-layouts', { pages, activePageId });
     return response.data;
   }
 
-  async hideWidget(widgetId: string) {
-    const response = await this.api.delete(`/widget-layouts/${widgetId}`);
+  async updateWidget(
+    widgetId: string,
+    data: {
+      layoutConfig?: unknown;
+      isVisible?: boolean;
+      displayOrder?: number;
+    },
+    pageId?: string
+  ) {
+    const response = await this.api.put(`/widget-layouts/${widgetId}`, data, {
+      params: pageId ? { pageId } : undefined,
+    });
+    return response.data;
+  }
+
+  async hideWidget(widgetId: string, pageId?: string) {
+    const response = await this.api.delete(`/widget-layouts/${widgetId}`, {
+      params: pageId ? { pageId } : undefined,
+    });
     return response.data;
   }
 
@@ -192,13 +219,85 @@ class ApiService {
     return response.data;
   }
 
-  async resetWidgetLayout() {
-    const response = await this.api.post('/widget-layouts/reset');
+  async resetWidgetLayout(activeFacilityId?: string | null) {
+    const response = await this.api.post('/widget-layouts/reset', {
+      activeFacilityId: activeFacilityId ?? undefined,
+    });
+    return response.data;
+  }
+
+  async resetWidgetLayoutDefaults() {
+    const response = await this.api.post('/widget-layouts/reset-defaults');
     return response.data;
   }
 
   async getWidgetTemplates() {
     const response = await this.api.get('/widget-layouts/templates');
+    return response.data;
+  }
+
+  async listSavedDashboards() {
+    const response = await this.api.get('/saved-dashboards');
+    return response.data;
+  }
+
+  async createSavedDashboard(payload: { name: string; description?: string }) {
+    const response = await this.api.post('/saved-dashboards', payload);
+    return response.data;
+  }
+
+  async updateSavedDashboardSnapshot(id: string) {
+    const response = await this.api.put(`/saved-dashboards/${id}/snapshot`);
+    return response.data;
+  }
+
+  async renameSavedDashboard(
+    id: string,
+    payload: { name?: string; description?: string | null }
+  ) {
+    const response = await this.api.patch(`/saved-dashboards/${id}`, payload);
+    return response.data;
+  }
+
+  async deleteSavedDashboard(id: string) {
+    const response = await this.api.delete(`/saved-dashboards/${id}`);
+    return response.data;
+  }
+
+  async loadSavedDashboard(id: string, activeFacilityId?: string | null) {
+    const response = await this.api.post(`/saved-dashboards/${id}/load`, {
+      activeFacilityId: activeFacilityId ?? undefined,
+    });
+    return response.data;
+  }
+
+  async listDashboardAssignments() {
+    const response = await this.api.get('/dashboard-assignments');
+    return response.data;
+  }
+
+  async createDashboardAssignment(payload: {
+    savedDashboardId: string;
+    scope: 'global' | 'facility' | 'user';
+    facilityId?: string | null;
+    userId?: string | null;
+    targetRole: string;
+    priority?: number;
+  }) {
+    const response = await this.api.post('/dashboard-assignments', payload);
+    return response.data;
+  }
+
+  async updateDashboardAssignment(
+    id: string,
+    payload: { savedDashboardId?: string; priority?: number }
+  ) {
+    const response = await this.api.patch(`/dashboard-assignments/${id}`, payload);
+    return response.data;
+  }
+
+  async deleteDashboardAssignment(id: string) {
+    const response = await this.api.delete(`/dashboard-assignments/${id}`);
     return response.data;
   }
 
@@ -382,6 +481,14 @@ class ApiService {
     return response.data;
   }
 
+  async getGatewayDeviceSyncLogs(
+    gatewayId: string,
+    params?: { limit?: number; offset?: number }
+  ): Promise<{ success: boolean; logs: import('@/types/gateway.types').GatewayDeviceSyncLogRecord[]; total: number }> {
+    const response = await this.api.get(`/gateways/${gatewayId}/device-sync-logs`, { params });
+    return response.data;
+  }
+
   async getGatewayWsStatus(facilityId: string) {
     const response = await this.api.get(`/gateways/status/${facilityId}`);
     return response.data as { success: boolean; facilityId: string; connected: boolean; lastPongAt?: number };
@@ -458,7 +565,7 @@ class ApiService {
     return response.data;
   }
 
-  async getAccessControlDevice(id: string) {
+  async getAccessControlDevice(id: string): Promise<{ success: boolean; device: AccessControlDevice }> {
     const response = await this.api.get(`/devices/access-control/${id}`);
     return response.data;
   }
@@ -495,12 +602,12 @@ class ApiService {
     return response.data;
   }
 
-  async createAccessControlDevice(data: object) {
+  async createAccessControlDevice(data: CreateAccessControlDevicePayload) {
     const response = await this.api.post('/devices/access-control', data);
     return response.data;
   }
 
-  async updateAccessControlDevice(id: string, data: object) {
+  async updateAccessControlDevice(id: string, data: UpdateAccessControlDevicePayload) {
     const response = await this.api.put(`/devices/access-control/${id}`, data);
     return response.data;
   }

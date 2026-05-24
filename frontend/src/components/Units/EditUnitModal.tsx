@@ -1,20 +1,15 @@
 import { useState, useEffect } from 'react';
-import {
-  TagIcon,
-  CheckIcon,
-  BuildingOfficeIcon,
-  PencilIcon
-} from '@heroicons/react/24/outline';
+import { BuildingOfficeIcon, PencilIcon } from '@heroicons/react/24/outline';
 import { Modal } from '@/components/Modal/Modal';
 import { apiService } from '@/services/api.service';
 import { Unit } from '@/types/facility.types';
 
-interface UpdateUnitData {
+type VacantUnitStatus = 'available' | 'maintenance' | 'reserved';
+
+interface EditUnitFormData {
   unit_number: string;
-  unit_type: string;
-  status: 'available' | 'occupied' | 'maintenance' | 'reserved';
+  status: VacantUnitStatus;
   description: string;
-  features: string[];
 }
 
 interface EditUnitModalProps {
@@ -24,53 +19,37 @@ interface EditUnitModalProps {
   unit: Unit | null;
 }
 
-const UNIT_TYPES = [
-  'Small Storage',
-  'Medium Storage',
-  'Large Storage',
-  'Extra Large Storage',
-  'Climate Controlled',
-  'Drive-up',
-  'Indoor',
-  'Outdoor',
-  'Vehicle Storage',
-  'Business Storage'
-];
+function unitHasTenant(unit: Unit): boolean {
+  return Boolean(
+    unit.primary_tenant?.id || (unit.shared_tenants && unit.shared_tenants.length > 0)
+  );
+}
 
-const COMMON_FEATURES = [
-  'Climate Controlled',
-  'Drive-up Access',
-  '24/7 Access',
-  'Security Cameras',
-  'Lighting',
-  'Ground Floor',
-  'Elevator Access',
-  'Loading Dock',
-  'Power Outlet',
-  'Shelving Available'
-];
+function vacantStatusFromUnit(unit: Unit): VacantUnitStatus {
+  if (unit.status === 'maintenance' || unit.status === 'reserved') {
+    return unit.status;
+  }
+  return 'available';
+}
 
 export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModalProps) {
-  const [formData, setFormData] = useState<UpdateUnitData>({
+  const [formData, setFormData] = useState<EditUnitFormData>({
     unit_number: '',
-    unit_type: '',
     status: 'available',
     description: '',
-    features: []
   });
 
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  const hasTenant = unit ? unitHasTenant(unit) : false;
+
   useEffect(() => {
     if (isOpen && unit) {
-      // Populate form with current unit data
       setFormData({
         unit_number: unit.unit_number || '',
-        unit_type: unit.unit_type || '',
-        status: unit.status || 'available',
+        status: vacantStatusFromUnit(unit),
         description: unit.description || '',
-        features: unit.features || []
       });
     }
   }, [isOpen, unit]);
@@ -81,26 +60,16 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
     if (!formData.unit_number.trim()) {
       newErrors.unit_number = 'Unit number is required';
     }
-    if (!formData.unit_type) {
-      newErrors.unit_type = 'Unit type is required';
-    }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleInputChange = (field: keyof UpdateUnitData, value: string | number | string[]) => {
+  const handleInputChange = (field: keyof EditUnitFormData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
-  };
-
-  const handleFeatureToggle = (feature: string) => {
-    const newFeatures = formData.features.includes(feature)
-      ? formData.features.filter(f => f !== feature)
-      : [...formData.features, feature];
-    handleInputChange('features', newFeatures);
   };
 
   const handleSubmit = async () => {
@@ -109,8 +78,20 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
     try {
       setLoading(true);
 
-      // Update unit
-      await apiService.updateUnit(unit.id, formData);
+      const payload: {
+        unit_number: string;
+        description: string;
+        status?: VacantUnitStatus;
+      } = {
+        unit_number: formData.unit_number,
+        description: formData.description,
+      };
+
+      if (!hasTenant) {
+        payload.status = formData.status;
+      }
+
+      await apiService.updateUnit(unit.id, payload);
 
       onSuccess();
       handleClose();
@@ -125,10 +106,8 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
   const handleClose = () => {
     setFormData({
       unit_number: '',
-      unit_type: '',
       status: 'available',
       description: '',
-      features: []
     });
     setErrors({});
     onClose();
@@ -153,7 +132,7 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
               Edit Unit
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Update unit details and configuration
+              Update unit number, status, and description
             </p>
           </div>
         </div>
@@ -161,7 +140,6 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
 
       <div className="px-8 py-6">
         <div className="space-y-6">
-          {/* Basic Information */}
           <div className="space-y-4">
             <h4 className="text-sm font-medium text-gray-900 dark:text-white">Unit Details</h4>
 
@@ -201,49 +179,39 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
                   } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
                   placeholder="e.g. A101, B-205"
                 />
-                {errors.unit_number && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.unit_number}</p>}
+                {errors.unit_number && (
+                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.unit_number}</p>
+                )}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Unit Type *
-                </label>
-                <select
-                  value={formData.unit_type}
-                  onChange={(e) => handleInputChange('unit_type', e.target.value)}
-                  className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 ${
-                    errors.unit_type
-                      ? 'border-red-300 dark:border-red-600'
-                      : 'border-gray-300 dark:border-gray-600'
-                  } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
-                >
-                  <option value="">Select unit type</option>
-                  {UNIT_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-                {errors.unit_type && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.unit_type}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Status
-                </label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Status
+              </label>
+              {hasTenant ? (
+                <div>
+                  <input
+                    type="text"
+                    value="Occupied"
+                    disabled
+                    className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-400 cursor-not-allowed"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Status is occupied while tenants are assigned. Remove all tenants to change status.
+                  </p>
+                </div>
+              ) : (
                 <select
                   value={formData.status}
-                  onChange={(e) => handleInputChange('status', e.target.value)}
+                  onChange={(e) => handleInputChange('status', e.target.value as VacantUnitStatus)}
                   className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
                   <option value="available">Available</option>
-                  <option value="occupied">Occupied</option>
                   <option value="maintenance">Maintenance</option>
                   <option value="reserved">Reserved</option>
                 </select>
-              </div>
+              )}
             </div>
 
             <div>
@@ -257,36 +225,6 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
                 className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 placeholder="Enter unit description"
               />
-            </div>
-          </div>
-
-          {/* Features */}
-          <div className="space-y-4">
-            <h4 className="text-sm font-medium text-gray-900 dark:text-white flex items-center">
-              <TagIcon className="h-4 w-4 mr-2" />
-              Features
-            </h4>
-
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {COMMON_FEATURES.map((feature) => (
-                <button
-                  key={feature}
-                  type="button"
-                  onClick={() => handleFeatureToggle(feature)}
-                  className={`text-left px-3 py-2 text-sm rounded-lg border transition-colors ${
-                    formData.features.includes(feature)
-                      ? 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
-                      : 'border-gray-200 hover:border-gray-300 text-gray-700 dark:border-gray-700 dark:hover:border-gray-600 dark:text-gray-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span>{feature}</span>
-                    {formData.features.includes(feature) && (
-                      <CheckIcon className="h-4 w-4 text-primary-600 dark:text-primary-400" />
-                    )}
-                  </div>
-                </button>
-              ))}
             </div>
           </div>
         </div>

@@ -12,11 +12,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { Unit } from '@/types/units.types';
 import { apiService } from '@/services/api.service';
+import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface BatteryStatusWidgetProps {
   currentSize: WidgetSize;
   onSizeChange: (size: WidgetSize) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   /** When set, GET /units is filtered to this facility (backend enforces RBAC) */
   facilityFilter?: string;
 }
@@ -64,6 +66,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
   currentSize,
   onSizeChange,
   onRemove,
+  readOnly,
   facilityFilter,
 }) => {
   const { authState } = useAuth();
@@ -159,20 +162,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
     }
   };
 
-  const getMaxItems = (size: WidgetSize): number => {
-    switch (size) {
-      case 'small':
-        return 3;
-      case 'medium':
-        return 5;
-      case 'medium-tall':
-        return 8;
-      case 'large':
-        return 10;
-      default:
-        return 5;
-    }
-  };
+  const layout = getWidgetLayoutProfile(currentSize);
 
   const formatLastSeen = (dateString: string | undefined): string => {
     if (!dateString) return 'Never';
@@ -228,7 +218,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
       }
     }) || [];
 
-  const maxItems = getMaxItems(currentSize);
+  const maxItems = layout.listCap;
   const displayUnits = filteredUnits.slice(0, maxItems);
 
   const criticalCount = batteryData?.criticalBatteryUnits || 0;
@@ -244,6 +234,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" />
@@ -261,6 +252,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full">
           <div className="text-red-500 text-center">
@@ -280,6 +272,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
       onSizeChange={onSizeChange}
       availableSizes={availableSizes}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
           <button
@@ -354,7 +347,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
 
         {/* Unit List */}
         <div
-          className={`flex-1 ${currentSize === 'small' ? 'space-y-1 overflow-hidden' : 'space-y-2 overflow-y-auto'}`}
+          className={`${WIDGET_LIST_SCROLL_CLASS} ${currentSize === 'small' ? 'space-y-1' : 'space-y-2'}`}
         >
           {displayUnits.length > 0 ? (
             displayUnits.map((unit) => {

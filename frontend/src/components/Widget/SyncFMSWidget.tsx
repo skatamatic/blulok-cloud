@@ -17,6 +17,55 @@ import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { FMSSyncLog } from '@/types/fms.types';
 import { getFmsSyncHistoryDetectedSuffix } from '@/utils/fmsSyncLogDisplay';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
+import { usePressWithoutDrag } from '@/hooks/usePressWithoutDrag';
+import { StatTinyContent } from '@/components/Widget/widget-content.utils';
+
+const FMS_SYNC_TINT_ACTIVE =
+  'text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/20';
+const FMS_SYNC_TINT_INACTIVE =
+  'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800/80';
+
+function fmsSyncTintClass(enabled: boolean): string {
+  return enabled ? FMS_SYNC_TINT_ACTIVE : FMS_SYNC_TINT_INACTIVE;
+}
+
+function fmsSyncActionClass(enabled: boolean): string {
+  return `${fmsSyncTintClass(enabled)} transition-opacity hover:opacity-90`;
+}
+
+function FmsSyncActionButton({
+  enabled,
+  syncing = false,
+  disabled = false,
+  onClick,
+  title,
+  className = '',
+  iconClassName = 'h-5 w-5',
+  children,
+}: {
+  enabled: boolean;
+  syncing?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  title?: string;
+  className?: string;
+  iconClassName?: string;
+  children?: React.ReactNode;
+}) {
+  const { pressProps } = usePressWithoutDrag(onClick, { disabled });
+
+  return (
+    <div
+      {...pressProps}
+      title={title}
+      className={`pointer-events-auto flex items-center justify-center ${disabled ? 'cursor-not-allowed opacity-50' : ''} ${fmsSyncActionClass(enabled)} ${className}`}
+    >
+      <ArrowPathIcon className={`${iconClassName} ${syncing ? 'animate-spin' : ''}`} />
+      {children}
+    </div>
+  );
+}
 
 interface FMSSyncStatus {
   facilityId: string;
@@ -38,25 +87,35 @@ interface SyncFMSWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
 }
 
 export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   id,
   title,
   initialSize = 'medium',
-  availableSizes = ['medium', 'large', 'large-wide', 'huge'],
+  currentSize,
+  availableSizes = ['tiny', 'small', 'medium', 'large', 'large-wide', 'huge'],
+  onSizeChange,
   onGridSizeChange,
-  onRemove
+  onRemove,
+  readOnly,
 }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
   const { startSync, completeSync, canStartNewSync, cancelSync } = useFMSSync();
   const { subscribe, unsubscribe } = useWebSocket();
   const { selectedFacilityId, facilities, isLoading: facilitiesLoading } = useGlobalFacility();
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   
   // FMS state
   const [fmsStatuses, setFmsStatuses] = useState<FMSSyncStatus[]>([]);
@@ -461,16 +520,17 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     return `${diffDays}d ago`;
   };
 
-  if (showBlockingSpinner) {
+  if (showBlockingSpinner && size !== 'tiny') {
     return (
       <Widget
         id={id}
         title={title}
         size={size}
         availableSizes={availableSizes}
-        onSizeChange={setSize}
+        onSizeChange={handleSizeChange}
         onGridSizeChange={onGridSizeChange}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full min-h-0">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" aria-label="Loading" />
@@ -479,52 +539,49 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     );
   }
 
-  // Render tiny size - sync button with dropdown + oldest sync info
   if (size === 'tiny') {
+    const canSync = Boolean(effectiveFacilityId && fmsConfigured);
     return (
-      <>
-        <Widget
-          id={id}
-          title={title}
-          size={size}
-          availableSizes={availableSizes}
-          onSizeChange={setSize}
-          onGridSizeChange={onGridSizeChange}
-          onRemove={onRemove}
-        >
-          <div className="h-full flex flex-col justify-center items-center space-y-1">
-            {/* Sync button */}
-            {effectiveFacilityId ? (
-              <button
-                onClick={handleManualSync}
-                disabled={syncing || showBlockingSpinner || !fmsConfigured}
-                className={`no-drag w-11 h-11 text-xs font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  fmsConfigured
-                    ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                    : 'bg-gray-400 text-gray-200'
-                }`}
-                title={!fmsConfigured ? 'FMS not configured for this facility' : undefined}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <ArrowPathIcon className={`h-5 w-5 ${syncing ? 'animate-spin' : ''}`} />
-              </button>
-            ) : (
-              <div className="text-xs text-gray-400 text-center px-2">
-                Select a facility
-              </div>
-            )}
-
-            {/* Oldest sync time below button */}
-            {effectiveFacilityId && currentFacilityStatus && currentFacilityStatus.lastSyncTime && (
-              <div className="text-center">
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {formatTimeAgo(currentFacilityStatus.lastSyncTime)}
-                </div>
-              </div>
-            )}
-          </div>
-        </Widget>
-      </>
+      <Widget
+        id={id}
+        title={title}
+        size={size}
+        availableSizes={availableSizes}
+        onSizeChange={handleSizeChange}
+        onGridSizeChange={onGridSizeChange}
+        onRemove={onRemove}
+        readOnly={readOnly}
+        suppressTitleOverlay
+      >
+        <StatTinyContent
+          loading={showBlockingSpinner}
+          icon={canSync ? ArrowPathIcon : CloudIcon}
+          value={
+            syncing
+              ? '…'
+              : !effectiveFacilityId || !fmsConfigured
+                ? '—'
+                : (currentFacilityStatus?.lastSyncTime ?? oldestSyncStatus?.lastSyncTime)
+                  ? formatTimeAgo(
+                      (currentFacilityStatus?.lastSyncTime ??
+                        oldestSyncStatus?.lastSyncTime) as string
+                    )
+                  : 'Sync'
+          }
+          label={title}
+          iconClassName={fmsSyncTintClass(canSync)}
+          onClick={effectiveFacilityId ? handleManualSync : undefined}
+          disabled={syncing || !canSync}
+          spinning={syncing}
+          actionTitle={
+            !effectiveFacilityId
+              ? 'Select a facility to sync'
+              : !fmsConfigured
+                ? 'FMS not configured for this facility'
+                : 'Sync now'
+          }
+        />
+      </Widget>
     );
   }
 
@@ -535,9 +592,10 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         title={title}
         size={size}
         availableSizes={availableSizes}
-        onSizeChange={setSize}
+        onSizeChange={handleSizeChange}
         onGridSizeChange={onGridSizeChange}
         onRemove={onRemove}
+        readOnly={readOnly}
         enhancedMenu={
           fmsConfigured ? (
             <div className="space-y-1">
@@ -556,6 +614,11 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         }
       >
         <div className="h-full min-h-0 flex flex-col space-y-3 overflow-hidden">
+          {size === 'small' && !effectiveFacilityId && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 text-center px-2">
+              Select a facility to sync
+            </p>
+          )}
           {/* Show message if "All Facilities" is selected */}
           {selectedFacilityId === ALL_FACILITIES_ID && (
             <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
@@ -566,20 +629,15 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           {/* Small: single compact row — only when this facility has FMS (avoid stacking with empty-state blocks) */}
           {size === 'small' && effectiveFacilityId && hasAnyFMSConfigured && fmsConfigured && (
             <div className="flex min-h-0 flex-1 shrink-0 items-center justify-center gap-2 overflow-hidden px-1 py-0">
-              <button
-                type="button"
-                onClick={handleManualSync}
+              <FmsSyncActionButton
+                enabled={fmsConfigured}
+                syncing={syncing}
                 disabled={syncing || showBlockingSpinner || !fmsConfigured}
-                className={`no-drag flex shrink-0 items-center justify-center rounded-lg p-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  fmsConfigured
-                    ? 'bg-primary-600 text-white hover:bg-primary-700'
-                    : 'bg-gray-400 text-gray-200'
-                }`}
+                onClick={handleManualSync}
                 title={!fmsConfigured ? 'FMS not configured for this facility' : 'Sync now'}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-              </button>
+                className="shrink-0 rounded-lg p-2 text-sm font-medium"
+                iconClassName="h-4 w-4"
+              />
               <div className="min-w-0 flex-1 text-left">
                 {currentFacilityStatus ? (
                   <>
@@ -685,13 +743,15 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               {/* Sync button - takes remaining space */}
               {hasAnyFMSConfigured && (
                 <div className="flex items-center">
-                  <button
-                    onClick={handleManualSync}
+                  <FmsSyncActionButton
+                    enabled={fmsConfigured}
+                    syncing={syncing}
                     disabled={syncing || !fmsConfigured}
-                    className="px-4 py-4 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <ArrowPathIcon className={`h-5 w-5 ${syncing ? 'animate-spin' : ''}`} />
-                  </button>
+                    onClick={handleManualSync}
+                    title={!fmsConfigured ? 'FMS not configured for this facility' : 'Sync now'}
+                    className="rounded-lg px-4 py-4"
+                    iconClassName="h-5 w-5"
+                  />
                 </div>
               )}
             </div>
@@ -730,14 +790,17 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           {/* Manual Sync Button for large sizes */}
           {(size === 'large' || size === 'large-wide' || size === 'huge') && effectiveFacilityId && hasAnyFMSConfigured && (
             <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-              <button
-                onClick={handleManualSync}
+              <FmsSyncActionButton
+                enabled={fmsConfigured}
+                syncing={syncing}
                 disabled={syncing || !fmsConfigured}
-                className="w-full flex items-center justify-center space-x-2 py-2 px-3 text-sm bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleManualSync}
+                title={!fmsConfigured ? 'FMS not configured for this facility' : 'Sync now'}
+                className="w-full space-x-2 py-2 px-3 text-sm font-medium rounded-lg"
+                iconClassName="h-4 w-4"
               >
-                <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
                 <span>{syncing ? 'Syncing...' : 'Sync Now'}</span>
-              </button>
+              </FmsSyncActionButton>
             </div>
           )}
         </div>

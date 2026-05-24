@@ -149,6 +149,23 @@ describe('AccessHistoryPage', () => {
     }
   });
 
+  it('applies unit_id from URL query on load', async () => {
+    render(
+      <MemoryRouter initialEntries={['/access-history?unit_id=unit-42&facility_id=fac-1']}>
+        <AccessHistoryPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockGetAccessHistory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unit_id: 'unit-42',
+          facility_id: 'fac-1',
+        })
+      );
+    });
+  });
+
   it('shows a log row when API returns data', async () => {
     const ts = new Date().toISOString();
     mockGetAccessHistory.mockResolvedValue({

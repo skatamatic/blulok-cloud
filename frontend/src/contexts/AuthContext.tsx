@@ -134,6 +134,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Clear widget configs to prevent cross-user contamination
     localStorage.removeItem('blulok-widget-layouts');
     localStorage.removeItem('blulok-widget-instances');
+    localStorage.removeItem('blulok-dashboard-v2');
     
     // Disconnect WebSocket
     websocketService.disconnect();

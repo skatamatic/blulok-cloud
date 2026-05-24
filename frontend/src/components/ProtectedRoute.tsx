@@ -2,6 +2,7 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
+import { canAccessSystemSettings } from '@/utils/settings-rbac.utils';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -9,6 +10,7 @@ interface ProtectedRouteProps {
   requireAdmin?: boolean;
   requireUserManagement?: boolean;
   requireDevAdmin?: boolean;
+  requireSettingsAccess?: boolean;
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
@@ -17,6 +19,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requireAdmin,
   requireUserManagement,
   requireDevAdmin,
+  requireSettingsAccess,
 }) => {
   const { authState, hasRole, isAdmin, canManageUsers } = useAuth();
   const location = useLocation();
@@ -75,6 +78,17 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Developer Access Required</h1>
           <p className="text-gray-600 dark:text-gray-400">This page requires developer administrator privileges.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (requireSettingsAccess && !canAccessSystemSettings(authState.user?.role)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Access Denied</h1>
+          <p className="text-gray-600 dark:text-gray-400">You do not have permission to view settings.</p>
         </div>
       </div>
     );

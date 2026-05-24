@@ -13,6 +13,8 @@ import { authRouter } from '@/routes/auth.routes';
 import { usersRouter } from '@/routes/users.routes';
 import { userFacilitiesRouter } from '@/routes/user-facilities.routes';
 import { widgetLayoutsRouter } from '@/routes/widget-layouts.routes';
+import { savedDashboardsRouter } from '@/routes/saved-dashboards.routes';
+import { dashboardAssignmentsRouter } from '@/routes/dashboard-assignments.routes';
 import { facilitiesRouter } from '@/routes/facilities.routes';
 import { gatewayRouter } from '@/routes/gateway.routes';
 import { devicesRouter } from '@/routes/devices.routes';
@@ -103,6 +105,8 @@ export function createApp(): Application {
   app.use('/api/v1/user-devices', userDevicesRouter);
   app.use('/api/v1/user-facilities', userFacilitiesRouter);
   app.use('/api/v1/widget-layouts', widgetLayoutsRouter);
+  app.use('/api/v1/saved-dashboards', savedDashboardsRouter);
+  app.use('/api/v1/dashboard-assignments', dashboardAssignmentsRouter);
   app.use('/api/v1/facilities', facilitiesRouter);
   app.use('/api/v1', schedulesRouter);
   app.use('/api/v1/gateways', gatewayRouter);

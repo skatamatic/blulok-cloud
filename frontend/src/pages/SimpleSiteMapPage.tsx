@@ -10,7 +10,8 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
-import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import { DetailsPageHeader } from '@/components/Common/DetailsPageLayout';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 
 const statusColors = {
@@ -29,7 +30,7 @@ const lockStatusColors = {
 export default function SimpleSiteMapPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
-  const handleBack = useBackNavigation('/units');
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/units' });
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,28 +81,21 @@ export default function SimpleSiteMapPage() {
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+        <DetailsPageHeader
+          onBack={showBack ? goBack : undefined}
+          backLabel={backLabel}
+          title="Facility Site Map"
+          subtitle="Visual layout of storage units"
+          actions={
             <button
-              onClick={handleBack}
-              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              onClick={() => navigate('/units')}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
-              <ArrowLeftIcon className="h-5 w-5" />
+              <EyeIcon className="h-4 w-4 mr-2" />
+              List View
             </button>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Facility Site Map</h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Visual layout of storage units</p>
-            </div>
-          </div>
-          
-          <button
-            onClick={() => navigate('/units')}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-          >
-            <EyeIcon className="h-4 w-4 mr-2" />
-            List View
-          </button>
-        </div>
+          }
+        />
       </div>
 
       <div className="flex-1 flex">

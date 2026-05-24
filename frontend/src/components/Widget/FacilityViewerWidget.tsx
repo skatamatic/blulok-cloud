@@ -23,9 +23,14 @@ interface FacilityViewerWidgetProps {
   /** Facility name for display */
   facilityName?: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
+  onFullscreenToggle?: () => void;
+  isFullscreen?: boolean;
 }
 
 export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
@@ -35,13 +40,22 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   bluLokFacilityId,
   facilityName,
   initialSize = 'huge',
+  currentSize,
   availableSizes = ['huge', 'huge-wide', 'mega-tall'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
+  onFullscreenToggle,
+  isFullscreen = false,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const [size, setSize] = useState<WidgetSize>(currentSize ?? initialSize);
+
+  useEffect(() => {
+    if (currentSize) setSize(currentSize);
+  }, [currentSize]);
   
   // Facility selection state
   const [bluDesignFacilities, setBluDesignFacilities] = useState<Array<{ id: string; name: string }>>([]);
@@ -98,72 +112,63 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
       title={displayTitle}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={(next) => {
+        setSize(next);
+        onSizeChange?.(next);
+      }}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
+      onFullscreenToggle={onFullscreenToggle}
+      isFullscreen={isFullscreen}
       enhancedMenu={enhancedMenu}
-      suppressTitleOverlay={true}
+      suppressTitleOverlay={false}
+      edgeToEdge
     >
-      <div className="h-full w-full relative -m-5" style={{ marginTop: '-1rem' }}>
-        {/* Make the viewer take full widget space */}
-        <div className="absolute inset-0" style={{ 
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          marginLeft: '-1.25rem',
-          marginRight: '-1.25rem',
-          marginBottom: '-1.25rem',
-          width: 'calc(100% + 2.5rem)',
-          height: 'calc(100% + 1.25rem)',
-        }}>
-          {/* Facility Selector - Top Right */}
-          {bluDesignFacilities.length > 0 && (
-            <div className="absolute top-4 right-4 z-30">
-              <div className={`
-                flex items-center gap-2 px-3 py-2 rounded-lg backdrop-blur-md shadow-lg border
-                ${isDark 
-                  ? 'bg-gray-900/90 border-gray-700/60' 
-                  : 'bg-white/90 border-gray-200/80'
-                }
-              `}>
-                <label className={`text-xs font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  3D Model:
-                </label>
-                <select
-                  value={selectedBluDesignFacilityId || ''}
-                  onChange={(e) => setSelectedBluDesignFacilityId(e.target.value || null)}
-                  disabled={isLoadingFacilities}
-                  className={`
-                    text-sm px-2 py-1 rounded border
-                    ${isDark 
-                      ? 'bg-gray-800 border-gray-600 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                    }
-                    focus:outline-none focus:ring-2 focus:ring-primary-500
-                  `}
-                >
-                  {bluDesignFacilities.map((facility) => (
-                    <option key={facility.id} value={facility.id}>
-                      {facility.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+      <div className="relative h-full min-h-0 w-full overflow-hidden rounded-b-xl">
+        {bluDesignFacilities.length > 0 && (
+          <div className="absolute top-2 right-2 z-30 pointer-events-auto">
+            <div
+              className={`
+                flex items-center gap-2 px-2.5 py-1.5 rounded-lg backdrop-blur-md shadow-md border
+                ${isDark ? 'bg-gray-900/90 border-gray-700/60' : 'bg-white/90 border-gray-200/80'}
+              `}
+            >
+              <label
+                className={`text-[10px] font-medium uppercase tracking-wide ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
+              >
+                Model
+              </label>
+              <select
+                value={selectedBluDesignFacilityId || ''}
+                onChange={(e) => setSelectedBluDesignFacilityId(e.target.value || null)}
+                disabled={isLoadingFacilities}
+                className={`
+                  text-xs max-w-[140px] px-2 py-0.5 rounded border truncate
+                  ${isDark ? 'bg-gray-800 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'}
+                  focus:outline-none focus:ring-2 focus:ring-[#147FD4]
+                `}
+              >
+                {bluDesignFacilities.map((facility) => (
+                  <option key={facility.id} value={facility.id}>
+                    {facility.name}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
-          
-          {selectedBluDesignFacilityId ? (
-            <FacilityViewer3D
-              bluDesignFacilityId={selectedBluDesignFacilityId}
-              bluLokFacilityId={bluLokFacilityId}
-              onReady={handleReady}
-              onError={handleError}
-            />
-          ) : (
-            <NoFacilityPlaceholder isDark={isDark} />
-          )}
-        </div>
+          </div>
+        )}
+
+        {selectedBluDesignFacilityId ? (
+          <FacilityViewer3D
+            bluDesignFacilityId={selectedBluDesignFacilityId}
+            bluLokFacilityId={bluLokFacilityId}
+            onReady={handleReady}
+            onError={handleError}
+          />
+        ) : (
+          <NoFacilityPlaceholder isDark={isDark} />
+        )}
       </div>
     </Widget>
   );

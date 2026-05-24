@@ -6,17 +6,20 @@ import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface AccessHistoryWidgetProps {
   currentSize: WidgetSize;
-  onSizeChange: (size: WidgetSize) => void;
+  onSizeChange?: (size: WidgetSize) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
 }
 
 export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   currentSize,
   onSizeChange,
   onRemove,
+  readOnly = false,
 }) => {
   const { authState } = useAuth();
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
@@ -65,15 +68,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     return () => unsubscribe(subscriptionId);
   }, [isConnected, subscribe, unsubscribe]);
 
-  const getMaxItems = (size: WidgetSize): number => {
-    switch (size) {
-      case 'small': return 3;
-      case 'medium': return 5;
-      case 'medium-tall': return 8;
-      case 'large': return 10;
-      default: return 5;
-    }
-  };
+  const layout = getWidgetLayoutProfile(currentSize);
 
   const formatTime = (dateString: string): string => {
     const date = new Date(dateString);
@@ -163,7 +158,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     return 'Unknown Unit';
   };
 
-  const maxItems = getMaxItems(currentSize);
+  const maxItems = layout.listCap;
   const displayHistory = accessHistory.slice(0, maxItems);
 
   if (loading) {
@@ -175,6 +170,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full">
           <div className="text-gray-500 dark:text-gray-400">Loading...</div>
@@ -192,6 +188,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full">
           <div className="text-red-500 text-center">
@@ -211,6 +208,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
       onSizeChange={onSizeChange}
       availableSizes={availableSizes}
       onRemove={onRemove}
+      readOnly={readOnly}
     >
       <div className="space-y-2 h-full flex flex-col">
         {accessHistory.length === 0 ? (
@@ -235,7 +233,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
           </div>
         ) : (
           // Full view for larger sizes
-          <div className="space-y-2 flex-1 overflow-y-auto">
+          <div className={`space-y-2 ${WIDGET_LIST_SCROLL_CLASS}`}>
             {displayHistory.map((entry) => (
               <div key={entry.id} className="flex items-center space-x-3 p-2 rounded-md bg-gray-50 dark:bg-gray-700">
                 <div className="flex-shrink-0">

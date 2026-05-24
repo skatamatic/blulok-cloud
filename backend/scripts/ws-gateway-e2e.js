@@ -1741,9 +1741,9 @@ async function run() {
     heading('Access Control Device Setup');
     if (!gatewayId) throw new Error('No gatewayId available – cannot create access control devices');
     const acDeviceTypes = [
-      { name: 'Main Entrance Door', device_type: 'door', location_description: 'Building A - Ground Floor', relay_channel: 1 },
-      { name: 'Parking Gate', device_type: 'gate', location_description: 'North Parking Lot', relay_channel: 2 },
-      { name: 'Service Elevator', device_type: 'elevator', location_description: 'Building A - Rear', relay_channel: 3 },
+      { device_serial: 'E2E-AC-DOOR-1', name: 'Main Entrance Door', device_type: 'door', location_description: 'Building A - Ground Floor', relay_channel: 1 },
+      { device_serial: 'E2E-AC-GATE-1', name: 'Parking Gate', device_type: 'gate', location_description: 'North Parking Lot', relay_channel: 2 },
+      { device_serial: 'E2E-AC-ELEV-1', name: 'Service Elevator', device_type: 'elevator', location_description: 'Building A - Rear', relay_channel: 3 },
     ];
     for (const acDef of acDeviceTypes) {
       step(`Creating ${acDef.device_type} device: ${acDef.name}`);
@@ -2057,6 +2057,125 @@ async function run() {
     }
     ok(`State update correctly tracked not_found: ${stateResult2.not_found.join(', ')}`);
 
+  // ---- ACCESS CONTROL: mixed inventory + state on unified endpoints ----
+    heading('Access Control Device Sync (unified inventory/state)');
+    const accessRelayPrimary = 7;
+    const accessRelaySecondary = 8;
+    const accessSerialMulti = 'E2E-KP-MULTI';
+
+    step('Testing POST /devices/inventory (add access_control by access_id + relay_channel)');
+    const reqAccessInv1 = 'req-access-inv-1';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessInv1,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          { lock_id: remainingSerial },
+          { lock_id: inventorySerial1, lock_number: 201 },
+          {
+            kind: 'access_control',
+            access_id: accessSerialMulti,
+            relay_channel: accessRelayPrimary,
+            device_type: 'door',
+            name: 'E2E Keypad',
+          },
+        ],
+      },
+    }));
+    const respAccessInv1 = await waitForProxyResponse(ws, reqAccessInv1);
+    if (respAccessInv1.status !== 200 || !respAccessInv1.body?.success) {
+      throw new Error(`Access control inventory add failed: ${respAccessInv1.status}`);
+    }
+    const accessInv1 = respAccessInv1.body?.data?.access_control;
+    if (!accessInv1 || accessInv1.added < 1) {
+      throw new Error(`Expected access_control.added >= 1, got ${JSON.stringify(accessInv1)}`);
+    }
+    ok(`Access control inventory added relay ${accessRelayPrimary}`);
+
+    step('Testing POST /devices/state (access_control online/locked)');
+    const reqAccessState1 = 'req-access-state-1';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessState1,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          {
+            kind: 'access_control',
+            access_id: accessSerialMulti,
+            relay_channel: accessRelayPrimary,
+            online: true,
+            locked: true,
+          },
+        ],
+      },
+    }));
+    const respAccessState1 = await waitForProxyResponse(ws, reqAccessState1);
+    if (respAccessState1.status !== 200 || !respAccessState1.body?.success) {
+      throw new Error(`Access control state update failed: ${respAccessState1.status}`);
+    }
+    const accessState1 = respAccessState1.body?.data?.access_control;
+    if (!accessState1 || accessState1.updated < 1) {
+      throw new Error(`Expected access_control.updated >= 1, got ${JSON.stringify(accessState1)}`);
+    }
+    ok(`Access control state updated for relay ${accessRelayPrimary}`);
+
+    step('Testing POST /devices/inventory (mixed payload adds second relay, removes first)');
+    const reqAccessInv2 = 'req-access-inv-2';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessInv2,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          { lock_id: remainingSerial },
+          { lock_id: inventorySerial1, lock_number: 201 },
+          {
+            kind: 'access_control',
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            device_type: 'gate',
+          },
+        ],
+      },
+    }));
+    const respAccessInv2 = await waitForProxyResponse(ws, reqAccessInv2);
+    if (respAccessInv2.status !== 200 || !respAccessInv2.body?.success) {
+      throw new Error(`Access control inventory delta failed: ${respAccessInv2.status}`);
+    }
+    const accessInv2 = respAccessInv2.body?.data?.access_control;
+    if (!accessInv2 || accessInv2.added < 1 || accessInv2.removed < 1) {
+      throw new Error(
+        `Expected access_control add+remove delta, got ${JSON.stringify(accessInv2)}`
+      );
+    }
+    ok(`Access control inventory delta: added relay ${accessRelaySecondary}, removed relay ${accessRelayPrimary}`);
+
+    step('Negative: access_control inventory item missing access_id');
+    const reqAccessInvBad = 'req-access-inv-bad';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessInvBad,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [{ kind: 'access_control', relay_channel: 1 }],
+      },
+    }));
+    const respAccessInvBad = await waitForProxyResponse(ws, reqAccessInvBad);
+    if (respAccessInvBad.status !== 400) {
+      throw new Error(`Expected 400 for access_control without access_id, got ${respAccessInvBad.status}`);
+    }
+    ok('Access control inventory validation rejects missing access_id');
+
     // Test device removal when assigned to unit
     step('Testing device removal when assigned to unit');
     step('Creating unit-linked device group member for swap-follow validation');
@@ -2170,6 +2289,12 @@ async function run() {
         await assignDeviceToUnit(token, deviceId, unitId);
         ok(`Re-assigned original device ${deviceId} back to unit ${unitId}`);
         if (unitLinkedSwapGroupId) {
+          // Gateway inventory delete removes unit-linked rows by source_unit_id; re-link after restore.
+          await axios.post(
+            `${API_BASE}/device-groups/${unitLinkedSwapGroupId}/members`,
+            { unit_id: unitId, device_type: 'blulok' },
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
           const linkedGroupAfterRestore = await axios.get(
             `${API_BASE}/device-groups/${unitLinkedSwapGroupId}`,
             { headers: { Authorization: `Bearer ${token}` } },

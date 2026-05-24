@@ -495,10 +495,11 @@ describe('API Contract Validation Tests', () => {
         .post('/api/v1/devices/access-control')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          facility_id: 'facility-1',
-          unit_id: 'unit-1',
-          device_name: 'Test Device',
-          device_type: 'access_control',
+          gateway_id: 'test-gateway-id',
+          device_serial: 'CONTRACT-AC-001',
+          name: 'Test Device',
+          device_type: 'door',
+          location_description: 'Main entrance',
           relay_channel: 1
         });
 

@@ -201,7 +201,7 @@ describe('UserDetailsPage', () => {
       renderUserDetailsPage();
 
       await waitFor(() => {
-        expect(screen.getByText('Error Loading User Details')).toBeInTheDocument();
+        expect(screen.getByText('Error loading user')).toBeInTheDocument();
         expect(screen.getByText('Failed to load user details')).toBeInTheDocument();
       });
     });

@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import {
-  ArrowLeftIcon,
   UserIcon,
   BuildingOfficeIcon,
   DevicePhoneMobileIcon,
@@ -20,7 +19,13 @@ import {
   LinkIcon,
   TicketIcon
 } from '@heroicons/react/24/outline';
-import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
+import {
+  DetailsPageHeader,
+  DetailsPageNotFound,
+  DetailsPageShell,
+  DetailsTabNav,
+} from '@/components/Common/DetailsPageLayout';
 
 interface UserDetails {
   id: string;
@@ -117,8 +122,9 @@ export default function UserDetailsPage() {
   const { authState, canManageUsers } = useAuth();
   const { addToast } = useToast();
   const canManageUsersScope = canManageUsers();
+  const location = useLocation();
   const backPath = canManageUsersScope ? '/users' : '/dashboard';
-  const handleBack = useBackNavigation(backPath);
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: backPath });
 
   const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -458,183 +464,109 @@ export default function UserDetailsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-64 mb-6"></div>
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-              <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-48 mb-4"></div>
-              <div className="space-y-3">
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full"></div>
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
-              </div>
+      <DetailsPageShell>
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-64 mb-6"></div>
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-48 mb-4"></div>
+            <div className="space-y-3">
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full"></div>
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
             </div>
           </div>
         </div>
-      </div>
+      </DetailsPageShell>
     );
   }
 
   if (error || !userDetails) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="text-center">
-              <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-red-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">Error Loading User Details</h3>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{error}</p>
-              <div className="mt-6">
-                <button
-                  onClick={handleBack}
-                  className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
-                >
-                  <ArrowLeftIcon className="mr-2 h-4 w-4" />
-                  {canManageUsersScope ? 'Back to Users' : 'Back to Dashboard'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <DetailsPageNotFound
+        title="Error loading user"
+        message={error || 'User not found'}
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+      />
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-6">
-          <button
-            onClick={handleBack}
-            className="inline-flex items-center text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors mb-4"
-          >
-            <ArrowLeftIcon className="mr-2 h-4 w-4" />
-            {canManageUsersScope ? 'Back to Users' : 'Back to Dashboard'}
-          </button>
-            <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                {userDetails.firstName} {userDetails.lastName}
-              </h1>
-              <p className="text-gray-600 dark:text-gray-400">{userDetails.email}</p>
-              {userDetails.phoneNumber ? (
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{userDetails.phoneNumber}</p>
-              ) : null}
-            </div>
-            <div className="flex items-center space-x-4">
-              <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${getRoleBadgeColor(userDetails.role)}`}>
-                {userDetails.role}
-              </span>
-              <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
-                userDetails.isActive
-                  ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                  : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-              }`}>
-                {userDetails.isActive ? 'Active' : 'Inactive'}
-              </span>
-              {canManageUsersScope && (
-                <>
-                  <button
-                    onClick={() => {
-                      setEditing(true);
-                      setEditForm({
-                        firstName: userDetails.firstName,
-                        lastName: userDetails.lastName,
-                        phoneNumber: userDetails.phoneNumber || '',
-                        role: userDetails.role,
-                        isActive: userDetails.isActive
-                      });
-                      setActiveTab('edit');
-                    }}
-                    className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
-                  >
-                    <PencilIcon className="h-4 w-4 mr-2" />
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => setDeleteUserModal(true)}
-                    disabled={userDetails.id === authState.user?.id}
-                    className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <TrashIcon className="h-4 w-4 mr-2" />
-                    Delete
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+  const userTabs = [
+    { key: 'summary', label: 'Summary', icon: UserIcon },
+    { key: 'facilities', label: `Facilities (${userDetails.facilities.length})`, icon: BuildingOfficeIcon },
+    ...(canViewDevices
+      ? [{ key: 'devices', label: `Devices (${userDetails.devices.length})`, icon: DevicePhoneMobileIcon }]
+      : []),
+    ...(canManageUsersScope
+      ? [{ key: 'invites', label: 'Invites & OTP', icon: PaperAirplaneIcon }]
+      : []),
+    ...(canViewRoutePasses
+      ? [{ key: 'route-passes', label: 'Route Passes', icon: TicketIcon }]
+      : []),
+  ];
 
-        {/* Tabs */}
-        <div className="mb-6">
-          <div className="border-b border-gray-200 dark:border-gray-700">
-            <nav className="-mb-px flex space-x-8">
-              <button
-                onClick={() => setActiveTab('summary')}
-                className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'summary'
-                    ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-                }`}
-              >
-                <UserIcon className="mr-2 h-4 w-4 inline" />
-                Summary
-              </button>
-              <button
-                onClick={() => setActiveTab('facilities')}
-                className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'facilities'
-                    ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-                }`}
-              >
-                <BuildingOfficeIcon className="mr-2 h-4 w-4 inline" />
-                Facilities ({userDetails.facilities.length})
-              </button>
-              {canViewDevices && (
-                <button
-                  onClick={() => setActiveTab('devices')}
-                  className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'devices'
-                      ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-                  }`}
-                >
-                  <DevicePhoneMobileIcon className="mr-2 h-4 w-4 inline" />
-                  Devices ({userDetails.devices.length})
-                </button>
-              )}
-              {canManageUsersScope && (
-                <button
-                  onClick={() => setActiveTab('invites')}
-                  className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'invites'
-                      ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-                  }`}
-                >
-                  <PaperAirplaneIcon className="mr-2 h-4 w-4 inline" />
-                  Invites & OTP
-                </button>
-              )}
-              {canViewRoutePasses && (
-                <button
-                  onClick={() => setActiveTab('route-passes')}
-                  className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'route-passes'
-                      ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-                  }`}
-                >
-                  <TicketIcon className="mr-2 h-4 w-4 inline" />
-                  Route Passes
-                </button>
-              )}
-            </nav>
+  return (
+    <DetailsPageShell>
+      <DetailsPageHeader
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+        title={`${userDetails.firstName} ${userDetails.lastName}`}
+        subtitle={userDetails.email}
+        meta={
+          <div className="flex flex-wrap items-center gap-2">
+            {userDetails.phoneNumber ? (
+              <span className="text-sm text-gray-500 dark:text-gray-400">{userDetails.phoneNumber}</span>
+            ) : null}
+            <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${getRoleBadgeColor(userDetails.role)}`}>
+              {userDetails.role}
+            </span>
+            <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
+              userDetails.isActive
+                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+            }`}>
+              {userDetails.isActive ? 'Active' : 'Inactive'}
+            </span>
           </div>
-        </div>
+        }
+        actions={
+          canManageUsersScope ? (
+            <>
+              <button
+                onClick={() => {
+                  setEditing(true);
+                  setEditForm({
+                    firstName: userDetails.firstName,
+                    lastName: userDetails.lastName,
+                    phoneNumber: userDetails.phoneNumber || '',
+                    role: userDetails.role,
+                    isActive: userDetails.isActive
+                  });
+                  setActiveTab('edit');
+                }}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+              >
+                <PencilIcon className="h-4 w-4 mr-2" />
+                Edit
+              </button>
+              <button
+                onClick={() => setDeleteUserModal(true)}
+                disabled={userDetails.id === authState.user?.id}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <TrashIcon className="h-4 w-4 mr-2" />
+                Delete
+              </button>
+            </>
+          ) : undefined
+        }
+      />
+
+      <DetailsTabNav
+        tabs={userTabs}
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key as TabType)}
+      />
 
         {/* Tab Content */}
         <div className="space-y-6">
@@ -808,7 +740,9 @@ export default function UserDetailsPage() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    navigate(`/facilities/${facilityId}`);
+                                    navigate(`/facilities/${facilityId}`, {
+                                      state: withReturnPath(location),
+                                    });
                                   }}
                                   className="text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 hover:underline flex items-center"
                                 >
@@ -836,7 +770,9 @@ export default function UserDetailsPage() {
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            navigate(`/units/${unit.id}`);
+                                            navigate(`/units/${unit.id}`, {
+                                              state: withReturnPath(location),
+                                            });
                                           }}
                                           className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 hover:underline flex items-center"
                                         >
@@ -861,7 +797,9 @@ export default function UserDetailsPage() {
                                             <button
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                navigate(`/devices/${unit.device!.id}`);
+                                                navigate(`/devices/${unit.device!.id}`, {
+                                                  state: withReturnPath(location),
+                                                });
                                               }}
                                               className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 hover:underline flex items-center mt-1"
                                             >
@@ -1406,7 +1344,6 @@ export default function UserDetailsPage() {
           variant="danger"
           isLoading={deletingUser}
         />
-      </div>
-    </div>
+    </DetailsPageShell>
   );
 }

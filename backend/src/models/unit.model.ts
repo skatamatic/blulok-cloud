@@ -170,16 +170,25 @@ export function deriveEffectiveUnitStatus(
 export const SHARED_ACCESS_TENANT_LABEL = 'Shared access';
 
 /**
- * Stored `units.status` cannot be "vacant" while assignments exist (DB + API stay aligned).
+ * Stored `units.status` rules:
+ * - With tenants: only `occupied` is allowed (status is driven by assignments).
+ * - Without tenants: `available`, `maintenance`, or `reserved` — not `occupied`.
  */
 export function assertStoredStatusAllowedWithAssignments(
   newStatus: Unit['status'],
   assignmentCount: number
 ): void {
-  if (assignmentCount > 0 && (newStatus === 'available' || newStatus === 'reserved')) {
-    throw new Error(
-      'Cannot set unit to available or reserved while tenants are assigned. Remove assignments first.'
-    );
+  if (assignmentCount > 0) {
+    if (newStatus !== 'occupied') {
+      throw new Error(
+        'Cannot change unit status while tenants are assigned. Remove all tenants first.'
+      );
+    }
+    return;
+  }
+
+  if (newStatus === 'occupied') {
+    throw new Error('Cannot set unit to occupied without a tenant assignment. Assign a tenant first.');
   }
 }
 
@@ -479,7 +488,8 @@ export class UnitModel {
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
-          'users.email as tenant_email'
+          'users.email as tenant_email',
+          'users.phone_number as tenant_phone'
         ])
         .from('units as u')
         .leftJoin('facilities as f', 'u.facility_id', 'f.id')
@@ -683,6 +693,8 @@ export class UnitModel {
             ? SHARED_ACCESS_TENANT_LABEL
             : null,
         tenant_email: row.tenant_email,
+        tenant_phone: row.tenant_phone,
+        signal_strength: row.signal_strength != null ? Number(row.signal_strength) : null,
         blulok_device: row.device_id ? {
           id: row.device_id,
           device_serial: row.device_serial,
@@ -690,6 +702,7 @@ export class UnitModel {
           supports_remote_lock: Boolean(row.supports_remote_lock),
           device_status: row.device_status,
           battery_level: row.battery_level,
+          signal_strength: row.signal_strength != null ? Number(row.signal_strength) : null,
           last_activity: row.last_activity,
           firmware_version: row.firmware_version
         } : null,
@@ -697,7 +710,8 @@ export class UnitModel {
           id: row.primary_tenant_id,
           first_name: row.tenant_first_name,
           last_name: row.tenant_last_name,
-          email: row.tenant_email
+          email: row.tenant_email,
+          phone_number: row.tenant_phone
         } : null
       }));
 

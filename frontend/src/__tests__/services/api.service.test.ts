@@ -1064,13 +1064,25 @@ describe('APIService', () => {
     it('updateWidget PUTs widget-layouts id', async () => {
       mockAxios.put.mockResolvedValueOnce({ data: {} });
       await apiService.updateWidget('w1', { isVisible: false });
-      expect(mockAxios.put).toHaveBeenCalledWith('/widget-layouts/w1', { isVisible: false });
+      expect(mockAxios.put).toHaveBeenCalledWith(
+        '/widget-layouts/w1',
+        { isVisible: false },
+        { params: undefined }
+      );
     });
 
     it('hideWidget DELETEs widget', async () => {
       mockAxios.delete.mockResolvedValueOnce({ data: {} });
       await apiService.hideWidget('w1');
-      expect(mockAxios.delete).toHaveBeenCalledWith('/widget-layouts/w1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/widget-layouts/w1', { params: undefined });
+    });
+
+    it('hideWidget passes pageId as a query param when provided', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.hideWidget('w1', 'page-1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/widget-layouts/w1', {
+        params: { pageId: 'page-1' },
+      });
     });
 
     it('showWidget POSTs show', async () => {

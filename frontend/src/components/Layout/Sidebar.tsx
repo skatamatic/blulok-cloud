@@ -5,6 +5,7 @@ import { useSidebar } from '@/contexts/SidebarContext';
 import { useBluFMSDemo } from '@/contexts/BluFMSDemoContext';
 import { useBluDesign } from '@/contexts/BluDesignContext';
 import { UserRole } from '@/types/auth.types';
+import { canAccessSystemSettings } from '@/utils/settings-rbac.utils';
 import { ChangePasswordModal } from '@/components/UserManagement/ChangePasswordModal';
 import { TopLevelFacilitySelector } from './TopLevelFacilitySelector';
 import {
@@ -36,26 +37,36 @@ interface NavItem {
   roles?: UserRole[];
   requireAdmin?: boolean;
   requireUserManagement?: boolean;
+  requireSettingsAccess?: boolean;
+  /** When true, NavLink only matches the href exactly (not nested paths). */
+  end?: boolean;
   isCategory?: boolean;
   children?: NavItem[];
 }
 
 const bluLokNavigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
-  { name: 'Facility', href: '/facilities', icon: BuildingStorefrontIcon },
   { name: 'Access History', href: '/access-history', icon: ClockIcon },
   { 
     name: 'User Management', 
     href: '/users', 
     icon: UsersIcon,
-    requireUserManagement: true
+    requireUserManagement: true,
+    end: true,
+  },
+  { name: 'Facility Setup', href: '/facilities', icon: BuildingStorefrontIcon },
+  {
+    name: 'Settings',
+    href: '/settings',
+    icon: Cog6ToothIcon,
+    requireSettingsAccess: true,
+    end: true,
   },
   { 
     name: 'System', 
     isCategory: true,
     requireAdmin: true,
     children: [
-      { name: 'System Settings', href: '/settings', icon: Cog6ToothIcon },
       { name: 'Add Facility', href: '/settings/add-facility', icon: BuildingStorefrontIcon },
     ]
   },
@@ -143,6 +154,9 @@ export const Sidebar: React.FC = () => {
     if (item.roles && !hasRole(item.roles)) return false;
     if (item.requireAdmin && !isAdmin()) return false;
     if (item.requireUserManagement && !canManageUsers()) return false;
+    if (item.requireSettingsAccess && !canAccessSystemSettings(authState.user?.role)) {
+      return false;
+    }
     return true;
   };
 
@@ -279,6 +293,7 @@ export const Sidebar: React.FC = () => {
                             <NavLink
                               key={child.name}
                               to={child.href!}
+                              end={child.end}
                               className={({ isActive }) =>
                                 `group flex items-center ${isCollapsed ? 'justify-center px-2 py-3' : 'px-4 py-2'} text-sm font-medium rounded-md transition-all duration-200 ${
                                   isActive
@@ -303,6 +318,7 @@ export const Sidebar: React.FC = () => {
                       ) : (
                         <NavLink
                           to={item.href!}
+                          end={item.end}
                           className={({ isActive }) =>
                             `group flex items-center ${isCollapsed ? 'justify-center px-2 py-3' : 'px-2 py-2'} text-sm font-medium rounded-md transition-all duration-200 ${
                               isActive
@@ -485,6 +501,7 @@ export const Sidebar: React.FC = () => {
                     <NavLink
                       key={child.name}
                       to={child.href!}
+                      end={child.end}
                       className={({ isActive }) =>
                         `group flex items-center ${isCollapsed ? 'justify-center px-2 py-3' : 'px-4 py-2'} text-sm font-medium rounded-md transition-all duration-200 ${
                           isActive
@@ -509,6 +526,7 @@ export const Sidebar: React.FC = () => {
               ) : (
                 <NavLink
                   to={item.href!}
+                  end={item.end}
                   className={({ isActive }) =>
                     `group flex items-center ${isCollapsed ? 'justify-center px-2 py-3' : 'px-2 py-2'} text-sm font-medium rounded-md transition-all duration-200 ${
                       isActive

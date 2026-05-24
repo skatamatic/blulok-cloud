@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import {
-  ArrowLeftIcon,
   LockClosedIcon,
   LockOpenIcon,
   CheckCircleIcon,
@@ -18,13 +17,21 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
-import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
+import { formatAccessDeviceListSubtitle, isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
+import {
+  DetailsPageHeader,
+  DetailsPageLoading,
+  DetailsPageNotFound,
+  DetailsPageShell,
+  DetailsTabNav,
+} from '@/components/Common/DetailsPageLayout';
 
 interface DeviceDetails {
   id: string;
@@ -32,6 +39,14 @@ interface DeviceDetails {
   device_serial: string;
   /** Access-control only: enabled credential channels (app / keypad / fob). */
   access_methods?: AccessMethod[];
+  /** Access-control only: relay actuation channel (1–8). */
+  relay_channel?: number;
+  /** Access-control only: gate / door / elevator. */
+  device_type?: 'gate' | 'elevator' | 'door';
+  gateway_id?: string;
+  gateway_name?: string | null;
+  location_description?: string;
+  metadata?: Record<string, unknown>;
   /** When true, cloud may issue remote lock; default false — unlock-only from cloud. */
   supports_remote_lock?: boolean;
   /** Gateway-provided serial number (optional, separate from device_serial) */
@@ -108,9 +123,10 @@ const sourceLabels = {
 export default function DeviceDetailsPage() {
   const { deviceId } = useParams<{ deviceId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { addToast } = useToast();
   const { authState } = useAuth();
-  const handleBack = useBackNavigation('/devices');
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/devices' });
   const [device, setDevice] = useState<DeviceDetails | null>(null);
   const [denylistEntries, setDenylistEntries] = useState<DenylistEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -289,8 +305,14 @@ export default function DeviceDetailsPage() {
         const mappedAccessControl: DeviceDetails = {
           id: ac.id,
           name: ac.name,
-          device_serial: ac.name || ac.id,
+          device_serial: ac.device_serial || ac.name || ac.id,
           access_methods: methods,
+          relay_channel: ac.relay_channel,
+          device_type: ac.device_type,
+          gateway_id: ac.gateway_id,
+          gateway_name: ac.gateway_name,
+          location_description: ac.location_description,
+          metadata: ac.metadata,
           supports_remote_lock: Boolean(ac.supports_remote_lock),
           facility_id: ac.facility_id,
           facility_name: ac.facility_name || String(ac.facility_id),
@@ -417,163 +439,136 @@ export default function DeviceDetailsPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-      </div>
-    );
+    return <DetailsPageLoading />;
   }
 
   if (error || !device) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <button
-          onClick={handleBack}
-          className="mb-4 inline-flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-        >
-          <ArrowLeftIcon className="h-4 w-4 mr-2" />
-          Back
-        </button>
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-          <p className="text-red-800 dark:text-red-400">{error || 'Device not found'}</p>
-        </div>
-      </div>
+      <DetailsPageNotFound
+        title="Device not found"
+        message={error || 'Device not found'}
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+      />
     );
   }
 
-  const BatteryIcon = device.battery_level !== undefined && device.battery_level < 20 
-    ? Battery50Icon 
+  const BatteryIcon = device.battery_level !== undefined && device.battery_level < 20
+    ? Battery50Icon
     : Battery100Icon;
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="mb-6">
-        <button
-          onClick={handleBack}
-          className="mb-4 inline-flex items-center text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-        >
-          <ArrowLeftIcon className="h-4 w-4 mr-2" />
-          Back
-        </button>
+  const deviceSubtitle =
+    deviceCategory === 'access_control'
+      ? formatAccessDeviceListSubtitle({
+          device_serial: device.device_serial,
+          relay_channel: device.relay_channel,
+          location_description: device.location_description,
+        })
+      : device.device_serial;
 
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-              Device Details
-            </h1>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              {device.device_serial}
-              {device.unit_number && ` • Unit ${device.unit_number}`}
-            </p>
-          </div>
-          {canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') && (
-            <div>
-              <button
-                disabled={
-                  !canRequestRemoteUnlock(device.lock_status) ||
-                  isLockTransitionPending(device.lock_status) ||
-                  (deviceCategory === 'access_control' && device.device_status !== 'online')
-                }
-                onClick={async () => {
-                  if (!canRequestRemoteUnlock(device.lock_status)) return;
-                  if (deviceCategory === 'access_control' && device.device_status !== 'online') return;
-                  try {
-                    pendingRemoteUnlockRef.current = true;
-                    scheduleUnlockWatch(() => deviceLockStatusRef.current, () => {
-                      pendingRemoteUnlockRef.current = false;
-                    });
-
-                    setDevice(prev =>
-                      prev
-                        ? {
-                            ...prev,
-                            lock_status: 'unlocking',
-                          }
-                        : prev,
-                    );
-
-                    const response =
-                      deviceCategory === 'blulok'
-                        ? await apiService.updateLockStatus(device.id, 'unlocked')
-                        : await apiService.updateAccessControlLockStatus(device.id, 'unlocked');
-
-                    const nextStatus =
-                      (response?.lock_status as DeviceDetails['lock_status']) || 'unlocking';
-
-                    setDevice(prev =>
-                      prev ? { ...prev, lock_status: nextStatus } : prev,
-                    );
-
-                    addToast(lockHardwareFeedbackToasts.unlockCommandSent());
-                  } catch (e) {
-                    pendingRemoteUnlockRef.current = false;
-                    cancelWatch();
-                    await loadDeviceDetails();
-                    addToast(lockHardwareFeedbackToasts.failedToUpdateLockStatus());
-                  }
-                }}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                  isLockTransitionPending(device.lock_status)
-                    ? 'bg-blue-600 text-white animate-pulse'
-                    : canRequestRemoteUnlock(device.lock_status)
-                      ? 'bg-green-600 hover:bg-green-700 text-white'
-                      : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
-                }`}
-              >
-                {isLockTransitionPending(device.lock_status)
-                  ? 'Unlocking…'
-                  : canRequestRemoteUnlock(device.lock_status)
-                    ? 'Unlock'
-                    : 'Unlocked'}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
-        <nav className="-mb-px flex space-x-8">
-          <button
-            onClick={() => handleTabChange('overview')}
-            className={`${
-              activeTab === 'overview'
-                ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-            } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-          >
-            Overview
-          </button>
-          {deviceCategory === 'blulok' && (
-            <button
-              onClick={() => handleTabChange('denylist')}
-              className={`${
-                activeTab === 'denylist'
-                  ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-            >
-              Denylist
-              {denylistEntries.length > 0 && (
+  const deviceTabs = [
+    { key: 'overview', label: 'Overview' },
+    ...(deviceCategory === 'blulok'
+      ? [
+          {
+            key: 'denylist',
+            label: 'Denylist',
+            badge:
+              denylistEntries.length > 0 ? (
                 <span className="ml-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
                   {denylistEntries.length}
                 </span>
-              )}
+              ) : undefined,
+          },
+        ]
+      : []),
+    { key: 'diagnostics', label: 'Diagnostics' },
+  ];
+
+  return (
+    <DetailsPageShell>
+      <DetailsPageHeader
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+        title={device.name || device.device_serial}
+        subtitle={
+          <>
+            {deviceSubtitle}
+            {device.unit_number ? ` • Unit ${device.unit_number}` : null}
+          </>
+        }
+        meta={
+          deviceCategory === 'access_control' && isGatewaySyncProvisioned(device.metadata) ? (
+            <span className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-300">
+              Gateway sync managed
+            </span>
+          ) : undefined
+        }
+        actions={
+          canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') ? (
+            <button
+              disabled={
+                !canRequestRemoteUnlock(device.lock_status) ||
+                isLockTransitionPending(device.lock_status) ||
+                (deviceCategory === 'access_control' && device.device_status !== 'online')
+              }
+              onClick={async () => {
+                if (!canRequestRemoteUnlock(device.lock_status)) return;
+                if (deviceCategory === 'access_control' && device.device_status !== 'online') return;
+                try {
+                  pendingRemoteUnlockRef.current = true;
+                  scheduleUnlockWatch(() => deviceLockStatusRef.current, () => {
+                    pendingRemoteUnlockRef.current = false;
+                  });
+
+                  setDevice(prev =>
+                    prev
+                      ? {
+                          ...prev,
+                          lock_status: 'unlocking',
+                        }
+                      : prev,
+                  );
+
+                  const response =
+                    deviceCategory === 'blulok'
+                      ? await apiService.updateLockStatus(device.id, 'unlocked')
+                      : await apiService.updateAccessControlLockStatus(device.id, 'unlocked');
+
+                  const nextStatus =
+                    (response?.lock_status as DeviceDetails['lock_status']) || 'unlocking';
+
+                  setDevice(prev =>
+                    prev ? { ...prev, lock_status: nextStatus } : prev,
+                  );
+
+                  addToast(lockHardwareFeedbackToasts.unlockCommandSent());
+                } catch (e) {
+                  pendingRemoteUnlockRef.current = false;
+                  cancelWatch();
+                  await loadDeviceDetails();
+                  addToast(lockHardwareFeedbackToasts.failedToUpdateLockStatus());
+                }
+              }}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                isLockTransitionPending(device.lock_status)
+                  ? 'bg-blue-600 text-white animate-pulse'
+                  : canRequestRemoteUnlock(device.lock_status)
+                    ? 'bg-green-600 hover:bg-green-700 text-white'
+                    : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
+              }`}
+            >
+              {isLockTransitionPending(device.lock_status)
+                ? 'Unlocking…'
+                : canRequestRemoteUnlock(device.lock_status)
+                  ? 'Unlock'
+                  : 'Unlocked'}
             </button>
-          )}
-          <button
-            onClick={() => handleTabChange('diagnostics')}
-            className={`${
-              activeTab === 'diagnostics'
-                ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-            } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
-          >
-            Diagnostics
-          </button>
-        </nav>
-      </div>
+          ) : undefined
+        }
+      />
+
+      <DetailsTabNav tabs={deviceTabs} activeKey={activeTab} onChange={(key) => handleTabChange(key as TabType)} />
 
       {/* Tab Content */}
       {activeTab === 'overview' && (
@@ -583,7 +578,11 @@ export default function DeviceDetailsPage() {
             <div className="flex flex-wrap gap-3">
               {device.primary_tenant && (
                 <button
-                  onClick={() => navigate(`/users/${device.primary_tenant?.id}`)}
+                  onClick={() =>
+                    navigate(`/users/${device.primary_tenant?.id}/details`, {
+                      state: withReturnPath(location),
+                    })
+                  }
                   className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
                 >
                   <UserIcon className="h-4 w-4 mr-2" />
@@ -592,7 +591,9 @@ export default function DeviceDetailsPage() {
               )}
               {device.unit_id && device.unit_number && (
                 <button
-                  onClick={() => navigate(`/units/${device.unit_id}`)}
+                  onClick={() =>
+                    navigate(`/units/${device.unit_id}`, { state: withReturnPath(location) })
+                  }
                   className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
                 >
                   <ArrowTopRightOnSquareIcon className="h-4 w-4 mr-2" />
@@ -661,7 +662,11 @@ export default function DeviceDetailsPage() {
                   <button
                     type="button"
                     className="font-medium text-red-900 dark:text-red-100 underline"
-                    onClick={() => navigate(`/facilities/${device.facility_id}?tab=gateway`)}
+                    onClick={() =>
+                      navigate(`/facilities/${device.facility_id}?tab=gateway`, {
+                        state: withReturnPath(location),
+                      })
+                    }
                   >
                     Gateway
                   </button>{' '}
@@ -884,9 +889,43 @@ export default function DeviceDetailsPage() {
               <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Device Information</h3>
               <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Serial Number</dt>
-                  <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.device_serial}</dd>
+                  <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                    {deviceCategory === 'access_control' ? 'Hardware Serial' : 'Serial Number'}
+                  </dt>
+                  <dd className="mt-1 text-sm font-mono text-gray-900 dark:text-white">{device.device_serial}</dd>
                 </div>
+                {deviceCategory === 'access_control' && device.relay_channel != null && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Relay Channel</dt>
+                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">#{device.relay_channel}</dd>
+                  </div>
+                )}
+                {deviceCategory === 'access_control' && device.device_type && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Device Type</dt>
+                    <dd className="mt-1 text-sm text-gray-900 dark:text-white capitalize">{device.device_type}</dd>
+                  </div>
+                )}
+                {deviceCategory === 'access_control' && device.location_description && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Location</dt>
+                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.location_description}</dd>
+                  </div>
+                )}
+                {deviceCategory === 'access_control' && device.gateway_name && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Gateway</dt>
+                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.gateway_name}</dd>
+                  </div>
+                )}
+                {deviceCategory === 'access_control' && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Provisioning</dt>
+                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">
+                      {isGatewaySyncProvisioned(device.metadata) ? 'Gateway inventory sync' : 'Manual (admin)'}
+                    </dd>
+                  </div>
+                )}
                 {device.serial && (
                   <div>
                     <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Gateway Serial</dt>
@@ -904,7 +943,9 @@ export default function DeviceDetailsPage() {
                     <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Unit</dt>
                     <dd className="mt-1">
                       <button
-                        onClick={() => navigate(`/units/${device.unit_id}`)}
+                        onClick={() =>
+                    navigate(`/units/${device.unit_id}`, { state: withReturnPath(location) })
+                  }
                         className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
                       >
                         Unit {device.unit_number}
@@ -917,7 +958,11 @@ export default function DeviceDetailsPage() {
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Facility</dt>
                   <dd className="mt-1">
                     <button
-                      onClick={() => navigate(`/facilities/${device.facility_id}`)}
+                      onClick={() =>
+                        navigate(`/facilities/${device.facility_id}`, {
+                          state: withReturnPath(location),
+                        })
+                      }
                       className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
                     >
                       {device.facility_name}
@@ -1225,7 +1270,7 @@ export default function DeviceDetailsPage() {
         variant="danger"
         isLoading={removingFromInventory}
       />
-    </div>
+    </DetailsPageShell>
   );
 }
 

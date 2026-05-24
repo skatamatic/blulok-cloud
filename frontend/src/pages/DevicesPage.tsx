@@ -31,6 +31,7 @@ import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluL
 import { withReturnPath } from '@/hooks/useBackNavigation';
 import { ViewModeToggle } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
+import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -86,7 +87,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const [allDevices, setAllDevices] = useState<Array<{ id: string; device_category?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
-  const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
@@ -313,10 +313,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           {canManage && (
             <div className="relative">
               <button
-                onClick={() => {
-                  setSelectedDeviceType('access_control');
-                  setShowAddDeviceModal(true);
-                }}
+                onClick={() => setShowAddDeviceModal(true)}
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
               >
                 <ServerIcon className="h-4 w-4 mr-2" />
@@ -550,7 +547,9 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                             {isBlulok ? `Unit ${blulokDevice.unit_number}` : accessDevice.name}
                           </div>
                           <div className="text-sm text-gray-500 dark:text-gray-400">
-                            {isBlulok ? blulokDevice.device_serial : accessDevice.location_description || 'N/A'}
+                            {isBlulok
+                              ? blulokDevice.device_serial
+                              : formatAccessDeviceListSubtitle(accessDevice)}
                           </div>
                         </div>
                       </div>
@@ -698,7 +697,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           loadDevices();
           setShowAddDeviceModal(false);
         }}
-        deviceType={selectedDeviceType}
       />
 
       {/* Unassign Device Confirmation Modal */}

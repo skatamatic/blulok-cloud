@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
   BuildingOfficeIcon, 
   MapPinIcon, 
@@ -24,6 +24,7 @@ import {
   CheckCircleIcon,
   ArrowTopRightOnSquareIcon,
   WrenchScrewdriverIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
@@ -43,10 +44,18 @@ import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
-import { withReturnPath } from '@/hooks/useBackNavigation';
+import {
+  DetailsPageHeader,
+  DetailsPageNotFound,
+  DetailsPagePrimaryAction,
+  DetailsPageShell,
+  DetailsTabNav,
+} from '@/components/Common/DetailsPageLayout';
+import { withReturnPath, useDetailsBackNavigation } from '@/hooks/useBackNavigation';
 import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
+import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
@@ -113,6 +122,7 @@ export default function FacilityDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ showWithoutFromPath: false });
   const { authState } = useAuth();
   const { addToast } = useToast();
   const { selectedFacilityId, setSelectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
@@ -120,27 +130,47 @@ export default function FacilityDetailsPage() {
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
   
-  type FacilityTab = 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes';
+const FACILITY_TAB_KEYS = [
+  'facility',
+  'devices',
+  'units',
+  'schedules',
+  'access-codes',
+  'device-groups',
+  'fms',
+  'gateway',
+] as const;
+
+type FacilityTab = (typeof FACILITY_TAB_KEYS)[number];
+
+const isFacilityTab = (value: string | null): value is FacilityTab =>
+  !!value && (FACILITY_TAB_KEYS as readonly string[]).includes(value);
+
+const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
+  if (value === 'overview') return 'facility';
+  return isFacilityTab(value) ? value : null;
+};
   type FacilityDeviceListItem = (AccessControlDevice | BluLokDevice) & { device_category: string };
 
   // Get initial tab from URL query parameter or location state
   const getInitialTab = (): FacilityTab => {
     const urlParams = new URLSearchParams(location.search);
-    const tabParam = urlParams.get('tab');
-    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'device-groups', 'access-codes'].includes(tabParam)) {
-      return tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes';
+    const tabParam = normalizeFacilityTab(urlParams.get('tab'));
+    if (tabParam) {
+      return tabParam;
     }
-    const locationState = location.state as { tab?: FacilityTab } | null;
-    if (locationState?.tab) {
-      return locationState.tab;
+    const locationState = location.state as { tab?: string } | null;
+    const stateTab = locationState?.tab ? normalizeFacilityTab(locationState.tab) : null;
+    if (stateTab) {
+      return stateTab;
     }
-    return 'overview';
+    return 'facility';
   };
   
   const [activeTab, setActiveTab] = useState<FacilityTab>(getInitialTab());
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
-  const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
+  const [showCreateDeviceGroup, setShowCreateDeviceGroup] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteImpact, setDeleteImpact] = useState<{ units: number; devices: number; gateways: number } | null>(null);
   const [loadingImpact, setLoadingImpact] = useState(false);
@@ -222,7 +252,7 @@ export default function FacilityDetailsPage() {
     if (selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && selectedFacilityId !== id) {
       // Preserve the current tab when navigating
       const urlParams = new URLSearchParams(location.search);
-      const tabParam = urlParams.get('tab') || 'overview';
+      const tabParam = normalizeFacilityTab(urlParams.get('tab')) || 'facility';
       navigate(`/facilities/${selectedFacilityId}?tab=${tabParam}`, { replace: true });
     }
   }, [selectedFacilityId, id, isAllFacilitiesSelected, navigate, location.search]);
@@ -231,16 +261,20 @@ export default function FacilityDetailsPage() {
   useEffect(() => {
     const urlParams = new URLSearchParams(location.search);
     const tabParam = urlParams.get('tab');
-    if (tabParam && ['overview', 'devices', 'units', 'fms', 'gateway', 'schedules', 'device-groups', 'access-codes'].includes(tabParam)) {
-      setActiveTab(tabParam as 'overview' | 'devices' | 'units' | 'fms' | 'gateway' | 'schedules' | 'device-groups' | 'access-codes');
+    const normalizedTab = normalizeFacilityTab(tabParam);
+    if (normalizedTab) {
+      setActiveTab(normalizedTab);
+      if (tabParam === 'overview') {
+        urlParams.set('tab', 'facility');
+        navigate(`${location.pathname}?${urlParams.toString()}`, { replace: true });
+      }
     } else if (!tabParam && facility) {
-      // If no tab in URL and facility is loaded, add default tab to URL
-      urlParams.set('tab', 'overview');
+      urlParams.set('tab', 'facility');
       navigate(`${location.pathname}?${urlParams.toString()}`, { replace: true });
     }
   }, [location.search, location.pathname, navigate, facility]);
 
-  // Subscribe to gateway status updates to update overview gateway status
+  // Subscribe to gateway status updates for the facility tab gateway card
   useEffect(() => {
     if (!ws) return;
     const subscriptionId = ws.subscribe(
@@ -248,7 +282,7 @@ export default function FacilityDetailsPage() {
       (data: unknown) => {
         const gateways = ((data as { gateways?: Array<{ id: string; status: 'online' | 'offline' | 'error' | 'maintenance' }> })?.gateways) || [];
         gateways.forEach((g) => {
-          // Update deviceHierarchy gateway status for overview tab
+          // Update deviceHierarchy gateway status for facility tab
           setDeviceHierarchy(prev => {
             if (!prev?.gateway || prev.gateway.id !== g.id) return prev;
             return {
@@ -558,9 +592,38 @@ export default function FacilityDetailsPage() {
     setFacilityUnitsPageNumber(1);
   };
 
+  const headerActions = useMemo(() => {
+    if (!canManage) return null;
+    if (activeTab === 'devices') {
+      return (
+        <DetailsPagePrimaryAction
+          label="Add device"
+          onClick={() => setShowAddDeviceModal(true)}
+        />
+      );
+    }
+    if (activeTab === 'units') {
+      return (
+        <DetailsPagePrimaryAction
+          label="Add Unit"
+          onClick={() => setShowAddUnitModal(true)}
+        />
+      );
+    }
+    if (activeTab === 'device-groups') {
+      return (
+        <DetailsPagePrimaryAction
+          label="Add Group"
+          onClick={() => setShowCreateDeviceGroup(true)}
+        />
+      );
+    }
+    return null;
+  }, [activeTab, canManage]);
+
   if (loading) {
     return (
-      <div className="space-y-6">
+      <DetailsPageShell>
         <div className="animate-pulse">
           <div className="h-8 bg-gray-300 dark:bg-gray-600 rounded w-1/4 mb-4"></div>
           <div className="h-32 bg-gray-300 dark:bg-gray-600 rounded mb-6"></div>
@@ -570,27 +633,19 @@ export default function FacilityDetailsPage() {
             ))}
           </div>
         </div>
-      </div>
+      </DetailsPageShell>
     );
   }
 
   if (!facility) {
     return (
-      <div className="text-center py-12">
-        <BuildingOfficeIcon className="mx-auto h-12 w-12 text-gray-400" />
-        <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">Facility not found</h3>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          The facility you're looking for doesn't exist or you don't have access to it.
-        </p>
-        <div className="mt-6">
-          <Link
-            to="/dashboard"
-            className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
-          >
-            Go to Dashboard
-          </Link>
-        </div>
-      </div>
+      <DetailsPageNotFound
+        icon={<BuildingOfficeIcon className="mx-auto h-12 w-12 text-gray-400" />}
+        title="Facility not found"
+        message="The facility you're looking for doesn't exist or you don't have access to it."
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+      />
     );
   }
 
@@ -602,7 +657,7 @@ export default function FacilityDetailsPage() {
         className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-md hover:bg-blue-50 dark:hover:bg-blue-900/20 group"
         onClick={() => {
           // Preserve current tab in URL when navigating to unit
-          const currentTab = activeTab || 'overview';
+          const currentTab = activeTab || 'facility';
           navigate(`/units/${unit.id}`, {
             state: withReturnPath(location, { returnTab: currentTab, returnPath: `${location.pathname}?tab=${currentTab}` }),
           });
@@ -750,117 +805,97 @@ export default function FacilityDetailsPage() {
     );
   };
 
+  const facilityTabs = [
+    { key: 'facility', label: 'Facility', icon: BuildingOfficeIcon },
+    ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
+    { key: 'units', label: 'Units', icon: HomeIcon },
+    { key: 'schedules', label: 'Schedules', icon: ClockIcon },
+    { key: 'access-codes', label: 'Access Codes', icon: KeyIcon },
+    ...(!isTenant && canManage ? [{ key: 'device-groups', label: 'Device Groups', icon: RectangleGroupIcon }] : []),
+    ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
+    ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          {facility.branding_image && facility.image_mime_type ? (
+    <DetailsPageShell>
+      <DetailsPageHeader
+        title={facility.name}
+        subtitle={facility.address}
+        actions={headerActions}
+        media={
+          facility.branding_image && facility.image_mime_type ? (
             <img
               src={`data:${facility.image_mime_type};base64,${facility.branding_image}`}
               alt={facility.name}
               className="h-16 w-16 rounded-lg object-contain bg-white dark:bg-gray-100 p-1 border border-gray-200 dark:border-gray-600 flex-shrink-0"
             />
-          ) : null}
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{facility.name}</h1>
-            <p className="text-sm text-gray-600 dark:text-gray-400">{facility.address}</p>
-          </div>
-        </div>
-        <div className="flex items-center space-x-3">
-          {canManage && (
-            <button
-              onClick={() => navigate(`/facilities/${facility.id}/edit`)}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-            >
-              <PencilIcon className="h-4 w-4 mr-2" />
-              Edit
-            </button>
-          )}
-          {canDelete && (
-            <button
-              onClick={openDeleteConfirm}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-            >
-              Delete
-            </button>
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200 dark:border-gray-700">
-        <nav className="-mb-px flex space-x-8">
-          {[
-            { key: 'overview', label: 'Overview', icon: BuildingOfficeIcon },
-            ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
-            { key: 'units', label: 'Units', icon: HomeIcon },
-            { key: 'schedules', label: 'Schedules', icon: ClockIcon },
-            { key: 'access-codes', label: 'Access Codes', icon: KeyIcon },
-            ...(!isTenant && canManage ? [{ key: 'device-groups', label: 'Device Groups', icon: RectangleGroupIcon }] : []),
-            ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
-            ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : []),
-          ].map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => {
-                setActiveTab(key as FacilityTab);
-                // Update URL with tab parameter
-                const newSearchParams = new URLSearchParams(location.search);
-                newSearchParams.set('tab', key);
-                navigate(`${location.pathname}?${newSearchParams.toString()}`, { replace: true });
-              }}
-              className={`group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === key
-                  ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-              }`}
-            >
-              <Icon className={`mr-2 h-5 w-5 ${
-                activeTab === key ? 'text-primary-500' : 'text-gray-400 group-hover:text-gray-500'
-              }`} />
-              {label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      <DetailsTabNav
+        tabs={facilityTabs}
+        activeKey={activeTab}
+        onChange={(key) => {
+          setActiveTab(key as FacilityTab);
+          const newSearchParams = new URLSearchParams(location.search);
+          newSearchParams.set('tab', key);
+          navigate(`${location.pathname}?${newSearchParams.toString()}`, { replace: true });
+        }}
+      />
 
       {/* Tab Content */}
-      {activeTab === 'overview' && (
+      {activeTab === 'facility' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Facility Info */}
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Facility Information</h3>
-              
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Facility profile</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                Core identity and contact details for this site.
+              </p>
               {facility.description && (
-                <p className="text-gray-600 dark:text-gray-400 mb-4">{facility.description}</p>
+                <p className="text-gray-600 dark:text-gray-400 mb-6">{facility.description}</p>
               )}
-
-              <div className="space-y-3">
-                <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
-                  <MapPinIcon className="h-4 w-4 mr-3 flex-shrink-0" />
-                  <span>{facility.address}</span>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <dt className="text-gray-500 dark:text-gray-400">Name</dt>
+                  <dd className="mt-1 font-medium text-gray-900 dark:text-white">{facility.name}</dd>
+                </div>
+                <div>
+                  <dt className="text-gray-500 dark:text-gray-400">Facility ID</dt>
+                  <dd className="mt-1 font-mono text-xs text-gray-900 dark:text-white break-all">{facility.id}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-gray-500 dark:text-gray-400">Address</dt>
+                  <dd className="mt-1 flex items-center text-gray-900 dark:text-white">
+                    <MapPinIcon className="h-4 w-4 mr-2 flex-shrink-0 text-gray-400" />
+                    {facility.address}
+                  </dd>
                 </div>
                 {facility.contact_email && (
-                  <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
-                    <EnvelopeIcon className="h-4 w-4 mr-3 flex-shrink-0" />
-                    <span>{facility.contact_email}</span>
+                  <div>
+                    <dt className="text-gray-500 dark:text-gray-400">Contact email</dt>
+                    <dd className="mt-1 flex items-center text-gray-900 dark:text-white">
+                      <EnvelopeIcon className="h-4 w-4 mr-2 flex-shrink-0 text-gray-400" />
+                      {facility.contact_email}
+                    </dd>
                   </div>
                 )}
                 {facility.contact_phone && (
-                  <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
-                    <PhoneIcon className="h-4 w-4 mr-3 flex-shrink-0" />
-                    <span>{facility.contact_phone}</span>
+                  <div>
+                    <dt className="text-gray-500 dark:text-gray-400">Contact phone</dt>
+                    <dd className="mt-1 flex items-center text-gray-900 dark:text-white">
+                      <PhoneIcon className="h-4 w-4 mr-2 flex-shrink-0 text-gray-400" />
+                      {facility.contact_phone}
+                    </dd>
                   </div>
                 )}
-              </div>
+              </dl>
             </div>
 
-            {/* Gateway Status */}
             {!isTenant && deviceHierarchy?.gateway && (
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway Status</h3>
+              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway status</h3>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
                     <div className="p-3 bg-primary-100 dark:bg-primary-900/20 rounded-lg mr-4">
@@ -879,16 +914,15 @@ export default function FacilityDetailsPage() {
             )}
           </div>
 
-          {/* Stats */}
           <div className="space-y-6">
             {!isTenant && facility.stats && (
-              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Statistics</h3>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
                       <HomeIcon className="h-5 w-5 text-blue-500 mr-2" />
-                      <span className="text-sm text-gray-600 dark:text-gray-400">Total Units</span>
+                      <span className="text-sm text-gray-600 dark:text-gray-400">Total units</span>
                     </div>
                     <span className="text-lg font-semibold text-gray-900 dark:text-white">{facility.stats.totalUnits}</span>
                   </div>
@@ -902,7 +936,7 @@ export default function FacilityDetailsPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
                       <SignalIcon className="h-5 w-5 text-primary-500 mr-2" />
-                      <span className="text-sm text-gray-600 dark:text-gray-400">Devices Online</span>
+                      <span className="text-sm text-gray-600 dark:text-gray-400">Devices online</span>
                     </div>
                     <span className="text-lg font-semibold text-gray-900 dark:text-white">
                       {facility.stats.devicesOnline}/{facility.stats.devicesTotal}
@@ -912,8 +946,7 @@ export default function FacilityDetailsPage() {
               </div>
             )}
 
-            {/* Location Map */}
-            {facility.latitude !== undefined && facility.longitude !== undefined && 
+            {facility.latitude !== undefined && facility.longitude !== undefined &&
              typeof facility.latitude === 'number' && typeof facility.longitude === 'number' && (
               <MapCard
                 address={facility.address}
@@ -924,56 +957,54 @@ export default function FacilityDetailsPage() {
               />
             )}
 
+            {canManage && (
+              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Edit facility</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Update name, address, branding, and contact information.
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(`/facilities/${facility.id}/edit`, { state: withReturnPath(location) })
+                  }
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                >
+                  <PencilIcon className="h-4 w-4" />
+                  Edit facility settings
+                </button>
+              </div>
+            )}
+
+            {canDelete && (
+              <div className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20 p-6">
+                <div className="flex items-start gap-3">
+                  <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg font-medium text-red-900 dark:text-red-200">Delete facility</h3>
+                    <p className="mt-1 text-sm text-red-800/90 dark:text-red-300/90">
+                      Permanently removes this facility, all units, devices, and gateway assignments. This cannot be
+                      undone.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void openDeleteConfirm()}
+                      disabled={loadingImpact}
+                      className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                      {loadingImpact ? 'Loading impact…' : 'Delete facility'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {activeTab === 'devices' && (
         <div className="space-y-6">
-          {canManage && (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <p className="text-sm text-gray-600 dark:text-gray-400 max-w-xl">
-                Physical endpoints for this facility: access control (gates, doors, elevators) and BluLok locks.
-                The{' '}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('device-groups');
-                    const next = new URLSearchParams(location.search);
-                    next.set('tab', 'device-groups');
-                    navigate(`${location.pathname}?${next.toString()}`, { replace: true });
-                  }}
-                  className="text-primary-600 dark:text-primary-400 font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-primary-500 rounded"
-                >
-                  Device Groups
-                </button>{' '}
-                tab is where you organize those devices into zones or shared keypad code scopes (it does not replace adding hardware here).
-              </p>
-              <div className="flex shrink-0 space-x-2">
-                <button
-                  onClick={() => {
-                    setSelectedDeviceType('access_control');
-                    setShowAddDeviceModal(true);
-                  }}
-                  className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
-                >
-                  <BoltIcon className="h-4 w-4 mr-2" />
-                  Add Access Control
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedDeviceType('blulok');
-                    setShowAddDeviceModal(true);
-                  }}
-                  className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
-                >
-                  <LockClosedIcon className="h-4 w-4 mr-2" />
-                  Add BluLok
-                </button>
-              </div>
-            </div>
-          )}
-
           <ExpandableFilters
             searchValue={deviceFilters.search || ''}
             onSearchChange={handleDeviceSearch}
@@ -1164,7 +1195,9 @@ export default function FacilityDetailsPage() {
                                     {isBlulok ? `Unit ${blulokDevice.unit_number ?? blulokDevice.device_serial}` : accessDevice.name}
                                   </div>
                                   <div className="text-sm text-gray-500 dark:text-gray-400">
-                                    {isBlulok ? blulokDevice.device_serial : accessDevice.location_description || '—'}
+                                    {isBlulok
+                                      ? blulokDevice.device_serial
+                                      : formatAccessDeviceListSubtitle(accessDevice)}
                                   </div>
                                 </div>
                               </div>
@@ -1294,17 +1327,6 @@ export default function FacilityDetailsPage() {
 
       {activeTab === 'units' && (
         <div className="space-y-6">
-          {canManage && (
-            <div className="flex justify-end">
-              <button
-                onClick={() => setShowAddUnitModal(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              >
-                Add Unit
-              </button>
-            </div>
-          )}
-
           <ExpandableFilters
             searchValue={unitFilters.search || ''}
             onSearchChange={handleUnitSearch}
@@ -1610,6 +1632,9 @@ export default function FacilityDetailsPage() {
           ]}
           groups={deviceGroups}
           onGroupsChanged={loadDeviceGroups}
+          createDialogOpen={showCreateDeviceGroup}
+          onCreateDialogChange={setShowCreateDeviceGroup}
+          hideInlineAddButton
         />
       )}
 
@@ -1644,7 +1669,6 @@ export default function FacilityDetailsPage() {
           setShowAddDeviceModal(false);
         }}
         facilityId={facility?.id}
-        deviceType={selectedDeviceType}
       />
 
       {/* Add Unit Modal */}
@@ -1669,6 +1693,6 @@ export default function FacilityDetailsPage() {
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={confirmDelete}
       />
-    </div>
+    </DetailsPageShell>
   );
 }

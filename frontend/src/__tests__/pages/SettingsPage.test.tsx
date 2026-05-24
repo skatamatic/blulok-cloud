@@ -12,6 +12,7 @@ jest.mock('@/services/api.service', () => ({
     getSystemSettings: jest.fn(),
     updateSystemSettings: jest.fn(),
     resetWidgetLayout: jest.fn(),
+    resetWidgetLayoutDefaults: jest.fn(),
   },
 }));
 
@@ -27,10 +28,23 @@ jest.mock('@/contexts/ToastContext', () => ({
   useToast: jest.fn(),
 }));
 
+jest.mock('@/pages/settings/DashboardSettingsTab', () => ({
+  __esModule: true,
+  default: () => <div>Merged dashboard settings</div>,
+}));
+
 const mockApi = apiService as jest.Mocked<typeof apiService>;
 const mockUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 const mockUseTheme = useTheme as jest.MockedFunction<typeof useTheme>;
 const mockUseToast = useToast as jest.MockedFunction<typeof useToast>;
+
+function renderSettings(initialEntry = '/settings?tab=security') {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <SettingsPage />
+    </MemoryRouter>
+  );
+}
 
 describe('SettingsPage', () => {
   beforeEach(() => {
@@ -41,6 +55,7 @@ describe('SettingsPage', () => {
         },
       },
       hasRole: (roles: UserRole[]) => roles.includes(UserRole.DEV_ADMIN),
+      isAdmin: () => true,
     } as any);
 
     mockUseTheme.mockReturnValue({
@@ -60,6 +75,36 @@ describe('SettingsPage', () => {
     jest.clearAllMocks();
   });
 
+  it('shows limited tabs for tenants', () => {
+    mockUseAuth.mockReturnValue({
+      authState: { user: { role: UserRole.TENANT } },
+      hasRole: (roles: UserRole[]) => roles.includes(UserRole.TENANT),
+      isAdmin: () => false,
+    } as any);
+
+    renderSettings('/settings');
+
+    expect(screen.getByRole('button', { name: /appearance/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /system information/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^dashboard$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /notifications/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /dashboard library/i })).not.toBeInTheDocument();
+  });
+
+  it('shows merged dashboard tab for admins', () => {
+    renderSettings('/settings?tab=dashboard');
+
+    expect(screen.getByRole('button', { name: /^dashboard$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /dashboard library/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/merged dashboard settings/i)).toBeInTheDocument();
+  });
+
+  it('maps legacy dashboard library tab to dashboard', () => {
+    renderSettings('/settings?tab=dashboards');
+
+    expect(screen.getByText(/merged dashboard settings/i)).toBeInTheDocument();
+  });
+
   it('displays unlimited state when max devices is 0', async () => {
     mockApi.getSystemSettings.mockResolvedValue({
       success: true,
@@ -68,17 +113,13 @@ describe('SettingsPage', () => {
       },
     });
 
-    render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>
-    );
+    renderSettings('/settings?tab=security');
 
     await waitFor(() => {
       expect(screen.getByText(/Unlimited devices enabled/)).toBeInTheDocument();
     });
 
-    const input = screen.getByLabelText('Maximum Devices Per User') as HTMLInputElement;
+    const input = screen.getByLabelText(/Maximum Devices Per User/i) as HTMLInputElement;
     expect(input.value).toBe('0');
   });
 
@@ -90,17 +131,11 @@ describe('SettingsPage', () => {
       },
     });
 
-    render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>
-    );
+    renderSettings('/settings?tab=security');
 
-    const input = await screen.findByLabelText('Maximum Devices Per User') as HTMLInputElement;
+    const input = await screen.findByLabelText(/Maximum Devices Per User/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: '300' } });
 
     expect(input.value).toBe('250');
   });
 });
-
-

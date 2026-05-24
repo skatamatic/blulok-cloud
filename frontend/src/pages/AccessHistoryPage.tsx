@@ -1,9 +1,10 @@
 import { Fragment, useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
 import { generateHighlightId, calculatePageForItem, navigateAndHighlightWithAutoPagination, navigateAndHighlight } from '@/utils/navigation.utils';
+import { withReturnPath } from '@/hooks/useBackNavigation';
 import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
@@ -191,16 +192,26 @@ const SortableHeader: React.FC<SortableHeaderProps> = ({
   );
 };
 
+const defaultAccessHistoryDateFilters = (): Pick<FilterState, 'date_from' | 'date_to' | 'limit'> => ({
+  date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+  date_to: new Date().toISOString().split('T')[0],
+  limit: 50,
+});
+
 export default function AccessHistoryPage() {
   const { authState } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { selectedFacilityId } = useGlobalFacility();
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [filtersExpanded, setFiltersExpanded] = useState(
+    () => !!searchParams.get('unit_id')
+  );
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortableColumn>('occurred_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -208,15 +219,36 @@ export default function AccessHistoryPage() {
   const [isCustomDateRange, setIsCustomDateRange] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
-  
-  const [filters, setFilters] = useState<FilterState>({
-    date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    date_to: new Date().toISOString().split('T')[0],
-    limit: 50,
+
+  const [filters, setFilters] = useState<FilterState>(() => {
+    const unitId = searchParams.get('unit_id') ?? undefined;
+    const facilityId = searchParams.get('facility_id') ?? undefined;
+    return {
+      ...defaultAccessHistoryDateFilters(),
+      ...(unitId ? { unit_id: unitId } : {}),
+      ...(facilityId ? { facility_id: facilityId } : {}),
+    };
   });
 
   const isFacilityAdmin = authState.user?.role === 'facility_admin';
   const isTenant = authState.user?.role === 'tenant';
+
+  useEffect(() => {
+    const unitId = searchParams.get('unit_id') ?? undefined;
+    const facilityId = searchParams.get('facility_id') ?? undefined;
+    setFilters((prev) => {
+      if (prev.unit_id === unitId && prev.facility_id === facilityId) return prev;
+      return {
+        ...prev,
+        unit_id: unitId,
+        facility_id: facilityId,
+      };
+    });
+    if (unitId) {
+      setFiltersExpanded(true);
+      setCurrentPage(1);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     loadAccessHistory();
@@ -256,14 +288,28 @@ export default function AccessHistoryPage() {
       setLoading(true);
       
       let response;
-      const queryFilters = {
+      const queryFilters: FilterState & {
+        offset: number;
+        sort_by: SortableColumn;
+        sort_order: 'asc' | 'desc';
+      } = {
         ...filters,
         offset: (currentPage - 1) * (filters.limit || 50),
         sort_by: sortBy,
         sort_order: sortOrder,
-        // Add facility_id from global context if not "All Facilities"
-        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
       };
+
+      // When scoped to a unit (e.g. from Units Manager), keep deep-link facility only if provided.
+      // Otherwise apply the global facility selector.
+      if (filters.unit_id) {
+        if (filters.facility_id) {
+          queryFilters.facility_id = filters.facility_id;
+        } else {
+          delete queryFilters.facility_id;
+        }
+      } else if (selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID) {
+        queryFilters.facility_id = selectedFacilityId;
+      }
 
       // Apply role-based filtering
       if (isTenant) {
@@ -308,11 +354,7 @@ export default function AccessHistoryPage() {
   };
 
   const clearFilters = () => {
-    setFilters({
-      date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      date_to: new Date().toISOString().split('T')[0],
-      limit: 50,
-    });
+    setFilters(defaultAccessHistoryDateFilters());
     setIsCustomDateRange(false);
     setCurrentPage(1);
   };
@@ -367,10 +409,9 @@ export default function AccessHistoryPage() {
     if (targetId && targetType) {
       if (targetType === 'unit') {
         // Navigate directly to unit details
-        navigate(`/units/${targetId}`);
+        navigate(`/units/${targetId}`, { state: withReturnPath(location) });
       } else if (targetType === 'facility') {
-        // Navigate directly to facility details
-        navigate(`/facilities/${targetId}`);
+        navigate(`/facilities/${targetId}`, { state: withReturnPath(location) });
       } else if (targetType === 'device') {
         // For devices, use auto-pagination to determine the correct page
         await navigateAndHighlightWithAutoPagination(navigate, {

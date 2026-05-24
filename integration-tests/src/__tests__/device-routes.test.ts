@@ -202,8 +202,9 @@ describe('Device Routes Integration Tests', () => {
   describe('POST /api/v1/devices/access-control', () => {
     const accessControlDevice = {
       gateway_id: 'gateway-1',
+      device_serial: 'INT-AC-001',
       name: 'Main Gate Access Control',
-      device_type: 'access_control',
+      device_type: 'gate',
       location_description: 'Main entrance gate',
       relay_channel: 1
     };
@@ -624,7 +625,7 @@ describe('Device Routes Integration Tests', () => {
       const maliciousDevice = {
         gateway_id: 'gateway-1',
         name: '<script>alert("xss")</script>',
-        device_type: 'access_control',
+        device_type: 'gate',
         location_description: 'Test location',
         relay_channel: 1
       };
@@ -645,7 +646,7 @@ describe('Device Routes Integration Tests', () => {
       const largeDevice = {
         gateway_id: 'gateway-1',
         name: 'A'.repeat(10000),
-        device_type: 'access_control',
+        device_type: 'gate',
         location_description: 'A'.repeat(10000),
         relay_channel: 1
       };

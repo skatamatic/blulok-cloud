@@ -54,6 +54,8 @@ export interface AccessControlDevice {
   location_description?: string;
   /** Relay channel number for control */
   relay_channel: number;
+  /** Manufacturer / gateway-reported hardware serial */
+  device_serial: string;
   /** Current operational status */
   status: 'online' | 'offline' | 'error' | 'maintenance';
   /** Current lock state of the device */
@@ -198,6 +200,7 @@ export interface CreateAccessControlDeviceData {
   device_type: 'gate' | 'elevator' | 'door';
   location_description?: string;
   relay_channel: number;
+  device_serial: string;
   device_settings?: Record<string, any>;
   access_methods?: AccessMethod[];
   metadata?: Record<string, any>;
@@ -207,6 +210,7 @@ export interface UpdateAccessControlDeviceData {
   name?: string;
   location_description?: string;
   relay_channel?: number;
+  device_serial?: string;
   status?: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked?: boolean;
   device_settings?: Record<string, any>;
@@ -248,6 +252,7 @@ export interface DeviceFilters {
 // Valid columns for sorting access control devices (facility/gateway use joined tables)
 const VALID_ACCESS_CONTROL_SORT_COLUMNS = [
   'name',
+  'device_serial',
   'device_type',
   'status',
   'last_activity',
@@ -324,7 +329,8 @@ export class DeviceModel {
       const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function(this: any) {
         this.where('access_control_devices.name', 'like', `%${escapedSearch}%`)
-            .orWhere('access_control_devices.location_description', 'like', `%${escapedSearch}%`);
+            .orWhere('access_control_devices.location_description', 'like', `%${escapedSearch}%`)
+            .orWhere('access_control_devices.device_serial', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -560,6 +566,86 @@ export class DeviceModel {
     };
   }
 
+  async findAccessControlBySerialAndRelay(
+    gatewayId: string,
+    deviceSerial: string,
+    relayChannel: number
+  ): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('access_control_devices')
+      .where({
+        gateway_id: gatewayId,
+        device_serial: deviceSerial,
+        relay_channel: relayChannel,
+      })
+      .first();
+    if (!device) return null;
+    return {
+      ...(device as AccessControlDevice),
+      device_settings: this.safeParseJson(device.device_settings),
+      access_methods: this.safeParseJson(device.access_methods) || ['app'],
+      metadata: this.safeParseJson(device.metadata),
+    };
+  }
+
+  async findAccessControlByRelayChannel(
+    gatewayId: string,
+    relayChannel: number
+  ): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('access_control_devices')
+      .where({ gateway_id: gatewayId, relay_channel: relayChannel })
+      .first();
+    if (!device) return null;
+    return {
+      ...(device as AccessControlDevice),
+      device_settings: this.safeParseJson(device.device_settings),
+      access_methods: this.safeParseJson(device.access_methods) || ['app'],
+      metadata: this.safeParseJson(device.metadata),
+    };
+  }
+
+  async bulkCreateAccessControlDevices(
+    devices: CreateAccessControlDeviceData[]
+  ): Promise<number> {
+    if (devices.length === 0) return 0;
+    const knex = this.db.connection;
+    const rows = devices.map((data) => ({
+      id: uuidv4(),
+      ...data,
+      device_settings: data.device_settings ? JSON.stringify(data.device_settings) : undefined,
+      access_methods: data.access_methods ? JSON.stringify(data.access_methods) : JSON.stringify(['app']),
+      metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
+    }));
+    await knex('access_control_devices').insert(rows);
+    return rows.length;
+  }
+
+  async updateAccessControlDeviceBySerialAndRelay(
+    gatewayId: string,
+    deviceSerial: string,
+    relayChannel: number,
+    data: UpdateAccessControlDeviceData
+  ): Promise<AccessControlDevice | null> {
+    const existing = await this.findAccessControlBySerialAndRelay(
+      gatewayId,
+      deviceSerial,
+      relayChannel
+    );
+    if (!existing) return null;
+    return this.updateAccessControlDevice(existing.id, data);
+  }
+
+  async updateAccessControlDeviceByRelayChannel(
+    gatewayId: string,
+    relayChannel: number,
+    data: UpdateAccessControlDeviceData
+  ): Promise<AccessControlDevice | null> {
+    const existing = await this.findAccessControlByRelayChannel(gatewayId, relayChannel);
+    if (!existing) return null;
+    return this.updateAccessControlDevice(existing.id, data);
+  }
+
   async updateAccessControlDevice(deviceId: string, data: UpdateAccessControlDeviceData): Promise<AccessControlDevice | null> {
     const knex = this.db.connection;
 
@@ -580,6 +666,7 @@ export class DeviceModel {
     if (data.name !== undefined) updatePayload.name = data.name;
     if (data.location_description !== undefined) updatePayload.location_description = data.location_description;
     if (data.relay_channel !== undefined) updatePayload.relay_channel = data.relay_channel;
+    if (data.device_serial !== undefined) updatePayload.device_serial = data.device_serial;
     if (data.status !== undefined) updatePayload.status = data.status;
     if (data.is_locked !== undefined) updatePayload.is_locked = data.is_locked;
     if (data.device_settings !== undefined) updatePayload.device_settings = JSON.stringify(data.device_settings);

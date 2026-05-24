@@ -1,103 +1,61 @@
+import { randomUUID } from 'crypto';
 import { BaseModel } from './base.model';
 import { WidgetTypeHelper } from '@/types/widget.types';
-
-/**
- * User Widget Layout Model
- *
- * Manages personalized dashboard layouts for users, controlling widget positioning,
- * sizing, visibility, and display order. Enables customizable user experiences
- * while maintaining consistent widget behavior and permissions.
- *
- * Key Features:
- * - Personalized widget layouts per user
- * - Drag-and-drop positioning system
- * - Responsive widget sizing
- * - Visibility controls and ordering
- * - Default template management
- * - Permission-based widget filtering
- *
- * Layout System:
- * - Grid-based positioning (x, y coordinates)
- * - Flexible sizing (width, height)
- * - Display order for tab navigation
- * - Visibility toggles for customization
- * - Responsive behavior across devices
- *
- * Widget Management:
- * - User-specific widget instances
- * - Template-based widget creation
- * - Permission validation on layout changes
- * - Migration support for layout updates
- * - Backup and restore capabilities
- *
- * Default Templates:
- * - Pre-configured widget layouts
- * - Role-based default configurations
- * - Organization-wide layout standards
- * - Onboarding experience templates
- *
- * Security Considerations:
- * - User isolation prevents layout manipulation
- * - Permission validation before layout changes
- * - Input sanitization for layout configurations
- * - XSS protection in widget content
- * - Secure default template management
- */
+import {
+  UserDashboardPageModel,
+  UserDashboardPage,
+} from './user-dashboard-page.model';
 
 export interface UserWidgetLayout {
-  /** Globally unique identifier for the layout entry */
   id: string;
-  /** User that owns this widget layout */
   user_id: string;
-  /** Unique widget instance identifier */
+  page_id: string;
   widget_id: string;
-  /** Canonical widget type identifier */
   widget_type: string;
-  /** Layout configuration including position and sizing */
   layout_config: {
     position: { x: number; y: number; w: number; h: number };
     size: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
-  /** Whether the widget is visible in the dashboard */
   is_visible: boolean;
-  /** Display order for widget arrangement */
   display_order: number;
-  /** Layout creation timestamp */
   created_at: Date;
-  /** Layout last update timestamp */
   updated_at: Date;
 }
 
 export interface DefaultWidgetTemplate {
-  /** Globally unique identifier for the template */
   id: string;
-  /** Canonical widget identifier for the template */
   widget_id: string;
-  /** Widget type this template applies to */
   widget_type: string;
-  /** Human-readable template name */
   name: string;
-  /** Optional template description */
   description?: string;
-  /** Default layout configuration */
   default_config: {
     position: { x: number; y: number; w: number; h: number };
     size: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
-  /** Available size options for this widget */
   available_sizes: string[];
-  /** Required permissions to use this widget */
   required_permissions?: string[];
-  /** Whether this template is currently active */
   is_active: boolean;
-  /** Default display order for new instances */
   default_order: number;
-  /** Template creation timestamp */
   created_at: Date;
-  /** Template last update timestamp */
   updated_at: Date;
+}
+
+export interface DashboardWidgetPayload {
+  widgetId: string;
+  widgetType?: string;
+  config?: Record<string, unknown>;
+  layoutConfig: Record<string, unknown>;
+  displayOrder: number;
+  isVisible?: boolean;
+}
+
+export interface DashboardPagePayload {
+  id?: string;
+  name?: string;
+  pageOrder: number;
+  widgets: DashboardWidgetPayload[];
 }
 
 export class UserWidgetLayoutModel extends BaseModel {
@@ -112,97 +70,239 @@ export class UserWidgetLayoutModel extends BaseModel {
       .orderBy('display_order', 'asc') as Promise<UserWidgetLayout[]>;
   }
 
-  public static async findByUserAndWidget(userId: string, widgetId: string): Promise<UserWidgetLayout | undefined> {
+  public static async findByUserAndPage(
+    userId: string,
+    pageId: string
+  ): Promise<UserWidgetLayout[]> {
     return this.query()
       .where('user_id', userId)
-      .where('widget_id', widgetId)
-      .first() as Promise<UserWidgetLayout | undefined>;
+      .where('page_id', pageId)
+      .where('is_visible', true)
+      .orderBy('display_order', 'asc') as Promise<UserWidgetLayout[]>;
   }
 
-  public static async saveUserLayout(userId: string, widgetId: string, layoutConfig: any): Promise<UserWidgetLayout> {
-    const existing = await this.findByUserAndWidget(userId, widgetId);
-    
+  public static async resolvePageId(
+    userId: string,
+    pageId?: string
+  ): Promise<string> {
+    if (pageId) {
+      const page = await UserDashboardPageModel.findByIdForUser(pageId, userId);
+      if (page) return page.id;
+    }
+    const fallback = await UserDashboardPageModel.ensureDefaultPage(userId);
+    return fallback.id;
+  }
+
+  public static async findPagesWithWidgets(userId: string): Promise<{
+    pages: UserDashboardPage[];
+    widgetsByPageId: Map<string, UserWidgetLayout[]>;
+  }> {
+    let pages = await UserDashboardPageModel.findByUserId(userId);
+    if (pages.length === 0) {
+      const defaultPage = await UserDashboardPageModel.ensureDefaultPage(userId);
+      pages = [defaultPage];
+    }
+
+    const allWidgets = await this.query()
+      .where('user_id', userId)
+      .where('is_visible', true)
+      .orderBy('display_order', 'asc') as UserWidgetLayout[];
+
+    const widgetsByPageId = new Map<string, UserWidgetLayout[]>();
+    for (const page of pages) {
+      widgetsByPageId.set(page.id, []);
+    }
+
+    const fallbackPageId = pages[0]?.id;
+    for (const widget of allWidgets) {
+      let list = widgetsByPageId.get(widget.page_id);
+      if (!list && fallbackPageId) {
+        list = widgetsByPageId.get(fallbackPageId);
+      }
+      if (list) {
+        list.push(widget);
+      }
+    }
+    return { pages, widgetsByPageId };
+  }
+
+  public static async findByUserAndWidget(
+    userId: string,
+    widgetId: string,
+    pageId?: string
+  ): Promise<UserWidgetLayout | undefined> {
+    const q = this.query()
+      .where('user_id', userId)
+      .where('widget_id', widgetId);
+    if (pageId) {
+      q.where('page_id', pageId);
+    }
+    return q.first() as Promise<UserWidgetLayout | undefined>;
+  }
+
+  public static async saveUserLayout(
+    userId: string,
+    pageId: string,
+    widgetId: string,
+    layoutConfig: Record<string, unknown>
+  ): Promise<UserWidgetLayout> {
+    const existing = await this.findByUserAndWidget(userId, widgetId, pageId);
+
     if (existing) {
-      // Update existing layout
       const updated = await this.updateById(existing.id, {
         layout_config: JSON.stringify(layoutConfig),
         updated_at: this.db.fn.now(),
       }) as UserWidgetLayout;
       return updated;
-    } else {
-      // Create new layout
-      const created = await this.create({
-        user_id: userId,
-        widget_id: widgetId,
-        widget_type: this.extractWidgetType(widgetId),
-        layout_config: JSON.stringify(layoutConfig),
-        is_visible: true,
-        display_order: 0,
-      }) as UserWidgetLayout;
-      return created;
     }
+
+    const created = await this.create({
+      user_id: userId,
+      page_id: pageId,
+      widget_id: widgetId,
+      widget_type: this.extractWidgetType(widgetId),
+      layout_config: JSON.stringify(layoutConfig),
+      is_visible: true,
+      display_order: 0,
+    }) as UserWidgetLayout;
+    return created;
   }
 
-  public static async saveUserLayouts(userId: string, layouts: Array<{
-    widgetId: string;
-    widgetType?: string;
-    config?: Record<string, unknown>;
-    layoutConfig: any;
-    displayOrder: number;
-    isVisible?: boolean;
-  }>): Promise<void> {
-    // Use transaction for atomic updates
-    await this.db.transaction(async (trx) => {
-      for (const layout of layouts) {
-        try {
-          const existing = await trx('user_widget_layouts')
-            .where('user_id', userId)
-            .where('widget_id', layout.widgetId)
-            .first();
+  /** Legacy bulk save — assigns all widgets to the user's first page. */
+  public static async saveUserLayouts(
+    userId: string,
+    layouts: Array<{
+      widgetId: string;
+      widgetType?: string;
+      config?: Record<string, unknown>;
+      layoutConfig: Record<string, unknown>;
+      displayOrder: number;
+      isVisible?: boolean;
+    }>
+  ): Promise<void> {
+    const page = await UserDashboardPageModel.ensureDefaultPage(userId);
+    await this.saveDashboardState(userId, [
+      {
+        id: page.id,
+        name: page.name,
+        pageOrder: page.page_order,
+        widgets: layouts,
+      },
+    ]);
+  }
 
-          // Include widget config in the layout_config
+  public static async saveDashboardState(
+    userId: string,
+    pages: DashboardPagePayload[]
+  ): Promise<void> {
+    await this.db.transaction(async (trx) => {
+      const existingPages = await trx('user_dashboard_pages')
+        .where('user_id', userId)
+        .orderBy('page_order', 'asc');
+
+      const keepPageIds: string[] = [];
+      const sortedPages = [...pages].sort(
+        (a, b) => (a.pageOrder ?? 0) - (b.pageOrder ?? 0)
+      );
+
+      for (let i = 0; i < sortedPages.length; i++) {
+        const pagePayload = sortedPages[i];
+        const pageOrder = pagePayload.pageOrder ?? i;
+        const name = pagePayload.name ?? `Page ${pageOrder + 1}`;
+
+        let pageId = pagePayload.id;
+        if (pageId) {
+          const existing = existingPages.find((p) => p.id === pageId);
+          if (existing) {
+            await trx('user_dashboard_pages')
+              .where('id', pageId)
+              .update({
+                name,
+                page_order: pageOrder,
+                updated_at: trx.fn.now(),
+              });
+          } else {
+            pageId = undefined;
+          }
+        }
+
+        if (!pageId) {
+          pageId = randomUUID();
+          await trx('user_dashboard_pages').insert({
+            id: pageId,
+            user_id: userId,
+            name,
+            page_order: pageOrder,
+            created_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
+          });
+        }
+
+        keepPageIds.push(pageId);
+
+        const widgetIdsInPayload = new Set(
+          pagePayload.widgets.map((w) => w.widgetId)
+        );
+
+        await trx('user_widget_layouts')
+          .where('user_id', userId)
+          .where('page_id', pageId)
+          .whereNotIn('widget_id', [...widgetIdsInPayload])
+          .del();
+
+        for (const layout of pagePayload.widgets) {
           const fullLayoutConfig = {
             ...layout.layoutConfig,
-            config: layout.config, // Store widget-specific config (e.g., facility IDs)
+            config: layout.config,
           };
           const layoutConfigJson = JSON.stringify(fullLayoutConfig);
-          
-          // Determine widget type - use provided type, or extract from ID
-          const widgetType = layout.widgetType || this.extractWidgetType(layout.widgetId);
+          const widgetType =
+            layout.widgetType || this.extractWidgetType(layout.widgetId);
+
+          const existing = await trx('user_widget_layouts')
+            .where('user_id', userId)
+            .where('page_id', pageId)
+            .where('widget_id', layout.widgetId)
+            .first();
 
           if (existing) {
             await trx('user_widget_layouts')
               .where('id', existing.id)
               .update({
-                widget_type: widgetType, // Update widget type
+                widget_type: widgetType,
                 layout_config: layoutConfigJson,
                 display_order: layout.displayOrder,
-                is_visible: layout.isVisible !== undefined ? layout.isVisible : true,
+                is_visible:
+                  layout.isVisible !== undefined ? layout.isVisible : true,
                 updated_at: trx.fn.now(),
               });
           } else {
             try {
               await trx('user_widget_layouts').insert({
                 user_id: userId,
+                page_id: pageId,
                 widget_id: layout.widgetId,
                 widget_type: widgetType,
                 layout_config: layoutConfigJson,
-                is_visible: layout.isVisible !== undefined ? layout.isVisible : true,
+                is_visible:
+                  layout.isVisible !== undefined ? layout.isVisible : true,
                 display_order: layout.displayOrder,
                 created_at: trx.fn.now(),
                 updated_at: trx.fn.now(),
               });
-            } catch (insertError: any) {
-              // If duplicate entry error, try to update instead
-              if (insertError.code === 'ER_DUP_ENTRY') {
+            } catch (insertError: unknown) {
+              const err = insertError as { code?: string };
+              if (err.code === 'ER_DUP_ENTRY') {
                 await trx('user_widget_layouts')
                   .where('user_id', userId)
+                  .where('page_id', pageId)
                   .where('widget_id', layout.widgetId)
                   .update({
                     widget_type: widgetType,
                     layout_config: layoutConfigJson,
                     display_order: layout.displayOrder,
-                    is_visible: layout.isVisible !== undefined ? layout.isVisible : true,
+                    is_visible:
+                      layout.isVisible !== undefined ? layout.isVisible : true,
                     updated_at: trx.fn.now(),
                   });
               } else {
@@ -210,17 +310,27 @@ export class UserWidgetLayoutModel extends BaseModel {
               }
             }
           }
-        } catch (error) {
-          console.error('Error processing layout:', layout, error);
-          throw error;
         }
+      }
+
+      if (keepPageIds.length > 0) {
+        await trx('user_dashboard_pages')
+          .where('user_id', userId)
+          .whereNotIn('id', keepPageIds)
+          .del();
       }
     });
   }
 
-  public static async hideWidget(userId: string, widgetId: string): Promise<void> {
+  public static async hideWidget(
+    userId: string,
+    widgetId: string,
+    pageId?: string
+  ): Promise<void> {
+    const resolvedPageId = await this.resolvePageId(userId, pageId);
     await this.query()
       .where('user_id', userId)
+      .where('page_id', resolvedPageId)
       .where('widget_id', widgetId)
       .update({
         is_visible: false,
@@ -228,9 +338,15 @@ export class UserWidgetLayoutModel extends BaseModel {
       });
   }
 
-  public static async showWidget(userId: string, widgetId: string): Promise<void> {
+  public static async showWidget(
+    userId: string,
+    widgetId: string,
+    pageId?: string
+  ): Promise<void> {
+    const resolvedPageId = await this.resolvePageId(userId, pageId);
     await this.query()
       .where('user_id', userId)
+      .where('page_id', resolvedPageId)
       .where('widget_id', widgetId)
       .update({
         is_visible: true,
@@ -239,14 +355,18 @@ export class UserWidgetLayoutModel extends BaseModel {
   }
 
   public static async resetToDefaults(userId: string): Promise<void> {
-    // Delete all user layouts to fall back to defaults
-    await this.query()
-      .where('user_id', userId)
-      .del();
+    await this.clearUserDashboard(userId);
+  }
+
+  /** Remove all personal dashboard pages/widgets (revert to assigned or system default). */
+  public static async clearUserDashboard(userId: string): Promise<void> {
+    await this.db.transaction(async (trx) => {
+      await trx('user_widget_layouts').where('user_id', userId).del();
+      await trx('user_dashboard_pages').where('user_id', userId).del();
+    });
   }
 
   public static extractWidgetType(widgetId: string): string {
-    // Use the shared widget type helper for consistent type extraction
     return WidgetTypeHelper.extractWidgetTypeFromId(widgetId);
   }
 }
@@ -262,28 +382,37 @@ export class DefaultWidgetTemplateModel extends BaseModel {
       .orderBy('default_order', 'asc') as Promise<DefaultWidgetTemplate[]>;
   }
 
-  public static async findByWidgetId(widgetId: string): Promise<DefaultWidgetTemplate | undefined> {
+  public static async findByWidgetId(
+    widgetId: string
+  ): Promise<DefaultWidgetTemplate | undefined> {
     return this.query()
       .where('widget_id', widgetId)
       .where('is_active', true)
       .first() as Promise<DefaultWidgetTemplate | undefined>;
   }
 
-  public static async findByType(widgetType: string): Promise<DefaultWidgetTemplate[]> {
+  public static async findByType(
+    widgetType: string
+  ): Promise<DefaultWidgetTemplate[]> {
     return this.query()
       .where('widget_type', widgetType)
       .where('is_active', true)
       .orderBy('default_order', 'asc') as Promise<DefaultWidgetTemplate[]>;
   }
 
-  public static async getAvailableForUser(userRole: string): Promise<DefaultWidgetTemplate[]> {
+  public static async getAvailableForUser(
+    userRole: string
+  ): Promise<DefaultWidgetTemplate[]> {
     const allTemplates = await this.findActive();
-    
-    return allTemplates.filter(template => {
-      if (!template.required_permissions || template.required_permissions.length === 0) {
-        return true; // No permissions required
+
+    return allTemplates.filter((template) => {
+      if (
+        !template.required_permissions ||
+        template.required_permissions.length === 0
+      ) {
+        return true;
       }
-      
+
       return template.required_permissions.includes(userRole);
     });
   }

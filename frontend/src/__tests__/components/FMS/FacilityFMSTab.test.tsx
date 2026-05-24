@@ -263,18 +263,47 @@ describe('FacilityFMSTab', () => {
       mockFmsService.testConnection.mockResolvedValue(true);
 
       renderComponent();
-      
-      // Expand configuration
-      await waitFor(() => screen.getByLabelText('Expand configuration'));
-      fireEvent.click(screen.getByLabelText('Expand configuration'));
 
-      await waitFor(() => screen.getByText('Test Connection'));
-      
-      const testButton = screen.getByText('Test Connection');
-      fireEvent.click(testButton);
+      await waitFor(() => {
+        expect(screen.getByText('Test Connection')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Test Connection'));
 
       await waitFor(() => {
         expect(mockFmsService.testConnection).toHaveBeenCalledWith('config-1');
+      });
+    });
+
+    it('should show collapsed configuration summary when config exists', async () => {
+      mockFmsService.getConfig.mockResolvedValue({
+        id: 'config-1',
+        facility_id: facilityId,
+        provider_type: FMSProviderType.SIMULATED,
+        is_enabled: true,
+        config: {
+          auth: { type: 'api_key' as const, credentials: {} },
+          features: {
+            supportsTenantSync: true,
+            supportsUnitSync: true,
+            supportsWebhooks: true,
+            supportsRealtime: false,
+          },
+          syncSettings: { autoAcceptChanges: false },
+        } as any,
+        last_sync_at: new Date().toISOString(),
+        last_sync_status: FMSSyncStatus.COMPLETED,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      renderComponent(true);
+
+      await waitFor(() => {
+        expect(screen.getByText('No credentials needed')).toBeInTheDocument();
+        expect(screen.getByText('Test Connection')).toBeInTheDocument();
+        expect(screen.getByLabelText('Expand configuration')).toBeInTheDocument();
+        expect(screen.queryByText('Authentication')).not.toBeInTheDocument();
       });
     });
   });
@@ -364,7 +393,7 @@ describe('FacilityFMSTab', () => {
         expect(screen.getByText('FMS Configuration')).toBeInTheDocument();
         expect(screen.getByText('Simulated Provider')).toBeInTheDocument();
         expect(screen.getAllByText('Enabled').length).toBeGreaterThan(0);
-        expect(screen.getByText('Configuration managed by administrators')).toBeInTheDocument();
+        expect(screen.getByText(/Configuration managed by administrators/i)).toBeInTheDocument();
         // No expand/collapse button should be present
         expect(screen.queryByLabelText('Expand configuration')).not.toBeInTheDocument();
         expect(screen.queryByLabelText('Collapse configuration')).not.toBeInTheDocument();

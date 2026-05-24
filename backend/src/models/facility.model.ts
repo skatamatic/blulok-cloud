@@ -230,6 +230,23 @@ export class FacilityModel {
   }
 
   /**
+   * Find a facility by display name (case-insensitive, trimmed).
+   * Used to prevent duplicate facility names across the system.
+   */
+  async findByName(name: string, excludeId?: string): Promise<Facility | null> {
+    const normalized = name.trim();
+    if (!normalized) return null;
+
+    const knex = this.db.connection;
+    let query = knex('facilities').whereRaw('LOWER(TRIM(name)) = LOWER(?)', [normalized]);
+    if (excludeId) {
+      query = query.whereNot('id', excludeId);
+    }
+    const facility = await query.first();
+    return facility || null;
+  }
+
+  /**
    * Find multiple facilities by their IDs.
    * Bulk operation for efficient batch retrieval.
    *

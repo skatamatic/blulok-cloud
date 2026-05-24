@@ -318,6 +318,35 @@ jest.mock('../models/facility.model', () => ({
       // Return null for non-existent facilities
       return Promise.resolve(null);
     }),
+    findByName: jest.fn().mockImplementation((name: string, excludeId?: string) => {
+      const normalized = name.trim().toLowerCase();
+      const resolveFacilityId = (facilityId?: string) => {
+        if (facilityId === 'facility-1') return '550e8400-e29b-41d4-a716-446655440001';
+        if (facilityId === 'facility-2') return '550e8400-e29b-41d4-a716-446655440002';
+        if (facilityId === 'facility-3') return '550e8400-e29b-41d4-a716-446655440003';
+        return facilityId;
+      };
+      const excludedId = resolveFacilityId(excludeId);
+      const mockFacilities = [
+        {
+          id: '550e8400-e29b-41d4-a716-446655440001',
+          name: 'Test Facility 1',
+        },
+        {
+          id: '550e8400-e29b-41d4-a716-446655440002',
+          name: 'Test Facility 2',
+        },
+        {
+          id: '550e8400-e29b-41d4-a716-446655440003',
+          name: 'Test Facility 3',
+        },
+      ];
+      const match = mockFacilities.find(
+        (facility) =>
+          facility.name.trim().toLowerCase() === normalized && facility.id !== excludedId
+      );
+      return Promise.resolve(match || null);
+    }),
     findByIds: jest.fn().mockResolvedValue([]),
     create: jest.fn().mockImplementation((data: any) => {
       return Promise.resolve({
@@ -540,11 +569,17 @@ jest.mock('../models/device.model', () => {
   }));
   (global as any).__mockReturnValues = mockReturnValues;
   const createAccessControlDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
-    if (payload && ('serial' in payload || 'device_serial' in payload)) {
-      throw new Error('Access control create payload must not contain BluLok serial fields');
+    if (payload && 'serial' in payload) {
+      throw new Error('Access control create payload must not contain BluLok serial alias field');
+    }
+    if (payload && !payload.device_serial) {
+      throw new Error('Access control create payload must include device_serial');
     }
     const values = (global as any).__mockReturnValues || mockReturnValues;
-    return values.createAccessControlDevice;
+    return {
+      ...values.createAccessControlDevice,
+      ...(payload ?? {}),
+    };
   });
   const createBluLokDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
     if (!payload?.device_serial || !payload?.serial) {
@@ -1861,6 +1896,34 @@ jest.mock('bcrypt', () => ({
   }),
 }));
 
+jest.mock('../models/user-dashboard-page.model', () => ({
+  UserDashboardPageModel: {
+    findByUserId: jest.fn().mockResolvedValue([]),
+    findByIdForUser: jest.fn().mockResolvedValue(undefined),
+    createPage: jest.fn().mockImplementation((_userId: string, name: string, pageOrder: number) =>
+      Promise.resolve({
+        id: 'page-1',
+        user_id: _userId,
+        name,
+        page_order: pageOrder,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+    ),
+    ensureDefaultPage: jest.fn().mockImplementation((userId: string) =>
+      Promise.resolve({
+        id: 'page-1',
+        user_id: userId,
+        name: 'Main',
+        page_order: 0,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+    ),
+    deletePagesNotIn: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
 // Mock UserWidgetLayoutModel
 jest.mock('../models/user-widget-layout.model', () => ({
   UserWidgetLayoutModel: {
@@ -1874,6 +1937,7 @@ jest.mock('../models/user-widget-layout.model', () => ({
         {
           id: 'layout-1',
           user_id: userId,
+          page_id: 'page-1',
           widget_id: 'facilities_stats',
           widget_type: 'stats',
           layout_config: {
@@ -1887,6 +1951,28 @@ jest.mock('../models/user-widget-layout.model', () => ({
         }
       ]);
     }),
+    resolvePageId: jest.fn().mockResolvedValue('page-1'),
+    findPagesWithWidgets: jest.fn().mockImplementation(async (userId: string) => {
+      const { UserWidgetLayoutModel } = jest.requireMock('../models/user-widget-layout.model');
+      const widgets = await UserWidgetLayoutModel.findByUserId(userId);
+      if (widgets.length === 0) {
+        return { pages: [], widgetsByPageId: new Map() };
+      }
+      const pages = [
+        {
+          id: 'page-1',
+          user_id: userId,
+          name: 'Main',
+          page_order: 0,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ];
+      const widgetsByPageId = new Map([[ 'page-1', widgets ]]);
+      return { pages, widgetsByPageId };
+    }),
+    findByUserAndPage: jest.fn().mockResolvedValue(undefined),
+    saveDashboardState: jest.fn().mockResolvedValue(undefined),
     findByUserAndWidget: jest.fn().mockImplementation((userId: string, widgetId: string) => {
       if (userId === 'tenant-1' && widgetId === 'facilities_stats') {
         return Promise.resolve({
@@ -1906,8 +1992,16 @@ jest.mock('../models/user-widget-layout.model', () => ({
       }
       return Promise.resolve(undefined);
     }),
-    saveUserLayouts: jest.fn().mockImplementation((_userId: string, _layouts: any[]) => {
-      return Promise.resolve();
+    saveUserLayouts: jest.fn().mockImplementation(async (userId: string, layouts: unknown[]) => {
+      const { UserWidgetLayoutModel } = jest.requireMock('../models/user-widget-layout.model');
+      return UserWidgetLayoutModel.saveDashboardState(userId, [
+        {
+          id: 'page-1',
+          name: 'Main',
+          pageOrder: 0,
+          widgets: layouts,
+        },
+      ]);
     }),
     hideWidget: jest.fn().mockImplementation((_userId: string, _widgetId: string) => {
       return Promise.resolve();
@@ -1916,6 +2010,9 @@ jest.mock('../models/user-widget-layout.model', () => ({
       return Promise.resolve();
     }),
     resetToDefaults: jest.fn().mockImplementation((_userId: string) => {
+      return Promise.resolve();
+    }),
+    clearUserDashboard: jest.fn().mockImplementation((_userId: string) => {
       return Promise.resolve();
     }),
     updateById: jest.fn().mockImplementation((id: string, data: any) => {
@@ -2005,6 +2102,58 @@ jest.mock('../models/user-widget-layout.model', () => ({
     findByWidgetId: jest.fn().mockResolvedValue(undefined),
     findByType: jest.fn().mockResolvedValue([])
   }
+}));
+
+jest.mock('../models/saved-dashboard.model', () => ({
+  SavedDashboardModel: {
+    listAll: jest.fn().mockResolvedValue([]),
+    findById: jest.fn().mockResolvedValue(undefined),
+    findByName: jest.fn().mockResolvedValue(undefined),
+    createFromUserWorkingLayout: jest.fn().mockResolvedValue({
+      id: 'saved-dashboard-1',
+      name: 'Test Dashboard',
+      description: null,
+    }),
+    updateSnapshotFromUserWorkingLayout: jest.fn().mockResolvedValue({
+      id: 'saved-dashboard-1',
+      name: 'Test Dashboard',
+      description: null,
+      page_count: 1,
+      widget_count: 2,
+      updated_at: new Date(),
+    }),
+    updateMetadata: jest.fn().mockResolvedValue({
+      id: 'saved-dashboard-1',
+      name: 'Renamed Dashboard',
+      description: null,
+    }),
+    deleteById: jest.fn().mockResolvedValue(1),
+    loadIntoUserWorkingLayout: jest.fn().mockResolvedValue([]),
+    countAssignmentsReferencing: jest.fn().mockResolvedValue(0),
+  },
+  DashboardAssignmentModel: {
+    listAll: jest.fn().mockResolvedValue([]),
+    findById: jest.fn().mockResolvedValue(undefined),
+    createAssignment: jest.fn().mockResolvedValue({
+      id: 'assignment-1',
+      saved_dashboard_id: 'saved-dashboard-1',
+      scope: 'global',
+      facility_id: null,
+      user_id: null,
+      target_role: 'facility_admin',
+      priority: 0,
+    }),
+    updateAssignment: jest.fn().mockResolvedValue(undefined),
+    deleteById: jest.fn().mockResolvedValue(1),
+    resolveAssignment: jest.fn().mockResolvedValue(null),
+    resolveAssignedDashboardId: jest.fn().mockResolvedValue(null),
+    findAffectedUserIds: jest.fn().mockResolvedValue([]),
+    findUserIdsForSavedDashboard: jest.fn().mockResolvedValue([]),
+    scopePriority: jest.fn().mockImplementation((scope: string) => {
+      const priorities: Record<string, number> = { user: 300, facility: 200, global: 100 };
+      return priorities[scope] ?? 0;
+    }),
+  },
 }));
 
 // Mock winston logger to avoid console noise during tests

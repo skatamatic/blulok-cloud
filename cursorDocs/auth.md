@@ -130,7 +130,19 @@ CREATE TABLE user_facility_associations (
 - **Facility-Scoped Roles** (`facility_admin`, `tenant`, `maintenance`, `blulok_technician`): Access only ASSIGNED facilities
 - **No Associations**: Facility-scoped users with no associations have no facility access
 
-## Authentication Flow
+### User list API (`GET /api/v1/users`)
+
+List scoping is enforced in `filterUsersForListScope` (`users-rbac.util.ts`) and `UserListScopeService`:
+
+| Requester | Visible users |
+|-----------|----------------|
+| **admin / dev_admin** | All users |
+| **facility_admin** | Users associated with at least one of the requester's facilities — **excluding** admin/dev_admin (global roles have no facility associations and must not appear) |
+| **tenant / maintenance** | Self plus users they have actively shared unit access with (`key_sharing.primary_tenant_id` → `shared_with_user_id`). Route still returns **403** via `requireUserManagement`; scoping applies if list access is granted elsewhere. |
+| **Other roles** | Empty list |
+
+Single-user reads (`GET /users/:id`, `/details`) use `UserListScopeService.canRequesterViewUser` with the same rules (plus self-access).
+
 
 ### Login Process
 
@@ -192,7 +204,8 @@ CREATE TABLE user_facility_associations (
 /users              # requireUserManagement: admin, dev_admin only
 /maintenance        # maintenance, blulok_technician, admin, dev_admin
 /analytics          # admin, dev_admin only
-/settings           # requireAdmin: admin, dev_admin only
+/settings           # requireSettingsAccess: tenant, maintenance, facility_admin, blulok_technician, admin, dev_admin (tab visibility varies by role)
+/settings/add-facility # requireAdmin: admin, dev_admin only
 ```
 
 ### Backend API Protection
@@ -227,6 +240,10 @@ requireUserManagement          # Requires admin or dev_admin
 useAuth().hasRole([UserRole.ADMIN])     # Check specific roles
 useAuth().isAdmin()                     # Check admin privileges
 useAuth().canManageUsers()              # Check user management access
+
+// Settings RBAC (`settings-rbac.utils.ts`)
+canAccessSystemSettings(role)           # Settings page + sidebar link
+canEditDashboardLayout(role)            # Personal dashboard tab + layout mutation (admin/dev_admin)
 ```
 
 ## Security Features
@@ -270,8 +287,11 @@ useAuth().canManageUsers()              # Check user management access
 |-------|----------|------|---------|
 | `admin@blulok.com` | `Admin123!@#` | admin | Facility administration |
 | `devadmin@blulok.com` | `DevAdmin123!@#` | dev_admin | System development |
+| `dev.facilityadmin@blulok.com` | `DevTest123!@#` | facility_admin | Linked to first facility (dev startup) |
+| `dev.maintenance@blulok.com` | `DevTest123!@#` | maintenance | Linked to first facility (dev startup) |
+| `dev.tenant@blulok.com` | `DevTest123!@#` | tenant | Linked to first facility (dev startup) |
 
-**Note**: These are created automatically by database seeds in development environment only.
+**Note**: Admin/dev_admin accounts are created by database seeds. Role test accounts (`dev.*`) are ensured on every backend startup when `NODE_ENV=development` and appear as quick-login buttons on the login page in Vite dev mode only.
 
 ## API Endpoints
 

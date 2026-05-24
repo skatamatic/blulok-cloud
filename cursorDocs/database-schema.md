@@ -188,12 +188,32 @@ CREATE TABLE access_logs (
 - Supports system and user actions
 - Optimized for time-based queries
 
+### User Dashboard Pages Table
+
+```sql
+CREATE TABLE user_dashboard_pages (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL,
+  name VARCHAR(100) NOT NULL DEFAULT 'Main',
+  page_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_user_id (user_id),
+  INDEX idx_user_page_order (user_id, page_order)
+);
+```
+
+**Purpose**: Multi-page dashboard tabs per user (staff: up to 5 pages; tenants: single page via API).
+
 ### User Widget Layouts Table
 
 ```sql
 CREATE TABLE user_widget_layouts (
   id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
   user_id VARCHAR(36) NOT NULL,
+  page_id VARCHAR(36) NOT NULL,
   widget_id VARCHAR(100) NOT NULL,
   widget_type VARCHAR(50) NOT NULL,
   layout_config JSON NOT NULL,
@@ -203,20 +223,21 @@ CREATE TABLE user_widget_layouts (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_user_widget (user_id, widget_id),
+  FOREIGN KEY (page_id) REFERENCES user_dashboard_pages(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_user_page_widget (user_id, page_id, widget_id),
   INDEX idx_user_id (user_id),
+  INDEX idx_user_page_display_order (user_id, page_id, display_order),
   INDEX idx_widget_type (widget_type),
-  INDEX idx_is_visible (is_visible),
-  INDEX idx_display_order (display_order)
+  INDEX idx_is_visible (is_visible)
 );
 ```
 
-**Purpose**: Store personalized widget layouts for each user  
+**Purpose**: Store personalized widget layouts per dashboard page  
 **Key Features**:
-- Per-user dashboard customization
-- Widget position and size persistence
+- Per-page widget instances (same widget type allowed on different pages with distinct `widget_id`)
+- Widget position and size persistence (`layout_config` includes `size` enum and grid `position`)
 - Visibility control for individual widgets
-- Display order management
+- Display order within a page
 
 ### Default Widget Templates Table
 
@@ -243,6 +264,63 @@ CREATE TABLE default_widget_templates (
 - Role-based widget availability
 - Default layout configurations
 - Size constraint definitions
+
+### Saved Dashboards Table
+
+```sql
+CREATE TABLE saved_dashboards (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  name VARCHAR(100) NOT NULL UNIQUE,
+  description TEXT NULL,
+  snapshot JSON NOT NULL,
+  page_count INT NOT NULL DEFAULT 0,
+  widget_count INT NOT NULL DEFAULT 0,
+  created_by VARCHAR(36) NOT NULL,
+  updated_by VARCHAR(36) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT,
+  INDEX idx_name (name),
+  INDEX idx_created_by (created_by),
+  INDEX idx_updated_at (updated_at)
+);
+```
+
+**Purpose**: Org-wide named dashboard templates (admin/dev_admin library).  
+**Snapshot shape**: `{ version: 1, pages: DashboardPagePayload[] }` — same structure as `POST /widget-layouts`.
+
+### Dashboard Assignments Table
+
+```sql
+CREATE TABLE dashboard_assignments (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  saved_dashboard_id VARCHAR(36) NOT NULL,
+  scope ENUM('global', 'facility', 'user') NOT NULL,
+  facility_id VARCHAR(36) NULL,
+  user_id VARCHAR(36) NULL,
+  target_role ENUM('tenant','admin','facility_admin','maintenance','blulok_technician','dev_admin') NOT NULL,
+  priority INT NOT NULL DEFAULT 0,
+  created_by VARCHAR(36) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (saved_dashboard_id) REFERENCES saved_dashboards(id) ON DELETE CASCADE,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Scope consistency (MySQL 8+ CHECK, migration 065)
+-- global: facility_id and user_id NULL
+-- facility: user_id NULL; facility_id may be NULL (= all-facilities aggregate view)
+-- user: user_id required; facility_id NULL
+-- Dedup via generated scope_entity_id + UNIQUE(saved_dashboard_id, target_role, scope, scope_entity_id)
+-- scope_entity_id for facility scope uses COALESCE(facility_id, '00000000-0000-0000-0000-000000000000')
+```
+
+**Purpose**: Role/scope dashboard template assignments (user > facility > global hierarchy). Managed in System Settings → Dashboards → Assignments.
 
 ### Notifications Table
 

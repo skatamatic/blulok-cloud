@@ -40,21 +40,27 @@ jest.mock('@/services/device-sync.service', () => {
   const syncGatewayDevicesMock = jest.fn().mockResolvedValue(undefined);
   const updateDeviceStatusesMock = jest.fn().mockResolvedValue(undefined);
   const syncDeviceInventoryMock = jest.fn().mockResolvedValue({ added: 1, removed: 0, unchanged: 2, errors: [] });
+  const syncAccessDeviceInventoryMock = jest.fn().mockResolvedValue({ added: 1, removed: 0, unchanged: 0, errors: [] });
   const updateDeviceStatesMock = jest.fn().mockResolvedValue({ updated: 2, not_found: [], errors: [] });
+  const updateAccessDeviceStatesMock = jest.fn().mockResolvedValue({ updated: 1, not_found: [], errors: [] });
   return {
     DeviceSyncService: {
       getInstance: jest.fn().mockReturnValue({
         syncGatewayDevices: syncGatewayDevicesMock,
         updateDeviceStatuses: updateDeviceStatusesMock,
         syncDeviceInventory: syncDeviceInventoryMock,
+        syncAccessDeviceInventory: syncAccessDeviceInventoryMock,
         updateDeviceStates: updateDeviceStatesMock,
+        updateAccessDeviceStates: updateAccessDeviceStatesMock,
       }),
     },
     __mocks: {
       syncGatewayDevicesMock,
       updateDeviceStatusesMock,
       syncDeviceInventoryMock,
+      syncAccessDeviceInventoryMock,
       updateDeviceStatesMock,
+      updateAccessDeviceStatesMock,
     },
   };
 });
@@ -62,7 +68,14 @@ jest.mock('@/services/device-sync.service', () => {
 // Access mocks exported by the jest factory above
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const deviceSyncModule = require('@/services/device-sync.service');
-const { syncGatewayDevicesMock, updateDeviceStatusesMock, syncDeviceInventoryMock, updateDeviceStatesMock } = deviceSyncModule.__mocks;
+const {
+  syncGatewayDevicesMock,
+  updateDeviceStatusesMock,
+  syncDeviceInventoryMock,
+  syncAccessDeviceInventoryMock,
+  updateDeviceStatesMock,
+  updateAccessDeviceStatesMock,
+} = deviceSyncModule.__mocks;
 
 describe('Internal Gateway Routes', () => {
   let app: any;
@@ -341,6 +354,45 @@ describe('Internal Gateway Routes', () => {
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
     });
+
+    it('requires access_id and relay_channel for access_control inventory items', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [{ kind: 'access_control', relay_channel: 1 }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('performs mixed lock and access_control inventory sync', async () => {
+      syncDeviceInventoryMock.mockClear();
+      syncAccessDeviceInventoryMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [
+            { lock_id: 'lock-1' },
+            { kind: 'access_control', access_id: 'KP-004', relay_channel: 4 },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.access_control).toBeDefined();
+      expect(syncDeviceInventoryMock).toHaveBeenCalledTimes(1);
+      expect(syncAccessDeviceInventoryMock).toHaveBeenCalledTimes(1);
+      expect(syncAccessDeviceInventoryMock).toHaveBeenCalledWith(
+        'gateway-1',
+        'facility-1',
+        [expect.objectContaining({ access_id: 'KP-004', relay_channel: 4 })]
+      );
+    });
   });
 
   describe('POST /api/v1/internal/gateway/devices/state', () => {
@@ -490,6 +542,27 @@ describe('Internal Gateway Routes', () => {
 
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
+    });
+
+    it('performs mixed lock and access_control state updates', async () => {
+      updateDeviceStatesMock.mockClear();
+      updateAccessDeviceStatesMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          updates: [
+            { lock_id: 'lock-1', online: true },
+            { kind: 'access_control', access_id: 'KP-002', relay_channel: 2, locked: true },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.access_control).toBeDefined();
+      expect(updateDeviceStatesMock).toHaveBeenCalledTimes(1);
+      expect(updateAccessDeviceStatesMock).toHaveBeenCalledTimes(1);
     });
   });
 

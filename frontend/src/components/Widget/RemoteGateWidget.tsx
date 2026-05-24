@@ -17,6 +17,7 @@ import { AccessControlDevice } from '@/types/facility.types';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
 import { useToast } from '@/contexts/ToastContext';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { startHardwareAckWatch, LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS } from '@/utils/lockHardwareFeedback.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 
@@ -39,9 +40,12 @@ interface RemoteGateWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   facilityFilter?: string;
 }
 
@@ -66,12 +70,19 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   id,
   title,
   initialSize = 'medium',
+  currentSize,
   availableSizes = ['medium', 'large'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
   facilityFilter
 }) => {
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   const [gates, setGates] = useState<GateDevice[]>([]);
   const [selectedGate, setSelectedGate] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
@@ -282,9 +293,10 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
       title={title}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
           <button
@@ -382,9 +394,9 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
       ) : (
         /* Full gate control for large widgets */
-        <div className="space-y-2 h-full flex flex-col">
-        {/* Gate Selection */}
-        <div>
+        <div className="h-full flex flex-col min-h-0">
+        {/* Gate Selection — pinned to top */}
+        <div className="flex-shrink-0 mb-2">
           <select
             value={selectedGate}
             onChange={(e) => setSelectedGate(e.target.value)}
@@ -401,7 +413,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
 
         {/* Gate Status */}
         {selectedGateData && (
-          <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+          <div className="flex-shrink-0 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 mb-2">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2">
                 {getStatusIcon(selectedGateData.status)}
@@ -430,8 +442,14 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
           </div>
         )}
 
-        {/* Control Buttons */}
-        <div className="flex-1 flex flex-col justify-end">
+        {/* Control / empty state — centered unless an online gate is selected */}
+        <div
+          className={`flex-1 flex flex-col min-h-0 ${
+            selectedGateData?.status === 'online'
+              ? 'justify-end'
+              : 'justify-center items-center'
+          }`}
+        >
           {selectedGateData ? (
             selectedGateData.status === 'online' ? (
               <div className="space-y-2">
@@ -473,7 +491,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                 )}
               </div>
             ) : (
-              <div className="text-center py-4">
+              <div className="text-center">
                 <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mx-auto mb-2" />
                 <p className="text-sm text-red-600 dark:text-red-400">
                   Gate {selectedGateData.status}
@@ -484,7 +502,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
               </div>
             )
           ) : (
-            <div className="text-center py-4">
+            <div className="text-center">
               <BoltIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
               <p className="text-sm text-gray-500 dark:text-gray-400">Select a gate to control</p>
               {gates.length === 0 && (

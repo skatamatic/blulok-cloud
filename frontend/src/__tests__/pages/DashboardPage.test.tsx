@@ -6,6 +6,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import DashboardPage from '@/pages/DashboardPage';
 import { UserRole } from '@/types/auth.types';
+import { ToastProvider } from '@/contexts/ToastContext';
 
 const mockUseAuth = jest.fn();
 const mockUseGlobalFacility = jest.fn();
@@ -36,25 +37,37 @@ jest.mock('@/hooks/useGeneralStatsData', () => ({
 
 jest.mock('@/services/widget-subscription-manager', () => ({
   widgetSubscriptionManager: {
+    subscribe: jest.fn(),
     updateSubscriptions: jest.fn(),
     unsubscribe: jest.fn(),
     unsubscribeAll: jest.fn(),
   },
 }));
 
+jest.mock('@/services/websocket.service', () => ({
+  websocketService: {
+    subscribe: jest.fn(),
+    unsubscribe: jest.fn(),
+    onMessage: jest.fn(() => jest.fn()),
+  },
+}));
+
 const mockGetWidgetLayouts = jest.fn();
 const mockSaveWidgetLayouts = jest.fn();
+const mockSaveDashboard = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getWidgetLayouts: () => mockGetWidgetLayouts(),
     saveWidgetLayouts: (...args: unknown[]) => mockSaveWidgetLayouts(...args),
+    saveDashboard: (...args: unknown[]) => mockSaveDashboard(...args),
+    hideWidget: jest.fn(),
   },
 }));
 
-jest.mock('@/components/Widget/WidgetGrid', () => ({
-  WidgetGrid: ({ children }: { children?: React.ReactNode }) => (
-    <div data-testid="widget-grid">{children}</div>
+jest.mock('@/components/Dashboard/DashboardCanvas', () => ({
+  DashboardCanvas: ({ children }: { children?: React.ReactNode }) => (
+    <div data-testid="dashboard-canvas">{children}</div>
   ),
 }));
 
@@ -99,12 +112,21 @@ jest.mock('@/components/Widget/FacilityViewerWidget', () => ({
 jest.mock('@/components/Widget/DailyAccessCodesWidget', () => ({
   DailyAccessCodesWidget: () => <div data-testid="daily-access-widget" />,
 }));
+jest.mock('@/components/Widget/UnitsManagerWidget', () => ({
+  UnitsManagerWidget: () => <div data-testid="units-manager-widget" />,
+}));
 
 describe('DashboardPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
-    mockGetWidgetLayouts.mockResolvedValue({ layouts: [] });
+    mockGetWidgetLayouts.mockResolvedValue({
+      pages: [],
+      layouts: [],
+      layoutSource: 'default',
+      canEditLayout: true,
+      allowMultiplePages: true,
+    });
     mockSaveWidgetLayouts.mockResolvedValue(undefined);
     mockUseGlobalFacility.mockReturnValue({
       selectedFacilityId: '__ALL_FACILITIES__',
@@ -128,7 +150,9 @@ describe('DashboardPage', () => {
   it('loads layout and shows welcome for admin', async () => {
     render(
       <MemoryRouter>
-        <DashboardPage />
+        <ToastProvider>
+          <DashboardPage />
+        </ToastProvider>
       </MemoryRouter>
     );
 
@@ -137,11 +161,87 @@ describe('DashboardPage', () => {
     });
 
     expect(screen.getByText(/admin dashboard/i)).toBeInTheDocument();
-    expect(screen.getByTestId('widget-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-canvas')).toBeInTheDocument();
+    expect(screen.getByTitle('Dashboard settings')).toBeInTheDocument();
     expect(mockGetWidgetLayouts).toHaveBeenCalled();
   });
 
+  it('hides dashboard settings for facility admin (read-only layout)', async () => {
+    mockGetWidgetLayouts.mockResolvedValue({
+      pages: [],
+      layouts: [],
+      layoutSource: 'assigned',
+      canEditLayout: false,
+      allowMultiplePages: false,
+      assignedDashboardName: 'Staff default',
+    });
+    mockUseAuth.mockReturnValue({
+      authState: {
+        isAuthenticated: true,
+        user: {
+          id: 'fa1',
+          firstName: 'Frank',
+          role: UserRole.FACILITY_ADMIN,
+        },
+      },
+      logout: jest.fn(),
+      hasRole: jest.fn(() => true),
+      isAdmin: jest.fn(() => false),
+      canManageUsers: jest.fn(() => true),
+    });
+
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <DashboardPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /welcome back, frank/i })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTitle('Dashboard settings')).not.toBeInTheDocument();
+    expect(screen.getByText(/dashboard managed by your organization/i)).toBeInTheDocument();
+    expect(screen.getByTitle('Add new user')).toBeInTheDocument();
+  });
+
+  it('shows revert banner when admin has personal override over assigned template', async () => {
+    mockGetWidgetLayouts.mockResolvedValue({
+      pages: [{ id: 'p1', name: 'Main', pageOrder: 0, widgets: [] }],
+      layouts: [],
+      layoutSource: 'personal',
+      canEditLayout: true,
+      allowMultiplePages: false,
+      hasAssignedOverride: true,
+      assignedDashboardName: 'Org Standard',
+    });
+
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <DashboardPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/personal layout active/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /revert to assigned/i })).toBeInTheDocument();
+    expect(screen.getByText(/org standard/i)).toBeInTheDocument();
+  });
+
   it('shows tenant copy and tenant widget stubs', async () => {
+    mockGetWidgetLayouts.mockResolvedValue({
+      pages: [],
+      layouts: [],
+      layoutSource: 'default',
+      canEditLayout: false,
+      allowMultiplePages: false,
+    });
     mockUseAuth.mockReturnValue({
       authState: {
         isAuthenticated: true,
@@ -159,7 +259,9 @@ describe('DashboardPage', () => {
 
     render(
       <MemoryRouter>
-        <DashboardPage />
+        <ToastProvider>
+          <DashboardPage />
+        </ToastProvider>
       </MemoryRouter>
     );
 

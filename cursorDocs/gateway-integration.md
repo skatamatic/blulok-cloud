@@ -147,13 +147,39 @@ The dashboard shows **one** “Cloud connection” state derived from the **`gat
 - The **Facility → Gateway** tab loads **`GET /api/v1/gateways?facility_id=...`**. If no gateway row exists yet, the UI shows **“No Gateway Configured”** even though the mesh session is up — unless you also created/assigned a gateway record.
 - **Two different things:** (1) **session connected** = someone authenticated to `/ws/gateway` for this facility; (2) **gateway configured** = a **`gateways`** row exists with `facility_id` set (needed for device sync, firmware targeting, etc.). The dashboard now calls out this split when a session is active but no record exists.
 
+## Gateway device sync (locks + access control)
+
+Unified internal routes (via `PROXY_REQUEST` or direct REST):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/v1/internal/gateway/devices/inventory` | Reconcile locks (`lock_id`) and access keypads (`kind: access_control`, `access_id`, `relay_channel`) |
+| `POST /api/v1/internal/gateway/devices/state` | Partial telemetry: locks use full telemetry; access uses `online` / `locked` only |
+| `GET /api/v1/internal/gateway/access-codes` | Poll keypad codes after access devices exist |
+
+**Removal policy:** inventory sync removes only auto-provisioned devices (`metadata.createdFromGatewaySync`, or legacy `createdFromInventorySync`). Manually created locks/access rows are never deleted by a gateway delta.
+
+**Access inventory example:**
+
+```json
+{
+  "facility_id": "<uuid>",
+  "devices": [
+    { "lock_id": "lock-serial-123" },
+    { "kind": "access_control", "access_id": "KP-7F2A-001", "relay_channel": 2, "device_type": "door" }
+  ]
+}
+```
+
+After access inventory changes, the backend pushes access codes to the gateway (same as admin device create).
+
 ## Automated regression tests
 
 - **Inbound WS → DB status:** `backend/src/__tests__/services/gateway-events.service.inbound-db-sync.test.ts` — connect/disconnect updates `gateways.status` for physical/simulated, skips HTTP and missing rows; uses `jest.unmock('@/models/gateway.model')` because global `setup-mocks` replaces `GatewayModel` with a plain factory (no real prototype for `jest.spyOn`).
 - **Gateway status cache:** `GatewayStatusSubscriptionManager.broadcastUpdate` always calls `invalidateCache()` before loading gateways so **HTTP/BaseGateway** DB updates and inbound WS both fan out **fresh** rows (not a stale 5s `findAll` cache). Tests live in `gateway-status-subscription-manager.test.ts`.
 - **Dashboard client parsing:** `frontend/src/__tests__/services/websocket.service.test.ts` covers `gateway_status_update`, `device_status_update`, and `units_update` dispatch to `onMessage` handlers (same path the app uses for lock + gateway UI).
 - **Units management realtime:** `frontend/src/__tests__/pages/UnitsManagementPage.test.tsx` mocks `WebSocketContext` and asserts facility-scoped `device_status` + `units` subscriptions (`useLockDeviceRealtime`).
-- **Live backend E2E:** `backend/npm run ws:e2e` (`scripts/ws-gateway-e2e.js`) exercises `/ws/gateway` PROXY → `devices/state`, then dashboard `/ws` subscriptions for **`device_status_update`**, **`units_update`**, and **`gateway_status_update`** (plus stress paths). Includes **device commissioning** HTTP checks: `DELETE /devices/blulok/:id/unassign`, admin `DELETE /devices/blulok/:id` (cloud inventory removal), and facility-admin **403** on inventory delete. While subscribed with **`device_id`** (same filter as `useLockDeviceRealtime` / the web app), it asserts **`lock_status`** after **HTTP** `PUT .../devices/blulok/:id/lock` and after **gateway** `devices/state` LOCKED/UNLOCKED, plus **`units_update`** after a gateway lock change. It also decodes route pass JWTs from **`POST /passes/request`** and asserts **`user_role`** (`tenant` for primary/shared users; **`facility_admin`** for the provisioned facility admin). Defaults: read **`PORT`** from the **`backend/.env` file** (local dev template uses **3000**; not shell `PORT`, so another process cannot steal the port), then `127.0.0.1`. Override with **`E2E_API_PORT`** / **`BACKEND_PORT`**, or **`API_BASE_URL`** (WebSocket defaults follow the same host:port unless `WS_URL` / `UI_WS_URL` are set), or **`E2E_HOST`** for host-only.
+- **Live backend E2E:** `backend/npm run ws:e2e` (`scripts/ws-gateway-e2e.js`) exercises `/ws/gateway` PROXY → `devices/state`, then dashboard `/ws` subscriptions for **`device_status_update`**, **`units_update`**, and **`gateway_status_update`** (plus stress paths). Includes **unified device sync**: mixed `devices/inventory` (locks + `kind: access_control`), access-only state updates, relay delta add/remove, and validation failures. Includes **device commissioning** HTTP checks: `DELETE /devices/blulok/:id/unassign`, admin `DELETE /devices/blulok/:id` (cloud inventory removal), and facility-admin **403** on inventory delete. While subscribed with **`device_id`** (same filter as `useLockDeviceRealtime` / the web app), it asserts **`lock_status`** after **HTTP** `PUT .../devices/blulok/:id/lock` and after **gateway** `devices/state` LOCKED/UNLOCKED, plus **`units_update`** after a gateway lock change. It also decodes route pass JWTs from **`POST /passes/request`** and asserts **`user_role`** (`tenant` for primary/shared users; **`facility_admin`** for the provisioned facility admin). Defaults: read **`PORT`** from the **`backend/.env` file** (local dev template uses **3000**; not shell `PORT`, so another process cannot steal the port), then `127.0.0.1`. Override with **`E2E_API_PORT`** / **`BACKEND_PORT`**, or **`API_BASE_URL`** (WebSocket defaults follow the same host:port unless `WS_URL` / `UI_WS_URL` are set), or **`E2E_HOST`** for host-only.
 - **Facility Gateway tab UI:** `frontend/src/__tests__/components/Gateway/FacilityGatewayTab.test.tsx` — amber “Inbound WebSocket session is active” when `getGatewayWsStatus.connected` but no gateway row; “Gateway status (database)” when a row exists.
 
 ## Quick checklist

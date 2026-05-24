@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { isViteDev } from '@/services/appConfig';
+import { DEV_QUICK_LOGIN_ACCOUNTS } from '@/config/devTestAccounts';
 import { LockClosedIcon, EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 export default function LoginPage() {
@@ -265,23 +266,19 @@ export default function LoginPage() {
                 <div className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-3">
                   Quick login with test accounts:
                 </div>
-                <div className="space-y-2">
-                  <button
-                    onClick={() => handleTestAccountLogin('admin@blulok.com', 'Admin123!@#')}
-                    disabled={isLoading || isSubmitting}
-                    className="w-full bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md p-3 text-left transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div className="font-medium text-gray-900 dark:text-white">Admin Account</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">admin@blulok.com</div>
-                  </button>
-                  <button
-                    onClick={() => handleTestAccountLogin('devadmin@blulok.com', 'DevAdmin123!@#')}
-                    disabled={isLoading || isSubmitting}
-                    className="w-full bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md p-3 text-left transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div className="font-medium text-gray-900 dark:text-white">Dev Admin Account</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">devadmin@blulok.com</div>
-                  </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {DEV_QUICK_LOGIN_ACCOUNTS.map((account) => (
+                    <button
+                      key={account.email}
+                      type="button"
+                      onClick={() => handleTestAccountLogin(account.email, account.password)}
+                      disabled={isLoading || isSubmitting}
+                      className="w-full bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md p-3 text-left transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <div className="font-medium text-gray-900 dark:text-white">{account.label}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{account.email}</div>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>

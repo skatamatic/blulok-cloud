@@ -12,7 +12,8 @@ import {
   ServerIcon,
   ArrowPathIcon,
   KeyIcon,
-  BuildingOffice2Icon
+  BuildingOffice2Icon,
+  Squares2X2Icon
 } from '@heroicons/react/24/outline';
 
 // Import the shared widget registry and add icons
@@ -83,6 +84,10 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
   'facility-viewer': {
     ...SHARED_WIDGET_REGISTRY['facility-viewer'],
     icon: BuildingOffice2Icon
+  },
+  'units-manager': {
+    ...SHARED_WIDGET_REGISTRY['units-manager'],
+    icon: Squares2X2Icon
   }
 };
 

@@ -1,6 +1,19 @@
-import { DeviceModel, BluLokDevice, CreateBluLokDeviceData, DeviceStateUpdate } from '../models/device.model';
+import { DeviceModel, BluLokDevice, CreateBluLokDeviceData, CreateAccessControlDeviceData, DeviceStateUpdate } from '../models/device.model';
 import { DeviceEventService } from './device-event.service';
 import { DevicesService } from './devices.service';
+import { AccessCodeService } from './access-code.service';
+import {
+  AccessDeviceInventoryItem,
+  AccessDeviceStateUpdate,
+  extractAccessId,
+  formatAccessDeviceKey,
+  isGatewaySyncManaged,
+  isValidRelayChannel,
+  resolveAccessDeviceKey,
+} from '../utils/gateway-sync.utils';
+import type { DeviceSyncLogEntry } from '../types/gateway-device-sync.types';
+
+export type { AccessDeviceInventoryItem, AccessDeviceStateUpdate };
 
 /**
  * Gateway Device Data Interface
@@ -76,7 +89,9 @@ export interface InventorySyncResult {
   added: number;
   removed: number;
   unchanged: number;
+  skipped_manual?: number;
   errors: string[];
+  entries?: DeviceSyncLogEntry[];
 }
 
 /**
@@ -266,13 +281,16 @@ export class DeviceSyncService {
       if (devicesToRemove.length > 0) {
         const devicesService = DevicesService.getInstance();
         for (const device of devicesToRemove) {
+          if (!isGatewaySyncManaged(device.metadata)) {
+            continue;
+          }
           try {
             await devicesService.deleteBluLokFromInventory(device.id, { source: 'gateway_sync' });
           } catch (error) {
             console.error(`Failed to remove device ${device.device_serial} from gateway ${gatewayId}:`, error);
           }
         }
-        console.log(`[DEVICE-SYNC] Removed ${devicesToRemove.length} devices from gateway ${gatewayId}`);
+        console.log(`[DEVICE-SYNC] Removed sync-managed devices from gateway ${gatewayId}`);
       }
 
     } catch (error) {
@@ -324,6 +342,13 @@ export class DeviceSyncService {
    */
   private async removeGatewayDevice(device: BluLokDevice): Promise<void> {
     try {
+      if (!isGatewaySyncManaged(device.metadata)) {
+        console.log(
+          `[DEVICE-SYNC] Skipping removal of manually provisioned device ${device.device_serial} on gateway ${device.gateway_id}`
+        );
+        return;
+      }
+
       const logMessage = device.unit_id
         ? `[DEVICE-SYNC] Device ${device.device_serial} (assigned to unit ${device.unit_id}) no longer exists on gateway ${device.gateway_id}, removing from database`
         : `[DEVICE-SYNC] Device ${device.device_serial} no longer exists on gateway ${device.gateway_id}, removing from database`;
@@ -435,7 +460,9 @@ export class DeviceSyncService {
       added: 0,
       removed: 0,
       unchanged: 0,
+      skipped_manual: 0,
       errors: [],
+      entries: [],
     };
 
     try {
@@ -473,7 +500,7 @@ export class DeviceSyncService {
             device_settings: { lockNumber: inventoryItem.lock_number },
             metadata: {
               autoCreated: true,
-              createdFromInventorySync: true,
+              createdFromGatewaySync: true,
             },
           };
 
@@ -486,6 +513,12 @@ export class DeviceSyncService {
           // Device exists - collect for state update if any state fields provided
           devicesToUpdateState.push({ lockId, item: inventoryItem });
           result.unchanged++;
+          result.entries!.push({
+            action: 'unchanged',
+            device_kind: 'blulok',
+            identifier: lockId,
+            label: lockId,
+          });
         }
       }
 
@@ -494,6 +527,15 @@ export class DeviceSyncService {
         try {
           const count = await this.deviceModel.bulkCreateBluLokDevices(devicesToAdd);
           result.added = count;
+          for (const createData of devicesToAdd) {
+            result.entries!.push({
+              action: 'added',
+              device_kind: 'blulok',
+              identifier: createData.device_serial,
+              label: createData.device_serial,
+              reason: 'Auto-provisioned from gateway inventory',
+            });
+          }
           console.log(`[DEVICE-SYNC] Bulk added ${count} devices from inventory sync`);
         } catch (error: any) {
           result.errors.push(`Bulk add failed: ${error.message}`);
@@ -502,6 +544,13 @@ export class DeviceSyncService {
             try {
               await this.deviceModel.createBluLokDevice(createData);
               result.added++;
+              result.entries!.push({
+                action: 'added',
+                device_kind: 'blulok',
+                identifier: createData.device_serial,
+                label: createData.device_serial,
+                reason: 'Auto-provisioned from gateway inventory',
+              });
             } catch (err: any) {
               result.errors.push(`Failed to add device ${createData.device_serial}: ${err.message}`);
             }
@@ -532,9 +581,27 @@ export class DeviceSyncService {
       if (devicesToRemove.length > 0) {
         const devicesService = DevicesService.getInstance();
         for (const device of devicesToRemove) {
+          if (!isGatewaySyncManaged(device.metadata)) {
+            result.skipped_manual = (result.skipped_manual ?? 0) + 1;
+            result.entries!.push({
+              action: 'skipped_manual',
+              device_kind: 'blulok',
+              identifier: device.device_serial,
+              label: device.device_serial,
+              reason: 'Manually added — preserved when omitted from gateway inventory',
+            });
+            continue;
+          }
           try {
             await devicesService.deleteBluLokFromInventory(device.id, { source: 'gateway_sync' });
             result.removed++;
+            result.entries!.push({
+              action: 'removed',
+              device_kind: 'blulok',
+              identifier: device.device_serial,
+              label: device.device_serial,
+              reason: 'Omitted from gateway inventory (sync-managed)',
+            });
           } catch (err: any) {
             result.errors.push(`Failed to remove device ${device.device_serial}: ${err.message}`);
           }
@@ -735,6 +802,296 @@ export class DeviceSyncService {
 
     console.log(
       `[DEVICE-SYNC] State update complete: updated=${result.updated}, not_found=${result.not_found.length}, errors=${result.errors.length}`
+    );
+
+    return result;
+  }
+
+  private mapAccessInventoryToStateUpdate(
+    item: AccessDeviceInventoryItem
+  ): Parameters<DeviceModel['updateAccessControlDevice']>[1] {
+    const updates: Parameters<DeviceModel['updateAccessControlDevice']>[1] = {};
+    if (item.online !== undefined) {
+      updates.status = item.online ? 'online' : 'offline';
+    }
+    if (item.locked !== undefined) {
+      updates.is_locked = item.locked;
+    }
+    if (item.last_seen !== undefined) {
+      // last_activity updated via metadata merge if needed - use update payload via model
+    }
+    return updates;
+  }
+
+  private mapAccessStateUpdate(
+    update: AccessDeviceStateUpdate
+  ): Parameters<DeviceModel['updateAccessControlDevice']>[1] {
+    const dbUpdates: Parameters<DeviceModel['updateAccessControlDevice']>[1] = {};
+    if (update.online !== undefined) {
+      dbUpdates.status = update.online ? 'online' : 'offline';
+    }
+    if (update.locked !== undefined) {
+      dbUpdates.is_locked = update.locked;
+    }
+    return dbUpdates;
+  }
+
+  /**
+   * Sync access control device inventory for a gateway (serial + relay composite key).
+   */
+  public async syncAccessDeviceInventory(
+    gatewayId: string,
+    facilityId: string,
+    devices: AccessDeviceInventoryItem[]
+  ): Promise<InventorySyncResult> {
+    const result: InventorySyncResult = {
+      added: 0,
+      removed: 0,
+      unchanged: 0,
+      skipped_manual: 0,
+      errors: [],
+      entries: [],
+    };
+
+    let inventoryChanged = false;
+
+    try {
+      const incomingMap = new Map<string, AccessDeviceInventoryItem>();
+      for (const device of devices) {
+        try {
+          const accessId = extractAccessId(device as unknown as Record<string, unknown>);
+          const relayChannel = Number(device.relay_channel);
+          if (!isValidRelayChannel(relayChannel)) {
+            result.errors.push(
+              `Access control item ${accessId} has invalid relay_channel (must be integer 1–8)`
+            );
+            continue;
+          }
+          incomingMap.set(formatAccessDeviceKey(accessId, relayChannel), device);
+        } catch (err: any) {
+          result.errors.push(err.message);
+        }
+      }
+
+      let remainingDevices = await this.deviceModel.findAccessControlDevices({ gateway_id: gatewayId });
+
+      // Remove sync-managed rows omitted from inventory before adds (relay channel is unique per gateway).
+      for (const device of remainingDevices) {
+        const key = resolveAccessDeviceKey(device);
+        if (incomingMap.has(key)) {
+          continue;
+        }
+        if (!isGatewaySyncManaged(device.metadata)) {
+          result.skipped_manual = (result.skipped_manual ?? 0) + 1;
+          result.entries!.push({
+            action: 'skipped_manual',
+            device_kind: 'access_control',
+            identifier: resolveAccessDeviceKey(device),
+            label: device.name,
+            reason: 'Manually added — preserved when omitted from gateway inventory',
+          });
+          continue;
+        }
+        try {
+          await this.deviceModel.deleteAccessControlDevice(device.id);
+          result.removed++;
+          result.entries!.push({
+            action: 'removed',
+            device_kind: 'access_control',
+            identifier: resolveAccessDeviceKey(device),
+            label: device.name,
+            reason: 'Omitted from gateway inventory (sync-managed)',
+          });
+          inventoryChanged = true;
+        } catch (err: any) {
+          result.errors.push(
+            `Failed to remove access control ${device.device_serial}:${device.relay_channel}: ${err.message}`
+          );
+        }
+      }
+
+      if (inventoryChanged) {
+        remainingDevices = await this.deviceModel.findAccessControlDevices({ gateway_id: gatewayId });
+      }
+
+      const existingMap = new Map(
+        remainingDevices.map((d) => [resolveAccessDeviceKey(d), d])
+      );
+
+      const devicesToAdd: CreateAccessControlDeviceData[] = [];
+      const devicesToUpdate: Array<{ key: string; item: AccessDeviceInventoryItem }> = [];
+
+      for (const [key, item] of incomingMap) {
+        if (!existingMap.has(key)) {
+          const accessId = extractAccessId(item as unknown as Record<string, unknown>);
+          const relayChannel = Number(item.relay_channel);
+
+          const relayConflict = remainingDevices.find(
+            (d) => d.relay_channel === relayChannel && resolveAccessDeviceKey(d) !== key
+          );
+          if (relayConflict) {
+            result.errors.push(
+              `Relay ${relayChannel} is already used by device ${relayConflict.device_serial}`
+            );
+            result.entries!.push({
+              action: 'error',
+              device_kind: 'access_control',
+              identifier: formatAccessDeviceKey(accessId, relayChannel),
+              label: item.name,
+              reason: `Relay ${relayChannel} already used by ${relayConflict.device_serial}`,
+            });
+            continue;
+          }
+
+          devicesToAdd.push({
+            gateway_id: gatewayId,
+            device_serial: accessId,
+            name: item.name?.trim() || `${accessId} relay ${relayChannel}`,
+            device_type: item.device_type || 'door',
+            location_description:
+              item.location_description?.trim() || `Gateway relay ${relayChannel}`,
+            relay_channel: relayChannel,
+            access_methods: ['keypad'],
+            metadata: {
+              autoCreated: true,
+              createdFromGatewaySync: true,
+            },
+          });
+        } else {
+          devicesToUpdate.push({ key, item });
+          result.unchanged++;
+          result.entries!.push({
+            action: 'unchanged',
+            device_kind: 'access_control',
+            identifier: key,
+            label: item.name,
+          });
+        }
+      }
+
+      if (devicesToAdd.length > 0) {
+        try {
+          const count = await this.deviceModel.bulkCreateAccessControlDevices(devicesToAdd);
+          result.added = count;
+          inventoryChanged = true;
+          for (const createData of devicesToAdd) {
+            result.entries!.push({
+              action: 'added',
+              device_kind: 'access_control',
+              identifier: formatAccessDeviceKey(createData.device_serial, createData.relay_channel),
+              label: createData.name,
+              reason: 'Auto-provisioned from gateway inventory',
+            });
+          }
+          console.log(`[DEVICE-SYNC] Bulk added ${count} access control devices from inventory sync`);
+        } catch (error: any) {
+          result.errors.push(`Bulk add access control failed: ${error.message}`);
+          for (const createData of devicesToAdd) {
+            try {
+              await this.deviceModel.createAccessControlDevice(createData);
+              result.added++;
+              inventoryChanged = true;
+              result.entries!.push({
+                action: 'added',
+                device_kind: 'access_control',
+                identifier: formatAccessDeviceKey(createData.device_serial, createData.relay_channel),
+                label: createData.name,
+                reason: 'Auto-provisioned from gateway inventory',
+              });
+            } catch (err: any) {
+              result.errors.push(
+                `Failed to add access control ${createData.device_serial}:${createData.relay_channel}: ${err.message}`
+              );
+            }
+          }
+        }
+      }
+
+      for (const { key, item } of devicesToUpdate) {
+        const stateUpdate = this.mapAccessInventoryToStateUpdate(item);
+        if (Object.keys(stateUpdate).length > 0) {
+          try {
+            const accessId = extractAccessId(item as unknown as Record<string, unknown>);
+            await this.deviceModel.updateAccessControlDeviceBySerialAndRelay(
+              gatewayId,
+              accessId,
+              Number(item.relay_channel),
+              stateUpdate
+            );
+          } catch (error: any) {
+            result.errors.push(`Failed to update access control ${key}: ${error.message}`);
+          }
+        }
+      }
+
+      if (inventoryChanged) {
+        try {
+          await AccessCodeService.getInstance().pushCodesToGateway(facilityId);
+        } catch (pushError: any) {
+          result.errors.push(`Failed to push access codes after inventory sync: ${pushError.message}`);
+        }
+      }
+
+      console.log(
+        `[DEVICE-SYNC] Access control inventory sync complete: added=${result.added}, removed=${result.removed}, unchanged=${result.unchanged}`
+      );
+    } catch (error: any) {
+      console.error(`Error in access control inventory sync for gateway ${gatewayId}:`, error);
+      result.errors.push(`Sync failed: ${error.message}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Update access control device states by serial + relay channel.
+   */
+  public async updateAccessDeviceStates(
+    gatewayId: string,
+    updates: AccessDeviceStateUpdate[]
+  ): Promise<StateUpdateResult> {
+    const result: StateUpdateResult = {
+      updated: 0,
+      not_found: [],
+      errors: [],
+    };
+
+    for (const update of updates) {
+      const accessId = update.access_id?.trim();
+      const relayChannel = Number(update.relay_channel);
+      const compositeKey = accessId ? formatAccessDeviceKey(accessId, relayChannel) : 'unknown';
+
+      try {
+        if (!accessId) {
+          result.errors.push('Access control state update missing access_id');
+          continue;
+        }
+
+        const dbUpdates = this.mapAccessStateUpdate(update);
+        if (Object.keys(dbUpdates).length === 0) {
+          continue;
+        }
+
+        const updated = await this.deviceModel.updateAccessControlDeviceBySerialAndRelay(
+          gatewayId,
+          accessId,
+          relayChannel,
+          dbUpdates
+        );
+
+        if (updated) {
+          result.updated++;
+          console.log(`[DEVICE-SYNC] Updated access control state for ${compositeKey}`);
+        } else {
+          result.not_found.push(compositeKey);
+        }
+      } catch (error: any) {
+        result.errors.push(`Failed to update ${compositeKey}: ${error.message}`);
+      }
+    }
+
+    console.log(
+      `[DEVICE-SYNC] Access control state update complete: updated=${result.updated}, not_found=${result.not_found.length}`
     );
 
     return result;

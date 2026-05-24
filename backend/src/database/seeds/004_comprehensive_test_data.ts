@@ -195,6 +195,7 @@ export async function seed(knex: Knex): Promise<void> {
         device_type: deviceType,
         location_description: location,
         relay_channel: i + 1,
+        device_serial: `AC-SEED-${String(gateway.id).slice(0, 8)}-r${i + 1}`,
         status: Math.random() > 0.1 ? 'online' : 'offline',
         last_activity: new Date(Date.now() - Math.random() * 10 * 60 * 1000) // Within 10 minutes
       });

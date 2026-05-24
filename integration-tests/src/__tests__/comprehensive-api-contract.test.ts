@@ -453,8 +453,9 @@ describe('Blulok Cloud Comprehensive API Contract Tests', () => {
       const token = await getAuthToken();
       const deviceData = {
         gateway_id: 'test-gateway-id',
+        device_serial: 'COMP-AC-001',
         name: 'Test Access Control',
-        device_type: 'access_control',
+        device_type: 'door',
         location_description: 'Main entrance',
         relay_channel: 1
       };

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { useNavigate } from 'react-router-dom';
 import { 
   LockOpenIcon,
@@ -13,14 +14,18 @@ import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
 import { useUnitsData } from '@/hooks/useUnitsData';
+import { WIDGET_BODY_CLASS, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface UnlockedUnitsWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   /** When set (single facility from global selector), scopes unit lists to that facility */
   facilityFilter?: string;
 }
@@ -62,13 +67,20 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
   id,
   title,
   initialSize = 'medium',
+  currentSize,
   availableSizes = ['small', 'medium', 'medium-tall', 'large', 'large-wide', 'huge'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
   facilityFilter,
 }) => {
   const navigate = useNavigate();
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   const [filter, setFilter] = useState<'all' | 'long_unlocked' | 'recent_unlocked'>('all');
   
   const { data: unitsData, loading, error, refetch } = useUnitsData(facilityFilter);
@@ -142,9 +154,10 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
       title={`${title} ${displayedUnits.length > 0 ? `(${displayedUnits.length})` : ''}`}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
           <button
@@ -176,7 +189,7 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
         </div>
       }
     >
-      <div className="flex flex-col">
+      <div className={WIDGET_BODY_CLASS}>
         {/* Error Display */}
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
@@ -357,7 +370,7 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
                 </div>
 
                 {/* Most Critical Units - Refined layout with grouping */}
-                <div className="flex-1 space-y-1.5 overflow-y-auto">
+                <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-1.5`}>
                   {groupedUnits.slice(0, hasMultipleFacilities ? 2 : 1).map((group, groupIndex) => (
                     <div key={group.facilityName} className="space-y-1.5">
                       {/* Facility Header for small mode */}

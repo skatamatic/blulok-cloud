@@ -271,11 +271,16 @@ export interface BluLokUnit {
 export interface BluLokAccessControlDevice {
   id: string;
   gateway_id: string;
+  gateway_name?: string | null;
   name: string;
   device_type: 'gate' | 'elevator' | 'door';
   location_description?: string;
+  device_serial: string;
+  relay_channel: number;
   status: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked: boolean;
+  access_methods?: Array<'app' | 'keypad' | 'fob'>;
+  metadata?: Record<string, unknown>;
 }
 
 /**

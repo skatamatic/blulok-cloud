@@ -16,7 +16,9 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
-import { DeviceSyncService, GatewayDeviceData, DeviceInventoryItem, DeviceStateUpdate } from '@/services/device-sync.service';
+import { DeviceSyncService, GatewayDeviceData, DeviceInventoryItem, DeviceStateUpdate, AccessDeviceInventoryItem, AccessDeviceStateUpdate } from '@/services/device-sync.service';
+import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
+import { partitionInventoryByKind, partitionStateUpdatesByKind } from '@/utils/gateway-sync.utils';
 import { AccessCodeService } from '@/services/access-code.service';
 import { GatewayModel } from '@/models/gateway.model';
 import { AuthService } from '@/services/auth.service';
@@ -257,27 +259,92 @@ router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandle
 // POST /api/v1/internal/gateway/devices/inventory
 // Sync device inventory - add new devices, remove missing ones
 // Now also supports updating state fields in the same call
+const lockInventoryFields = {
+  lock_id: Joi.string().trim().min(1).required(),
+  lock_number: Joi.number().optional(),
+  state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
+  lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
+  locked: Joi.boolean().optional(),
+  battery_level: Joi.number().optional(),
+  battery_unit: Joi.string().optional(),
+  online: Joi.boolean().optional(),
+  signal_strength: Joi.number().optional(),
+  temperature_value: Joi.number().optional(),
+  temperature_unit: Joi.string().optional(),
+  firmware_version: Joi.string().optional(),
+  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+};
+
+const accessInventoryFields = {
+  kind: Joi.string().valid('access_control').required(),
+  access_id: Joi.string().trim().min(1).required(),
+  relay_channel: Joi.number().integer().min(1).max(8).required(),
+  device_type: Joi.string().valid('gate', 'door', 'elevator').optional(),
+  name: Joi.string().trim().max(255).optional(),
+  location_description: Joi.string().trim().max(255).optional(),
+  online: Joi.boolean().optional(),
+  locked: Joi.boolean().optional(),
+  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+};
+
+const lockInventoryItemSchema = Joi.object({
+  kind: Joi.string().valid('lock').optional(),
+  ...lockInventoryFields,
+});
+
+const accessInventoryItemSchema = Joi.object(accessInventoryFields);
+
 const inventorySyncSchema = Joi.object({
   tid: tidField,
   facility_id: Joi.string().optional(),
-  devices: Joi.array().items(
-    Joi.object({
-      lock_id: Joi.string().trim().min(1).required(),
-      lock_number: Joi.number().optional(),
-      // State fields (matching gateway payload format)
-      state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
-      lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
-      locked: Joi.boolean().optional(),
-      battery_level: Joi.number().optional(), // Raw mV, no longer 0-100
-      battery_unit: Joi.string().optional(),
-      online: Joi.boolean().optional(),
-      signal_strength: Joi.number().optional(),
-      temperature_value: Joi.number().optional(),
-      temperature_unit: Joi.string().optional(),
-      firmware_version: Joi.string().optional(),
-      last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-    })
-  ).required()
+  devices: Joi.array()
+    .items(Joi.alternatives().try(accessInventoryItemSchema, lockInventoryItemSchema))
+    .required(),
+});
+
+const lockStateFields = {
+  lock_id: Joi.string().trim().min(1).required(),
+  lock_number: Joi.number().optional(),
+  serial: Joi.string().trim().min(1).optional(),
+  state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
+  lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
+  locked: Joi.boolean().optional(),
+  battery_level: Joi.number().optional(),
+  battery_unit: Joi.string().optional(),
+  online: Joi.boolean().optional(),
+  signal_strength: Joi.number().optional(),
+  temperature: Joi.number().optional(),
+  temperature_value: Joi.number().optional(),
+  temperature_unit: Joi.string().optional(),
+  firmware_version: Joi.string().optional(),
+  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+  error_code: Joi.string().allow(null, '').optional(),
+  error_message: Joi.string().allow(null, '').optional(),
+  source: Joi.string().valid('GATEWAY', 'USER', 'CLOUD').optional(),
+};
+
+const accessStateFields = {
+  kind: Joi.string().valid('access_control').required(),
+  access_id: Joi.string().trim().min(1).required(),
+  relay_channel: Joi.number().integer().min(1).max(8).required(),
+  online: Joi.boolean().optional(),
+  locked: Joi.boolean().optional(),
+  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+};
+
+const lockStateUpdateSchema = Joi.object({
+  kind: Joi.string().valid('lock').optional(),
+  ...lockStateFields,
+});
+
+const accessStateUpdateSchema = Joi.object(accessStateFields);
+
+const stateUpdateSchema = Joi.object({
+  tid: tidField,
+  facility_id: Joi.string().optional(),
+  updates: Joi.array()
+    .items(Joi.alternatives().try(accessStateUpdateSchema, lockStateUpdateSchema))
+    .required(),
 });
 
 router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -297,50 +364,62 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
     return;
   }
 
-  // Perform inventory sync
-  const devices: DeviceInventoryItem[] = value.devices;
-  const result = await DeviceSyncService.getInstance().syncDeviceInventory(gateway.id, devices);
+  // Perform inventory sync (locks + optional access control)
+  let lockDevices: DeviceInventoryItem[];
+  let accessDevices: AccessDeviceInventoryItem[];
+  try {
+    const partitioned = partitionInventoryByKind(value.devices as Record<string, unknown>[]);
+    lockDevices = partitioned.locks as unknown as DeviceInventoryItem[];
+    accessDevices = partitioned.accessControl as unknown as AccessDeviceInventoryItem[];
+  } catch (partitionError: any) {
+    res.status(400).json({ success: false, message: partitionError.message });
+    return;
+  }
+
+  const syncService = DeviceSyncService.getInstance();
+  const [lockResult, accessResult] = await Promise.all([
+    lockDevices.length > 0
+      ? syncService.syncDeviceInventory(gateway.id, lockDevices)
+      : Promise.resolve(null),
+    accessDevices.length > 0
+      ? syncService.syncAccessDeviceInventory(gateway.id, facilityId, accessDevices)
+      : Promise.resolve(null),
+  ]);
+
+  const result = lockResult ?? {
+    added: 0,
+    removed: 0,
+    unchanged: 0,
+    errors: [] as string[],
+  };
+
+  const responseData: Record<string, unknown> = {
+    gateway_id: gateway.id,
+    ...result,
+  };
+
+  if (accessResult) {
+    responseData.access_control = accessResult;
+  }
+
+  try {
+    await GatewayDeviceSyncLogService.getInstance().recordInventorySync({
+      gatewayId: gateway.id,
+      facilityId,
+      source: 'gateway_ws',
+      lockResult,
+      accessResult,
+    });
+  } catch (logError) {
+    logger.warn('[DEVICE-SYNC] Failed to persist inventory sync log', { logError });
+  }
 
   res.json({
     success: true,
     message: 'Inventory sync completed',
-    data: {
-      gateway_id: gateway.id,
-      ...result
-    }
+    data: responseData,
   });
 }));
-
-// POST /api/v1/internal/gateway/devices/state
-// Update device state with partial data
-// Matches gateway payload format with all state fields
-const stateUpdateSchema = Joi.object({
-  tid: tidField,
-  facility_id: Joi.string().optional(),
-  updates: Joi.array().items(
-    Joi.object({
-      lock_id: Joi.string().trim().min(1).required(),
-      lock_number: Joi.number().optional(),
-      serial: Joi.string().trim().min(1).optional(),
-      // State fields (matching gateway payload format)
-      state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
-      lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
-      locked: Joi.boolean().optional(),
-      battery_level: Joi.number().optional(), // Raw mV, no longer 0-100
-      battery_unit: Joi.string().optional(),
-      online: Joi.boolean().optional(),
-      signal_strength: Joi.number().optional(),
-      temperature: Joi.number().optional(), // Legacy field
-      temperature_value: Joi.number().optional(),
-      temperature_unit: Joi.string().optional(),
-      firmware_version: Joi.string().optional(),
-      last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-      error_code: Joi.string().allow(null, '').optional(),
-      error_message: Joi.string().allow(null, '').optional(),
-      source: Joi.string().valid('GATEWAY', 'USER', 'CLOUD').optional(),
-    })
-  ).required()
-});
 
 router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = stateUpdateSchema.validate(req.body);
@@ -359,14 +438,46 @@ router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHand
     return;
   }
 
-  // Perform state update
-  const updates: DeviceStateUpdate[] = value.updates;
-  const result = await DeviceSyncService.getInstance().updateDeviceStates(gateway.id, updates);
+  let lockUpdates: DeviceStateUpdate[];
+  let accessUpdates: AccessDeviceStateUpdate[];
+  try {
+    const partitioned = partitionStateUpdatesByKind(value.updates as Record<string, unknown>[]);
+    lockUpdates = partitioned.locks as unknown as DeviceStateUpdate[];
+    accessUpdates = partitioned.accessControl as unknown as AccessDeviceStateUpdate[];
+  } catch (partitionError: any) {
+    res.status(400).json({ success: false, message: partitionError.message });
+    return;
+  }
+
+  const syncService = DeviceSyncService.getInstance();
+  const [lockResult, accessResult] = await Promise.all([
+    lockUpdates.length > 0
+      ? syncService.updateDeviceStates(gateway.id, lockUpdates)
+      : Promise.resolve(null),
+    accessUpdates.length > 0
+      ? syncService.updateAccessDeviceStates(gateway.id, accessUpdates)
+      : Promise.resolve(null),
+  ]);
+
+  const result = lockResult ?? {
+    updated: 0,
+    not_found: [] as string[],
+    errors: [] as string[],
+  };
+
+  const responseData: Record<string, unknown> = {
+    gateway_id: gateway.id,
+    ...result,
+  };
+
+  if (accessResult) {
+    responseData.access_control = accessResult;
+  }
 
   res.json({
     success: true,
     message: 'State updates applied',
-    data: result
+    data: responseData,
   });
 }));
 

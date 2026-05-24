@@ -17,8 +17,11 @@ import {
   assertRequesterMayAssignRoleOnCreate,
   assertRequesterMayAssignRoleOnUpdate,
   FACILITY_ADMIN_CREATABLE_ROLES,
+  filterUsersForListScope,
+  userMatchesFacilityFilter,
   validateFacilityIdsForAssignment,
 } from '@/utils/users-rbac.util';
+import { UserListScopeService } from '@/services/user-list-scope.service';
 
 /**
  * User Management Routes
@@ -54,27 +57,13 @@ router.use(authenticateToken);
 // Helper function to check facility access for facility admins
 const checkFacilityAccess = async (req: AuthenticatedRequest, targetUserId: string): Promise<boolean> => {
   if (!req.user) return false;
-  
-  // Global admins can access all users
-  if (AuthService.canAccessAllFacilities(req.user.role)) {
-    return true;
-  }
-  
-  // Facility admins can only access users in their facilities
-  if (AuthService.isFacilityAdmin(req.user.role)) {
-    if (!req.user.facilityIds || req.user.facilityIds.length === 0) {
-      return false;
-    }
-    
-    // Get the target user's facility associations
-    const targetUserFacilities = await UserFacilityAssociationModel.getUserFacilityIds(targetUserId);
-    
-    // Check if any of the target user's facilities are in the admin's facilities
-    return targetUserFacilities.some(facilityId => req.user!.facilityIds!.includes(facilityId));
-  }
-  
-  // Other roles can only access their own profile
-  return req.user.userId === targetUserId;
+
+  return UserListScopeService.canRequesterViewUser(
+    req.user.userId,
+    req.user.role,
+    targetUserId,
+    req.user.facilityIds ?? []
+  );
 };
 
 // Validation schemas
@@ -109,31 +98,24 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
 
   // Get users with facility information
   const usersWithFacilities = await UserFacilityAssociationModel.getUsersWithFacilities();
-  
-  let filteredUsers = usersWithFacilities;
 
-  // RBAC: Facility admins can only see users from their facilities
-  if (userRole === UserRole.FACILITY_ADMIN) {
-    // Get facilities managed by this facility admin
-    const userFacilityAssociations = await UserFacilityAssociationModel.findByUserId(userId);
-    const managedFacilityIds = userFacilityAssociations.map(assoc => assoc.facility_id);
+  const managedFacilityIds =
+    userRole === UserRole.FACILITY_ADMIN
+      ? req.user!.facilityIds ?? []
+      : [];
 
-    if (managedFacilityIds.length === 0) {
-      // Facility admin with no facilities sees no users
-      filteredUsers = [];
-    } else {
-      // Filter to only users associated with managed facilities
-      filteredUsers = filteredUsers.filter(user => {
-        if (AuthService.canAccessAllFacilities(user.role as UserRole)) {
-          return true;
-        }
-        if (!user.facility_ids) return false;
-        const userFacilityIds = user.facility_ids.split(',').map((id: string) => id.trim());
-        // Check if any of the user's facilities match the admin's managed facilities
-        return userFacilityIds.some((facId: string) => managedFacilityIds.includes(facId));
-      });
-    }
-  }
+  const sharedAccessUserIds =
+    userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE
+      ? await UserListScopeService.getSharedAccessRecipientUserIds(userId)
+      : new Set<string>();
+
+  let filteredUsers = filterUsersForListScope(
+    usersWithFacilities,
+    userRole,
+    userId,
+    managedFacilityIds,
+    sharedAccessUserIds
+  );
 
   // Apply search filter
   if (search) {
@@ -155,19 +137,7 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
 
   // Apply facility filter
   if (facility) {
-    filteredUsers = filteredUsers.filter(user => {
-      // Global admin roles are intentionally visible in all facility scopes.
-      if (AuthService.canAccessAllFacilities(user.role as UserRole)) {
-        return true;
-      }
-      // Handle users with no facility associations (facility_ids is null)
-      if (!user.facility_ids) {
-        return false;
-      }
-      // Split the comma-separated facility IDs and check if the selected facility is included
-      const userFacilityIds = user.facility_ids.split(',').map((id: string) => id.trim());
-      return userFacilityIds.includes(String(facility));
-    });
+    filteredUsers = filteredUsers.filter((user) => userMatchesFacilityFilter(user, String(facility)));
   }
 
   // Apply sorting
@@ -200,23 +170,6 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
       return aVal > bVal ? 1 : -1;
     }
   });
-
-  // If requester is facility admin, filter to only show users from their facilities
-  if (AuthService.isFacilityAdmin(req.user!.role)) {
-    const requesterFacilityIds = req.user!.facilityIds || [];
-    filteredUsers = filteredUsers.filter(user => {
-      // Always show global admins
-      if (AuthService.canAccessAllFacilities(user.role as UserRole)) {
-        return true;
-      }
-      // Show users who share at least one facility
-      if (user.facility_ids) {
-        const userFacilityIds = user.facility_ids.split(',');
-        return userFacilityIds.some((id: string) => requesterFacilityIds.includes(id));
-      }
-      return false;
-    });
-  }
 
   // Apply pagination
   const total = filteredUsers.length;

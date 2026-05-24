@@ -217,6 +217,19 @@ describe('SyncFMSWidget', () => {
       // Just verify it renders without crashing
       expect(screen.getByTestId('widget')).toBeInTheDocument();
     });
+
+    it('keeps tiny label visible while loading', () => {
+      (useGlobalFacility as jest.Mock).mockReturnValue({
+        ...mockGlobalFacilityContext,
+        isLoading: true,
+      });
+      renderWithProviders(
+        <SyncFMSWidget {...defaultProps} initialSize="tiny" />
+      );
+
+      expect(screen.getByText('FMS Sync')).toBeInTheDocument();
+      expect(screen.getByLabelText('Loading')).toBeInTheDocument();
+    });
   });
 
   describe('Tiny Size Widget', () => {
@@ -263,8 +276,7 @@ describe('SyncFMSWidget', () => {
       );
 
       await waitFor(() => {
-        const syncButton = screen.getByRole('button');
-        expect(syncButton).toBeInTheDocument();
+        expect(screen.getByTitle('Sync now')).toBeInTheDocument();
       });
     });
 
@@ -300,7 +312,8 @@ describe('SyncFMSWidget', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Select a facility/i)).toBeInTheDocument();
+        expect(screen.getByText('FMS Sync')).toBeInTheDocument();
+        expect(screen.getByText('—')).toBeInTheDocument();
       });
     });
 
@@ -336,8 +349,7 @@ describe('SyncFMSWidget', () => {
       );
 
       const syncButton = await screen.findByRole('button');
-      // Button should be disabled when FMS is not configured
-      expect(syncButton).toBeDisabled();
+      expect(syncButton).toHaveAttribute('aria-disabled', 'true');
     });
   });
 
@@ -372,10 +384,10 @@ describe('SyncFMSWidget', () => {
         <SyncFMSWidget {...defaultProps} initialSize="small" />
       );
 
-      expect(await screen.findByText(/ago/)).toBeInTheDocument();
+      expect((await screen.findAllByText(/ago/)).length).toBeGreaterThan(0);
 
-      const syncButton = screen.getByRole('button');
-      expect(syncButton).toBeInTheDocument();
+      const syncButton = screen.getByTitle('Sync now');
+      expect(syncButton.className).toContain('bg-blue-100');
     });
 
     it('shows sync status for small widget with single facility', async () => {
@@ -391,8 +403,7 @@ describe('SyncFMSWidget', () => {
 
       // Small widget shows sync button and time ago, not "Success" text
       await waitFor(() => {
-        const syncButton = screen.getByRole('button');
-        expect(syncButton).toBeInTheDocument();
+        expect(screen.getByTitle('Sync now')).toBeInTheDocument();
       });
     });
 
@@ -402,8 +413,7 @@ describe('SyncFMSWidget', () => {
       );
 
       await waitFor(() => {
-        const syncButton = screen.getByRole('button');
-        expect(syncButton).toBeInTheDocument();
+        expect(screen.getByTitle('Sync now')).toBeInTheDocument();
       });
     });
   });
@@ -455,12 +465,8 @@ describe('SyncFMSWidget', () => {
       expect(await screen.findByText('Last Sync Successful')).toBeInTheDocument();
 
       // Medium size has an icon-only sync button (no text)
-      const syncButtons = screen.getAllByRole('button');
-      const syncButton = syncButtons.find(btn => 
-        btn.querySelector('svg[data-slot="icon"]') && 
-        btn.className.includes('bg-primary-600')
-      );
-      expect(syncButton).toBeInTheDocument();
+      expect(await screen.findByTitle('Sync now')).toBeInTheDocument();
+      expect(screen.getByTitle('Sync now').className).toContain('bg-blue-100');
     });
 
     it('shows sync status for selected facility', async () => {

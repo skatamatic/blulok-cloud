@@ -388,7 +388,8 @@ describe('Devices Routes', () => {
         name: 'Main Gate Controller',
         device_type: 'gate',
         location_description: 'Main entrance gate',
-        relay_channel: 1
+        relay_channel: 1,
+        device_serial: 'AC-GATE-001',
       };
 
       it('should create access control device for DEV_ADMIN', async () => {
@@ -1059,7 +1060,8 @@ describe('Devices Routes', () => {
         name: 'Main Gate Controller',
         device_type: 'gate',
         location_description: 'Main entrance gate',
-        relay_channel: 1
+        relay_channel: 1,
+        device_serial: 'AC-GATE-001',
       };
 
       it('should allow DEV_ADMIN to create access control devices', async () => {
@@ -1420,7 +1422,8 @@ describe('Devices Routes', () => {
         name: '<script>alert("xss")</script>Malicious Device',
         device_type: 'door',
         location_description: 'Test location',
-        relay_channel: 1
+        relay_channel: 1,
+        device_serial: 'AC-GATE-001',
       };
 
       const sanitizedName = '&lt;script&gt;alert(&quot;xss&quot;)&lt;&#x2F;script&gt;Malicious Device';

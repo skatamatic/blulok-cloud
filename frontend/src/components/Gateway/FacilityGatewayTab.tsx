@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ServerIcon,
   ArrowPathIcon,
+  ClipboardDocumentListIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
   ClockIcon,
@@ -13,6 +14,7 @@ import {
   CpuChipIcon,
 } from '@heroicons/react/24/outline';
 import GatewayFirmwareTab from './GatewayFirmwareTab';
+import { GatewayDeviceSyncHistory } from './GatewayDeviceSyncHistory';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -83,7 +85,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       errors: string[];
     };
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'firmware' | 'devtools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'device-sync' | 'firmware' | 'devtools'>('overview');
 
   // Debug panel state
   const [fallbackJwtInput, setFallbackJwtInput] = useState('');
@@ -98,6 +100,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
   const { authState } = useAuth();
   const userRole = authState.user?.role;
   const isDevAdmin = userRole === UserRole.DEV_ADMIN;
+  const isPlatformAdmin = userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN;
   const canReassignGateway = canManageGateway && (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN);
   const [candidateGateways, setCandidateGateways] = useState<Gateway[]>([]);
   const [selectedCandidateGatewayId, setSelectedCandidateGatewayId] = useState('');
@@ -504,6 +507,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
   const navTabs = [
     { id: 'overview' as const, label: 'Overview', icon: InformationCircleIcon },
     { id: 'sync' as const, label: 'Sync', icon: CloudIcon },
+    ...(isPlatformAdmin
+      ? [{ id: 'device-sync' as const, label: 'Inventory sync', icon: ClipboardDocumentListIcon }]
+      : []),
     { id: 'firmware' as const, label: 'Firmware', icon: CpuChipIcon },
     { id: 'devtools' as const, label: 'DevTools/Diag', icon: WrenchScrewdriverIcon },
   ];
@@ -1332,6 +1338,15 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       <div className="flex-1 min-w-0">
         {activeTab === 'overview' && renderOverviewTab()}
         {activeTab === 'sync' && renderSyncTab()}
+        {activeTab === 'device-sync' && isPlatformAdmin && gateway && (
+          <GatewayDeviceSyncHistory gatewayId={gateway.id} />
+        )}
+        {activeTab === 'device-sync' && isPlatformAdmin && !gateway && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center">
+            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600 dark:text-gray-400">Assign a gateway to view inventory sync history.</p>
+          </div>
+        )}
         {activeTab === 'firmware' && gateway && (
           <GatewayFirmwareTab
             gatewayId={gateway.id}

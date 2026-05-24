@@ -3,6 +3,10 @@
  */
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import LoginPage from '@/pages/LoginPage';
+import { isViteDev } from '@/services/appConfig';
+import { DEV_QUICK_LOGIN_ACCOUNTS } from '@/config/devTestAccounts';
+
+const mockIsViteDev = isViteDev as jest.MockedFunction<typeof isViteDev>;
 
 const mockNavigate = jest.fn();
 const mockLogin = jest.fn();
@@ -24,11 +28,16 @@ jest.mock('@/contexts/AuthContext', () => ({
   }),
 }));
 
+jest.mock('@/services/appConfig', () => ({
+  isViteDev: jest.fn(() => false),
+}));
+
 describe('LoginPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
     localStorage.clear();
+    mockIsViteDev.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -101,6 +110,33 @@ describe('LoginPage', () => {
       expect(
         screen.getByText(/invalid email or password\. please check your credentials/i)
       ).toBeInTheDocument();
+    });
+  });
+
+  it('shows dev quick-login buttons when running in Vite dev mode', () => {
+    mockIsViteDev.mockReturnValue(true);
+
+    render(<LoginPage />);
+
+    expect(screen.getByText(/quick login with test accounts/i)).toBeInTheDocument();
+    for (const account of DEV_QUICK_LOGIN_ACCOUNTS) {
+      expect(screen.getByText(account.email)).toBeInTheDocument();
+    }
+  });
+
+  it('logs in via dev quick-login button', async () => {
+    mockIsViteDev.mockReturnValue(true);
+    mockLogin.mockResolvedValueOnce({ success: true, message: 'ok' });
+
+    render(<LoginPage />);
+
+    fireEvent.click(screen.getByText('dev.tenant@blulok.com'));
+
+    await waitFor(() => {
+      expect(mockLogin).toHaveBeenCalledWith({
+        identifier: 'dev.tenant@blulok.com',
+        password: 'DevTest123!@#',
+      });
     });
   });
 

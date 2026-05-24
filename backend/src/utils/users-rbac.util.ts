@@ -1,6 +1,68 @@
 import { AuthService } from '@/services/auth.service';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 
+/** Minimum fields required for list RBAC; full rows from `getUsersWithFacilities()` include more. */
+export interface UserListRecord {
+  id: string;
+  role: string;
+  facility_ids?: string | null;
+  email?: string | null;
+  phone_number?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  is_active?: boolean;
+  last_login?: Date | string | null;
+  created_at?: Date | string;
+  updated_at?: Date | string;
+  facility_names?: string | null;
+}
+
+export function parseUserListFacilityIds(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(',').map((id) => id.trim()).filter(Boolean);
+}
+
+/** Facility admins may only list users associated with their facilities — never global admins. */
+export function isUserVisibleToFacilityAdmin(
+  user: UserListRecord,
+  managedFacilityIds: string[]
+): boolean {
+  if (managedFacilityIds.length === 0) return false;
+  if (AuthService.canAccessAllFacilities(user.role as UserRole)) {
+    return false;
+  }
+  const userFacilityIds = parseUserListFacilityIds(user.facility_ids);
+  return userFacilityIds.some((id) => managedFacilityIds.includes(id));
+}
+
+export function filterUsersForListScope<T extends UserListRecord>(
+  users: T[],
+  requesterRole: UserRole,
+  requesterId: string,
+  managedFacilityIds: string[],
+  sharedAccessUserIds: ReadonlySet<string>
+): T[] {
+  if (AuthService.canAccessAllFacilities(requesterRole)) {
+    return users;
+  }
+
+  if (requesterRole === UserRole.FACILITY_ADMIN) {
+    return users.filter((user) => isUserVisibleToFacilityAdmin(user, managedFacilityIds));
+  }
+
+  if (requesterRole === UserRole.TENANT || requesterRole === UserRole.MAINTENANCE) {
+    return users.filter(
+      (user) => user.id === requesterId || sharedAccessUserIds.has(user.id)
+    );
+  }
+
+  return [];
+}
+
+export function userMatchesFacilityFilter(user: UserListRecord, facilityId: string): boolean {
+  return parseUserListFacilityIds(user.facility_ids).includes(facilityId);
+}
+
 /** Roles facility admins may create (no global / cross-facility privileges). */
 export const FACILITY_ADMIN_CREATABLE_ROLES: UserRole[] = [
   UserRole.TENANT,

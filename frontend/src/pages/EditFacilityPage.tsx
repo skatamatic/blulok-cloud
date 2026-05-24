@@ -3,15 +3,21 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { 
   PhoneIcon, 
   EnvelopeIcon,
-  ArrowLeftIcon,
-  PhotoIcon,
   CheckCircleIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  PhotoIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Facility } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
-import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import {
+  DetailsPageHeader,
+  DetailsPageLoading,
+  DetailsPageNotFound,
+  DetailsPageShell,
+} from '@/components/Common/DetailsPageLayout';
+import { UserRole } from '@/types/auth.types';
 
 const statusOptions = [
   { value: 'active', label: 'Active' },
@@ -23,7 +29,9 @@ export default function EditFacilityPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { authState } = useAuth();
-  const handleBack = useBackNavigation(id ? `/facilities/${id}` : '/facilities');
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({
+    fallbackPath: id ? `/facilities/${id}?tab=facility` : '/dashboard',
+  });
   
   const [facility, setFacility] = useState<Facility | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,6 +55,14 @@ export default function EditFacilityPage() {
   });
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+
+  const canEditThisFacility = (() => {
+    if (!canManage || !id) return false;
+    if (authState.user?.role === UserRole.FACILITY_ADMIN) {
+      return authState.user.facilityIds?.includes(id) ?? false;
+    }
+    return true;
+  })();
 
   const loadFacility = useCallback(async () => {
     try {
@@ -73,19 +89,20 @@ export default function EditFacilityPage() {
       }
     } catch (error) {
       console.error('Failed to load facility:', error);
-      setError('Failed to load facility details');
+      const apiError = error as { response?: { data?: { message?: string; error?: string } } };
+      setError(apiError?.response?.data?.message || apiError?.response?.data?.error || 'Failed to load facility details');
     } finally {
       setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
-    if (id && canManage) {
+    if (id && canEditThisFacility) {
       loadFacility();
-    } else if (!canManage) {
-      navigate('/facilities');
+    } else if (!canEditThisFacility) {
+      navigate(id ? `/facilities/${id}` : '/facilities');
     }
-  }, [id, canManage, navigate, loadFacility]);
+  }, [id, canEditThisFacility, navigate, loadFacility]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -155,62 +172,36 @@ export default function EditFacilityPage() {
       }
     } catch (error) {
       console.error('Failed to update facility:', error);
-      setError('Failed to update facility. Please try again.');
+      const apiError = error as { response?: { data?: { message?: string } } };
+      setError(apiError?.response?.data?.message || 'Failed to update facility. Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-      </div>
-    );
+    return <DetailsPageLoading />;
   }
 
   if (!facility) {
     return (
-      <div className="text-center py-12">
-        <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-gray-400" />
-        <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">Facility not found</h3>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          The facility you're looking for doesn't exist or you don't have permission to edit it.
-        </p>
-        <div className="mt-6">
-          <button
-            onClick={handleBack}
-            className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-          >
-            <ArrowLeftIcon className="h-4 w-4 mr-2" />
-            Back to Facilities
-          </button>
-        </div>
-      </div>
+      <DetailsPageNotFound
+        title="Facility not found"
+        message="The facility you're looking for doesn't exist or you don't have permission to edit it."
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+      />
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={handleBack}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-          >
-            <ArrowLeftIcon className="h-4 w-4 mr-2" />
-            Back
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Edit Facility</h1>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Update facility information and settings
-            </p>
-          </div>
-        </div>
-      </div>
-
+    <DetailsPageShell>
+      <DetailsPageHeader
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+        title="Edit Facility"
+        subtitle="Update facility information and settings"
+      />
       {/* Success Message */}
       {success && (
         <div className="rounded-md bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4">
@@ -262,6 +253,9 @@ export default function EditFacilityPage() {
                   className="input"
                   placeholder="Enter facility name"
                 />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Facility names must be unique across the system.
+                </p>
               </div>
 
               <div>
@@ -457,7 +451,7 @@ export default function EditFacilityPage() {
         <div className="flex items-center justify-end space-x-3 pt-6 border-t border-gray-200 dark:border-gray-700">
           <button
             type="button"
-            onClick={handleBack}
+            onClick={goBack}
             className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
             Cancel
@@ -478,7 +472,7 @@ export default function EditFacilityPage() {
           </button>
         </div>
       </form>
-    </div>
+    </DetailsPageShell>
   );
 }
 

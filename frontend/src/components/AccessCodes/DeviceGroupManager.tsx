@@ -18,6 +18,7 @@ interface GroupableDevice {
   unit_id?: string;
   unit_number?: string;
   device_serial?: string;
+  relay_channel?: number;
   device_status?: string;
 }
 
@@ -32,9 +33,20 @@ interface DeviceGroupManagerProps {
   devices: GroupableDevice[];
   groups: DeviceGroup[];
   onGroupsChanged: () => Promise<void>;
+  createDialogOpen?: boolean;
+  onCreateDialogChange?: (open: boolean) => void;
+  hideInlineAddButton?: boolean;
 }
 
-export function DeviceGroupManager({ facilityId, devices, groups, onGroupsChanged }: DeviceGroupManagerProps) {
+export function DeviceGroupManager({
+  facilityId,
+  devices,
+  groups,
+  onGroupsChanged,
+  createDialogOpen,
+  onCreateDialogChange,
+  hideInlineAddButton = false,
+}: DeviceGroupManagerProps) {
   const { addToast } = useToast();
   const location = useLocation();
   const [groupName, setGroupName] = useState('');
@@ -51,7 +63,16 @@ export function DeviceGroupManager({ facilityId, devices, groups, onGroupsChange
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [internalCreateDialogOpen, setInternalCreateDialogOpen] = useState(false);
+  const isCreateDialogControlled = createDialogOpen !== undefined;
+  const showCreateDialog = isCreateDialogControlled ? createDialogOpen : internalCreateDialogOpen;
+  const setShowCreateDialog = (open: boolean) => {
+    if (isCreateDialogControlled) {
+      onCreateDialogChange?.(open);
+      return;
+    }
+    setInternalCreateDialogOpen(open);
+  };
   const normalizedGroupName = groupName.trim();
   const groupNamePattern = /^[A-Za-z0-9\s\-_.(),+&:'/#!;]+$/;
 
@@ -99,6 +120,8 @@ export function DeviceGroupManager({ facilityId, devices, groups, onGroupsChange
           device.device_category === 'blulok' ? 'BluLok device' : 'Access control device',
           device.device_category === 'blulok' && device.unit_number ? `Unit ${device.unit_number}` : '',
           device.device_category === 'blulok' && device.device_serial ? `Serial ${device.device_serial}` : '',
+          device.device_category === 'access_control' && device.device_serial ? `Serial ${device.device_serial}` : '',
+          device.device_category === 'access_control' && device.relay_channel != null ? `Relay ${device.relay_channel}` : '',
           device.device_category === 'access_control' && device.device_type ? device.device_type : '',
           device.device_category === 'access_control' ? (device.location_description || '') : '',
           device.device_category === 'access_control' && device.access_methods?.includes('keypad') ? 'keypad-enabled' : '',
@@ -109,6 +132,8 @@ export function DeviceGroupManager({ facilityId, devices, groups, onGroupsChange
           device.device_category || '',
           device.device_category === 'blulok' ? (device.unit_number || '') : '',
           device.device_category === 'blulok' ? (device.device_serial || '') : '',
+          device.device_category === 'access_control' ? (device.device_serial || '') : '',
+          device.device_category === 'access_control' && device.relay_channel != null ? `relay ${device.relay_channel}` : '',
           device.device_category === 'access_control' ? (device.location_description || '') : '',
           device.device_category === 'access_control' ? (device.device_type || '') : '',
         ].filter(Boolean) as string[],
@@ -335,13 +360,15 @@ export function DeviceGroupManager({ facilityId, devices, groups, onGroupsChange
             Manage Zones (general-purpose grouping) and Access-Code Groups (shared keypad code scopes).
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowCreateDialog(true)}
-          className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors"
-        >
-          Add Group
-        </button>
+        {!hideInlineAddButton && (
+          <button
+            type="button"
+            onClick={() => setShowCreateDialog(true)}
+            className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors"
+          >
+            Add Group
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[260px_1fr]">
@@ -401,7 +428,9 @@ export function DeviceGroupManager({ facilityId, devices, groups, onGroupsChange
               </button>
             ))}
             {filteredGroups.length === 0 && (
-              <p className="text-sm text-gray-500 dark:text-gray-400">No groups yet. Create one above.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {hideInlineAddButton ? 'No groups yet.' : 'No groups yet. Create one above.'}
+              </p>
             )}
           </div>
         </div>

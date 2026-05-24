@@ -8,10 +8,12 @@ The BluLok Cloud widget system provides a flexible, drag-and-drop dashboard inte
 
 Widgets live inside **react-grid-layout** cells with a fixed height. Follow this so content never clips spinners, icons, or controls:
 
-1. **Shell**: The shared `Widget` / `CompactWidget` wrapper uses **`h-full min-h-0 flex flex-col overflow-hidden`**. The scrollable region is the **content** area: **`flex-1 min-h-0`** plus **`overflow-y-auto`** (or `overflow-hidden` for tiny/small-only UIs).
-2. **Body**: Widget implementations should wrap scrollable lists in **`flex-1 min-h-0 overflow-y-auto`** (nested as needed).
-3. **Typography (guideline)**:
-   - **`small` / `tiny`**: Prefer **single-line** titles/status; **`text-xs`**; avoid multi-block layouts.
+1. **Shell**: The shared `Widget` / `CompactWidget` wrapper uses **`h-full min-h-0 flex flex-col overflow-hidden`**. Padding scales via **`getWidgetLayoutProfile(size)`** in `frontend/src/utils/widget-layout.utils.ts` (dock sizes use tighter `px-2.5 py-1` headers; medium/large use `py-1.5` with `text-xs`/`text-sm` titles). Header action buttons (fullscreen, ⋮ menu) use **`headerActionPadding`** and **`headerIconSize`** from the same profile (~40% shorter than the original header bar).
+2. **Body**: Use **`WIDGET_BODY_CLASS`** (`flex flex-col flex-1 min-h-0 overflow-hidden`) and **`WIDGET_LIST_SCROLL_CLASS`** for scrollable lists. Call **`getWidgetListCap(size)`** (or `profile.listCap`) instead of per-widget magic numbers.
+3. **Dock / fullscreen**: Dock widgets should hide non-essential columns and use compact typography; fullscreen uses the same profile with `isFullscreen: true` and a higher list cap.
+4. **Edge-to-edge**: Pass **`edgeToEdge`** on `Widget` when content must bleed to the cell border (3D viewer).
+5. **Typography (guideline)**:
+   - **`small` / `tiny`**: Prefer **single-line** titles/status; tiny tiles use **`StatTinyContent`** (~27px icons, stepped value type, 12px footer labels).
    - **`medium`**: **`text-xs`–`text-sm`** body; cap list rows to what fits **~3–4** lines without scroll, or scroll the inner region.
    - **`large`+**: Full detail, filters, secondary actions.
 
@@ -22,7 +24,7 @@ Widgets live inside **react-grid-layout** cells with a fixed height. Follow this
 ### Drag and Drop Behavior
 
 **Drag Initiation:**
-- **Drag Handle**: Only the widget header area is draggable
+- **Drag Handle**: Only the widget title strip is draggable (header action buttons are outside the drag zone)
 - **Visual Feedback**: Header shows drag handle (hamburger icon) on hover
 - **Cursor Following**: Widget follows cursor exactly during drag (no snapping to grid during drag)
 - **Smooth Movement**: 60fps smooth movement with proper transform handling
@@ -83,10 +85,14 @@ const sizeMap = {
 ```
 
 **Resize Interface:**
-- **Hamburger Menu**: Click to show size options
-- **Dropdown Menu**: Select from available sizes
-- **Instant Resize**: Immediate layout adjustment
-- **Content Adaptation**: Widget content adapts to new size
+- **Drag handles**: Title strip in the widget header (grab cursor). Header **⋮ / fullscreen buttons** always win pointer events over corner grips.
+- **Corner resize grips**: All four corners (`sw`, `se`, `nw`, `ne`) use a 28×28px hit zone above the card. The blue L indicator appears only when the pointer is over that corner's hit zone (not on general widget hover). While actively resizing, the active corner indicator stays visible.
+- **NE corner priority arbitration**: The widget header `⋮` menu sits at `z-index: 400`, above the resize handle (`z-index: 300`), inside the grid item's stacking context. Because `.card` does not create its own stacking context, the menu's z-index competes directly with the handle's. The result:
+  - Mouse over the `⋮` button → button wins (pointer cursor + click)
+  - Mouse over the rest of the NE corner → handle wins (resize cursor + grip indicator)
+  - This requires `.card` and `.widget-header` to **not** set `z-index` or `isolation` (otherwise the menu becomes trapped in a child stacking context capped below the handle).
+- **Widget ⋮ menu**: Dock layout presets only (when supported); configuration and remove
+- **Content Adaptation**: Widget content adapts to snapped grid size
 
 ## Widget Types & Sizing
 
@@ -325,17 +331,10 @@ const gridProps = {
 .drag-handle {
   cursor: grab;
   user-select: none;
-  transition: background-color 0.2s ease;
 }
 
-.drag-handle:hover {
-  background-color: rgba(0, 0, 0, 0.02);
-}
-
-.drag-handle:active,
 .dragging .drag-handle {
   cursor: grabbing;
-  background-color: rgba(0, 0, 0, 0.05);
 }
 ```
 
@@ -498,6 +497,10 @@ const handleLayoutChange = useCallback(
 | **Large** | 4x3 | 592x424 | Detailed content, tables, extended analytics |
 | **Huge** | 6x4 | 880x544 | Complex visualizations, comprehensive dashboards |
 
+### Dock sizes (dashboard v2)
+
+Fixed regions on a **6×12** grid (no page scroll): `dock-top`, `dock-bottom`, `dock-left`, `dock-right`, `dock-bottom-two-thirds`, `dock-full` (entire page). Docked widgets cannot be dragged; choose dock presets from **Dock layout** in the widget **⋮** menu (standard sizes are set by drag-resize on the grid). Fullscreen **focus mode** (maximize) is separate from `dock-full`. See `dashboard-layout-engine` and [dashboard-widgets.md](./dashboard-widgets.md).
+
 ### Content Adaptation Rules
 
 **Stats Widget Sizes:**
@@ -566,7 +569,7 @@ interface LayoutConfig {
     w: number;        // Width in grid units
     h: number;        // Height in grid units
   };
-  size: WidgetSize;   // Current size preset
+  size: WidgetSize;   // Content tier (compact/expanded UI); grid w/h are authoritative for geometry
   [key: string]: any; // Widget-specific configuration
 }
 ```

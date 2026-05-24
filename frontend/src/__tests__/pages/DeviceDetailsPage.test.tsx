@@ -153,10 +153,10 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Device Details')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
     });
 
-    expect(screen.getByText('SN123456')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
     expect(screen.getByText('Unit assignment')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Unassign from unit/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Remove lock from cloud inventory/i })).toBeInTheDocument();
@@ -257,7 +257,7 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Device Details')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
     });
 
     const denylistTab = screen.getByText('Denylist');
@@ -359,7 +359,7 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Device not found|Failed to load device details/)).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Device not found' })).toBeInTheDocument();
     });
   });
 
@@ -399,7 +399,7 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Device Details')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
     });
 
     const button = screen.getByRole('button', { name: /Unlock/i });
@@ -436,7 +436,7 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Device Details')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Main Door' })).toBeInTheDocument();
     });
 
     const button = screen.getByRole('button', { name: /Unlock/i });
@@ -465,7 +465,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       // Click on Overview tab to ensure we're on the right tab
@@ -491,7 +491,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       // Click on Overview tab
@@ -520,7 +520,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       // Click on Overview tab
@@ -549,7 +549,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       // Click on Overview tab
@@ -578,7 +578,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       // Click on Overview tab
@@ -610,7 +610,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       expect(mockSubscribe).toHaveBeenCalledWith(
@@ -631,7 +631,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       unmount();
@@ -657,7 +657,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       // Click on Overview tab
@@ -706,7 +706,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Device Details')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
       // Click on Overview tab

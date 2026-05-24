@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { 
   ClockIcon,
   UserIcon,
@@ -17,6 +18,12 @@ import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import {
+  getWidgetLayoutProfile,
+  isWideWidgetSize,
+  WIDGET_BODY_CLASS,
+  WIDGET_LIST_SCROLL_CLASS,
+} from '@/utils/widget-layout.utils';
 
 interface ActivityLogEntry {
   id: string;
@@ -33,9 +40,12 @@ interface ActivityMonitorWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   facilityFilter?: string;
   maxEntries?: number;
 }
@@ -133,13 +143,20 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   id,
   title,
   initialSize = 'medium-tall',
+  currentSize,
   availableSizes = ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
   facilityFilter,
   maxEntries = 50
 }) => {
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   const [activities, setActivities] = useState<ActivityLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -195,18 +212,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
     return () => unsubscribe(subscriptionId);
   }, [isConnected, subscribe, unsubscribe, loadActivities]);
 
-  const getMaxDisplayItems = (size: WidgetSize): number => {
-    switch (size) {
-      case 'small': return 3;
-      case 'medium': return 5;
-      case 'medium-tall': return 12;
-      case 'large': return 8;
-      case 'large-wide': return 10;
-      case 'huge': return 15;
-      case 'huge-wide': return 20;
-      default: return 5;
-    }
-  };
+  const layout = getWidgetLayoutProfile(size);
 
   const getActivityIcon = (type: string, severity: string) => {
     switch (type) {
@@ -248,7 +254,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
     return true;
   });
 
-  const displayedActivities = filteredActivities.slice(0, getMaxDisplayItems(size));
+  const displayedActivities = filteredActivities.slice(0, layout.listCap);
 
   const formatTimestamp = (timestamp: Date) => {
     const now = new Date();
@@ -271,9 +277,10 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
       title={title}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
           <button
@@ -318,9 +325,9 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
         </div>
       }
     >
-      <div className="space-y-2 h-full overflow-hidden flex flex-col">
-        {/* Filter Tabs (for larger widgets) */}
-        {(size === 'large' || size === 'huge' || size.includes('wide')) && (
+      <div className={`${WIDGET_BODY_CLASS} gap-2`}>
+        {/* Filter Tabs (for larger / wide / dock widgets) */}
+        {(isWideWidgetSize(size) || layout.isTall) && (
           <div className="flex space-x-1 mb-3">
             {[
               { key: 'all', label: 'All', count: activities.length },
@@ -343,7 +350,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
         )}
 
         {/* Activity List */}
-        <div className="flex-1 space-y-2 overflow-y-auto">
+        <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-1.5`}>
           {isLoading ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => (
@@ -374,30 +381,39 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05, duration: 0.3 }}
-                className="flex items-start space-x-3 p-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg transition-colors group"
+                className={`flex items-start gap-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg transition-colors group ${
+                  layout.isDock ? 'p-1.5' : 'p-2'
+                }`}
               >
-                <div className={`p-2 rounded-full ${getSeverityColor(activity.severity)} flex-shrink-0`}>
+                <div
+                  className={`rounded-full ${getSeverityColor(activity.severity)} flex-shrink-0 ${
+                    layout.isDock ? 'p-1' : 'p-2'
+                  }`}
+                >
                   {getActivityIcon(activity.type, activity.severity)}
                 </div>
-                
+
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900 dark:text-white leading-tight">
+                  <p
+                    className={`text-gray-900 dark:text-white leading-tight ${
+                      layout.isDock ? 'text-xs line-clamp-1' : 'text-sm'
+                    }`}
+                  >
                     {activity.message}
                   </p>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
                       {formatTimestamp(activity.timestamp)}
                     </span>
-                    {activity.facility && (
-                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                    {activity.facility && !layout.isDock && (
+                      <span className="text-[11px] text-gray-400 dark:text-gray-500 truncate">
                         • {activity.facility}
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Action button for larger widgets */}
-                {(size === 'large' || size === 'huge' || size.includes('wide')) && (
+                {(isWideWidgetSize(size) || layout.isTall) && (
                   <button className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-all">
                     <EyeIcon className="h-4 w-4" />
                   </button>

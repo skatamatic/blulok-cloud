@@ -47,6 +47,7 @@ import { authenticateToken, requireAdmin, requireRoles } from '../middleware/aut
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { asyncHandler } from '../middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
 
 const router = Router();
 const gatewayModel = new GatewayModel();
@@ -156,6 +157,32 @@ router.get('/reassignment-candidates/:facilityId', requireAdmin, asyncHandler(as
   res.json({
     success: true,
     gateways,
+  });
+}));
+
+// GET /api/gateways/:id/device-sync-logs — inventory sync audit trail (admin / dev_admin only)
+router.get('/:id/device-sync-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.id);
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '20'), 10) || 20, 1), 100);
+  const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+
+  const gateway = await gatewayModel.findById(gatewayId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found' });
+    return;
+  }
+
+  const { logs, total } = await GatewayDeviceSyncLogService.getInstance().listForGateway(gatewayId, {
+    limit,
+    offset,
+  });
+
+  res.json({
+    success: true,
+    logs,
+    total,
+    limit,
+    offset,
   });
 }));
 

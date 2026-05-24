@@ -25,25 +25,33 @@ describe('deriveEffectiveUnitStatus', () => {
 });
 
 describe('assertStoredStatusAllowedWithAssignments', () => {
-  it('allows available and reserved when there are no assignments', () => {
+  it('allows available, maintenance, and reserved when there are no assignments', () => {
     expect(() => assertStoredStatusAllowedWithAssignments('available', 0)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 0)).not.toThrow();
     expect(() => assertStoredStatusAllowedWithAssignments('reserved', 0)).not.toThrow();
   });
 
-  it('rejects available and reserved when assignments exist', () => {
-    expect(() => assertStoredStatusAllowedWithAssignments('available', 1)).toThrow(
-      /Cannot set unit to available or reserved/
-    );
-    expect(() => assertStoredStatusAllowedWithAssignments('reserved', 2)).toThrow(
-      /Cannot set unit to available or reserved/
+  it('rejects occupied when there are no assignments', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 0)).toThrow(
+      /Cannot set unit to occupied without a tenant assignment/
     );
   });
 
-  it('allows occupied and maintenance regardless of assignment count', () => {
-    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 0)).not.toThrow();
+  it('allows only occupied when assignments exist', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 1)).not.toThrow();
     expect(() => assertStoredStatusAllowedWithAssignments('occupied', 3)).not.toThrow();
-    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 0)).not.toThrow();
-    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 1)).not.toThrow();
+  });
+
+  it('rejects vacant statuses when assignments exist', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('available', 1)).toThrow(
+      /Cannot change unit status while tenants are assigned/
+    );
+    expect(() => assertStoredStatusAllowedWithAssignments('reserved', 2)).toThrow(
+      /Cannot change unit status while tenants are assigned/
+    );
+    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 1)).toThrow(
+      /Cannot change unit status while tenants are assigned/
+    );
   });
 });
 

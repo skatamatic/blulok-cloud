@@ -10,12 +10,19 @@ import {
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
   mapApiNotificationToDashboardView,
 } from '@/utils/notification-display.utils';
+import {
+  getWidgetLayoutProfile,
+  isWideWidgetSize,
+  WIDGET_BODY_CLASS,
+  WIDGET_LIST_SCROLL_CLASS,
+} from '@/utils/widget-layout.utils';
 
 type DisplayNotification = ReturnType<typeof mapApiNotificationToDashboardView>;
 
@@ -23,9 +30,12 @@ interface NotificationsWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   /** Global facility filter (omit when "All facilities") */
   facilityFilter?: string;
 }
@@ -67,12 +77,19 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   id,
   title,
   initialSize = 'medium-tall',
+  currentSize,
   availableSizes = ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
   facilityFilter,
 }) => {
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   const [rows, setRows] = useState<DisplayNotification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -239,26 +256,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     await loadNotifications({ silent: false });
   };
 
-  const getMaxDisplayItems = (s: WidgetSize): number => {
-    switch (s) {
-      case 'small':
-        return 2;
-      case 'medium':
-        return 4;
-      case 'medium-tall':
-        return 8;
-      case 'large':
-        return 6;
-      case 'large-wide':
-        return 8;
-      case 'huge':
-        return 10;
-      case 'huge-wide':
-        return 12;
-      default:
-        return 4;
-    }
-  };
+  const layout = getWidgetLayoutProfile(size);
 
   const filteredNotifications = useMemo(() => {
     return rows.filter((notification) => {
@@ -268,7 +266,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     });
   }, [rows, filter]);
 
-  const displayedNotifications = filteredNotifications.slice(0, getMaxDisplayItems(size));
+  const displayedNotifications = filteredNotifications.slice(0, layout.listCap);
   const unreadCount = useMemo(() => rows.filter((n) => !n.isRead).length, [rows]);
 
   const getNotificationIcon = (displayType: string) => {
@@ -300,9 +298,10 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       title={`${title} ${unreadCount > 0 ? `(${unreadCount})` : ''}`}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
           <button
@@ -347,8 +346,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         </div>
       }
     >
-      <div className="h-full min-h-0 flex flex-col overflow-hidden">
-        {(size === 'large' || size === 'huge' || size.includes('wide')) && (
+      <div className={WIDGET_BODY_CLASS}>
+        {(isWideWidgetSize(size) || layout.isTall) && (
           <div className="flex space-x-1 mb-3 shrink-0">
             {[
               { key: 'all', label: 'All', count: rows.length },
@@ -398,10 +397,10 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             </button>
           </div>
         ) : size !== 'small' ? (
-          <div className="flex-1 min-h-0 space-y-2 overflow-y-auto">
+          displayedNotifications.length > 0 ? (
+          <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-2`}>
             <AnimatePresence>
-              {displayedNotifications.length > 0 ? (
-                displayedNotifications.map((notification, index) => (
+                {displayedNotifications.map((notification, index) => (
                   <motion.div
                     key={notification.id}
                     initial={{ opacity: 0, x: -20 }}
@@ -493,21 +492,33 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                       )}
                     </div>
                   </motion.div>
-                ))
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                  <BellIcon className="h-8 w-8 text-gray-400 mb-2" />
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {filter === 'unread'
-                      ? 'No unread notifications'
-                      : filter === 'actionRequired'
-                        ? 'No actions required'
-                        : 'No notifications'}
-                  </p>
-                </div>
-              )}
+                ))}
             </AnimatePresence>
           </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center min-h-0 text-center">
+              <BellIcon
+                className={`text-gray-400 mb-1.5 ${
+                  layout.density === 'micro' || layout.density === 'compact'
+                    ? 'h-6 w-6'
+                    : 'h-8 w-8'
+                }`}
+              />
+              <p
+                className={`text-gray-500 dark:text-gray-400 ${
+                  layout.density === 'micro' || layout.density === 'compact'
+                    ? 'text-xs'
+                    : 'text-sm'
+                }`}
+              >
+                {filter === 'unread'
+                  ? 'No unread notifications'
+                  : filter === 'actionRequired'
+                    ? 'No actions required'
+                    : 'No notifications'}
+              </p>
+            </div>
+          )
         ) : null}
 
         {(size === 'medium-tall' || size === 'large' || size === 'huge' || size.includes('wide')) &&

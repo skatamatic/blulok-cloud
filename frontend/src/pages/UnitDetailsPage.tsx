@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
 import { UserFilter } from '@/components/Common/UserFilter';
@@ -7,7 +7,6 @@ import { EditUnitModal } from '@/components/Units/EditUnitModal';
 import { DeviceAssignmentModal } from '@/components/Devices/DeviceAssignmentModal';
 import { ShareKeyModal } from '@/components/Units/ShareKeyModal';
 import {
-  ArrowLeftIcon,
   HomeIcon,
   UserIcon,
   CpuChipIcon,
@@ -25,7 +24,13 @@ import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline';
-import { useBackNavigation } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
+import {
+  DetailsPageHeader,
+  DetailsPageNotFound,
+  DetailsPageShell,
+  DetailsTabNav,
+} from '@/components/Common/DetailsPageLayout';
 import { useToast } from '@/contexts/ToastContext';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
@@ -120,7 +125,8 @@ export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const handleBack = useBackNavigation('/units');
+  const location = useLocation();
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/units' });
   const [unit, setUnit] = useState<UnitDetails | null>(null);
   const [boundDeviceGroupNames, setBoundDeviceGroupNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -334,154 +340,108 @@ export default function UnitDetailsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-6"></div>
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-              <div className="space-y-4">
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
-              </div>
+      <DetailsPageShell>
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-6"></div>
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <div className="space-y-4">
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
             </div>
           </div>
         </div>
-      </div>
+      </DetailsPageShell>
     );
   }
 
   if (error || !unit) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center">
-            <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">Unit not found</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {error || 'The unit you are looking for does not exist or you do not have access to it.'}
-            </p>
-            <div className="mt-6">
-              <button
-                onClick={handleBack}
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              >
-                <ArrowLeftIcon className="h-4 w-4 mr-2" />
-                Back to Units
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <DetailsPageNotFound
+        title="Unit not found"
+        message={error || 'The unit you are looking for does not exist or you do not have access to it.'}
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+      />
     );
   }
 
   const StatusIcon = statusIcons[unit.status];
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-          <button
-            onClick={handleBack}
-                className="inline-flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-          >
-                <ArrowLeftIcon className="h-5 w-5 mr-1" />
-            Back to Units
-          </button>
-              <div className="h-6 w-px bg-gray-300 dark:bg-gray-600"></div>
-              <Link
-                to={`/facilities/${unit.facility_id}`}
-                className="inline-flex items-center text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-              >
-                <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-                {unit.facility_name}
-              </Link>
-            </div>
-            {canManageUnits && (
-              <div className="flex items-center space-x-3">
-                {unit.blulok_device && (
-                  <button
-                    type="button"
-                    disabled={
-                      updatingLock ||
-                      (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
-                        !isLockTransitionPending(unit.blulok_device.lock_status))
-                    }
-                    onClick={() => void handleRemoteUnlock()}
-                    className={`inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                      isLockTransitionPending(unit.blulok_device.lock_status) || updatingLock
-                        ? 'bg-blue-600 text-white animate-pulse'
-                        : canRequestRemoteUnlock(unit.blulok_device.lock_status)
-                          ? 'bg-green-600 text-white hover:bg-green-700'
-                          : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
-                    }`}
-                  >
-                    {isLockTransitionPending(unit.blulok_device.lock_status) || updatingLock
-                      ? 'Unlocking…'
-                      : canRequestRemoteUnlock(unit.blulok_device.lock_status)
-                        ? 'Unlock'
-                        : 'Unlocked'}
-                  </button>
-                )}
+    <DetailsPageShell>
+      <DetailsPageHeader
+        onBack={showBack ? goBack : undefined}
+        backLabel={backLabel}
+        title={`Unit ${unit.unit_number}`}
+        subtitle={<span className="capitalize">{unit.unit_type}</span>}
+        media={
+          <div className="p-3 bg-gray-100 dark:bg-gray-700 rounded-xl shrink-0">
+            <StatusIcon className="h-8 w-8 text-gray-500 dark:text-gray-400" />
+          </div>
+        }
+        meta={
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              to={`/facilities/${unit.facility_id}`}
+              state={withReturnPath(location)}
+              className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+            >
+              <BuildingOfficeIcon className="h-4 w-4 mr-1.5" />
+              {unit.facility_name}
+            </Link>
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColors[unit.status]}`}>
+              <StatusIcon className="h-4 w-4 mr-2" />
+              {unit.status}
+            </span>
+          </div>
+        }
+        actions={
+          canManageUnits ? (
+            <>
+              {unit.blulok_device && (
                 <button
-                  onClick={() => setShowEditModal(true)}
-                  className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  type="button"
+                  disabled={
+                    updatingLock ||
+                    (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                      !isLockTransitionPending(unit.blulok_device.lock_status))
+                  }
+                  onClick={() => void handleRemoteUnlock()}
+                  className={`inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    isLockTransitionPending(unit.blulok_device.lock_status) || updatingLock
+                      ? 'bg-blue-600 text-white animate-pulse'
+                      : canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                        ? 'bg-green-600 text-white hover:bg-green-700'
+                        : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
+                  }`}
                 >
-                  <PencilIcon className="h-4 w-4 mr-2" />
-                  Edit Unit
+                  {isLockTransitionPending(unit.blulok_device.lock_status) || updatingLock
+                    ? 'Unlocking…'
+                    : canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? 'Unlock'
+                      : 'Unlocked'}
                 </button>
-              </div>
-            )}
-          </div>
+              )}
+              <button
+                onClick={() => setShowEditModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                <PencilIcon className="h-4 w-4 mr-2" />
+                Edit Unit
+              </button>
+            </>
+          ) : undefined
+        }
+      />
 
-          {/* Unit Title */}
-          <div className="mt-6">
-            <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-3">
-                <StatusIcon className="h-8 w-8 text-gray-400" />
-            <div>
-                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{unit.unit_number}</h1>
-                  <p className="text-lg text-gray-600 dark:text-gray-400 capitalize">{unit.unit_type}</p>
-                </div>
-            </div>
-              <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColors[unit.status]}`}>
-                <StatusIcon className="h-4 w-4 mr-2" />
-                {unit.status}
-              </div>
-            </div>
-          </div>
-        </div>
+      <DetailsTabNav
+        tabs={tabs}
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key as 'overview' | 'tenant' | 'device')}
+      />
 
-        {/* Tabs */}
-        <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-visible">
-          <div className="border-b border-gray-200 dark:border-gray-700">
-            <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActiveTab(tab.key as any)}
-                    className={`group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                      activeTab === tab.key
-                        ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'
-                    }`}
-                  >
-                    <Icon className={`h-5 w-5 mr-3 ${
-                      activeTab === tab.key ? 'text-primary-500' : 'text-gray-400 group-hover:text-gray-500'
-                    }`} />
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-visible">
           <div className="p-6">
             {/* Overview Tab */}
             {activeTab === 'overview' && (
@@ -529,6 +489,7 @@ export default function UnitDetailsPage() {
                       <p className="mt-1 text-sm text-gray-900 dark:text-white">
                         <Link
                           to={`/facilities/${unit.facility_id}`}
+                          state={withReturnPath(location)}
                           className="text-primary-600 hover:text-primary-500 dark:text-primary-400"
                         >
                           {unit.facility_name}
@@ -1020,6 +981,7 @@ export default function UnitDetailsPage() {
                         <div className="flex space-x-3">
                           <Link
                             to={`/devices/${unit.blulok_device.id}`}
+                            state={withReturnPath(location)}
                             className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
                           >
                             <CpuChipIcon className="h-4 w-4 mr-1" />
@@ -1092,8 +1054,7 @@ export default function UnitDetailsPage() {
                 )}
                 </div>
             )}
-        </div>
-      </div>
+          </div>
       </div>
 
       {/* Edit Unit Modal */}
@@ -1130,7 +1091,7 @@ export default function UnitDetailsPage() {
           }}
         />
       )}
-    </div>
+    </DetailsPageShell>
   );
 }
 

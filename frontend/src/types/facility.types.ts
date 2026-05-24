@@ -48,9 +48,11 @@ export interface AccessControlDevice {
   /** Present on list/detail responses (from gateway’s facility). */
   facility_id?: string;
   facility_name?: string | null;
+  gateway_name?: string | null;
   name: string;
   device_type: 'gate' | 'elevator' | 'door';
   location_description?: string;
+  device_serial: string;
   relay_channel: number;
   status: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked: boolean;
@@ -62,6 +64,31 @@ export interface AccessControlDevice {
   access_methods?: AccessMethod[];
   created_at: string;
   updated_at: string;
+}
+
+/** Admin POST /api/v1/devices/access-control */
+export interface CreateAccessControlDevicePayload {
+  gateway_id: string;
+  device_serial: string;
+  name: string;
+  device_type: 'gate' | 'elevator' | 'door';
+  location_description: string;
+  relay_channel: number;
+  access_methods?: AccessMethod[];
+  device_settings?: Record<string, unknown>;
+}
+
+/** Admin PUT /api/v1/devices/access-control/:id */
+export interface UpdateAccessControlDevicePayload {
+  name?: string;
+  location_description?: string;
+  device_serial?: string;
+  relay_channel?: number;
+  status?: AccessControlDevice['status'];
+  is_locked?: boolean;
+  access_methods?: AccessMethod[];
+  device_settings?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export type AccessMethod = 'app' | 'keypad' | 'fob';

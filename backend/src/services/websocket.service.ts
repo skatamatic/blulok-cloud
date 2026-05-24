@@ -458,11 +458,15 @@ export class WebSocketService {
     }
   }
 
-  public broadcastDashboardLayoutUpdate(userId: string, layouts: any, widgetInstances: any[]): void {
-    
+  public broadcastDashboardLayoutUpdate(
+    userId: string,
+    layouts: unknown,
+    widgetInstances: unknown[],
+    apiResponse?: Record<string, unknown>
+  ): void {
     const manager = this.subscriptionRegistry.getDashboardLayoutManager();
     if (manager) {
-      manager.broadcastLayoutUpdate(userId, layouts, widgetInstances);
+      manager.broadcastLayoutUpdate(userId, layouts as never, widgetInstances as never, undefined, apiResponse);
     }
   }
 

@@ -3,6 +3,7 @@ import { createApp } from '@/app';
 import { logger } from '@/utils/logger';
 import { DatabaseService } from '@/services/database.service';
 import { MigrationService } from '@/services/migration.service';
+import { DevTestAccountsService } from '@/services/dev-test-accounts.service';
 import { WebSocketService } from '@/services/websocket.service';
 import { LoggerInterceptorService } from '@/services/logger-interceptor.service';
 import { DeviceEventService } from '@/services/device-event.service';
@@ -35,6 +36,14 @@ async function bootstrap(): Promise<void> {
         logger.info('Database needs initial data. Running seeds...');
         await MigrationService.runSeeds();
         logger.info('Initial data seeded successfully');
+      }
+
+      if (config.nodeEnv === 'development') {
+        try {
+          await DevTestAccountsService.ensureRoleTestAccounts();
+        } catch (devAccountsError) {
+          logger.warn('Failed to ensure dev role test accounts:', devAccountsError);
+        }
       }
       
     } catch (dbError) {

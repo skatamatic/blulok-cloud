@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AccessControlDevice, BluLokDevice } from '@/types/facility.types';
+import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -54,6 +55,9 @@ export function AccessControlDeviceCard({ device, groupNames = [], onViewDevice 
           </div>
           <div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">{device.name}</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+              {formatAccessDeviceListSubtitle(device)}
+            </p>
             <p className="text-sm text-gray-500 dark:text-gray-400 capitalize">{device.device_type} Controller</p>
           </div>
         </div>
@@ -96,6 +100,10 @@ export function AccessControlDeviceCard({ device, groupNames = [], onViewDevice 
       </div>
 
       <div className="space-y-3">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-500 dark:text-gray-400">Hardware Serial</span>
+          <span className="font-mono font-medium text-gray-900 dark:text-white">{device.device_serial}</span>
+        </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 dark:text-gray-400">Relay Channel</span>
           <span className="font-medium text-gray-900 dark:text-white">#{device.relay_channel}</span>

@@ -27,23 +27,10 @@ jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }));
 
+const mockUseAuth = jest.fn();
+
 jest.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({
-    authState: {
-      user: {
-        id: '1',
-        firstName: 'Sam',
-        lastName: 'Admin',
-        role: UserRole.ADMIN,
-        email: 'sam@example.com',
-      },
-      isAuthenticated: true,
-    },
-    logout: mockLogout,
-    hasRole: mockHasRole,
-    isAdmin: mockIsAdmin,
-    canManageUsers: mockCanManageUsers,
-  }),
+  useAuth: () => mockUseAuth(),
 }));
 
 jest.mock('@/contexts/SidebarContext', () => ({
@@ -73,6 +60,22 @@ describe('Sidebar', () => {
     mockHasRole.mockImplementation(() => true);
     mockIsAdmin.mockImplementation(() => true);
     mockCanManageUsers.mockImplementation(() => true);
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: {
+          id: '1',
+          firstName: 'Sam',
+          lastName: 'Admin',
+          role: UserRole.ADMIN,
+          email: 'sam@example.com',
+        },
+        isAuthenticated: true,
+      },
+      logout: mockLogout,
+      hasRole: mockHasRole,
+      isAdmin: mockIsAdmin,
+      canManageUsers: mockCanManageUsers,
+    });
   });
 
   it('renders BluLok nav links for an admin', () => {
@@ -98,6 +101,67 @@ describe('Sidebar', () => {
     );
 
     expect(screen.queryByRole('link', { name: /user management/i })).not.toBeInTheDocument();
+  });
+
+  it('shows Settings for tenants', () => {
+    mockIsAdmin.mockImplementation(() => false);
+    mockCanManageUsers.mockImplementation(() => false);
+    mockHasRole.mockImplementation((roles: UserRole[]) => roles.includes(UserRole.TENANT));
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: {
+          id: '1',
+          firstName: 'Terry',
+          lastName: 'Tenant',
+          role: UserRole.TENANT,
+          email: 'tenant@example.com',
+        },
+        isAuthenticated: true,
+      },
+      logout: mockLogout,
+      hasRole: mockHasRole,
+      isAdmin: mockIsAdmin,
+      canManageUsers: mockCanManageUsers,
+    });
+
+    render(
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('link', { name: /^settings$/i })).toHaveAttribute('href', '/settings');
+    expect(screen.queryByRole('link', { name: /add facility/i })).not.toBeInTheDocument();
+  });
+
+  it('marks Facility Setup active on facility detail routes', () => {
+    render(
+      <MemoryRouter initialEntries={['/facilities/facility-1?tab=devices']}>
+        <Sidebar />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('link', { name: /facility setup/i })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+  });
+
+  it('marks only Add Facility active on /settings/add-facility', () => {
+    render(
+      <MemoryRouter initialEntries={['/settings/add-facility']}>
+        <Sidebar />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('link', { name: /^settings$/i })).not.toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+    expect(screen.getByRole('link', { name: /add facility/i })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
   });
 
   it('calls toggleSidebar when collapse control is used', async () => {

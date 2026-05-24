@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { FunnelIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
 import { generateHighlightId } from '@/utils/navigation.utils';
@@ -8,10 +9,7 @@ import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { SortableHeader } from '@/components/UserManagement/SortableHeader';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
-import {
-  PlusIcon,
-  FunnelIcon,
-} from '@heroicons/react/24/outline';
+import { withReturnPath } from '@/hooks/useBackNavigation';
 
 interface User {
   id: string;
@@ -324,7 +322,9 @@ export default function UserManagementPage() {
                   <tr 
                     key={user.id} 
                     id={generateHighlightId('user', user.id)}
-                    onClick={() => navigate(`/users/${user.id}/details`)}
+                    onClick={() =>
+                      navigate(`/users/${user.id}/details`, { state: withReturnPath(location) })
+                    }
                     className="group transition-all duration-200 cursor-pointer hover:shadow-sm border-b border-gray-200 dark:border-gray-700 last:border-b-0"
                   >
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">

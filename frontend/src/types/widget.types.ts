@@ -3,7 +3,22 @@
  * This file should be kept in sync with backend/src/types/widget.types.ts
  */
 
-export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide' | 'mega-tall';
+export type WidgetSize =
+  | 'tiny'
+  | 'small'
+  | 'medium'
+  | 'medium-tall'
+  | 'large'
+  | 'huge'
+  | 'large-wide'
+  | 'huge-wide'
+  | 'mega-tall'
+  | 'dock-top'
+  | 'dock-bottom'
+  | 'dock-left'
+  | 'dock-right'
+  | 'dock-bottom-two-thirds'
+  | 'dock-full';
 
 export type WidgetCategory = 'analytics' | 'status' | 'activity' | 'system';
 
@@ -16,6 +31,8 @@ export interface WidgetTypeDefinition {
   allowMultiple: boolean;
   category: WidgetCategory;
   requiredPermissions?: string[];
+  /** When true, the widget can enter a runtime fullscreen "focus" mode covering the entire dashboard. */
+  supportsFullscreen?: boolean;
 }
 
 /**
@@ -50,6 +67,9 @@ export const WIDGET_TYPES = {
   
   // Visualization widgets
   'facility-viewer': 'facility-viewer',
+
+  // Management widgets
+  'units-manager': 'units-manager',
 } as const;
 
 export type WidgetType = typeof WIDGET_TYPES[keyof typeof WIDGET_TYPES];
@@ -104,7 +124,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     name: 'Activity Monitor',
     description: 'Real-time activity log and monitoring',
     defaultSize: 'medium-tall',
-    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide', 'dock-top', 'dock-bottom', 'dock-left', 'dock-right', 'dock-bottom-two-thirds'],
     allowMultiple: false,
     category: 'activity',
     requiredPermissions: ['admin', 'facility_admin', 'maintenance']
@@ -204,7 +224,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     name: 'Activity Histogram',
     description: 'Site activity over time',
     defaultSize: 'large-wide',
-    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide', 'dock-top', 'dock-bottom', 'dock-bottom-two-thirds'],
     allowMultiple: true,
     category: 'analytics',
     requiredPermissions: ['admin', 'facility_admin', 'maintenance']
@@ -214,10 +234,33 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     name: 'Facility 3D View',
     description: 'Interactive 3D visualization of linked facility with real-time lock status',
     defaultSize: 'huge',
-    availableSizes: ['huge', 'huge-wide'],
+    availableSizes: ['huge', 'huge-wide', 'dock-left', 'dock-right', 'dock-bottom-two-thirds', 'dock-full'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance'],
+    supportsFullscreen: true,
+  },
+  'units-manager': {
+    type: 'units-manager',
+    name: 'Units Manager',
+    description: 'Live unit grid with lock state, battery, signal, tenant, and one-tap remote unlock',
+    defaultSize: 'dock-bottom',
+    availableSizes: [
+      'large',
+      'large-wide',
+      'huge',
+      'huge-wide',
+      'dock-top',
+      'dock-bottom',
+      'dock-bottom-two-thirds',
+      'dock-left',
+      'dock-right',
+      'dock-full',
+    ],
+    allowMultiple: false,
+    category: 'status',
+    requiredPermissions: ['admin', 'dev_admin', 'facility_admin', 'maintenance'],
+    supportsFullscreen: true,
   }
 };
 
@@ -270,6 +313,9 @@ export class WidgetTypeHelper {
    * This should be used sparingly - prefer using the canonical widget types
    */
   static extractWidgetTypeFromId(widgetId: string): string {
+    if (widgetId.includes('units-manager') || widgetId.includes('units_manager')) {
+      return WIDGET_TYPES['units-manager'];
+    }
     // Map old widget ID patterns to new canonical types
     if (widgetId.includes('facilities_stats') || widgetId.includes('facilities')) {
       return WIDGET_TYPES['stats-facilities'];

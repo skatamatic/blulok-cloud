@@ -203,6 +203,38 @@
   .widget-grid .react-grid-item .card {
     overflow: hidden; /* Content overflow hidden */
     position: relative;
+    /*
+     * Intentionally NO z-index: keeps the card from creating a stacking
+     * context, so descendant absolute elements (e.g. the ⋮ menu) can use
+     * z-index values that compete with the resize handles which are siblings
+     * of the card on .react-grid-item.
+     */
+    flex: 1 1 auto;
+    min-height: 0;
+    pointer-events: none;
+  }
+
+  .widget-grid .react-grid-item .card .widget-header {
+    position: relative;
+    pointer-events: auto;
+    /* No isolation — same reason as above. */
+  }
+
+  .widget-grid .react-grid-item .card .drag-handle,
+  .widget-grid .react-grid-item .card .widget-header-actions,
+  .widget-grid .react-grid-item .card .widget-header-actions *,
+  .widget-grid .react-grid-item .card .widget-content,
+  .widget-grid .react-grid-item .card .widget-content > *,
+  .widget-grid .react-grid-item .card .dropdown-container,
+  .widget-grid .react-grid-item .card .dropdown-container *,
+  .widget-grid .react-grid-item .card button,
+  .widget-grid .react-grid-item .card input,
+  .widget-grid .react-grid-item .card select,
+  .widget-grid .react-grid-item .card textarea,
+  .widget-grid .react-grid-item .card a,
+  .widget-grid .react-grid-item .card .no-drag,
+  .widget-grid .react-grid-item .card .widget-body {
+    pointer-events: auto;
   }
 
   /* Ensure dropdowns appear above other widgets */
@@ -245,6 +277,28 @@
     opacity: 0.8;
   }
 
+  /* Invalid drag/resize placement — overlaps or blocked by dock min size */
+  .widget-grid.widget-grid--placement-invalid .react-grid-item.react-grid-placeholder,
+  .widget-grid--placement-invalid .widget-grid .react-grid-item.react-grid-placeholder {
+    @apply bg-red-50 dark:bg-red-950/30 border-red-500 dark:border-red-400;
+    opacity: 0.9;
+  }
+
+  .widget-grid.widget-grid--placement-invalid .react-grid-item.react-draggable-dragging .card,
+  .widget-grid.widget-grid--placement-invalid .react-grid-item.resizing .card,
+  .widget-grid--placement-invalid .widget-grid .react-grid-item.react-draggable-dragging .card,
+  .widget-grid--placement-invalid .widget-grid .react-grid-item.resizing .card {
+    outline: 2px dashed theme('colors.red.500');
+    outline-offset: -2px;
+  }
+
+  .dark .widget-grid.widget-grid--placement-invalid .react-grid-item.react-draggable-dragging .card,
+  .dark .widget-grid.widget-grid--placement-invalid .react-grid-item.resizing .card,
+  .dark .widget-grid--placement-invalid .widget-grid .react-grid-item.react-draggable-dragging .card,
+  .dark .widget-grid--placement-invalid .widget-grid .react-grid-item.resizing .card {
+    outline-color: theme('colors.red.400');
+  }
+
   /* Dragging widget follows cursor smoothly */
   .widget-grid .react-grid-item.react-draggable-dragging {
     @apply z-40 shadow-2xl;
@@ -274,21 +328,12 @@
     user-select: none;
   }
 
-  .widget-grid .drag-handle:hover {
-    background-color: rgba(0, 0, 0, 0.02);
-  }
-
-  .dark .widget-grid .drag-handle:hover {
-    background-color: rgba(255, 255, 255, 0.02);
-  }
-
   .widget-grid .react-grid-item.react-draggable-dragging .drag-handle {
     cursor: grabbing;
-    background-color: rgba(0, 0, 0, 0.05);
   }
 
   .dark .widget-grid .react-grid-item.react-draggable-dragging .drag-handle {
-    background-color: rgba(255, 255, 255, 0.05);
+    cursor: grabbing;
   }
 
   /* Widget content scrolling */
@@ -334,33 +379,202 @@
     pointer-events: none !important;
   }
 
-  /* 2. Re-enable pointer events on the drag handle so it can be grabbed. */
+  /* 2. Re-enable pointer events on the drag handle and header actions. */
   .react-grid-item .drag-handle {
     pointer-events: auto !important;
     cursor: grab !important;
   }
+
+  .react-grid-item .widget-header-actions {
+    pointer-events: auto !important;
+    cursor: default !important;
+  }
+
+  .react-grid-item .widget-header-actions button {
+    cursor: pointer !important;
+  }
+
+  /* Resize handles are siblings of .card on .react-grid-item.react-resizable */
+  .react-grid-item .react-resizable-handle {
+    pointer-events: auto !important;
+    touch-action: none;
+  }
+
+  /* All four resize handles sit above the card content. */
+  .react-grid-item .react-resizable-handle-sw,
+  .react-grid-item .react-resizable-handle-se,
+  .react-grid-item .react-resizable-handle-nw,
+  .react-grid-item .react-resizable-handle-ne {
+    z-index: 300 !important;
+  }
+
+  /*
+   * The ⋮ menu wins click priority over the NE resize handle by sitting at a
+   * higher z-index than the handle (handle = 300, menu = 400). Because .card
+   * does NOT create a stacking context, this z-index competes directly with
+   * the handle in the grid item's stacking context.
+   */
+  .widget-grid .widget-header .widget-header-actions {
+    pointer-events: auto !important;
+    cursor: default !important;
+    position: relative;
+    z-index: 400;
+  }
+
+  /* Compact/tiny tiles: menu floats in the corner — must not become in-flow */
+  .widget-grid .compact-widget .widget-header-actions {
+    pointer-events: auto !important;
+    cursor: default !important;
+    position: absolute !important;
+    z-index: 400;
+  }
+
+  .widget-grid .widget-header .widget-header-actions button,
+  .widget-grid .compact-widget .widget-header-actions button,
+  .widget-grid .widget-header-actions .dropdown-container,
+  .widget-grid .widget-header-actions .dropdown-container button {
+    cursor: pointer !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw,
+  .widget-grid .react-resizable-handle-se,
+  .widget-grid .react-resizable-handle-nw,
+  .widget-grid .react-resizable-handle-ne {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    background-image: none !important;
+    padding: 0;
+    transform: none !important;
+    z-index: 300 !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw::before,
+  .widget-grid .react-resizable-handle-se::before,
+  .widget-grid .react-resizable-handle-nw::before,
+  .widget-grid .react-resizable-handle-ne::before {
+    display: none !important;
+  }
+
+  .widget-grid .react-resizable-handle-se {
+    right: 0;
+    bottom: 0;
+    cursor: se-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw {
+    left: 0;
+    bottom: 0;
+    cursor: sw-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-nw {
+    left: 0;
+    top: 0;
+    cursor: nw-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-ne {
+    right: 0;
+    top: 0;
+    cursor: ne-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw::after,
+  .widget-grid .react-resizable-handle-se::after,
+  .widget-grid .react-resizable-handle-nw::after,
+  .widget-grid .react-resizable-handle-ne::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+  }
+
+  .widget-grid .react-resizable-handle-se::after {
+    right: 5px;
+    bottom: 5px;
+    border-right: 3px solid theme('colors.primary.500');
+    border-bottom: 3px solid theme('colors.primary.500');
+    border-top: none;
+    border-left: none;
+    border-radius: 0 0 3px 0;
+    box-shadow: 2px 2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-sw::after {
+    left: 5px;
+    bottom: 5px;
+    border-left: 3px solid theme('colors.primary.500');
+    border-bottom: 3px solid theme('colors.primary.500');
+    border-top: none;
+    border-right: none;
+    border-radius: 0 0 0 3px;
+    box-shadow: -2px 2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-nw::after {
+    left: 5px;
+    top: 5px;
+    border-left: 3px solid theme('colors.primary.500');
+    border-top: 3px solid theme('colors.primary.500');
+    border-right: none;
+    border-bottom: none;
+    border-radius: 3px 0 0 0;
+    box-shadow: -2px -2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-ne::after {
+    right: 5px;
+    top: 5px;
+    border-right: 3px solid theme('colors.primary.500');
+    border-top: 3px solid theme('colors.primary.500');
+    border-left: none;
+    border-bottom: none;
+    border-radius: 0 3px 0 0;
+    box-shadow: 2px -2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-sw:hover::after,
+  .widget-grid .react-resizable-handle-se:hover::after,
+  .widget-grid .react-resizable-handle-nw:hover::after,
+  .widget-grid .react-resizable-handle-ne:hover::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-se::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-sw::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-nw::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-ne::after {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+
+  .dark .widget-grid .react-resizable-handle-se::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: 2px 2px 0 rgba(20, 127, 212, 0.25);
+  }
+
+  .dark .widget-grid .react-resizable-handle-sw::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: -2px 2px 0 rgba(20, 127, 212, 0.25);
+  }
+
+  .dark .widget-grid .react-resizable-handle-nw::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: -2px -2px 0 rgba(20, 127, 212, 0.25);
+  }
+
+  .dark .widget-grid .react-resizable-handle-ne::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: 2px -2px 0 rgba(20, 127, 212, 0.25);
+  }
+
   .react-grid-item.react-draggable-dragging .drag-handle {
     cursor: grabbing !important;
   }
 
-  /* 3. Re-enable pointer events on the content area and any interactive elements within it. */
-  .react-grid-item .widget-content,
-  .react-grid-item .widget-content *,
-  .react-grid-item .dropdown-container,
-  .react-grid-item .dropdown-container *,
-  .react-grid-item button,
-  .react-grid-item input,
-  .react-grid-item select,
-  .react-grid-item textarea,
-  .react-grid-item a {
-    pointer-events: auto !important;
-  }
-
-  /* 4. Ensure the widget body (non-header area) cannot be dragged */
-  .react-grid-item .widget-body,
-  .react-grid-item .card > *:not(.drag-handle),
-  .react-grid-item .no-drag {
-    pointer-events: auto !important;
+  /* 3. Default cursor on card chrome (drag-handle keeps grab above) */
+  .react-grid-item .card > *:not(.drag-handle):not(.widget-header-actions) {
     cursor: default !important;
   }
   /* --- END OF FIX --- */
@@ -380,13 +594,19 @@
     50% { opacity: 0.4; }
   }
 
-  /* Better drag handle visibility */
-  .widget-grid .react-grid-item:hover .drag-handle {
-    background-color: rgba(0, 0, 0, 0.02);
+  /* Compact widget specific styles */
+  .compact-widget .drag-handle {
+    border-radius: 8px;
   }
 
-  .dark .widget-grid .react-grid-item:hover .drag-handle {
-    background-color: rgba(255, 255, 255, 0.02);
+  /* Title overlay for compact widgets */
+  .compact-widget .title-overlay {
+    backdrop-filter: blur(4px);
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+
+  .dark .compact-widget .title-overlay {
+    background-color: rgba(31, 41, 55, 0.9);
   }
 
   /* Hamburger menu visibility - only on header hover */
@@ -436,34 +656,30 @@
     overflow: hidden;
   }
 
-  /* Ensure widgets maintain their aspect ratio during animations */
-  .widget-grid .react-grid-item > div {
-    height: 100%;
+  /* Grid item hosts .card + resize handle (flex; .react-resizable sets position:relative) */
+  .widget-grid .react-grid-item.react-resizable {
     display: flex;
     flex-direction: column;
   }
 
-  /* Compact widget specific styles */
-  .compact-widget .drag-handle {
-    border-radius: 8px;
+  .widget-grid .react-grid-item.react-resizable > .card {
+    width: 100%;
   }
 
-  .compact-widget:hover .drag-handle {
-    background-color: rgba(0, 0, 0, 0.01);
+  /* RGL child wrapper must fill the grid cell */
+  .widget-grid .react-grid-item > div {
+    height: 100%;
+    min-height: 0;
   }
 
-  .dark .compact-widget:hover .drag-handle {
-    background-color: rgba(255, 255, 255, 0.01);
+  /* Tiny stat tiles — edge-to-edge content, no phantom header row */
+  .widget-grid .compact-widget--tiny .compact-widget-body {
+    padding: 3px;
   }
 
-  /* Title overlay for compact widgets */
-  .compact-widget .title-overlay {
-    backdrop-filter: blur(4px);
-    background-color: rgba(255, 255, 255, 0.9);
-  }
-
-  .dark .compact-widget .title-overlay {
-    background-color: rgba(31, 41, 55, 0.9);
+  .widget-grid .compact-widget--tiny .drag-handle {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   /* Ensure all colored buttons always have white text */

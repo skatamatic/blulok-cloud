@@ -96,6 +96,7 @@ CREATE TABLE access_control_devices (
   device_type ENUM('gate', 'elevator', 'door') NOT NULL,
   location_description VARCHAR(255),
   relay_channel INTEGER NOT NULL,
+  device_serial VARCHAR(100) NOT NULL,
   access_methods JSON NOT NULL, -- ['app' | 'keypad' | 'fob'], default ['app']
   status ENUM('online', 'offline', 'error', 'maintenance') DEFAULT 'offline',
   is_locked BOOLEAN DEFAULT TRUE,
@@ -104,7 +105,8 @@ CREATE TABLE access_control_devices (
   metadata JSON,
   created_at TIMESTAMP,
   updated_at TIMESTAMP,
-  UNIQUE(gateway_id, relay_channel) -- Unique relay per gateway
+  UNIQUE(gateway_id, relay_channel), -- One relay output per gateway
+  UNIQUE(gateway_id, device_serial, relay_channel) -- Sync identity: serial + relay
 );
 ```
 
@@ -260,24 +262,28 @@ CREATE TABLE blulok_devices (
 The gateway uses two endpoints for device management:
 
 **1. Inventory Sync** (`POST /api/v1/internal/gateway/devices/inventory`)
-- Syncs the full device inventory for a gateway
-- Devices in the array that don't exist are created
-- Devices not in the array are removed
-- Used for initial sync and device discovery
+- Syncs the full device inventory for a gateway (locks and access control in one `devices[]` array)
+- **Locks** (`lock_id`, optional `kind: "lock"`): rows in `blulok_devices`
+- **Access control** (`kind: "access_control"`, `access_id` + `relay_channel`): rows in `access_control_devices`. Identity is **hardware serial + relay** (parallel to `lock_id` for BluLok). `relay_channel` is actuation config (which gateway output to pulse).
+- Devices in the array that don't exist are created (access auto-provision uses `access_methods: ["keypad"]`, `metadata.createdFromGatewaySync: true`)
+- **Removal policy:** only auto-provisioned devices (`metadata.createdFromGatewaySync`, or legacy `createdFromInventorySync`) are removed when omitted; admin-created devices are preserved
+- Include both lock and access items in the same payload when reconciling a full gateway inventory
 
 ```json
 {
   "facility_id": "uuid",
   "devices": [
-    { "lock_id": "serial-or-uuid", "lock_number": 101, "firmware_version": "1.0.0" }
+    { "lock_id": "serial-or-uuid", "lock_number": 101, "firmware_version": "1.0.0" },
+    { "kind": "access_control", "access_id": "KP-7F2A-001", "relay_channel": 2, "device_type": "door", "name": "Main keypad" }
   ]
 }
 ```
 
+Response includes lock counts at the top level and, when access items were sent, an `access_control` object with the same shape.
+
 **2. State Update** (`POST /api/v1/internal/gateway/devices/state`)
 - Partial updates for device telemetry and state
-- Only updates fields that are provided (partial updates supported)
-- Used for real-time status updates from devices
+- Lock updates use `lock_id`; access control uses `kind: "access_control"` + `access_id` + `relay_channel` (`online` → `status`, `locked` → `is_locked`)
 
 ```json
 {
@@ -285,13 +291,16 @@ The gateway uses two endpoints for device management:
   "updates": [
     {
       "lock_id": "serial-or-uuid",
-      "lock_state": "LOCKED", // LOCKED, UNLOCKED, LOCKING, UNLOCKING, ERROR, UNKNOWN
-      "battery_level": 85,
+      "lock_state": "LOCKED",
+      "battery_level": 3423,
+      "online": true
+    },
+    {
+      "kind": "access_control",
+      "access_id": "KP-7F2A-001",
+      "relay_channel": 2,
       "online": true,
-      "signal_strength": -65,
-      "temperature": 22.5,
-      "error_code": null,
-      "source": "GATEWAY"
+      "locked": true
     }
   ]
 }
@@ -301,6 +310,44 @@ The gateway uses two endpoints for device management:
 - Combined inventory and state sync
 - Returns `X-Deprecated` header
 - Use `/devices/inventory` + `/devices/state` instead
+
+### Admin REST API (frontend / manual provisioning)
+
+These endpoints are used by the web UI when an admin adds or edits access control hardware. They use **`device_serial`** (same value as gateway `access_id`), not the internal UUID.
+
+| Operation | Method | Path | Required fields |
+|-----------|--------|------|-----------------|
+| Create | `POST` | `/api/v1/devices/access-control` | `gateway_id`, `device_serial`, `name`, `device_type` (`gate` \| `elevator` \| `door`), `location_description`, `relay_channel` (1–8) |
+| Read | `GET` | `/api/v1/devices/access-control/:id` | — |
+| Update | `PUT` | `/api/v1/devices/access-control/:id` | Any of: `name`, `location_description`, `device_serial`, `relay_channel`, `access_methods`, `device_settings`, `metadata` |
+| Lock/unlock | `PUT` | `/api/v1/devices/access-control/:id/lock` | `lock_status`: `locked` \| `unlocked` |
+
+**Create example (manual admin):**
+
+```json
+{
+  "gateway_id": "uuid",
+  "device_serial": "KP-7F2A-001",
+  "name": "Main gate keypad",
+  "device_type": "gate",
+  "location_description": "North entrance",
+  "relay_channel": 2,
+  "access_methods": ["app", "keypad"]
+}
+```
+
+**Gateway vs admin identity mapping:**
+
+| Context | Serial field name | Relay field | Composite key |
+|---------|-------------------|-------------|---------------|
+| Gateway inventory/state | `access_id` | `relay_channel` | `{access_id}::{relay_channel}` in sync `not_found` responses |
+| Admin API / DB / frontend | `device_serial` | `relay_channel` | Unique `(gateway_id, device_serial, relay_channel)` |
+
+Manual devices have no `metadata.createdFromGatewaySync` and are **never** removed by gateway inventory omission. Gateway auto-provision sets `metadata.createdFromGatewaySync: true` and default `access_methods: ["keypad"]`.
+
+**Frontend types:** `CreateAccessControlDevicePayload` and `UpdateAccessControlDevicePayload` in `frontend/src/types/facility.types.ts`; list/card subtitle helper `formatAccessDeviceListSubtitle()` in `frontend/src/utils/accessDeviceDisplay.utils.ts`.
+
+**Inventory sync audit log:** Each `POST /internal/gateway/devices/inventory` run persists a row in `gateway_device_sync_logs` with per-device entries (`added`, `removed`, `unchanged`, `skipped_manual`, `error`). Admins and dev admins can read history via `GET /api/v1/gateways/:gatewayId/device-sync-logs` (Facility → Gateway → **Inventory sync** tab).
 
 ### 6. Unit Assignments
 

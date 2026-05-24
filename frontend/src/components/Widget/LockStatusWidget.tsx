@@ -14,11 +14,13 @@ import { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { getScopedFacilityId } from '@/utils/globalFacilityScope.utils';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface LockStatusWidgetProps {
   currentSize: WidgetSize;
-  onSizeChange: (size: WidgetSize) => void;
+  onSizeChange?: (size: WidgetSize) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
 }
 
 /** GET /units/my is tenant-only; admin list rows use device_status / last_activity field names */
@@ -41,6 +43,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   currentSize,
   onSizeChange,
   onRemove,
+  readOnly = false,
 }) => {
   const { authState } = useAuth();
   const { selectedFacilityId, isLoading: facilitiesLoading } = useGlobalFacility();
@@ -168,15 +171,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
     subscribeDeviceStatusForRefresh: false,
   });
 
-  const getMaxItems = (size: WidgetSize): number => {
-    switch (size) {
-      case 'small': return 3;
-      case 'medium': return 4;
-      case 'medium-tall': return 6;
-      case 'large': return 8;
-      default: return 4;
-    }
-  };
+  const layout = getWidgetLayoutProfile(currentSize);
 
   const formatLastSeen = (dateString: string | undefined): string => {
     if (!dateString) return 'Never';
@@ -253,7 +248,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
     await fetchUnits();
   };
 
-  const maxItems = getMaxItems(currentSize);
+  const maxItems = layout.listCap;
   const displayUnits = units.slice(0, maxItems);
   const unlockedCount = units.filter((unit) => deviceLockStatus(unit) === 'unlocked').length;
   const lowBatteryCount = units.filter(unit => (unit.battery_level || 0) < 20).length;
@@ -268,6 +263,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex items-center justify-center h-full">
           <div className="text-gray-500 dark:text-gray-400">Loading...</div>
@@ -285,6 +281,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
         onSizeChange={onSizeChange}
         availableSizes={availableSizes}
         onRemove={onRemove}
+        readOnly={readOnly}
       >
         <div className="flex flex-col items-center justify-center h-full">
           <div className="text-red-500 text-center">
@@ -310,6 +307,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
       onSizeChange={onSizeChange}
       availableSizes={availableSizes}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
           <button
@@ -388,7 +386,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
           </div>
         ) : (
           // Full view for larger sizes
-          <div className="space-y-3 flex-1 overflow-y-auto">
+          <div className={`space-y-2 ${WIDGET_LIST_SCROLL_CLASS}`}>
             {/* Status Summary */}
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div className="text-center p-2 rounded-md bg-gray-50 dark:bg-gray-700">
