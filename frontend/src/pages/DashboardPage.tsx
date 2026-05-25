@@ -45,7 +45,6 @@ export default function DashboardPage() {
   const [savedTabActive, setSavedTabActive] = useState(false);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [editingPageIndex, setEditingPageIndex] = useState<number | null>(null);
-  const [isPageTransitioning, setIsPageTransitioning] = useState(false);
 
   const {
     pages,
@@ -282,7 +281,6 @@ export default function DashboardPage() {
                       isTenant={isTenant}
                       canEditLayout={canEditLayout}
                       isPageActive={isActivePage}
-                      isPageTransitioning={isPageTransitioning}
                       effectiveFacilityId={effectiveFacilityId}
                       generalStats={generalStats}
                       statsLoading={statsLoading}
@@ -321,11 +319,7 @@ export default function DashboardPage() {
   const pageCount = pages.length;
 
   const pageCanvas = (
-    <DashboardPageStrip
-      pageCount={pageCount}
-      activeIndex={activePageIndex}
-      onTransitionChange={setIsPageTransitioning}
-    >
+    <DashboardPageStrip pageCount={pageCount} activeIndex={activePageIndex}>
       {pages.map((page, index) => renderPagePanel(page, index))}
     </DashboardPageStrip>
   );
@@ -427,7 +421,6 @@ export default function DashboardPage() {
               isTenant={isTenant}
               canEditLayout={canEditLayout}
               isPageActive
-              isPageTransitioning={false}
               effectiveFacilityId={effectiveFacilityId}
               generalStats={generalStats}
               statsLoading={statsLoading}

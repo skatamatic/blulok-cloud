@@ -129,7 +129,7 @@ export interface FMSChange {
   external_id: string; // FMS entity ID
   internal_id?: string; // Our entity ID (if exists)
   before_data?: any;
-  after_data: any;
+  after_data?: any | null;
   required_actions: FMSChangeAction[];
   impact_summary: string;
   is_reviewed: boolean;

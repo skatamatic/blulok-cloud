@@ -25,6 +25,8 @@ interface ViewerFloorsPanelProps {
   onToggleFullView: () => void;
   onRotateCamera?: (direction: 'cw' | 'ccw') => void;
   onToggleCameraMode?: () => void;
+  /** Wide layouts anchor camera/floor controls at bottom-center. */
+  anchor?: 'bottom-right' | 'bottom-center';
 }
 
 /**
@@ -54,6 +56,7 @@ export const ViewerFloorsPanel: React.FC<ViewerFloorsPanelProps> = ({
   onToggleFullView,
   onRotateCamera,
   onToggleCameraMode,
+  anchor = 'bottom-right',
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -113,7 +116,13 @@ export const ViewerFloorsPanel: React.FC<ViewerFloorsPanelProps> = ({
   `;
 
   return (
-    <div className="absolute bottom-4 right-4 z-40 flex flex-col items-end gap-2">
+    <div
+      className={`absolute bottom-4 z-40 flex flex-col gap-2 ${
+        anchor === 'bottom-center'
+          ? 'left-1/2 -translate-x-1/2 items-center'
+          : 'right-4 items-end'
+      }`}
+    >
       {/* Main Control Row - Compact horizontal strip */}
       <div className={`
         flex items-center gap-1 p-1.5 rounded-xl shadow-xl border backdrop-blur-md

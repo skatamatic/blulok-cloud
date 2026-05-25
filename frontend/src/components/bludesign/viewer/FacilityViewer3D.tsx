@@ -6,7 +6,6 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
 import { useBluDesignEngine } from '../hooks/useBluDesignEngine';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -16,6 +15,7 @@ import { ViewerFloorsPanel } from './ViewerFloorsPanel';
 import { ViewerPropertiesPanel } from './ViewerPropertiesPanel';
 import { ViewerSmartObjectsPanel } from './ViewerSmartObjectsPanel';
 import { PerformanceMonitor } from '../ui/PerformanceMonitor';
+import { shouldUseExpandedViewerChrome } from './viewer-layout.utils';
 import {
   PlacedObject,
   DeviceState,
@@ -61,8 +61,13 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   
-  // Container height for constraining child panels
-  const [containerHeight, setContainerHeight] = useState(0);
+  // Container size for panel layout and sizing constraints
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const containerHeight = containerSize.height;
+  const useExpandedChrome = shouldUseExpandedViewerChrome(
+    containerSize.width,
+    containerSize.height
+  );
   
   // Loading states
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -115,7 +120,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     },
   });
 
-  // Pause WebGL while off-screen, transitioning, or tab hidden; show last frame as a still.
+  // Pause WebGL while off-screen or tab hidden; show last frame as a still (no fade).
   useEffect(() => {
     if (!isEngineReady || !engine) return;
 
@@ -140,6 +145,17 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     resumeRendering,
     captureSnapshot,
   ]);
+
+  // Reload scene when the bound BluDesign facility changes.
+  useEffect(() => {
+    setIsDataLoaded(false);
+    setLoadError(null);
+    setLoadingProgress(0);
+    setLoadingMessage('Initializing...');
+    setSelectedObject(null);
+    setSelectedObjectState(null);
+    assetStatesRef.current.clear();
+  }, [bluDesignFacilityId]);
 
   // Safe state for rendering
   const safeState = useMemo(() => {
@@ -238,22 +254,23 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     };
   }, [bluLokFacilityId, isDataLoaded, subscribe, unsubscribe, selectedObject]);
 
-  // Track container height for panel sizing constraints
+  // Track container size for panel layout
   useEffect(() => {
     const container = canvasContainerRef.current;
     if (!container) return;
-    
-    const updateHeight = () => {
-      setContainerHeight(container.offsetHeight);
+
+    const updateSize = () => {
+      setContainerSize({
+        width: container.offsetWidth,
+        height: container.offsetHeight,
+      });
     };
-    
-    // Initial measurement
-    updateHeight();
-    
-    // Watch for resize
-    const resizeObserver = new ResizeObserver(updateHeight);
+
+    updateSize();
+
+    const resizeObserver = new ResizeObserver(updateSize);
     resizeObserver.observe(container);
-    
+
     return () => {
       resizeObserver.disconnect();
     };
@@ -398,13 +415,11 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
       className={`relative w-full h-full overflow-hidden ${className}`}
       style={{ background: bgGradient }}
     >
-      {/* Three.js Canvas Container */}
-      <motion.div
+      {/* Three.js Canvas Container — hidden instantly when showing snapshot; no opacity tween */}
+      <div
         ref={containerRef}
-        className="absolute inset-0"
+        className={`absolute inset-0${showStaticPreview ? ' invisible' : ''}`}
         style={{ touchAction: 'none' }}
-        animate={{ opacity: showStaticPreview ? 0 : 1 }}
-        transition={{ duration: 0.12 }}
         aria-hidden={showStaticPreview}
       />
 
@@ -469,6 +484,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
             onFocusObject={handleFocusObject}
             onFocusBuilding={handleFocusBuilding}
             maxExpandedHeight={containerHeight > 0 ? Math.floor(containerHeight / 2) - 80 : undefined}
+            anchor={useExpandedChrome ? 'corner' : 'above-controls'}
           />
 
           {/* Floor Selector with Camera Controls */}
@@ -481,6 +497,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
             onToggleFullView={handleToggleFullView}
             onRotateCamera={handleRotateCamera}
             onToggleCameraMode={handleToggleCameraMode}
+            anchor={useExpandedChrome ? 'bottom-center' : 'bottom-right'}
           />
         </>
       )}

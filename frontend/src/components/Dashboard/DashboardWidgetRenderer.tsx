@@ -41,8 +41,6 @@ export interface DashboardWidgetRendererProps {
   gridSize?: { w: number; h: number };
   /** Dashboard page strip: this widget's page is the visible page. */
   isPageActive?: boolean;
-  /** Dashboard page strip is mid-slide — heavy widgets should pause rendering. */
-  isPageTransitioning?: boolean;
 }
 
 export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
@@ -60,7 +58,6 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
   isFullscreen = false,
   gridSize,
   isPageActive = true,
-  isPageTransitioning = false,
 }: DashboardWidgetRendererProps) {
   const widgetType = getWidgetType(widget.type);
   if (!widgetType) {
@@ -77,7 +74,7 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
 
   const layoutEditable = canEditLayout && !isTenant;
   const handleSizeChange = (size: WidgetSize) => onSizeChange(widget.id, size);
-  const facilityViewerRenderActive = isPageActive && !isPageTransitioning;
+  const facilityViewerRenderActive = isPageActive;
 
   const commonProps = {
     id: widget.id,

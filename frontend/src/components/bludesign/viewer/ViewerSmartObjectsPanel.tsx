@@ -24,6 +24,8 @@ interface ViewerSmartObjectsPanelProps {
   onFocusBuilding: (buildingId: string) => void;
   /** Maximum height for the expanded panel content (defaults to 384px / max-h-96) */
   maxExpandedHeight?: number;
+  /** Wide layouts pin the finder to the bottom-right corner; compact stacks above floor controls. */
+  anchor?: 'corner' | 'above-controls';
 }
 
 export const ViewerSmartObjectsPanel: React.FC<ViewerSmartObjectsPanelProps> = ({
@@ -32,6 +34,7 @@ export const ViewerSmartObjectsPanel: React.FC<ViewerSmartObjectsPanelProps> = (
   onFocusObject,
   onFocusBuilding,
   maxExpandedHeight,
+  anchor = 'above-controls',
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -59,7 +62,11 @@ export const ViewerSmartObjectsPanel: React.FC<ViewerSmartObjectsPanelProps> = (
   }
 
   return (
-    <div className="absolute bottom-16 right-4 z-40 w-72">
+    <div
+      className={`absolute z-40 w-72 max-w-[calc(100%-2rem)] ${
+        anchor === 'corner' ? 'bottom-4 right-4' : 'bottom-16 right-4'
+      }`}
+    >
       <div className={`
         rounded-xl overflow-hidden shadow-xl border backdrop-blur-md
         ${isDark 
