@@ -11,7 +11,6 @@ import {
   DevicePhoneMobileIcon,
   KeyIcon,
   TrashIcon,
-  ExclamationTriangleIcon,
   ClockIcon,
   PaperAirplaneIcon,
   PencilIcon,

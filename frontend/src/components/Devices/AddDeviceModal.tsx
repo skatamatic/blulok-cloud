@@ -10,7 +10,6 @@ import {
   KeyIcon,
   LockClosedIcon,
   PlusCircleIcon,
-  ServerIcon,
   WifiIcon,
 } from '@heroicons/react/24/outline';
 import { AnimatePresence, motion } from 'framer-motion';

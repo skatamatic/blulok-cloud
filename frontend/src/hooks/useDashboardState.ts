@@ -37,6 +37,8 @@ import {
   buildProposedFreeFromGesture,
   derivePreviewResizeTier,
   isLivePlacementAccepted,
+  normalizeApiPageWidgets,
+  type ApiPageWidgetInput,
 } from '@/utils/dashboard-persistence.utils';
 
 const MAX_WIDGETS_PER_PAGE = 12;
@@ -263,7 +265,7 @@ export function useDashboardState({
             p.id ?? `local-${p.pageOrder}`,
             p.name,
             p.pageOrder,
-            p.widgets ?? []
+            normalizeApiPageWidgets(p.widgets ?? [])
           );
           totalDropped += droppedCount;
           return page;
@@ -328,12 +330,13 @@ export function useDashboardState({
         return;
       }
 
-      if (response.layouts && response.layouts.length > 0) {
+      const legacyLayouts = response.layouts;
+      if (Array.isArray(legacyLayouts) && legacyLayouts.length > 0) {
         const { page, droppedCount } = pageFromApiWidgets(
           'legacy-main',
           'Main',
           0,
-          response.layouts
+          normalizeApiPageWidgets(legacyLayouts as ApiPageWidgetInput[])
         );
         totalDropped += droppedCount;
         setPages([page]);

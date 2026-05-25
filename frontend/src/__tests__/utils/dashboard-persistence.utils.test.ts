@@ -122,7 +122,6 @@ describe('applyWidgetSizeToPage – undock preserves grid size', () => {
 function expectStableRoundTrip(page: DashboardPageState) {
   const [saved] = pagesToSavePayload([page]);
   for (const widget of saved.widgets) {
-    const inst = page.widgetInstances.find((w) => w.id === widget.widgetId);
     const lg = (page.layouts.lg as GridLayoutItem[]).find((i) => i.i === widget.widgetId)!;
     expect(widget.layoutConfig.position).toMatchObject({
       x: lg.x,

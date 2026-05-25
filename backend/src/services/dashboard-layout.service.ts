@@ -245,6 +245,7 @@ export async function buildDashboardApiResponse(
         canEditLayout,
         allowMultiplePages: pages.length > 1,
         isDefault: false,
+        hasAssignedOverride: false,
       };
     }
   }
@@ -257,5 +258,6 @@ export async function buildDashboardApiResponse(
     canEditLayout,
     allowMultiplePages: pages.length > 1,
     isDefault: true,
+    hasAssignedOverride: false,
   };
 }

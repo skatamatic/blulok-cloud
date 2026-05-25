@@ -145,7 +145,11 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
       );
     case 'battery-status':
       return (
-        <BatteryStatusWidget {...commonProps} facilityFilter={effectiveFacilityId} />
+        <BatteryStatusWidget
+          {...commonProps}
+          facilityFilter={effectiveFacilityId}
+          onSizeChange={(size) => onSizeChange(widget.id, size)}
+        />
       );
     case 'unlocked-units':
       return (

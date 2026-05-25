@@ -208,7 +208,9 @@ export function FacilityFMSTab({
   };
 
   const availableProviders = getAvailableProviders(isDevMode);
-  const providerName = config ? getProviderMetadata(config.provider_type)?.name : null;
+  const providerName = config
+    ? (getProviderMetadata(config.provider_type)?.name ?? null)
+    : null;
   const showSyncPanel = Boolean(config?.is_enabled);
 
   if (loading) {

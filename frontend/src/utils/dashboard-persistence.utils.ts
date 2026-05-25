@@ -79,6 +79,43 @@ function resolveLoadedContentTier(
 /** @deprecated Use resolveLoadedContentTier */
 export const resolveLoadedWidgetSize = resolveLoadedContentTier;
 
+export type ApiPageWidgetInput = {
+  id?: string;
+  widgetId?: string;
+  widgetType?: string;
+  title?: string;
+  size?: WidgetSize;
+  layoutConfig?: Record<string, unknown>;
+  widgetConfig?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  displayOrder?: number;
+};
+
+/** Normalize GET /widget-layouts page widgets for {@link pageFromApiWidgets}. */
+export function normalizeApiPageWidgets(
+  apiWidgets: ApiPageWidgetInput[]
+): Parameters<typeof pageFromApiWidgets>[3] {
+  const normalized: Parameters<typeof pageFromApiWidgets>[3] = [];
+
+  apiWidgets.forEach((widget, idx) => {
+    const layoutConfig = widget.layoutConfig as
+      | { position?: { x: number; y: number; w: number; h: number }; size?: string }
+      | undefined;
+    const position = layoutConfig?.position;
+    if (!position) return;
+
+    normalized.push({
+      widgetId: widget.widgetId ?? widget.id ?? `widget-${idx}`,
+      widgetType: widget.widgetType,
+      layoutConfig: { position, size: layoutConfig?.size },
+      config: (widget.config ?? widget.widgetConfig) as Record<string, unknown> | undefined,
+      displayOrder: widget.displayOrder ?? idx,
+    });
+  });
+
+  return normalized;
+}
+
 export function pageFromApiWidgets(
   pageId: string,
   name: string,

@@ -343,7 +343,9 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   const effectiveFacilityId = selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : null;
   const currentFacilityStatus = effectiveFacilityId ? fmsStatuses.find(s => s.facilityId === effectiveFacilityId) : null;
   // FMS is configured if we have a status for this facility that's not 'not_configured'
-  const fmsConfigured = effectiveFacilityId ? hasFMSConfigured(effectiveFacilityId) : false;
+  const fmsConfigured = Boolean(
+    effectiveFacilityId && hasFMSConfigured(effectiveFacilityId)
+  );
 
   const showBlockingSpinner =
     loading || (!!authState.user && facilitiesLoading && userFacilityIds.length === 0);

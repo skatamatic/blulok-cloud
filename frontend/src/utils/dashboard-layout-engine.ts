@@ -1,10 +1,8 @@
-import { getWidgetType } from '@/config/widgetRegistry';
 import { WidgetSize } from '@/types/widget.types';
 import {
   sizeToGrid,
   isValidSize,
   isDockSize,
-  snapGridToAllowedSize,
   gridBoundsForAllowedSizes,
   orderSizesForPlacement,
   allowedSizesForWidget,
@@ -21,6 +19,11 @@ export interface GridLayoutItem {
   y: number;
   w: number;
   h: number;
+  minW?: number;
+  minH?: number;
+  maxW?: number;
+  maxH?: number;
+  static?: boolean;
 }
 
 export function dockPlacement(size: WidgetSize): Omit<GridLayoutItem, 'i'> | null {

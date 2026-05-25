@@ -3,6 +3,7 @@
  */
 import { renderHook, act } from '@testing-library/react';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
+import { WidgetSize } from '@/types/widget.types';
 
 describe('useWidgetSizeState', () => {
   it('calls onSizeChange when handleSizeChange runs', () => {
@@ -22,10 +23,10 @@ describe('useWidgetSizeState', () => {
   it('syncs from currentSize prop', () => {
     const { result, rerender } = renderHook(
       ({ currentSize }) => useWidgetSizeState(currentSize, 'medium'),
-      { initialProps: { currentSize: 'medium' as const } }
+      { initialProps: { currentSize: 'medium' as WidgetSize } }
     );
 
-    rerender({ currentSize: 'huge' });
+    rerender({ currentSize: 'huge' as WidgetSize });
     expect(result.current.size).toBe('huge');
   });
 });

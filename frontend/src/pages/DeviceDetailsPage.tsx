@@ -314,12 +314,20 @@ export default function DeviceDetailsPage() {
           location_description: ac.location_description,
           metadata: ac.metadata,
           supports_remote_lock: Boolean(ac.supports_remote_lock),
-          facility_id: ac.facility_id,
-          facility_name: ac.facility_name || String(ac.facility_id),
+          facility_id: ac.facility_id ?? '',
+          facility_name: ac.facility_name || String(ac.facility_id ?? ''),
           lock_status: ac.is_locked ? 'locked' : 'unlocked',
-          device_status: ac.status || 'offline',
+          device_status:
+            ac.status === 'maintenance' || ac.status === 'offline'
+              ? 'offline'
+              : ac.status === 'error'
+                ? 'error'
+                : 'online',
           last_activity: ac.last_activity,
-          firmware_version: ac.firmware_version,
+          firmware_version:
+            typeof ac.metadata?.firmware_version === 'string'
+              ? ac.metadata.firmware_version
+              : undefined,
           unit_id: undefined,
           unit_number: undefined,
           battery_level: undefined,
@@ -461,7 +469,7 @@ export default function DeviceDetailsPage() {
     deviceCategory === 'access_control'
       ? formatAccessDeviceListSubtitle({
           device_serial: device.device_serial,
-          relay_channel: device.relay_channel,
+          relay_channel: device.relay_channel ?? 1,
           location_description: device.location_description,
         })
       : device.device_serial;

@@ -13,6 +13,7 @@ describe('AccessControlService', () => {
     id: 'device-1',
     gateway_id: 'gateway-1',
     name: 'Main Gate',
+    device_serial: 'SN-gateway-1-1',
     device_type: 'gate',
     location_description: 'Facility entrance',
     relay_channel: 1,

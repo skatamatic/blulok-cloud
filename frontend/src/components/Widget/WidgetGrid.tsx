@@ -527,9 +527,9 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     // final geometry on `onDragStop` / `onResizeStop`.
     allowOverlap: true,
     preventCollision: false,
-    compactType: null as const,
+    compactType: null,
     isBounded: maxRows != null,
-    resizeHandles: ['sw', 'se', 'nw', 'ne'] as const,
+    resizeHandles: ['sw', 'se', 'nw', 'ne'] as ('sw' | 'se' | 'nw' | 'ne')[],
     onResize: (
       layout: Layout[],
       _oldItem: Layout,

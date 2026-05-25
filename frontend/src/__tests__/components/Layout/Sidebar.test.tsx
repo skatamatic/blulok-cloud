@@ -9,7 +9,7 @@ import { UserRole } from '@/types/auth.types';
 
 const mockLogout = jest.fn();
 const mockNavigate = jest.fn();
-const mockHasRole = jest.fn(() => true);
+const mockHasRole = jest.fn((_roles: UserRole[]) => true);
 const mockIsAdmin = jest.fn(() => true);
 const mockCanManageUsers = jest.fn(() => true);
 const mockToggleSidebar = jest.fn();

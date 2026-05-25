@@ -41,8 +41,8 @@ jest.mock('@/hooks/useDashboardAssignments', () => ({
 }));
 
 function renderRules(templates = [
-  { id: 'tpl-1', name: 'Staff Layout', description: null, pageCount: 1, widgetCount: 2, updatedAt: '' },
-  { id: 'tpl-2', name: 'Ops Layout', description: null, pageCount: 1, widgetCount: 3, updatedAt: '' },
+  { id: 'tpl-1', name: 'Staff Layout', description: null, pageCount: 1, widgetCount: 2, createdBy: 'user-1', updatedAt: '' },
+  { id: 'tpl-2', name: 'Ops Layout', description: null, pageCount: 1, widgetCount: 3, createdBy: 'user-1', updatedAt: '' },
 ]) {
   return render(
     <MemoryRouter>
