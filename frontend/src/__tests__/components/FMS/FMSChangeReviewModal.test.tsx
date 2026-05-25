@@ -183,7 +183,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText('Review FMS Changes (4 detected) - Test Facility')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Review FMS Changes \(4 detected\).*Test Facility/ })).toBeInTheDocument();
       expect(screen.getByText('All Changes (4)')).toBeInTheDocument();
       expect(screen.getByText('New tenant John Doe added to unit A-101')).toBeInTheDocument();
     });
@@ -213,7 +213,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText('Review FMS Changes (4 detected)')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Review FMS Changes \(4 detected\)/ })).toBeInTheDocument();
     });
 
     it('shows empty state when no changes provided', () => {
@@ -227,7 +227,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText('Review FMS Changes (0 detected)')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Review FMS Changes \(0 detected\)/ })).toBeInTheDocument();
       expect(screen.getByText('All Changes (0)')).toBeInTheDocument();
       expect(screen.getByText('No changes in this category')).toBeInTheDocument();
     });
@@ -274,7 +274,7 @@ describe('FMSChangeReviewModal', () => {
       expect(screen.queryByText('Tenant Bob Wilson removed from system')).not.toBeInTheDocument();
 
       // Selection count should reflect filtered changes
-      expect(screen.getByText(/2.*changes selected/)).toBeInTheDocument();
+      expect(screen.getByText(/2.*selected/)).toBeInTheDocument();
     });
 
     it('filters to updated changes only', () => {
@@ -351,7 +351,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText(/4.*changes selected/)).toBeInTheDocument();
+      expect(screen.getByText(/4.*selected/)).toBeInTheDocument();
     });
 
     it('toggles individual change selection', async () => {
@@ -456,8 +456,11 @@ describe('FMSChangeReviewModal', () => {
       );
 
       // Find expand button by looking for the button with ChevronRightIcon initially
-      const changeContainer = screen.getByText('New tenant John Doe added to unit A-101').closest('div[class*="border-2"]');
-      const expandButton = changeContainer?.querySelector('button[class*="p-1 rounded-lg"]');
+      const changeCards = screen.getAllByTestId('fms-change-card');
+      const addCard = changeCards.find((card) =>
+        card.textContent?.includes('New tenant John Doe added to unit A-101'),
+      );
+      const expandButton = addCard?.querySelector('[data-testid="fms-change-expand"]');
 
       // Initially collapsed
       expect(screen.queryByText('Details')).not.toBeInTheDocument();
@@ -484,8 +487,8 @@ describe('FMSChangeReviewModal', () => {
 
       // Find and expand the update change
       const updateChange = screen.getByText('Tenant Jane Smith updated contact information');
-      const changeContainer = updateChange.closest('[data-testid="change-container"]') || updateChange.closest('div[class*="border-2"]');
-      const expandButton = changeContainer?.querySelector('button[class*="p-1 rounded-lg"]');
+      const changeContainer = updateChange.closest('[data-testid="fms-change-card"]');
+      const expandButton = changeContainer?.querySelector('[data-testid="fms-change-expand"]');
 
       if (expandButton) {
         fireEvent.click(expandButton);
@@ -508,10 +511,8 @@ describe('FMSChangeReviewModal', () => {
 
       // Find and expand the addition change
       const addChange = screen.getByText('New tenant John Doe added to unit A-101');
-      const expandButtons = addChange.closest('div')?.querySelectorAll('button');
-      const expandButton = Array.from(expandButtons || []).find(btn =>
-        btn.querySelector('svg[data-slot="icon"]')
-      );
+      const changeContainer = addChange.closest('[data-testid="fms-change-card"]');
+      const expandButton = changeContainer?.querySelector('[data-testid="fms-change-expand"]');
 
       if (expandButton) {
         fireEvent.click(expandButton);
@@ -535,10 +536,10 @@ describe('FMSChangeReviewModal', () => {
       );
 
       // Check that change type labels are displayed correctly
-      expect(screen.getByText('TENANT ADDED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT UPDATED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT REMOVED')).toBeInTheDocument();
-      expect(screen.getByText('UNIT ADDED')).toBeInTheDocument();
+      expect(screen.getByText('Tenant added')).toBeInTheDocument();
+      expect(screen.getByText('Tenant updated')).toBeInTheDocument();
+      expect(screen.getByText('Tenant removed')).toBeInTheDocument();
+      expect(screen.getByText('Unit added')).toBeInTheDocument();
     });
 
     it('applies correct colors for different change types', () => {
@@ -554,10 +555,44 @@ describe('FMSChangeReviewModal', () => {
 
       // The color classes are applied to icon containers
       // We verify the changes are rendered with their types
-      expect(screen.getByText('TENANT ADDED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT UPDATED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT REMOVED')).toBeInTheDocument();
-      expect(screen.getByText('UNIT ADDED')).toBeInTheDocument();
+      expect(screen.getByText('Tenant added')).toBeInTheDocument();
+      expect(screen.getByText('Tenant updated')).toBeInTheDocument();
+      expect(screen.getByText('Tenant removed')).toBeInTheDocument();
+      expect(screen.getByText('Unit added')).toBeInTheDocument();
+    });
+
+    it('does not flag tenant_removed as invalid when is_valid is omitted (legacy API rows)', () => {
+      const removedWithoutFlag: FMSChange = {
+        id: 'removed-legacy',
+        sync_log_id: 'sync-123',
+        change_type: FMSChangeType.TENANT_REMOVED,
+        entity_type: 'tenant',
+        external_id: 'ext-removed',
+        internal_id: 'user-removed',
+        before_data: {
+          email: 'jodycs1@gmail.com',
+          first_name: 'jody',
+          last_name: 'sacher',
+        },
+        after_data: null,
+        required_actions: [FMSChangeAction.DEACTIVATE_USER, FMSChangeAction.REMOVE_ACCESS],
+        impact_summary: 'Tenant removed: jodycs1@gmail.com',
+        is_reviewed: false,
+        created_at: '2025-01-01T00:00:00Z',
+      };
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={[removedWithoutFlag]}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: [removedWithoutFlag] }}
+        />
+      );
+
+      expect(screen.queryByText('Cannot apply this change')).not.toBeInTheDocument();
+      expect(screen.getByText('Invalid (0)')).toBeInTheDocument();
     });
   });
 
@@ -787,8 +822,8 @@ describe('FMSChangeReviewModal', () => {
       );
 
       // Expand to see data rendering
-      const changeContainer = screen.getByText('Test change').closest('div[class*="border-2"]');
-      const expandButton = changeContainer?.querySelector('button[class*="p-1 rounded-lg"]');
+      const changeContainer = screen.getByText('Test change').closest('[data-testid="fms-change-card"]');
+      const expandButton = changeContainer?.querySelector('[data-testid="fms-change-expand"]');
       if (expandButton) {
         fireEvent.click(expandButton);
       }
@@ -828,7 +863,7 @@ describe('FMSChangeReviewModal', () => {
       );
 
       const heading = screen.getByRole('heading', { level: 2 });
-      expect(heading).toHaveTextContent('Review FMS Changes (4 detected) - Test Facility');
+      expect(heading).toHaveTextContent(/Review FMS Changes \(4 detected\).*Test Facility/);
     });
 
     it('supports keyboard navigation', () => {

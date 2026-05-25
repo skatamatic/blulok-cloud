@@ -383,10 +383,11 @@ export class FMSChangeModel {
     let derivedInvalid = false;
     if ((record.is_valid === false || record.is_valid === 0) && (!validationErrors || validationErrors.length === 0)) {
       const derived: string[] = [];
-      if (record.entity_type === 'tenant' && parsedAfter) {
-        const email = parsedAfter.email as string | null | undefined;
-        const firstName = (parsedAfter.firstName ?? parsedAfter.first_name) as string | null | undefined;
-        const lastName = (parsedAfter.lastName ?? parsedAfter.last_name) as string | null | undefined;
+      const tenantPayload = parsedAfter ?? parsedBefore;
+      if (record.entity_type === 'tenant' && tenantPayload) {
+        const email = (tenantPayload.email ?? tenantPayload.login_identifier) as string | null | undefined;
+        const firstName = (tenantPayload.firstName ?? tenantPayload.first_name) as string | null | undefined;
+        const lastName = (tenantPayload.lastName ?? tenantPayload.last_name) as string | null | undefined;
 
         if (!email || (typeof email === 'string' && email.trim() === '')) {
           derived.push('Missing or empty email address');
@@ -398,19 +399,20 @@ export class FMSChangeModel {
           derived.push('Missing or empty last name');
         }
       }
-      // Future: add unit validation derivation here if needed
       if (derived.length > 0) {
         validationErrors = derived;
         derivedInvalid = true;
       }
     }
 
-    // Convert MySQL integer (0/1) to boolean
-    let isValidBoolean: boolean | undefined;
+    // Convert MySQL integer (0/1) to boolean — null/undefined means valid (legacy rows)
+    let isValidBoolean: boolean;
     if (derivedInvalid) {
       isValidBoolean = false;
-    } else if (record.is_valid !== null && record.is_valid !== undefined) {
-      isValidBoolean = Boolean(record.is_valid);
+    } else if (record.is_valid === false || record.is_valid === 0) {
+      isValidBoolean = false;
+    } else {
+      isValidBoolean = true;
     }
 
     const result: FMSChange = {
@@ -430,12 +432,8 @@ export class FMSChangeModel {
       is_accepted: record.is_accepted,
       applied_at: record.applied_at,
       created_at: record.created_at,
+      is_valid: isValidBoolean,
     };
-
-    // Only set is_valid if it has a value
-    if (isValidBoolean !== undefined) {
-      result.is_valid = isValidBoolean;
-    }
 
     // Only set validation_errors if it has a value
     if (validationErrors !== null && validationErrors !== undefined) {

@@ -114,6 +114,22 @@ describe('FMSChangeModel', () => {
     });
   });
 
+  describe('findById — legacy is_valid', () => {
+    it('treats null is_valid as valid (tenant_removed rows before explicit flag)', async () => {
+      mockKnex.mockImplementation((table: string) => {
+        if (table !== 'fms_changes') return {};
+        return {
+          where: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue(baseRow('id-legacy', { is_valid: null })),
+        };
+      });
+
+      const change = await model.findById('id-legacy');
+      expect(change).not.toBeNull();
+      expect(change?.is_valid).toBe(true);
+    });
+  });
+
   describe('bulkCreate', () => {
     it('uses null after_data in insert rows when after_data is null', async () => {
       const orderByRawMock = jest.fn().mockImplementation((_sql: string, bindings: string[]) =>

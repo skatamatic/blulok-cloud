@@ -779,6 +779,7 @@ export class FMSService {
             after_data: null as any,
             required_actions: [FMSChangeAction.REMOVE_ACCESS, FMSChangeAction.DEACTIVATE_USER],
             impact_summary: `Tenant removed: ${user.email} - Will be deactivated and access revoked from all units`,
+            is_valid: true,
           });
         }
       }

@@ -156,18 +156,14 @@ export function AssignmentRulePanel({
       onClose={onClose}
       footer={
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
+          <button type="button" onClick={onClose} className="btn-secondary rounded-lg">
             Cancel
           </button>
           <button
             type="submit"
             form="assignment-rule-form"
             disabled={submitting || !savedDashboardId}
-            className="rounded-lg bg-[#147FD4] px-4 py-2 text-sm font-medium text-white hover:bg-[#126fb8] disabled:opacity-50 transition-colors"
+            className="btn-primary rounded-lg"
           >
             {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create rule'}
           </button>

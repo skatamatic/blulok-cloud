@@ -503,13 +503,13 @@ router.get('/changes/:syncLogId/pending',
 
     // Retrieve pending changes and ensure validation_errors are present for invalid items
     const changes = (await getFMSService().getPendingChanges(syncLogId)).map((c) => {
-      if ((c.is_valid === false || c.is_valid === null || typeof c.is_valid === 'undefined') && (!c.validation_errors || c.validation_errors.length === 0)) {
+      if (c.is_valid === false && (!c.validation_errors || c.validation_errors.length === 0)) {
         const derived: string[] = [];
-        const after: any = c.after_data;
-        if (c.entity_type === 'tenant' && after) {
-          const email = after.email as string | null | undefined;
-          const firstName = (after.firstName ?? after.first_name) as string | null | undefined;
-          const lastName = (after.lastName ?? after.last_name) as string | null | undefined;
+        const tenantPayload: any = c.after_data ?? c.before_data;
+        if (c.entity_type === 'tenant' && tenantPayload) {
+          const email = (tenantPayload.email ?? tenantPayload.login_identifier) as string | null | undefined;
+          const firstName = (tenantPayload.firstName ?? tenantPayload.first_name) as string | null | undefined;
+          const lastName = (tenantPayload.lastName ?? tenantPayload.last_name) as string | null | undefined;
           if (!email || (typeof email === 'string' && email.trim() === '')) derived.push('Missing or empty email address');
           if (!firstName || (typeof firstName === 'string' && firstName.trim() === '')) derived.push('Missing or empty first name');
           if (!lastName || (typeof lastName === 'string' && lastName.trim() === '')) derived.push('Missing or empty last name');

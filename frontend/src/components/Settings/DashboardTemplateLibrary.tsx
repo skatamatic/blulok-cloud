@@ -97,7 +97,7 @@ export function DashboardTemplateLibrary({
           </p>
           <Link
             to="/dashboard"
-            className="mt-4 inline-flex rounded-lg bg-[#147FD4] px-4 py-2 text-sm font-medium text-white hover:bg-[#126fb8] transition-colors"
+            className="btn-primary mt-4 gap-1.5 rounded-lg"
           >
             Go to dashboard
           </Link>

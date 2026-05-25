@@ -510,7 +510,7 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       );
 
       // Deselect one change
-      const firstChange = screen.getByText('New tenant John Doe added to unit A-101').closest('div[class*="border-2"]');
+      const firstChange = screen.getByText('New tenant John Doe added to unit A-101').closest('[data-testid="fms-change-card"]');
       if (firstChange) {
         fireEvent.click(firstChange);
       }
