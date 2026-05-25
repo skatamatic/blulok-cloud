@@ -891,7 +891,8 @@ frontend/src/components/bludesign/viewer/
 
 1. **Dashboard Widget** (`FacilityViewerWidget`):
    - Huge-size widget showing linked facility 3D view
-   - Only available for facilities with linked BluDesign models
+   - Driven by global facility selector: single-facility scope only; all-facilities mode shows an empty canvas
+   - No in-widget model picker — model is always the one bound to the selected facility
    - Widget type: `facility-viewer`
 
 2. **BluFMS Facility Map Page**:

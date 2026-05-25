@@ -706,7 +706,7 @@ describe('APIService', () => {
     it('getWidgetLayouts GETs /widget-layouts', async () => {
       mockAxios.get.mockResolvedValueOnce({ data: { layouts: [] } });
       const result = await apiService.getWidgetLayouts();
-      expect(mockAxios.get).toHaveBeenCalledWith('/widget-layouts');
+      expect(mockAxios.get).toHaveBeenCalledWith('/widget-layouts', { params: undefined });
       expect(result).toEqual({ layouts: [] });
     });
 
@@ -1094,7 +1094,9 @@ describe('APIService', () => {
     it('resetWidgetLayout POSTs reset', async () => {
       mockAxios.post.mockResolvedValueOnce({ data: {} });
       await apiService.resetWidgetLayout();
-      expect(mockAxios.post).toHaveBeenCalledWith('/widget-layouts/reset');
+      expect(mockAxios.post).toHaveBeenCalledWith('/widget-layouts/reset', {
+        activeFacilityId: undefined,
+      });
     });
 
     it('getWidgetTemplates GETs templates', async () => {

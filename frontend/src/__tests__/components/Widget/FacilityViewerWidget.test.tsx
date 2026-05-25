@@ -16,15 +16,20 @@ const options: DesignFacilityOption[] = [
 ];
 
 describe('resolveActiveDesignFacility', () => {
-  it('uses the all-facilities picker selection', () => {
+  it('returns null in all-facilities mode regardless of available models', () => {
+    expect(resolveActiveDesignFacility(options, true, null)).toBeNull();
     expect(
-      resolveActiveDesignFacility(options, true, 'design-b', null)
-    ).toMatchObject({ id: 'design-b', linkedBlulokId: 'blulok-2' });
+      resolveActiveDesignFacility(options, true, {
+        id: 'blulok-1',
+        name: 'North Site',
+        bluDesignFacilityId: 'design-a',
+      })
+    ).toBeNull();
   });
 
   it('uses bluDesignFacilityId on the selected facility when scoped', () => {
     expect(
-      resolveActiveDesignFacility(options, false, null, {
+      resolveActiveDesignFacility(options, false, {
         id: 'blulok-1',
         name: 'North Site',
         bluDesignFacilityId: 'design-a',
@@ -34,7 +39,7 @@ describe('resolveActiveDesignFacility', () => {
 
   it('falls back to link lookup when bluDesignFacilityId is missing', () => {
     expect(
-      resolveActiveDesignFacility(options, false, null, {
+      resolveActiveDesignFacility(options, false, {
         id: 'blulok-2',
         name: 'South Site',
       })
@@ -43,7 +48,7 @@ describe('resolveActiveDesignFacility', () => {
 
   it('returns null when scoped facility has no linked model', () => {
     expect(
-      resolveActiveDesignFacility(options, false, null, {
+      resolveActiveDesignFacility(options, false, {
         id: 'blulok-9',
         name: 'Unlinked Site',
       })

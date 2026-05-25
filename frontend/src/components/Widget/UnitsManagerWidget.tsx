@@ -31,6 +31,7 @@ import {
   WIDGET_LIST_SCROLL_CLASS,
 } from '@/utils/widget-layout.utils';
 import { compareNaturalStrings } from '@/utils/naturalStringCompare';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 
 type LockState = 'locked' | 'unlocked' | 'unknown' | 'unlocking' | 'locking';
 
@@ -395,28 +396,42 @@ type RowLayoutFlags = {
   showTableColumns: boolean;
   showTenantColumn: boolean;
   showDeviceColumn: boolean;
+  showFacilityColumn: boolean;
 };
 
 const rowGridTemplateColumns = ({
   isDock,
   showTenantColumn,
   showDeviceColumn,
+  showFacilityColumn,
 }: RowLayoutFlags): string => {
   const chevron = isDock ? '1.1rem' : '1.25rem';
+  const facilityPrefix = showFacilityColumn
+    ? `${isDock ? 'minmax(3.25rem, 0.85fr)' : 'minmax(4rem, 1fr)'} `
+    : '';
 
   if (showDeviceColumn && showTenantColumn) {
-    return isDock
-      ? `minmax(4.75rem, 0.9fr) minmax(4rem, 2.25fr) minmax(2.75rem, 0.55fr) ${METRIC_GRID_COLS} ${chevron}`
-      : `minmax(6.5rem, 0.95fr) minmax(5rem, 2.75fr) minmax(3rem, 0.5fr) ${METRIC_GRID_COLS} ${chevron}`;
+    return (
+      facilityPrefix +
+      (isDock
+        ? `minmax(4.75rem, 0.9fr) minmax(4rem, 2.25fr) minmax(2.75rem, 0.55fr) ${METRIC_GRID_COLS} ${chevron}`
+        : `minmax(6.5rem, 0.95fr) minmax(5rem, 2.75fr) minmax(3rem, 0.5fr) ${METRIC_GRID_COLS} ${chevron}`)
+    );
   }
   if (showTenantColumn) {
-    return isDock
-      ? `minmax(0, 0.85fr) minmax(3.5rem, 2fr) ${METRIC_GRID_COLS} ${chevron}`
-      : `minmax(0, 0.9fr) minmax(4.5rem, 2.5fr) ${METRIC_GRID_COLS} ${chevron}`;
+    return (
+      facilityPrefix +
+      (isDock
+        ? `minmax(0, 0.85fr) minmax(3.5rem, 2fr) ${METRIC_GRID_COLS} ${chevron}`
+        : `minmax(0, 0.9fr) minmax(4.5rem, 2.5fr) ${METRIC_GRID_COLS} ${chevron}`)
+    );
   }
-  return isDock
-    ? `minmax(0, 1fr) ${METRIC_GRID_COLS} ${chevron}`
-    : `minmax(0, 1fr) ${METRIC_GRID_COLS} ${chevron}`;
+  return (
+    facilityPrefix +
+    (isDock
+      ? `minmax(0, 1fr) ${METRIC_GRID_COLS} ${chevron}`
+      : `minmax(0, 1fr) ${METRIC_GRID_COLS} ${chevron}`)
+  );
 };
 
 /** Inline section link (matches Recent access “View all” pattern). */
@@ -549,6 +564,7 @@ const ListColumnHeader: React.FC<{
       }`}
       aria-hidden
     >
+      {layout.showFacilityColumn && <span className={headerCell}>Facility</span>}
       <SortableHeaderCell
         label="Unit"
         columnKey="unit_number"
@@ -966,6 +982,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
   const [quickFilter, setQuickFilter] = useState<UnitQuickFilter | null>(null);
   const [sortBy, setSortBy] = useState<UnitSortKey>('unit_number');
   const [sortOrder, setSortOrder] = useState<UnitSortOrder>('asc');
+  const [scopeFacilityFilter, setScopeFacilityFilter] = useState('');
   const reqIdRef = useRef(0);
   const unitsRef = useRef(units);
   unitsRef.current = units;
@@ -973,6 +990,8 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
   const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
+  const { isAllFacilitiesSelected } = useGlobalFacility();
+  const isAllFacilitiesMode = isAllFacilitiesSelected && !facilityFilter;
 
   useEffect(() => {
     if (currentSize) setSize(currentSize);
@@ -1011,6 +1030,24 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
   useEffect(() => {
     fetchUnits();
   }, [fetchUnits]);
+
+  useEffect(() => {
+    if (!isAllFacilitiesMode) {
+      setScopeFacilityFilter('');
+    }
+  }, [isAllFacilitiesMode]);
+
+  const facilityOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const unit of units) {
+      if (unit.facility_id) {
+        map.set(unit.facility_id, unit.facility_name ?? unit.facility_id);
+      }
+    }
+    return [...map.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([id, name]) => ({ id, name }));
+  }, [units]);
 
   const handleColumnSort = (columnKey: UnitSortKey) => {
     if (sortBy === columnKey) {
@@ -1054,11 +1091,16 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
       list = list.filter(isUnoccupiedUnit);
     }
 
+    if (isAllFacilitiesMode && scopeFacilityFilter) {
+      list = list.filter((u) => u.facility_id === scopeFacilityFilter);
+    }
+
     return [...list].sort((a, b) => compareUnits(a, b, sortBy, sortOrder));
-  }, [units, search, quickFilter, sortBy, sortOrder]);
+  }, [units, search, quickFilter, sortBy, sortOrder, isAllFacilitiesMode, scopeFacilityFilter]);
 
   const hasActiveSearch = search.trim().length > 0;
-  const hasActiveFilter = quickFilter !== null;
+  const hasActiveFacilityFilter = isAllFacilitiesMode && scopeFacilityFilter !== '';
+  const hasActiveFilter = quickFilter !== null || hasActiveFacilityFilter;
 
   const stats = useMemo(() => {
     let unlocked = 0;
@@ -1124,12 +1166,14 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
   const showTenantColumn =
     showMetaColumns || layout.isHorizontalDock || isFullscreen;
   const showDeviceColumn = showMetaColumns || isFullscreen;
-  const showListHeader = showTenantColumn && displayed.length > 0;
+  const showFacilityColumn = isAllFacilitiesMode;
+  const showListHeader = (showTenantColumn || showFacilityColumn) && displayed.length > 0;
   const rowLayout: RowLayoutFlags = {
     isDock: layout.isDock,
     showTableColumns,
     showTenantColumn,
     showDeviceColumn,
+    showFacilityColumn,
   };
   const showInlineStats = layout.isHorizontalDock || isFullscreen || layout.density === 'spacious';
 
@@ -1210,6 +1254,29 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
           )}
         </div>
 
+        {isAllFacilitiesMode && (
+          <div className={`flex-shrink-0 ${layout.isDock ? 'mb-2' : 'mb-3'}`}>
+            <label className="sr-only" htmlFor={`${id}-facility-filter`}>
+              Filter by facility
+            </label>
+            <select
+              id={`${id}-facility-filter`}
+              value={scopeFacilityFilter}
+              onChange={(e) => setScopeFacilityFilter(e.target.value)}
+              className={`no-drag w-full max-w-xs rounded-md border border-gray-200 bg-gray-50 text-gray-900 focus:border-[#147FD4] focus:outline-none focus:ring-1 focus:ring-[#147FD4] dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-100 ${
+                layout.isDock ? 'py-1 pl-2 pr-7 text-xs' : 'py-1.5 pl-3 pr-8 text-sm'
+              }`}
+            >
+              <option value="">All facilities</option>
+              {facilityOptions.map((facility) => (
+                <option key={facility.id} value={facility.id}>
+                  {facility.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {error && (
           <div className={`mb-2 flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 dark:border-rose-800 dark:bg-rose-900/20 ${TYPE.meta} text-rose-700 dark:text-rose-300`}>
             <ExclamationTriangleIcon className="h-4 w-4" />
@@ -1238,8 +1305,10 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                 <p className={`${TYPE.bodyStrong} text-gray-700 dark:text-gray-300`}>
                   {hasActiveSearch && hasActiveFilter
                     ? 'No units match your search and filter.'
-                    : hasActiveFilter
-                      ? quickFilterEmptyMessage(quickFilter!)
+                    : hasActiveFacilityFilter
+                      ? 'No units match the selected facility.'
+                    : hasActiveFilter && quickFilter
+                      ? quickFilterEmptyMessage(quickFilter)
                       : hasActiveSearch
                         ? 'No units match your search.'
                         : 'No units to display.'}
@@ -1255,7 +1324,10 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
               {hasActiveFilter && (
                 <button
                   type="button"
-                  onClick={() => setQuickFilter(null)}
+                  onClick={() => {
+                    setQuickFilter(null);
+                    setScopeFacilityFilter('');
+                  }}
                   className={`no-drag rounded-full border border-[#147FD4]/30 px-3 py-1 ${TYPE.link}`}
                 >
                   Show all units
@@ -1287,10 +1359,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                     <span className="italic text-gray-400">Unassigned</span>
                   );
                   const rowAria = `Unit ${unit.unit_number}${tenantLabel ? `, ${tenantLabel}` : ''}`;
-                  const unitSubline = [
-                    unit.facility_name,
-                    unit.unit_type,
-                  ].filter(Boolean);
+                  const unitSubline = [unit.unit_type].filter(Boolean);
 
                   return (
                     <motion.li
@@ -1317,6 +1386,11 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                           layout.isDock ? 'px-2 py-1.5' : 'px-3 py-2'
                         }`}
                       >
+                        {showFacilityColumn && (
+                          <div className={`min-w-0 truncate ${TYPE.meta}`} title={unit.facility_name}>
+                            {unit.facility_name ?? '—'}
+                          </div>
+                        )}
                         <div className="min-w-0">
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span className={`truncate ${TYPE.bodyStrong}`}>

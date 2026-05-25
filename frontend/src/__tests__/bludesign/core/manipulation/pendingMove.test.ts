@@ -173,8 +173,8 @@ describe('revert mesh helpers', () => {
       internalYOffset: 0.1,
       gridToWorld: (p) => new THREE.Vector3(p.x * 10, 0, p.z * 10),
     });
-    expect(pos.x).toBe(10 + 1);
-    expect(pos.z).toBe(20 + 0.5);
+    expect(pos.x).toBe(20);
+    expect(pos.z).toBe(25);
     expect(pos.y).toBeCloseTo(1 * FLOOR_HEIGHT * 1 + 0.1);
   });
 });

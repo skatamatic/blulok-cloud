@@ -94,6 +94,8 @@ interface SyncFMSWidgetProps {
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
   readOnly?: boolean;
+  /** When false (dashboard page strip), sync actions are disabled on off-screen pages. */
+  isPageActive?: boolean;
 }
 
 export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
@@ -106,6 +108,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   onGridSizeChange,
   onRemove,
   readOnly,
+  isPageActive = true,
 }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
@@ -129,6 +132,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 
 
   const [facilityNamesMap, setFacilityNamesMap] = useState<Record<string, string>>({});
+  const manualSyncInFlightRef = useRef(false);
 
   // Get user's facilities
   const isAdminUser = authState.user?.role === 'admin' || authState.user?.role === 'dev_admin';
@@ -351,6 +355,9 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   const showBlockingSpinner =
     loading || (!!authState.user && facilitiesLoading && userFacilityIds.length === 0);
 
+  const syncActionDisabled =
+    !isPageActive || syncing || showBlockingSpinner || !fmsConfigured;
+
   // Load sync history when facility changes
   useEffect(() => {
     const loadHistory = async () => {
@@ -378,6 +385,14 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   }, [effectiveFacilityId, fmsConfigured, loading, facilitiesLoading]);
 
   const handleManualSync = async () => {
+    if (!isPageActive) {
+      return;
+    }
+
+    if (manualSyncInFlightRef.current) {
+      return;
+    }
+
     if (!effectiveFacilityId) {
       addToast({
         type: 'error',
@@ -398,6 +413,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     }
 
     try {
+      manualSyncInFlightRef.current = true;
       setSyncing(true);
 
       const facilityName = getFacilityName(effectiveFacilityId);
@@ -470,6 +486,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         message: error.message || 'Failed to sync with FMS',
       });
     } finally {
+      manualSyncInFlightRef.current = false;
       setSyncing(false);
     }
   };
@@ -579,7 +596,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           label={title}
           iconClassName={fmsSyncTintClass(canSync)}
           onClick={effectiveFacilityId ? handleManualSync : undefined}
-          disabled={syncing || !canSync}
+          disabled={syncing || !canSync || !isPageActive}
           spinning={syncing}
           actionTitle={
             !effectiveFacilityId
@@ -640,7 +657,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               <FmsSyncActionButton
                 enabled={fmsConfigured}
                 syncing={syncing}
-                disabled={syncing || showBlockingSpinner || !fmsConfigured}
+                disabled={syncActionDisabled}
                 onClick={handleManualSync}
                 title={!fmsConfigured ? 'FMS not configured for this facility' : 'Sync now'}
                 className="shrink-0 rounded-lg p-2 text-sm font-medium"
@@ -754,7 +771,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
                   <FmsSyncActionButton
                     enabled={fmsConfigured}
                     syncing={syncing}
-                    disabled={syncing || !fmsConfigured}
+                    disabled={syncActionDisabled}
                     onClick={handleManualSync}
                     title={!fmsConfigured ? 'FMS not configured for this facility' : 'Sync now'}
                     className="rounded-lg px-4 py-4"
@@ -801,7 +818,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               <FmsSyncActionButton
                 enabled={fmsConfigured}
                 syncing={syncing}
-                disabled={syncing || !fmsConfigured}
+                disabled={syncActionDisabled}
                 onClick={handleManualSync}
                 title={!fmsConfigured ? 'FMS not configured for this facility' : 'Sync now'}
                 className="w-full space-x-2 py-2 px-3 text-sm font-medium rounded-lg"

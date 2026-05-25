@@ -688,7 +688,7 @@ export function FMSChangeReviewModal({
                       type="button"
                       onClick={() => handleReview(true)}
                       disabled={applying || filteredSelectedCount === 0}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#147FD4] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#106bb3] hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none sm:w-auto"
+                      className="btn-primary w-full gap-2 rounded-lg sm:w-auto"
                     >
                       {applying ? (
                         <>

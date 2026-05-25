@@ -64,15 +64,17 @@ export function usePressWithoutDrag(
       const { exceeded, gridDrag } = session;
       sessionRef.current = null;
 
-      requestAnimationFrame(() => {
-        const dragLike = exceeded || gridDrag || isGridRepositionActive();
-        if (!disabled && !dragLike) {
-          onPress();
-          pointerPressRef.current = true;
-          return;
-        }
+      const dragLike = exceeded || gridDrag || isGridRepositionActive();
+      if (!disabled && !dragLike) {
+        // Mark before rAF so the synthetic click (same pointer gesture) cannot fire onPress again.
+        pointerPressRef.current = true;
         suppressClickRef.current = true;
-      });
+        requestAnimationFrame(() => {
+          onPress();
+        });
+        return;
+      }
+      suppressClickRef.current = true;
     },
     [detachDocumentListeners, disabled, onPress]
   );

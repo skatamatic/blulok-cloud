@@ -160,7 +160,7 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
         <UnlockedUnitsWidget {...commonProps} facilityFilter={effectiveFacilityId} />
       );
     case 'sync-fms':
-      return <SyncFMSWidget {...commonProps} />;
+      return <SyncFMSWidget {...commonProps} isPageActive={isPageActive} />;
     case 'access-history':
       return (
         <AccessHistoryWidget

@@ -202,10 +202,10 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
       readOnly={readOnly}
     >
       <div className="flex h-full flex-col">
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            {isAdminLike && isAllFacilitiesSelected ? 'All facilities' : (selectedFacility?.name || 'Current scope')}
-          </p>
+        <div className="mb-3 flex items-center justify-end">
+          {isAdminLike && isAllFacilitiesSelected && (
+            <p className="mr-auto text-xs text-gray-500 dark:text-gray-400">All facilities</p>
+          )}
           <button
             type="button"
             onClick={() => loadCodes(true)}
@@ -244,7 +244,7 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
                     <p className="text-xs text-gray-500 dark:text-gray-400">
                       {entry.device_type}
                       {entry.location_description ? ` • ${entry.location_description}` : ''}
-                      {entry.facility_name ? ` • ${entry.facility_name}` : ''}
+                      {isAllFacilitiesSelected && entry.facility_name ? ` • ${entry.facility_name}` : ''}
                       {` • ${entry.schedule_name || 'Always-on'}`}
                     </p>
                   </div>

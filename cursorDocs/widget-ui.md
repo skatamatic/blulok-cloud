@@ -172,14 +172,18 @@ return <FullStatsLayout />;
 - **Huge-Wide** (8x4): Extended width for wider facilities
 
 **Content:**
-- Interactive 3D view of linked BluDesign facility
+- Interactive 3D view of the BluDesign model linked to the **globally selected facility**
 - Floor selector panel (collapsible, bottom-right)
 - Object selection with properties panel
 - Camera rotation controls (bottom center)
 - Real-time smart asset state updates via WebSocket
 
+**Facility scope:**
+- **Single facility:** Renders the 3D viewer only when the selected facility has a linked BluDesign model; otherwise the widget body is empty (no picker, no placeholder).
+- **All facilities:** Widget body is empty — no model picker and no 3D view. Select a specific facility to see its linked model.
+
 **Visibility:**
-- Only available for facilities with linked BluDesign 3D models
+- Only available for facilities with linked BluDesign 3D models in the "Add Widget" modal
 - `facility.bluDesignFacilityId` must exist for widget to appear in "Add Widget" modal
 
 **Implementation:**
@@ -187,13 +191,11 @@ return <FullStatsLayout />;
 <FacilityViewerWidget
   id={widget.id}
   title={widget.title}
-  bluDesignFacilityId="uuid-of-3d-model"
-  bluLokFacilityId="uuid-of-facility"
-  facilityName="My Facility"
   initialSize="huge"
   onRemove={() => removeWidget(widget.id)}
 />
 ```
+(Facility/model IDs are resolved from `GlobalFacilityContext`, not widget config.)
 
 ## Responsive Content Design
 

@@ -656,6 +656,24 @@ describe('SyncFMSWidget', () => {
       });
     });
 
+    it('does not trigger sync when dashboard page is inactive', async () => {
+      (useGlobalFacility as jest.Mock).mockReturnValue({
+        ...mockGlobalFacilityContext,
+        facilities: [{ id: 'facility-1', name: 'Facility One' }],
+        hasMultipleFacilities: false,
+      });
+
+      renderWithProviders(
+        <SyncFMSWidget {...defaultProps} initialSize="large" isPageActive={false} />
+      );
+
+      const syncButton = await screen.findByText('Sync Now');
+      fireEvent.click(syncButton);
+
+      expect(mockFMSSyncContext.startSync).not.toHaveBeenCalled();
+      expect(fmsService.triggerSync).not.toHaveBeenCalled();
+    });
+
     it('handles manual sync successfully', async () => {
       (useGlobalFacility as jest.Mock).mockReturnValue({
         ...mockGlobalFacilityContext,

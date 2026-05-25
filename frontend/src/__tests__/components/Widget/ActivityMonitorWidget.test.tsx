@@ -252,12 +252,12 @@ describe('ActivityMonitorWidget', () => {
       });
     });
 
-    it('renders in large size with filter tabs', async () => {
+    it('renders in wide size with filter tabs', async () => {
       renderWithProviders(
         <ActivityMonitorWidget 
           id="test-widget" 
           title="Activity Monitor" 
-          initialSize="large"
+          initialSize="huge-wide"
         />
       );
       
@@ -291,7 +291,7 @@ describe('ActivityMonitorWidget', () => {
         <ActivityMonitorWidget 
           id="test-widget" 
           title="Activity Monitor" 
-          initialSize="large"
+          initialSize="huge-wide"
         />
       );
       
@@ -317,7 +317,7 @@ describe('ActivityMonitorWidget', () => {
         <ActivityMonitorWidget 
           id="test-widget" 
           title="Activity Monitor" 
-          initialSize="large"
+          initialSize="huge-wide"
         />
       );
       
@@ -341,7 +341,7 @@ describe('ActivityMonitorWidget', () => {
         <ActivityMonitorWidget 
           id="test-widget" 
           title="Activity Monitor" 
-          initialSize="large"
+          initialSize="huge-wide"
         />
       );
       

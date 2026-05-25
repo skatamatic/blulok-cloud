@@ -20,7 +20,7 @@ export const DashboardPageStrip: React.FC<DashboardPageStripProps> = ({
   const slidePercent = safeCount > 1 ? (100 / safeCount) * activeIndex : 0;
 
   return (
-    <div className="relative h-full min-h-0 w-full overflow-hidden">
+    <motion.div className="relative h-full min-h-0 w-full overflow-hidden" initial={false}>
       <motion.div
         className="flex h-full min-h-0"
         style={{ width: `${safeCount * 100}%` }}
@@ -30,7 +30,7 @@ export const DashboardPageStrip: React.FC<DashboardPageStripProps> = ({
       >
         {children}
       </motion.div>
-    </div>
+    </motion.div>
   );
 };
 
@@ -51,14 +51,14 @@ export const DashboardPageStripPanel: React.FC<DashboardPageStripPanelProps> = (
   const panelWidth = `${100 / safeCount}%`;
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-shrink-0 flex-col"
+    <motion.div
+      className={`flex h-full min-h-0 flex-shrink-0 flex-col${isActive ? '' : ' pointer-events-none'}`}
       style={{ width: panelWidth }}
       aria-hidden={!isActive}
       data-dashboard-page-index={pageIndex}
       data-active={isActive ? 'true' : 'false'}
     >
       {children}
-    </div>
+    </motion.div>
   );
 };

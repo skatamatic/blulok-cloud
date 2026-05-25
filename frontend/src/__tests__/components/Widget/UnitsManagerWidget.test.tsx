@@ -25,6 +25,14 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  ...jest.requireActual('@/contexts/GlobalFacilityContext'),
+  useGlobalFacility: jest.fn(),
+}));
+
+const mockUseGlobalFacility = jest.requireMock('@/contexts/GlobalFacilityContext')
+  .useGlobalFacility as jest.Mock;
+
 const sampleUnits = {
   success: true,
   units: [
@@ -108,6 +116,9 @@ describe('UnitsManagerWidget', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockNavigate.mockReset();
+    mockUseGlobalFacility.mockReturnValue({
+      isAllFacilitiesSelected: false,
+    });
     mockGetUnits.mockResolvedValue(sampleUnits);
     mockGetUnitAccessHistory.mockResolvedValue({ logs: [] });
     mockUpdateLockStatus.mockResolvedValue({ success: true });
@@ -304,5 +315,49 @@ describe('UnitsManagerWidget', () => {
     const rows = screen.getAllByRole('button', { name: /Unit \d/ });
     expect(rows[0]).toHaveAccessibleName(/Unit 2/);
     expect(rows[1]).toHaveAccessibleName(/Unit 10/);
+  });
+
+  it('hides facility name in row subline when a single facility is scoped', async () => {
+    renderWidget();
+    await waitFor(() => screen.getByText(/Unit A-101/));
+    expect(screen.queryByText(/Riverside/)).not.toBeInTheDocument();
+  });
+
+  it('shows facility filter and column in all-facilities mode', async () => {
+    mockUseGlobalFacility.mockReturnValue({
+      isAllFacilitiesSelected: true,
+    });
+    mockGetUnits.mockResolvedValue({
+      success: true,
+      units: [
+        { ...sampleUnits.units[0], facility_id: 'fac-1', facility_name: 'Riverside' },
+        {
+          ...sampleUnits.units[1],
+          id: 'unit-east',
+          unit_number: 'D-10',
+          facility_id: 'fac-2',
+          facility_name: 'Eastside',
+        },
+      ],
+    });
+
+    renderWidget();
+    await waitFor(() => screen.getByText(/Unit A-101/));
+
+    expect(screen.getByLabelText(/Filter by facility/i)).toBeInTheDocument();
+    expect(screen.getByText('Facility')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Riverside' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Eastside' })).toBeInTheDocument();
+    expect(screen.getAllByText('Riverside').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Eastside').length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.change(screen.getByLabelText(/Filter by facility/i), {
+      target: { value: 'fac-2' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Unit D-10/)).toBeInTheDocument();
+      expect(screen.queryByText(/Unit A-101/)).not.toBeInTheDocument();
+    });
   });
 });

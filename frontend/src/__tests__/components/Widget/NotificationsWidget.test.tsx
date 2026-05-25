@@ -110,7 +110,7 @@ describe('NotificationsWidget', () => {
   });
 
   it('shows items from API', async () => {
-    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
     await waitFor(() => {
       expect(screen.getByText('Security')).toBeInTheDocument();
     });
@@ -122,10 +122,10 @@ describe('NotificationsWidget', () => {
   });
 
   it('filters action required using priority/type rules', async () => {
-    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
     await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: /Action Required/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Action Required \(\d+\)/ }));
     await waitFor(() => {
       expect(screen.getByText('Security')).toBeInTheDocument();
     });

@@ -30,7 +30,13 @@ jest.mock('@/contexts/WebSocketContext', () => ({
 }));
 
 jest.mock('@/hooks/useBackNavigation', () => ({
+  ...jest.requireActual('@/hooks/useBackNavigation'),
   useBackNavigation: () => jest.fn(),
+  useDetailsBackNavigation: () => ({
+    showBack: true,
+    backLabel: 'Back to Units',
+    goBack: jest.fn(),
+  }),
 }));
 
 jest.mock('@/components/Common/UserFilter', () => ({

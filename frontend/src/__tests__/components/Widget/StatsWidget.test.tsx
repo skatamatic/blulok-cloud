@@ -57,17 +57,17 @@ describe('StatsWidget', () => {
     expect(screen.getByText('42')).toBeInTheDocument();
   });
 
-  it('renders change trend for small layout', () => {
+  it('renders change trend for large layout', () => {
     render(
       <StatsWidget
         id="s1"
         title="X"
         value={10}
         icon={Icon}
-        initialSize="small"
+        initialSize="large"
         change={{ value: -3, trend: 'down' }}
       />
     );
-    expect(screen.getByText('3%')).toBeInTheDocument();
+    expect(screen.getByText('3% vs last period')).toBeInTheDocument();
   });
 });

@@ -27,5 +27,7 @@ describe('DashboardPageStrip', () => {
     expect(screen.getByText('Page B')).toBeInTheDocument();
     expect(screen.getByText('Page C')).toBeInTheDocument();
     expect(screen.getByText('Page B').closest('[data-active="true"]')).toBeInTheDocument();
+    expect(screen.getByText('Page A').closest('[data-active="false"]')).toHaveClass('pointer-events-none');
+    expect(screen.getByText('Page B').closest('[data-active="true"]')).not.toHaveClass('pointer-events-none');
   });
 });
