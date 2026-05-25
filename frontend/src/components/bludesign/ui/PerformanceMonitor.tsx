@@ -12,9 +12,14 @@ import { BluDesignEngine } from '../core/BluDesignEngine';
 
 interface PerformanceMonitorProps {
   engine: BluDesignEngine | null;
+  /** When false, skip the secondary rAF loop and stat polling. */
+  active?: boolean;
 }
 
-export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ engine }) => {
+export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
+  engine,
+  active = true,
+}) => {
   const [fps, setFps] = useState(0);
   const [gpuInfo, setGpuInfo] = useState<string>('N/A');
   const [meshCount, setMeshCount] = useState(0);
@@ -44,7 +49,7 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ engine }
   
   // FPS tracking
   useEffect(() => {
-    if (!showFPS && !showGPUMemory) {
+    if (!active || (!showFPS && !showGPUMemory)) {
       return;
     }
     
@@ -94,11 +99,11 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ engine }
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [showFPS, showGPUMemory]);
+  }, [active, showFPS, showGPUMemory]);
   
   // Update mesh and material counts periodically (every 2 seconds)
   useEffect(() => {
-    if (!engine) return;
+    if (!active || !engine) return;
     
     const updateStats = () => {
       try {
@@ -157,9 +162,9 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ engine }
         clearInterval(statsUpdateIntervalRef.current);
       }
     };
-  }, [engine]);
+  }, [active, engine]);
   
-  if (!showFPS && !showGPUMemory) {
+  if (!active || (!showFPS && !showGPUMemory)) {
     return null;
   }
   

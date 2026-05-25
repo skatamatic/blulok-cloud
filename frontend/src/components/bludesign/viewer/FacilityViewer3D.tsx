@@ -6,6 +6,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { useBluDesignEngine } from '../hooks/useBluDesignEngine';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -29,6 +30,8 @@ interface FacilityViewer3DProps {
   bluLokFacilityId?: string;
   /** Optional CSS class name */
   className?: string;
+  /** When false, WebGL rendering pauses and a static snapshot is shown instead. */
+  isRenderActive?: boolean;
   /** Callback when the viewer is ready */
   onReady?: () => void;
   /** Callback when an error occurs */
@@ -48,6 +51,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   bluDesignFacilityId,
   bluLokFacilityId,
   className = '',
+  isRenderActive = true,
   onReady,
   onError,
 }) => {
@@ -72,6 +76,25 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   
   // Asset states from WebSocket
   const assetStatesRef = useRef<Map<string, SmartAssetState>>(new Map());
+  const applyEngineUpdatesRef = useRef(true);
+  const [documentVisible, setDocumentVisible] = useState(
+    () => typeof document === 'undefined' || !document.hidden
+  );
+  const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null);
+  const [engineAllowed, setEngineAllowed] = useState(isRenderActive);
+
+  useEffect(() => {
+    if (isRenderActive) setEngineAllowed(true);
+  }, [isRenderActive]);
+
+  const shouldRunEngine = isRenderActive && documentVisible;
+  const showStaticPreview = !shouldRunEngine && snapshotUrl !== null;
+
+  useEffect(() => {
+    const onVisibilityChange = () => setDocumentVisible(!document.hidden);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
 
   // Initialize engine
   const {
@@ -79,14 +102,44 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     engine,
     state,
     isReady: isEngineReady,
+    pauseRendering,
+    resumeRendering,
+    captureSnapshot,
   } = useBluDesignEngine({
     readonly: true,
+    enabled: engineAllowed,
     theme: effectiveTheme,
     onReady: () => {
       setLoadingProgress(40);
       setLoadingMessage('Engine ready...');
     },
   });
+
+  // Pause WebGL while off-screen, transitioning, or tab hidden; show last frame as a still.
+  useEffect(() => {
+    if (!isEngineReady || !engine) return;
+
+    applyEngineUpdatesRef.current = shouldRunEngine;
+
+    if (shouldRunEngine) {
+      setSnapshotUrl(null);
+      resumeRendering();
+      return;
+    }
+
+    if (engine.isRenderLoopRunning()) {
+      const url = captureSnapshot();
+      if (url) setSnapshotUrl(url);
+      pauseRendering();
+    }
+  }, [
+    shouldRunEngine,
+    isEngineReady,
+    engine,
+    pauseRendering,
+    resumeRendering,
+    captureSnapshot,
+  ]);
 
   // Safe state for rendering
   const safeState = useMemo(() => {
@@ -131,10 +184,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         
         setLoadingProgress(90);
         setLoadingMessage('Finalizing...');
-        
-        // Small delay for visual smoothness
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
+
         setLoadingProgress(100);
         setIsDataLoaded(true);
         onReady?.();
@@ -164,10 +214,11 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         if (data.updates && Array.isArray(data.updates)) {
           data.updates.forEach((update: SmartAssetState) => {
             assetStatesRef.current.set(update.entityId, update);
-            
-            // Update visual state in engine
-            updateAssetVisualState(update);
-            
+
+            if (applyEngineUpdatesRef.current) {
+              updateAssetVisualState(update);
+            }
+
             // Update selected object state if it matches
             if (selectedObject?.binding?.entityId === update.entityId) {
               setSelectedObjectState(update);
@@ -210,7 +261,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
 
   // Update visual state in engine for an asset
   const updateAssetVisualState = useCallback((stateUpdate: SmartAssetState) => {
-    if (!engine) return;
+    if (!engine || !applyEngineUpdatesRef.current) return;
 
     const sceneManager = engine.getSceneManager();
     const allObjects = sceneManager.getAllPlacedObjects();
@@ -348,11 +399,23 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
       style={{ background: bgGradient }}
     >
       {/* Three.js Canvas Container */}
-      <div 
-        ref={containerRef} 
-        className="absolute inset-0" 
-        style={{ touchAction: 'none' }} 
+      <motion.div
+        ref={containerRef}
+        className="absolute inset-0"
+        style={{ touchAction: 'none' }}
+        animate={{ opacity: showStaticPreview ? 0 : 1 }}
+        transition={{ duration: 0.12 }}
+        aria-hidden={showStaticPreview}
       />
+
+      {showStaticPreview && (
+        <img
+          src={snapshotUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
+          draggable={false}
+        />
+      )}
 
       {/* Loading Overlay */}
       <ViewerLoadingOverlay
@@ -382,10 +445,10 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
       )}
 
       {/* Performance Monitor */}
-      <PerformanceMonitor engine={engine} />
+      <PerformanceMonitor engine={engine} active={shouldRunEngine} />
 
-      {/* UI Overlays - only show when loaded */}
-      {isDataLoaded && !loadError && (
+      {/* UI Overlays - only show when loaded and actively rendering */}
+      {isDataLoaded && !loadError && shouldRunEngine && (
         <>
           {/* Properties Panel */}
           <ViewerPropertiesPanel

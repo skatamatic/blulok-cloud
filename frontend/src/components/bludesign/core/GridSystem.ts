@@ -237,6 +237,13 @@ export class GridSystem {
   }
 
   /**
+   * Whether the ground/grid plane is currently shown.
+   */
+  isGridVisible(): boolean {
+    return this.gridMesh?.visible ?? false;
+  }
+
+  /**
    * Set grid visibility
    */
   setVisible(visible: boolean): void {

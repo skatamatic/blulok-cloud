@@ -31,6 +31,8 @@ interface FacilityViewerWidgetProps {
   readOnly?: boolean;
   onFullscreenToggle?: () => void;
   isFullscreen?: boolean;
+  /** When false, 3D rendering is suspended (off-screen dashboard page or page transition). */
+  isRenderActive?: boolean;
 }
 
 export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
@@ -48,6 +50,7 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   readOnly,
   onFullscreenToggle,
   isFullscreen = false,
+  isRenderActive = true,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -163,6 +166,7 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
           <FacilityViewer3D
             bluDesignFacilityId={selectedBluDesignFacilityId}
             bluLokFacilityId={bluLokFacilityId}
+            isRenderActive={isRenderActive}
             onReady={handleReady}
             onError={handleError}
           />

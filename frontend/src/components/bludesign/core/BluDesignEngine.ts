@@ -747,23 +747,66 @@ export class BluDesignEngine {
   }
 
   /**
+   * Resume the render loop after {@link stop} without re-emitting `ready`.
+   */
+  resumeRenderLoop(): void {
+    if (this.isRunning) return;
+
+    this.isRunning = true;
+    this.clock.start();
+    this.render();
+  }
+
+  /** Whether the animation loop is active. */
+  isRenderLoopRunning(): boolean {
+    return this.isRunning;
+  }
+
+  /**
+   * Render a single frame (used for snapshots and manual refresh).
+   */
+  renderFrameOnce(): void {
+    this.renderFrame();
+  }
+
+  /**
+   * Capture the current view as a JPEG data URL (renders one frame first).
+   */
+  captureFrameSnapshot(): string | null {
+    try {
+      this.renderFrameOnce();
+      return this.renderer.domElement.toDataURL('image/jpeg', 0.82);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Main render loop
    */
   private render(): void {
     if (!this.isRunning) return;
-    
+
     this.animationFrameId = requestAnimationFrame(this.render);
-    
+    this.renderFrame();
+  }
+
+  private renderFrame(): void {
     const delta = this.clock.getDelta();
-    
-    // Update subsystems
+
     this.cameraController.update(delta);
-    this.gridSystem.update(this.cameraController.getCamera());
+    if (this.gridSystem.isGridVisible()) {
+      this.gridSystem.update(this.cameraController.getCamera());
+    }
     this.selectionManager.update();
-    this.selectionHighlightManager.update();
-    this.translateGizmo.update();
-    
-    // Render scene
+    const hasSelection = this.selectionManager.getSelectedIds().length > 0;
+    if (hasSelection || !this.readonly) {
+      this.selectionHighlightManager.update();
+    }
+    if (!this.readonly) {
+      this.translateGizmo.update();
+    }
+
     this.renderer.render(this.scene, this.cameraController.getCamera());
     this.labelRenderer.render(this.scene, this.cameraController.getCamera());
   }

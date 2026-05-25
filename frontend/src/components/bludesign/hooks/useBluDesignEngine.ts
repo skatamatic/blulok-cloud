@@ -17,10 +17,13 @@ import {
 } from '../core/types';
 import { LoadingProgress } from '../loading/LoadingManager';
 
-const MIN_LOADING_TIME_MS = 2000;
+const DEFAULT_MIN_LOADING_TIME_MS = 2000;
+const READONLY_MIN_LOADING_TIME_MS = 0;
 
 interface UseBluDesignEngineOptions {
   readonly?: boolean;
+  /** When false, the engine is not created until enabled (saves WebGL on off-screen viewers). */
+  enabled?: boolean;
   theme?: 'light' | 'dark';
   onReady?: () => void;
   onSelectionChange?: (selection: SelectionState) => void;
@@ -34,7 +37,7 @@ interface UseBluDesignEngineReturn {
   isReady: boolean;
   isLoading: boolean;
   loadingProgress: LoadingProgress | null;
-  
+
   // Actions
   setTool: (tool: EditorTool) => void;
   setCameraMode: (mode: CameraMode) => void;
@@ -46,15 +49,22 @@ interface UseBluDesignEngineReturn {
   resetCamera: () => void;
   clearSelection: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
+  pauseRendering: () => void;
+  resumeRendering: () => void;
+  captureSnapshot: () => string | null;
 }
 
 export function useBluDesignEngine(
   options: UseBluDesignEngineOptions = {}
 ): UseBluDesignEngineReturn {
+  const minLoadingTimeMs = options.readonly
+    ? READONLY_MIN_LOADING_TIME_MS
+    : DEFAULT_MIN_LOADING_TIME_MS;
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<BluDesignEngine | null>(null);
+  const [engineInstance, setEngineInstance] = useState<BluDesignEngine | null>(null);
   const [isEngineReady, setIsEngineReady] = useState(false);
-  const [isMinTimeElapsed, setIsMinTimeElapsed] = useState(false);
+  const [isMinTimeElapsed, setIsMinTimeElapsed] = useState(minLoadingTimeMs === 0);
   const [state, setState] = useState<EditorState | null>(null);
   const [loadingProgress, setLoadingProgress] = useState<LoadingProgress | null>(null);
   const startTimeRef = useRef<number>(0);
@@ -92,7 +102,7 @@ export function useBluDesignEngine(
 
     progressIntervalRef.current = setInterval(() => {
       const elapsed = Date.now() - startTimeRef.current;
-      const targetProgress = Math.min(80, (elapsed / MIN_LOADING_TIME_MS) * 100);
+      const targetProgress = Math.min(80, (elapsed / minLoadingTimeMs || 1) * 100);
       
       // Ease-out animation
       fakeProgress += (targetProgress - fakeProgress) * 0.1;
@@ -122,20 +132,26 @@ export function useBluDesignEngine(
         progressIntervalRef.current = null;
       }
     };
-  }, [isReady]);
+  }, [isReady, minLoadingTimeMs]);
 
   // Initialize engine
   useEffect(() => {
+    if (options.enabled === false) {
+      return;
+    }
+
     let cancelled = false;
     let cleanup: (() => void) | null = null;
     let initTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    // Start minimum time timer
-    const minTimeTimer = setTimeout(() => {
-      if (!cancelled) {
-        setIsMinTimeElapsed(true);
-      }
-    }, MIN_LOADING_TIME_MS);
+  const minTimeTimer =
+    minLoadingTimeMs > 0
+      ? setTimeout(() => {
+          if (!cancelled) {
+            setIsMinTimeElapsed(true);
+          }
+        }, minLoadingTimeMs)
+      : null;
 
     const tryInit = () => {
       if (cancelled || engineRef.current) return true; // Already init'd or cancelled
@@ -150,11 +166,20 @@ export function useBluDesignEngine(
       const engineOptions: BluDesignEngineOptions = {
         container: containerRef.current,
         readonly: options.readonly,
+        ...(options.readonly
+          ? {
+              rendererConfig: {
+                pixelRatio: Math.min(window.devicePixelRatio, 1.5),
+                shadowMap: false,
+              },
+            }
+          : {}),
       };
 
       try {
         const engine = new BluDesignEngine(engineOptions);
         engineRef.current = engine;
+        setEngineInstance(engine);
 
         // Subscribe to events
         const unsubReady = engine.on('ready', () => {
@@ -194,6 +219,7 @@ export function useBluDesignEngine(
           unsubState();
           engine.dispose();
           engineRef.current = null;
+          setEngineInstance(null);
         };
       } catch (error) {
         console.error('Failed to initialize BluDesign engine:', error);
@@ -215,13 +241,14 @@ export function useBluDesignEngine(
 
     return () => {
       cancelled = true;
-      clearTimeout(minTimeTimer);
+      if (minTimeTimer) clearTimeout(minTimeTimer);
       if (initTimeout) clearTimeout(initTimeout);
       if (cleanup) cleanup();
       setIsEngineReady(false);
-      setIsMinTimeElapsed(false);
+      setIsMinTimeElapsed(minLoadingTimeMs === 0);
+      setEngineInstance(null);
     };
-  }, [options.readonly]);
+  }, [minLoadingTimeMs, options.enabled, options.readonly]);
 
   // Action callbacks
   const setTool = useCallback((tool: EditorTool) => {
@@ -270,6 +297,18 @@ export function useBluDesignEngine(
     engineRef.current?.setTheme(theme);
   }, []);
 
+  const pauseRendering = useCallback(() => {
+    engineRef.current?.stop();
+  }, []);
+
+  const resumeRendering = useCallback(() => {
+    engineRef.current?.resumeRenderLoop();
+  }, []);
+
+  const captureSnapshot = useCallback((): string | null => {
+    return engineRef.current?.captureFrameSnapshot() ?? null;
+  }, []);
+
   // Update theme when it changes
   useEffect(() => {
     if (options.theme && isReady) {
@@ -279,7 +318,7 @@ export function useBluDesignEngine(
 
   return {
     containerRef,
-    engine: engineRef.current,
+    engine: engineInstance,
     state,
     isReady,
     isLoading,
@@ -294,5 +333,8 @@ export function useBluDesignEngine(
     resetCamera,
     clearSelection,
     setTheme,
+    pauseRendering,
+    resumeRendering,
+    captureSnapshot,
   };
 }

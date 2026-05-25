@@ -5,6 +5,7 @@ export interface DashboardPageStripProps {
   pageCount: number;
   activeIndex: number;
   children: React.ReactNode;
+  onTransitionChange?: (isTransitioning: boolean) => void;
 }
 
 /**
@@ -15,6 +16,7 @@ export const DashboardPageStrip: React.FC<DashboardPageStripProps> = ({
   pageCount,
   activeIndex,
   children,
+  onTransitionChange,
 }) => {
   const safeCount = Math.max(pageCount, 1);
   const slidePercent = safeCount > 1 ? (100 / safeCount) * activeIndex : 0;
@@ -27,6 +29,8 @@ export const DashboardPageStrip: React.FC<DashboardPageStripProps> = ({
         initial={false}
         animate={{ x: `-${slidePercent}%` }}
         transition={{ duration: 0.32, ease: [0.4, 0, 0.2, 1] }}
+        onAnimationStart={() => onTransitionChange?.(true)}
+        onAnimationComplete={() => onTransitionChange?.(false)}
       >
         {children}
       </motion.div>
