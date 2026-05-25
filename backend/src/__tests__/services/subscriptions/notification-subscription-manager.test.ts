@@ -84,7 +84,10 @@ describe('NotificationSubscriptionManager', () => {
       );
 
       expect(result).toBe(true);
-      expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1');
+      expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1', {
+        facilityId: undefined,
+        facilityIds: ['facility-1'],
+      });
       expect(mockNotificationModel.find).toHaveBeenCalled();
       expect(mockWs.send).toHaveBeenCalled();
 

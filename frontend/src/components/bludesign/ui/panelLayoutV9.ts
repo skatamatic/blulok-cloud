@@ -187,7 +187,7 @@ export function dockPanel(
   panelId: PanelId,
   side: 'left' | 'right'
 ): PanelLayoutStateV9 {
-  let next: PanelLayoutStateV9 = JSON.parse(JSON.stringify(layout)) as PanelLayoutStateV9;
+  const next: PanelLayoutStateV9 = JSON.parse(JSON.stringify(layout)) as PanelLayoutStateV9;
 
   next.docks.left.panelIds = next.docks.left.panelIds.filter((id) => id !== panelId);
   next.docks.right.panelIds = next.docks.right.panelIds.filter((id) => id !== panelId);

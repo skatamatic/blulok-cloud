@@ -241,7 +241,7 @@ describe('NotificationModel', () => {
         update: mockUpdate,
       });
 
-      const result = await model.markAllAsRead('user-1', 'facility-1');
+      const result = await model.markAllAsRead('user-1', { facilityId: 'facility-1' });
 
       expect(result).toBe(3);
       // Should be called at least 4 times: user_id, is_read, is_deleted, facility_id

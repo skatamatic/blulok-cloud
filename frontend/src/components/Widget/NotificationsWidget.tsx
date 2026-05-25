@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useAuth } from '@/contexts/AuthContext';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
   mapApiNotificationToDashboardView,
@@ -66,11 +67,23 @@ function toApiNotification(
 
 function matchesFacilityFilter(
   n: UserNotificationApi,
-  facilityFilter: string | undefined
+  facilityFilter: string | undefined,
+  allowedFacilityIds: string[] | undefined,
+  canAccessAllFacilities: boolean,
 ): boolean {
-  if (!facilityFilter) return true;
-  if (!n.facilityId) return true;
-  return n.facilityId === facilityFilter;
+  if (facilityFilter) {
+    return n.facilityId === facilityFilter;
+  }
+  if (canAccessAllFacilities) {
+    return true;
+  }
+  if (!n.facilityId) {
+    return false;
+  }
+  if (!allowedFacilityIds?.length) {
+    return false;
+  }
+  return allowedFacilityIds.includes(n.facilityId);
 }
 
 export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
@@ -85,6 +98,26 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   readOnly,
   facilityFilter,
 }) => {
+  const { authState } = useAuth();
+  const canAccessAllFacilities =
+    authState.user?.role === 'admin' || authState.user?.role === 'dev_admin';
+  const allowedFacilityIds = authState.user?.facilityIds;
+
+  const notificationWsFilters = useMemo(() => {
+    if (facilityFilter) {
+      return { facilityId: facilityFilter };
+    }
+    if (!canAccessAllFacilities && allowedFacilityIds?.length) {
+      return { facilityIds: allowedFacilityIds };
+    }
+    return undefined;
+  }, [facilityFilter, canAccessAllFacilities, allowedFacilityIds]);
+
+  const matchesScope = useCallback(
+    (n: UserNotificationApi) =>
+      matchesFacilityFilter(n, facilityFilter, allowedFacilityIds, canAccessAllFacilities),
+    [facilityFilter, allowedFacilityIds, canAccessAllFacilities],
+  );
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
     initialSize,
@@ -102,7 +135,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       const map = new Map<string, DisplayNotification>();
       prev.forEach((p) => map.set(p.id, p));
       incoming.forEach((raw) => {
-        if (!matchesFacilityFilter(raw, facilityFilter)) return;
+        if (!matchesScope(raw)) return;
         const v = mapApiNotificationToDashboardView(raw);
         map.set(v.id, v);
       });
@@ -110,7 +143,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
       );
     });
-  }, [facilityFilter]);
+  }, [matchesScope]);
 
   const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
@@ -123,7 +156,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       });
       if (response.success && response.notifications) {
         const mapped = response.notifications
-          .filter((n) => matchesFacilityFilter(n, facilityFilter))
+          .filter((n) => matchesScope(n))
           .map(mapApiNotificationToDashboardView);
         setRows(mapped);
       } else {
@@ -138,9 +171,10 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     } finally {
       if (!silent) setIsLoading(false);
     }
-  }, [facilityFilter]);
+  }, [facilityFilter, matchesScope]);
 
   useEffect(() => {
+    setRows([]);
     setIsLoading(true);
     loadNotifications();
   }, [loadNotifications]);
@@ -173,7 +207,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             metadata: null,
             createdAt: String(data.timestamp ?? new Date().toISOString()),
           };
-          if (!matchesFacilityFilter(apiRow, facilityFilter)) break;
+          if (!matchesScope(apiRow)) break;
           mergeById([apiRow]);
           break;
         }
@@ -209,14 +243,14 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           break;
       }
     },
-    [facilityFilter, mergeById, loadNotifications]
+    [matchesScope, mergeById, loadNotifications]
   );
 
   useEffect(() => {
     if (!isConnected) return;
-    const subId = subscribe('notifications', handleWs);
+    const subId = subscribe('notifications', handleWs, undefined, notificationWsFilters);
     return () => unsubscribe(subId);
-  }, [subscribe, unsubscribe, isConnected, handleWs]);
+  }, [subscribe, unsubscribe, isConnected, handleWs, notificationWsFilters]);
 
   const markAsRead = async (notificationId: string) => {
     try {
@@ -535,7 +569,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                   onClick={clearRead}
                   className="flex-1 py-2 px-3 text-xs font-medium text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/40 rounded-lg transition-colors"
                 >
-                  Clear Read
+                  Hide Read
                 </button>
               </div>
             </div>

@@ -100,9 +100,12 @@ export interface CreateActivityLogData {
  * Filters for querying activity logs
  */
 export interface ActivityLogFilters {
+  id?: string;
   entity_type?: ActivityEntityType;
   entity_id?: string;
   activity_type?: ActivityType;
+  /** Match any of these activity types (takes precedence over activity_type) */
+  activity_types?: ActivityType[];
   actor_type?: ActorType;
   actor_id?: string;
   result?: ActivityResult;
@@ -110,10 +113,14 @@ export interface ActivityLogFilters {
   /** Filter by multiple facilities (alternative to facility_id) */
   facility_ids?: string[];
   unit_id?: string;
+  /** Filter by multiple units (alternative to unit_id) */
+  unit_ids?: string[];
   device_id?: string;
   from_date?: Date;
   to_date?: Date;
   limit?: number;
+  /** Override default max limit (e.g. for export, capped at 5000) */
+  max_limit?: number;
   offset?: number;
   sortBy?: 'occurred_at' | 'created_at';
   sortOrder?: 'asc' | 'desc';
@@ -125,6 +132,7 @@ export interface ActivityLogFilters {
 export interface ActivityLogWithContext extends ActivityLog {
   unit_number?: string;
   device_serial?: string;
+  access_control_device_name?: string;
   facility_name?: string;
 }
 
@@ -189,6 +197,10 @@ export class ActivityLogModel {
    * @param tablePrefix - Optional table prefix for joined queries (e.g., 'activity_logs.')
    */
   private applyFilters(query: any, filters: ActivityLogFilters, tablePrefix: string = ''): any {
+    if (filters.id) {
+      query = query.where(`${tablePrefix}id`, filters.id);
+    }
+
     if (filters.entity_type) {
       query = query.where(`${tablePrefix}entity_type`, filters.entity_type);
     }
@@ -197,7 +209,9 @@ export class ActivityLogModel {
       query = query.where(`${tablePrefix}entity_id`, filters.entity_id);
     }
 
-    if (filters.activity_type) {
+    if (filters.activity_types && filters.activity_types.length > 0) {
+      query = query.whereIn(`${tablePrefix}activity_type`, filters.activity_types);
+    } else if (filters.activity_type) {
       query = query.where(`${tablePrefix}activity_type`, filters.activity_type);
     }
 
@@ -221,6 +235,8 @@ export class ActivityLogModel {
 
     if (filters.unit_id) {
       query = query.where(`${tablePrefix}unit_id`, filters.unit_id);
+    } else if (filters.unit_ids && filters.unit_ids.length > 0) {
+      query = query.whereIn(`${tablePrefix}unit_id`, filters.unit_ids);
     }
 
     if (filters.device_id) {
@@ -255,7 +271,8 @@ export class ActivityLogModel {
     query = query.orderBy(sortBy, sortOrder);
 
     // Pagination - always enforce a limit to prevent unbounded queries
-    const limit = Math.min(filters.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
+    const maxCap = filters.max_limit ?? MAX_QUERY_LIMIT;
+    const limit = Math.min(filters.limit || DEFAULT_QUERY_LIMIT, maxCap);
     query = query.limit(limit);
     if (filters.offset) {
       query = query.offset(filters.offset);
@@ -277,10 +294,12 @@ export class ActivityLogModel {
         'activity_logs.*',
         'units.unit_number',
         'blulok_devices.device_serial',
+        'access_control_devices.name as access_control_device_name',
         'facilities.name as facility_name'
       )
       .leftJoin('units', 'activity_logs.unit_id', 'units.id')
       .leftJoin('blulok_devices', 'activity_logs.device_id', 'blulok_devices.id')
+      .leftJoin('access_control_devices', 'activity_logs.device_id', 'access_control_devices.id')
       .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id');
 
     // Apply common filters with table prefix for joined query
@@ -292,7 +311,8 @@ export class ActivityLogModel {
     query = query.orderBy(`activity_logs.${sortBy}`, sortOrder);
 
     // Pagination - always enforce a limit to prevent unbounded queries
-    const limit = Math.min(filters.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
+    const maxCap = filters.max_limit ?? MAX_QUERY_LIMIT;
+    const limit = Math.min(filters.limit || DEFAULT_QUERY_LIMIT, maxCap);
     query = query.limit(limit);
     if (filters.offset) {
       query = query.offset(filters.offset);
@@ -303,7 +323,60 @@ export class ActivityLogModel {
       ...this.parseActivityLog(l),
       unit_number: l.unit_number,
       device_serial: l.device_serial,
+      access_control_device_name: l.access_control_device_name,
       facility_name: l.facility_name,
+    }));
+  }
+
+  /**
+   * Aggregated access-attempt counts for histogram (canonical activity_logs source).
+   */
+  async getActivityStats(options: {
+    startDate: Date;
+    endDate: Date;
+    facilityIds?: string[];
+    groupBy: 'hour' | 'day' | 'week';
+  }): Promise<Array<{ date: string; facility_id: string; facility_name: string; activity_count: number }>> {
+    const knex = this.db.connection;
+
+    let dateTrunc: string;
+    switch (options.groupBy) {
+      case 'hour':
+        dateTrunc = "DATE_FORMAT(occurred_at, '%Y-%m-%d %H:00:00')";
+        break;
+      case 'week':
+        dateTrunc = "DATE(DATE_SUB(occurred_at, INTERVAL WEEKDAY(occurred_at) DAY))";
+        break;
+      case 'day':
+      default:
+        dateTrunc = 'DATE(occurred_at)';
+        break;
+    }
+
+    let query = knex('activity_logs')
+      .select(
+        knex.raw(`${dateTrunc} as date`),
+        'activity_logs.facility_id',
+        'facilities.name as facility_name',
+        knex.raw('COUNT(*) as activity_count'),
+      )
+      .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id')
+      .where('activity_logs.activity_type', 'access_attempt')
+      .whereBetween('activity_logs.occurred_at', [options.startDate, options.endDate])
+      .whereNotNull('activity_logs.facility_id')
+      .groupByRaw(`${dateTrunc}, activity_logs.facility_id, facilities.name`)
+      .orderByRaw(`${dateTrunc} ASC, facilities.name ASC`);
+
+    if (options.facilityIds && options.facilityIds.length > 0) {
+      query = query.whereIn('activity_logs.facility_id', options.facilityIds);
+    }
+
+    const results = await query;
+    return results.map((row: any) => ({
+      date: typeof row.date === 'string' ? row.date : row.date?.toISOString?.()?.split('T')[0] || String(row.date),
+      facility_id: row.facility_id,
+      facility_name: row.facility_name || 'Unknown Facility',
+      activity_count: parseInt(row.activity_count, 10) || 0,
     }));
   }
 

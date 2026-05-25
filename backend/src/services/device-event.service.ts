@@ -352,6 +352,10 @@ export class DeviceEventService extends EventEmitter {
     }
 
     const isLocked = event.newStatus === 'locked';
+    const blulokDevice = await deviceModel.findBluLokDeviceById(event.deviceId);
+    const acDevice = blulokDevice ? null : await deviceModel.findAccessControlDeviceWithGateway(event.deviceId);
+    const deviceType = acDevice && !blulokDevice ? 'access_control' : 'blulok';
+
     await ActivityService.getInstance().logLockEvent(
       event.deviceId,
       event.unitId || undefined,
@@ -361,7 +365,12 @@ export class DeviceEventService extends EventEmitter {
       undefined,
       'Gateway',
       'success',
-      { oldStatus: event.oldStatus, newStatus: event.newStatus, gatewayId: event.gatewayId }
+      {
+        oldStatus: event.oldStatus,
+        newStatus: event.newStatus,
+        gatewayId: event.gatewayId,
+        device_type: deviceType,
+      }
     );
   }
 

@@ -32,6 +32,29 @@ jest.mock('@/contexts/WebSocketContext', () => ({
   WebSocketProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+const mockUser = {
+  id: 'user-1',
+  email: 'test@example.com',
+  firstName: 'Test',
+  lastName: 'User',
+  role: 'facility_admin' as const,
+  facilityIds: ['fac-123', 'fac-456'],
+  facilityNames: ['Site A', 'Site B'],
+};
+
+jest.mock('@/contexts/AuthContext', () => ({
+  ...jest.requireActual('@/contexts/AuthContext'),
+  useAuth: () => ({
+    authState: {
+      user: mockUser,
+      isAuthenticated: true,
+    },
+    login: jest.fn(),
+    logout: jest.fn(),
+  }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 jest.mock('framer-motion', () => ({
   motion: {
     div: ({ children, ...props }: React.PropsWithChildren<object>) => <div {...props}>{children}</div>,
@@ -55,7 +78,7 @@ const baseNotification = (over: Partial<UserNotificationApi>): UserNotificationA
   isRead: false,
   readAt: null,
   reference: null,
-  facilityId: null,
+  facilityId: 'fac-123',
   metadata: null,
   createdAt: new Date().toISOString(),
   ...over,
@@ -102,10 +125,15 @@ describe('NotificationsWidget', () => {
     });
   });
 
-  it('subscribes to notifications websocket channel', async () => {
+  it('subscribes to notifications websocket channel with facility scope', async () => {
     renderWithProviders(<NotificationsWidget id="w1" title="Notifications" />);
     await waitFor(() => {
-      expect(mockSubscribe).toHaveBeenCalledWith('notifications', expect.any(Function));
+      expect(mockSubscribe).toHaveBeenCalledWith(
+        'notifications',
+        expect.any(Function),
+        undefined,
+        { facilityIds: mockUser.facilityIds },
+      );
     });
   });
 

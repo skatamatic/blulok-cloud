@@ -222,10 +222,10 @@ describe('RemoteGateWidget', () => {
         expect(select).toBeInTheDocument();
       });
       
-      // Check that options are present
-      expect(screen.getByText(/Main Entrance/)).toBeInTheDocument();
-      expect(screen.getByText(/Loading Dock/)).toBeInTheDocument();
-      expect(screen.getByText(/Vehicle Gate/)).toBeInTheDocument();
+      // Check that options are present (name may appear in select + detail panel)
+      expect(screen.getAllByText(/Main Entrance/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Loading Dock/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Vehicle Gate/).length).toBeGreaterThan(0);
     });
 
     it('auto-selects first online gate', async () => {
@@ -291,7 +291,7 @@ describe('RemoteGateWidget', () => {
       
       await waitFor(() => {
         // Medium size should show the gate name
-        expect(screen.getByText('Main Entrance')).toBeInTheDocument();
+        expect(screen.getAllByText('Main Entrance').length).toBeGreaterThan(0);
       });
     });
 

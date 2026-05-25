@@ -14,19 +14,21 @@ jest.mock('@/services/api.service', () => ({
 }));
 
 // Mock auth context
+const mockUser = {
+  id: 'user-1',
+  email: 'test@example.com',
+  firstName: 'Test',
+  lastName: 'User',
+  role: 'admin' as const,
+  facilityIds: ['facility-1', 'facility-2', 'facility-3'],
+  facilityNames: ['Downtown Storage', 'Warehouse District', 'Airport Facility'],
+};
+
 jest.mock('@/contexts/AuthContext', () => ({
   ...jest.requireActual('@/contexts/AuthContext'),
   useAuth: () => ({
     authState: {
-      user: {
-        id: 'user-1',
-        email: 'test@example.com',
-        firstName: 'Test',
-        lastName: 'User',
-        role: 'admin' as const,
-        facilityIds: ['facility-1', 'facility-2', 'facility-3'],
-        facilityNames: ['Downtown Storage', 'Warehouse District', 'Airport Facility'],
-      },
+      user: mockUser,
       isAuthenticated: true,
     },
     login: jest.fn(),
@@ -38,7 +40,7 @@ jest.mock('@/contexts/AuthContext', () => ({
 // Mock framer-motion to avoid animation issues in tests
 jest.mock('framer-motion', () => ({
   motion: {
-    div: ({ children, ...props }: React.PropsWithChildren<any>) => (
+    div: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => (
       <div {...props}>{children}</div>
     ),
   },
@@ -75,8 +77,7 @@ describe('HistogramWidget', () => {
   });
 
   afterEach(() => {
-    // Ensure all pending promises are resolved
-    jest.runOnlyPendingTimers();
+    // no-op: beforeEach already clears mocks
   });
 
   describe('Basic Rendering', () => {
@@ -90,7 +91,7 @@ describe('HistogramWidget', () => {
 
     it('displays loading state initially', async () => {
       // Create a promise that resolves after a delay to test loading state
-      let resolvePromise: (value: any) => void;
+      let resolvePromise: (value: typeof mockActivityStats) => void;
       const hangingPromise = new Promise((resolve) => {
         resolvePromise = resolve;
       });
@@ -101,14 +102,14 @@ describe('HistogramWidget', () => {
       );
       
       // Should show loading state
-      expect(screen.getByText('Loading activity data...')).toBeInTheDocument();
+      expect(document.querySelector('.animate-spin')).toBeInTheDocument();
       
       // Resolve the promise to prevent hanging
       resolvePromise!(mockActivityStats);
       
       // Wait for the component to update
       await waitFor(() => {
-        expect(screen.queryByText('Loading activity data...')).not.toBeInTheDocument();
+        expect(document.querySelector('.animate-spin')).not.toBeInTheDocument();
       }, { timeout: 2000 });
     });
 
@@ -244,24 +245,18 @@ describe('HistogramWidget', () => {
       });
     });
 
-    it('limits facility selection to 3', async () => {
-      // The component should auto-select first 3 facilities
+    it('scopes chart to all assigned facilities from auth', async () => {
       renderWithProviders(
         <HistogramWidget id="test-widget" title="Activity Histogram" />
       );
-      
+
       await waitFor(() => {
         expect(mockGetActivityStats).toHaveBeenCalledWith(
           expect.objectContaining({
-            facility_ids: expect.any(Array),
+            facility_ids: ['facility-1', 'facility-2', 'facility-3'],
           })
         );
       });
-      
-      // Verify facility_ids has max 3 items
-      const calls = mockGetActivityStats.mock.calls;
-      const lastCall = calls[calls.length - 1][0];
-      expect(lastCall.facility_ids.length).toBeLessThanOrEqual(3);
     });
   });
 
@@ -285,7 +280,7 @@ describe('HistogramWidget', () => {
       
       await waitFor(() => {
         // Bars should have title attributes with activity counts
-        const bars = document.querySelectorAll('[title*="activities"]');
+        const bars = document.querySelectorAll('[title*="access attempts"]');
         expect(bars.length).toBeGreaterThan(0);
       });
     });

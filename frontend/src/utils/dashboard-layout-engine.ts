@@ -175,8 +175,8 @@ function computeDockFullRect(
     if (!changed) break;
   }
 
-  let w = rect.right - rect.left;
-  let h = rect.bottom - rect.top;
+  const w = rect.right - rect.left;
+  const h = rect.bottom - rect.top;
   if (w < bounds.minW) {
     const midX = (rect.left + rect.right) / 2;
     rect.left = Math.max(0, Math.round(midX - bounds.minW / 2));
@@ -324,7 +324,7 @@ function clampItemToGrid(
   cols: number,
   maxRows: number
 ): GridLayoutItem {
-  let next = { ...item };
+  const next = { ...item };
   if (next.w > cols) next.w = cols;
   if (next.h > maxRows) next.h = maxRows;
   if (next.x + next.w > cols) next.x = Math.max(0, cols - next.w);
@@ -548,7 +548,7 @@ function deconflictFreeWidgets(
   cols: number,
   maxRows: number
 ): GridLayoutItem[] {
-  let result = items.map((i) => snapGridItem(i, cols, maxRows));
+  const result = items.map((i) => snapGridItem(i, cols, maxRows));
   const maxPasses = Math.max(4, result.length * 2);
 
   for (let pass = 0; pass < maxPasses; pass++) {
@@ -939,7 +939,7 @@ export function clampLayout(
   const placed: GridLayoutItem[] = [];
 
   for (const item of sorted) {
-    let next = { ...item };
+    const next = { ...item };
 
     if (next.w > cols) next.w = cols;
     if (next.h > maxRows) next.h = maxRows;

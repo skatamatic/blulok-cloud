@@ -1,8 +1,9 @@
-import { ActivityLog, ActivityLogFilters, ActivityLogModel } from '@/models/activity-log.model';
+import { ActivityLog, ActivityLogFilters, ActivityLogModel, ActivityLogWithContext, ActivityType } from '@/models/activity-log.model';
 import { UserRole } from '@/types/auth.types';
-import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
+import { AccessEventScopeService, AccessEventScope } from '@/services/access/access-event-scope.service';
 import { AuthService } from '@/services/auth.service';
 import { AccessLogFilters, AccessLogModel } from '@/models/access-log.model';
+import { MAX_ACCESS_HISTORY_EXPORT } from '@/constants/access-history.constants';
 
 export type QueryFilters = {
   facility_id?: string;
@@ -49,6 +50,8 @@ export class AccessHistoryReadService {
   private readonly scopeService = new AccessEventScopeService();
   private readonly legacyAccessLogModel = new AccessLogModel();
 
+  static readonly DASHBOARD_ACTIVITY_TYPES: ActivityType[] = ['access_attempt', 'lock', 'unlock'];
+
   public async query(
     userId: string,
     role: UserRole,
@@ -67,22 +70,11 @@ export class AccessHistoryReadService {
       return { logs: [], total: 0, limit: filters.limit || 50, offset: filters.offset || 0 };
     }
 
-    const activityFilters: ActivityLogFilters = {
-      activity_type: 'access_attempt',
-      facility_id: filters.facility_id,
-      unit_id: filters.unit_id,
-      device_id: filters.device_id,
-      actor_id: filters.user_id,
-      from_date: filters.date_from ? new Date(filters.date_from) : undefined,
-      to_date: filters.date_to ? new Date(filters.date_to) : undefined,
-      limit: Math.min(filters.limit || 50, 100),
-      offset: Math.max(filters.offset || 0, 0),
-      sortBy: filters.sort_by === 'created_at' ? 'created_at' : 'occurred_at',
-      sortOrder: filters.sort_order === 'asc' ? 'asc' : 'desc',
-      facility_ids: scope.allowedFacilityIds && scope.allowedFacilityIds.length > 0 ? scope.allowedFacilityIds : undefined,
-    };
+    const dashboardActivityTypes = AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES;
 
-    const rows = await this.activityLogModel.find(activityFilters);
+    const activityFilters = this.buildActivityFilters(filters, scope, dashboardActivityTypes);
+
+    const rows = await this.activityLogModel.findWithContext(activityFilters);
 
     const scopedRows = this.applyPostQueryScope(rows, scope);
     const filteredRows = scopedRows.filter((row) => this.matchesAccessFilters(row, filters));
@@ -158,12 +150,45 @@ export class AccessHistoryReadService {
       };
     }
 
+    const countFilters = this.buildActivityFilters(
+      { ...filters, limit: undefined, offset: undefined },
+      scope,
+      dashboardActivityTypes,
+    );
+    const total = await this.activityLogModel.count(countFilters);
+
     return {
       logs: mapped,
-      total: mapped.length,
+      total,
       limit: activityFilters.limit || 50,
       offset: activityFilters.offset || 0,
     };
+  }
+
+  /** Paginated export up to MAX_ACCESS_HISTORY_EXPORT rows. */
+  public async exportQuery(
+    userId: string,
+    role: UserRole,
+    facilityIds: string[] | undefined,
+    filters: QueryFilters,
+  ): Promise<AccessHistoryRecord[]> {
+    const exportLimit = Math.min(filters.limit || MAX_ACCESS_HISTORY_EXPORT, MAX_ACCESS_HISTORY_EXPORT);
+    const pageSize = 100;
+    const all: AccessHistoryRecord[] = [];
+    let offset = 0;
+
+    while (all.length < exportLimit) {
+      const batch = await this.query(userId, role, facilityIds, {
+        ...filters,
+        limit: Math.min(pageSize, exportLimit - all.length),
+        offset,
+      });
+      all.push(...batch.logs);
+      if (batch.logs.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    return all.slice(0, exportLimit);
   }
 
   public async findById(
@@ -173,16 +198,50 @@ export class AccessHistoryReadService {
     facilityIds: string[] | undefined,
   ): Promise<AccessHistoryRecord | null> {
     const log = await this.activityLogModel.findById(id);
-    if (!log || log.activity_type !== 'access_attempt') {
-      const legacy = await this.legacyAccessLogModel.findById(id);
-      return (legacy as unknown as AccessHistoryRecord) || null;
+    if (log && AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES.includes(log.activity_type)) {
+      const scope = await this.scopeService.buildScope(userId, role, facilityIds);
+      const postScoped = this.applyPostQueryScope([log], scope);
+      if (postScoped.length === 0) {
+        return null;
+      }
+      const withContext = await this.activityLogModel.findWithContext({
+        id: log.id,
+        limit: 1,
+      });
+      const enriched = withContext[0] ?? postScoped[0];
+      return this.mapToAccessHistoryRecord(enriched);
     }
-    const scope = await this.scopeService.buildScope(userId, role, facilityIds);
-    const postScoped = this.applyPostQueryScope([log], scope);
-    if (postScoped.length === 0) {
-      return null;
+
+    const legacy = await this.legacyAccessLogModel.findById(id);
+    return (legacy as unknown as AccessHistoryRecord) || null;
+  }
+
+  private buildActivityFilters(
+    filters: QueryFilters,
+    scope: AccessEventScope,
+    activityTypes: ActivityType[],
+  ): ActivityLogFilters {
+    const activityFilters: ActivityLogFilters = {
+      activity_types: activityTypes,
+      facility_id: filters.facility_id,
+      unit_id: filters.unit_id,
+      device_id: filters.device_id,
+      actor_id: filters.user_id ?? scope.ownUserId,
+      from_date: filters.date_from ? new Date(filters.date_from) : undefined,
+      to_date: filters.date_to ? new Date(filters.date_to) : undefined,
+      limit: Math.min(filters.limit || 50, 100),
+      max_limit: undefined,
+      offset: Math.max(filters.offset || 0, 0),
+      sortBy: filters.sort_by === 'created_at' ? 'created_at' : 'occurred_at',
+      sortOrder: filters.sort_order === 'asc' ? 'asc' : 'desc',
+      facility_ids: scope.allowedFacilityIds && scope.allowedFacilityIds.length > 0 ? scope.allowedFacilityIds : undefined,
+    };
+
+    if (scope.allowedUnitIds?.length) {
+      activityFilters.unit_ids = scope.allowedUnitIds;
     }
-    return this.mapToAccessHistoryRecord(postScoped[0]);
+
+    return activityFilters;
   }
 
   private applyPostQueryScope(rows: ActivityLog[], scope: { allowedUnitIds?: string[]; ownUserId?: string }): ActivityLog[] {
@@ -211,8 +270,8 @@ export class AccessHistoryReadService {
 
   private matchesAccessFilters(row: ActivityLog, filters: QueryFilters): boolean {
     const metadata = this.extractMetadata(row);
-    const action = this.extractAction(metadata);
-    const method = this.extractMethod(metadata);
+    const action = this.extractAction(row, metadata);
+    const method = this.extractMethod(row, metadata);
     const denialReason = this.extractDenialReason(metadata);
 
     if (filters.action && action !== filters.action) return false;
@@ -222,10 +281,10 @@ export class AccessHistoryReadService {
     return true;
   }
 
-  private mapToAccessHistoryRecord(row: ActivityLog): AccessHistoryRecord {
+  private mapToAccessHistoryRecord(row: ActivityLog | ActivityLogWithContext): AccessHistoryRecord {
     const metadata = this.extractMetadata(row);
-    const action = this.extractAction(metadata);
-    const method = this.extractMethod(metadata);
+    const action = this.extractAction(row, metadata);
+    const method = this.extractMethod(row, metadata);
     const denialReason = this.extractDenialReason(metadata);
     const reasonMessage = typeof row.result_message === 'string' ? row.result_message : undefined;
 
@@ -238,6 +297,11 @@ export class AccessHistoryReadService {
     const deviceType = this.inferDeviceType(metadata);
     const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : new Date(row.created_at).toISOString();
     const updatedAt = row.updated_at instanceof Date ? row.updated_at.toISOString() : new Date(row.updated_at).toISOString();
+
+    const ctx = row as ActivityLogWithContext;
+    const deviceName =
+      ctx.access_control_device_name ||
+      (ctx.device_serial ? `Lock ${ctx.device_serial}` : undefined);
 
     return {
       id: row.id,
@@ -255,11 +319,11 @@ export class AccessHistoryReadService {
       occurred_at: row.occurred_at.toISOString(),
       created_at: createdAt,
       updated_at: updatedAt,
-      facility_name: undefined,
-      unit_number: undefined,
+      facility_name: ctx.facility_name,
+      unit_number: ctx.unit_number,
       user_name: userName,
       user_email: undefined,
-      device_name: undefined,
+      device_name: deviceName,
     };
   }
 
@@ -267,12 +331,17 @@ export class AccessHistoryReadService {
     return row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
   }
 
-  private extractAction(metadata: Record<string, unknown>): string {
+  private extractAction(row: ActivityLog, metadata: Record<string, unknown>): string {
+    if (row.activity_type === 'lock') return 'lock';
+    if (row.activity_type === 'unlock') return 'unlock';
     const action = metadata.action;
     return typeof action === 'string' ? action : 'access_granted';
   }
 
-  private extractMethod(metadata: Record<string, unknown>): string {
+  private extractMethod(row: ActivityLog, metadata: Record<string, unknown>): string {
+    if (row.activity_type === 'lock' || row.activity_type === 'unlock') {
+      return 'device';
+    }
     const method = metadata.method;
     return typeof method === 'string' ? method : 'app';
   }

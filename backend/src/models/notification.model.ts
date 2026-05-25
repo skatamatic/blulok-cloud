@@ -16,21 +16,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
+import { InAppNotificationType } from '@/constants/in-app-notification.constants';
 
 /**
  * Notification types supported by the system
  */
-export type NotificationType =
-  | 'access_granted'
-  | 'access_denied'
-  | 'device_registered'
-  | 'password_reset'
-  | 'unit_assigned'
-  | 'unit_unassigned'
-  | 'system_alert'
-  | 'maintenance_alert'
-  | 'security_alert'
-  | 'general';
+export type NotificationType = InAppNotificationType;
 
 /**
  * Priority levels for notifications
@@ -84,6 +75,8 @@ export interface NotificationFilters {
   priority?: NotificationPriority;
   is_read?: boolean;
   facility_id?: string;
+  /** When set (and facility_id omitted), match any of these facilities */
+  facility_ids?: string[];
   reference_type?: string;
   reference_id?: string;
   include_deleted?: boolean;
@@ -177,6 +170,8 @@ export class NotificationModel {
 
     if (filters.facility_id) {
       query = query.where('facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('facility_id', filters.facility_ids);
     }
 
     if (filters.reference_type) {
@@ -200,6 +195,29 @@ export class NotificationModel {
     }
 
     return query;
+  }
+
+  /**
+   * Check whether a duplicate notification exists within a time window.
+   * Uses SQL time filter to avoid race-prone in-memory filtering.
+   */
+  async hasRecentDuplicate(
+    userId: string,
+    notificationType: NotificationType,
+    referenceId: string,
+    since: Date,
+  ): Promise<boolean> {
+    const knex = this.db.connection;
+    const row = await knex('notifications')
+      .where({
+        user_id: userId,
+        notification_type: notificationType,
+        reference_id: referenceId,
+        is_deleted: false,
+      })
+      .where('created_at', '>=', since)
+      .first('id');
+    return !!row;
   }
 
   /**
@@ -254,11 +272,12 @@ export class NotificationModel {
   /**
    * Get unread notification count for a user
    */
-  async getUnreadCount(userId: string, facilityId?: string): Promise<number> {
+  async getUnreadCount(userId: string, scope?: { facilityId?: string; facilityIds?: string[] }): Promise<number> {
     return this.count({
       user_id: userId,
       is_read: false,
-      facility_id: facilityId,
+      facility_id: scope?.facilityId,
+      facility_ids: scope?.facilityId ? undefined : scope?.facilityIds,
     });
   }
 
@@ -319,7 +338,7 @@ export class NotificationModel {
   /**
    * Mark all notifications as read for a user
    */
-  async markAllAsRead(userId: string, facilityId?: string): Promise<number> {
+  async markAllAsRead(userId: string, scope?: { facilityId?: string; facilityIds?: string[] }): Promise<number> {
     const knex = this.db.connection;
     
     let query = knex('notifications')
@@ -327,8 +346,10 @@ export class NotificationModel {
       .where('is_read', false)
       .where('is_deleted', false);
 
-    if (facilityId) {
-      query = query.where('facility_id', facilityId);
+    if (scope?.facilityId) {
+      query = query.where('facility_id', scope.facilityId);
+    } else if (scope?.facilityIds && scope.facilityIds.length > 0) {
+      query = query.whereIn('facility_id', scope.facilityIds);
     }
 
     const result = await query.update({

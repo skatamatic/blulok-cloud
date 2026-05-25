@@ -450,16 +450,34 @@ describe('NotificationService', () => {
       const result = await service.markAllAsRead('user-1', UserRole.TENANT, 'user-1');
 
       expect(result).toBe(10);
-      expect(mockNotificationModel.markAllAsRead).toHaveBeenCalledWith('user-1', undefined);
-      expect(mockEventService.emitBatchRead).toHaveBeenCalledWith('user-1', [], undefined);
+      expect(mockNotificationModel.markAllAsRead).toHaveBeenCalledWith('user-1', {
+        facilityId: undefined,
+        facilityIds: undefined,
+      });
+      expect(mockEventService.emitBatchRead).toHaveBeenCalledWith('user-1', [], {
+        facilityId: undefined,
+        facilityIds: undefined,
+      });
     });
 
     it('should mark all notifications as read with facility filter', async () => {
-      const result = await service.markAllAsRead('user-1', UserRole.TENANT, 'user-1', 'facility-1');
+      const result = await service.markAllAsRead(
+        'user-1',
+        UserRole.FACILITY_ADMIN,
+        'user-1',
+        { facilityId: 'facility-1' },
+        ['facility-1'],
+      );
 
       expect(result).toBe(10);
-      expect(mockNotificationModel.markAllAsRead).toHaveBeenCalledWith('user-1', 'facility-1');
-      expect(mockEventService.emitBatchRead).toHaveBeenCalledWith('user-1', [], 'facility-1');
+      expect(mockNotificationModel.markAllAsRead).toHaveBeenCalledWith('user-1', {
+        facilityId: 'facility-1',
+        facilityIds: undefined,
+      });
+      expect(mockEventService.emitBatchRead).toHaveBeenCalledWith('user-1', [], {
+        facilityId: 'facility-1',
+        facilityIds: undefined,
+      });
     });
 
     it('should throw error when non-admin tries to mark other user notifications', async () => {
@@ -472,7 +490,10 @@ describe('NotificationService', () => {
       const result = await service.markAllAsRead('admin-1', UserRole.ADMIN, 'user-1');
 
       expect(result).toBe(10);
-      expect(mockNotificationModel.markAllAsRead).toHaveBeenCalledWith('user-1', undefined);
+      expect(mockNotificationModel.markAllAsRead).toHaveBeenCalledWith('user-1', {
+        facilityId: undefined,
+        facilityIds: undefined,
+      });
     });
   });
 
@@ -528,10 +549,12 @@ describe('NotificationService', () => {
     });
 
     it('should return unread count scoped to facility', async () => {
-      const result = await service.getUnreadCount('user-1', 'facility-1');
+      const result = await service.getUnreadCount('user-1', { facilityId: 'facility-1' });
 
       expect(result).toBe(5);
-      expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1', 'facility-1');
+      expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1', {
+        facilityId: 'facility-1',
+      });
     });
   });
 

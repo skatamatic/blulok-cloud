@@ -33,24 +33,13 @@ import { NotificationService } from '@/services/notification.service';
 import { AuthService } from '@/services/auth.service';
 import { asyncHandler, AccessDeniedError, NotFoundError } from '@/middleware/error.middleware';
 import { validate } from '@/middleware/validator.middleware';
-import { logger } from '@/utils/logger';
+import { IN_APP_NOTIFICATION_TYPES } from '@/constants/in-app-notification.constants';
 
 const router = Router();
 
 // Validation schemas
 const listQuerySchema = Joi.object({
-  type: Joi.string().valid(
-    'access_granted',
-    'access_denied',
-    'device_registered',
-    'password_reset',
-    'unit_assigned',
-    'unit_unassigned',
-    'system_alert',
-    'maintenance_alert',
-    'security_alert',
-    'general'
-  ).optional(),
+  type: Joi.string().valid(...IN_APP_NOTIFICATION_TYPES).optional(),
   priority: Joi.string().valid('low', 'normal', 'high', 'urgent').optional(),
   isRead: Joi.boolean().optional(),
   facilityId: Joi.string().uuid().optional(),
@@ -101,9 +90,9 @@ router.get(
       {
         type: type as any,
         priority: priority as any,
-        // Joi coerces query string 'true'/'false' to boolean; handle both coerced and raw forms
         isRead: typeof isRead === 'boolean' ? isRead : isRead === 'true' ? true : isRead === 'false' ? false : undefined,
-        facilityId: facilityId as string,
+        facilityId: facilityId as string | undefined,
+        facilityIds: !facilityId && !AuthService.canAccessAllFacilities(user.role) ? user.facilityIds : undefined,
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
       }
@@ -132,7 +121,6 @@ router.get(
     const user = req.user!;
     const facilityId = req.query.facilityId as string | undefined;
 
-    // Validate facility access if facilityId is provided
     if (facilityId && !AuthService.canAccessAllFacilities(user.role)) {
       if (!user.facilityIds?.includes(facilityId)) {
         throw new AccessDeniedError('Access denied to this facility');
@@ -140,7 +128,12 @@ router.get(
     }
 
     const service = NotificationService.getInstance();
-    const count = await service.getUnreadCount(user.userId, facilityId);
+    const scope = facilityId
+      ? { facilityId }
+      : !AuthService.canAccessAllFacilities(user.role) && user.facilityIds?.length
+        ? { facilityIds: user.facilityIds }
+        : undefined;
+    const count = await service.getUnreadCount(user.userId, scope);
 
     res.json({
       success: true,
@@ -235,8 +228,25 @@ router.post(
     const user = req.user!;
     const { facilityId } = req.body;
 
+    if (facilityId && !AuthService.canAccessAllFacilities(user.role)) {
+      if (!user.facilityIds?.includes(facilityId)) {
+        throw new AccessDeniedError('Access denied to this facility');
+      }
+    }
+
     const service = NotificationService.getInstance();
-    const count = await service.markAllAsRead(user.userId, user.role, user.userId, facilityId);
+    const scope = facilityId
+      ? { facilityId }
+      : !AuthService.canAccessAllFacilities(user.role) && user.facilityIds?.length
+        ? { facilityIds: user.facilityIds }
+        : undefined;
+    const count = await service.markAllAsRead(
+      user.userId,
+      user.role,
+      user.userId,
+      scope,
+      user.facilityIds,
+    );
 
     res.json({
       success: true,

@@ -147,6 +147,23 @@ export const errorHandler = (
   // Log error with request context for debugging
   logger.error(`${req.method} ${req.url} - ${statusCode} - ${message} - ${req.ip}`);
 
+  if (statusCode >= 500 && error.isOperational !== true) {
+    void (async (): Promise<void> => {
+      try {
+        const { InAppNotificationDispatcher } = await import(
+          '@/services/notifications/in-app-notification-dispatcher.service'
+        );
+        await InAppNotificationDispatcher.getInstance().notifyBackendError(
+          'Critical Backend Error',
+          `${req.method} ${req.url}: ${message}`,
+          { path: req.url, method: req.method },
+        );
+      } catch (notifyErr) {
+        logger.error('Failed to dispatch backend_error notification:', notifyErr);
+      }
+    })();
+  }
+
   // Send structured error response
   const errorResponse = {
     success: false,

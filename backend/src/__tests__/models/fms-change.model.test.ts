@@ -42,7 +42,7 @@ describe('FMSChangeModel', () => {
       }
       return {
         insert: jest.fn().mockImplementation(async (rows: unknown[]) => {
-          capturedInsertBatches.push(rows as unknown[]);
+          capturedInsertBatches.push(rows);
           return [1];
         }),
         where: jest.fn().mockReturnThis(),

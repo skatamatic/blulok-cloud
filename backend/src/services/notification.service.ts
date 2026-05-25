@@ -61,6 +61,8 @@ export interface QueryNotificationsOptions {
   priority?: NotificationPriority;
   isRead?: boolean;
   facilityId?: string;
+  /** All-facilities mode: restrict to these facility IDs */
+  facilityIds?: string[];
   limit?: number;
   offset?: number;
 }
@@ -149,18 +151,29 @@ export class NotificationService {
       sortOrder: 'desc',
     };
 
-    // Apply facility filter if provided and user has access
-    if (options.facilityId) {
-      if (!this.canAccessFacility(requestingUserRole, options.facilityId, requestingUserFacilityIds)) {
-        throw new AccessDeniedError('Access denied to this facility');
-      }
-      filters.facility_id = options.facilityId;
+    // Apply facility scope
+    const facilityScope = this.resolveFacilityScope(
+      requestingUserRole,
+      requestingUserFacilityIds,
+      options.facilityId,
+      options.facilityIds,
+    );
+    if (facilityScope.facilityId) {
+      filters.facility_id = facilityScope.facilityId;
+    } else if (facilityScope.facilityIds && facilityScope.facilityIds.length > 0) {
+      filters.facility_ids = facilityScope.facilityIds;
     }
+
+    const unreadScope = facilityScope.facilityId
+      ? { facilityId: facilityScope.facilityId }
+      : facilityScope.facilityIds?.length
+        ? { facilityIds: facilityScope.facilityIds }
+        : undefined;
 
     const [notifications, total, unreadCount] = await Promise.all([
       this.notificationModel.find(filters),
       this.notificationModel.count(filters),
-      this.notificationModel.getUnreadCount(targetUserId, options.facilityId),
+      this.notificationModel.getUnreadCount(targetUserId, unreadScope),
     ]);
 
     return {
@@ -272,19 +285,43 @@ export class NotificationService {
     requestingUserId: string,
     requestingUserRole: UserRole,
     targetUserId: string,
-    facilityId?: string
+    scope?: { facilityId?: string; facilityIds?: string[] },
+    requestingUserFacilityIds?: string[],
   ): Promise<number> {
     // Users can only mark their own notifications unless they're admins
     if (requestingUserId !== targetUserId && !AuthService.isAdmin(requestingUserRole)) {
       throw new AccessDeniedError('Cannot modify other user notifications');
     }
 
-    const count = await this.notificationModel.markAllAsRead(targetUserId, facilityId);
+    const facilityScope = this.resolveFacilityScope(
+      requestingUserRole,
+      requestingUserFacilityIds,
+      scope?.facilityId,
+      scope?.facilityIds,
+    );
+
+    const count = await this.notificationModel.markAllAsRead(targetUserId, {
+      facilityId: facilityScope.facilityId,
+      facilityIds: facilityScope.facilityIds,
+    });
 
     // Emit batch event
-    this.eventService.emitBatchRead(targetUserId, [], facilityId);
+    this.eventService.emitBatchRead(targetUserId, [], {
+      facilityId: facilityScope.facilityId,
+      facilityIds: facilityScope.facilityIds,
+    });
 
     return count;
+  }
+
+  /**
+   * Get unread count for a user with optional facility scope
+   */
+  async getUnreadCount(
+    userId: string,
+    scope?: { facilityId?: string; facilityIds?: string[] },
+  ): Promise<number> {
+    return this.notificationModel.getUnreadCount(userId, scope);
   }
 
   /**
@@ -320,13 +357,6 @@ export class NotificationService {
     }
 
     return deleted;
-  }
-
-  /**
-   * Get unread count for a user
-   */
-  async getUnreadCount(userId: string, facilityId?: string): Promise<number> {
-    return this.notificationModel.getUnreadCount(userId, facilityId);
   }
 
   // ============================================
@@ -493,6 +523,38 @@ export class NotificationService {
       return true;
     }
     return userFacilityIds?.includes(facilityId) || false;
+  }
+
+  /**
+   * Resolve REST/WS facility scope from explicit filter or user's assigned facilities.
+   */
+  private resolveFacilityScope(
+    userRole: UserRole,
+    userFacilityIds: string[] | undefined,
+    facilityId?: string,
+    facilityIds?: string[],
+  ): { facilityId?: string; facilityIds?: string[] } {
+    if (facilityId) {
+      if (!this.canAccessFacility(userRole, facilityId, userFacilityIds)) {
+        throw new AccessDeniedError('Access denied to this facility');
+      }
+      return { facilityId };
+    }
+
+    if (facilityIds && facilityIds.length > 0) {
+      if (!AuthService.canAccessAllFacilities(userRole)) {
+        const allowed = userFacilityIds ?? [];
+        const filtered = facilityIds.filter((id) => allowed.includes(id));
+        return { facilityIds: filtered };
+      }
+      return { facilityIds };
+    }
+
+    if (!AuthService.canAccessAllFacilities(userRole) && userFacilityIds && userFacilityIds.length > 0) {
+      return { facilityIds: userFacilityIds };
+    }
+
+    return {};
   }
 
   /**

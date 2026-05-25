@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../services/database.service';
 import { DeviceEventService } from '../services/device-event.service';
+import { logger } from '../utils/logger';
 
 /**
  * Device Models
@@ -924,14 +925,14 @@ export class DeviceModel {
     // Get current device state before update for event emission
     let device = await knex('blulok_devices')
       .where('id', deviceId)
-      .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id')
+      .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id', 'battery_level', 'device_serial')
       .first();
 
     if (!device) {
       // Try by device_serial
       device = await knex('blulok_devices')
         .where('device_serial', deviceId)
-        .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id')
+        .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id', 'battery_level', 'device_serial')
         .first();
     }
 
@@ -941,6 +942,7 @@ export class DeviceModel {
 
     const oldLockStatus = device.lock_status;
     const oldDeviceStatus = device.device_status;
+    const oldBatteryLevel = device.battery_level as number | null | undefined;
 
     // Apply update
     await knex('blulok_devices')
@@ -971,6 +973,16 @@ export class DeviceModel {
         gatewayId: device.gateway_id
       });
       statusChanged = true;
+    }
+
+    if (updates.battery_level !== undefined) {
+      void this.maybeNotifyLowBattery(
+        device.id,
+        device.unit_id,
+        device.gateway_id,
+        oldBatteryLevel,
+        updates.battery_level,
+      );
     }
 
     // If no status change but telemetry fields were updated, emit telemetry event
@@ -1259,5 +1271,45 @@ export class DeviceModel {
 
     const result = await query.count('* as count').first();
     return parseInt(result?.count as string) || 0;
+  }
+
+  private async maybeNotifyLowBattery(
+    deviceId: string,
+    unitId: string | null | undefined,
+    gatewayId: string,
+    previousLevel: number | null | undefined,
+    nextLevel: number,
+  ): Promise<void> {
+    const { LOW_BATTERY_THRESHOLD_PERCENT } = await import('@/constants/in-app-notification.constants');
+    const crossedThreshold =
+      nextLevel <= LOW_BATTERY_THRESHOLD_PERCENT &&
+      (previousLevel === null || previousLevel === undefined || previousLevel > LOW_BATTERY_THRESHOLD_PERCENT);
+    if (!crossedThreshold) return;
+
+    try {
+      const gateway = await this.findGatewayById(gatewayId);
+      if (!gateway?.facility_id) return;
+
+      const knex = this.db.connection;
+      const deviceRow = await knex('blulok_devices').where('id', deviceId).first('device_serial');
+      const unitRow = unitId
+        ? await knex('units').where('id', unitId).first('unit_number')
+        : null;
+      const label = unitRow?.unit_number
+        ? `Unit ${unitRow.unit_number}`
+        : deviceRow?.device_serial
+          ? `Device ${deviceRow.device_serial}`
+          : 'Device';
+
+      const { InAppNotificationDispatcher } = await import('@/services/notifications/in-app-notification-dispatcher.service');
+      await InAppNotificationDispatcher.getInstance().notifyDeviceLowBattery(
+        gateway.facility_id,
+        deviceId,
+        label,
+        nextLevel,
+      );
+    } catch (err) {
+      logger.warn('Low battery notification failed:', err);
+    }
   }
 }

@@ -9,7 +9,6 @@ import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   ArrowPathIcon,
-  EyeIcon,
   XCircleIcon
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
@@ -206,11 +205,16 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
 
   useEffect(() => {
     if (!isConnected) return;
-    const subscriptionId = subscribe('activity', () => {
-      void loadActivities();
-    });
+    const subscriptionId = subscribe(
+      'activity',
+      () => {
+        void loadActivities();
+      },
+      undefined,
+      facilityFilter ? { facility_id: facilityFilter } : undefined,
+    );
     return () => unsubscribe(subscriptionId);
-  }, [isConnected, subscribe, unsubscribe, loadActivities]);
+  }, [isConnected, subscribe, unsubscribe, loadActivities, facilityFilter]);
 
   const layout = getWidgetLayoutProfile(size);
 
@@ -413,11 +417,6 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
                   </div>
                 </div>
 
-                {(isWideWidgetSize(size) || layout.isTall) && (
-                  <button className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-all">
-                    <EyeIcon className="h-4 w-4" />
-                  </button>
-                )}
               </motion.div>
             ))
           ) : (

@@ -497,11 +497,19 @@ The following integrations are wired up automatically — no manual calls needed
 
 | Trigger | Service | What Happens |
 |---------|---------|--------------|
-| Lock/unlock via gateway state update | `DeviceEventService` → `ActivityService.logLockEvent()` | Activity log created for lock/unlock events |
+| Lock/unlock via gateway state update | `DeviceEventService` → `ActivityService.logLockEvent()` | Activity log created for lock/unlock events (shown in Activity Monitor) |
+| Gateway access events (BluLok + access control) | `AccessEventIngestionService` → `activity_logs` | `access_attempt` rows with `metadata.device_type` |
 | Device online/offline change | `DeviceEventService` → `ActivityService.logStatusChange()` | Activity log created for status changes |
-| Tenant assigned to unit | `UnitsService.assignTenant()` → `NotificationService.notifyUnitAssigned()` + `ActivityService.logAssignmentChange()` | Notification sent to tenant; activity log created |
-| Tenant unassigned from unit | `UnitsService.unassignTenant()` → `NotificationService.notifyUnitUnassigned()` + `ActivityService.logAssignmentChange()` | Notification sent to tenant; activity log created |
-| Key shared with user | `KeySharingService.createShare()` → `NotificationService.notifyAccessGranted()` | Notification sent to recipient |
+| Tenant assigned to unit | `UnitsService` → `NotificationService.notifyUnitAssigned()` | In-app notification to tenant |
+| Tenant unassigned from unit | `UnitsService` → `NotificationService.notifyUnitUnassigned()` | In-app notification to tenant |
+| Key shared with user | `KeySharingService` → `NotificationService.notifyAccessGranted()` | In-app notification to recipient |
+| FMS sync complete/failed | `FMSService` → `InAppNotificationDispatcher` | Facility operators notified (excludes triggering user) |
+| Gateway offline/online | `GatewayEventsService` → `InAppNotificationDispatcher` | Facility operators notified |
+| Device low battery (≤20%) | `DeviceModel` → `InAppNotificationDispatcher` | Facility operators notified (deduped 24h) |
+
+**Facility scoping:** REST and WebSocket notification subscriptions filter by `facilityId` (single facility) or the user's assigned `facilityIds` (all-facilities mode). Histogram stats read from `activity_logs` via `ActivityLogModel.getActivityStats()` (not legacy `access_logs`).
+
+**Extensibility:** Add new operational alerts in `InAppNotificationDispatcher` (`backend/src/services/notifications/in-app-notification-dispatcher.service.ts`) and register types in `IN_APP_NOTIFICATION_TYPES`.
 
 **Important notes:**
 - All side-effect calls are fire-and-forget — they never block the primary operation

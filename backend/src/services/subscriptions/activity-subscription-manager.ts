@@ -8,6 +8,9 @@ import { AuthService } from '@/services/auth.service';
 import { UnitModel } from '@/models/unit.model';
 import { DeviceModel } from '@/models/device.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
+import { AccessHistoryReadService } from '@/services/access/access-history-read.service';
+
+const LIVE_ACTIVITY_TYPES = AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES;
 
 /**
  * Activity Subscription Manager
@@ -229,7 +232,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       // Build query filters
       const queryFilters: any = {
         limit: 20,
-        activity_type: 'access_attempt',
+        activity_types: LIVE_ACTIVITY_TYPES,
         sortBy: 'occurred_at',
         sortOrder: 'desc',
       };
@@ -293,7 +296,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       const filters = this.subscriptionFilters.get(subscriptionId);
       
       if (!client) continue;
-      if (event.activityType !== 'access_attempt') continue;
+      if (!LIVE_ACTIVITY_TYPES.includes(event.activityType as typeof LIVE_ACTIVITY_TYPES[number])) continue;
 
       // Check if this subscription should receive this activity
       // 1. If subscribed to specific facility, skip if event doesn't match

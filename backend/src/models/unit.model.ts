@@ -739,7 +739,7 @@ export class UnitModel {
         return false;
       }
 
-      if (!Boolean(device.supports_remote_lock)) {
+      if (!device.supports_remote_lock) {
         logger.warn('lockUnit rejected: supports_remote_lock is false', { unitId, deviceId: device.id });
         return false;
       }

@@ -41,13 +41,13 @@ const createMockDbConnection = (userDeviceRow: any, lockRows: any[]) => {
       return qb;
     }
     if (table === 'blulok_devices' || table.startsWith('blulok_devices')) {
-      (qb as any)._joinTarget = '';
+      (qb)._joinTarget = '';
       qb.join = jest.fn().mockImplementation((target: string) => {
-        (qb as any)._joinTarget = target;
+        (qb)._joinTarget = target;
         return qb;
       });
       qb.then = (onFulfilled?: (rows: any[]) => any) => {
-        const rows = String((qb as any)._joinTarget || '').includes('key_sharing') ? [] : lockRows;
+        const rows = String((qb)._joinTarget || '').includes('key_sharing') ? [] : lockRows;
         if (onFulfilled) onFulfilled(rows);
         return Promise.resolve(rows);
       };

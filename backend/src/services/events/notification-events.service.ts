@@ -138,13 +138,18 @@ export class NotificationEventsService {
   /**
    * Emit batch read event (multiple notifications marked as read)
    */
-  public emitBatchRead(userId: string, notificationIds: string[], facilityId?: string): void {
+  public emitBatchRead(
+    userId: string,
+    notificationIds: string[],
+    scope?: { facilityId?: string; facilityIds?: string[] },
+  ): void {
     logger.info(`📬 Batch notifications read: ${notificationIds.length} for user ${userId}`);
 
     this.eventEmitter.emit('notification:batch:read', {
       userId,
       notificationIds,
-      facilityId,
+      facilityId: scope?.facilityId,
+      facilityIds: scope?.facilityIds,
       timestamp: new Date(),
     });
   }
@@ -193,7 +198,7 @@ export class NotificationEventsService {
    * Subscribe to batch read events
    * @returns Cleanup function to unsubscribe
    */
-  public onBatchRead(handler: (event: { userId: string; notificationIds: string[]; facilityId?: string; timestamp: Date }) => void | Promise<void>): () => void {
+  public onBatchRead(handler: (event: { userId: string; notificationIds: string[]; facilityId?: string; facilityIds?: string[]; timestamp: Date }) => void | Promise<void>): () => void {
     const wrappedHandler = this.wrapHandler(handler);
     this.eventEmitter.on('notification:batch:read', wrappedHandler);
     return () => this.eventEmitter.off('notification:batch:read', wrappedHandler);

@@ -466,6 +466,8 @@ export class FMSService {
         message: 'Sync complete',
       });
 
+      void this.notifyFmsSyncOutcome(facilityId, syncLog.id, changes.length, userId, false);
+
       return result;
     } catch (error) {
       logger.error('FMS sync failed:', error);
@@ -489,10 +491,62 @@ export class FMSService {
         message: 'Sync failed',
       });
 
+      void this.notifyFmsSyncOutcome(
+        facilityId,
+        syncLog.id,
+        0,
+        userId,
+        true,
+        error instanceof Error ? error.message : 'Unknown error',
+      );
+
       throw error;
     } finally {
       // Clean up active sync tracking
       this.activeSyncs.delete(facilityId);
+    }
+  }
+
+  /**
+   * Fire-and-forget in-app notifications for FMS sync outcomes.
+   */
+  private async notifyFmsSyncOutcome(
+    facilityId: string,
+    syncLogId: string,
+    changesDetected: number,
+    triggeredByUserId: string | undefined,
+    failed: boolean,
+    errorMessage?: string,
+  ): Promise<void> {
+    try {
+      const { InAppNotificationDispatcher } = await import('@/services/notifications/in-app-notification-dispatcher.service');
+      const { DatabaseService } = await import('@/services/database.service');
+      const row = await DatabaseService.getInstance()
+        .connection('facilities')
+        .where('id', facilityId)
+        .first('name');
+      const facilityName = (row?.name as string | undefined) || 'Facility';
+      const dispatcher = InAppNotificationDispatcher.getInstance();
+
+      if (failed) {
+        await dispatcher.notifyFmsSyncFailed(
+          facilityId,
+          facilityName,
+          syncLogId,
+          errorMessage || 'Sync failed',
+          triggeredByUserId,
+        );
+      } else {
+        await dispatcher.notifyFmsSyncComplete(
+          facilityId,
+          facilityName,
+          syncLogId,
+          changesDetected,
+          triggeredByUserId,
+        );
+      }
+    } catch (err) {
+      logger.error('[FMS] Failed to send sync notification:', err);
     }
   }
 

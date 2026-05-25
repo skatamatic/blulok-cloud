@@ -1,13 +1,12 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
-import { 
-  CalendarIcon, 
-  BuildingStorefrontIcon,
+import {
+  CalendarIcon,
   ChevronDownIcon,
   ArrowPathIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { apiService } from '@/services/api.service';
@@ -31,18 +30,33 @@ interface HistogramWidgetProps {
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
   readOnly?: boolean;
-  /** Single facility from global selector; when set, stats are limited to this facility */
   facilityFilter?: string;
 }
 
 type TimePeriod = 'day' | 'week' | 'month' | 'year';
 
+const MAX_HISTOGRAM_FACILITIES = 50;
+const MAX_LEGEND_FACILITIES = 8;
+
 const timePeriodLabels: Record<TimePeriod, string> = {
   day: 'Last 24 Hours',
-  week: 'Last Week', 
+  week: 'Last Week',
   month: 'Last Month',
-  year: 'Last Year'
+  year: 'Last Year',
 };
+
+const facilityColors = [
+  'bg-blue-500',
+  'bg-green-500',
+  'bg-purple-500',
+  'bg-orange-500',
+  'bg-pink-500',
+  'bg-cyan-500',
+  'bg-amber-500',
+  'bg-rose-500',
+  'bg-indigo-500',
+  'bg-teal-500',
+];
 
 interface ActivityStatsResponse {
   success: boolean;
@@ -68,79 +82,67 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   facilityFilter,
 }) => {
   const { authState } = useAuth();
-  const { size, handleSizeChange } = useWidgetSizeState(
-    currentSize,
-    initialSize,
-    onSizeChange
-  );
+  const { size, handleSizeChange } = useWidgetSizeState(currentSize, initialSize, onSizeChange);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('month');
-  const [userFacilities, setUserFacilities] = useState<{ id: string; name: string }[]>([]);
-  const [selectedFacilities, setSelectedFacilities] = useState<string[]>([]);
-  const [showFacilityDropdown, setShowFacilityDropdown] = useState(false);
   const [showTimePeriodDropdown, setShowTimePeriodDropdown] = useState(false);
   const [histogramData, setHistogramData] = useState<HistogramData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const facilitiesInitializedRef = useRef(false);
-
-  // Load user facilities from auth state
-  useEffect(() => {
-    // Only initialize once - don't re-run if already initialized
-    if (facilitiesInitializedRef.current) return;
-    
-    if (authState.user?.facilityIds && authState.user.facilityIds.length > 0) {
-      const facilityNames = authState.user.facilityNames || [];
-      const facilities = authState.user.facilityIds.map((id: string, index: number) => ({
-        id,
-        name: facilityNames[index] || id
-      }));
-      const newSelected = facilities.slice(0, 3).map((f: { id: string; name: string }) => f.id);
-      // Only set if different to avoid unnecessary re-renders
-      setUserFacilities(prev => {
-        const prevIds = prev.map((f: { id: string; name: string }) => f.id).sort().join(',');
-        const newIds = facilities.map((f: { id: string; name: string }) => f.id).sort().join(',');
-        return prevIds === newIds ? prev : facilities;
-      });
-      setSelectedFacilities(prev => {
-        const prevStr = prev.sort().join(',');
-        const newStr = newSelected.sort().join(',');
-        return prevStr === newStr ? prev : newSelected;
-      });
-      facilitiesInitializedRef.current = true;
-    } else {
-      // For admins without specific facilities, we'll fetch from API data
-      setUserFacilities([]);
-      setSelectedFacilities([]);
-      facilitiesInitializedRef.current = false;
-    }
-  }, [authState.user]);
 
   const facilityIdsForApi = useMemo(() => {
+    if (facilityFilter) return [facilityFilter];
+    const ids = authState.user?.facilityIds?.slice(0, MAX_HISTOGRAM_FACILITIES);
+    return ids?.length ? ids : undefined;
+  }, [facilityFilter, authState.user?.facilityIds]);
+
+  const chartFacilities = useMemo(() => {
+    const fromAuth =
+      authState.user?.facilityIds?.map((fid, index) => ({
+        id: fid,
+        name: authState.user?.facilityNames?.[index] || fid,
+      })) ?? [];
+    const fromData = Array.from(
+      new Map(histogramData.map((d) => [d.facilityId, { id: d.facilityId, name: d.facilityName }])).values()
+    );
+
     if (facilityFilter) {
-      return [facilityFilter];
+      const match =
+        fromAuth.find((f) => f.id === facilityFilter) ??
+        fromData.find((f) => f.id === facilityFilter);
+      return match ? [match] : fromData.filter((f) => f.id === facilityFilter);
     }
-    return selectedFacilities.length > 0 ? selectedFacilities : undefined;
-  }, [facilityFilter, selectedFacilities]);
+    if (fromAuth.length > 0) return fromAuth.slice(0, MAX_HISTOGRAM_FACILITIES);
+    return fromData.slice(0, MAX_HISTOGRAM_FACILITIES);
+  }, [authState.user?.facilityIds, authState.user?.facilityNames, histogramData, facilityFilter]);
+
+  const legendFacilities = useMemo(() => chartFacilities.slice(0, MAX_LEGEND_FACILITIES), [chartFacilities]);
+  const legendOverflow = Math.max(0, chartFacilities.length - MAX_LEGEND_FACILITIES);
+
+  const facilityColorIndex = useCallback(
+    (facilityId: string) => {
+      const idx = chartFacilities.findIndex((f) => f.id === facilityId);
+      return idx >= 0 ? idx : 0;
+    },
+    [chartFacilities]
+  );
 
   const loadActivityStats = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-
     try {
       const response: ActivityStatsResponse = await apiService.getActivityStats({
         period: timePeriod,
         facility_ids: facilityIdsForApi,
       });
-
       if (response.success && response.data) {
-        // Transform API response to histogram data format
-        const transformed = response.data.map(item => ({
-          date: item.date,
-          facilityId: item.facility_id,
-          facilityName: item.facility_name,
-          activityCount: item.activity_count
-        }));
-        setHistogramData(transformed);
+        setHistogramData(
+          response.data.map((item) => ({
+            date: item.date,
+            facilityId: item.facility_id,
+            facilityName: item.facility_name,
+            activityCount: item.activity_count,
+          }))
+        );
       } else {
         setHistogramData([]);
       }
@@ -157,77 +159,28 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     loadActivityStats();
   }, [loadActivityStats]);
 
-  // Extract facilities from data if none are set (for admins viewing all facilities)
-  // Only do this once on initial load when we have no facilities from auth
-  useEffect(() => {
-    if (!facilitiesInitializedRef.current && histogramData.length > 0 && userFacilities.length === 0 && selectedFacilities.length === 0) {
-      const uniqueFacilities = Array.from(
-        new Map(
-          histogramData.map(d => [d.facilityId, { id: d.facilityId, name: d.facilityName }])
-        ).values()
-      );
-      if (uniqueFacilities.length > 0) {
-        const newSelected = uniqueFacilities.slice(0, 3).map((f: { id: string; name: string }) => f.id);
-        // Only set if different to avoid loops
-        setUserFacilities(uniqueFacilities);
-        setSelectedFacilities(prev => {
-          const prevStr = [...prev].sort().join(',');
-          const newStr = [...newSelected].sort().join(',');
-          return prevStr === newStr ? prev : newSelected;
-        });
-        facilitiesInitializedRef.current = true;
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [histogramData]);
-
-  // Group data by date for stacked bars
   const groupedData = useMemo(() => {
     const grouped: Record<string, HistogramData[]> = {};
-    const filterIds = facilityFilter ? [facilityFilter] : selectedFacilities;
-    const filteredData = histogramData.filter(item => 
-      filterIds.length === 0 || filterIds.includes(item.facilityId)
-    );
-    
-    filteredData.forEach(item => {
-      if (!grouped[item.date]) {
-        grouped[item.date] = [];
-      }
+    const scopeIds = facilityIdsForApi;
+    const filteredData = scopeIds?.length
+      ? histogramData.filter((item) => scopeIds.includes(item.facilityId))
+      : histogramData;
+
+    filteredData.forEach((item) => {
+      if (!grouped[item.date]) grouped[item.date] = [];
       grouped[item.date].push(item);
     });
     return grouped;
-  }, [histogramData, selectedFacilities, facilityFilter]);
+  }, [histogramData, facilityIdsForApi]);
 
   const maxValue = useMemo(() => {
-    const totals = Object.values(groupedData).map(dayData => 
+    const totals = Object.values(groupedData).map((dayData) =>
       dayData.reduce((sum, item) => sum + item.activityCount, 0)
     );
-    return Math.max(...totals, 1); // Ensure at least 1 to avoid division by zero
+    return Math.max(...totals, 1);
   }, [groupedData]);
 
-  const facilityColors = [
-    'bg-blue-500',
-    'bg-green-500', 
-    'bg-purple-500',
-    'bg-orange-500',
-    'bg-pink-500'
-  ];
-
-  const handleFacilityToggle = (facilityId: string) => {
-    setSelectedFacilities(prev => {
-      if (prev.includes(facilityId)) {
-        return prev.filter(id => id !== facilityId);
-      } else if (prev.length < 3) {
-        return [...prev, facilityId];
-      }
-      return prev;
-    });
-  };
-
-  const getBarHeight = (value: number): string => {
-    if (maxValue === 0) return '0%';
-    return `${(value / maxValue) * 100}%`;
-  };
+  const getBarHeight = (value: number): string => `${(value / maxValue) * 100}%`;
 
   const formatDateLabel = (dateStr: string): string => {
     const date = new Date(dateStr);
@@ -244,10 +197,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     }
   };
 
-  const handleRefresh = async () => {
-    await loadActivityStats();
-  };
-
   const layout = getWidgetLayoutProfile(size);
   const chartAreaClass = layout.isDock
     ? 'h-24 flex-shrink-0'
@@ -258,9 +207,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
         : 'h-48 flex-shrink-0';
 
   return (
-    <Widget 
-      id={id} 
-      title={title} 
+    <Widget
+      id={id}
+      title={title}
       size={size}
       availableSizes={availableSizes}
       onSizeChange={handleSizeChange}
@@ -269,20 +218,16 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
       readOnly={readOnly}
       className="group"
       enhancedMenu={
-        <div className="space-y-3">
-          {/* Refresh Button */}
+        <motion.div className="space-y-3">
           <button
-            onClick={handleRefresh}
+            onClick={() => loadActivityStats()}
             disabled={isLoading}
             className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
           >
             <ArrowPathIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
           </button>
-          
-          <div className="border-t border-gray-200 dark:border-gray-600"></div>
-          
-          {/* Time Period Selector */}
+          <div className="border-t border-gray-200 dark:border-gray-600" />
           <div className="relative">
             <button
               onClick={() => setShowTimePeriodDropdown(!showTimePeriodDropdown)}
@@ -294,7 +239,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
               </div>
               <ChevronDownIcon className="h-4 w-4" />
             </button>
-            
             {showTimePeriodDropdown && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50">
                 {Object.entries(timePeriodLabels).map(([period, label]) => (
@@ -305,7 +249,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                       setShowTimePeriodDropdown(false);
                     }}
                     className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700 first:rounded-t-lg last:rounded-b-lg ${
-                      timePeriod === period ? 'bg-primary-50 dark:bg-primary-900 text-primary-600 dark:text-primary-300' : ''
+                      timePeriod === period
+                        ? 'bg-primary-50 dark:bg-primary-900 text-primary-600 dark:text-primary-300'
+                        : ''
                     }`}
                   >
                     {label}
@@ -314,72 +260,19 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
               </div>
             )}
           </div>
-
-          {/* Facility Selector */}
-          {userFacilities.length > 0 && (
-            <div className="relative">
-              <button
-                onClick={() => setShowFacilityDropdown(!showFacilityDropdown)}
-                className="flex items-center justify-between w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
-              >
-                <div className="flex items-center space-x-2">
-                  <BuildingStorefrontIcon className="h-4 w-4" />
-                  <span>{selectedFacilities.length} of {userFacilities.length} facilities</span>
-                </div>
-                <ChevronDownIcon className="h-4 w-4" />
-              </button>
-              
-              {showFacilityDropdown && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
-                  {userFacilities.map((facility, index) => {
-                    const isSelected = selectedFacilities.includes(facility.id);
-                    const isDisabled = !isSelected && selectedFacilities.length >= 3;
-                    
-                    return (
-                      <button
-                        key={facility.id}
-                        onClick={() => !isDisabled && handleFacilityToggle(facility.id)}
-                        disabled={isDisabled}
-                        className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700 first:rounded-t-lg last:rounded-b-lg flex items-center space-x-2 ${
-                          isDisabled ? 'opacity-50 cursor-not-allowed' : ''
-                        } ${isSelected ? 'bg-primary-50 dark:bg-primary-900' : ''}`}
-                      >
-                        <div className={`h-3 w-3 rounded-full ${facilityColors[index % facilityColors.length]}`} />
-                        <span className="flex-1">{facility.name}</span>
-                        {isSelected && <span className="text-primary-600 dark:text-primary-300">✓</span>}
-                      </button>
-                    );
-                  })}
-                  <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-600">
-                    Select up to 3 facilities
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        </motion.div>
       }
     >
       <div className={WIDGET_BODY_CLASS}>
-        {/* Loading State */}
         {isLoading && histogramData.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <ArrowPathIcon className="h-8 w-8 text-gray-400 mx-auto mb-2 animate-spin" />
-              <p className="text-sm text-gray-500 dark:text-gray-400">Loading activity data...</p>
-            </div>
+            <ArrowPathIcon className="h-8 w-8 text-gray-400 animate-spin" />
           </div>
         ) : error ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-center">
+          <motion.div className="flex-1 flex flex-col items-center justify-center text-center">
             <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
             <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
-            <button
-              onClick={handleRefresh}
-              className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-            >
-              Try again
-            </button>
-          </div>
+          </motion.div>
         ) : Object.keys(groupedData).length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center">
             <CalendarIcon className="h-8 w-8 text-gray-400 mb-2" />
@@ -387,54 +280,49 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
           </div>
         ) : (
           <>
-            {/* Chart Area */}
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 shrink-0">
+              Access attempts by facility
+            </p>
             <div className={`${chartAreaClass} relative`}>
               <div className="absolute inset-0 flex items-end justify-between px-1 pb-6">
-                {Object.entries(groupedData).slice(-20).map(([date, dayData], index) => {
-                  return (
+                {Object.entries(groupedData)
+                  .slice(-20)
+                  .map(([date, dayData], index) => (
                     <div key={date} className="flex flex-col items-center flex-1 max-w-8">
-                      <div className="flex flex-col-reverse items-center w-full space-y-reverse space-y-0.5 mb-1">
-                        {dayData.map((item) => {
-                          const facilityColorIndex = selectedFacilities.indexOf(item.facilityId);
-                          const colorIndex = facilityColorIndex >= 0 ? facilityColorIndex : 
-                            userFacilities.findIndex(f => f.id === item.facilityId);
-                          return (
-                            <motion.div
-                              key={`${item.facilityId}-${date}`}
-                              initial={{ height: 0 }}
-                              animate={{ height: getBarHeight(item.activityCount) }}
-                              transition={{ duration: 0.5, delay: index * 0.05 }}
-                              className={`w-full ${facilityColors[colorIndex % facilityColors.length]} rounded-sm opacity-80`}
-                              title={`${item.facilityName}: ${item.activityCount} activities`}
-                            />
-                          );
-                        })}
-                      </div>
+                      <motion.div className="flex flex-col-reverse items-center w-full space-y-reverse space-y-0.5 mb-1">
+                        {dayData.map((item) => (
+                          <motion.div
+                            key={`${item.facilityId}-${date}`}
+                            initial={{ height: 0 }}
+                            animate={{ height: getBarHeight(item.activityCount) }}
+                            transition={{ duration: 0.5, delay: index * 0.05 }}
+                            className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-80`}
+                            title={`${item.facilityName}: ${item.activityCount} access attempts`}
+                          />
+                        ))}
+                      </motion.div>
                       <span className="text-xs text-gray-500 dark:text-gray-400 transform rotate-45 origin-left whitespace-nowrap">
                         {formatDateLabel(date)}
                       </span>
                     </div>
-                  );
-                })}
+                  ))}
               </div>
             </div>
-
-            {/* Legend */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
-              <div className="flex flex-wrap gap-2">
-                {(selectedFacilities.length > 0 ? selectedFacilities : userFacilities.slice(0, 3).map(f => f.id)).map((facilityId, index) => {
-                  const facility = userFacilities.find(f => f.id === facilityId);
-                  if (!facility) return null;
-                  
-                  return (
-                    <div key={facilityId} className="flex items-center space-x-1">
-                      <div className={`h-3 w-3 rounded-sm ${facilityColors[index % facilityColors.length]}`} />
-                      <span className="text-xs text-gray-600 dark:text-gray-300 truncate">
-                        {facility.name}
-                      </span>
-                    </div>
-                  );
-                })}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-600 shrink-0">
+              <div className="flex flex-wrap gap-2 max-h-16 overflow-y-auto">
+                {legendFacilities.map((facility, index) => (
+                  <div key={facility.id} className="flex items-center space-x-1">
+                    <div className={`h-3 w-3 rounded-sm ${facilityColors[index % facilityColors.length]}`} />
+                    <span className="text-xs text-gray-600 dark:text-gray-300 truncate max-w-[120px]">
+                      {facility.name}
+                    </span>
+                  </div>
+                ))}
+                {legendOverflow > 0 && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400 self-center">
+                    +{legendOverflow} more
+                  </span>
+                )}
               </div>
             </div>
           </>

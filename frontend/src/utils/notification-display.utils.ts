@@ -4,6 +4,11 @@ import type { UserNotificationApi } from '@/types/notifications.types';
 const ACTION_REQUIRED_TYPES = new Set([
   'security_alert',
   'maintenance_alert',
+  'fms_sync_failed',
+  'device_low_battery',
+  'gateway_offline',
+  'gateway_alert',
+  'backend_error',
 ]);
 
 const ACTION_REQUIRED_PRIORITIES = new Set(['high', 'urgent']);
@@ -48,6 +53,9 @@ function mapApiTypeToTone(
   if (
     notificationType === 'access_denied' ||
     notificationType === 'security_alert' ||
+    notificationType === 'fms_sync_failed' ||
+    notificationType === 'gateway_offline' ||
+    notificationType === 'backend_error' ||
     priority === 'urgent'
   ) {
     return 'error';
@@ -55,11 +63,18 @@ function mapApiTypeToTone(
   if (
     notificationType === 'maintenance_alert' ||
     notificationType === 'system_alert' ||
+    notificationType === 'device_low_battery' ||
+    notificationType === 'gateway_alert' ||
     priority === 'high'
   ) {
     return 'warning';
   }
-  if (priority === 'low') {
+  if (
+    notificationType === 'fms_sync_complete' ||
+    notificationType === 'gateway_restored' ||
+    notificationType === 'access_granted' ||
+    notificationType === 'unit_assigned'
+  ) {
     return 'success';
   }
   return 'info';
@@ -72,11 +87,16 @@ function mapToneToLegacyType(tone: WidgetNotificationTone): 'info' | 'warning' |
 function mapTypeToSource(notificationType: string): DashboardNotificationView['source'] {
   if (
     notificationType.includes('security') ||
-    notificationType === 'access_denied'
+    notificationType === 'access_denied' ||
+    notificationType.startsWith('gateway_')
   ) {
     return 'security';
   }
-  if (notificationType.includes('device') || notificationType.includes('unit')) {
+  if (
+    notificationType.includes('device') ||
+    notificationType.includes('unit') ||
+    notificationType === 'device_low_battery'
+  ) {
     return 'device';
   }
   return 'system';

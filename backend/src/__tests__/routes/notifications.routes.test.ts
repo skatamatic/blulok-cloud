@@ -299,7 +299,7 @@ describe('Notifications Routes', () => {
 
       expect(mockService.getUnreadCount).toHaveBeenCalledWith(
         testData.users.tenant.id,
-        facilityId
+        { facilityId }
       );
     });
 
@@ -532,7 +532,8 @@ describe('Notifications Routes', () => {
         testData.users.tenant.id,
         testData.users.tenant.role,
         testData.users.tenant.id,
-        undefined
+        { facilityIds: testData.users.tenant.facilityIds },
+        testData.users.tenant.facilityIds,
       );
     });
 
@@ -558,7 +559,8 @@ describe('Notifications Routes', () => {
         testData.users.tenant.id,
         testData.users.tenant.role,
         testData.users.tenant.id,
-        facilityId
+        { facilityId },
+        testData.users.tenant.facilityIds,
       );
     });
 

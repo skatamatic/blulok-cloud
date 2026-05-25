@@ -3,6 +3,7 @@ import { logger } from '@/utils/logger';
 import { GatewayTransport } from './gateway-transport.interface';
 import { WebsocketGatewayTransport } from './websocket-gateway.transport';
 import { GatewayModel } from '@/models/gateway.model';
+import { notifyGatewayStatusAfterDbUpdate } from '@/utils/gateway-status-notification.util';
 import { WebSocketService } from '@/services/websocket.service';
 
 /**
@@ -219,11 +220,23 @@ export class GatewayEventsService {
         return;
       }
 
+      const previousStatus = gw.status;
       const next: 'online' | 'offline' = connected ? 'online' : 'offline';
       if (next === 'online') {
         await this.gatewayModel.updateStatusAndLastSeen(gw.id, 'online');
       } else {
         await this.gatewayModel.updateStatus(gw.id, 'offline');
+      }
+
+      if (previousStatus !== next) {
+        void notifyGatewayStatusAfterDbUpdate({
+          facilityId,
+          gatewayId: gw.id,
+          gatewayName: gw.name,
+          previousStatus,
+          nextStatus: next,
+          reason: event.reason,
+        });
       }
 
       const wsService = WebSocketService.getInstance();

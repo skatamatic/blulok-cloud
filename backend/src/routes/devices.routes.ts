@@ -191,7 +191,7 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
     const offsetNum = parseListOffset(q.offset);
 
     // Restrict facility access based on user role
-    let allowedFacilityId = facility_id as string | undefined;
+    const allowedFacilityId = facility_id as string | undefined;
     /** When dashboard omits facility_id, scoped users see devices across all assigned facilities (not only the first). */
     let allowedFacilityIds: string[] | undefined;
 

@@ -22,10 +22,6 @@ export const DashboardPageNavigator: React.FC<DashboardPageNavigatorProps> = ({
   onPrev,
   onNext,
 }) => {
-  if (pageCount <= 1) {
-    return null;
-  }
-
   const canGoPrev = activeIndex > 0;
   const canGoNext = activeIndex < pageCount - 1;
   const activeName = pageNames[activeIndex] ?? `Page ${activeIndex + 1}`;
@@ -53,9 +49,16 @@ export const DashboardPageNavigator: React.FC<DashboardPageNavigatorProps> = ({
   );
 
   useEffect(() => {
+    if (pageCount <= 1) {
+      return undefined;
+    }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  }, [handleKeyDown, pageCount]);
+
+  if (pageCount <= 1) {
+    return null;
+  }
 
   return (
     <div className="mt-2 flex flex-shrink-0 flex-col items-center gap-1">

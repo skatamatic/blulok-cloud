@@ -15,6 +15,7 @@ import {
 import { IGatewayConnection } from '../../../types/gateway.types';
 import { IProtocol } from '../../../types/gateway.types';
 import { DeviceSyncService, GatewayDeviceData } from '../../device-sync.service';
+import { notifyGatewayStatusAfterDbUpdate } from '@/utils/gateway-status-notification.util';
 
 /**
  * Base Gateway Implementation
@@ -151,7 +152,16 @@ export abstract class BaseGateway extends EventEmitter implements IGateway {
       try {
         const { GatewayModel } = await import('@/models/gateway.model');
         const gatewayModel = new GatewayModel();
+        const existing = await gatewayModel.findById(this.id);
+        const previousStatus = existing?.status || 'offline';
         await gatewayModel.updateStatusAndLastSeen(this.id, 'online');
+        void notifyGatewayStatusAfterDbUpdate({
+          facilityId: this.facilityId,
+          gatewayId: this.id,
+          previousStatus,
+          nextStatus: 'online',
+          gatewayName: existing?.name,
+        });
         if (!silent) {
           const { WebSocketService } = await import('@/services/websocket.service');
           await WebSocketService.getInstance().broadcastGatewayStatusUpdate(this.facilityId, this.id);
@@ -184,7 +194,16 @@ export abstract class BaseGateway extends EventEmitter implements IGateway {
       try {
         const { GatewayModel } = await import('@/models/gateway.model');
         const gatewayModel = new GatewayModel();
+        const existing = await gatewayModel.findById(this.id);
+        const previousStatus = existing?.status || 'online';
         await gatewayModel.updateStatus(this.id, 'offline');
+        void notifyGatewayStatusAfterDbUpdate({
+          facilityId: this.facilityId,
+          gatewayId: this.id,
+          previousStatus,
+          nextStatus: 'offline',
+          gatewayName: existing?.name,
+        });
         if (!silent) {
           const { WebSocketService } = await import('@/services/websocket.service');
           await WebSocketService.getInstance().broadcastGatewayStatusUpdate(this.facilityId, this.id);
@@ -493,7 +512,17 @@ export abstract class BaseGateway extends EventEmitter implements IGateway {
       try {
         const { GatewayModel } = await import('@/models/gateway.model');
         const gatewayModel = new GatewayModel();
+        const existing = await gatewayModel.findById(this.id);
+        const previousStatus = existing?.status || 'online';
         await gatewayModel.updateStatus(this.id, 'error');
+        void notifyGatewayStatusAfterDbUpdate({
+          facilityId: this.facilityId,
+          gatewayId: this.id,
+          previousStatus,
+          nextStatus: 'error',
+          reason: error.message,
+          gatewayName: existing?.name,
+        });
         const { WebSocketService } = await import('@/services/websocket.service');
         await WebSocketService.getInstance().broadcastGatewayStatusUpdate(this.facilityId, this.id);
       } catch (_e) {}
@@ -511,7 +540,16 @@ export abstract class BaseGateway extends EventEmitter implements IGateway {
       try {
         const { GatewayModel } = await import('@/models/gateway.model');
         const gatewayModel = new GatewayModel();
+        const existing = await gatewayModel.findById(this.id);
+        const previousStatus = existing?.status || 'online';
         await gatewayModel.updateStatus(this.id, 'offline');
+        void notifyGatewayStatusAfterDbUpdate({
+          facilityId: this.facilityId,
+          gatewayId: this.id,
+          previousStatus,
+          nextStatus: 'offline',
+          gatewayName: existing?.name,
+        });
         const { WebSocketService } = await import('@/services/websocket.service');
         await WebSocketService.getInstance().broadcastGatewayStatusUpdate(this.facilityId, this.id);
       } catch (_e) {}

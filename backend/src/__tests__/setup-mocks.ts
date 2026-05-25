@@ -631,6 +631,26 @@ jest.mock('../models/device.model', () => {
         lock_status: 'locked',
       },
     ]),
+    findBluLokDeviceById: jest.fn().mockImplementation((id: string) => {
+      if (id === 'device-1' || id === 'device-2') {
+        return Promise.resolve({
+          id,
+          facility_id: id === 'device-1' ? 'facility-1' : '550e8400-e29b-41d4-a716-446655440001',
+          device_serial: 'SERIAL-1',
+        });
+      }
+      return Promise.resolve(null);
+    }),
+    findAccessControlDeviceWithGateway: jest.fn().mockImplementation((id: string) => {
+      if (id === 'ac-device-1') {
+        return Promise.resolve({
+          id: 'ac-device-1',
+          name: 'Test Access Control Device',
+          facility_id: 'facility-1',
+        });
+      }
+      return Promise.resolve(null);
+    }),
     countAccessControlDevices: jest.fn().mockResolvedValue(1),
     countBluLokDevices: jest.fn().mockResolvedValue(1),
     getFacilityHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
@@ -1586,7 +1606,7 @@ jest.mock('../models/unit.model', () => {
   const {
     deriveEffectiveUnitStatus: actualDeriveEffectiveUnitStatus,
     assertStoredStatusAllowedWithAssignments: actualAssertStoredStatusAllowedWithAssignments,
-  } = jest.requireActual('../models/unit.model') as typeof import('../models/unit.model');
+  } = jest.requireActual('../models/unit.model');
 
   const mockUnits = [
     {

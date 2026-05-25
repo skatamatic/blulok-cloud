@@ -45,6 +45,8 @@ export class AccessEventIngestionService {
   public async ingestOne(event: AccessEventPayload, context: IngestContext): Promise<ActivityLogResponse> {
     await this.assertFacilityEntityConsistency(event, context.facilityId);
 
+    const deviceType = await this.resolveDeviceType(event.device_id);
+
     const sanitizedMetadata: Record<string, unknown> = {
       ingestion_source: context.source,
       event_id: event.event_id || randomUUID(),
@@ -57,6 +59,7 @@ export class AccessEventIngestionService {
       route_pass: event.route_pass || null,
       keypad: this.sanitizeKeypad(event.keypad),
       metadata: event.metadata || {},
+      device_type: deviceType,
     };
 
     const title = this.buildTitle(event);
@@ -146,8 +149,20 @@ export class AccessEventIngestionService {
       if (deviceFacility && deviceFacility !== facilityId) {
         throw new ValidationError('device_id does not belong to scoped facility');
       }
-    } catch {
-      // Device enrichment should not block ingestion when the lookup layer is unavailable.
+    } catch (err) {
+      if (err instanceof ValidationError) throw err;
+      // Transient lookup failures should not block ingestion.
     }
+  }
+
+  private async resolveDeviceType(deviceId: string): Promise<'blulok' | 'access_control'> {
+    const [blulokDevice, acDevice] = await Promise.all([
+      this.deviceModel.findBluLokDeviceById(deviceId),
+      this.deviceModel.findAccessControlDeviceWithGateway(deviceId),
+    ]);
+    if (acDevice && !blulokDevice) return 'access_control';
+    if (blulokDevice) return 'blulok';
+    if (acDevice) return 'access_control';
+    return 'blulok';
   }
 }

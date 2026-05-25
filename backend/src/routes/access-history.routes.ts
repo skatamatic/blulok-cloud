@@ -48,6 +48,7 @@ import { AccessHistoryReadService, AccessHistoryRecord, QueryFilters } from '@/s
 import { AccessLogModel } from '@/models/access-log.model';
 import { KeySharingModel } from '@/models/key-sharing.model';
 import { UnitModel } from '@/models/unit.model';
+import { MAX_HISTOGRAM_FACILITIES } from '@/constants/access-history.constants';
 import { ActivityLogModel } from '@/models/activity-log.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
@@ -125,8 +126,18 @@ const normalizeFilters = (query: AuthenticatedRequest['query']): QueryFilters =>
   action: typeof query.action === 'string' ? query.action : undefined,
   method: typeof query.method === 'string' ? query.method : undefined,
   denial_reason: typeof query.denial_reason === 'string' ? query.denial_reason : undefined,
-  date_from: typeof query.date_from === 'string' ? query.date_from : undefined,
-  date_to: typeof query.date_to === 'string' ? query.date_to : undefined,
+  date_from:
+    typeof query.date_from === 'string'
+      ? query.date_from
+      : typeof query.start_date === 'string'
+        ? query.start_date
+        : undefined,
+  date_to:
+    typeof query.date_to === 'string'
+      ? query.date_to
+      : typeof query.end_date === 'string'
+        ? query.end_date
+        : undefined,
   success: parseBoolean(query.success),
   limit: Number(query.limit) || 50,
   offset: Number(query.offset) || 0,
@@ -236,13 +247,12 @@ router.get('/export', async (req: AuthenticatedRequest, res: Response): Promise<
       res.status(403).json({ success: false, message: 'Access denied to this facility' });
       return;
     }
-    const data = await getAccessHistoryReadService().query(user.userId, user.role, user.facilityIds, {
+    const data = await getAccessHistoryReadService().exportQuery(user.userId, user.role, user.facilityIds, {
       ...normalizeFilters(req.query),
       limit: Math.min(Number(req.query.limit) || 1000, 5000),
-      offset: 0,
     });
 
-    const csv = generateCSV(data.logs);
+    const csv = generateCSV(data);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="access-history.csv"');
     res.send(csv);
@@ -289,12 +299,21 @@ router.get('/stats/activity', async (req: AuthenticatedRequest, res: Response): 
       ? requestedFacilityIds.length > 0
         ? requestedFacilityIds.filter((id) => user.facilityIds?.includes(id))
         : user.facilityIds
-      : requestedFacilityIds;
+      : requestedFacilityIds.length > 0
+        ? requestedFacilityIds
+        : user.facilityIds;
 
-    const result = await getLegacyAccessLogModel().getActivityStats({
+    const cappedFacilityIds =
+      allowedFacilityIds && allowedFacilityIds.length > MAX_HISTOGRAM_FACILITIES
+        ? allowedFacilityIds.slice(0, MAX_HISTOGRAM_FACILITIES)
+        : allowedFacilityIds && allowedFacilityIds.length > 0
+          ? allowedFacilityIds
+          : undefined;
+
+    const result = await getActivityLogModel().getActivityStats({
       startDate,
       endDate: now,
-      facilityIds: allowedFacilityIds && allowedFacilityIds.length > 0 ? allowedFacilityIds : undefined,
+      facilityIds: cappedFacilityIds && cappedFacilityIds.length > 0 ? cappedFacilityIds : undefined,
       groupBy,
     });
 
@@ -314,7 +333,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
   try {
     const user = req.user!;
     const raw = await getActivityLogModel().findById(req.params.id);
-    if (raw && raw.activity_type === 'access_attempt') {
+    if (raw && AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES.includes(raw.activity_type)) {
       const scope = await getScopeService().buildScope(user.userId, user.role, user.facilityIds);
       if (scope.allowedFacilityIds && raw.facility_id && !scope.allowedFacilityIds.includes(raw.facility_id)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });
