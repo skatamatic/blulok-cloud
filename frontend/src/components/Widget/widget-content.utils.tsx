@@ -7,6 +7,9 @@ export const TINY_TILE_SPINNER_CLASS =
   'h-[1.675rem] w-[1.675rem] animate-spin rounded-full border-2 border-current/30 border-t-current';
 export const TINY_TILE_LABEL_CLASS =
   'shrink-0 truncate px-0.5 text-center text-[12px] font-medium leading-tight text-gray-600 dark:text-gray-400';
+/** Value line in tinted panel — leading-tight keeps descenders (g, y, p) inside the clip box. */
+export const TINY_TILE_VALUE_CLASS =
+  'max-w-full truncate text-center font-bold tabular-nums leading-tight';
 
 function tinyValueSizeClass(display: string): string {
   if (display.length > 4) return 'text-base';
@@ -65,7 +68,7 @@ export function StatTinyContent({
   const { pressProps } = usePressWithoutDrag(onClick ?? (() => {}), {
     disabled: disabled || !onClick || loading,
   });
-  const panelClassName = `flex min-h-0 flex-1 flex-col items-center justify-center gap-1 overflow-hidden rounded-[7px] px-1 py-1.5 ${iconClassName}${
+  const panelClassName = `flex min-h-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-x-hidden rounded-[7px] px-1 pt-1.5 pb-2 ${iconClassName}${
     onClick && !loading
       ? ` pointer-events-auto w-full transition-opacity hover:opacity-90${disabled ? ' cursor-not-allowed opacity-50' : ''}`
       : ''
@@ -75,9 +78,7 @@ export function StatTinyContent({
   ) : (
     <>
       <Icon className={`${TINY_TILE_ICON_CLASS} ${spinning ? 'animate-spin' : ''}`} aria-hidden />
-      <span
-        className={`${valueSize} max-w-full truncate text-center font-bold tabular-nums leading-none`}
-      >
+      <span className={`${valueSize} ${TINY_TILE_VALUE_CLASS}`}>
         {display}
       </span>
     </>

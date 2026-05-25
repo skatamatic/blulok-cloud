@@ -13,7 +13,7 @@ Widgets live inside **react-grid-layout** cells with a fixed height. Follow this
 3. **Dock / fullscreen**: Dock widgets should hide non-essential columns and use compact typography; fullscreen uses the same profile with `isFullscreen: true` and a higher list cap.
 4. **Edge-to-edge**: Pass **`edgeToEdge`** on `Widget` when content must bleed to the cell border (3D viewer).
 5. **Typography (guideline)**:
-   - **`small` / `tiny`**: Prefer **single-line** titles/status; tiny tiles use **`StatTinyContent`** (~27px icons, stepped value type, 12px footer labels).
+   - **`small` / `tiny`**: Prefer **single-line** titles/status; tiny tiles use **`StatTinyContent`** (~27px icons, stepped value type with **`leading-tight`** so descenders are not clipped, 12px footer labels).
    - **`medium`**: **`text-xs`–`text-sm`** body; cap list rows to what fits **~3–4** lines without scroll, or scroll the inner region.
    - **`large`+**: Full detail, filters, secondary actions.
 
