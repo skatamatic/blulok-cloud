@@ -248,14 +248,14 @@ export function useDashboardState({
       layoutDirtyRef.current = false;
       if (response.layoutSource) setLayoutSource(response.layoutSource);
       if (response.canEditLayout !== undefined) setCanEditLayout(response.canEditLayout);
-      if (response.allowMultiplePages !== undefined) {
-        setAllowMultiplePages(response.allowMultiplePages);
-      }
+      const canManagePages =
+        response.canEditLayout === true || response.allowMultiplePages === true;
+      setAllowMultiplePages(canManagePages);
       setAssignedDashboardName(response.assignedDashboardName);
       setAssignedDashboardId(response.assignedDashboardId);
       setHasAssignedOverride(response.hasAssignedOverride ?? false);
 
-      const multiPage = response.allowMultiplePages ?? allowMultiplePagesRef.current;
+      const multiPage = canManagePages;
       const apiPages = response.pages;
       let totalDropped = 0;
 

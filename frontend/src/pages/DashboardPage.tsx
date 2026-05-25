@@ -432,7 +432,7 @@ export default function DashboardPage() {
         </FullscreenWidgetView>
           </div>
 
-      {allowMultiplePages && pageCount > 1 && !focusedWidgetId && (
+      {pageCount > 1 && !focusedWidgetId && (
         <DashboardPageNavigator
           pageCount={pages.length}
           activeIndex={activePageIndex}
@@ -453,7 +453,7 @@ export default function DashboardPage() {
         existingWidgets={activePage?.widgetInstances.map((w) => w.type) ?? []}
         maxWidgets={maxWidgetsPerPage}
         role={authState.user?.role}
-        allowPageManagement={allowMultiplePages}
+        allowPageManagement={canEditLayout}
         showSavedTab={isAdmin()}
         pageNames={pages.map((p) => p.name)}
         pageIds={pages.map((p) => p.id)}

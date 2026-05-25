@@ -73,6 +73,7 @@ export interface DashboardLayoutApiMeta {
   assignedDashboardName?: string;
   hasAssignedOverride?: boolean;
   canEditLayout: boolean;
+  /** Admin/dev_admin may manage dashboard pages (add/rename/remove). */
   allowMultiplePages: boolean;
   isDefault: boolean;
 }
@@ -216,7 +217,7 @@ export async function buildDashboardApiResponse(
       layouts: pages[0]?.widgets ?? [],
       layoutSource: 'personal' as const,
       canEditLayout,
-      allowMultiplePages: pages.length > 1,
+      allowMultiplePages: canEditLayout,
       isDefault: false,
       hasAssignedOverride: !!assignedMeta.assignedDashboardId,
       ...assignedMeta,
@@ -243,7 +244,7 @@ export async function buildDashboardApiResponse(
         assignedDashboardId: resolved.savedDashboardId,
         assignedDashboardName: name,
         canEditLayout,
-        allowMultiplePages: pages.length > 1,
+        allowMultiplePages: canEditLayout,
         isDefault: false,
         hasAssignedOverride: false,
       };
@@ -256,7 +257,7 @@ export async function buildDashboardApiResponse(
     layouts: pages[0]?.widgets ?? [],
     layoutSource: 'default' as const,
     canEditLayout,
-    allowMultiplePages: pages.length > 1,
+    allowMultiplePages: canEditLayout,
     isDefault: true,
     hasAssignedOverride: false,
   };

@@ -8,7 +8,7 @@ The BluLok Cloud widget system provides a flexible, drag-and-drop dashboard inte
 
 Widgets live inside **react-grid-layout** cells with a fixed height. Follow this so content never clips spinners, icons, or controls:
 
-1. **Shell**: The shared `Widget` / `CompactWidget` wrapper uses **`h-full min-h-0 flex flex-col overflow-hidden`**. Padding scales via **`getWidgetLayoutProfile(size)`** in `frontend/src/utils/widget-layout.utils.ts` (dock sizes use tighter `px-2.5 py-1` headers; medium/large use `py-1.5` with `text-xs`/`text-sm` titles). Header action buttons (fullscreen, ⋮ menu) use **`headerActionPadding`** and **`headerIconSize`** from the same profile (~40% shorter than the original header bar).
+1. **Shell**: The shared `Widget` / `CompactWidget` wrapper uses **`h-full min-h-0 flex flex-col overflow-hidden`**. **Header chrome is uniform** for every non-tiny size via **`STANDARD_WIDGET_HEADER`** in `frontend/src/utils/widget-layout.utils.ts` (`text-xs` title, `px-3 py-1.5` bar, `h-3 w-3` action icons). Body padding still scales via **`getWidgetLayoutProfile(size)`** (dock sizes use tighter `px-3 py-2` content; medium/large use `p-4`/`p-5`). Tiny tiles use **`CompactWidget`** with no header row.
 2. **Body**: Use **`WIDGET_BODY_CLASS`** (`flex flex-col flex-1 min-h-0 overflow-hidden`) and **`WIDGET_LIST_SCROLL_CLASS`** for scrollable lists. Call **`getWidgetListCap(size)`** (or `profile.listCap`) instead of per-widget magic numbers.
 3. **Dock / fullscreen**: Dock widgets should hide non-essential columns and use compact typography; fullscreen uses the same profile with `isFullscreen: true` and a higher list cap.
 4. **Edge-to-edge**: Pass **`edgeToEdge`** on `Widget` when content must bleed to the cell border (3D viewer).

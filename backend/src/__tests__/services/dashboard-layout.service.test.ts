@@ -159,6 +159,37 @@ describe('dashboard-layout.service', () => {
       expect(response.layoutSource).toBe('personal');
       expect(response.hasAssignedOverride).toBe(true);
       expect(response.assignedDashboardName).toBe('Org Dashboard');
+      expect(response.allowMultiplePages).toBe(true);
+    });
+
+    it('allows page management for admin with a single working page', async () => {
+      (UserWidgetLayoutModel.findPagesWithWidgets as jest.Mock).mockResolvedValue({
+        pages: [{ id: 'p1', name: 'Main', page_order: 0 }],
+        widgetsByPageId: new Map([['p1', []]]),
+      });
+      (DashboardAssignmentModel.resolveAssignment as jest.Mock).mockResolvedValue(null);
+
+      const adminResponse = await buildDashboardApiResponse(userId, UserRole.ADMIN);
+      expect(adminResponse.allowMultiplePages).toBe(true);
+      expect(adminResponse.pages).toHaveLength(1);
+
+      const devAdminResponse = await buildDashboardApiResponse(userId, UserRole.DEV_ADMIN);
+      expect(devAdminResponse.allowMultiplePages).toBe(true);
+
+      (DashboardAssignmentModel.resolveAssignment as jest.Mock).mockResolvedValue({
+        savedDashboardId: 'dash-1',
+        assignmentId: 'a1',
+        scope: 'global',
+      });
+      const { SavedDashboardModel } = jest.requireMock('@/models/saved-dashboard.model');
+      SavedDashboardModel.findById.mockResolvedValue({
+        id: 'dash-1',
+        name: 'Org Dashboard',
+        snapshot: { version: 1, pages: [{ id: 'sp1', name: 'Main', pageOrder: 0, widgets: [] }] },
+      });
+
+      const tenantResponse = await buildDashboardApiResponse(userId, UserRole.FACILITY_ADMIN);
+      expect(tenantResponse.allowMultiplePages).toBe(false);
     });
   });
 

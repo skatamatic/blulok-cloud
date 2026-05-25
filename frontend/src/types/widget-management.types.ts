@@ -58,6 +58,7 @@ export interface DashboardLayoutApiResponse {
   assignedDashboardName?: string;
   hasAssignedOverride?: boolean;
   canEditLayout?: boolean;
+  /** True when admin/dev_admin may add/rename/remove dashboard pages (not tied to current page count). */
   allowMultiplePages?: boolean;
   isDefault?: boolean;
 }

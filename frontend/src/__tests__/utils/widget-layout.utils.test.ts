@@ -4,6 +4,7 @@ import {
   isWideWidgetSize,
   isTallWidgetSize,
   inferFreeGridLayoutShape,
+  STANDARD_WIDGET_HEADER,
 } from '@/utils/widget-layout.utils';
 import { contentTierForUndock } from '@/utils/widget-size.utils';
 
@@ -55,6 +56,20 @@ describe('widget-layout.utils', () => {
     expect(undocked.density).toBe(docked.density);
     expect(undocked.listCap).toBe(docked.listCap);
     expect(undocked.shell).toEqual(docked.shell);
+  });
+
+  it('uses the same header chrome for small, medium, large, dock, and fullscreen', () => {
+    const sizes = ['small', 'medium', 'large', 'huge-wide', 'dock-bottom'] as const;
+    for (const size of sizes) {
+      const { shell } = getWidgetLayoutProfile(size);
+      expect(shell.headerPadding).toBe(STANDARD_WIDGET_HEADER.headerPadding);
+      expect(shell.titleSize).toBe(STANDARD_WIDGET_HEADER.titleSize);
+      expect(shell.headerActionPadding).toBe(STANDARD_WIDGET_HEADER.headerActionPadding);
+      expect(shell.headerIconSize).toBe(STANDARD_WIDGET_HEADER.headerIconSize);
+    }
+    const fullscreen = getWidgetLayoutProfile('medium', { isFullscreen: true });
+    expect(fullscreen.shell.titleSize).toBe(STANDARD_WIDGET_HEADER.titleSize);
+    expect(fullscreen.shell.headerIconSize).toBe(STANDARD_WIDGET_HEADER.headerIconSize);
   });
 
   it('contentTierForUndock maps dock-bottom to large-wide for units-manager', () => {

@@ -49,14 +49,27 @@ export function inferFreeGridLayoutShape(
   return null;
 }
 
-const COMPACT_DOCK_SHELL: WidgetShellStyles = {
-  headerPadding: 'px-2.5 py-1',
-  contentPadding: 'px-3 py-2',
+/** Uniform header chrome for every non-tiny widget size (title, padding, action icons). */
+export const STANDARD_WIDGET_HEADER: Pick<
+  WidgetShellStyles,
+  'headerPadding' | 'titleSize' | 'titleTruncate' | 'headerActionPadding' | 'headerIconSize'
+> = {
+  headerPadding: 'px-3 py-1.5',
   titleSize: 'text-xs',
   titleTruncate: 'truncate',
-  contentOverflow: 'overflow-hidden',
   headerActionPadding: 'p-1',
   headerIconSize: 'h-3 w-3',
+};
+
+function withStandardHeader(
+  shell: Pick<WidgetShellStyles, 'contentPadding' | 'contentOverflow'>
+): WidgetShellStyles {
+  return { ...STANDARD_WIDGET_HEADER, ...shell };
+}
+
+const COMPACT_DOCK_CONTENT = {
+  contentPadding: 'px-3 py-2',
+  contentOverflow: 'overflow-hidden' as const,
 };
 
 function profileForFreeGridShape(
@@ -73,7 +86,7 @@ function profileForFreeGridShape(
         isVerticalDock: false,
         isHorizontalDock: true,
         listCap: gridH <= 2 ? 6 : 8,
-        shell: COMPACT_DOCK_SHELL,
+        shell: withStandardHeader(COMPACT_DOCK_CONTENT),
       };
     case 'two-thirds-panel':
       return {
@@ -84,7 +97,7 @@ function profileForFreeGridShape(
         isVerticalDock: false,
         isHorizontalDock: true,
         listCap: 14,
-        shell: COMPACT_DOCK_SHELL,
+        shell: withStandardHeader(COMPACT_DOCK_CONTENT),
       };
     case 'vertical-strip':
       return {
@@ -95,7 +108,7 @@ function profileForFreeGridShape(
         isVerticalDock: true,
         isHorizontalDock: false,
         listCap: 16,
-        shell: COMPACT_DOCK_SHELL,
+        shell: withStandardHeader(COMPACT_DOCK_CONTENT),
       };
     case 'full-panel':
       return {
@@ -106,7 +119,7 @@ function profileForFreeGridShape(
         isVerticalDock: false,
         isHorizontalDock: true,
         listCap: 24,
-        shell: COMPACT_DOCK_SHELL,
+        shell: withStandardHeader(COMPACT_DOCK_CONTENT),
       };
   }
 }
@@ -204,15 +217,10 @@ export function getWidgetLayoutProfile(
       isVerticalDock: false,
       isHorizontalDock: false,
       listCap: getWidgetListCap(size, true),
-      shell: {
-        headerPadding: 'px-4 py-1.5',
+      shell: withStandardHeader({
         contentPadding: 'p-4',
-        titleSize: 'text-sm',
-        titleTruncate: 'truncate',
         contentOverflow: 'overflow-hidden',
-        headerActionPadding: 'p-1',
-        headerIconSize: 'h-3.5 w-3.5',
-      },
+      }),
     };
   }
 
@@ -234,48 +242,25 @@ export function getWidgetLayoutProfile(
 
   if (isDock) {
     density = 'compact';
-    shell = {
-      headerPadding: 'px-2.5 py-1',
-      contentPadding: 'px-3 py-2',
-      titleSize: 'text-xs',
-      titleTruncate: 'truncate',
-      contentOverflow: 'overflow-hidden',
-      headerActionPadding: 'p-1',
-      headerIconSize: 'h-3 w-3',
-    };
+    shell = withStandardHeader(COMPACT_DOCK_CONTENT);
   } else if (size === 'tiny' || size === 'small') {
     density = size === 'tiny' ? 'micro' : 'compact';
-    shell = {
-      headerPadding: size === 'tiny' ? 'px-1.5 py-0.5' : 'px-2 py-1',
+    shell = withStandardHeader({
       contentPadding: size === 'tiny' ? 'p-1' : 'p-2',
-      titleSize: size === 'tiny' ? 'text-[9px]' : 'text-[10px]',
-      titleTruncate: 'truncate',
       contentOverflow: 'overflow-hidden',
-      headerActionPadding: 'p-0.5',
-      headerIconSize: 'h-2.5 w-2.5',
-    };
+    });
   } else if (size === 'medium' || size === 'medium-tall') {
     density = 'comfortable';
-    shell = {
-      headerPadding: 'px-3 py-1.5',
+    shell = withStandardHeader({
       contentPadding: 'p-4',
-      titleSize: 'text-xs',
-      titleTruncate: 'truncate',
       contentOverflow: 'overflow-hidden',
-      headerActionPadding: 'p-1',
-      headerIconSize: 'h-3 w-3',
-    };
+    });
   } else {
     density = 'spacious';
-    shell = {
-      headerPadding: 'px-4 py-1.5',
+    shell = withStandardHeader({
       contentPadding: 'p-5',
-      titleSize: 'text-sm',
-      titleTruncate: 'truncate',
       contentOverflow: 'overflow-hidden',
-      headerActionPadding: 'p-1',
-      headerIconSize: 'h-3.5 w-3.5',
-    };
+    });
   }
 
   return {

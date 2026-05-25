@@ -74,7 +74,7 @@
 
 ## Dashboard settings modal (tabbed)
 
-- **`DashboardSettingsModal`** uses Headless UI **`Tab.Group`**: **Pages** (admin/dev_admin only, when multi-page is enabled) · **Widgets** · **Saved dashboards** (admin/dev_admin only).
+- **`DashboardSettingsModal`** uses Headless UI **`Tab.Group`**: **Pages** (admin/dev_admin only — `canEditLayout`, independent of current page count) · **Widgets** · **Saved dashboards** (admin/dev_admin only).
 - **Layout editing** (drag, resize, add/remove widgets, multi-page, settings cog) is restricted to **`admin`** and **`dev_admin`** on both frontend (`isAdmin()` in `DashboardPage`) and backend (`requireAdmin` on widget-layout POST/PUT/DELETE/show/reset). Non-admins may **read** via `GET /widget-layouts` only.
 - **Read-only roles** (`facility_admin`, `maintenance`, `blulok_technician`, `tenant`) receive their resolved working layout via **`GET /widget-layouts`** but cannot mutate it.
 
