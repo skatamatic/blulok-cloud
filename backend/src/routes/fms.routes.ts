@@ -316,21 +316,13 @@ router.post('/sync/:facilityId',
       }
     }
 
-    try {
-      const result = await getFMSService().performSync(facilityId, user.userId, user.role);
+    const result = await getFMSService().performSync(facilityId, user.userId, user.role);
 
-      res.json({
-        success: result.success,
-        message: result.success ? 'Sync completed successfully' : 'Sync completed with errors',
-        result,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Sync failed',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
+    res.json({
+      success: result.success,
+      message: result.success ? 'Sync completed successfully' : 'Sync completed with errors',
+      result,
+    });
   })
 );
 

@@ -87,13 +87,24 @@ class FMSService {
    * Trigger manual sync
    */
   async triggerSync(facilityId: string): Promise<FMSSyncResult> {
-    const data = await apiService.post(`/fms/sync/${facilityId}`);
-    
-    if (!data.result) {
-      throw new Error('Failed to trigger sync');
+    try {
+      const data = await apiService.post(`/fms/sync/${facilityId}`);
+
+      if (!data.result) {
+        throw new Error('Failed to trigger sync');
+      }
+
+      return data.result;
+    } catch (error: unknown) {
+      const { FMSSyncInProgressError, isFMSSyncInProgressError } = await import('@/utils/fms-sync.utils');
+      if (isFMSSyncInProgressError(error)) {
+        const message =
+          (error as { response?: { data?: { message?: string } } }).response?.data?.message ??
+          'A sync operation is already in progress for this facility';
+        throw new FMSSyncInProgressError(message);
+      }
+      throw error;
     }
-    
-    return data.result;
   }
 
   /**

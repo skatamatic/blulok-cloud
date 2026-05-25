@@ -9,6 +9,7 @@ import { createMockTestData, MockTestData, expectSuccess } from '@/__tests__/uti
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSService } from '@/services/fms/fms.service';
 import { FMSProviderType } from '@/types/fms.types';
+import { ConflictError } from '@/middleware/error.middleware';
 
 describe('FMS routes — critical paths', () => {
   let app: ReturnType<typeof createApp>;
@@ -107,6 +108,23 @@ describe('FMS routes — critical paths', () => {
       expect(Array.isArray(ch.validation_errors)).toBe(true);
       expect(ch.validation_errors.some((e: string) => /email/i.test(e))).toBe(true);
       expect(ch.validation_errors.some((e: string) => /first name/i.test(e))).toBe(true);
+    });
+  });
+
+  describe('POST /api/v1/fms/sync/:facilityId', () => {
+    it('returns 409 when a sync is already running for the facility', async () => {
+      const fms = FMSService.getInstance() as unknown as { performSync: jest.Mock };
+      fms.performSync.mockRejectedValueOnce(
+        new ConflictError('A sync operation is already running for this facility'),
+      );
+
+      const response = await request(app)
+        .post(`/api/v1/fms/sync/${facility1}`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(String(response.body.message)).toMatch(/already running/i);
     });
   });
 });

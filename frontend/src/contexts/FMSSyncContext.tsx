@@ -26,7 +26,7 @@ export interface FMSSyncState {
 
 interface FMSSyncContextType {
   syncState: FMSSyncState;
-  startSync: (facilityId: string, facilityName: string) => void;
+  startSync: (facilityId: string, facilityName: string) => boolean;
   updateStep: (step: SyncStep) => void;
   setProgress: (percentage: number) => void;
   completeSync: (changes: FMSChange[], syncResult: FMSSyncResult) => void;
@@ -39,6 +39,7 @@ interface FMSSyncContextType {
   applyChanges: () => Promise<void>;
   isSyncActive: () => boolean;
   canStartNewSync: () => boolean;
+  hasCompletedSync: () => boolean;
 }
 
 const FMSSyncContext = createContext<FMSSyncContextType | undefined>(undefined);
@@ -62,6 +63,10 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   const progressSubIdRef = useRef<string | null>(null);
   /** Avoid stale facilityId inside the long-lived WS handler (e.g. second sync same session). */
   const facilityIdRef = useRef<string | null>(null);
+  /** Synchronous guard — setState from startSync is async, so double-clicks can race without this. */
+  const syncInFlightFacilityRef = useRef<string | null>(null);
+  const syncCompletedRef = useRef(false);
+  const activeSyncLogIdRef = useRef<string | null>(null);
 
   // Client-side minimum step display time tracking
   const lastStepTimeRef = useRef<number>(0);
@@ -78,7 +83,15 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const startSync = useCallback(
-    (facilityId: string, facilityName: string) => {
+    (facilityId: string, facilityName: string): boolean => {
+      if (syncInFlightFacilityRef.current) {
+        return false;
+      }
+
+      syncInFlightFacilityRef.current = facilityId;
+      syncCompletedRef.current = false;
+      activeSyncLogIdRef.current = null;
+
       if (progressSubIdRef.current) {
         unsubscribe(progressSubIdRef.current);
         progressSubIdRef.current = null;
@@ -96,6 +109,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
         currentStep: 'connecting',
         progressPercentage: 0,
       });
+      return true;
     },
     [unsubscribe]
   );
@@ -159,9 +173,13 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const completeSync = useCallback((changes: FMSChange[], syncResult: FMSSyncResult) => {
-    console.log('[FMSSyncContext] completeSync called', { 
+    syncCompletedRef.current = true;
+    syncInFlightFacilityRef.current = null;
+    activeSyncLogIdRef.current = syncResult.syncLogId;
+
+    console.log('[FMSSyncContext] completeSync called', {
       changesCount: changes.length,
-      willShowReview: changes.length > 0 
+      willShowReview: changes.length > 0,
     });
     
     setSyncState(prev => {
@@ -192,6 +210,11 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cancelSync = useCallback(() => {
+    if (syncCompletedRef.current) {
+      return;
+    }
+    syncInFlightFacilityRef.current = null;
+    activeSyncLogIdRef.current = null;
     setSyncState(prev => ({
       ...prev,
       currentStep: 'cancelled',
@@ -253,6 +276,23 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        if (typeof data.syncLogId === 'string') {
+          if (
+            activeSyncLogIdRef.current &&
+            data.syncLogId !== activeSyncLogIdRef.current
+          ) {
+            console.log('[FMSSyncContext] Sync log ID mismatch, ignoring stale progress:', {
+              active: activeSyncLogIdRef.current,
+              received: data.syncLogId,
+              step: data.step,
+            });
+            return;
+          }
+          if (!activeSyncLogIdRef.current) {
+            activeSyncLogIdRef.current = data.syncLogId;
+          }
+        }
+
         const step = data.step as string;
         const percent = typeof data.percent === 'number' ? data.percent : undefined;
 
@@ -266,6 +306,9 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
         };
 
         if (step === 'failed' || step === 'cancelled') {
+          if (syncCompletedRef.current) {
+            return;
+          }
           clearProgressSub();
           cancelSync();
           return;
@@ -423,8 +466,13 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   }, [syncState.isActive]);
 
   const canStartNewSync = useCallback(() => {
+    if (syncInFlightFacilityRef.current) {
+      return false;
+    }
     return !syncState.isActive || syncState.currentStep === 'complete' || syncState.currentStep === 'cancelled';
   }, [syncState.isActive, syncState.currentStep]);
+
+  const hasCompletedSync = useCallback(() => syncCompletedRef.current, []);
 
   // Progress is now driven by real-time WebSocket events from the backend
   // No simulated timers needed - the WebSocket subscription handler above will update progress
@@ -444,6 +492,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
     applyChanges,
     isSyncActive,
     canStartNewSync,
+    hasCompletedSync,
   };
 
   return (

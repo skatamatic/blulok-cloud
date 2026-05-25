@@ -31,6 +31,7 @@ import { FMSConfigSummary } from './FMSConfigSummary';
 import { useToast } from '@/contexts/ToastContext';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { getFmsSyncAppliedColumnText } from '@/utils/fmsSyncLogDisplay';
+import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 
 interface FacilityFMSTabProps {
   facilityId: string;
@@ -75,7 +76,7 @@ export function FacilityFMSTab({
   canEditFMS = true,
 }: FacilityFMSTabProps) {
   const { addToast } = useToast();
-  const { canStartNewSync, startSync, completeSync, showReview, cancelSync } = useFMSSync();
+  const { canStartNewSync, startSync, completeSync, showReview, cancelSync, hasCompletedSync } = useFMSSync();
   const [config, setConfig] = useState<FMSConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -169,32 +170,41 @@ export function FacilityFMSTab({
 
     try {
       setSyncing(true);
-      startSync(facilityId, facilityName || 'Unknown Facility');
+      if (!startSync(facilityId, facilityName || 'Unknown Facility')) {
+        return;
+      }
 
       const result = await fmsService.triggerSync(facilityId);
       setSyncResult(result);
 
-      if (result.changesDetected && result.changesDetected.length > 0) {
-        setPendingChanges(result.changesDetected);
-        completeSync(result.changesDetected, result);
+      if (!hasCompletedSync()) {
+        if (result.changesDetected && result.changesDetected.length > 0) {
+          setPendingChanges(result.changesDetected);
+          completeSync(result.changesDetected, result);
+          showReview();
+          addToast({
+            type: 'info',
+            title: 'Changes Detected',
+            message: `Found ${result.changesDetected.length} changes that need review`,
+          });
+        } else {
+          completeSync([], result);
+          addToast({
+            type: 'success',
+            title: 'Sync Completed',
+            message: 'No changes detected - system is in sync with FMS',
+          });
+        }
+      } else if (result.changesDetected && result.changesDetected.length > 0) {
         showReview();
-        addToast({
-          type: 'info',
-          title: 'Changes Detected',
-          message: `Found ${result.changesDetected.length} changes that need review`,
-        });
-      } else {
-        completeSync([], result);
-        addToast({
-          type: 'success',
-          title: 'Sync Completed',
-          message: 'No changes detected - system is in sync with FMS',
-        });
       }
 
       await loadSyncHistory();
       await loadConfig();
     } catch (error: unknown) {
+      if (isFMSSyncInProgressError(error)) {
+        return;
+      }
       cancelSync();
       const message = error instanceof Error ? error.message : 'Failed to sync with FMS';
       addToast({

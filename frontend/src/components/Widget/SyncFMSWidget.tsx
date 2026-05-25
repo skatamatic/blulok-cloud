@@ -17,6 +17,7 @@ import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { FMSSyncLog } from '@/types/fms.types';
 import { getFmsSyncHistoryDetectedSuffix } from '@/utils/fmsSyncLogDisplay';
+import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { usePressWithoutDrag } from '@/hooks/usePressWithoutDrag';
 import { StatTinyContent } from '@/components/Widget/widget-content.utils';
@@ -108,7 +109,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const { startSync, completeSync, canStartNewSync, cancelSync } = useFMSSync();
+  const { startSync, completeSync, canStartNewSync, cancelSync, hasCompletedSync } = useFMSSync();
   const { subscribe, unsubscribe } = useWebSocket();
   const { selectedFacilityId, facilities, isLoading: facilitiesLoading } = useGlobalFacility();
   const { size, handleSizeChange } = useWidgetSizeState(
@@ -399,17 +400,19 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     try {
       setSyncing(true);
 
-      // Start sync in global context
       const facilityName = getFacilityName(effectiveFacilityId);
-      startSync(effectiveFacilityId, facilityName);
+      if (!startSync(effectiveFacilityId, facilityName)) {
+        return;
+      }
 
       const result = await fmsService.triggerSync(effectiveFacilityId);
 
-      // Complete sync in global context with the changes detected
-      if (result.changesDetected && result.changesDetected.length > 0) {
-        completeSync(result.changesDetected, result);
-      } else {
-        completeSync([], result);
+      if (!hasCompletedSync()) {
+        if (result.changesDetected && result.changesDetected.length > 0) {
+          completeSync(result.changesDetected, result);
+        } else {
+          completeSync([], result);
+        }
       }
 
       if (result.changesDetected && result.changesDetected.length > 0) {
@@ -457,6 +460,9 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         setSyncHistory(history.logs);
       }
     } catch (error: any) {
+      if (isFMSSyncInProgressError(error)) {
+        return;
+      }
       cancelSync();
       addToast({
         type: 'error',

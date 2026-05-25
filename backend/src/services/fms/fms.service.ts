@@ -21,6 +21,7 @@
  * - Comprehensive audit trails for all changes
  */
 
+import { ConflictError } from '@/middleware/error.middleware';
 import { BaseFMSProvider } from './base-fms-provider';
 import { FMSConfigurationModel } from '@/models/fms-configuration.model';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
@@ -241,7 +242,7 @@ export class FMSService {
 
     // Check if sync is already running for this facility
     if (this.activeSyncs.has(facilityId)) {
-      throw new Error('A sync operation is already running for this facility');
+      throw new ConflictError('A sync operation is already running for this facility');
     }
 
     // Create abort controller for this sync
@@ -454,6 +455,9 @@ export class FMSService {
 
       // Broadcast FMS sync status update via WebSocket
       this.broadcastFMSSyncUpdate(facilityId);
+
+      const result = await this.buildSyncResult(syncLog.id, changes);
+
       this.broadcastFMSSyncProgress({
         facilityId,
         syncLogId: syncLog.id,
@@ -462,7 +466,7 @@ export class FMSService {
         message: 'Sync complete',
       });
 
-      return this.buildSyncResult(syncLog.id, changes);
+      return result;
     } catch (error) {
       logger.error('FMS sync failed:', error);
       
