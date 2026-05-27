@@ -26,13 +26,13 @@ This document summarizes the new centralized trust model implemented in the back
   - LOCK: `{ cmd_type:'LOCK', device_id: 'deviceId' }`
   - UNLOCK: `{ cmd_type:'UNLOCK', device_id: 'deviceId' }`
   - SECURE_TIME_SYNC: `{ cmd_type:'SECURE_TIME_SYNC', ts }`
-  - FIRMWARE_MANIFEST: `{ cmd_type:'FIRMWARE_MANIFEST', version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`
+  - FIRMWARE_MANIFEST: `{ cmd_type:'FIRMWARE_MANIFEST', push_id, target_type, version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`
   - FIRMWARE_CHUNK: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`
   - ACCESS_CODE_UPDATE: `{ cmd_type:'ACCESS_CODE_UPDATE', facility_id, nonce, codes:[{ device_id, relay_channel, code, valid_until }] }`
 - WebSocket command envelope: `{ type: 'COMMAND', jwt: 'eyJ...' }`
 - WebSocket firmware envelopes: `{ type: 'FIRMWARE_MANIFEST', jwt: 'eyJ...' }`, `{ type: 'FIRMWARE_CHUNK', jwt: 'eyJ...' }`
 - WebSocket access-code envelope: `{ type: 'ACCESS_CODE_UPDATE', jwt: 'eyJ...' }`
-- Gateway firmware responses: `{ type: 'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status:'ok'|'error' }`, `{ type: 'FIRMWARE_UPDATE_STATUS', nonce, status, message? }`
+- Gateway firmware responses: `{ type: 'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status:'ok'|'error' }`, `{ type: 'FIRMWARE_UPDATE_STATUS', push_id, status, target_type?, version?, error? }`, `{ type: 'FIRMWARE_PROGRESS', push_id, ... }` (optional)
 
 #### Route Pass Audience Formats
 - Direct lock access: `lock:{lockId}`
@@ -76,7 +76,7 @@ This document summarizes the new centralized trust model implemented in the back
   - Full REST API proxying over WS using loopback HTTP with facility guard
   - Auth: JWT required; roles allowed: DEV_ADMIN, ADMIN, FACILITY_ADMIN; one facilityId per connection
   - Protocol (JSON frames):
-    - Client→Server: `{type:'AUTH', token, facilityId}`, `{type:'PROXY_REQUEST', id, method, path, headers?, query?, body?}`, `{type:'PONG'}`, `{type:'COMMAND_ACK', id, status, message?}`, `{type:'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status, message?}`, `{type:'FIRMWARE_UPDATE_STATUS', nonce, status, message?}`
+    - Client→Server: `{type:'AUTH', token, facilityId}`, `{type:'PROXY_REQUEST', id, method, path, headers?, query?, body?}`, `{type:'PONG'}`, `{type:'COMMAND_ACK', id, status, message?}`, `{type:'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status, message?}`, `{type:'FIRMWARE_UPDATE_STATUS', push_id, status, target_type?, version?, error?}`, `{type:'FIRMWARE_PROGRESS', push_id, ...}` (optional)
     - Server→Client: `{type:'AUTH_OK', facilityId, ops_public_key}`, `{type:'PROXY_RESPONSE', id, status, headers?, body?}`, `{type:'PING'}`, `{type:'FIRMWARE_MANIFEST', jwt}`, `{type:'FIRMWARE_CHUNK', jwt}`, `{type:'ACCESS_CODE_UPDATE', jwt}`
   - Facility Guard: FACILITY_ADMIN requests must not target other facilities (path/body checked)
   - Proxy Security: server re-signs a short-lived passthrough JWT with same identity and injects `Authorization: Bearer <token>`
@@ -109,9 +109,9 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 
 ### Firmware OTA Security
 - Firmware binaries are uploaded by DEV_ADMIN via DevTools and stored with SHA-256 hash.
-- Before delivery, a manifest JWT is signed with the Ops Ed25519 key: `{ cmd_type:'FIRMWARE_MANIFEST', version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`.
-- Binary is split into 256KB raw chunks; each chunk is signed as a JWT: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`.
-- The `nonce` correlates manifest and chunks for replay protection.
+- Before delivery, a manifest JWT is signed with the Ops Ed25519 key: `{ cmd_type:'FIRMWARE_MANIFEST', push_id, target_type, version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`.
+- Binary is split into 128KB raw chunks; each chunk is signed as a JWT: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`.
+- The manifest `nonce` correlates chunk ACKs; the manifest `push_id` correlates `FIRMWARE_UPDATE_STATUS` / `FIRMWARE_PROGRESS` messages (do not substitute one for the other).
 - Gateway verifies each JWT using the Ops public key received in `AUTH_OK`.
 - After reassembly, gateway verifies full SHA-256 against manifest, then verifies manufacturer signature on the binary.
 - Trust chain (no CA required): TLS secures transport → JWT auth verifies gateway identity → `AUTH_OK` delivers Ops public key → public key verifies all signed firmware payloads.

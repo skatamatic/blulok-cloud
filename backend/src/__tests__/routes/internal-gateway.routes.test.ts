@@ -35,6 +35,15 @@ jest.mock('@/models/gateway.model', () => ({
   })),
 }));
 
+const ingestMock = jest.fn();
+jest.mock('@/services/gateway-telemetry-log.service', () => ({
+  GatewayTelemetryLogService: {
+    getInstance: jest.fn().mockReturnValue({
+      ingest: (...args: unknown[]) => ingestMock(...args),
+    }),
+  },
+}));
+
 // Mock DeviceSyncService to assert how device-sync normalizes payloads
 jest.mock('@/services/device-sync.service', () => {
   const syncGatewayDevicesMock = jest.fn().mockResolvedValue(undefined);
@@ -623,6 +632,112 @@ describe('Internal Gateway Routes', () => {
         .send({ facility_id: 'facility-1', tid: 'tx-99', updates: [{ lock_id: 'lock-1', online: true }] })
         .expect(200);
       expect(res.body.success).toBe(true);
+    });
+  });
+
+  describe('POST /api/v1/internal/gateway/add_log', () => {
+    beforeEach(() => {
+      ingestMock.mockReset();
+      ingestMock.mockResolvedValue([
+        {
+          id: 'log-1',
+          gateway_id: 'gateway-1',
+          facility_id: 'facility-1',
+          logged_at: new Date(),
+          payload: { message: 'hello' },
+          source: 'gateway_ws',
+          created_at: new Date(),
+        },
+      ]);
+    });
+
+    it('ingests a single message', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/add_log')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({ message: '2026-05-26T09:53:21.653711 Gateway heartbeat OK', tid: 42 })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.ingested).toBe(1);
+      expect(res.body.data.tid).toBe(42);
+      expect(ingestMock).toHaveBeenCalledWith(
+        'facility-1',
+        'gateway-1',
+        ['2026-05-26T09:53:21.653711 Gateway heartbeat OK'],
+      );
+    });
+
+    it('ingests messages array', async () => {
+      await request(app)
+        .post('/api/v1/internal/gateway/add_log')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({ messages: ['line-a', 'line-b'] })
+        .expect(200);
+
+      expect(ingestMock).toHaveBeenCalledWith('facility-1', 'gateway-1', ['line-a', 'line-b']);
+    });
+
+    it('accepts raw string JSON body', async () => {
+      await request(app)
+        .post('/api/v1/internal/gateway/add_log')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .set('Content-Type', 'application/json')
+        .send(JSON.stringify({ message: 'raw string body line' }))
+        .expect(200);
+
+      expect(ingestMock).toHaveBeenCalledWith('facility-1', 'gateway-1', ['raw string body line']);
+    });
+
+    it('accepts PROXY-style JSON string log line body', async () => {
+      const line = '2026-05-26T09:53:21.653711 Gateway heartbeat OK';
+      await request(app)
+        .post('/api/v1/internal/gateway/add_log')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({ message: line })
+        .expect(200);
+
+      expect(ingestMock).toHaveBeenCalledWith('facility-1', 'gateway-1', [line]);
+    });
+
+    it('rejects facility_id override for facility admin', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/add_log')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({ message: 'line', facility_id: '550e8400-e29b-41d4-a716-446655440099' })
+        .expect(403);
+
+      expect(res.body.success).toBe(false);
+      expect(ingestMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects batches over the ingest limit', async () => {
+      const messages = Array.from({ length: 501 }, (_, i) => `line-${i}`);
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/add_log')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({ messages })
+        .expect(400);
+
+      expect(res.body.success).toBe(false);
+      expect(ingestMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid body', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/add_log')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({})
+        .expect(400);
+
+      expect(res.body.success).toBe(false);
     });
   });
 

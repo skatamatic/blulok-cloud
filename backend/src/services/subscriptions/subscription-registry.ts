@@ -14,6 +14,7 @@ import { GatewayDebugSubscriptionManager } from './gateway-debug-subscription-ma
 import { DeviceStatusSubscriptionManager } from './device-status-subscription-manager';
 import { NotificationSubscriptionManager } from './notification-subscription-manager';
 import { ActivitySubscriptionManager } from './activity-subscription-manager';
+import { GatewayTelemetryLogSubscriptionManager } from './gateway-telemetry-log-subscription-manager';
 import { FirmwarePushSubscriptionManager } from './firmware-push-subscription-manager';
 
 /**
@@ -63,6 +64,7 @@ export class SubscriptionRegistry {
     this.registerManager(new NotificationSubscriptionManager());
     this.registerManager(new ActivitySubscriptionManager());
     this.registerManager(new FirmwarePushSubscriptionManager());
+    this.registerManager(new GatewayTelemetryLogSubscriptionManager());
   }
 
   private registerManager(manager: SubscriptionManager): void {

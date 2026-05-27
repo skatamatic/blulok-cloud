@@ -1275,6 +1275,19 @@ function waitForProxyResponse(ws, id, timeoutMs = 10000) {
   });
 }
 
+async function waitForTelemetryLogWsEvent(events, predicate, timeoutMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    for (let i = 0; i < events.length; i++) {
+      if (predicate(events[i])) {
+        return events.splice(i, 1)[0];
+      }
+    }
+    await delay(200);
+  }
+  throw new Error('Timed out waiting for gateway_telemetry_log_update');
+}
+
 async function run() {
   console.log('=== WS Gateway E2E ===');
   console.log(C.gray(`API (HTTP)=${API_BASE}`));
@@ -1316,6 +1329,7 @@ async function run() {
     shares: [],
     scheduleId: null,
     accessControlDeviceIds: [],
+    extraFacilityIds: [],
     facilityAdminId: null,
     facilityAdminToken: null,
     primaryAppDevId: null,
@@ -1848,6 +1862,192 @@ async function run() {
     }
     ok('Proxy POST request-time-sync succeeded');
 
+    // ---- Gateway telemetry logs (PROXY ingest + REST + dashboard WS) ----
+    heading('Gateway Telemetry Logs');
+    const resolvedGatewayId = gatewayId || created.gatewayId;
+    if (!resolvedGatewayId) {
+      warn('Skipping gateway telemetry log tests — no gateway_id resolved');
+    } else {
+      const telemetryLogWsEvents = [];
+      let telemetryLogsWs = null;
+
+      step('Connect dashboard WS and subscribe to gateway_telemetry_logs');
+      telemetryLogsWs = new WebSocket(`${UI_WS_URL}?token=${token}`);
+      await new Promise((res, rej) => {
+        telemetryLogsWs.once('open', res);
+        telemetryLogsWs.once('error', rej);
+      });
+      telemetryLogsWs.on('message', (raw) => {
+        try {
+          const msg = JSON.parse(raw.toString());
+          if (VERBOSE) console.log('[WS-TELEMETRY-LOGS <-]', raw.toString());
+          if (msg.type === 'gateway_telemetry_log_update' && msg.data?.logs?.length) {
+            telemetryLogWsEvents.push(msg);
+          }
+        } catch {
+          /* ignore */
+        }
+      });
+      telemetryLogsWs.send(JSON.stringify({
+        type: 'subscription',
+        subscriptionType: 'gateway_telemetry_logs',
+        data: { filters: { facility_id: facilityId, gateway_id: resolvedGatewayId } },
+      }));
+      await delay(400);
+      ok('Subscribed to gateway_telemetry_logs on dashboard /ws');
+
+      const wsProbeToken = `ws-e2e-${Date.now()}`;
+      const telemetryLine =
+        `${new Date().toISOString()} E2E telemetry probe\nHeader E2E01, Payload {"probe":"${wsProbeToken}","tid":1}`;
+
+      step('PROXY POST add_log with object body (message field)');
+      const reqAddLog = 'req-add-log';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqAddLog,
+        method: 'POST',
+        path: `/internal/gateway/add_log`,
+        body: { facility_id: facilityId, message: telemetryLine, tid: 9001 },
+      }));
+      const respAddLog = await waitForProxyResponse(ws, reqAddLog);
+      if (respAddLog.status !== 200 || !respAddLog.body?.success) {
+        throw new Error(`Proxy POST add_log failed: ${respAddLog.status} ${JSON.stringify(respAddLog.body)}`);
+      }
+      const ingestedIds = respAddLog.body?.data?.ids;
+      if (!Array.isArray(ingestedIds) || ingestedIds.length < 1) {
+        throw new Error(`add_log did not return ingested ids: ${JSON.stringify(respAddLog.body?.data)}`);
+      }
+      if (respAddLog.body?.data?.tid !== 9001) {
+        throw new Error(`add_log did not echo tid: ${JSON.stringify(respAddLog.body?.data?.tid)}`);
+      }
+      ok(`add_log ingested ${ingestedIds.length} line(s) with tid echo`);
+
+      step('PROXY POST add_log with raw string body (gateway PROXY contract)');
+      const rawProbeToken = `ws-e2e-raw-${Date.now()}`;
+      const rawTelemetryLine =
+        `${new Date().toISOString()} Raw string ingest\nHeader E2E02, Payload {"probe":"${rawProbeToken}"}`;
+      const reqAddLogRaw = 'req-add-log-raw';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqAddLogRaw,
+        method: 'POST',
+        path: `/internal/gateway/add_log`,
+        body: rawTelemetryLine,
+      }));
+      const respAddLogRaw = await waitForProxyResponse(ws, reqAddLogRaw);
+      if (respAddLogRaw.status !== 200 || !respAddLogRaw.body?.success) {
+        throw new Error(`Proxy POST add_log (raw string body) failed: ${respAddLogRaw.status} ${JSON.stringify(respAddLogRaw.body)}`);
+      }
+      const rawIngestedIds = respAddLogRaw.body?.data?.ids || [];
+      if (rawIngestedIds.length < 1) {
+        throw new Error('Raw string add_log returned no ingested ids');
+      }
+      ok('PROXY add_log accepted raw string body');
+
+      step('PROXY POST add_log with messages[] batch');
+      const batchProbe = `ws-e2e-batch-${Date.now()}`;
+      const reqAddLogBatch = 'req-add-log-batch';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqAddLogBatch,
+        method: 'POST',
+        path: `/internal/gateway/add_log`,
+        body: {
+          facility_id: facilityId,
+          messages: [
+            `${new Date().toISOString()} batch line 1 {"probe":"${batchProbe}-1"}`,
+            `${new Date().toISOString()} batch line 2 {"probe":"${batchProbe}-2"}`,
+          ],
+        },
+      }));
+      const respAddLogBatch = await waitForProxyResponse(ws, reqAddLogBatch);
+      if (respAddLogBatch.status !== 200 || !respAddLogBatch.body?.success) {
+        throw new Error(`Proxy POST add_log (batch) failed: ${respAddLogBatch.status}`);
+      }
+      if ((respAddLogBatch.body?.data?.ingested ?? 0) < 2) {
+        throw new Error(`Expected 2 ingested batch lines, got ${respAddLogBatch.body?.data?.ingested}`);
+      }
+      ok('add_log ingested messages[] batch');
+
+      step('Wait for gateway_telemetry_log_update on dashboard WS');
+      const wsTelemetryHit = await waitForTelemetryLogWsEvent(
+        telemetryLogWsEvents,
+        (msg) => {
+          const rows = msg.data?.logs || [];
+          return rows.some((row) => ingestedIds.includes(row.id) || rawIngestedIds.includes(row.id));
+        },
+        10000,
+      );
+      const wsRows = wsTelemetryHit.data?.logs || [];
+      if (!wsRows.some((row) => row.payload?.data?.probe === wsProbeToken || row.payload?.data?.probe === rawProbeToken)) {
+        throw new Error('gateway_telemetry_log_update did not include expected probe payload');
+      }
+      ok('Received gateway_telemetry_log_update via dashboard WebSocket');
+
+      step('GET /gateways/:id/telemetry-logs — search + JSON path filter');
+      const logsSearchRes = await axios.get(
+        `${API_BASE}/gateways/${resolvedGatewayId}/telemetry-logs`,
+        {
+          headers: authHeaders(token),
+          params: { limit: 20, search: wsProbeToken },
+        },
+      );
+      if (logsSearchRes.status !== 200 || !logsSearchRes.data?.success) {
+        throw new Error(`GET telemetry-logs (search) failed: ${logsSearchRes.status}`);
+      }
+      const searchHit = (logsSearchRes.data.logs || []).some((row) => ingestedIds.includes(row.id));
+      if (!searchHit) {
+        throw new Error('Search filter did not return ingested telemetry log');
+      }
+      ok('GET telemetry-logs search filter returned ingested row');
+
+      const logsPathRes = await axios.get(
+        `${API_BASE}/gateways/${resolvedGatewayId}/telemetry-logs`,
+        {
+          headers: authHeaders(token),
+          params: {
+            limit: 10,
+            payload_path: 'data.probe',
+            payload_value: rawProbeToken,
+            payload_op: 'eq',
+          },
+        },
+      );
+      if (logsPathRes.status !== 200 || !logsPathRes.data?.success) {
+        throw new Error(`GET telemetry-logs (payload_path) failed: ${logsPathRes.status}`);
+      }
+      const pathHit = (logsPathRes.data.logs || []).some((row) => rawIngestedIds.includes(row.id));
+      if (!pathHit) {
+        throw new Error('payload_path filter did not return raw-string ingested log');
+      }
+      ok('GET telemetry-logs payload_path filter returned ingested row');
+
+      step('Negative: add_log rejects batches over 500 lines');
+      const oversizedMessages = Array.from({ length: 501 }, (_, i) => `oversized line ${i}`);
+      const reqAddLogOversized = 'req-add-log-oversized';
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqAddLogOversized,
+        method: 'POST',
+        path: `/internal/gateway/add_log`,
+        body: { facility_id: facilityId, messages: oversizedMessages },
+      }));
+      const respAddLogOversized = await waitForProxyResponse(ws, reqAddLogOversized);
+      if (respAddLogOversized.status !== 400) {
+        throw new Error(`Expected 400 for oversized add_log batch, got ${respAddLogOversized.status}`);
+      }
+      ok('add_log rejected batch over 500 lines');
+
+      if (telemetryLogsWs && telemetryLogsWs.readyState === WebSocket.OPEN) {
+        telemetryLogsWs.send(JSON.stringify({
+          type: 'unsubscription',
+          subscriptionType: 'gateway_telemetry_logs',
+        }));
+        telemetryLogsWs.close();
+      }
+      ok('Gateway telemetry logs E2E complete');
+    }
+
     // Negative test: device-sync should reject devices without any identifiers
     step('Negative device-sync payload (missing identifiers) should be rejected');
     const badSyncId = 'req-internal-sync-bad';
@@ -2031,6 +2231,80 @@ async function run() {
       throw new Error(`Expected 1 removed, 2 unchanged; got removed=${invResult2?.removed} unchanged=${invResult2?.unchanged}`);
     }
     ok(`Inventory sync: removed=${invResult2.removed}, unchanged=${invResult2.unchanged}`);
+
+    step('Testing inventory re-sync refreshes state on existing lock (no /devices/state call)');
+    const inventoryRefreshBattery = 2999;
+    const reqInventoryStateRefresh = 'req-inventory-state-refresh';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqInventoryStateRefresh,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          { lock_id: remainingSerial },
+          {
+            lock_id: inventorySerial1,
+            lock_number: 201,
+            battery_level: inventoryRefreshBattery,
+            battery_unit: 'mV',
+            state: 'CLOSED',
+            online: true,
+            locked: true,
+          },
+        ],
+      },
+    }));
+    const respInventoryStateRefresh = await waitForProxyResponse(ws, reqInventoryStateRefresh);
+    if (respInventoryStateRefresh.status !== 200 || !respInventoryStateRefresh.body?.success) {
+      throw new Error(`Inventory state refresh failed: ${respInventoryStateRefresh.status}`);
+    }
+    const refreshedDevice = await findDeviceBySerial(token, facilityId, inventorySerial1);
+    if (!refreshedDevice?.id) {
+      throw new Error(`Inventory refresh target device ${inventorySerial1} not found`);
+    }
+    if (refreshedDevice.battery_level !== inventoryRefreshBattery) {
+      throw new Error(
+        `Expected battery_level ${inventoryRefreshBattery} after inventory refresh, got ${refreshedDevice.battery_level}`,
+      );
+    }
+    ok('Inventory re-sync refreshed battery_level on existing gateway-managed lock');
+
+    step('Testing manual HTTP-created device preservation on inventory delta');
+    if (!gatewayId) throw new Error('gatewayId required for manual device preservation test');
+    const manualUnit = await createUnit(token, facilityId, `E2E-MANUAL-${Date.now()}`);
+    if (!manualUnit?.id) throw new Error('Failed to create unit for manual device preservation test');
+    created.units.push(manualUnit.id);
+    const manualSerial = `MANUAL-E2E-${Date.now()}`;
+    const manualDeviceId = await createBlulokDevice(token, gatewayId, manualUnit.id, manualSerial);
+    const reqInventoryManualPreserve = 'req-inventory-manual-preserve';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqInventoryManualPreserve,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          { lock_id: remainingSerial },
+          { lock_id: inventorySerial1, lock_number: 201 },
+        ],
+      },
+    }));
+    const respInventoryManualPreserve = await waitForProxyResponse(ws, reqInventoryManualPreserve);
+    if (respInventoryManualPreserve.status !== 200 || !respInventoryManualPreserve.body?.success) {
+      throw new Error(`Manual preservation inventory sync failed: ${respInventoryManualPreserve.status}`);
+    }
+    const manualPreserveResult = respInventoryManualPreserve.body?.data;
+    const manualStillPresent = await findDeviceBySerial(token, facilityId, manualSerial);
+    if (!manualStillPresent?.id) {
+      throw new Error('Manual HTTP-created device was removed by gateway inventory delta');
+    }
+    if ((manualPreserveResult?.skipped_manual ?? 0) < 1) {
+      warn('Inventory response did not report skipped_manual; verified manual device still exists in DB');
+    }
+    ok(`Manual device ${manualDeviceId} preserved when omitted from gateway inventory (skipped_manual=${manualPreserveResult?.skipped_manual ?? 0})`);
 
     // Test devices/state - not_found tracking
     step('Testing POST /devices/state (not_found tracking)');
@@ -3326,6 +3600,23 @@ async function run() {
       },
     ];
 
+    if (created.accessControlDeviceIds.length > 0) {
+      eventsToIngest.push({
+        event_id: `evt-access-control-${Date.now()}`,
+        occurred_at: new Date().toISOString(),
+        facility_id: facilityId,
+        device_id: created.accessControlDeviceIds[0],
+        action: 'access_granted',
+        method: 'app',
+        success: true,
+        actor: {
+          user_id: facilityAdmin.id,
+          role: 'facility_admin',
+          name: 'Facility Admin',
+        },
+      });
+    }
+
     const reqAccessEvents = `req-access-events-${Date.now()}`;
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -3341,7 +3632,79 @@ async function run() {
     if (respAccessEvents.status !== 200) {
       throw new Error(`Access-event ingestion failed: ${respAccessEvents.status} ${JSON.stringify(respAccessEvents.body)}`);
     }
-    ok(`Ingested ${eventsToIngest.length} canonical access events`);
+    const ingestData = respAccessEvents.body?.data;
+    if (ingestData?.ingested !== eventsToIngest.length) {
+      throw new Error(`Expected ingested=${eventsToIngest.length}, got ${ingestData?.ingested}`);
+    }
+    if (!Array.isArray(ingestData?.activity_ids) || ingestData.activity_ids.length !== eventsToIngest.length) {
+      throw new Error(
+        `Expected ${eventsToIngest.length} activity_ids, got ${JSON.stringify(ingestData?.activity_ids)}`,
+      );
+    }
+    ok(`Ingested ${eventsToIngest.length} canonical access events with matching activity_ids`);
+
+    step('Negative ingestion: reject device_id from another facility');
+    const foreignDevicesRes = await axios.get(`${API_BASE}/devices`, {
+      headers: authHeaders(token),
+      params: { device_type: 'blulok', limit: 200 },
+    });
+    const foreignDevice = (foreignDevicesRes.data?.devices || []).find(
+      (d) => d.facility_id && d.facility_id !== facilityId,
+    );
+    let otherDeviceId = foreignDevice?.id || null;
+    if (!otherDeviceId) {
+      const otherFacilityId = await createTestFacility(token, `E2E-Other-Facility-${Date.now()}`);
+      created.extraFacilityIds.push(otherFacilityId);
+      await axios.post(`${API_BASE}/gateways`, {
+        facility_id: otherFacilityId,
+        name: 'E2E Other Facility Gateway',
+        gateway_type: 'http',
+        base_url: 'http://127.0.0.1',
+        status: 'online',
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      const otherGateway = await axios.get(`${API_BASE}/gateways`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { facility_id: otherFacilityId },
+      }).then((r) => (r.data?.gateways || []).find((g) => g.facility_id === otherFacilityId));
+      if (!otherGateway?.id) throw new Error('Failed to resolve gateway for cross-facility access-event test');
+      const otherUnit = await createUnit(token, otherFacilityId, `E2E-OTHER-${Date.now()}`);
+      if (!otherUnit?.id) throw new Error('Failed to create unit for cross-facility access-event test');
+      otherDeviceId = await createBlulokDevice(
+        token,
+        otherGateway.id,
+        otherUnit.id,
+        `OTHER-FAC-DEV-${Date.now()}`,
+      );
+    } else {
+      info(`Using existing foreign device ${otherDeviceId} from facility ${foreignDevice.facility_id}`);
+    }
+    const reqAccessEventsWrongFacility = `req-access-events-wrong-facility-${Date.now()}`;
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessEventsWrongFacility,
+      method: 'POST',
+      path: '/internal/gateway/access-events',
+      body: {
+        facility_id: facilityId,
+        events: [
+          {
+            event_id: `evt-wrong-facility-device-${Date.now()}`,
+            occurred_at: new Date().toISOString(),
+            facility_id: facilityId,
+            unit_id: unitId,
+            device_id: otherDeviceId,
+            action: 'access_granted',
+            method: 'app',
+            success: true,
+          },
+        ],
+      },
+    }));
+    const wrongFacilityResp = await waitForProxyResponse(ws, reqAccessEventsWrongFacility);
+    if (wrongFacilityResp.status !== 400) {
+      throw new Error(`Expected 400 for cross-facility device_id, got ${wrongFacilityResp.status}`);
+    }
+    ok('Rejected access event when device_id belongs to a different facility');
 
     await delay(1200);
 
@@ -3359,6 +3722,25 @@ async function run() {
     if (!denied) throw new Error('Missing route_pass_invalid_signature denial in access history');
     const keypadDenied = adminHistory.data.logs.find((x) => x.action === 'keypad_attempt' && x.denial_reason === 'out_of_schedule');
     if (!keypadDenied) throw new Error('Missing keypad out_of_schedule denial in access history');
+    const keypadEnteredCode = keypadDenied?.metadata?.keypad?.entered_code;
+    if (keypadEnteredCode === '1234') {
+      throw new Error('keypad entered_code must not be stored in plaintext');
+    }
+    if (keypadEnteredCode !== '***REDACTED***') {
+      throw new Error(`Expected redacted keypad entered_code, got ${JSON.stringify(keypadEnteredCode)}`);
+    }
+    if (keypadDenied?.metadata?.keypad?.schedule_name !== 'Night Schedule') {
+      throw new Error('Expected keypad schedule_name metadata to be preserved');
+    }
+    if (created.accessControlDeviceIds.length > 0) {
+      const acHistory = adminHistory.data.logs.find(
+        (x) => x.device_id === created.accessControlDeviceIds[0] && x.device_type === 'access_control',
+      );
+      if (!acHistory) {
+        throw new Error('Missing access_control device access event in access history');
+      }
+      ok('Access-control device event ingested with device_type=access_control');
+    }
     const shadowUnitSeenByTenant = adminHistory.data.logs.some(
       (x) => x.unit_id === shadowUnit.id && x.denial_reason === 'denylist_blocked',
     );
@@ -7134,6 +7516,16 @@ async function run() {
         } catch (err) {
           cleanupFailed = true;
           cleanupErrors.push(`Failed to hard delete user ${userId}: ${err?.response?.data || err?.message || err}`);
+        }
+      }
+      for (const extraFacilityId of created.extraFacilityIds || []) {
+        step(`Hard deleting auxiliary test facility ${extraFacilityId}`);
+        try {
+          await axios.delete(`${API_BASE}/admin/facilities/${extraFacilityId}/hard`, { headers: { Authorization: `Bearer ${token}` } });
+          ok(`Hard deleted auxiliary facility ${extraFacilityId}`);
+        } catch (err) {
+          cleanupFailed = true;
+          cleanupErrors.push(`Failed to hard delete auxiliary facility ${extraFacilityId}: ${err?.response?.data || err?.message || err}`);
         }
       }
       if (created.facilityId) {

@@ -349,6 +349,8 @@ Manual devices have no `metadata.createdFromGatewaySync` and are **never** remov
 
 **Inventory sync audit log:** Each `POST /internal/gateway/devices/inventory` run persists a row in `gateway_device_sync_logs` with per-device entries (`added`, `removed`, `unchanged`, `skipped_manual`, `error`). Admins and dev admins can read history via `GET /api/v1/gateways/:gatewayId/device-sync-logs` (Facility → Gateway → **Inventory sync** tab).
 
+**Gateway telemetry logs:** High-volume operational lines from the gateway via `POST /internal/gateway/add_log` are stored in `gateway_telemetry_logs` (`logged_at`, JSON `payload`, up to 10k rows/gateway). Admins, dev admins, and facility admins read via `GET /api/v1/gateways/:gatewayId/telemetry-logs` (Facility → Gateway → **Gateway logs** tab); live updates use WebSocket subscription `gateway_telemetry_logs`.
+
 ### 6. Unit Assignments
 
 **Purpose**: Manages tenant access to units with primary/shared relationships.

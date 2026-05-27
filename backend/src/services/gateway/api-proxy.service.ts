@@ -3,6 +3,7 @@ import { config } from '@/config/environment';
 import { FacilityGuardService } from './facility-guard.service';
 import { UserRole } from '@/types/auth.types';
 import { AuthService } from '@/services/auth.service';
+import { wrapProxyStringBodyForAddLog } from '@/utils/gateway-telemetry-log-ingest.utils';
 
 export class ApiProxyService {
   private static instance: ApiProxyService;
@@ -45,14 +46,17 @@ export class ApiProxyService {
       ...(headers || {}),
       Authorization: `Bearer ${passthroughToken}`,
       'X-Gateway-Facility-Id': connectionFacilityId,
+      'Content-Type': 'application/json',
     };
+
+    const requestBody = wrapProxyStringBodyForAddLog(normalizedPath, body);
 
     const resp = await axios.request({
       url,
       method,
       headers: hdrs,
       params: query,
-      data: body,
+      data: requestBody,
       validateStatus: () => true,
     });
 

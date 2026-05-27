@@ -18,6 +18,9 @@ import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
 import { DeviceSyncService, GatewayDeviceData, DeviceInventoryItem, DeviceStateUpdate, AccessDeviceInventoryItem, AccessDeviceStateUpdate } from '@/services/device-sync.service';
 import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
+import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
+import { GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH } from '@/constants/gateway-telemetry-log.constants';
+import { normalizeAddLogBody } from '@/utils/gateway-telemetry-log-ingest.utils';
 import { partitionInventoryByKind, partitionStateUpdatesByKind } from '@/utils/gateway-sync.utils';
 import { AccessCodeService } from '@/services/access-code.service';
 import { GatewayModel } from '@/models/gateway.model';
@@ -193,6 +196,19 @@ const accessEventsSchema = Joi.object({
   facility_id: Joi.string().optional(),
   events: Joi.array().items(accessEventSchema).min(1).required(),
 });
+
+const addLogSchema = Joi.alternatives().try(
+  Joi.object({
+    facility_id: Joi.string().uuid().optional(),
+    tid: tidField,
+    message: Joi.string().required(),
+  }),
+  Joi.object({
+    facility_id: Joi.string().uuid().optional(),
+    tid: tidField,
+    messages: Joi.array().items(Joi.string()).min(1).max(GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH).required(),
+  }),
+);
 
 router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = deviceSyncSchema.validate(req.body);
@@ -511,6 +527,65 @@ router.post('/access-events', authenticateToken, requireFacilityAdmin, asyncHand
       ingested: created.length,
       activity_ids: created.map((entry) => entry.id),
     },
+  });
+}));
+
+router.post('/add_log', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const body = normalizeAddLogBody(req.body);
+  if (!body) {
+    res.status(400).json({ success: false, message: 'Invalid add_log body' });
+    return;
+  }
+
+  const { error, value } = addLogSchema.validate(body);
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
+  if (!facilityId) {
+    return;
+  }
+
+  const gatewayModel = new GatewayModel();
+  const gateway = await gatewayModel.findByFacilityId(facilityId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
+    return;
+  }
+
+  const rawLines: string[] = value.messages
+    ? (value.messages as string[])
+    : [String(value.message)];
+
+  if (rawLines.length > GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH) {
+    res.status(400).json({
+      success: false,
+      message: `At most ${GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH} log lines per request`,
+    });
+    return;
+  }
+
+  const ingested = await GatewayTelemetryLogService.getInstance().ingest(
+    facilityId,
+    gateway.id,
+    rawLines,
+  );
+
+  const responseData: Record<string, unknown> = {
+    ingested: ingested.length,
+    ids: ingested.map((row) => row.id),
+    gateway_id: gateway.id,
+    facility_id: facilityId,
+  };
+  if (value.tid !== undefined) {
+    responseData.tid = value.tid;
+  }
+
+  res.json({
+    success: true,
+    data: responseData,
   });
 }));
 

@@ -5,6 +5,7 @@ import { config } from '@/config/environment';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { SubscriptionRegistry } from './subscriptions/subscription-registry';
+import { GatewayTelemetryLogService } from './gateway-telemetry-log.service';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 
 /**
@@ -113,6 +114,7 @@ export class WebSocketService {
 
   private constructor() {
     this.subscriptionRegistry = new SubscriptionRegistry();
+    GatewayTelemetryLogService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
     this.startHeartbeat();
   }
 

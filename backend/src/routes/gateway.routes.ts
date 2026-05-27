@@ -48,6 +48,8 @@ import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { asyncHandler } from '../middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
+import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
+import { sanitizePayloadPath } from '@/utils/gateway-telemetry-log.parser';
 
 const router = Router();
 const gatewayModel = new GatewayModel();
@@ -157,6 +159,70 @@ router.get('/reassignment-candidates/:facilityId', requireAdmin, asyncHandler(as
   res.json({
     success: true,
     gateways,
+  });
+}));
+
+// GET /api/gateways/:id/telemetry-logs — gateway operational log stream (admin / facility admin)
+router.get('/:id/telemetry-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+  const gatewayId = String(req.params.id);
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '500'), 10) || 500, 1), 500);
+  const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+
+  const gateway = await gatewayModel.findById(gatewayId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found' });
+    return;
+  }
+
+  if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
+    if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
+      res.status(403).json({ success: false, message: 'Access denied. You can only access gateways in your assigned facilities.' });
+      return;
+    }
+  }
+
+  const payloadPath = typeof req.query.payload_path === 'string' ? req.query.payload_path : undefined;
+  const payloadValue = typeof req.query.payload_value === 'string' ? req.query.payload_value : undefined;
+  if (payloadPath && !sanitizePayloadPath(payloadPath)) {
+    res.status(400).json({ success: false, message: 'Invalid payload_path' });
+    return;
+  }
+
+  const from = typeof req.query.from === 'string' && req.query.from ? new Date(req.query.from) : undefined;
+  const to = typeof req.query.to === 'string' && req.query.to ? new Date(req.query.to) : undefined;
+  if (from && Number.isNaN(from.getTime())) {
+    res.status(400).json({ success: false, message: 'Invalid from date' });
+    return;
+  }
+  if (to && Number.isNaN(to.getTime())) {
+    res.status(400).json({ success: false, message: 'Invalid to date' });
+    return;
+  }
+
+  const payloadOp = req.query.payload_op === 'contains' ? 'contains' : 'eq';
+  const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+
+  const { logs, total } = await GatewayTelemetryLogService.getInstance().list(
+    gatewayId,
+    {
+      from,
+      to,
+      search,
+      payload_path: payloadPath,
+      payload_value: payloadValue,
+      payload_op: payloadOp,
+    },
+    { limit, offset },
+  );
+
+  res.json({
+    success: true,
+    logs,
+    total,
+    limit,
+    offset,
+    hasMore: offset + logs.length < total,
   });
 }));
 

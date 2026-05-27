@@ -489,6 +489,14 @@ class ApiService {
     return response.data;
   }
 
+  async getGatewayTelemetryLogs(
+    gatewayId: string,
+    params?: import('@/types/gateway.types').GatewayTelemetryLogFilters & { limit?: number; offset?: number }
+  ): Promise<import('@/types/gateway.types').GatewayTelemetryLogsResponse> {
+    const response = await this.api.get(`/gateways/${gatewayId}/telemetry-logs`, { params });
+    return response.data;
+  }
+
   async getGatewayWsStatus(facilityId: string) {
     const response = await this.api.get(`/gateways/status/${facilityId}`);
     return response.data as { success: boolean; facilityId: string; connected: boolean; lastPongAt?: number };

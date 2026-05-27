@@ -173,6 +173,69 @@ Unified internal routes (via `PROXY_REQUEST` or direct REST):
 
 After access inventory changes, the backend pushes access codes to the gateway (same as admin device create).
 
+## Gateway telemetry logs
+
+On-site gateways can stream high-volume operational log lines to the cloud via **`PROXY_REQUEST`** → **`POST /api/v1/internal/gateway/add_log`**. The backend parses each line into **`logged_at`** + JSON **`payload`**, retains up to **10,000 rows per gateway**, and exposes a filterable read API plus a dashboard WebSocket stream.
+
+### Ingest (`POST /internal/gateway/add_log`)
+
+Facility-scoped like other internal gateway POSTs (`authenticateToken` + facility admin role + `X-Gateway-Facility-Id` from the proxy).
+
+**Body shapes:**
+
+| Shape | Example |
+|-------|---------|
+| Single line | `{ "message": "2026-05-26T09:53:21.653711 …" }` |
+| Batch | `{ "messages": ["line1", "line2"] }` |
+| Raw JSON string (Express edge case) | entire body is a JSON string |
+
+Optional: `facility_id`, `tid` (echoed in response for gateway correlation).
+
+Maximum **500 lines** per request (`message` or `messages[]`). Additional lines are truncated server-side if they slip through validation.
+
+**Line grammar (best-effort parser):**
+
+| Input | Parsed payload |
+|-------|----------------|
+| `{ISO} … \nHeader {HEX}, Payload {JSON}` | `{ header, message?, data: <object> }` |
+| `{ISO} …` (no Header/Payload tail) | `{ message: "<remainder>" }` |
+| Entire line is JSON object | payload = parsed object |
+| Unparseable | `{ message: "<full raw line>" }` |
+
+Messages are heterogeneous (BLE lock traffic, gateway events, errors, etc.) — there are **no dedicated DB columns** for `lock_id` or other optional fields; they live inside `payload` when present.
+
+**Response:** `{ success: true, data: { ingested, ids[], gateway_id, facility_id, tid? } }`
+
+### Read API
+
+`GET /api/v1/gateways/:gatewayId/telemetry-logs`
+
+Roles: **`admin`**, **`dev_admin`**, **`facility_admin`** (facility-scoped). Query params:
+
+| Param | Default | Notes |
+|-------|---------|-------|
+| `limit` | 500 | max 500 |
+| `offset` | 0 | load-more pagination |
+| `from`, `to` | — | ISO range on `logged_at` (applied first) |
+| `search` | — | text search across JSON payload |
+| `payload_path`, `payload_value`, `payload_op` | — | JSON path filter (`eq` or `contains`) |
+
+Response: `{ logs, total, limit, offset, hasMore }`.
+
+### Dashboard WebSocket
+
+Subscribe on the **operator** `/ws` channel (not `/ws/gateway`):
+
+- **Type:** `gateway_telemetry_logs`
+- **Filters:** `{ facility_id?, gateway_id? }`
+- **Updates:** `gateway_telemetry_log_update` with `{ logs: [...] }` (new rows only)
+
+    Facility → Gateway → **Gateway Logs** tab (visible when the user can manage the gateway). Live subscription is active only while that tab is open. Ingest accepts at most **500 lines per request**; the UI display caps at **1,000** rows in memory during live tailing.
+
+### Storage
+
+Table **`gateway_telemetry_logs`**: `id`, `gateway_id`, `facility_id`, `logged_at`, `payload` (JSON), `source` (default `gateway_ws`), `created_at`. Index `(gateway_id, logged_at DESC)`. Retention trim runs after each ingest batch.
+
 ## Automated regression tests
 
 - **Inbound WS → DB status:** `backend/src/__tests__/services/gateway-events.service.inbound-db-sync.test.ts` — connect/disconnect updates `gateways.status` for physical/simulated, skips HTTP and missing rows; uses `jest.unmock('@/models/gateway.model')` because global `setup-mocks` replaces `GatewayModel` with a plain factory (no real prototype for `jest.spyOn`).

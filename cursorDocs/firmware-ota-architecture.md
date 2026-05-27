@@ -2,15 +2,16 @@
 
 ## Overview
 
-The firmware OTA (Over-The-Air) system delivers signed firmware binaries from the cloud to field devices through gateway WebSocket connections. Firmware can target three distinct device types, and the gateway acts as a relay for all targets.
+The firmware OTA (Over-The-Air) system delivers signed firmware binaries from the cloud to field devices through gateway WebSocket connections. Firmware can target several device types, and the gateway acts as a relay for non-gateway targets.
 
 ## Target Types
 
-| Target Type   | Description                                      | Delivery Path                                |
-|---------------|--------------------------------------------------|----------------------------------------------|
-| `gateway`     | Applied to the gateway hardware itself           | Cloud → Gateway WS → Gateway self-applies    |
-| `lock`        | Broadcast to all BluLok locks on the BLE network | Cloud → Gateway WS → Gateway relays via BLE  |
-| `friend_node` | Broadcast to all friend nodes (BLE mesh relays)  | Cloud → Gateway WS → Gateway relays via BLE  |
+| Target Type       | Description                                      | Delivery Path                                |
+|-------------------|--------------------------------------------------|----------------------------------------------|
+| `gateway`         | Applied to the gateway hardware itself           | Cloud → Gateway WS → Gateway self-applies    |
+| `lock`            | Broadcast to all BluLok locks on the BLE network | Cloud → Gateway WS → Gateway relays via BLE  |
+| `friend_node`     | Broadcast to all friend nodes (BLE mesh relays)  | Cloud → Gateway WS → Gateway relays via BLE  |
+| `access_control`  | Access-control hardware on the gateway           | Cloud → Gateway WS → Gateway relays/applies |
 
 The same firmware version string (e.g. `2.0.0`) can exist independently for different target types. Version uniqueness is scoped to `(version, target_type)`.
 
@@ -51,7 +52,8 @@ The same firmware version string (e.g. `2.0.0`) can exist independently for diff
 ### Inbound WS Message Validation
 
 - `FIRMWARE_CHUNK_ACK` messages are validated: `nonce` must be a string (1-128 chars), `chunkIndex` must be an integer (0-100000), `status` and `message` must be strings if present.
-- `FIRMWARE_UPDATE_STATUS` messages are validated: `status` required string (1-64 chars), optional fields (`nonce`, `version`, `error`, `target_type`) are type-checked and length-limited.
+- `FIRMWARE_UPDATE_STATUS` messages are validated: **`push_id`** required string (1-128 chars), **`status`** required string (1-64 chars); optional fields (`version`, `error`, `target_type`) are type-checked and length-limited. Messages that omit `push_id` (for example by sending manifest `nonce` instead) are rejected and do not advance the push.
+- `FIRMWARE_PROGRESS` messages are validated: `push_id` required; optional progress fields (`progress_percent`, `phase`, `devices`, `error`) are type-checked. This message is optional and does **not** mark a push complete.
 
 ### API Response Sanitization
 
@@ -125,17 +127,26 @@ JWT payload fields:
 | Field              | Type   | Description                                |
 |--------------------|--------|--------------------------------------------|
 | `cmd_type`         | string | Always `FIRMWARE_MANIFEST`                 |
-| `target_type`      | string | `gateway`, `lock`, or `friend_node`        |
+| `push_id`          | string | **Cloud push record UUID** — required on all later `FIRMWARE_UPDATE_STATUS` / `FIRMWARE_PROGRESS` messages |
+| `target_type`      | string | `gateway`, `lock`, `friend_node`, or `access_control` |
 | `version`          | string | Firmware version                           |
 | `sha256`           | string | SHA-256 hex hash of the full binary        |
 | `size`             | number | Binary size in bytes                       |
 | `chunk_count`      | number | Total number of chunks                     |
 | `chunk_size`       | number | Chunk size in bytes (128KB)                |
-| `nonce`            | string | UUID for replay protection + ACK correlation |
+| `nonce`            | string | UUID for chunk ACK correlation only (`FIRMWARE_CHUNK_ACK`) — **not** a substitute for `push_id` |
+| `filename`         | string | Original firmware filename (optional)    |
 | `compatible_models`| array  | Compatible device models (optional)        |
 | `iss`              | string | `BluCloud:Root`                            |
 | `iat`              | number | Issued at (Unix timestamp)                 |
 | `exp`              | number | Expiration (Unix timestamp, default iat+1800) |
+
+**Correlation IDs:** The manifest JWT carries two different UUIDs. Gateways must keep both but use each only where documented:
+
+| Field | Use on gateway → cloud messages |
+|-------|----------------------------------|
+| `nonce` | `FIRMWARE_CHUNK_ACK` only |
+| `push_id` | `FIRMWARE_UPDATE_STATUS`, `FIRMWARE_PROGRESS` |
 
 ### 2. FIRMWARE_CHUNK
 
@@ -177,23 +188,64 @@ The cloud waits for each ACK before sending the next chunk. If no ACK is receive
 
 ### 4. FIRMWARE_UPDATE_STATUS
 
-Sent from gateway to cloud to report final update outcome.
+Sent from gateway to cloud to report apply/relay progress and **final outcome**. Required after all chunks are ACK'd; the cloud does not mark a push `complete` until it receives a terminal success status on this message type.
 
 ```json
 {
   "type": "FIRMWARE_UPDATE_STATUS",
-  "nonce": "<manifest nonce>",
-  "target_type": "gateway",
+  "push_id": "<push_id from manifest JWT>",
+  "target_type": "lock",
   "status": "success",
-  "version": "2.1.0"
+  "version": "2.10.0"
 }
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `push_id` | **Yes** | Must match `push_id` from the manifest JWT for this transfer |
+| `status` | **Yes** | See status mapping below |
+| `target_type` | Recommended | Should match manifest `target_type`; mismatches are rejected |
+| `version` | Optional | Firmware version being applied (informational) |
+| `error` | Optional | Human-readable failure reason when `status` is `failed` or `error` |
+
+**Do not send `nonce` instead of `push_id`.** The cloud ignores `FIRMWARE_UPDATE_STATUS` without a valid `push_id` (backend logs: `FIRMWARE_UPDATE_STATUS: invalid push_id`).
+
+Typical lock/friend_node lifecycle (gateway → cloud):
+
+```json
+{ "type": "FIRMWARE_UPDATE_STATUS", "push_id": "…", "target_type": "lock", "version": "2.10.0", "status": "verifying" }
+{ "type": "FIRMWARE_UPDATE_STATUS", "push_id": "…", "target_type": "lock", "version": "2.10.0", "status": "applying" }
+{ "type": "FIRMWARE_UPDATE_STATUS", "push_id": "…", "target_type": "lock", "version": "2.10.0", "status": "success" }
 ```
 
 `handleUpdateStatus` maps gateway status reports to push record updates:
 - `success` / `applied` → push status `complete`
 - `failed` / `error` → push status `failed` with error message
-- `verifying` → push status `verifying`
-- Terminal status updates (`success`/`applied`/`failed`/`error`) require nonce correlation to avoid mutating the wrong push.
+- `verifying` / `applying` → push status `verifying` (progress bar may already show 100% while BLE relay/install continues)
+- Any other status (e.g. `rebooting`, `completed`, `done`) → logged as unknown; push is **not** updated
+
+Terminal status updates (`success`/`applied`/`failed`/`error`) require **`push_id`** correlation to avoid mutating the wrong push.
+
+### 5. FIRMWARE_PROGRESS (optional)
+
+Optional gateway → cloud progress telemetry for dashboards. **Does not complete a push** — use `FIRMWARE_UPDATE_STATUS` with `status: "success"` or `"applied"` for that.
+
+```json
+{
+  "type": "FIRMWARE_PROGRESS",
+  "push_id": "<push_id from manifest JWT>",
+  "target_type": "lock",
+  "progress_percent": 80,
+  "phase": "installing",
+  "message": "Installing on lock nodes",
+  "devices": [
+    { "device_id": "lock-1", "status": "installing", "progress_percent": 90 },
+    { "device_id": "lock-2", "status": "downloading", "progress_percent": 30 }
+  ]
+}
+```
+
+Sending `progress_percent: 100` or per-device `status: "complete"` here updates UI progress only; the push remains `verifying` until `FIRMWARE_UPDATE_STATUS` reports success.
 
 ## Push Status API Hydration
 
@@ -211,12 +263,12 @@ pending → transferring → verifying → complete
 
 1. **pending**: Push record created, background task spawned
 2. **transferring**: Manifest sent, chunks being delivered with ACK flow control
-3. **verifying**: All chunks delivered to the gateway. The gateway is applying (for `gateway` target) or BLE-relaying (for `lock`/`friend_node` targets) the firmware. Completion depends on `FIRMWARE_UPDATE_STATUS`; if no final status arrives before timeout, the push is auto-failed.
-4. **complete**: Gateway confirmed firmware applied successfully via `FIRMWARE_UPDATE_STATUS` with `status: 'success'` or `'applied'`
+3. **verifying**: All chunks delivered to the gateway. The cloud sets progress to **100%** and status to `verifying`. The gateway is applying (for `gateway` target) or BLE-relaying (for `lock`/`friend_node` targets) the firmware. Completion depends on `FIRMWARE_UPDATE_STATUS` with `push_id` and terminal `success`/`applied`; if no final status arrives before timeout (default 900s, `FIRMWARE_VERIFY_TIMEOUT_SEC`), the push is auto-failed.
+4. **complete**: Gateway confirmed firmware applied successfully via `FIRMWARE_UPDATE_STATUS` with `status: 'success'` or `'applied'` and the correct `push_id`
 5. **failed**: Chunk ACK timeout after max retries, SHA-256 mismatch, gateway reported failure, gateway disconnect, or other error
 6. **cancelled**: User cancelled via API (atomic status transition); background task stops at next chunk boundary
 
-**Important:** `executePush` sets the status to `verifying` (NOT `complete`) after all chunks are sent. The final `complete` status is only set by `handleUpdateStatus` when the gateway reports success. This prevents premature "complete" indicators for lock/friend_node targets where BLE relay is still in progress.
+**Important:** `executePush` sets the status to `verifying` (NOT `complete`) after all chunks are sent and broadcasts **100%** progress. The final `complete` status is only set by `handleUpdateStatus` when the gateway reports `success`/`applied` with **`push_id`**. This prevents premature "complete" indicators for lock/friend_node targets where BLE relay is still in progress, and prevents `FIRMWARE_PROGRESS` alone from closing the push.
 
 ## Pre-Push Checks
 

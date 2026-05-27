@@ -478,16 +478,23 @@ router.post('/blulok', requireAdminOrFacilityAdmin, asyncHandler(async (req: Aut
     // TODO: Add facility access check for FACILITY_ADMIN
 
     const normalizedSerial = String(value.device_serial || value.serial).trim();
-    // Sanitize device name to prevent XSS
-    const sanitizedValue = {
-      ...value,
-      serial: normalizedSerial,
-      device_serial: normalizedSerial,
-      name: sanitizeHtml(value.name),
-      location_description: sanitizeHtml(value.location_description)
-    };
+    const displayName = sanitizeHtml(value.name);
+    const locationDescription = sanitizeHtml(value.location_description);
+    const deviceSettings =
+      displayName || locationDescription
+        ? {
+            ...(displayName ? { displayName } : {}),
+            ...(locationDescription ? { locationDescription } : {}),
+          }
+        : undefined;
 
-    const device = await deviceModel.createBluLokDevice(sanitizedValue);
+    const device = await deviceModel.createBluLokDevice({
+      gateway_id: value.gateway_id,
+      unit_id: value.unit_id,
+      device_serial: normalizedSerial,
+      serial: normalizedSerial,
+      device_settings: deviceSettings,
+    });
     
     res.status(201).json({ success: true, device });
   } catch (error) {

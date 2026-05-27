@@ -31,3 +31,31 @@ export interface GatewayDeviceSyncLogRecord {
   entries: DeviceSyncLogEntry[];
   created_at: string;
 }
+
+export interface GatewayTelemetryLogRecord {
+  id: string;
+  gateway_id: string;
+  facility_id: string;
+  logged_at: string;
+  payload: Record<string, unknown> | null;
+  source: string;
+  created_at: string;
+}
+
+export interface GatewayTelemetryLogFilters {
+  from?: string;
+  to?: string;
+  search?: string;
+  payload_path?: string;
+  payload_value?: string;
+  payload_op?: 'eq' | 'contains';
+}
+
+export interface GatewayTelemetryLogsResponse {
+  success: boolean;
+  logs: GatewayTelemetryLogRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}

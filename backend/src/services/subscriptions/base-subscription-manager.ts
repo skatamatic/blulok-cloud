@@ -10,7 +10,7 @@ import { UserRole } from '@/types/auth.types';
  */
 export interface WebSocketMessage {
   /** Message type determining how the message should be processed */
-  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update' | 'command_queue_update' | 'logs_update' | 'units_update' | 'battery_status_update' | 'device_status_update' | 'fms_sync_status_update' | 'fms_sync_progress_update' | 'dev_notifications_update' | 'notifications_update' | 'notification_created' | 'notification_read' | 'notification_deleted' | 'notifications_batch_read' | 'notifications_count_update' | 'activity_update' | 'activity_new' | 'firmware_push_progress_update';
+  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update' | 'command_queue_update' | 'logs_update' | 'units_update' | 'battery_status_update' | 'device_status_update' | 'fms_sync_status_update' | 'fms_sync_progress_update' | 'dev_notifications_update' | 'notifications_update' | 'notification_created' | 'notification_read' | 'notification_deleted' | 'notifications_batch_read' | 'notifications_count_update' | 'activity_update' | 'activity_new' | 'firmware_push_progress_update' | 'gateway_telemetry_log_update';
   /** Unique subscription identifier for targeted operations */
   subscriptionId?: string;
   /** Type of subscription being referenced */
