@@ -293,6 +293,23 @@ describe('SyncFMSWidget', () => {
       });
     });
 
+    it('triggers sync when tiny tile is clicked', async () => {
+      renderWithProviders(
+        <SyncFMSWidget {...defaultProps} initialSize="tiny" />
+      );
+
+      const syncButton = await screen.findByTitle('Sync now');
+      expect(syncButton).toHaveClass('no-drag');
+
+      fireEvent.pointerDown(syncButton, { pointerId: 1, clientX: 10, clientY: 10 });
+      fireEvent.pointerUp(document, { pointerId: 1, clientX: 10, clientY: 10 });
+
+      await waitFor(() => {
+        expect(mockFMSSyncContext.startSync).toHaveBeenCalledWith('facility-1', 'Facility One');
+        expect(fmsService.triggerSync).toHaveBeenCalledWith('facility-1');
+      });
+    });
+
     it('shows oldest sync time for tiny widget', async () => {
       renderWithProviders(
         <SyncFMSWidget {...defaultProps} initialSize="tiny" />

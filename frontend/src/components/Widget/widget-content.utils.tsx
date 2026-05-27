@@ -68,9 +68,9 @@ export function StatTinyContent({
   const { pressProps } = usePressWithoutDrag(onClick ?? (() => {}), {
     disabled: disabled || !onClick || loading,
   });
-  const panelClassName = `flex min-h-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-x-hidden rounded-[7px] px-1 pt-1.5 pb-2 ${iconClassName}${
+  const panelClassName = `no-drag flex min-h-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-x-hidden rounded-[7px] px-1 pt-1.5 pb-2 ${iconClassName}${
     onClick && !loading
-      ? ` pointer-events-auto w-full transition-opacity hover:opacity-90${disabled ? ' cursor-not-allowed opacity-50' : ''}`
+      ? ` pointer-events-auto w-full transition-opacity hover:opacity-90${disabled ? ' cursor-not-allowed opacity-50' : ' cursor-pointer'}`
       : ''
   }`;
   const panelBody = loading ? (
@@ -98,7 +98,10 @@ export function StatTinyContent({
         <div className={panelClassName}>{panelBody}</div>
       )}
       {tinyLabel ? (
-        <span className={TINY_TILE_LABEL_CLASS} title={label}>
+        <span
+          className={`${TINY_TILE_LABEL_CLASS} ${onClick && !loading && !disabled ? 'cursor-grab' : ''}`}
+          title={label}
+        >
           {tinyLabel}
         </span>
       ) : null}

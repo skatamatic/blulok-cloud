@@ -34,4 +34,20 @@ describe('usePressWithoutDrag', () => {
 
     expect(onPress).not.toHaveBeenCalled();
   });
+
+  it('does not fire onPress after pointer movement exceeds drag threshold', async () => {
+    const onPress = jest.fn();
+    render(<PressButton onPress={onPress} />);
+
+    fireEvent.pointerDown(screen.getByTestId('press-target'), {
+      pointerId: 1,
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 30, clientY: 30 });
+    fireEvent.pointerUp(document, { pointerId: 1, clientX: 30, clientY: 30 });
+    await waitFor(() => expect(onPress).not.toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId('press-target'));
+    expect(onPress).not.toHaveBeenCalled();
+  });
 });

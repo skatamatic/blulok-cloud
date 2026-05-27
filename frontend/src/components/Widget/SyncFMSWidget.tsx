@@ -60,7 +60,7 @@ function FmsSyncActionButton({
     <div
       {...pressProps}
       title={title}
-      className={`pointer-events-auto flex items-center justify-center ${disabled ? 'cursor-not-allowed opacity-50' : ''} ${fmsSyncActionClass(enabled)} ${className}`}
+      className={`no-drag pointer-events-auto flex items-center justify-center ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${fmsSyncActionClass(enabled)} ${className}`}
     >
       <ArrowPathIcon className={`${iconClassName} ${syncing ? 'animate-spin' : ''}`} />
       {children}

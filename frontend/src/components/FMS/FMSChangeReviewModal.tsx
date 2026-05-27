@@ -465,7 +465,7 @@ export function FMSChangeReviewModal({
                     </button>
                   </div>
 
-                  <div className="mt-4 -mb-px overflow-x-auto">
+                  <div className="mt-4 -mb-px overflow-x-auto scrollbar-hide">
                     <Tab.Group
                       onChange={(index) => {
                         const filters: ChangeFilter[] = ['all', 'added', 'updated', 'removed', 'invalid'];
@@ -500,7 +500,7 @@ export function FMSChangeReviewModal({
                 </div>
 
                 {/* Scrollable body */}
-                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
+                <div className="status-area-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
                   {filteredChanges.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
