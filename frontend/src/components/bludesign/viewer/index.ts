@@ -5,6 +5,8 @@
  */
 
 export { FacilityViewer3D } from './FacilityViewer3D';
+export { FacilityViewerEmptyState } from './FacilityViewerEmptyState';
+export type { FacilityViewerEmptyVariant } from './FacilityViewerEmptyState';
 export { ViewerLoadingOverlay } from './ViewerLoadingOverlay';
 export { ViewerFloorsPanel } from './ViewerFloorsPanel';
 export { ViewerPropertiesPanel } from './ViewerPropertiesPanel';

@@ -678,9 +678,22 @@
     padding: 3px;
   }
 
-  .widget-grid .compact-widget--tiny .drag-handle {
-    flex: 1 1 auto;
+  /* Footer drag strip — label stays compact; ::before extends grab area into content */
+  .widget-grid .compact-widget--tiny .tiny-widget-footer-drag {
+    position: relative;
+    z-index: 2;
+    flex: 0 0 auto;
     min-height: 0;
+    overflow: visible;
+  }
+
+  .widget-grid .compact-widget--tiny .tiny-widget-footer-drag::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    bottom: 0;
+    top: -0.75rem;
   }
 
   /* Ensure all colored buttons always have white text */

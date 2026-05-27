@@ -3,13 +3,13 @@
  *
  * Displays the 3D facility viewer with real-time state updates when a single
  * facility is selected and that facility has a linked BluDesign model.
- * All-facilities scope shows an empty canvas (no picker, no placeholder).
+ * All-facilities scope and unlinked facilities show a polished empty state.
  */
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
-import { FacilityViewer3D } from '../bludesign/viewer';
+import { FacilityViewer3D, FacilityViewerEmptyState } from '../bludesign/viewer';
 import { BuildingOffice2Icon } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
@@ -190,7 +190,12 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
             onReady={handleReady}
             onError={handleError}
           />
-        ) : null}
+        ) : (
+          <FacilityViewerEmptyState
+            variant={isAllFacilitiesSelected ? 'select-facility' : 'no-model'}
+            facilityName={selectedFacility?.name}
+          />
+        )}
       </div>
     </Widget>
   );
@@ -198,11 +203,14 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
 
 const LoadingPlaceholder: React.FC<{ isDark: boolean }> = ({ isDark }) => (
   <div
-    className={`flex h-full w-full items-center justify-center ${isDark ? 'bg-gray-900' : 'bg-gray-100'}`}
+    className={`flex h-full w-full items-center justify-center ${
+      isDark ? 'bg-gray-900' : 'bg-gray-50'
+    }`}
   >
     <div
-      className={`h-8 w-8 animate-spin rounded-full border-2 border-[#147FD4]/30 border-t-[#147FD4]`}
+      className="h-7 w-7 animate-spin rounded-full border-2 border-[#147FD4]/30 border-t-[#147FD4]"
       aria-label="Loading facility viewer"
+      role="status"
     />
   </div>
 );

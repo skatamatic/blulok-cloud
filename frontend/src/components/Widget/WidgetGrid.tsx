@@ -588,7 +588,7 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
       isInteractingRef.current = false;
       setPlacementInvalid(false);
     },
-    draggableHandle: '.drag-handle',
+    draggableHandle: '.drag-handle, .tiny-widget-footer-drag',
     cancel: '.no-drag, .widget-header-actions, [role="button"].no-drag, button, input, select, textarea, .widget-content, .widget-body, .card > *:not(.drag-handle)',
     transformScale: 1,
   }), [

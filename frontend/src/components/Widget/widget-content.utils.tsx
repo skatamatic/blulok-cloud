@@ -6,7 +6,7 @@ export const TINY_TILE_ICON_CLASS = 'h-[1.675rem] w-[1.675rem] shrink-0';
 export const TINY_TILE_SPINNER_CLASS =
   'h-[1.675rem] w-[1.675rem] animate-spin rounded-full border-2 border-current/30 border-t-current';
 export const TINY_TILE_LABEL_CLASS =
-  'shrink-0 truncate px-0.5 text-center text-[12px] font-medium leading-tight text-gray-600 dark:text-gray-400';
+  'shrink-0 flex-none truncate px-0.5 text-center text-[10px] font-medium leading-none text-gray-600 dark:text-gray-400';
 /** Value line in tinted panel — leading-tight keeps descenders (g, y, p) inside the clip box. */
 export const TINY_TILE_VALUE_CLASS =
   'max-w-full truncate text-center font-bold tabular-nums leading-tight';
@@ -68,7 +68,7 @@ export function StatTinyContent({
   const { pressProps } = usePressWithoutDrag(onClick ?? (() => {}), {
     disabled: disabled || !onClick || loading,
   });
-  const panelClassName = `no-drag flex min-h-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-x-hidden rounded-[7px] px-1 pt-1.5 pb-2 ${iconClassName}${
+  const panelClassName = `no-drag flex min-h-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-x-hidden rounded-[7px] px-1 pt-1.5 pb-1 ${iconClassName}${
     onClick && !loading
       ? ` pointer-events-auto w-full transition-opacity hover:opacity-90${disabled ? ' cursor-not-allowed opacity-50' : ' cursor-pointer'}`
       : ''
@@ -99,7 +99,7 @@ export function StatTinyContent({
       )}
       {tinyLabel ? (
         <span
-          className={`${TINY_TILE_LABEL_CLASS} drag-handle cursor-grab select-none`}
+          className={`${TINY_TILE_LABEL_CLASS} tiny-widget-footer-drag drag-handle cursor-grab select-none`}
           title={label}
         >
           {tinyLabel}
