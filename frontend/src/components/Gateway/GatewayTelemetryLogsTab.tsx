@@ -254,7 +254,7 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
   const filtersDirty =
     draftFilters.from !== appliedFilters.from ||
     draftFilters.to !== appliedFilters.to ||
-    draftFilters.search.trim() !== (appliedFilters.search ?? '') ||
+    draftFilters.search.trim() !== appliedFilters.search ||
     JSON.stringify(draftFilters.payloadFilters) !== JSON.stringify(appliedFilters.payloadFilters);
 
   return (

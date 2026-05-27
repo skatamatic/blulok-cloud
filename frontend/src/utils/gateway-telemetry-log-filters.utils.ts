@@ -13,7 +13,7 @@ export interface PayloadFilterChip {
 export interface TelemetryLogFilterState {
   from?: string;
   to?: string;
-  search?: string;
+  search: string;
   payloadFilters: PayloadFilterChip[];
 }
 
@@ -87,7 +87,7 @@ export function buildTelemetryLogQueryParams(filters: TelemetryLogFilterState): 
   return {
     from: datetimeLocalToIso(filters.from),
     to: datetimeLocalToIso(filters.to),
-    search: filters.search?.trim() || undefined,
+    search: filters.search.trim() || undefined,
     payload_path: primaryPayload?.path,
     payload_value: primaryPayload?.value,
     payload_op: primaryPayload?.op,
@@ -111,5 +111,5 @@ export function payloadStrPreview(payload: Record<string, unknown> | null): stri
 }
 
 export function isEmptyFilterState(filters: TelemetryLogFilterState): boolean {
-  return !filters.from && !filters.to && !filters.search?.trim() && filters.payloadFilters.length === 0;
+  return !filters.from && !filters.to && !filters.search.trim() && filters.payloadFilters.length === 0;
 }

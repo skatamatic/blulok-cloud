@@ -27,11 +27,13 @@ describe('gateway-telemetry-log-filters.utils', () => {
     const log = sampleLog();
     expect(
       logMatchesFilters(log, {
+        search: '',
         payloadFilters: [{ id: '1', path: 'data.lock_id', value: 'abc-123', op: 'eq' }],
       }),
     ).toBe(true);
     expect(
       logMatchesFilters(log, {
+        search: '',
         payloadFilters: [{ id: '1', path: 'data.lock_id', value: 'missing', op: 'eq' }],
       }),
     ).toBe(false);
@@ -43,6 +45,7 @@ describe('gateway-telemetry-log-filters.utils', () => {
       sampleLog({ id: 'b', payload: { data: { lock_id: 'abc', tid: 2 } } }),
     ];
     const filtered = applyClientSideTelemetryFilters(logs, {
+      search: '',
       payloadFilters: [
         { id: '1', path: 'data.lock_id', value: 'abc', op: 'eq' },
         { id: '2', path: 'data.tid', value: '2', op: 'eq' },
