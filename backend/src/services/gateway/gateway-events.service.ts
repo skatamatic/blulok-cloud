@@ -5,6 +5,8 @@ import { WebsocketGatewayTransport } from './websocket-gateway.transport';
 import { GatewayModel } from '@/models/gateway.model';
 import { notifyGatewayStatusAfterDbUpdate } from '@/utils/gateway-status-notification.util';
 import { WebSocketService } from '@/services/websocket.service';
+import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
+import { formatGatewayDisconnectReason } from '@/utils/gateway-telemetry-system-log.utils';
 
 /**
  * Gateway Client Information Interface
@@ -61,6 +63,8 @@ export class GatewayEventsService {
     timestamp: number;
     reason?: string;
     lastActivityAt?: number;
+    userId?: string;
+    remoteAddress?: string;
   }) => void>();
 
   public static getInstance(): GatewayEventsService {
@@ -94,6 +98,8 @@ export class GatewayEventsService {
         timestamp: number;
         reason?: string;
         lastActivityAt?: number;
+        userId?: string;
+        remoteAddress?: string;
       }) => {
         void this.syncGatewayDbWithInboundConnection(event);
         this.connectionListeners.forEach((listener) => {
@@ -178,6 +184,8 @@ export class GatewayEventsService {
     timestamp: number;
     reason?: string;
     lastActivityAt?: number;
+    userId?: string;
+    remoteAddress?: string;
   }) => void): () => void {
     this.connectionListeners.add(listener);
     return () => {
@@ -203,12 +211,52 @@ export class GatewayEventsService {
    * Keep `gateways.status` aligned with inbound `/ws/gateway` sessions for mesh/physical gateways.
    * HTTP gateways use outbound polling to report liveness; do not overwrite their DB status from inbound WS.
    */
+  private recordInboundWsTelemetryLog(
+    gatewayId: string,
+    facilityId: string,
+    event: {
+      connected: boolean;
+      reason?: string;
+      lastActivityAt?: number;
+      userId?: string;
+      remoteAddress?: string;
+    },
+  ): void {
+    const telemetry = GatewayTelemetryLogService.getInstance();
+    if (event.connected) {
+      telemetry.recordSystemEventSafe({
+        event: 'gateway_connected',
+        message: 'Gateway inbound WebSocket connected (cloud system)',
+        facility_id: facilityId,
+        gateway_id: gatewayId,
+        reason: event.reason ?? 'auth_ok',
+        user_id: event.userId,
+        remote_address: event.remoteAddress,
+      });
+      return;
+    }
+
+    const reasonLabel = formatGatewayDisconnectReason(event.reason);
+    telemetry.recordSystemEventSafe({
+      event: 'gateway_disconnected',
+      message: `Gateway inbound WebSocket disconnected: ${reasonLabel} (cloud system)`,
+      facility_id: facilityId,
+      gateway_id: gatewayId,
+      reason: event.reason,
+      user_id: event.userId,
+      remote_address: event.remoteAddress,
+      last_activity_at: event.lastActivityAt,
+    });
+  }
+
   private async syncGatewayDbWithInboundConnection(event: {
     facilityId: string;
     connected: boolean;
     timestamp: number;
     reason?: string;
     lastActivityAt?: number;
+    userId?: string;
+    remoteAddress?: string;
   }): Promise<void> {
     const { facilityId, connected } = event;
     try {
@@ -219,6 +267,8 @@ export class GatewayEventsService {
       if (gw.gateway_type === 'http') {
         return;
       }
+
+      this.recordInboundWsTelemetryLog(gw.id, facilityId, event);
 
       const previousStatus = gw.status;
       const next: 'online' | 'offline' = connected ? 'online' : 'offline';

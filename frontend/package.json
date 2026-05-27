@@ -9,6 +9,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "jest",
+    "test:ci": "node --max-old-space-size=8192 ./node_modules/jest/bin/jest.js --runInBand --passWithNoTests",
     "test:coverage": "jest --coverage --watchAll=false",
     "test:coverage:areas": "jest --coverage --coverageReporters=json-summary --coverageReporters=text-summary --watchAll=false --silent && node ../scripts/print-coverage-by-area.mjs frontend",
     "test:unit": "jest --testPathPattern=\"simple-integration|test-utils|LandingPage\"",

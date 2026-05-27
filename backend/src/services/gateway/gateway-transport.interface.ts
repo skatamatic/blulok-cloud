@@ -33,6 +33,8 @@ export interface GatewayTransport {
     timestamp: number;
     reason?: string;
     lastActivityAt?: number;
+    userId?: string;
+    remoteAddress?: string;
   }) => void): (() => void) | void;
 
   /**

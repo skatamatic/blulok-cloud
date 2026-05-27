@@ -7,6 +7,12 @@ import { parseGatewayTelemetryLogLine } from '@/utils/gateway-telemetry-log.pars
 import { SubscriptionRegistry } from '@/services/subscriptions/subscription-registry';
 import { GatewayTelemetryLogSubscriptionManager } from '@/services/subscriptions/gateway-telemetry-log-subscription-manager';
 import { GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH } from '@/constants/gateway-telemetry-log.constants';
+import { GATEWAY_TELEMETRY_CLOUD_SYSTEM_SOURCE } from '@/constants/gateway-telemetry-system-log.constants';
+import {
+  buildGatewayTelemetrySystemLogPayload,
+  type BuildGatewayTelemetrySystemLogInput,
+} from '@/utils/gateway-telemetry-system-log.utils';
+import { logger } from '@/utils/logger';
 
 export class GatewayTelemetryLogService {
   private static instance: GatewayTelemetryLogService;
@@ -54,6 +60,37 @@ export class GatewayTelemetryLogService {
     options: { limit?: number; offset?: number } = {},
   ) {
     return this.model.listByGateway(gatewayId, filters, options);
+  }
+
+  /**
+   * Persist a cloud-originated operational line in the gateway telemetry log stream.
+   * Payload uses the same header/message/data shape as gateway-ingested lines.
+   */
+  async recordSystemEvent(input: BuildGatewayTelemetrySystemLogInput): Promise<GatewayTelemetryLogRecord[]> {
+    const loggedAt = new Date();
+    const payload = buildGatewayTelemetrySystemLogPayload(input);
+    const rows = [
+      {
+        gateway_id: input.gateway_id,
+        facility_id: input.facility_id,
+        logged_at: loggedAt,
+        payload,
+        source: GATEWAY_TELEMETRY_CLOUD_SYSTEM_SOURCE,
+      },
+    ];
+    const created = await this.model.insertAndTrim(input.gateway_id, rows);
+    this.broadcast(created);
+    return created;
+  }
+
+  /** Non-blocking wrapper for lifecycle hooks; failures are logged only. */
+  recordSystemEventSafe(input: BuildGatewayTelemetrySystemLogInput): void {
+    void this.recordSystemEvent(input).catch((error) => {
+      logger.warn(
+        `Gateway telemetry system log failed event=${input.event} gateway=${input.gateway_id}`,
+        error,
+      );
+    });
   }
 
   broadcast(entries: GatewayTelemetryLogRecord[]): void {

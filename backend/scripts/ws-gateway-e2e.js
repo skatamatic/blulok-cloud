@@ -1896,6 +1896,31 @@ async function run() {
       await delay(400);
       ok('Subscribed to gateway_telemetry_logs on dashboard /ws');
 
+      step('GET telemetry-logs — cloud system gateway_connected from inbound WS AUTH');
+      const connectSystemRes = await axios.get(
+        `${API_BASE}/gateways/${resolvedGatewayId}/telemetry-logs`,
+        {
+          headers: authHeaders(token),
+          params: {
+            payload_path: 'data.event',
+            payload_value: 'gateway_connected',
+            payload_op: 'eq',
+            limit: 20,
+          },
+        },
+      );
+      if (connectSystemRes.status !== 200) {
+        throw new Error(`GET telemetry-logs (gateway_connected) failed: ${connectSystemRes.status}`);
+      }
+      const connectSystemLogs = connectSystemRes.data?.logs || [];
+      const cloudConnect = connectSystemLogs.find(
+        (row) => row.source === 'cloud_system' && row.payload?.data?.event === 'gateway_connected',
+      );
+      if (!cloudConnect) {
+        throw new Error('Expected cloud_system gateway_connected telemetry log after gateway WS AUTH');
+      }
+      ok('Cloud system gateway_connected log present in telemetry stream');
+
       const wsProbeToken = `ws-e2e-${Date.now()}`;
       const telemetryLine =
         `${new Date().toISOString()} E2E telemetry probe\nHeader E2E01, Payload {"probe":"${wsProbeToken}","tid":1}`;

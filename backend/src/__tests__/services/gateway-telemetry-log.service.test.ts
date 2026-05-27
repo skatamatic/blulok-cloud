@@ -66,4 +66,42 @@ describe('GatewayTelemetryLogService', () => {
     await GatewayTelemetryLogService.getInstance().list('gw-1', filters, { limit: 100, offset: 0 });
     expect(mockListByGateway).toHaveBeenCalledWith('gw-1', filters, { limit: 100, offset: 0 });
   });
+
+  it('recordSystemEvent persists cloud_system rows and broadcasts', async () => {
+    const created = [
+      {
+        id: 'sys-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        logged_at: new Date(),
+        payload: { cloud_system: true, header: 'CLD01' },
+        source: 'cloud_system',
+        created_at: new Date(),
+      },
+    ];
+    mockInsertAndTrim.mockResolvedValue(created);
+
+    const result = await GatewayTelemetryLogService.getInstance().recordSystemEvent({
+      event: 'gateway_connected',
+      message: 'Gateway connected',
+      facility_id: 'fac-1',
+      gateway_id: 'gw-1',
+    });
+
+    expect(mockInsertAndTrim).toHaveBeenCalledWith(
+      'gw-1',
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'cloud_system',
+          payload: expect.objectContaining({
+            cloud_system: true,
+            header: 'CLD01',
+            data: expect.objectContaining({ event: 'gateway_connected' }),
+          }),
+        }),
+      ]),
+    );
+    expect(mockBroadcastUpdate).toHaveBeenCalledWith(created);
+    expect(result).toEqual(created);
+  });
 });

@@ -236,6 +236,18 @@ Subscribe on the **operator** `/ws` channel (not `/ws/gateway`):
 
 Table **`gateway_telemetry_logs`**: `id`, `gateway_id`, `facility_id`, `logged_at`, `payload` (JSON), `source` (default `gateway_ws`), `created_at`. Index `(gateway_id, logged_at DESC)`. Retention trim runs after each ingest batch.
 
+### Cloud system logs (`source: cloud_system`)
+
+The backend also appends **BluLok cloud–originated** lines to the same stream (same UI tab, live WS fan-out). Payloads mirror gateway lines (`header`, `message`, `data`) and set **`cloud_system: true`** at the top level and inside `data`.
+
+| Event | When | Header |
+|-------|------|--------|
+| `gateway_connected` | Inbound `/ws/gateway` AUTH succeeds | `CLD01` |
+| `gateway_disconnected` | WS close, error, heartbeat timeout, replacement, etc. | `CLD02` |
+| `device_inventory_sync_completed` | After `POST /internal/gateway/devices/inventory` | `CLD04` |
+
+Disconnect `data.reason` uses transport codes (`auth_ok`, `heartbeat_timeout`, `replaced`, `close_event`, …) with a human `reason_label`.
+
 ## Automated regression tests
 
 - **Inbound WS → DB status:** `backend/src/__tests__/services/gateway-events.service.inbound-db-sync.test.ts` — connect/disconnect updates `gateways.status` for physical/simulated, skips HTTP and missing rows; uses `jest.unmock('@/models/gateway.model')` because global `setup-mocks` replaces `GatewayModel` with a plain factory (no real prototype for `jest.spyOn`).

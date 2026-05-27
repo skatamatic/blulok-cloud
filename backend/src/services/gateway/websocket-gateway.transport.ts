@@ -60,6 +60,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     timestamp: number;
     reason?: string;
     lastActivityAt?: number;
+    userId?: string;
+    remoteAddress?: string;
   }) => void;
 
   public initialize(server: HTTPServer): void {
@@ -149,6 +151,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     timestamp: number;
     reason?: string;
     lastActivityAt?: number;
+    userId?: string;
+    remoteAddress?: string;
   }) => void): () => void {
     this.connectionChangeListener = listener;
     return () => {
@@ -167,6 +171,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     connected: boolean,
     reason?: string,
     lastActivityAt?: number,
+    userId?: string,
+    remoteAddress?: string,
   ): void {
     if (!this.connectionChangeListener) return;
     try {
@@ -175,6 +181,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         connected,
         reason,
         lastActivityAt,
+        userId,
+        remoteAddress,
         timestamp: Date.now(),
       });
     } catch (error) {
@@ -242,7 +250,14 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         const current = this.facilityToClient.get(authed.facilityId);
         if (current?.ws === ws) {
           this.facilityToClient.delete(authed.facilityId);
-          this.notifyConnectionChange(authed.facilityId, false, reason, authed.lastActivityAt);
+          this.notifyConnectionChange(
+            authed.facilityId,
+            false,
+            reason,
+            authed.lastActivityAt,
+            authed.user.userId,
+            getRemoteAddress(ws),
+          );
           logger.info(`Gateway disconnected for facility ${authed.facilityId} (user=${authed.user.userId})`);
           GatewayDebugService.getInstance().publish({
             kind: 'connection_closed',
@@ -365,7 +380,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         const now = Date.now();
         authed = { ws, user: decoded, facilityId, lastActivityAt: now };
         this.facilityToClient.set(facilityId, authed);
-        this.notifyConnectionChange(facilityId, true, 'auth_ok', now);
+        this.notifyConnectionChange(facilityId, true, 'auth_ok', now, decoded.userId, remote);
         let ops_public_key_pem: string | undefined;
         try { ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem(); } catch {}
         safeSend(ws, {
@@ -466,7 +481,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         }
       })();
       logger.warn(`Gateway WS close event code=${code} reason=${reason || '<empty>'}`);
-      closeAndCleanup('close_event');
+      const cleanupReason = code === 4000 ? 'replaced' : 'close_event';
+      closeAndCleanup(cleanupReason);
     });
     ws.on('error', (err) => {
       logger.warn('Gateway WS error:', err);
@@ -481,7 +497,14 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       for (const [facilityId, client] of this.facilityToClient.entries()) {
         if (client.ws.readyState !== WebSocket.OPEN) {
           this.facilityToClient.delete(facilityId);
-          this.notifyConnectionChange(facilityId, false, 'socket_not_open', client.lastActivityAt);
+          this.notifyConnectionChange(
+            facilityId,
+            false,
+            'socket_not_open',
+            client.lastActivityAt,
+            client.user.userId,
+            getRemoteAddress(client.ws),
+          );
           continue;
         }
         const inactiveMs = now - client.lastActivityAt;
@@ -489,7 +512,14 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           logger.warn(`Gateway heartbeat inactivity timeout, closing facility ${facilityId}`);
           try { client.ws.close(4001, 'heartbeat timeout'); } catch {}
           this.facilityToClient.delete(facilityId);
-          this.notifyConnectionChange(facilityId, false, 'heartbeat_timeout', client.lastActivityAt);
+          this.notifyConnectionChange(
+            facilityId,
+            false,
+            'heartbeat_timeout',
+            client.lastActivityAt,
+            client.user.userId,
+            getRemoteAddress(client.ws),
+          );
           GatewayDebugService.getInstance().publish({
             kind: 'heartbeat_timeout',
             facilityId,

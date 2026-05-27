@@ -16,7 +16,15 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
-import { DeviceSyncService, GatewayDeviceData, DeviceInventoryItem, DeviceStateUpdate, AccessDeviceInventoryItem, AccessDeviceStateUpdate } from '@/services/device-sync.service';
+import {
+  DeviceSyncService,
+  GatewayDeviceData,
+  DeviceInventoryItem,
+  DeviceStateUpdate,
+  AccessDeviceInventoryItem,
+  AccessDeviceStateUpdate,
+  type InventorySyncResult,
+} from '@/services/device-sync.service';
 import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH } from '@/constants/gateway-telemetry-log.constants';
@@ -429,6 +437,28 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
   } catch (logError) {
     logger.warn('[DEVICE-SYNC] Failed to persist inventory sync log', { logError });
   }
+
+  const summarize = (result: InventorySyncResult | null) =>
+    result
+      ? {
+          added: result.added,
+          removed: result.removed,
+          unchanged: result.unchanged,
+          skipped_manual: result.skipped_manual,
+          errors: result.errors,
+        }
+      : null;
+
+  GatewayTelemetryLogService.getInstance().recordSystemEventSafe({
+    event: 'device_inventory_sync_completed',
+    message: 'Device inventory sync completed (cloud system)',
+    facility_id: facilityId,
+    gateway_id: gateway.id,
+    inventory_summary: {
+      locks: summarize(lockResult),
+      access_control: summarize(accessResult),
+    },
+  });
 
   res.json({
     success: true,

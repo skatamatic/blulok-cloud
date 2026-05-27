@@ -36,10 +36,12 @@ jest.mock('@/models/gateway.model', () => ({
 }));
 
 const ingestMock = jest.fn();
+const recordSystemEventSafeMock = jest.fn();
 jest.mock('@/services/gateway-telemetry-log.service', () => ({
   GatewayTelemetryLogService: {
     getInstance: jest.fn().mockReturnValue({
       ingest: (...args: unknown[]) => ingestMock(...args),
+      recordSystemEventSafe: (...args: unknown[]) => recordSystemEventSafeMock(...args),
     }),
   },
 }));
@@ -349,6 +351,13 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.data.added).toBe(1);
       expect(res.body.data.unchanged).toBe(2);
       expect(syncDeviceInventoryMock).toHaveBeenCalledTimes(1);
+      expect(recordSystemEventSafeMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'device_inventory_sync_completed',
+          facility_id: 'facility-1',
+          gateway_id: 'gateway-1',
+        }),
+      );
     });
 
     it('enforces facility scope for inventory sync', async () => {

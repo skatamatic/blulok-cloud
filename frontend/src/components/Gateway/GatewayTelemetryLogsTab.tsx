@@ -67,8 +67,16 @@ function TelemetryLogRow({ log }: { log: GatewayTelemetryLogRecord }) {
                 hdr {String(log.payload.header)}
               </span>
             )}
-            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              {log.source.replace(/_/g, ' ')}
+            <span
+              className={`text-xs uppercase tracking-wide ${
+                log.source === 'cloud_system' || log.payload?.cloud_system === true
+                  ? 'text-primary-600 dark:text-primary-400 font-medium'
+                  : 'text-gray-500 dark:text-gray-400'
+              }`}
+            >
+              {log.source === 'cloud_system' || log.payload?.cloud_system === true
+                ? 'cloud system'
+                : log.source.replace(/_/g, ' ')}
             </span>
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-400 truncate font-mono">{preview}</p>
