@@ -46,15 +46,9 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
       aria-label={title}
       style={{ transformOrigin: 'center' }}
     >
-      <div
-        className={`flex h-full min-h-0 flex-col relative transition-colors duration-200 ${
-          readOnly
-            ? 'cursor-default'
-            : 'drag-handle cursor-grab'
-        }`}
-      >
+      <div className="flex h-full min-h-0 flex-col relative transition-colors duration-200">
         <div
-          className="widget-header-actions no-drag absolute top-1 right-1"
+          className="widget-header-actions no-drag absolute top-1 right-1 z-30"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           style={{ pointerEvents: 'auto' }}
@@ -79,7 +73,7 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
         </div>
 
         <div
-          className={`compact-widget-body flex-1 min-h-0 w-full overflow-hidden pointer-events-none ${
+          className={`compact-widget-body no-drag flex-1 min-h-0 w-full overflow-hidden pointer-events-auto ${
             isTiny ? 'p-[3px]' : 'p-2 pr-9'
           }`}
         >

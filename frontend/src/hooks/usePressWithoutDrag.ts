@@ -95,6 +95,8 @@ export function usePressWithoutDrag(
     (e: React.PointerEvent<HTMLElement>) => {
       if (disabled) return;
 
+      e.stopPropagation();
+
       suppressClickRef.current = false;
       pointerPressRef.current = false;
 
@@ -109,6 +111,15 @@ export function usePressWithoutDrag(
       attachDocumentListeners();
     },
     [attachDocumentListeners, disabled]
+  );
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      if (disabled) return;
+      // react-grid-layout / react-draggable listen for mousedown on the grid item wrapper
+      e.stopPropagation();
+    },
+    [disabled]
   );
 
   useEffect(() => detachDocumentListeners, [detachDocumentListeners]);
@@ -148,6 +159,7 @@ export function usePressWithoutDrag(
       role: 'button' as const,
       tabIndex: disabled ? -1 : 0,
       'aria-disabled': disabled || undefined,
+      onMouseDown,
       onPointerDown,
       onClick,
       onKeyDown,

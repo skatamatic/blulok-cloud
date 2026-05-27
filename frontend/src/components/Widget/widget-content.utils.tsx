@@ -99,7 +99,7 @@ export function StatTinyContent({
       )}
       {tinyLabel ? (
         <span
-          className={`${TINY_TILE_LABEL_CLASS} ${onClick && !loading && !disabled ? 'cursor-grab' : ''}`}
+          className={`${TINY_TILE_LABEL_CLASS} drag-handle cursor-grab select-none`}
           title={label}
         >
           {tinyLabel}

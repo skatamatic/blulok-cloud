@@ -233,6 +233,7 @@
   .widget-grid .react-grid-item .card textarea,
   .widget-grid .react-grid-item .card a,
   .widget-grid .react-grid-item .card .no-drag,
+  .widget-grid .react-grid-item .card .compact-widget-body,
   .widget-grid .react-grid-item .card .widget-body {
     pointer-events: auto;
   }
