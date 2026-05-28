@@ -22,7 +22,6 @@ import {
   RectangleGroupIcon,
   CpuChipIcon,
   CheckCircleIcon,
-  ArrowTopRightOnSquareIcon,
   WrenchScrewdriverIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline';
@@ -52,7 +51,6 @@ import {
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
 import { withReturnPath, useDetailsBackNavigation } from '@/hooks/useBackNavigation';
-import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
@@ -1140,22 +1138,12 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                           onSort={handleFacilityDeviceColumnSort}
                         />
                         <SortableTableTh
-                          label="Gateway"
-                          columnKey="gateway_name"
-                          sortBy={deviceFilters.sortBy || 'name'}
-                          sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
-                          onSort={handleFacilityDeviceColumnSort}
-                        />
-                        <SortableTableTh
                           label="Last Activity"
                           columnKey="last_activity"
                           sortBy={deviceFilters.sortBy || 'name'}
                           sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
                           onSort={handleFacilityDeviceColumnSort}
                         />
-                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                          Actions
-                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -1169,12 +1157,6 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                         const st = isBlulok ? blulokDevice.device_status : accessDevice.status;
                         const StatusIcon =
                           deviceListStatusIcons[st as keyof typeof deviceListStatusIcons] || CheckCircleIcon;
-                        const groups = groupNamesByDeviceId[device.id] || [];
-                        const groupsLabel = groups.length ? groups.slice(0, 2).join(', ') + (groups.length > 2 ? '…' : '') : '—';
-                        const facilityId =
-                          typeof (device as { facility_id?: string }).facility_id === 'string'
-                            ? (device as { facility_id: string }).facility_id
-                            : undefined;
                         return (
                           <tr
                             key={`${device.device_category}-${device.id}`}
@@ -1220,46 +1202,8 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                                 ? blulokDevice.facility_name || '—'
                                 : accessDevice.facility_name || accessDevice.location_description || '—'}
                             </td>
-                            <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-300 max-w-[10rem] truncate" title={groups.join(', ')}>
-                              {groupsLabel}
-                            </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                               {device.last_activity ? new Date(device.last_activity).toLocaleString() : 'Never'}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm" onClick={(e) => e.stopPropagation()}>
-                              {isBlulok && facilityId && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const idx = facilityDevices.findIndex(
-                                      (d) =>
-                                        (typeof (d as { facility_id?: string }).facility_id === 'string'
-                                          ? (d as { facility_id: string }).facility_id
-                                          : undefined) === facilityId
-                                    );
-                                    const page = idx !== -1 ? calculatePageForItem(idx, DEVICES_PAGE_LIMIT) : 1;
-                                    navigateAndHighlight(navigate, { id: facilityId, type: 'facility', page });
-                                  }}
-                                  className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
-                                >
-                                  <BuildingOfficeIcon className="h-4 w-4" />
-                                  Facility
-                                </button>
-                              )}
-                              {!isBlulok && accessDevice.gateway_id && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const idx = facilityDevices.findIndex((d) => d.gateway_id === accessDevice.gateway_id);
-                                    const page = idx !== -1 ? calculatePageForItem(idx, DEVICES_PAGE_LIMIT) : 1;
-                                    navigateAndHighlight(navigate, { id: accessDevice.gateway_id, type: 'facility', page });
-                                  }}
-                                  className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1"
-                                >
-                                  <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-                                  Gateway
-                                </button>
-                              )}
                             </td>
                           </tr>
                         );
@@ -1439,9 +1383,6 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                           sortOrder={unitFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
                           onSort={handleFacilityUnitColumnSort}
                         />
-                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                          Open
-                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -1510,23 +1451,6 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                             ) : (
                               <span className="text-gray-400">—</span>
                             )}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const currentTab = activeTab || 'units';
-                                navigate(`/units/${unit.id}`, {
-                                  state: withReturnPath(location, {
-                                    returnTab: currentTab,
-                                    returnPath: `${location.pathname}?tab=${currentTab}`,
-                                  }),
-                                });
-                              }}
-                              className="text-primary-600 dark:text-primary-400 hover:underline text-sm"
-                            >
-                              View
-                            </button>
                           </td>
                         </tr>
                       ))}

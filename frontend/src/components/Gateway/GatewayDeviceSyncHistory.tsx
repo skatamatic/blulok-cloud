@@ -2,13 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowPathIcon,
   ChevronRightIcon,
-  ClockIcon,
   ExclamationTriangleIcon,
   LockClosedIcon,
   ServerIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import type { DeviceSyncLogEntry, GatewayDeviceSyncLogRecord } from '@/types/gateway.types';
 
@@ -47,7 +46,7 @@ function SummaryChips({ summary }: { summary: GatewayDeviceSyncLogRecord['summar
   const locks = summary.locks;
   const access = summary.access_control;
   if (!locks && !access) {
-    return <span className="text-xs text-gray-500 dark:text-gray-400">No device partitions in payload</span>;
+    return <span className="text-xs text-gray-500 dark:text-gray-400">No device partitions</span>;
   }
 
   const rows = [
@@ -56,32 +55,18 @@ function SummaryChips({ summary }: { summary: GatewayDeviceSyncLogRecord['summar
   ].filter(Boolean) as Array<{ kind: string; data: NonNullable<typeof locks> }>;
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
       {rows.map(({ kind, data }) => (
-        <motion.div
-          key={kind}
-          layout
-          className="inline-flex flex-wrap items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-2.5 py-1.5 text-xs"
-        >
+        <span key={kind} className="inline-flex flex-wrap items-center gap-1">
           <span className="font-medium text-gray-700 dark:text-gray-300">{kind}</span>
-          {data.added > 0 && (
-            <span className={`rounded-full px-2 py-0.5 ${ACTION_META.added.chip}`}>+{data.added}</span>
-          )}
-          {data.removed > 0 && (
-            <span className={`rounded-full px-2 py-0.5 ${ACTION_META.removed.chip}`}>−{data.removed}</span>
-          )}
+          {data.added > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{data.added}</span>}
+          {data.removed > 0 && <span className="text-rose-600 dark:text-rose-400">−{data.removed}</span>}
           {(data.skipped_manual ?? 0) > 0 && (
-            <span className={`rounded-full px-2 py-0.5 ${ACTION_META.skipped_manual.chip}`}>
-              skip {data.skipped_manual}
-            </span>
+            <span className="text-amber-700 dark:text-amber-300">skip {data.skipped_manual}</span>
           )}
-          {data.unchanged > 0 && (
-            <span className={`rounded-full px-2 py-0.5 ${ACTION_META.unchanged.chip}`}>{data.unchanged} ok</span>
-          )}
-          {data.errors.length > 0 && (
-            <span className={`rounded-full px-2 py-0.5 ${ACTION_META.error.chip}`}>{data.errors.length} err</span>
-          )}
-        </motion.div>
+          {data.unchanged > 0 && <span>{data.unchanged} ok</span>}
+          {data.errors.length > 0 && <span className="text-red-600 dark:text-red-400">{data.errors.length} err</span>}
+        </span>
       ))}
     </div>
   );
@@ -92,79 +77,81 @@ function SyncLogRow({ log }: { log: GatewayDeviceSyncLogRecord }) {
   const when = new Date(log.created_at);
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden transition-shadow hover:shadow-sm">
-      <button
-        type="button"
+    <>
+      <tr
+        className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-start gap-3 px-4 py-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+        aria-expanded={expanded}
       >
-        <motion.div className="mt-0.5 text-gray-400" animate={{ rotate: expanded ? 90 : 0 }} transition={{ duration: 0.15 }}>
-          <ChevronRightIcon className="h-5 w-5" />
-        </motion.div>
-        <div className="flex-1 min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-white">
-              <ClockIcon className="h-4 w-4 text-primary-500" />
-              {when.toLocaleString()}
-            </span>
-            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              {log.sync_kind} · {log.source.replace(/_/g, ' ')}
-            </span>
-          </div>
+        <td className="w-8 px-2 py-2.5 text-gray-400">
+          <motion.div animate={{ rotate: expanded ? 90 : 0 }} transition={{ duration: 0.15 }}>
+            <ChevronRightIcon className="h-4 w-4" />
+          </motion.div>
+        </td>
+        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-gray-700 dark:text-gray-300 tabular-nums">
+          {when.toLocaleString()}
+        </td>
+        <td className="whitespace-nowrap px-3 py-2.5 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          {log.sync_kind}
+        </td>
+        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+          {log.source.replace(/_/g, ' ')}
+        </td>
+        <td className="px-3 py-2.5">
           <SummaryChips summary={log.summary} />
-        </div>
-      </button>
-
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden border-t border-gray-200 dark:border-gray-700"
-          >
-            <div className="px-4 py-3 bg-gray-50/80 dark:bg-gray-900/30">
+        </td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={5} className="border-t border-gray-100 dark:border-gray-700/80 bg-gray-50/80 dark:bg-gray-900/30 p-0">
+            <div className="px-4 py-3">
               {log.entries.length === 0 ? (
                 <p className="text-sm text-gray-500 dark:text-gray-400">No per-device entries recorded.</p>
               ) : (
-                <ul className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {log.entries.map((entry, idx) => {
-                    const meta = ACTION_META[entry.action];
-                    const KindIcon = entry.device_kind === 'blulok' ? LockClosedIcon : ServerIcon;
-                    return (
-                      <li
-                        key={`${entry.identifier}-${entry.action}-${idx}`}
-                        className="flex items-start gap-3 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-3 py-2.5"
-                      >
-                        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${meta.dot}`} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <KindIcon className="h-4 w-4 text-gray-400" />
-                            <span className="font-mono text-sm text-gray-900 dark:text-white truncate">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      <th className="py-1.5 pr-3 font-medium">Device</th>
+                      <th className="py-1.5 pr-3 font-medium">Label</th>
+                      <th className="py-1.5 pr-3 font-medium">Action</th>
+                      <th className="py-1.5 font-medium">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700/80">
+                    {log.entries.map((entry, idx) => {
+                      const meta = ACTION_META[entry.action];
+                      const KindIcon = entry.device_kind === 'blulok' ? LockClosedIcon : ServerIcon;
+                      return (
+                        <tr key={`${entry.identifier}-${entry.action}-${idx}`}>
+                          <td className="py-2 pr-3 whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1.5 font-mono text-xs text-gray-900 dark:text-white">
+                              <KindIcon className="h-3.5 w-3.5 text-gray-400" />
                               {entry.identifier}
                             </span>
-                            {entry.label && entry.label !== entry.identifier && (
-                              <span className="text-sm text-gray-500 dark:text-gray-400 truncate">{entry.label}</span>
-                            )}
-                            <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${meta.chip}`}>
+                          </td>
+                          <td className="py-2 pr-3 text-xs text-gray-500 dark:text-gray-400 max-w-[12rem] truncate">
+                            {entry.label && entry.label !== entry.identifier ? entry.label : '—'}
+                          </td>
+                          <td className="py-2 pr-3 whitespace-nowrap">
+                            <span className={`inline-flex items-center gap-1 text-xs font-medium ${meta.chip}`}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
                               {meta.label}
                             </span>
-                            </div>
-                          {entry.reason && (
-                            <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">{entry.reason}</p>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                          </td>
+                          <td className="py-2 text-xs text-gray-600 dark:text-gray-400">
+                            {entry.reason || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -248,16 +235,37 @@ export function GatewayDeviceSyncHistory({ gatewayId }: GatewayDeviceSyncHistory
           </p>
         </div>
       ) : (
-        <>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+        <div className="flex min-h-0 flex-col">
+          <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
             Showing {logs.length} of {total} sync{total === 1 ? '' : 's'}
           </p>
-          <div className="space-y-3">
-            {logs.map((log) => (
-              <SyncLogRow key={log.id} log={log} />
-            ))}
+          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-left">
+              <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-900 shadow-sm">
+                <tr>
+                  <th className="w-8 px-2 py-2" aria-hidden />
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Time
+                  </th>
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Kind
+                  </th>
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Source
+                  </th>
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Summary
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/80 bg-white dark:bg-gray-800">
+                {logs.map((log) => (
+                  <SyncLogRow key={log.id} log={log} />
+                ))}
+              </tbody>
+            </table>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

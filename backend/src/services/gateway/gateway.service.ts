@@ -449,9 +449,16 @@ export class GatewayService extends EventEmitter {
 
     const ac = await this.db('access_control_devices')
       .where('id', internalDeviceId)
-      .select('metadata', 'device_settings')
+      .select('device_serial', 'metadata', 'device_settings')
       .first();
     if (ac) {
+      const columnSerial =
+        ac.device_serial && String(ac.device_serial).trim()
+          ? String(ac.device_serial).trim()
+          : null;
+      if (columnSerial) {
+        return columnSerial;
+      }
       const meta = this.parseJsonObjectMaybe(ac.metadata);
       const settings = this.parseJsonObjectMaybe(ac.device_settings);
       const fromAc =

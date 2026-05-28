@@ -86,6 +86,7 @@ describe('DeviceSyncService', () => {
       createAccessControlDevice: jest.fn(),
       updateAccessControlDeviceBySerialAndRelay: jest.fn(),
       updateAccessControlDeviceByRelayChannel: jest.fn(),
+      updateAccessControlDevice: jest.fn(),
       deleteAccessControlDevice: jest.fn(),
     } as any;
 
@@ -830,6 +831,50 @@ describe('DeviceSyncService', () => {
 
       expect(result.added).toBe(0);
       expect(result.errors.some((e) => e.includes('Relay 3'))).toBe(true);
+      expect(mockDeviceModel.bulkCreateAccessControlDevices).not.toHaveBeenCalled();
+    });
+
+    it('reconciles admin identity override device serial in place when gateway reports new serial on same relay', async () => {
+      mockDeviceModel.findAccessControlDevices
+        .mockResolvedValueOnce([
+          {
+            id: 'ac-override',
+            gateway_id: gatewayId,
+            device_serial: 'ADMIN-NEW',
+            relay_channel: 2,
+            name: 'Door 2',
+            metadata: { adminIdentityOverride: true },
+            device_settings: { device_serial: 'ADMIN-NEW' },
+          },
+        ] as unknown as AccessControlDevice[])
+        .mockResolvedValueOnce([
+          {
+            id: 'ac-override',
+            gateway_id: gatewayId,
+            device_serial: 'GATEWAY-SN',
+            relay_channel: 2,
+            name: 'Door 2',
+            metadata: { adminIdentityOverride: true },
+            device_settings: { device_serial: 'GATEWAY-SN' },
+          },
+        ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.updateAccessControlDevice.mockResolvedValue({
+        id: 'ac-override',
+        gateway_id: gatewayId,
+        device_serial: 'GATEWAY-SN',
+        relay_channel: 2,
+        name: 'Door 2',
+      } as unknown as AccessControlDevice);
+
+      const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        { kind: 'access_control', access_id: 'GATEWAY-SN', relay_channel: 2 },
+      ]);
+
+      expect(mockDeviceModel.updateAccessControlDevice).toHaveBeenCalledWith(
+        'ac-override',
+        expect.objectContaining({ device_serial: 'GATEWAY-SN' })
+      );
+      expect(result.added).toBe(0);
       expect(mockDeviceModel.bulkCreateAccessControlDevices).not.toHaveBeenCalled();
     });
   });

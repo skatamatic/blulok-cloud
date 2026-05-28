@@ -7,6 +7,7 @@ import {
   AccessDeviceStateUpdate,
   extractAccessId,
   formatAccessDeviceKey,
+  hasAdminIdentityOverride,
   isGatewaySyncManaged,
   isValidRelayChannel,
   resolveAccessDeviceKey,
@@ -925,6 +926,45 @@ export class DeviceSyncService {
         if (!existingMap.has(key)) {
           const accessId = extractAccessId(item as unknown as Record<string, unknown>);
           const relayChannel = Number(item.relay_channel);
+
+          const overrideOnRelay = remainingDevices.find(
+            (d) =>
+              d.relay_channel === relayChannel &&
+              hasAdminIdentityOverride(d.metadata as Record<string, unknown> | undefined)
+          );
+
+          if (overrideOnRelay) {
+            try {
+              const meta =
+                overrideOnRelay.metadata && typeof overrideOnRelay.metadata === 'object'
+                  ? { ...overrideOnRelay.metadata }
+                  : {};
+              const settings =
+                overrideOnRelay.device_settings &&
+                typeof overrideOnRelay.device_settings === 'object'
+                  ? { ...overrideOnRelay.device_settings }
+                  : {};
+              await this.deviceModel.updateAccessControlDevice(overrideOnRelay.id, {
+                device_serial: accessId,
+                metadata: { ...meta, device_serial: accessId, serial: accessId },
+                device_settings: { ...settings, device_serial: accessId, serial: accessId },
+              });
+              inventoryChanged = true;
+              result.unchanged++;
+              result.entries!.push({
+                action: 'unchanged',
+                device_kind: 'access_control',
+                identifier: formatAccessDeviceKey(accessId, relayChannel),
+                label: item.name ?? overrideOnRelay.name,
+                reason: 'Admin identity override reconciled to gateway inventory serial',
+              });
+            } catch (error: any) {
+              result.errors.push(
+                `Failed to reconcile admin override on relay ${relayChannel}: ${error.message}`
+              );
+            }
+            continue;
+          }
 
           const relayConflict = remainingDevices.find(
             (d) => d.relay_channel === relayChannel && resolveAccessDeviceKey(d) !== key

@@ -86,9 +86,39 @@ export interface UpdateAccessControlDevicePayload {
   relay_channel?: number;
   status?: AccessControlDevice['status'];
   is_locked?: boolean;
+  supports_remote_lock?: boolean;
   access_methods?: AccessMethod[];
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+}
+
+export interface UpdateBluLokDeviceMetadataPayload {
+  device_serial?: string;
+  serial?: string;
+  firmware_version?: string;
+  supports_remote_lock?: boolean;
+  device_settings?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateAccessControlDeviceMetadataPayload {
+  name?: string;
+  location_description?: string;
+  device_serial?: string;
+  relay_channel?: number;
+  supports_remote_lock?: boolean;
+  access_methods?: AccessMethod[];
+  device_settings?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DeviceMetadataSideEffects {
+  identityChanged: boolean;
+  accessCodesPushed: boolean;
+  previousIdentity?: {
+    device_serial?: string;
+    relay_channel?: number;
+  };
 }
 
 export type AccessMethod = 'app' | 'keypad' | 'fob';

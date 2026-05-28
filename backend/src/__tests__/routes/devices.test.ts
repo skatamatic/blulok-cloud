@@ -21,6 +21,18 @@ function mockKnexChainForFirstRow(row: Record<string, unknown>) {
 // Mock DevicesService
 jest.mock('@/services/devices.service');
 
+const mockUpdateBluLokMetadata = jest.fn();
+const mockUpdateAccessControlMetadata = jest.fn();
+
+jest.mock('@/services/device-metadata.service', () => ({
+  DeviceMetadataService: {
+    getInstance: jest.fn(() => ({
+      updateBluLokMetadata: mockUpdateBluLokMetadata,
+      updateAccessControlMetadata: mockUpdateAccessControlMetadata,
+    })),
+  },
+}));
+
 // Mock DatabaseService
 jest.mock('@/services/database.service');
 
@@ -567,6 +579,56 @@ describe('Devices Routes', () => {
           })
           .expect(201);
         expectSuccess(response);
+      });
+
+      it('should create BluLok with minimal payload (serial only, no unit)', async () => {
+        const response = await request(app)
+          .post('/api/v1/devices/blulok')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            gateway_id: 'gateway-1',
+            device_serial: 'BL-MINIMAL-1',
+          })
+          .expect(201);
+
+        expectSuccess(response);
+        expect(response.body).toHaveProperty('device');
+      });
+
+      it('returns 409 when BluLok serial already exists', async () => {
+        mockDeviceModel.findBluLokBySerial.mockResolvedValueOnce({ id: 'existing-device' });
+
+        const response = await request(app)
+          .post('/api/v1/devices/blulok')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            gateway_id: 'gateway-1',
+            device_serial: 'BL-DUPLICATE',
+          })
+          .expect(409);
+
+        expect(response.body.success).toBe(false);
+        expect(response.body.message).toMatch(/already in use/i);
+        expect(mockDeviceModel.createBluLokDevice).not.toHaveBeenCalled();
+      });
+
+      it('returns 403 when facility_admin creates BluLok on out-of-scope gateway', async () => {
+        mockDeviceModel.findGatewayById.mockResolvedValueOnce({
+          id: 'gateway-other',
+          facility_id: '00000000-0000-0000-0000-000000000099',
+          name: 'Other Gateway',
+        });
+
+        const response = await request(app)
+          .post('/api/v1/devices/blulok')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({
+            gateway_id: 'gateway-other',
+            device_serial: 'BL-SCOPED-TEST',
+          })
+          .expect(403);
+
+        expectForbidden(response);
       });
 
       it('should reject request when both serial aliases are missing', async () => {
@@ -2095,6 +2157,69 @@ describe('Devices Routes', () => {
 
         expectBadRequest(response);
         expect(response.body.message).toMatch(/already has|device assigned/i);
+      });
+    });
+
+    describe('PUT /api/v1/devices/*/metadata', () => {
+      beforeEach(() => {
+        mockUpdateBluLokMetadata.mockReset();
+        mockUpdateAccessControlMetadata.mockReset();
+      });
+
+      it('updates BluLok metadata for admin', async () => {
+        mockDeviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue({
+          id: 'device-1',
+          gateway_facility_id: testData.facilities.facility1.id,
+        });
+        mockUpdateBluLokMetadata.mockResolvedValue({
+          device: { id: 'device-1', device_serial: 'NEW-SN' },
+          sideEffects: { identityChanged: true, accessCodesPushed: false },
+        });
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/device-1/metadata')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ device_serial: 'NEW-SN' })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockUpdateBluLokMetadata).toHaveBeenCalled();
+        expect(response.body.sideEffects.identityChanged).toBe(true);
+      });
+
+      it('updates access control metadata for facility admin in scope', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          facility_id: testData.facilities.facility1.id,
+        });
+        mockUpdateAccessControlMetadata.mockResolvedValue({
+          device: { id: 'ac-1', relay_channel: 2 },
+          sideEffects: { identityChanged: true, accessCodesPushed: true },
+        });
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1/metadata')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ relay_channel: 2 })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockUpdateAccessControlMetadata).toHaveBeenCalled();
+      });
+
+      it('returns 403 for facility admin out of scope', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          facility_id: 'other-facility',
+        });
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1/metadata')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ name: 'Updated Gate' })
+          .expect(403);
+
+        expectForbidden(response);
       });
     });
   });

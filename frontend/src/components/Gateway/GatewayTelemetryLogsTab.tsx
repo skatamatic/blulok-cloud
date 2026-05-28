@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowPathIcon,
   ChevronRightIcon,
-  ClockIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   FunnelIcon,
@@ -11,7 +10,7 @@ import {
   SignalIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import type { GatewayTelemetryLogRecord } from '@/types/gateway.types';
@@ -44,61 +43,54 @@ function TelemetryLogRow({ log }: { log: GatewayTelemetryLogRecord }) {
       : log.payload?.header
         ? `Header ${String(log.payload.header)}`
         : payloadStrPreview(log.payload);
+  const sourceLabel =
+    log.source === 'cloud_system' || log.payload?.cloud_system === true
+      ? 'cloud system'
+      : log.source.replace(/_/g, ' ');
+  const isCloud = log.source === 'cloud_system' || log.payload?.cloud_system === true;
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden transition-shadow hover:shadow-sm">
-      <button
-        type="button"
+    <>
+      <tr
+        className="group cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
-        className="w-full flex items-start gap-3 px-4 py-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
       >
-        <motion.div className="mt-0.5 text-gray-400" animate={{ rotate: expanded ? 90 : 0 }} transition={{ duration: 0.15 }}>
-          <ChevronRightIcon className="h-5 w-5" />
-        </motion.div>
-        <div className="flex-1 min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-white">
-              <ClockIcon className="h-4 w-4 text-primary-500" />
-              {when.toLocaleString()}
-            </span>
-            {log.payload?.header != null && (
-              <span className="text-xs font-mono rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-gray-700 dark:text-gray-300">
-                hdr {String(log.payload.header)}
-              </span>
-            )}
-            <span
-              className={`text-xs uppercase tracking-wide ${
-                log.source === 'cloud_system' || log.payload?.cloud_system === true
-                  ? 'text-primary-600 dark:text-primary-400 font-medium'
-                  : 'text-gray-500 dark:text-gray-400'
-              }`}
-            >
-              {log.source === 'cloud_system' || log.payload?.cloud_system === true
-                ? 'cloud system'
-                : log.source.replace(/_/g, ' ')}
-            </span>
-          </div>
-          <p className="text-sm text-gray-600 dark:text-gray-400 truncate font-mono">{preview}</p>
-        </div>
-      </button>
-
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden border-t border-gray-200 dark:border-gray-700"
+        <td className="w-8 px-2 py-2.5 text-gray-400">
+          <motion.div animate={{ rotate: expanded ? 90 : 0 }} transition={{ duration: 0.15 }}>
+            <ChevronRightIcon className="h-4 w-4" />
+          </motion.div>
+        </td>
+        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-gray-700 dark:text-gray-300 tabular-nums">
+          {when.toLocaleString()}
+        </td>
+        <td
+          className={`whitespace-nowrap px-3 py-2.5 text-xs uppercase tracking-wide ${
+            isCloud ? 'text-primary-600 dark:text-primary-400 font-medium' : 'text-gray-500 dark:text-gray-400'
+          }`}
+        >
+          {sourceLabel}
+        </td>
+        <td className="whitespace-nowrap px-3 py-2.5 text-xs font-mono text-gray-600 dark:text-gray-400">
+          {log.payload?.header != null ? String(log.payload.header) : '—'}
+        </td>
+        <td className="max-w-0 px-3 py-2.5 text-xs font-mono text-gray-600 dark:text-gray-400 truncate">
+          {preview}
+        </td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td
+            colSpan={5}
+            className="border-t border-gray-100 dark:border-gray-700/80 bg-gray-50/80 dark:bg-gray-900/30 p-0"
           >
-            <pre className="px-4 py-3 text-xs font-mono text-gray-800 dark:text-gray-200 bg-gray-50/80 dark:bg-gray-900/30 overflow-x-auto max-h-96">
+            <pre className="max-h-64 overflow-auto px-4 py-3 text-xs font-mono text-gray-800 dark:text-gray-200">
               {JSON.stringify(log.payload, null, 2)}
             </pre>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -441,40 +433,59 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
           </p>
         </div>
       ) : (
-        <>
-          <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+        <div className="flex min-h-0 flex-col">
+          <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
             Showing {displayedLogs.length} matching
             {hasClientSideOnlyFilters ? ` (${logs.length} loaded)` : ` of ${serverTotal}`} log line
             {displayedLogs.length === 1 ? '' : 's'} (newest first)
             {logs.length >= TELEMETRY_LOGS_UI_MAX_ROWS && ' · display capped at 1,000 rows'}
           </p>
-          <ul className="space-y-3">
-            {displayedLogs.map((log) => (
-              <li key={log.id}>
-                <TelemetryLogRow log={log} />
-              </li>
-            ))}
-          </ul>
-          {hasMore && (
-            <div className="mt-6 flex justify-center">
-              <button
-                type="button"
-                onClick={() => void fetchLogs()}
-                disabled={loadingMore}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
-              >
-                {loadingMore ? (
-                  <>
-                    <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                    Loading…
-                  </>
-                ) : (
-                  'Load more'
-                )}
-              </button>
-            </div>
-          )}
-        </>
+          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-left">
+              <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-900 shadow-sm">
+                <tr>
+                  <th className="w-8 px-2 py-2" aria-hidden />
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Time
+                  </th>
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Source
+                  </th>
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Header
+                  </th>
+                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Message
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/80 bg-white dark:bg-gray-800">
+                {displayedLogs.map((log) => (
+                  <TelemetryLogRow key={log.id} log={log} />
+                ))}
+              </tbody>
+            </table>
+            {hasMore && (
+              <div className="sticky bottom-0 border-t border-gray-200 dark:border-gray-700 bg-gray-50/95 dark:bg-gray-900/95 px-4 py-3 flex justify-center backdrop-blur-sm">
+                <button
+                  type="button"
+                  onClick={() => void fetchLogs()}
+                  disabled={loadingMore}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                >
+                  {loadingMore ? (
+                    <>
+                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                      Loading…
+                    </>
+                  ) : (
+                    'Load more'
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

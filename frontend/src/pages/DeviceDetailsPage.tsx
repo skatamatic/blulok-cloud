@@ -12,6 +12,7 @@ import {
   UserIcon,
   ShieldExclamationIcon,
   ArrowTopRightOnSquareIcon,
+  PencilIcon,
   SignalIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
@@ -24,7 +25,10 @@ import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
+import { EditDeviceMetadataModal } from '@/components/Devices/EditDeviceMetadataModal';
 import { formatAccessDeviceListSubtitle, isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
+import { formatMetadataSideEffectsToast } from '@/utils/deviceApiErrors';
+import type { DeviceMetadataSideEffects } from '@/types/facility.types';
 import {
   DetailsPageHeader,
   DetailsPageLoading,
@@ -136,9 +140,7 @@ export default function DeviceDetailsPage() {
   const [deviceCategory, setDeviceCategory] = useState<DeviceCategory | null>(null);
   const [effectiveAccessCode, setEffectiveAccessCode] = useState<EffectiveAccessCode | null>(null);
   const [deviceGroupNames, setDeviceGroupNames] = useState<string[]>([]);
-  const [accessMethodsDraft, setAccessMethodsDraft] = useState<AccessMethod[]>(['app']);
-  const [editingAccessMethods, setEditingAccessMethods] = useState(false);
-  const [savingAccessMethods, setSavingAccessMethods] = useState(false);
+  const [showEditMetadataModal, setShowEditMetadataModal] = useState(false);
   const [showUnassignFromUnitConfirm, setShowUnassignFromUnitConfirm] = useState(false);
   const [unassigningFromUnit, setUnassigningFromUnit] = useState(false);
   const [showRemoveInventoryConfirm, setShowRemoveInventoryConfirm] = useState(false);
@@ -340,8 +342,6 @@ export default function DeviceDetailsPage() {
         };
         setDeviceCategory('access_control');
         setDenylistEntries([]);
-        setAccessMethodsDraft(methods);
-        setEditingAccessMethods(false);
         setDevice(mappedAccessControl);
       }
     } catch (error: any) {
@@ -421,31 +421,6 @@ export default function DeviceDetailsPage() {
   const isGlobalAdmin =
     authState.user?.role === UserRole.ADMIN || authState.user?.role === UserRole.DEV_ADMIN;
 
-  const saveAccessMethods = async () => {
-    if (!device || deviceCategory !== 'access_control') return;
-    const effective =
-      accessMethodsDraft.length > 0 ? accessMethodsDraft : (['app'] as AccessMethod[]);
-    try {
-      setSavingAccessMethods(true);
-      await apiService.updateAccessControlDevice(device.id, { access_methods: effective });
-      setDevice((prev) => (prev ? { ...prev, access_methods: effective } : prev));
-      setEditingAccessMethods(false);
-      addToast({ type: 'success', title: 'Access methods updated' });
-    } catch (e) {
-      console.error(e);
-      addToast({ type: 'error', title: 'Failed to update access methods' });
-    } finally {
-      setSavingAccessMethods(false);
-    }
-  };
-
-  const toggleAccessMethod = (method: AccessMethod) => {
-    setAccessMethodsDraft((prev) => {
-      const next = prev.includes(method) ? prev.filter((m) => m !== method) : [...prev, method];
-      return (next.length > 0 ? next : (['app'] as AccessMethod[])) as AccessMethod[];
-    });
-  };
-
   if (loading) {
     return <DetailsPageLoading />;
   }
@@ -514,7 +489,16 @@ export default function DeviceDetailsPage() {
         }
         actions={
           canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') ? (
-            <button
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowEditMetadataModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <PencilIcon className="h-4 w-4" />
+                Edit device
+              </button>
+              <button
               disabled={
                 !canRequestRemoteUnlock(device.lock_status) ||
                 isLockTransitionPending(device.lock_status) ||
@@ -571,7 +555,8 @@ export default function DeviceDetailsPage() {
                 : canRequestRemoteUnlock(device.lock_status)
                   ? 'Unlock'
                   : 'Unlocked'}
-            </button>
+              </button>
+            </div>
           ) : undefined
         }
       />
@@ -704,73 +689,22 @@ export default function DeviceDetailsPage() {
                 )}
               </div>
             )}
-            {deviceCategory === 'access_control' && canManage && (
+            {deviceCategory === 'access_control' && (
               <div className="rounded-lg border border-gray-200 dark:border-gray-600 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">Access methods</p>
-                  {!editingAccessMethods ? (
-                    <button
-                      type="button"
-                      onClick={() => setEditingAccessMethods(true)}
-                      className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                <p className="mb-3 text-sm font-medium text-gray-900 dark:text-white">Access methods</p>
+                <div className="flex flex-wrap gap-2">
+                  {(device.access_methods && device.access_methods.length > 0
+                    ? device.access_methods
+                    : ['app']
+                  ).map((method) => (
+                    <span
+                      key={method}
+                      className="inline-flex items-center rounded-full bg-primary-50 px-2.5 py-1 text-xs font-medium capitalize text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
                     >
-                      Edit
-                    </button>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={savingAccessMethods}
-                        onClick={() => void saveAccessMethods()}
-                        className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-                      >
-                        {savingAccessMethods ? 'Saving…' : 'Save'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const m =
-                            device.access_methods && device.access_methods.length > 0
-                              ? device.access_methods
-                              : (['app'] as AccessMethod[]);
-                          setAccessMethodsDraft(m);
-                          setEditingAccessMethods(false);
-                        }}
-                        className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
+                      {method}
+                    </span>
+                  ))}
                 </div>
-                {!editingAccessMethods ? (
-                  <div className="flex flex-wrap gap-2">
-                    {(accessMethodsDraft.length > 0 ? accessMethodsDraft : ['app']).map((method) => (
-                      <span
-                        key={method}
-                        className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-1 text-xs font-medium text-primary-700 dark:text-primary-300 capitalize"
-                      >
-                        {method}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-3">
-                    {(['app', 'keypad', 'fob'] as const).map((method) => (
-                      <label
-                        key={method}
-                        className="inline-flex items-center gap-2 rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm text-gray-700 dark:text-gray-300"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={(accessMethodsDraft.length > 0 ? accessMethodsDraft : ['app']).includes(method)}
-                          onChange={() => toggleAccessMethod(method)}
-                        />
-                        <span className="capitalize">{method}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
             {(deviceCategory === 'access_control' || deviceCategory === 'blulok') &&
@@ -1277,6 +1211,37 @@ export default function DeviceDetailsPage() {
         confirmText="Remove from inventory"
         variant="danger"
         isLoading={removingFromInventory}
+      />
+
+      <EditDeviceMetadataModal
+        isOpen={showEditMetadataModal}
+        onClose={() => setShowEditMetadataModal(false)}
+        onSuccess={(sideEffects?: DeviceMetadataSideEffects) => {
+          void loadDeviceDetails();
+          const toast = formatMetadataSideEffectsToast(sideEffects);
+          addToast({
+            type: 'success',
+            title: toast.title,
+            ...(toast.message ? { message: toast.message } : {}),
+          });
+        }}
+        device={
+          device && deviceCategory
+            ? {
+                id: device.id,
+                category: deviceCategory,
+                device_serial: device.device_serial,
+                relay_channel: device.relay_channel,
+                name: device.name,
+                location_description: device.location_description,
+                access_methods: device.access_methods,
+                supports_remote_lock: device.supports_remote_lock,
+                firmware_version: device.firmware_version,
+                metadata: device.metadata,
+                unit_number: device.unit_number,
+              }
+            : null
+        }
       />
     </DetailsPageShell>
   );

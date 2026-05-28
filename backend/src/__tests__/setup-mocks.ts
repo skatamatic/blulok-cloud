@@ -582,8 +582,8 @@ jest.mock('../models/device.model', () => {
     };
   });
   const createBluLokDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
-    if (!payload?.device_serial || !payload?.serial) {
-      throw new Error('BluLok create payload must include normalized serial fields');
+    if (!payload?.device_serial) {
+      throw new Error('BluLok create payload must include device_serial');
     }
     const values = (global as any).__mockReturnValues || mockReturnValues;
     return values.createBluLokDevice;
@@ -656,6 +656,19 @@ jest.mock('../models/device.model', () => {
     getFacilityHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
     getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
     findByFacilityId: jest.fn().mockResolvedValue([]),
+    findGatewayById: jest.fn().mockImplementation((id: string) =>
+      Promise.resolve({
+        id,
+        facility_id: '550e8400-e29b-41d4-a716-446655440001',
+        name: 'Test Gateway',
+      })
+    ),
+    findBluLokBySerial: jest.fn().mockResolvedValue(null),
+    findBluLokByUnitId: jest.fn().mockResolvedValue(null),
+    findUnitFacilityId: jest
+      .fn()
+      .mockResolvedValue('550e8400-e29b-41d4-a716-446655440001'),
+    findAccessControlIdentityConflict: jest.fn().mockResolvedValue(null),
     createAccessControlDevice: createAccessControlDeviceMock,
     createBluLokDevice: createBluLokDeviceMock,
     updateLockStatus: jest.fn().mockResolvedValue({ success: true }),

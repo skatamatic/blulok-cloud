@@ -47,6 +47,12 @@ describe('gateway-sync.utils', () => {
       expect(isGatewaySyncManaged({})).toBe(false);
       expect(isGatewaySyncManaged(null)).toBe(false);
     });
+
+    it('returns false when adminIdentityOverride is set', () => {
+      expect(
+        isGatewaySyncManaged({ createdFromGatewaySync: true, adminIdentityOverride: true })
+      ).toBe(false);
+    });
   });
 
   describe('formatAccessDeviceKey', () => {

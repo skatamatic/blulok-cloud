@@ -61,7 +61,15 @@ import { UserRole } from '../types/auth.types';
 import { AuthenticatedRequest } from '../types/auth.types';
 import { DevicesService } from '../services/devices.service';
 import { AuthService } from '../services/auth.service';
-import { asyncHandler } from '../middleware/error.middleware';
+import { asyncHandler, ConflictError, NotFoundError } from '../middleware/error.middleware';
+import {
+  assertUnitAvailableForBluLok,
+  assertUnitBelongsToGatewayFacility,
+  assertUserCanProvisionOnGateway,
+  buildManualProvisionMetadata,
+  mapDeviceProvisionDatabaseError,
+} from '@/utils/device-provision.utils';
+import { DeviceMetadataService } from '../services/device-metadata.service';
 import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/database.service';
 import { AccessCodeService } from '@/services/access-code.service';
@@ -112,6 +120,27 @@ const updateAccessControlDeviceSchema = Joi.object({
   relay_channel: Joi.number().integer().min(1).max(8).optional(),
   status: Joi.string().valid('online', 'offline', 'error', 'maintenance').optional(),
   is_locked: Joi.boolean().optional(),
+  supports_remote_lock: Joi.boolean().optional(),
+  device_settings: Joi.object().optional(),
+  metadata: Joi.object().optional(),
+  access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
+}).min(1);
+
+const updateBluLokMetadataSchema = Joi.object({
+  device_serial: Joi.string().trim().min(1).max(100).optional(),
+  serial: Joi.string().trim().min(1).max(100).optional(),
+  firmware_version: Joi.string().trim().max(100).optional(),
+  supports_remote_lock: Joi.boolean().optional(),
+  device_settings: Joi.object().optional(),
+  metadata: Joi.object().optional(),
+}).min(1);
+
+const updateAccessControlMetadataSchema = Joi.object({
+  name: Joi.string().optional(),
+  location_description: Joi.string().optional(),
+  device_serial: Joi.string().trim().min(1).max(100).optional(),
+  relay_channel: Joi.number().integer().min(1).max(8).optional(),
+  supports_remote_lock: Joi.boolean().optional(),
   device_settings: Joi.object().optional(),
   metadata: Joi.object().optional(),
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
@@ -119,21 +148,28 @@ const updateAccessControlDeviceSchema = Joi.object({
 
 const bluLokDeviceSchema = Joi.object({
   gateway_id: Joi.string().required(),
-  name: Joi.string().required(),
-  device_type: Joi.string().valid('blulok').required(),
-  location_description: Joi.string().required(),
-  unit_id: Joi.string().required(),
-  // Legacy alias accepted for backwards compatibility
+  unit_id: Joi.string().trim().optional().allow('', null),
+  name: Joi.string().trim().max(200).optional().allow(''),
+  location_description: Joi.string().trim().max(500).optional().allow(''),
+  firmware_version: Joi.string().trim().max(100).optional().allow(''),
+  supports_remote_lock: Joi.boolean().optional(),
+  device_settings: Joi.object().optional(),
+  metadata: Joi.object().optional(),
+  /** Legacy — accepted for backwards compatibility, ignored */
+  device_type: Joi.string().valid('blulok').optional(),
   serial: Joi.string().trim().min(1).optional(),
   device_serial: Joi.string().trim().min(1).optional(),
-}).or('serial', 'device_serial').custom((value, helpers) => {
-  if (value.serial && value.device_serial && value.serial.trim() !== value.device_serial.trim()) {
-    return helpers.error('any.invalid');
-  }
-  return value;
-}).messages({
-  'any.invalid': 'serial and device_serial must match when both are provided',
-});
+})
+  .or('serial', 'device_serial')
+  .custom((value, helpers) => {
+    if (value.serial && value.device_serial && value.serial.trim() !== value.device_serial.trim()) {
+      return helpers.error('any.invalid');
+    }
+    return value;
+  })
+  .messages({
+    'any.invalid': 'serial and device_serial must match when both are provided',
+  });
 
 const lockStatusSchema = Joi.object({
   // API accepts target state for command-style operations.
@@ -419,87 +455,136 @@ router.get('/facility/:facilityId/hierarchy', asyncHandler(async (req: Authentic
 
 // POST /api/devices/access-control - Create access control device
 router.post('/access-control', requireAdminOrFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  const { error, value } = accessControlDeviceSchema.validate(req.body);
+  if (error) {
+    res.status(400).json({
+      success: false,
+      message: error.details[0]?.message || 'Validation error',
+      error: error.details[0]?.message || 'Validation error',
+    });
+    return;
+  }
+
+  const gateway = await assertUserCanProvisionOnGateway(user, value.gateway_id, deviceModel);
+
+  const deviceSerial = String(value.device_serial).trim();
+  const relayChannel = Number(value.relay_channel);
+  const conflict = await deviceModel.findAccessControlIdentityConflict(
+    value.gateway_id,
+    deviceSerial,
+    relayChannel,
+    ''
+  );
+  if (conflict?.type === 'relay') {
+    throw new ConflictError(
+      `Relay ${relayChannel} is already used by device ${conflict.device.device_serial}`
+    );
+  }
+  if (conflict?.type === 'serial_relay') {
+    throw new ConflictError(
+      `Device serial "${deviceSerial}" on relay ${relayChannel} is already in use`
+    );
+  }
+
+  const sanitizedValue = {
+    ...value,
+    device_serial: deviceSerial,
+    name: sanitizeHtml(value.name),
+    location_description: sanitizeHtml(value.location_description),
+    metadata: buildManualProvisionMetadata(value.metadata),
+  };
+
   try {
-
-    // Validate request body
-    const { error, value } = accessControlDeviceSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({ 
-        success: false, 
-        message: error.details[0]?.message || 'Validation error',
-        error: error.details[0]?.message || 'Validation error'
-      });
-      return;
-    }
-
-    // TODO: Add facility access check for FACILITY_ADMIN
-
-    // Sanitize device name to prevent XSS
-    const sanitizedValue = {
-      ...value,
-      name: sanitizeHtml(value.name),
-      location_description: sanitizeHtml(value.location_description)
-    };
-
     const device = await deviceModel.createAccessControlDevice(sanitizedValue);
-    // Push effective codes after creating a new access-control device so gateways
-    // immediately receive any applicable scope/device mappings.
     try {
-      const gateway = await deviceModel.findGatewayById(String(device.gateway_id));
-      if (gateway?.facility_id) {
-        await AccessCodeService.getInstance().pushCodesToGateway(String(gateway.facility_id));
-      }
+      await AccessCodeService.getInstance().pushCodesToGateway(String(gateway.facility_id));
     } catch (pushError) {
       logger.warn('Failed to push access codes after access-control device creation', { pushError });
     }
-    
+
     res.status(201).json({ success: true, device });
-  } catch (error) {
-    logger.error('Error creating access control device:', error);
-    res.status(500).json({ success: false, message: 'Failed to create access control device' });
+  } catch (createError) {
+    const mapped = mapDeviceProvisionDatabaseError(createError);
+    if (mapped) throw mapped;
+    logger.error('Error creating access control device:', createError);
+    throw createError;
   }
 }));
 
 // POST /api/devices/blulok - Create BluLok device
 router.post('/blulok', requireAdminOrFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  const { error, value } = bluLokDeviceSchema.validate(req.body);
+  if (error) {
+    res.status(400).json({
+      success: false,
+      message: error.details[0]?.message || 'Validation error',
+      error: error.details[0]?.message || 'Validation error',
+    });
+    return;
+  }
+
+  const gateway = await assertUserCanProvisionOnGateway(user, value.gateway_id, deviceModel);
+
+  const normalizedSerial = String(value.device_serial || value.serial).trim();
+  const existingSerial = await deviceModel.findBluLokBySerial(normalizedSerial);
+  if (existingSerial) {
+    throw new ConflictError(`Device serial "${normalizedSerial}" is already in use`);
+  }
+
+  const unitId =
+    value.unit_id && String(value.unit_id).trim() ? String(value.unit_id).trim() : undefined;
+  if (unitId) {
+    await assertUnitBelongsToGatewayFacility(unitId, gateway.facility_id, deviceModel);
+    await assertUnitAvailableForBluLok(unitId, deviceModel);
+  }
+
+  const displayName =
+    value.name && String(value.name).trim() ? sanitizeHtml(String(value.name).trim()) : undefined;
+  const locationDescription =
+    value.location_description && String(value.location_description).trim()
+      ? sanitizeHtml(String(value.location_description).trim())
+      : undefined;
+  const firmwareVersion =
+    value.firmware_version && String(value.firmware_version).trim()
+      ? String(value.firmware_version).trim()
+      : undefined;
+
+  const deviceSettings = {
+    ...(value.device_settings && typeof value.device_settings === 'object'
+      ? value.device_settings
+      : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(locationDescription ? { locationDescription } : {}),
+  };
+
+  const metadata = buildManualProvisionMetadata(
+    value.metadata && typeof value.metadata === 'object' ? value.metadata : undefined
+  );
+
   try {
-
-    // Validate request body
-    const { error, value } = bluLokDeviceSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({ 
-        success: false, 
-        message: error.details[0]?.message || 'Validation error',
-        error: error.details[0]?.message || 'Validation error'
-      });
-      return;
-    }
-
-    // TODO: Add facility access check for FACILITY_ADMIN
-
-    const normalizedSerial = String(value.device_serial || value.serial).trim();
-    const displayName = sanitizeHtml(value.name);
-    const locationDescription = sanitizeHtml(value.location_description);
-    const deviceSettings =
-      displayName || locationDescription
-        ? {
-            ...(displayName ? { displayName } : {}),
-            ...(locationDescription ? { locationDescription } : {}),
-          }
-        : undefined;
-
     const device = await deviceModel.createBluLokDevice({
       gateway_id: value.gateway_id,
-      unit_id: value.unit_id,
+      ...(unitId ? { unit_id: unitId } : {}),
       device_serial: normalizedSerial,
       serial: normalizedSerial,
-      device_settings: deviceSettings,
+      ...(firmwareVersion ? { firmware_version: firmwareVersion } : {}),
+      ...(value.supports_remote_lock !== undefined
+        ? { supports_remote_lock: value.supports_remote_lock }
+        : {}),
+      device_settings: Object.keys(deviceSettings).length > 0 ? deviceSettings : undefined,
+      metadata,
     });
-    
+
     res.status(201).json({ success: true, device });
-  } catch (error) {
-    logger.error('Error creating BluLok device:', error);
-    res.status(500).json({ success: false, message: 'Failed to create BluLok device' });
+  } catch (createError) {
+    const mapped = mapDeviceProvisionDatabaseError(createError);
+    if (mapped) throw mapped;
+    logger.error('Error creating BluLok device:', createError);
+    throw createError;
   }
 }));
 
@@ -528,6 +613,47 @@ router.put('/access-control/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADM
     return;
   }
 
+  const { status, is_locked, ...metadataFields } = value;
+  const hasMetadataFields = Object.keys(metadataFields).length > 0;
+
+  if (hasMetadataFields) {
+    const metadataService = DeviceMetadataService.getInstance();
+    try {
+      const sanitizedMetadata = {
+        ...metadataFields,
+        name: metadataFields.name ? sanitizeHtml(metadataFields.name) : undefined,
+        location_description: metadataFields.location_description
+          ? sanitizeHtml(metadataFields.location_description)
+          : undefined,
+      };
+      const result = await metadataService.updateAccessControlMetadata(
+        String(id),
+        sanitizedMetadata,
+        {
+          userId: user.userId,
+          userName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email || undefined,
+        }
+      );
+      let device = result.device;
+      if (status !== undefined || is_locked !== undefined) {
+        const statusUpdate: Record<string, unknown> = {};
+        if (status !== undefined) statusUpdate.status = status;
+        if (is_locked !== undefined) statusUpdate.is_locked = is_locked;
+        await deviceModel.updateAccessControlDevice(String(id), statusUpdate);
+        device =
+          (await deviceModel.findAccessControlDeviceWithGateway(String(id))) ?? device;
+      }
+      res.json({ success: true, device, sideEffects: result.sideEffects });
+      return;
+    } catch (err) {
+      if (err instanceof ConflictError || err instanceof NotFoundError) {
+        res.status(err.statusCode).json({ success: false, message: err.message });
+        return;
+      }
+      throw err;
+    }
+  }
+
   const updatePayload = {
     ...value,
     name: value.name ? sanitizeHtml(value.name) : undefined,
@@ -536,6 +662,113 @@ router.put('/access-control/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADM
   const updated = await deviceModel.updateAccessControlDevice(String(id), updatePayload);
   res.json({ success: true, device: updated });
 }));
+
+// PUT /api/devices/access-control/:id/metadata - Update access control metadata with propagation
+router.put(
+  '/access-control/:id/metadata',
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { id } = req.params;
+    const { error, value } = updateAccessControlMetadataSchema.validate(req.body);
+    if (error) {
+      res.status(400).json({
+        success: false,
+        message: error.details[0]?.message || 'Validation error',
+      });
+      return;
+    }
+
+    const existing = await deviceModel.findAccessControlDeviceWithGateway(String(id));
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Device not found' });
+      return;
+    }
+
+    if (AuthService.isFacilityScoped(user.role) && !user.facilityIds?.includes(existing.facility_id)) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return;
+    }
+
+    const metadataService = DeviceMetadataService.getInstance();
+    try {
+      const result = await metadataService.updateAccessControlMetadata(
+        String(id),
+        {
+          ...value,
+          name: value.name ? sanitizeHtml(value.name) : undefined,
+          location_description: value.location_description
+            ? sanitizeHtml(value.location_description)
+            : undefined,
+        },
+        {
+          userId: user.userId,
+          userName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email || undefined,
+        }
+      );
+      res.json({ success: true, device: result.device, sideEffects: result.sideEffects });
+    } catch (err) {
+      if (err instanceof ConflictError || err instanceof NotFoundError) {
+        res.status(err.statusCode).json({ success: false, message: err.message });
+        return;
+      }
+      throw err;
+    }
+  })
+);
+
+// PUT /api/devices/blulok/:id/metadata - Update BluLok metadata with propagation
+router.put(
+  '/blulok/:id/metadata',
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { id } = req.params;
+    const { error, value } = updateBluLokMetadataSchema.validate(req.body);
+    if (error) {
+      res.status(400).json({
+        success: false,
+        message: error.details[0]?.message || 'Validation error',
+      });
+      return;
+    }
+
+    const existing = await deviceModel.findBluLokDeviceById(String(id));
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Device not found' });
+      return;
+    }
+
+    const facilityId = (existing as { gateway_facility_id?: string }).gateway_facility_id;
+    if (
+      facilityId &&
+      AuthService.isFacilityScoped(user.role) &&
+      !user.facilityIds?.includes(facilityId)
+    ) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return;
+    }
+
+    const metadataService = DeviceMetadataService.getInstance();
+    try {
+      const result = await metadataService.updateBluLokMetadata(
+        String(id),
+        value,
+        {
+          userId: user.userId,
+          userName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email || undefined,
+        }
+      );
+      res.json({ success: true, device: result.device, sideEffects: result.sideEffects });
+    } catch (err) {
+      if (err instanceof ConflictError || err instanceof NotFoundError) {
+        res.status(err.statusCode).json({ success: false, message: err.message });
+        return;
+      }
+      throw err;
+    }
+  })
+);
 
 // PUT /api/devices/:deviceType/:id/status - Update device status
 router.put('/:deviceType/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), async (req: AuthenticatedRequest, res: Response): Promise<void> => {

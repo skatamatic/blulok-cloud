@@ -51,7 +51,7 @@ describe('GatewayService.resolveDeviceIdForLockCommandJwt', () => {
     await expect(svc.resolveDeviceIdForLockCommandJwt('only-uuid')).resolves.toBe('only-uuid');
   });
 
-  it('reads access control serial from metadata or device_settings', async () => {
+  it('reads access control device_serial column first', async () => {
     const svc = GatewayService.getInstance();
     (svc as unknown as { db: jest.Mock }).db = jest.fn((table: string) => {
       if (table === 'blulok_devices') {
@@ -59,6 +59,26 @@ describe('GatewayService.resolveDeviceIdForLockCommandJwt', () => {
       }
       if (table === 'access_control_devices') {
         return makeQueryBuilder({
+          device_serial: 'COLUMN-SN',
+          metadata: JSON.stringify({ device_serial: 'META-SN' }),
+          device_settings: null,
+        });
+      }
+      return makeQueryBuilder(undefined);
+    });
+
+    await expect(svc.resolveDeviceIdForLockCommandJwt('ac-device-uuid')).resolves.toBe('COLUMN-SN');
+  });
+
+  it('reads access control serial from metadata or device_settings when column empty', async () => {
+    const svc = GatewayService.getInstance();
+    (svc as unknown as { db: jest.Mock }).db = jest.fn((table: string) => {
+      if (table === 'blulok_devices') {
+        return makeQueryBuilder(undefined);
+      }
+      if (table === 'access_control_devices') {
+        return makeQueryBuilder({
+          device_serial: '',
           metadata: JSON.stringify({ device_serial: 'GATE-R1' }),
           device_settings: null,
         });

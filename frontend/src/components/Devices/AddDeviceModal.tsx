@@ -16,7 +16,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import axios from 'axios';
 import { Modal } from '@/components/Modal/Modal';
 import { apiService } from '@/services/api.service';
-import { Facility, Unit, CreateAccessControlDevicePayload } from '@/types/facility.types';
+import { Facility, Gateway, Unit, CreateAccessControlDevicePayload } from '@/types/facility.types';
+import { mapDeviceApiErrorToFields } from '@/utils/deviceApiErrors';
 
 type HardwareKind = 'access_control' | 'blulok';
 type WizardStep = 'type' | 'location' | 'configure' | 'review';
@@ -29,8 +30,8 @@ interface CreateBluLokDeviceData {
   gateway_id: string;
   unit_id: string;
   device_serial: string;
+  display_name: string;
   firmware_version: string;
-  device_settings?: Record<string, unknown>;
 }
 
 interface AddDeviceModalProps {
@@ -58,7 +59,7 @@ const HARDWARE_OPTIONS: Array<{
   {
     id: 'blulok',
     title: 'BluLok lock',
-    description: 'Smart lock on a storage unit — assigned to a unit and synced by serial.',
+    description: 'Smart lock identified by hardware serial — assign to a unit now or later.',
     icon: LockClosedIcon,
     accent: 'from-blue-500/10 to-blue-600/5 border-blue-200 dark:border-blue-800',
   },
@@ -141,11 +142,12 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     gateway_id: '',
     unit_id: '',
     device_serial: '',
+    display_name: '',
     firmware_version: '',
-    device_settings: {},
   });
 
   const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [gateways, setGateways] = useState<Gateway[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedFacility, setSelectedFacility] = useState<string>(facilityId || '');
   const [loading, setLoading] = useState(false);
@@ -170,12 +172,18 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       gateway_id: '',
       unit_id: '',
       device_serial: '',
+      display_name: '',
       firmware_version: '',
-      device_settings: {},
     });
     setSelectedFacility(facilityId || '');
+    setGateways([]);
     setErrors({});
   }, [deviceType, facilityId, steps]);
+
+  const applyGatewaySelection = (gatewayId: string) => {
+    setAccessControlData((prev) => ({ ...prev, gateway_id: gatewayId }));
+    setBluLokData((prev) => ({ ...prev, gateway_id: gatewayId }));
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -183,7 +191,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       void loadFacilities();
       if (facilityId) {
         setSelectedFacility(facilityId);
-        void resolveGatewayIdForFacility(facilityId);
+        void loadGatewaysForFacility(facilityId);
         void loadUnits(facilityId);
       }
     }
@@ -207,24 +215,40 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     }
   };
 
-  const resolveGatewayIdForFacility = async (facilityIdValue: string) => {
+  const loadGatewaysForFacility = async (facilityIdValue: string) => {
     try {
-      const response = await apiService.getGateways({ facility_id: facilityIdValue, limit: 1, offset: 0 });
-      const gatewayId = response?.gateways?.[0]?.id;
-      if (!gatewayId) {
-        setErrors((prev) => ({ ...prev, gateway_id: 'No gateway assigned to this facility yet' }));
+      const response = await apiService.getGateways({
+        facility_id: facilityIdValue,
+        limit: 50,
+        offset: 0,
+      });
+      const list = (response?.gateways ?? []) as Gateway[];
+      setGateways(list);
+
+      if (list.length === 0) {
+        applyGatewaySelection('');
+        setErrors((prev) => ({
+          ...prev,
+          gateway_id: 'No gateway assigned to this facility yet',
+        }));
         return;
       }
+
+      const currentId = bluLokData.gateway_id || accessControlData.gateway_id;
+      const nextId =
+        currentId && list.some((g) => g.id === currentId) ? currentId : list[0].id;
+      applyGatewaySelection(nextId);
       setErrors((prev) => {
         const next = { ...prev };
         delete next.gateway_id;
         return next;
       });
-      setAccessControlData((prev) => ({ ...prev, gateway_id: gatewayId }));
-      setBluLokData((prev) => ({ ...prev, gateway_id: gatewayId }));
     } catch (error) {
-      console.error('Failed to resolve gateway for facility:', error);
-      setErrors((prev) => ({ ...prev, gateway_id: 'Failed to resolve gateway for selected facility' }));
+      console.error('Failed to load gateways for facility:', error);
+      setErrors((prev) => ({
+        ...prev,
+        gateway_id: 'Failed to load gateways for selected facility',
+      }));
     }
   };
 
@@ -244,10 +268,16 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     }
 
     if (target === 'configure' || target === 'review') {
+      const activeGatewayId =
+        selectedDeviceType === 'access_control'
+          ? accessControlData.gateway_id
+          : bluLokData.gateway_id;
+      if (!activeGatewayId) {
+        newErrors.gateway_id =
+          errors.gateway_id || 'Select a gateway for this facility';
+      }
+
       if (selectedDeviceType === 'access_control') {
-        if (!accessControlData.gateway_id) {
-          newErrors.gateway_id = 'Gateway could not be resolved for this facility';
-        }
         if (!accessControlData.name.trim()) newErrors.name = 'Device name is required';
         if (!accessControlData.device_serial.trim()) newErrors.device_serial = 'Hardware serial is required';
         if (!accessControlData.location_description.trim()) {
@@ -257,9 +287,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           newErrors.relay_channel = 'Relay channel must be between 1 and 8';
         }
       } else if (selectedDeviceType === 'blulok') {
-        if (!bluLokData.gateway_id) newErrors.gateway_id = 'Gateway could not be resolved for this facility';
-        if (!bluLokData.unit_id) newErrors.unit_id = 'Select a unit for this lock';
-        if (!bluLokData.device_serial.trim()) newErrors.device_serial = 'Device serial number is required';
+        if (!bluLokData.device_serial.trim()) newErrors.device_serial = 'Hardware serial is required';
       }
     }
 
@@ -280,8 +308,10 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
 
   const handleFacilityChange = async (fid: string) => {
     setSelectedFacility(fid);
+    setGateways([]);
+    applyGatewaySelection('');
     if (fid) {
-      await resolveGatewayIdForFacility(fid);
+      await loadGatewaysForFacility(fid);
       await loadUnits(fid);
     }
   };
@@ -308,10 +338,16 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           access_methods: accessControlData.access_methods,
         });
       } else {
-        await apiService.createBluLokDevice({
-          ...bluLokData,
+        const payload: Record<string, unknown> = {
+          gateway_id: bluLokData.gateway_id,
           device_serial: bluLokData.device_serial.trim(),
-        });
+        };
+        if (bluLokData.unit_id) payload.unit_id = bluLokData.unit_id;
+        if (bluLokData.display_name.trim()) payload.name = bluLokData.display_name.trim();
+        if (bluLokData.firmware_version.trim()) {
+          payload.firmware_version = bluLokData.firmware_version.trim();
+        }
+        await apiService.createBluLokDevice(payload);
       }
 
       onSuccess();
@@ -321,7 +357,13 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       const apiMessage = axios.isAxiosError(error)
         ? (error.response?.data?.message || error.response?.data?.error)
         : undefined;
-      setErrors({ submit: apiMessage || 'Failed to create device. Please try again.' });
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const fallback = apiMessage || 'Failed to create device. Please try again.';
+      setErrors(
+        status === 409 || status === 400
+          ? mapDeviceApiErrorToFields(String(fallback))
+          : { submit: fallback }
+      );
     } finally {
       setLoading(false);
     }
@@ -334,6 +376,62 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
 
   const selectedFacilityName = facilities.find((f) => f.id === selectedFacility)?.name || '';
   const selectedUnit = units.find((u) => u.id === bluLokData.unit_id);
+  const selectedGateway = gateways.find(
+    (g) => g.id === (selectedDeviceType === 'access_control' ? accessControlData.gateway_id : bluLokData.gateway_id)
+  );
+
+  const renderGatewayField = () => {
+    if (gateways.length === 0) {
+      return errors.gateway_id ? (
+        <p className="text-sm text-red-600 dark:text-red-400">{errors.gateway_id}</p>
+      ) : null;
+    }
+
+    if (gateways.length === 1) {
+      return (
+        <div className="flex items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-4 py-3 text-sm text-blue-800 dark:text-blue-200">
+          <WifiIcon className="h-4 w-4 shrink-0" />
+          <span>
+            Gateway: <strong>{gateways[0].name}</strong>
+          </span>
+        </div>
+      );
+    }
+
+    const gatewayId =
+      selectedDeviceType === 'access_control'
+        ? accessControlData.gateway_id
+        : bluLokData.gateway_id;
+
+    return (
+      <div>
+        <label
+          htmlFor="add-device-gateway"
+          className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
+          Gateway <span className="text-red-500">*</span>
+        </label>
+        <select
+          id="add-device-gateway"
+          value={gatewayId}
+          onChange={(e) => applyGatewaySelection(e.target.value)}
+          className={`block w-full rounded-lg border bg-white px-3 py-2.5 text-gray-900 dark:bg-gray-700 dark:text-white ${
+            errors.gateway_id ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
+          }`}
+        >
+          {gateways.map((gateway) => (
+            <option key={gateway.id} value={gateway.id}>
+              {gateway.name}
+              {gateway.status ? ` (${gateway.status})` : ''}
+            </option>
+          ))}
+        </select>
+        {errors.gateway_id && (
+          <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.gateway_id}</p>
+        )}
+      </div>
+    );
+  };
 
   const renderTypeStep = () => (
     <div className="space-y-4">
@@ -432,6 +530,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       {selectedDeviceType === 'access_control' ? (
         <>
           <h4 className="text-base font-semibold text-gray-900 dark:text-white">Access control device details</h4>
+          {renderGatewayField()}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Name *</label>
@@ -540,51 +639,109 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
         </>
       ) : (
         <>
-          <h4 className="text-base font-semibold text-gray-900 dark:text-white">BluLok Device Details</h4>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Unit *</label>
-            <div className="relative">
-              <HomeIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-              <select
-                value={bluLokData.unit_id}
-                onChange={(e) => setBluLokData((p) => ({ ...p, unit_id: e.target.value }))}
-                className={`block w-full pl-10 pr-3 py-2.5 rounded-lg border bg-white dark:bg-gray-700 ${
-                  errors.unit_id ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
-                }`}
-              >
-                <option value="">Select a unit</option>
-                {units.map((unit) => (
-                  <option key={unit.id} value={unit.id}>
-                    Unit {unit.unit_number} — {unit.unit_type}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {errors.unit_id && <p className="mt-1 text-sm text-red-600">{errors.unit_id}</p>}
+            <h4 className="text-base font-semibold text-gray-900 dark:text-white">BluLok lock details</h4>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              The hardware serial is the primary identifier for gateway commands and inventory sync.
+            </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+          {renderGatewayField()}
+
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/30 p-4 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Device serial *</label>
+              <label
+                htmlFor="add-blulok-serial"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+              >
+                Hardware serial <span className="text-red-500">*</span>
+              </label>
               <input
+                id="add-blulok-serial"
                 type="text"
-                required
                 value={bluLokData.device_serial}
                 onChange={(e) => setBluLokData((p) => ({ ...p, device_serial: e.target.value }))}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2"
+                className={`w-full rounded-lg border bg-white dark:bg-gray-700 px-3 py-2.5 font-mono text-sm text-gray-900 dark:text-white ${
+                  errors.device_serial ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
+                }`}
                 placeholder="e.g. BL-2024-001234"
+                autoComplete="off"
               />
-              {errors.device_serial && <p className="mt-1 text-sm text-red-600">{errors.device_serial}</p>}
+              {errors.device_serial && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.device_serial}</p>
+              )}
             </div>
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Firmware (optional)</label>
+              <label
+                htmlFor="add-blulok-display-name"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+              >
+                Display name <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
               <input
+                id="add-blulok-display-name"
+                type="text"
+                value={bluLokData.display_name}
+                onChange={(e) => setBluLokData((p) => ({ ...p, display_name: e.target.value }))}
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-gray-900 dark:text-white"
+                placeholder="Friendly label for admins (defaults to serial in lists)"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="add-blulok-firmware"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+              >
+                Firmware <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                id="add-blulok-firmware"
                 type="text"
                 value={bluLokData.firmware_version}
                 onChange={(e) => setBluLokData((p) => ({ ...p, firmware_version: e.target.value }))}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2"
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-gray-900 dark:text-white"
                 placeholder="v2.1.0"
               />
             </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+            <div>
+              <label
+                htmlFor="add-blulok-unit"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+              >
+                Unit assignment <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <div className="relative">
+                <HomeIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" />
+                <select
+                  id="add-blulok-unit"
+                  value={bluLokData.unit_id}
+                  onChange={(e) => setBluLokData((p) => ({ ...p, unit_id: e.target.value }))}
+                  className="block w-full appearance-none pl-10 pr-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">Unassigned — assign later from device details</option>
+                  {units.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      Unit {unit.unit_number} — {unit.unit_type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Leave unassigned when staging inventory before move-in, or assign from the unit page later.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-4 py-3 text-sm text-blue-800 dark:text-blue-200">
+            <LockClosedIcon className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>
+              Manually added locks are protected from gateway inventory removal until you delete them in the cloud.
+            </span>
           </div>
         </>
       )}
@@ -598,10 +755,12 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
         {[
           ['Hardware', selectedDeviceType === 'blulok' ? 'BluLok lock' : 'Access control'],
           ['Facility', selectedFacilityName || facilityId || '—'],
+          ['Gateway', selectedGateway?.name || '—'],
           ...(selectedDeviceType === 'blulok'
             ? [
-                ['Unit', selectedUnit ? `Unit ${selectedUnit.unit_number}` : '—'],
                 ['Serial', bluLokData.device_serial],
+                ['Display name', bluLokData.display_name.trim() || bluLokData.device_serial || '—'],
+                ['Unit', selectedUnit ? `Unit ${selectedUnit.unit_number}` : 'Unassigned'],
                 ['Firmware', bluLokData.firmware_version || '—'],
               ]
             : [

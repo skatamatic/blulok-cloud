@@ -620,6 +620,30 @@ class ApiService {
     return response.data;
   }
 
+  async updateAccessControlDeviceMetadata(
+    id: string,
+    data: import('@/types/facility.types').UpdateAccessControlDeviceMetadataPayload
+  ) {
+    const response = await this.api.put(`/devices/access-control/${id}/metadata`, data);
+    return response.data as {
+      success: boolean;
+      device: unknown;
+      sideEffects?: import('@/types/facility.types').DeviceMetadataSideEffects;
+    };
+  }
+
+  async updateBluLokDeviceMetadata(
+    id: string,
+    data: import('@/types/facility.types').UpdateBluLokDeviceMetadataPayload
+  ) {
+    const response = await this.api.put(`/devices/blulok/${id}/metadata`, data);
+    return response.data as {
+      success: boolean;
+      device: unknown;
+      sideEffects?: import('@/types/facility.types').DeviceMetadataSideEffects;
+    };
+  }
+
   async createBluLokDevice(data: object) {
     const response = await this.api.post('/devices/blulok', data);
     return response.data;

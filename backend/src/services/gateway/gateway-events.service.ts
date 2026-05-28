@@ -264,11 +264,14 @@ export class GatewayEventsService {
       if (!gw?.gateway_type) {
         return;
       }
+
+      // Always record cloud-system telemetry for inbound /ws/gateway sessions.
+      this.recordInboundWsTelemetryLog(gw.id, facilityId, event);
+
+      // HTTP gateways use outbound polling for liveness; do not drive DB status from inbound WS.
       if (gw.gateway_type === 'http') {
         return;
       }
-
-      this.recordInboundWsTelemetryLog(gw.id, facilityId, event);
 
       const previousStatus = gw.status;
       const next: 'online' | 'offline' = connected ? 'online' : 'offline';

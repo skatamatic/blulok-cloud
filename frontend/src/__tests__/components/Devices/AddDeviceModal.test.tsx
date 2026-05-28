@@ -36,28 +36,87 @@ describe('AddDeviceModal - BluLok wizard', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('BluLok Device Details')).toBeInTheDocument();
+      expect(screen.getByText('BluLok lock details')).toBeInTheDocument();
     });
   }
 
-  it('renders serial number input on configure step', async () => {
+  it('renders hardware serial input on configure step', async () => {
     await openBlulokConfigureStep();
-    const serialInput = screen.getByPlaceholderText('e.g. BL-2024-001234');
-    expect(serialInput).toBeInTheDocument();
-    expect(serialInput).toHaveAttribute('required');
+    expect(screen.getByLabelText(/Hardware serial/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Unit assignment/i)).toBeInTheDocument();
   });
 
   it('blocks submission when serial is missing/blank', async () => {
     await openBlulokConfigureStep();
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'unit-1' } });
-    fireEvent.change(screen.getByPlaceholderText('e.g. BL-2024-001234'), { target: { value: '   ' } });
+    fireEvent.change(screen.getByLabelText(/Hardware serial/i), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hardware serial is required')).toBeInTheDocument();
+    });
+    expect(mockApiService.createBluLokDevice).not.toHaveBeenCalled();
+  });
+
+  it('creates BluLok without unit assignment', async () => {
+    await openBlulokConfigureStep();
+
+    fireEvent.change(screen.getByLabelText(/Hardware serial/i), { target: { value: 'BL-TEST-001' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Review & create')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Unassigned')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create device' }));
+
+    await waitFor(() => {
+      expect(mockApiService.createBluLokDevice).toHaveBeenCalledWith({
+        gateway_id: 'gw-1',
+        device_serial: 'BL-TEST-001',
+      });
+    });
+  });
+
+  it('shows gateway picker when multiple gateways exist', async () => {
+    mockApiService.getGateways.mockResolvedValue({
+      gateways: [
+        { id: 'gw-1', name: 'Gateway A', facility_id: 'fac-1', status: 'online' },
+        { id: 'gw-2', name: 'Gateway B', facility_id: 'fac-1', status: 'online' },
+      ],
+    } as any);
+
+    await openBlulokConfigureStep();
+
+    expect(screen.getByLabelText(/^Gateway/i)).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Gateway A/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Gateway B/i })).toBeInTheDocument();
+  });
+
+  it('creates BluLok with optional unit and display name', async () => {
+    await openBlulokConfigureStep();
+
+    fireEvent.change(screen.getByLabelText(/Hardware serial/i), { target: { value: 'BL-TEST-002' } });
+    fireEvent.change(screen.getByLabelText(/Display name/i), { target: { value: 'Front lock' } });
+    fireEvent.change(screen.getByLabelText(/Unit assignment/i), { target: { value: 'unit-1' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await waitFor(() => {
-      expect(screen.getByText('Device serial number is required')).toBeInTheDocument();
+      expect(screen.getByText('Review & create')).toBeInTheDocument();
     });
-    expect(mockApiService.createBluLokDevice).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create device' }));
+
+    await waitFor(() => {
+      expect(mockApiService.createBluLokDevice).toHaveBeenCalledWith({
+        gateway_id: 'gw-1',
+        device_serial: 'BL-TEST-002',
+        unit_id: 'unit-1',
+        name: 'Front lock',
+      });
+    });
   });
 });
 

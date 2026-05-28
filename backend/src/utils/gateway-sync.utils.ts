@@ -54,10 +54,17 @@ export function isGatewaySyncManaged(metadata: Record<string, unknown> | null | 
   if (!metadata || typeof metadata !== 'object') {
     return false;
   }
+  if (metadata.adminIdentityOverride === true) {
+    return false;
+  }
   return (
     metadata.createdFromGatewaySync === true ||
     metadata.createdFromInventorySync === true
   );
+}
+
+export function hasAdminIdentityOverride(metadata: Record<string, unknown> | null | undefined): boolean {
+  return Boolean(metadata && typeof metadata === 'object' && metadata.adminIdentityOverride === true);
 }
 
 export function inferDeviceKind(item: Record<string, unknown>): GatewayDeviceKind {

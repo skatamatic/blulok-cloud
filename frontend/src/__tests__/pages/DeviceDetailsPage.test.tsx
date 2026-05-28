@@ -54,6 +54,24 @@ jest.mock('@/components/Modal/ConfirmModal', () => ({
     ) : null,
 }));
 
+jest.mock('@/components/Devices/EditDeviceMetadataModal', () => ({
+  EditDeviceMetadataModal: ({ isOpen, onClose, onSaved }: {
+    isOpen: boolean;
+    onClose: () => void;
+    onSaved?: () => void;
+  }) =>
+    isOpen ? (
+      <div data-testid="edit-metadata-modal" role="dialog">
+        <button type="button" onClick={onClose} data-testid="close-metadata-modal">
+          Close
+        </button>
+        <button type="button" onClick={() => onSaved?.()} data-testid="save-metadata-modal">
+          Save
+        </button>
+      </div>
+    ) : null,
+}));
+
 const mockDevice = {
   id: 'device-1',
   device_serial: 'SN123456',
@@ -187,6 +205,95 @@ describe('DeviceDetailsPage', () => {
 
     expect(screen.queryByRole('button', { name: /Remove lock from cloud inventory/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/Remove from facility \(cloud inventory\)/i)).not.toBeInTheDocument();
+  });
+
+  describe('Edit device metadata', () => {
+    it('shows Edit device for admin on BluLok devices', async () => {
+      render(
+        <MemoryRouter initialEntries={['/devices/device-1']}>
+          <ToastProvider>
+            <DeviceDetailsPage />
+          </ToastProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Edit device/i })).toBeInTheDocument();
+      });
+    });
+
+    it('shows Edit device for facility_admin', async () => {
+      (useAuth as jest.Mock).mockReturnValue({
+        authState: {
+          user: { id: 'fa-1', email: 'fa@example.com', role: 'facility_admin' },
+          isAuthenticated: true,
+          isLoading: false,
+        },
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/devices/device-1']}>
+          <ToastProvider>
+            <DeviceDetailsPage />
+          </ToastProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Edit device/i })).toBeInTheDocument();
+      });
+    });
+
+    it('hides Edit device for non-manage roles', async () => {
+      (useAuth as jest.Mock).mockReturnValue({
+        authState: {
+          user: { id: 'tenant-1', email: 'tenant@example.com', role: 'tenant' },
+          isAuthenticated: true,
+          isLoading: false,
+        },
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/devices/device-1']}>
+          <ToastProvider>
+            <DeviceDetailsPage />
+          </ToastProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
+      });
+
+      expect(screen.queryByRole('button', { name: /Edit device/i })).not.toBeInTheDocument();
+    });
+
+    it('opens metadata modal and reloads device on save', async () => {
+      render(
+        <MemoryRouter initialEntries={['/devices/device-1']}>
+          <ToastProvider>
+            <DeviceDetailsPage />
+          </ToastProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Edit device/i })).toBeInTheDocument();
+      });
+
+      const initialLoadCount = mockApiService.getBluLokDevice.mock.calls.length;
+      fireEvent.click(screen.getByRole('button', { name: /Edit device/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-metadata-modal')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId('save-metadata-modal'));
+
+      await waitFor(() => {
+        expect(mockApiService.getBluLokDevice.mock.calls.length).toBeGreaterThan(initialLoadCount);
+      });
+    });
   });
 
   it('unassigns lock from unit after confirmation', async () => {

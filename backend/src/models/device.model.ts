@@ -214,8 +214,18 @@ export interface UpdateAccessControlDeviceData {
   device_serial?: string;
   status?: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked?: boolean;
+  supports_remote_lock?: boolean;
   device_settings?: Record<string, any>;
   access_methods?: AccessMethod[];
+  metadata?: Record<string, any>;
+}
+
+export interface UpdateBluLokDeviceData {
+  device_serial?: string;
+  serial?: string;
+  firmware_version?: string;
+  supports_remote_lock?: boolean;
+  device_settings?: Record<string, any>;
   metadata?: Record<string, any>;
 }
 
@@ -670,6 +680,7 @@ export class DeviceModel {
     if (data.device_serial !== undefined) updatePayload.device_serial = data.device_serial;
     if (data.status !== undefined) updatePayload.status = data.status;
     if (data.is_locked !== undefined) updatePayload.is_locked = data.is_locked;
+    if (data.supports_remote_lock !== undefined) updatePayload.supports_remote_lock = data.supports_remote_lock;
     if (data.device_settings !== undefined) updatePayload.device_settings = JSON.stringify(data.device_settings);
     if (data.access_methods !== undefined) updatePayload.access_methods = JSON.stringify(data.access_methods);
     if (data.metadata !== undefined) updatePayload.metadata = JSON.stringify(data.metadata);
@@ -692,6 +703,87 @@ export class DeviceModel {
     return this.findAccessControlDeviceById(deviceId);
   }
 
+  async findUnitFacilityId(unitId: string): Promise<string | null> {
+    const knex = this.db.connection;
+    const unit = await knex('units').where('id', unitId).select('facility_id').first();
+    return unit?.facility_id ? String(unit.facility_id) : null;
+  }
+
+  async findBluLokByUnitId(unitId: string): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('blulok_devices').where('unit_id', unitId).first();
+    return device ? (device as BluLokDevice) : null;
+  }
+
+  async findBluLokBySerial(
+    deviceSerial: string,
+    excludeId?: string
+  ): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+    let query = knex('blulok_devices').where('device_serial', deviceSerial.trim());
+    if (excludeId) {
+      query = query.whereNot('id', excludeId);
+    }
+    const device = await query.first();
+    return device ? (device as BluLokDevice) : null;
+  }
+
+  /**
+   * Find access control row occupying the same relay or serial+relay on a gateway (excluding self).
+   */
+  async findAccessControlIdentityConflict(
+    gatewayId: string,
+    deviceSerial: string,
+    relayChannel: number,
+    excludeId: string
+  ): Promise<{ type: 'relay' | 'serial_relay'; device: AccessControlDevice } | null> {
+    const relayConflict = await this.findAccessControlByRelayChannel(gatewayId, relayChannel);
+    if (relayConflict && relayConflict.id !== excludeId) {
+      return { type: 'relay', device: relayConflict };
+    }
+    const serialRelay = await this.findAccessControlBySerialAndRelay(
+      gatewayId,
+      deviceSerial,
+      relayChannel
+    );
+    if (serialRelay && serialRelay.id !== excludeId) {
+      return { type: 'serial_relay', device: serialRelay };
+    }
+    return null;
+  }
+
+  async updateBluLokDevice(deviceId: string, data: UpdateBluLokDeviceData): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+    const updatePayload: Record<string, unknown> = { updated_at: new Date() };
+
+    if (data.device_serial !== undefined) updatePayload.device_serial = data.device_serial;
+    if (data.serial !== undefined) updatePayload.serial = data.serial;
+    if (data.firmware_version !== undefined) updatePayload.firmware_version = data.firmware_version;
+    if (data.supports_remote_lock !== undefined) {
+      updatePayload.supports_remote_lock = data.supports_remote_lock;
+    }
+    if (data.device_settings !== undefined) {
+      updatePayload.device_settings = JSON.stringify(data.device_settings);
+    }
+    if (data.metadata !== undefined) {
+      updatePayload.metadata = JSON.stringify(data.metadata);
+    }
+
+    if (Object.keys(updatePayload).length <= 1) {
+      const existing = await knex('blulok_devices').where('id', deviceId).first();
+      return existing ? (existing as BluLokDevice) : null;
+    }
+
+    await knex('blulok_devices').where('id', deviceId).update(updatePayload);
+    const device = await knex('blulok_devices').where('id', deviceId).first();
+    if (!device) return null;
+    return {
+      ...(device as BluLokDevice),
+      device_settings: this.safeParseJson(device.device_settings),
+      metadata: this.safeParseJson(device.metadata),
+    };
+  }
+
   async createBluLokDevice(data: CreateBluLokDeviceData): Promise<BluLokDevice> {
     const knex = this.db.connection;
     const id = uuidv4();
@@ -707,7 +799,19 @@ export class DeviceModel {
       device_serial: canonicalDeviceSerial,
       serial: canonicalSerial,
     };
-    await knex('blulok_devices').insert({ id, ...normalizedData });
+    await knex('blulok_devices').insert({
+      id,
+      gateway_id: normalizedData.gateway_id,
+      unit_id: normalizedData.unit_id ?? null,
+      device_serial: normalizedData.device_serial,
+      serial: normalizedData.serial,
+      firmware_version: normalizedData.firmware_version ?? null,
+      supports_remote_lock: normalizedData.supports_remote_lock,
+      device_settings: normalizedData.device_settings
+        ? JSON.stringify(normalizedData.device_settings)
+        : null,
+      metadata: normalizedData.metadata ? JSON.stringify(normalizedData.metadata) : null,
+    });
     const device = await knex('blulok_devices').where('id', id).first();
     return device as BluLokDevice;
   }
