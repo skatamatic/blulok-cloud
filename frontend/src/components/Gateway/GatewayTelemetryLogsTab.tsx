@@ -34,20 +34,33 @@ const EMPTY_FILTERS: TelemetryLogFilterState = {
   payloadFilters: [],
 };
 
+const SYSTEM_HEADER_LABELS: Record<string, string> = {
+  CLD01: 'Connected',
+  CLD02: 'Disconnected',
+  CLD03: 'Status',
+  CLD04: 'Inventory',
+};
+
+function formatLogTimestamp(when: Date): { date: string; time: string } {
+  return {
+    date: when.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' }),
+    time: when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+  };
+}
+
 function TelemetryLogRow({ log }: { log: GatewayTelemetryLogRecord }) {
   const [expanded, setExpanded] = useState(false);
   const when = new Date(log.logged_at);
+  const { date, time } = formatLogTimestamp(when);
   const preview =
     typeof log.payload?.message === 'string'
       ? log.payload.message
       : log.payload?.header
         ? `Header ${String(log.payload.header)}`
         : payloadStrPreview(log.payload);
-  const sourceLabel =
-    log.source === 'cloud_system' || log.payload?.cloud_system === true
-      ? 'cloud system'
-      : log.source.replace(/_/g, ' ');
   const isCloud = log.source === 'cloud_system' || log.payload?.cloud_system === true;
+  const headerCode = log.payload?.header != null ? String(log.payload.header) : null;
+  const headerHint = headerCode ? SYSTEM_HEADER_LABELS[headerCode] : undefined;
 
   return (
     <>
@@ -56,26 +69,42 @@ function TelemetryLogRow({ log }: { log: GatewayTelemetryLogRecord }) {
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        <td className="w-8 px-2 py-2.5 text-gray-400">
+        <td className="w-8 px-2 py-2 text-gray-400 align-top">
           <motion.div animate={{ rotate: expanded ? 90 : 0 }} transition={{ duration: 0.15 }}>
             <ChevronRightIcon className="h-4 w-4" />
           </motion.div>
         </td>
-        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-gray-700 dark:text-gray-300 tabular-nums">
-          {when.toLocaleString()}
+        <td className="w-[7.5rem] whitespace-nowrap px-2 py-2 align-top">
+          <div className="text-[11px] leading-tight text-gray-500 dark:text-gray-400 tabular-nums">{date}</div>
+          <div className="text-xs leading-tight text-gray-800 dark:text-gray-200 tabular-nums">{time}</div>
         </td>
-        <td
-          className={`whitespace-nowrap px-3 py-2.5 text-xs uppercase tracking-wide ${
-            isCloud ? 'text-primary-600 dark:text-primary-400 font-medium' : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          {sourceLabel}
+        <td className="w-[4.25rem] whitespace-nowrap px-2 py-2 align-top">
+          {headerCode ? (
+            <span
+              className="inline-block font-mono text-[11px] font-medium text-gray-700 dark:text-gray-300"
+              title={headerHint}
+            >
+              {headerCode}
+            </span>
+          ) : (
+            <span className="text-xs text-gray-400">—</span>
+          )}
         </td>
-        <td className="whitespace-nowrap px-3 py-2.5 text-xs font-mono text-gray-600 dark:text-gray-400">
-          {log.payload?.header != null ? String(log.payload.header) : '—'}
+        <td className="w-[4.75rem] whitespace-nowrap px-2 py-2 align-top">
+          <span
+            className={`inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+              isCloud
+                ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/40 dark:text-primary-300'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+            }`}
+          >
+            {isCloud ? 'Cloud' : 'Gateway'}
+          </span>
         </td>
-        <td className="max-w-0 px-3 py-2.5 text-xs font-mono text-gray-600 dark:text-gray-400 truncate">
-          {preview}
+        <td className="px-3 py-2 align-top min-w-0">
+          <p className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2 leading-snug" title={preview}>
+            {preview}
+          </p>
         </td>
       </tr>
       {expanded && (
@@ -440,19 +469,26 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
             {displayedLogs.length === 1 ? '' : 's'} (newest first)
             {logs.length >= TELEMETRY_LOGS_UI_MAX_ROWS && ' · display capped at 1,000 rows'}
           </p>
-          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-left">
+          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700 text-left">
+              <colgroup>
+                <col className="w-8" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[4.25rem]" />
+                <col className="w-[4.75rem]" />
+                <col />
+              </colgroup>
               <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-900 shadow-sm">
                 <tr>
-                  <th className="w-8 px-2 py-2" aria-hidden />
-                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th className="px-2 py-2" aria-hidden />
+                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Time
                   </th>
-                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Source
+                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Code
                   </th>
-                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Header
+                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Source
                   </th>
                   <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Message

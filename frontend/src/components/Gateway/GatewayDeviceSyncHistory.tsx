@@ -72,9 +72,44 @@ function SummaryChips({ summary }: { summary: GatewayDeviceSyncLogRecord['summar
   );
 }
 
+function formatLogTimestamp(when: Date): { date: string; time: string } {
+  return {
+    date: when.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' }),
+    time: when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+  };
+}
+
+function syncKindBadge(syncKind: GatewayDeviceSyncLogRecord['sync_kind']) {
+  const isInventory = syncKind === 'inventory';
+  return (
+    <span
+      className={`inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+        isInventory
+          ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/40 dark:text-primary-300'
+          : 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300'
+      }`}
+    >
+      {isInventory ? 'Inventory' : 'State'}
+    </span>
+  );
+}
+
+function syncSourceBadge(source: string) {
+  const isGatewayWs = source === 'gateway_ws';
+  return (
+    <span
+      className="inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+      title={source.replace(/_/g, ' ')}
+    >
+      {isGatewayWs ? 'Gateway' : source.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
 function SyncLogRow({ log }: { log: GatewayDeviceSyncLogRecord }) {
   const [expanded, setExpanded] = useState(false);
   const when = new Date(log.created_at);
+  const { date, time } = formatLogTimestamp(when);
 
   return (
     <>
@@ -83,21 +118,18 @@ function SyncLogRow({ log }: { log: GatewayDeviceSyncLogRecord }) {
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        <td className="w-8 px-2 py-2.5 text-gray-400">
+        <td className="w-8 px-2 py-2 text-gray-400 align-top">
           <motion.div animate={{ rotate: expanded ? 90 : 0 }} transition={{ duration: 0.15 }}>
             <ChevronRightIcon className="h-4 w-4" />
           </motion.div>
         </td>
-        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-gray-700 dark:text-gray-300 tabular-nums">
-          {when.toLocaleString()}
+        <td className="w-[7.5rem] whitespace-nowrap px-2 py-2 align-top">
+          <div className="text-[11px] leading-tight text-gray-500 dark:text-gray-400 tabular-nums">{date}</div>
+          <div className="text-xs leading-tight text-gray-800 dark:text-gray-200 tabular-nums">{time}</div>
         </td>
-        <td className="whitespace-nowrap px-3 py-2.5 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-          {log.sync_kind}
-        </td>
-        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400">
-          {log.source.replace(/_/g, ' ')}
-        </td>
-        <td className="px-3 py-2.5">
+        <td className="w-[5.5rem] whitespace-nowrap px-2 py-2 align-top">{syncKindBadge(log.sync_kind)}</td>
+        <td className="w-[5rem] whitespace-nowrap px-2 py-2 align-top">{syncSourceBadge(log.source)}</td>
+        <td className="px-3 py-2 align-top min-w-0">
           <SummaryChips summary={log.summary} />
         </td>
       </tr>
@@ -239,18 +271,25 @@ export function GatewayDeviceSyncHistory({ gatewayId }: GatewayDeviceSyncHistory
           <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
             Showing {logs.length} of {total} sync{total === 1 ? '' : 's'}
           </p>
-          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-left">
+          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700 text-left">
+              <colgroup>
+                <col className="w-8" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[5.5rem]" />
+                <col className="w-[5rem]" />
+                <col />
+              </colgroup>
               <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-900 shadow-sm">
                 <tr>
-                  <th className="w-8 px-2 py-2" aria-hidden />
-                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th className="px-2 py-2" aria-hidden />
+                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Time
                   </th>
-                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Kind
                   </th>
-                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Source
                   </th>
                   <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
