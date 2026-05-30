@@ -610,7 +610,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Available Firmware</h3>
           <button
-            onClick={loadData}
+            onClick={() => void loadData()}
             className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
             title="Refresh"
           >

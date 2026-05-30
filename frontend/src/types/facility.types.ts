@@ -75,6 +75,7 @@ export interface CreateAccessControlDevicePayload {
   location_description: string;
   relay_channel: number;
   access_methods?: AccessMethod[];
+  supports_remote_lock?: boolean;
   device_settings?: Record<string, unknown>;
 }
 

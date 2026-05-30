@@ -99,7 +99,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
       let list: Device[] = resp?.devices || [];
       if (excludeDeviceIds?.length) {
         const exclude = new Set(excludeDeviceIds);
-        list = list.filter((d) => !exclude.has(d.id));
+        list = list.filter((d) => d.id != null && !exclude.has(d.id));
       }
       setDevices(list);
       setFilteredDevices(list);
@@ -126,6 +126,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
   };
 
   const handleSelect = (device: Device) => {
+    if (!device.id) return;
     setSelectedDevice(device);
     setSearchTerm(formatBluLokLockNumberLabel(device));
     onChange(device.id);

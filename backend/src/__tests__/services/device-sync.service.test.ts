@@ -926,7 +926,7 @@ describe('DeviceSyncService', () => {
       mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
-        { kind: 'lock', lock_id: 'LOCK-1', state: 'CLOSED' },
+        { lock_id: 'LOCK-1', state: 'CLOSED' },
       ]);
 
       expect(result.updated).toBe(1);
@@ -940,7 +940,7 @@ describe('DeviceSyncService', () => {
       mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
-        { kind: 'lock', lock_id: 'LOCK-1', online: true },
+        { lock_id: 'LOCK-1', online: true },
       ]);
 
       expect(result.updated).toBe(1);
@@ -954,7 +954,6 @@ describe('DeviceSyncService', () => {
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
         {
-          kind: 'lock',
           lock_id: 'LOCK-1',
           state: 'OPENED',
           battery_level: 85,
@@ -1005,7 +1004,7 @@ describe('DeviceSyncService', () => {
       mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
-        { kind: 'lock', lock_id: 'LOCK-1', state: 'ERROR', error_code: 'E001', error_message: 'Motor stuck' },
+        { lock_id: 'LOCK-1', state: 'ERROR', error_code: 'E001', error_message: 'Motor stuck' },
       ]);
 
       expect(result.updated).toBe(1);

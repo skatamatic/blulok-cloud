@@ -58,7 +58,7 @@ describe('DeviceAssignmentModal', () => {
       id: 'device-1',
       device_serial: 'BLU-001',
       firmware_version: '1.0.0',
-      device_status: 'online',
+      device_status: 'online' as const,
       battery_level: 85,
     },
   };
