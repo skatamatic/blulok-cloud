@@ -26,6 +26,24 @@ function normalizeUnitListSortKey(raw: unknown): UnitListSortKey {
   return 'unit_number';
 }
 
+function parseBluLokDeviceSettings(raw: unknown): Record<string, unknown> | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Unit Entity Interface
  *
@@ -475,6 +493,8 @@ export class UnitModel {
           'f.address as facility_address',
           'bd.id as device_id',
           'bd.device_serial',
+          'bd.serial as blulok_serial',
+          'bd.device_settings as blulok_device_settings',
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
@@ -698,6 +718,8 @@ export class UnitModel {
         blulok_device: row.device_id ? {
           id: row.device_id,
           device_serial: row.device_serial,
+          serial: row.blulok_serial ?? undefined,
+          device_settings: parseBluLokDeviceSettings(row.blulok_device_settings),
           lock_status: row.lock_status,
           supports_remote_lock: Boolean(row.supports_remote_lock),
           device_status: row.device_status,
@@ -1056,6 +1078,8 @@ export class UnitModel {
           'f.address as facility_address',
           'bd.id as device_id',
           'bd.device_serial',
+          'bd.serial as blulok_serial',
+          'bd.device_settings as blulok_device_settings',
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
@@ -1175,6 +1199,8 @@ export class UnitModel {
         blulok_device: result.device_id ? {
           id: result.device_id,
           device_serial: result.device_serial,
+          serial: result.blulok_serial ?? undefined,
+          device_settings: parseBluLokDeviceSettings(result.blulok_device_settings),
           lock_status: result.lock_status,
           supports_remote_lock: Boolean(result.supports_remote_lock),
           device_status: result.device_status,

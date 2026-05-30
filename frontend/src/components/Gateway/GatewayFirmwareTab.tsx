@@ -78,9 +78,9 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
   const [liveEvents, setLiveEvents] = useState<FirmwarePushEvent[]>([]);
   const [liveError, setLiveError] = useState<{ code?: string; message: string; severity?: 'warning' | 'critical' } | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!opts?.silent) setLoading(true);
       const [fwRes, pushStatusRes, pushHistoryRes] = await Promise.all([
         apiService.listFirmware(selectedTargetType),
         // Keep initial load lightweight; live progress arrives via websocket updates.
@@ -123,13 +123,36 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
     } catch {
       addToast({ type: 'error', title: 'Failed to load firmware data' });
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [gatewayId, selectedTargetType, addToast]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const verifyingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    const status = liveProgress?.step || activePush?.status;
+    if (status !== 'verifying') {
+      if (verifyingPollRef.current) {
+        clearInterval(verifyingPollRef.current);
+        verifyingPollRef.current = null;
+      }
+      return;
+    }
+
+    verifyingPollRef.current = setInterval(() => {
+      void loadData({ silent: true });
+    }, 8000);
+
+    return () => {
+      if (verifyingPollRef.current) {
+        clearInterval(verifyingPollRef.current);
+        verifyingPollRef.current = null;
+      }
+    };
+  }, [liveProgress?.step, activePush?.status, loadData]);
 
   const terminalRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -141,6 +164,14 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
         if (data.targetType && data.targetType !== selectedTargetType) return;
 
         setLiveProgress(data);
+
+        if ((TERMINAL_STATUSES as readonly string[]).includes(data.step)) {
+          setActivePush((prev) => (
+            prev && prev.id === data.pushId
+              ? { ...prev, status: data.step as typeof prev.status, progress_percent: data.percent }
+              : prev
+          ));
+        }
 
         if (data.devices?.length) {
           setLiveDevices(normalizeLiveDevices(data.devices));
@@ -258,6 +289,8 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
   const hasKnownPhase = phaseIdx >= 0;
   const phaseLabel = currentPhase ? (PHASE_LABELS[currentPhase] || toReadableLabel(currentPhase)) : undefined;
   const effectivePercent = liveProgress?.percent || 0;
+  const isAwaitingGatewayConfirmation =
+    (liveProgress?.step === 'verifying' || activePush?.status === 'verifying') && effectivePercent >= 100;
   const fallbackDevicesTotal = liveDevices.length;
   const summaryDevicesTotal = (liveProgress?.devicesTotal != null && liveProgress.devicesTotal > 0)
     ? liveProgress.devicesTotal
@@ -450,12 +483,24 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
 
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
                 <div
-                  className="bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-400 dark:to-blue-500 h-3 rounded-full transition-all duration-300 ease-out relative"
+                  className={`h-3 rounded-full transition-all duration-300 ease-out relative ${
+                    isAwaitingGatewayConfirmation
+                      ? 'bg-gradient-to-r from-indigo-500 to-indigo-600 dark:from-indigo-400 dark:to-indigo-500 animate-pulse'
+                      : 'bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-400 dark:to-blue-500'
+                  }`}
                   style={{ width: `${Math.max(effectivePercent, 2)}%` }}
                 >
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse" />
+                  {!isAwaitingGatewayConfirmation && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse" />
+                  )}
                 </div>
               </div>
+
+              {isAwaitingGatewayConfirmation && (
+                <p className="text-xs text-indigo-600 dark:text-indigo-300 mt-2">
+                  Transfer complete — waiting for the gateway to confirm installation. This can take a few minutes if the device is rebooting.
+                </p>
+              )}
 
               {liveProgress?.message && (
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{liveProgress.message}</p>

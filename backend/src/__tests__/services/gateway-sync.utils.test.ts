@@ -1,13 +1,13 @@
 import {
   extractAccessId,
   formatAccessDeviceKey,
-  inferDeviceKind,
-  inferStateUpdateKind,
   isGatewaySyncManaged,
   isValidRelayChannel,
   partitionInventoryByKind,
   partitionStateUpdatesByKind,
   resolveAccessDeviceKey,
+  resolveAccessRelayChannel,
+  resolveGatewayDeviceKind,
 } from '../../utils/gateway-sync.utils';
 
 describe('gateway-sync.utils', () => {
@@ -16,8 +16,19 @@ describe('gateway-sync.utils', () => {
       expect(resolveAccessDeviceKey({ device_serial: 'KP-1', relay_channel: 2 })).toBe('KP-1::2');
     });
 
-    it('falls back for legacy rows missing serial', () => {
-      expect(resolveAccessDeviceKey({ id: 'abc-def-ghi', relay_channel: 4 })).toBe('legacy-abc-def-::4');
+    it('throws when device_serial is missing', () => {
+      expect(() => resolveAccessDeviceKey({ relay_channel: 4 })).toThrow(/device_serial/);
+    });
+  });
+
+  describe('resolveAccessRelayChannel', () => {
+    it('defaults to 1 when omitted', () => {
+      expect(resolveAccessRelayChannel(undefined)).toBe(1);
+      expect(resolveAccessRelayChannel(null)).toBe(1);
+    });
+
+    it('passes through valid channel numbers', () => {
+      expect(resolveAccessRelayChannel(4)).toBe(4);
     });
   });
 
@@ -37,10 +48,6 @@ describe('gateway-sync.utils', () => {
   describe('isGatewaySyncManaged', () => {
     it('returns true when createdFromGatewaySync is set', () => {
       expect(isGatewaySyncManaged({ createdFromGatewaySync: true })).toBe(true);
-    });
-
-    it('returns true for legacy createdFromInventorySync rows', () => {
-      expect(isGatewaySyncManaged({ createdFromInventorySync: true })).toBe(true);
     });
 
     it('returns false for manual devices', () => {
@@ -66,43 +73,32 @@ describe('gateway-sync.utils', () => {
       expect(extractAccessId({ access_id: ' KP-7 ' })).toBe('KP-7');
     });
 
-    it('accepts device_serial alias', () => {
-      expect(extractAccessId({ device_serial: 'AC-123' })).toBe('AC-123');
-    });
-
     it('throws when missing', () => {
       expect(() => extractAccessId({ relay_channel: 1 })).toThrow(/access_id/);
     });
   });
 
-  describe('inferDeviceKind', () => {
-    it('infers lock from lock_id', () => {
-      expect(inferDeviceKind({ lock_id: 'serial-1' })).toBe('lock');
+  describe('resolveGatewayDeviceKind', () => {
+    it('returns explicit lock kind', () => {
+      expect(resolveGatewayDeviceKind({ kind: 'lock', lock_id: 'serial-1' })).toBe('lock');
     });
 
-    it('infers access_control from access_id', () => {
-      expect(inferDeviceKind({ access_id: 'KP-001', relay_channel: 2 })).toBe('access_control');
+    it('returns explicit access_control kind', () => {
+      expect(
+        resolveGatewayDeviceKind({ kind: 'access_control', access_id: 'KP-1', relay_channel: 1 })
+      ).toBe('access_control');
     });
 
-    it('respects explicit kind', () => {
-      expect(inferDeviceKind({ kind: 'access_control', access_id: 'KP-1', relay_channel: 1 })).toBe(
-        'access_control'
-      );
-    });
-
-    it('rejects ambiguous lock_id + access_id', () => {
-      expect(() => inferDeviceKind({ lock_id: 'a', access_id: 'b' })).toThrow(/kind/);
-    });
-
-    it('requires lock_id or access_id', () => {
-      expect(() => inferDeviceKind({ relay_channel: 2 })).toThrow(/lock_id or access_id/);
+    it('requires kind on every item', () => {
+      expect(() => resolveGatewayDeviceKind({ lock_id: 'serial-1' })).toThrow(/kind/);
+      expect(() => resolveGatewayDeviceKind({ access_id: 'KP-001', relay_channel: 2 })).toThrow(/kind/);
     });
   });
 
   describe('partitionInventoryByKind', () => {
-    it('splits mixed inventory payloads', () => {
+    it('splits mixed inventory payloads by explicit kind', () => {
       const result = partitionInventoryByKind([
-        { lock_id: 'lock-1' },
+        { kind: 'lock', lock_id: 'lock-1' },
         { kind: 'access_control', access_id: 'KP-3', relay_channel: 3 },
       ]);
 
@@ -112,27 +108,14 @@ describe('gateway-sync.utils', () => {
   });
 
   describe('partitionStateUpdatesByKind', () => {
-    it('splits mixed state payloads', () => {
+    it('splits mixed state payloads by explicit kind', () => {
       const result = partitionStateUpdatesByKind([
-        { lock_id: 'lock-1', online: true },
+        { kind: 'lock', lock_id: 'lock-1', online: true },
         { kind: 'access_control', access_id: 'KP-2', relay_channel: 2, locked: true },
       ]);
 
       expect(result.locks).toHaveLength(1);
       expect(result.accessControl).toHaveLength(1);
-    });
-
-    it('infers access_control state updates from access_id', () => {
-      const result = partitionStateUpdatesByKind([
-        { access_id: 'KP-4', relay_channel: 4, online: false },
-      ]);
-      expect(result.accessControl).toHaveLength(1);
-    });
-  });
-
-  describe('inferStateUpdateKind', () => {
-    it('requires lock_id or access_id', () => {
-      expect(() => inferStateUpdateKind({ online: true })).toThrow(/lock_id or access_id/);
     });
   });
 });

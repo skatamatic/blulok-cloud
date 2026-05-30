@@ -111,6 +111,7 @@ const accessControlDeviceSchema = Joi.object({
   location_description: Joi.string().required(),
   relay_channel: Joi.number().integer().min(1).max(8).required(),
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
+  supports_remote_lock: Joi.boolean().optional(),
 });
 
 const updateAccessControlDeviceSchema = Joi.object({
@@ -140,6 +141,7 @@ const updateAccessControlMetadataSchema = Joi.object({
   location_description: Joi.string().optional(),
   device_serial: Joi.string().trim().min(1).max(100).optional(),
   relay_channel: Joi.number().integer().min(1).max(8).optional(),
+  device_type: Joi.string().valid('door', 'gate', 'elevator').optional(),
   supports_remote_lock: Joi.boolean().optional(),
   device_settings: Joi.object().optional(),
   metadata: Joi.object().optional(),
@@ -866,7 +868,7 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
     }
 
     // For locked/unlocked, route through the LockCommandService so the device
-    // enters a transitional state ('locking'/'unlocking') and we wait on device-sync.
+    // enters a transitional state ('locking'/'unlocking') and we wait on gateway state updates.
     const { LockCommandService } = await import('@/services/lock-command.service');
     const lockCommandService = LockCommandService.getInstance();
     const result = await lockCommandService.issueLockCommand(String(id), value.lock_status);

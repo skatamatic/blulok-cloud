@@ -19,6 +19,7 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { FirmwareService } from '@/services/firmware/firmware.service';
+import { FIRMWARE_MAX_SIZE_BYTES } from '@/services/firmware/firmware-storage.factory';
 import { FirmwareTargetType } from '@/models/firmware.model';
 import { FirmwarePushEventType } from '@/models/firmware-push-event.model';
 import { GatewayModel } from '@/models/gateway.model';
@@ -36,7 +37,7 @@ interface MulterRequest extends AuthenticatedRequest {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: { fileSize: FIRMWARE_MAX_SIZE_BYTES },
 });
 
 // ============================================================================

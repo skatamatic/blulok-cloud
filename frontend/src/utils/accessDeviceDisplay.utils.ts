@@ -16,5 +16,5 @@ export function formatAccessDeviceListSubtitle(
 
 export function isGatewaySyncProvisioned(metadata?: Record<string, unknown> | null): boolean {
   if (!metadata || typeof metadata !== 'object') return false;
-  return metadata.createdFromGatewaySync === true || metadata.createdFromInventorySync === true;
+  return metadata.createdFromGatewaySync === true;
 }

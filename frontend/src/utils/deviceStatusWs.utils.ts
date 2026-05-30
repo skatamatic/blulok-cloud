@@ -18,15 +18,15 @@ export interface LockDeviceSnapshot {
 }
 
 /**
- * Parse server `device_status_update` data: primary shape is `{ devices: [...] }`.
- * Supports legacy `{ updates: [] }` / `{ update: {} }` for older clients.
+ * Parse server `device_status_update` data: `{ devices: [...] }`.
  */
 export function normalizeDeviceStatusWsPayload(data: unknown): LockDeviceSnapshot[] {
   if (!data || typeof data !== 'object') return [];
   const d = data as Record<string, unknown>;
 
-  if (Array.isArray(d.devices)) {
-    return (d.devices as Record<string, unknown>[]).map((device) => ({
+  if (!Array.isArray(d.devices)) return [];
+
+  return (d.devices as Record<string, unknown>[]).map((device) => ({
       device_id: typeof device.id === 'string' ? device.id : undefined,
       unit_id: typeof device.unit_id === 'string' ? device.unit_id : undefined,
       lock_status: typeof device.lock_status === 'string' ? device.lock_status : undefined,
@@ -53,14 +53,6 @@ export function normalizeDeviceStatusWsPayload(data: unknown): LockDeviceSnapsho
       last_activity: typeof device.last_activity === 'string' ? device.last_activity : undefined,
       last_seen: typeof device.last_seen === 'string' ? device.last_seen : undefined,
     }));
-  }
-
-  const legacyUpdates = d.updates as LockDeviceSnapshot[] | undefined;
-  if (Array.isArray(legacyUpdates) && legacyUpdates.length > 0) {
-    return legacyUpdates;
-  }
-  const single = d.update as LockDeviceSnapshot | undefined;
-  return single ? [single] : [];
 }
 
 /**

@@ -133,9 +133,8 @@ export interface BluLokDevice {
  * All fields except lock_id are optional to support partial updates.
  * 
  * Matches the gateway payload format:
- * - state: 'CLOSED' | 'OPENED' (gateway sends this, maps to lock_status)
- * - lock_state: Legacy field, still supported
- * - locked: Boolean lock status
+ * - state: 'CLOSED' | 'OPENED' (maps to lock_status)
+ * - locked: Boolean lock status when `state` is omitted
  * - battery_level: Raw value in mV (not percentage)
  * - battery_unit: Unit for battery (e.g., 'mV')
  * - temperature_value: Temperature reading
@@ -150,9 +149,7 @@ export interface DeviceStateUpdate {
   serial?: string;
   /** Device state from gateway: 'CLOSED' = locked, 'OPENED' = unlocked */
   state?: 'CLOSED' | 'OPENED' | 'ERROR' | 'UNKNOWN';
-  /** Legacy lock state field */
-  lock_state?: 'LOCKED' | 'UNLOCKED' | 'LOCKING' | 'UNLOCKING' | 'ERROR' | 'UNKNOWN';
-  /** Boolean lock status */
+  /** Boolean lock status when `state` is omitted */
   locked?: boolean;
   /** Battery level in raw units (mV) - no longer 0-100 */
   battery_level?: number;
@@ -212,6 +209,7 @@ export interface UpdateAccessControlDeviceData {
   location_description?: string;
   relay_channel?: number;
   device_serial?: string;
+  device_type?: 'gate' | 'elevator' | 'door';
   status?: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked?: boolean;
   supports_remote_lock?: boolean;
@@ -678,6 +676,7 @@ export class DeviceModel {
     if (data.location_description !== undefined) updatePayload.location_description = data.location_description;
     if (data.relay_channel !== undefined) updatePayload.relay_channel = data.relay_channel;
     if (data.device_serial !== undefined) updatePayload.device_serial = data.device_serial;
+    if (data.device_type !== undefined) updatePayload.device_type = data.device_type;
     if (data.status !== undefined) updatePayload.status = data.status;
     if (data.is_locked !== undefined) updatePayload.is_locked = data.is_locked;
     if (data.supports_remote_lock !== undefined) updatePayload.supports_remote_lock = data.supports_remote_lock;
@@ -1323,6 +1322,7 @@ export class DeviceModel {
       facility_id: row.gateway_facility_id,
       unit_id: null, // Always null for unassigned devices
       device_serial: row.device_serial,
+      serial: row.serial ?? undefined,
       firmware_version: row.firmware_version,
       lock_status: row.lock_status,
       device_status: row.device_status,

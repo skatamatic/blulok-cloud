@@ -27,6 +27,12 @@ import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { EditDeviceMetadataModal } from '@/components/Devices/EditDeviceMetadataModal';
 import { formatAccessDeviceListSubtitle, isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
+import {
+  formatBluLokDeviceSubtitle,
+  formatBluLokLockNumberLabel,
+  getBluLokLockNumber,
+} from '@/utils/blulokDeviceDisplay.utils';
+import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 import { formatMetadataSideEffectsToast } from '@/utils/deviceApiErrors';
 import type { DeviceMetadataSideEffects } from '@/types/facility.types';
 import {
@@ -55,6 +61,8 @@ interface DeviceDetails {
   supports_remote_lock?: boolean;
   /** Gateway-provided serial number (optional, separate from device_serial) */
   serial?: string;
+  /** BluLok admin settings (lockNumber, displayName, locationDescription, …) */
+  device_settings?: Record<string, unknown>;
   unit_id?: string;
   unit_number?: string;
   facility_id: string;
@@ -447,7 +455,12 @@ export default function DeviceDetailsPage() {
           relay_channel: device.relay_channel ?? 1,
           location_description: device.location_description,
         })
-      : device.device_serial;
+      : formatBluLokDeviceSubtitle(device);
+
+  const blulokDisplayName =
+    deviceCategory === 'blulok' ? readDisplayName(device.device_settings) : '';
+  const blulokLockNumber =
+    deviceCategory === 'blulok' ? getBluLokLockNumber(device) : null;
 
   const deviceTabs = [
     { key: 'overview', label: 'Overview' },
@@ -473,7 +486,11 @@ export default function DeviceDetailsPage() {
       <DetailsPageHeader
         onBack={showBack ? goBack : undefined}
         backLabel={backLabel}
-        title={device.name || device.device_serial}
+        title={
+          deviceCategory === 'blulok'
+            ? blulokDisplayName || device.name || formatBluLokLockNumberLabel(device)
+            : device.name || device.device_serial
+        }
         subtitle={
           <>
             {deviceSubtitle}
@@ -830,9 +847,17 @@ export default function DeviceDetailsPage() {
             <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
               <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Device Information</h3>
               <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {deviceCategory === 'blulok' && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Lock number</dt>
+                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">
+                      {blulokLockNumber != null ? `#${blulokLockNumber}` : '—'}
+                    </dd>
+                  </div>
+                )}
                 <div>
                   <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                    {deviceCategory === 'access_control' ? 'Hardware Serial' : 'Serial Number'}
+                    {deviceCategory === 'access_control' ? 'Hardware Serial (access_id)' : 'Hardware serial (lock_id)'}
                   </dt>
                   <dd className="mt-1 text-sm font-mono text-gray-900 dark:text-white">{device.device_serial}</dd>
                 </div>
@@ -1231,14 +1256,23 @@ export default function DeviceDetailsPage() {
                 id: device.id,
                 category: deviceCategory,
                 device_serial: device.device_serial,
+                serial: device.serial,
                 relay_channel: device.relay_channel,
                 name: device.name,
                 location_description: device.location_description,
+                device_type: device.device_type,
                 access_methods: device.access_methods,
                 supports_remote_lock: device.supports_remote_lock,
                 firmware_version: device.firmware_version,
+                device_settings: device.device_settings,
                 metadata: device.metadata,
                 unit_number: device.unit_number,
+                lock_status: device.lock_status,
+                device_status: device.device_status,
+                battery_level: device.battery_level,
+                signal_strength: device.signal_strength,
+                temperature: device.temperature,
+                last_seen: device.last_seen,
               }
             : null
         }

@@ -11,7 +11,12 @@ import {
   isGatewaySyncManaged,
   isValidRelayChannel,
   resolveAccessDeviceKey,
+  resolveAccessRelayChannel,
 } from '../utils/gateway-sync.utils';
+import {
+  mapGatewayLockStateFieldsToDbUpdate,
+  resolveOutboundGatewayLockNumber,
+} from '../utils/gateway-lock-state-map.utils';
 import type { DeviceSyncLogEntry } from '../types/gateway-device-sync.types';
 
 export type { AccessDeviceInventoryItem, AccessDeviceStateUpdate };
@@ -61,9 +66,7 @@ export interface DeviceInventoryItem {
   lock_number?: number;
   /** Device state: 'CLOSED' = locked, 'OPENED' = unlocked */
   state?: 'CLOSED' | 'OPENED' | 'ERROR' | 'UNKNOWN';
-  /** Legacy lock state field */
-  lock_state?: 'LOCKED' | 'UNLOCKED' | 'LOCKING' | 'UNLOCKING' | 'ERROR' | 'UNKNOWN';
-  /** Boolean lock status */
+  /** Boolean lock status (used when `state` is omitted) */
   locked?: boolean;
   /** Battery level in raw units (mV) */
   battery_level?: number;
@@ -244,18 +247,20 @@ export class DeviceSyncService {
             const deviceId = this.extractDeviceIdentifier(gatewayDevice);
             if (!deviceId) return null;
             
-            const createData: any = {
+            const lockNumber = resolveOutboundGatewayLockNumber(gatewayDevice as Record<string, unknown>);
+            const createData: CreateBluLokDeviceData = {
               gateway_id: gatewayId,
               device_serial: deviceId,
               serial: deviceId,
               supports_remote_lock: true,
-              device_settings: JSON.stringify({ gatewayData: gatewayDevice }),
-              metadata: JSON.stringify({
-                autoCreated: true,
+              metadata: {
                 createdFromGatewaySync: true,
-                gatewayType: 'http'
-              })
+              },
             };
+
+            if (lockNumber !== undefined) {
+              createData.device_settings = { lockNumber };
+            }
 
             if (gatewayDevice.firmwareVersion) {
               createData.firmware_version = gatewayDevice.firmwareVersion;
@@ -313,20 +318,21 @@ export class DeviceSyncService {
       console.log(`[DEVICE-SYNC] Adding new device ${deviceId} from gateway ${gatewayId}`);
 
       // Create device without unit association - technicians assign units in the cloud
+      const lockNumber = resolveOutboundGatewayLockNumber(gatewayDevice as Record<string, unknown>);
       const createData: CreateBluLokDeviceData = {
         gateway_id: gatewayId,
         device_serial: deviceId,
         serial: deviceId,
         supports_remote_lock: true,
-        device_settings: { gatewayData: gatewayDevice },
         metadata: {
-          autoCreated: true,
           createdFromGatewaySync: true,
-          gatewayType: 'http'
-        }
+        },
       };
 
-      // Only add firmware_version if it exists
+      if (lockNumber !== undefined) {
+        createData.device_settings = { lockNumber };
+      }
+
       if (gatewayDevice.firmwareVersion) {
         createData.firmware_version = gatewayDevice.firmwareVersion;
       }
@@ -446,8 +452,8 @@ export class DeviceSyncService {
 
   /**
    * Sync device inventory for a gateway.
-   * This method handles adding new devices and removing devices not in the list.
-   * Does NOT update transient state (battery, lock state, etc.).
+   * Adds sync-managed devices, removes omitted sync-managed devices, and applies
+   * any state/telemetry fields included on each inventory item (new or existing).
    * 
    * @param gatewayId - The gateway ID
    * @param devices - Array of devices that should exist on the gateway
@@ -489,21 +495,25 @@ export class DeviceSyncService {
 
       // PERFORMANCE FIX: Collect devices to add and remove, then bulk process
       const devicesToAdd: CreateBluLokDeviceData[] = [];
-      const devicesToUpdateState: Array<{ lockId: string; item: DeviceInventoryItem }> = [];
-      
+      const inventoryStateUpdates: Array<{ lockId: string; item: DeviceInventoryItem }> = [];
+
       for (const [lockId, inventoryItem] of incomingDeviceMap) {
+        inventoryStateUpdates.push({ lockId, item: inventoryItem });
+
         if (!existingDeviceMap.has(lockId)) {
           const createData: CreateBluLokDeviceData = {
             gateway_id: gatewayId,
             device_serial: lockId,
             serial: lockId,
             supports_remote_lock: true,
-            device_settings: { lockNumber: inventoryItem.lock_number },
             metadata: {
-              autoCreated: true,
               createdFromGatewaySync: true,
             },
           };
+
+          if (inventoryItem.lock_number !== undefined) {
+            createData.device_settings = { lockNumber: inventoryItem.lock_number };
+          }
 
           if (inventoryItem.firmware_version) {
             createData.firmware_version = inventoryItem.firmware_version;
@@ -511,8 +521,6 @@ export class DeviceSyncService {
 
           devicesToAdd.push(createData);
         } else {
-          // Device exists - collect for state update if any state fields provided
-          devicesToUpdateState.push({ lockId, item: inventoryItem });
           result.unchanged++;
           result.entries!.push({
             action: 'unchanged',
@@ -559,15 +567,16 @@ export class DeviceSyncService {
         }
       }
 
-      // Update device state for existing devices (including firmware, battery, lock state, etc.)
-      for (const { lockId, item } of devicesToUpdateState) {
-        const stateUpdate = this.mapInventoryItemToStateUpdate(item);
-        if (Object.keys(stateUpdate).length > 0) {
-          try {
-            await this.deviceModel.updateBluLokDeviceState(lockId, stateUpdate);
-          } catch (error: any) {
-            result.errors.push(`Failed to update state for ${lockId}: ${error.message}`);
-          }
+      // Apply state/telemetry from inventory payload (new rows included after bulk add)
+      for (const { lockId, item } of inventoryStateUpdates) {
+        const stateUpdate = mapGatewayLockStateFieldsToDbUpdate(item);
+        if (Object.keys(stateUpdate).length === 0) {
+          continue;
+        }
+        try {
+          await this.deviceModel.updateBluLokDeviceState(lockId, stateUpdate);
+        } catch (error: any) {
+          result.errors.push(`Failed to update state for ${lockId}: ${error.message}`);
         }
       }
 
@@ -621,142 +630,8 @@ export class DeviceSyncService {
     return result;
   }
 
-  /**
-   * Map a state update to database format.
-   * Handles all field mappings including new gateway format fields.
-   */
-  private mapStateUpdateToDbFormat(update: DeviceStateUpdate): Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] {
-    const dbUpdates: Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] = {};
-
-    // Map 'state' field (CLOSED/OPENED) to lock_status
-    if (update.state) {
-      const stateMap: Record<string, 'locked' | 'unlocked' | 'error' | 'unknown'> = {
-        'CLOSED': 'locked',
-        'OPENED': 'unlocked',
-        'ERROR': 'error',
-        'UNKNOWN': 'unknown',
-      };
-      dbUpdates.lock_status = stateMap[update.state] || 'unknown';
-    }
-
-    // Map legacy lock_state to lock_status (if state not provided)
-    if (!dbUpdates.lock_status && update.lock_state) {
-      const lockStateMap: Record<string, 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'unknown'> = {
-        'LOCKED': 'locked',
-        'UNLOCKED': 'unlocked',
-        'LOCKING': 'locking',
-        'UNLOCKING': 'unlocking',
-        'ERROR': 'error',
-        'UNKNOWN': 'unknown',
-      };
-      dbUpdates.lock_status = lockStateMap[update.lock_state] || 'unknown';
-    }
-
-    // Map 'locked' boolean to lock_status (if neither state nor lock_state provided)
-    if (!dbUpdates.lock_status && update.locked !== undefined) {
-      dbUpdates.lock_status = update.locked ? 'locked' : 'unlocked';
-    }
-
-    // Map online to device_status
-    if (update.online !== undefined) {
-      dbUpdates.device_status = update.online ? 'online' : 'offline';
-    }
-
-    // Direct mappings
-    if (update.battery_level !== undefined) {
-      dbUpdates.battery_level = update.battery_level;
-    }
-    if (update.signal_strength !== undefined) {
-      dbUpdates.signal_strength = update.signal_strength;
-    }
-    // Handle both 'temperature' and 'temperature_value' fields
-    if (update.temperature !== undefined) {
-      dbUpdates.temperature = update.temperature;
-    } else if (update.temperature_value !== undefined) {
-      dbUpdates.temperature = update.temperature_value;
-    }
-    if (update.firmware_version !== undefined) {
-      dbUpdates.firmware_version = update.firmware_version;
-    }
-    if (update.error_code !== undefined) {
-      dbUpdates.error_code = update.error_code;
-    }
-    if (update.error_message !== undefined) {
-      dbUpdates.error_message = update.error_message;
-    }
-    if (update.last_seen !== undefined) {
-      dbUpdates.last_seen = typeof update.last_seen === 'string' 
-        ? new Date(update.last_seen) 
-        : update.last_seen;
-    }
-    if (update.serial !== undefined) {
-      dbUpdates.serial = update.serial;
-    }
-
-    return dbUpdates;
-  }
-
-  /**
-   * Map inventory item to state update format for database.
-   * Used when inventory sync includes state fields.
-   */
-  private mapInventoryItemToStateUpdate(item: DeviceInventoryItem): Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] {
-    const dbUpdates: Parameters<typeof this.deviceModel.updateBluLokDeviceState>[1] = {};
-
-    // Map 'state' field (CLOSED/OPENED) to lock_status
-    if (item.state) {
-      const stateMap: Record<string, 'locked' | 'unlocked' | 'error' | 'unknown'> = {
-        'CLOSED': 'locked',
-        'OPENED': 'unlocked',
-        'ERROR': 'error',
-        'UNKNOWN': 'unknown',
-      };
-      dbUpdates.lock_status = stateMap[item.state] || 'unknown';
-    }
-
-    // Map legacy lock_state to lock_status (if state not provided)
-    if (!dbUpdates.lock_status && item.lock_state) {
-      const lockStateMap: Record<string, 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'unknown'> = {
-        'LOCKED': 'locked',
-        'UNLOCKED': 'unlocked',
-        'LOCKING': 'locking',
-        'UNLOCKING': 'unlocking',
-        'ERROR': 'error',
-        'UNKNOWN': 'unknown',
-      };
-      dbUpdates.lock_status = lockStateMap[item.lock_state] || 'unknown';
-    }
-
-    // Map 'locked' boolean to lock_status (if neither state nor lock_state provided)
-    if (!dbUpdates.lock_status && item.locked !== undefined) {
-      dbUpdates.lock_status = item.locked ? 'locked' : 'unlocked';
-    }
-
-    // Map online to device_status
-    if (item.online !== undefined) {
-      dbUpdates.device_status = item.online ? 'online' : 'offline';
-    }
-
-    // Direct mappings
-    if (item.battery_level !== undefined) {
-      dbUpdates.battery_level = item.battery_level;
-    }
-    if (item.signal_strength !== undefined) {
-      dbUpdates.signal_strength = item.signal_strength;
-    }
-    if (item.temperature_value !== undefined) {
-      dbUpdates.temperature = item.temperature_value;
-    }
-    if (item.firmware_version !== undefined) {
-      dbUpdates.firmware_version = item.firmware_version;
-    }
-    if (item.last_seen !== undefined) {
-      dbUpdates.last_seen = typeof item.last_seen === 'string' 
-        ? new Date(item.last_seen) 
-        : item.last_seen;
-    }
-
-    return dbUpdates;
+  private mapStateUpdateToDbFormat(update: DeviceStateUpdate) {
+    return mapGatewayLockStateFieldsToDbUpdate(update);
   }
 
   /**
@@ -861,7 +736,7 @@ export class DeviceSyncService {
       for (const device of devices) {
         try {
           const accessId = extractAccessId(device as unknown as Record<string, unknown>);
-          const relayChannel = Number(device.relay_channel);
+          const relayChannel = resolveAccessRelayChannel(device.relay_channel);
           if (!isValidRelayChannel(relayChannel)) {
             result.errors.push(
               `Access control item ${accessId} has invalid relay_channel (must be integer 1–8)`
@@ -925,7 +800,7 @@ export class DeviceSyncService {
       for (const [key, item] of incomingMap) {
         if (!existingMap.has(key)) {
           const accessId = extractAccessId(item as unknown as Record<string, unknown>);
-          const relayChannel = Number(item.relay_channel);
+          const relayChannel = resolveAccessRelayChannel(item.relay_channel);
 
           const overrideOnRelay = remainingDevices.find(
             (d) =>
@@ -993,7 +868,6 @@ export class DeviceSyncService {
             relay_channel: relayChannel,
             access_methods: ['keypad'],
             metadata: {
-              autoCreated: true,
               createdFromGatewaySync: true,
             },
           });
@@ -1055,7 +929,7 @@ export class DeviceSyncService {
             await this.deviceModel.updateAccessControlDeviceBySerialAndRelay(
               gatewayId,
               accessId,
-              Number(item.relay_channel),
+              resolveAccessRelayChannel(item.relay_channel),
               stateUpdate
             );
           } catch (error: any) {
@@ -1097,13 +971,21 @@ export class DeviceSyncService {
     };
 
     for (const update of updates) {
-      const accessId = update.access_id?.trim();
-      const relayChannel = Number(update.relay_channel);
-      const compositeKey = accessId ? formatAccessDeviceKey(accessId, relayChannel) : 'unknown';
+      let accessId: string;
+      try {
+        accessId = extractAccessId(update as unknown as Record<string, unknown>);
+      } catch (err: any) {
+        result.errors.push(err.message);
+        continue;
+      }
+      const relayChannel = resolveAccessRelayChannel(update.relay_channel);
+      const compositeKey = formatAccessDeviceKey(accessId, relayChannel);
 
       try {
-        if (!accessId) {
-          result.errors.push('Access control state update missing access_id');
+        if (!isValidRelayChannel(relayChannel)) {
+          result.errors.push(
+            `Access control state update ${accessId} has invalid relay_channel (must be integer 1–8)`
+          );
           continue;
         }
 

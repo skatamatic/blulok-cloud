@@ -41,12 +41,8 @@ describe('accessDeviceDisplay.utils', () => {
       expect(isGatewaySyncProvisioned({ createdFromGatewaySync: true })).toBe(true);
     });
 
-    it('detects legacy createdFromInventorySync', () => {
-      expect(isGatewaySyncProvisioned({ createdFromInventorySync: true })).toBe(true);
-    });
-
     it('returns false for manual devices', () => {
-      expect(isGatewaySyncProvisioned({ autoCreated: false })).toBe(false);
+      expect(isGatewaySyncProvisioned({ manuallyAdded: true })).toBe(false);
       expect(isGatewaySyncProvisioned(undefined)).toBe(false);
     });
   });

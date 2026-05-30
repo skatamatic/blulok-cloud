@@ -23,7 +23,46 @@ const MAX_CHUNK_RETRIES = 3;
 /** ACK timeout per chunk in milliseconds */
 const CHUNK_ACK_TIMEOUT_MS = 30_000;
 const VERIFY_TIMEOUT_MS = (Number(process.env.FIRMWARE_VERIFY_TIMEOUT_SEC) || 900) * 1000;
+const GATEWAY_VERIFY_TIMEOUT_MS = (Number(process.env.FIRMWARE_GATEWAY_VERIFY_TIMEOUT_SEC) || 300) * 1000;
+const VERIFY_DISCONNECT_GRACE_MS = (Number(process.env.FIRMWARE_VERIFY_DISCONNECT_GRACE_SEC) || 180) * 1000;
 const VALID_TARGET_TYPES: FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'access_control'];
+
+/** Grace window to resume chunk transfer after a gateway WS drop (shorter than verify/reboot grace). */
+function transferDisconnectGraceMs(): number {
+  const explicit = Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return explicit * 1000;
+  }
+  if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+    return 10_000;
+  }
+  return VERIFY_DISCONNECT_GRACE_MS;
+}
+
+const GATEWAY_STATUS_FAILED = new Set([
+  'failed', 'error', 'failure', 'aborted',
+]);
+/** Intermediate gateway reports while install/relay is in progress. */
+const GATEWAY_STATUS_VERIFYING = new Set(['verifying', 'applying']);
+const DEVICE_STATUS_FAILED = new Set(['failed', 'error', 'failure', 'aborted']);
+
+function resolvePushId(msg: Record<string, unknown>): string | null {
+  const raw = msg.push_id ?? msg.pushId;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > 128) return null;
+  return trimmed;
+}
+
+function resolveTargetType(msg: Record<string, unknown>): FirmwareTargetType | undefined {
+  const raw = msg.target_type ?? msg.targetType;
+  if (typeof raw !== 'string') return undefined;
+  return VALID_TARGET_TYPES.includes(raw as FirmwareTargetType) ? (raw as FirmwareTargetType) : undefined;
+}
+
+function verifyTimeoutForTarget(targetType: FirmwareTargetType): number {
+  return targetType === 'gateway' ? GATEWAY_VERIFY_TIMEOUT_MS : VERIFY_TIMEOUT_MS;
+}
 
 /**
  * In-memory state for active push tasks.
@@ -38,6 +77,7 @@ interface ActivePush {
 
 const activePushes = new Map<string, ActivePush>();
 const verifyingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+const transferDisconnectTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 const resumeInFlightPushes = new Set<string>();
 const resumeFacilityRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const resumeFacilityRunsInFlight = new Set<string>();
@@ -45,6 +85,13 @@ const resumeFacilityRunsInFlight = new Set<string>();
 /** Exposed for unit tests only — allows tests to set up handleChunkAck state. */
 export const _testActivePushes = activePushes;
 export const _testResumeInFlightPushes = resumeInFlightPushes;
+
+export interface FirmwareUpdateStatusResult {
+  accepted: boolean;
+  push_id?: string;
+  push_status?: FirmwarePushStatus;
+  reason?: string;
+}
 
 export class FirmwareService {
   private static firmwareModel = new FirmwareModel();
@@ -339,6 +386,8 @@ export class FirmwareService {
         return;
       }
 
+      this.clearTransferDisconnectGrace(pushId);
+
       // Read binary from storage
       const storage = await getFirmwareStorageProvider();
       await storage.initialize();
@@ -356,7 +405,14 @@ export class FirmwareService {
 
       // Compute chunks
       const totalChunks = Math.ceil(binary.length / CHUNK_SIZE_BYTES);
-      await this.pushModel.updateChunksTotal(pushId, totalChunks);
+      if (!push.chunks_total) {
+        await this.pushModel.updateChunksTotal(pushId, totalChunks);
+      }
+      const startChunkIndex =
+        push.status === 'transferring' && (push.chunks_sent ?? 0) > 0
+          ? push.chunks_sent!
+          : 0;
+      const isResume = startChunkIndex > 0;
 
       // Sign and send manifest
       const manifestPayload = {
@@ -374,7 +430,9 @@ export class FirmwareService {
       };
       const manifestJwt = await Ed25519Service.signCommandJwt(manifestPayload);
 
-      await this.pushModel.updateStatus(pushId, 'transferring');
+      if (!isResume) {
+        await this.pushModel.updateStatus(pushId, 'transferring');
+      }
 
       // Send manifest with retry (fire-and-wait for first chunk ACK to confirm receipt)
       let manifestDelivered = false;
@@ -401,10 +459,23 @@ export class FirmwareService {
         manifestDelivered = true;
       }
 
-      this.broadcastProgress(push, 'manifest_sent', 0, totalChunks, 0);
+      if (isResume) {
+        logger.info(
+          `Resuming firmware push from chunk ${startChunkIndex}/${totalChunks} pushId=${pushId} facility=${push.facility_id}`,
+        );
+        this.broadcastProgress(
+          push,
+          'transferring',
+          Math.round((startChunkIndex / totalChunks) * 100),
+          totalChunks,
+          startChunkIndex,
+        );
+      } else {
+        this.broadcastProgress(push, 'manifest_sent', 0, totalChunks, 0);
+      }
 
       // Send chunks with flow control
-      for (let i = 0; i < totalChunks; i++) {
+      for (let i = startChunkIndex; i < totalChunks; i++) {
         // Check cancellation
         if (pushState.cancel) {
           logger.info(`Firmware push cancelled pushId=${pushId} at chunk ${i}/${totalChunks}`);
@@ -468,7 +539,7 @@ export class FirmwareService {
       // For gateway target: gateway applies directly; for lock/friend_node: BLE relay needed.
       // Final 'complete' status is set by handleUpdateStatus when the gateway reports success.
       await this.pushModel.updateStatus(pushId, 'verifying');
-      this.scheduleVerifyingTimeout(push);
+      this.scheduleVerifyingTimeout(push, verifyTimeoutForTarget(firmware.target_type));
       this.broadcastProgress(push, 'verifying', 100, totalChunks, totalChunks);
       logger.info(`Firmware push delivered, awaiting verification pushId=${pushId} firmware=${firmware.version} target=${firmware.target_type}`);
     } catch (err) {
@@ -539,74 +610,86 @@ export class FirmwareService {
    * Updates the push record based on the gateway's report of whether
    * the firmware was successfully applied to the target device(s).
    */
-  static async handleUpdateStatus(facilityId: string, msg: any): Promise<void> {
-    const { push_id: pushId, status: gwStatus, version, error: gwError, target_type: targetType } = msg;
+  static async handleUpdateStatus(facilityId: string, msg: any): Promise<FirmwareUpdateStatusResult> {
+    const pushId = resolvePushId(msg);
+    const gwStatus = msg?.status;
     const normalizedStatus = typeof gwStatus === 'string' ? gwStatus.trim().toLowerCase() : '';
+    const version = msg?.version;
+    const gwError = msg?.error;
+    const targetType = resolveTargetType(msg);
 
-    // Schema validation: enforce field types and limits
-    if (typeof pushId !== 'string' || pushId.length === 0 || pushId.length > 128) {
-      logger.warn(`FIRMWARE_UPDATE_STATUS: invalid push_id facility=${facilityId}`);
-      return;
-    }
+    const reject = (reason: string, id?: string): FirmwareUpdateStatusResult => {
+      logger.warn(`FIRMWARE_UPDATE_STATUS rejected facility=${facilityId} push_id=${id || pushId || 'n/a'} reason=${reason}`);
+      return { accepted: false, push_id: id || pushId || undefined, reason };
+    };
+
     if (!normalizedStatus || normalizedStatus.length > 64) {
-      logger.warn(`FIRMWARE_UPDATE_STATUS: invalid status (type=${typeof gwStatus}) facility=${facilityId}`);
-      return;
+      return reject(`invalid status (type=${typeof gwStatus})`);
     }
     if (version !== undefined && (typeof version !== 'string' || version.length > 64)) {
-      logger.warn(`FIRMWARE_UPDATE_STATUS: invalid version facility=${facilityId}`);
-      return;
+      return reject('invalid version');
     }
     if (gwError !== undefined && (typeof gwError !== 'string' || gwError.length > 2000)) {
-      logger.warn(`FIRMWARE_UPDATE_STATUS: invalid error field facility=${facilityId}`);
-      return;
-    }
-    if (targetType !== undefined && (typeof targetType !== 'string' || targetType.length > 32)) {
-      logger.warn(`FIRMWARE_UPDATE_STATUS: invalid target_type facility=${facilityId}`);
-      return;
+      return reject('invalid error field');
     }
 
-    logger.info(`Firmware update status from facility=${facilityId}: push_id=${pushId} status=${gwStatus} version=${version} target=${targetType}`);
-
-    const matchedPush = await this.pushModel.findById(pushId);
+    const matchedPush = await this.resolvePushForGatewayMessage(facilityId, pushId, targetType);
     if (!matchedPush) {
-      logger.warn(`FIRMWARE_UPDATE_STATUS: push not found push_id=${pushId} facility=${facilityId}`);
-      return;
+      if (pushId) {
+        return reject('push not found', pushId);
+      }
+      return reject(`no matching push (missing push_id) target=${targetType || 'n/a'}`);
     }
-    if (matchedPush.facility_id !== facilityId) {
-      logger.warn(
-        `FIRMWARE_UPDATE_STATUS: facility mismatch push_id=${pushId} expected=${matchedPush.facility_id} actual=${facilityId}`,
-      );
-      return;
-    }
+
     if (targetType && matchedPush.target_type !== targetType) {
       logger.warn(
-        `FIRMWARE_UPDATE_STATUS: target_type mismatch push_id=${pushId} expected=${matchedPush.target_type} actual=${targetType}`,
+        `FIRMWARE_UPDATE_STATUS: target_type mismatch push_id=${matchedPush.id} expected=${matchedPush.target_type} actual=${targetType} — applying via push_id`,
       );
-      return;
     }
 
-    // Map gateway status to push status
-    if (normalizedStatus === 'success' || normalizedStatus === 'applied') {
-      // Gateway confirmed firmware applied successfully — update if not already complete
+    logger.info(
+      `Firmware update status from facility=${facilityId}: push_id=${matchedPush.id} status=${gwStatus} version=${version} target=${targetType || matchedPush.target_type}`,
+    );
+
+    if (normalizedStatus === 'success') {
+      await this.recordGatewayStatusEvent(matchedPush.id, String(gwStatus), version, true);
       if (matchedPush.status !== 'complete') {
         await this.pushModel.updateStatus(matchedPush.id, 'complete');
         this.clearVerifyingTimeout(matchedPush.id);
         this.broadcastProgress(matchedPush, 'complete', 100);
         logger.info(`Firmware update confirmed by gateway pushId=${matchedPush.id} version=${version}`);
       }
-    } else if (normalizedStatus === 'failed' || normalizedStatus === 'error') {
+      return { accepted: true, push_id: matchedPush.id, push_status: 'complete' };
+    }
+
+    if (GATEWAY_STATUS_FAILED.has(normalizedStatus)) {
+      await this.recordGatewayStatusEvent(matchedPush.id, String(gwStatus), version, true);
       const errorMsg = gwError || `Gateway reported firmware update failure: ${gwStatus}`;
       await this.pushModel.updateStatus(matchedPush.id, 'failed', errorMsg);
       this.clearVerifyingTimeout(matchedPush.id);
       this.broadcastProgress(matchedPush, 'failed', 0, undefined, undefined, errorMsg);
       logger.error(`Firmware update failed on gateway pushId=${matchedPush.id}: ${errorMsg}`);
-    } else if (normalizedStatus === 'verifying' || normalizedStatus === 'applying') {
-      await this.pushModel.updateStatus(matchedPush.id, 'verifying');
-      this.scheduleVerifyingTimeout(matchedPush);
-      this.broadcastProgress(matchedPush, 'verifying', 100);
-    } else {
-      logger.warn(`FIRMWARE_UPDATE_STATUS: unknown status '${gwStatus}' from facility=${facilityId}`);
+      return { accepted: true, push_id: matchedPush.id, push_status: 'failed' };
     }
+
+    if (GATEWAY_STATUS_VERIFYING.has(normalizedStatus)) {
+      await this.recordGatewayStatusEvent(matchedPush.id, String(gwStatus), version, true);
+      if (matchedPush.status !== 'complete') {
+        await this.pushModel.updateStatus(matchedPush.id, 'verifying');
+        this.scheduleVerifyingTimeout(matchedPush, verifyTimeoutForTarget(matchedPush.target_type));
+        this.broadcastProgress(matchedPush, 'verifying', 100);
+      }
+      return { accepted: true, push_id: matchedPush.id, push_status: 'verifying' };
+    }
+
+    await this.recordGatewayStatusEvent(
+      matchedPush.id,
+      String(gwStatus),
+      version,
+      false,
+      `unknown status '${gwStatus}'`,
+    );
+    return reject(`unknown status '${gwStatus}'`, matchedPush.id);
   }
 
   // =========================================================================
@@ -620,24 +703,17 @@ export class FirmwareService {
    * still work via FIRMWARE_CHUNK_ACK / FIRMWARE_UPDATE_STATUS.
    */
   static async handleProgress(facilityId: string, msg: any): Promise<void> {
+    const pushId = resolvePushId(msg);
     const {
-      push_id: pushId,
       progress_percent,
       phase,
       message: gwMessage,
       devices,
       error: gwError,
-      target_type: rawTargetType,
-      targetType: rawTargetTypeCamel,
     } = msg;
-    const targetTypeCandidate = typeof rawTargetType === 'string'
-      ? rawTargetType
-      : (typeof rawTargetTypeCamel === 'string' ? rawTargetTypeCamel : undefined);
-    const targetType = (targetTypeCandidate && VALID_TARGET_TYPES.includes(targetTypeCandidate as FirmwareTargetType))
-      ? (targetTypeCandidate as FirmwareTargetType)
-      : undefined;
+    const targetType = resolveTargetType(msg);
 
-    if (typeof pushId !== 'string' || pushId.length === 0 || pushId.length > 128) {
+    if (!pushId) {
       logger.warn(`FIRMWARE_PROGRESS: invalid push_id facility=${facilityId}`);
       return;
     }
@@ -662,22 +738,16 @@ export class FirmwareService {
       return Array.from(byDeviceId.values());
     })();
 
-    const matchedPush = await this.pushModel.findById(pushId);
+    const matchedPush = await this.resolvePushForGatewayMessage(facilityId, pushId, targetType);
     if (!matchedPush) {
       logger.warn(`FIRMWARE_PROGRESS: push not found push_id=${pushId} facility=${facilityId}`);
       return;
     }
-    if (matchedPush.facility_id !== facilityId) {
-      logger.warn(
-        `FIRMWARE_PROGRESS: facility mismatch push_id=${pushId} expected=${matchedPush.facility_id} actual=${facilityId}`,
-      );
-      return;
-    }
+
     if (targetType && matchedPush.target_type !== targetType) {
       logger.warn(
-        `FIRMWARE_PROGRESS: target_type mismatch push_id=${pushId} expected=${matchedPush.target_type} actual=${targetType}`,
+        `FIRMWARE_PROGRESS: target_type mismatch push_id=${matchedPush.id} expected=${matchedPush.target_type} actual=${targetType} — applying via push_id`,
       );
-      return;
     }
 
     // Skip progress on terminal pushes to prevent stale/duplicate updates
@@ -719,6 +789,7 @@ export class FirmwareService {
       computedDevicesComplete = 0;
       computedDevicesFailed = 0;
       for (const dev of normalizedDevices) {
+        const normalizedDeviceStatus = dev.status.trim().toLowerCase();
         events.push({
           push_id: matchedPush.id,
           event_type: 'device_status',
@@ -728,14 +799,15 @@ export class FirmwareService {
           error_message: typeof dev.error === 'string' ? dev.error : undefined,
           reported_at: now,
         });
-        if (dev.status === 'complete') computedDevicesComplete++;
-        if (dev.status === 'failed') computedDevicesFailed++;
+        if (normalizedDeviceStatus === 'complete') computedDevicesComplete++;
+        if (DEVICE_STATUS_FAILED.has(normalizedDeviceStatus)) computedDevicesFailed++;
       }
       computedDevicesTotal = normalizedDevices.length;
       await this.pushModel.updateDeviceCounts(matchedPush.id, computedDevicesTotal, computedDevicesComplete, computedDevicesFailed);
     }
 
     // Error event
+    let autoFailed = false;
     if (gwError && typeof gwError === 'object' && typeof gwError.message === 'string') {
       events.push({
         push_id: matchedPush.id,
@@ -750,6 +822,8 @@ export class FirmwareService {
       // Critical errors auto-fail the push
       if (gwError.severity === 'critical') {
         await this.pushModel.updateStatus(matchedPush.id, 'failed', gwError.message);
+        this.clearVerifyingTimeout(matchedPush.id);
+        autoFailed = true;
       }
     }
 
@@ -768,9 +842,13 @@ export class FirmwareService {
       await this.pushEventModel.createMany(events);
     }
 
-    // Determine the effective step: if a critical error auto-failed the push, use 'failed'
     const effectiveStep: FirmwarePushStatus | 'manifest_sent' =
-      (gwError?.severity === 'critical') ? 'failed' : matchedPush.status;
+      autoFailed ? 'failed' : matchedPush.status;
+
+    if (!autoFailed && matchedPush.status === 'verifying') {
+      // Keep the verify window alive while the gateway is still reporting progress.
+      this.scheduleVerifyingTimeout(matchedPush, verifyTimeoutForTarget(matchedPush.target_type));
+    }
 
     this.broadcastProgress(
       matchedPush,
@@ -795,31 +873,38 @@ export class FirmwareService {
   // =========================================================================
 
   /**
-   * Handle a gateway facility disconnection. Cancels any active firmware
-   * pushes for the disconnected facility so they fail immediately instead
-   * of waiting for per-chunk ACK timeouts.
+   * Handle a gateway facility disconnection. Pauses in-flight chunk transfers so
+   * they can resume on reconnect instead of failing immediately.
    */
   static async handleFacilityDisconnect(facilityId: string): Promise<void> {
     for (const [pushId, pushState] of activePushes.entries()) {
       if (pushState.facilityId === facilityId && !pushState.cancel) {
         pushState.cancel = true;
-        // Unblock any in-flight ACK waits immediately so reconnect can resume quickly.
+        // Unblock any in-flight ACK waits immediately so executePush can unwind.
         for (const resolver of pushState.chunkAckResolvers.values()) {
           try {
             resolver.reject(new Error('Gateway disconnected during firmware push'));
           } catch {}
         }
         pushState.chunkAckResolvers.clear();
-        const failed = await this.pushModel.atomicFailIfActive(pushId, 'Gateway disconnected during firmware push');
-        if (failed) {
-          const push = await this.pushModel.findById(pushId);
-          if (push) {
-            this.clearVerifyingTimeout(pushId);
-            this.broadcastProgress(push, 'failed', push.progress_percent || 0, push.chunks_total ?? undefined, push.chunks_sent, 'Gateway disconnected during firmware push');
-          }
-        }
-        logger.info(`Firmware push cancelled due to gateway disconnect pushId=${pushId} facility=${facilityId}`);
+        this.scheduleTransferDisconnectGrace(pushId, transferDisconnectGraceMs());
+        logger.info(`Firmware push paused due to gateway disconnect pushId=${pushId} facility=${facilityId}`);
       }
+    }
+
+    // Verifying pushes are no longer in activePushes — arm a shorter grace timeout while the
+    // gateway may be rebooting to apply firmware.
+    try {
+      const verifyingPushes = (await this.pushModel.findActiveByFacilities([facilityId]))
+        .filter((push) => push.status === 'verifying');
+      for (const push of verifyingPushes) {
+        this.scheduleVerifyingTimeout(push, VERIFY_DISCONNECT_GRACE_MS);
+        logger.info(
+          `Firmware push verifying during disconnect; armed ${Math.round(VERIFY_DISCONNECT_GRACE_MS / 1000)}s grace pushId=${push.id} facility=${facilityId}`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`Failed to arm verifying disconnect grace for facility=${facilityId}`, err);
     }
   }
 
@@ -857,7 +942,13 @@ export class FirmwareService {
 
     const candidates = await this.pushModel.findActiveByFacilities([facilityId]);
     let shouldRetry = false;
+    const verifyingPushes: FirmwarePush[] = [];
     for (const push of candidates) {
+      if (push.status === 'verifying') {
+        this.scheduleVerifyingTimeout(push, verifyTimeoutForTarget(push.target_type));
+        verifyingPushes.push(push);
+        continue;
+      }
       if (push.status !== 'pending' && push.status !== 'transferring') {
         continue;
       }
@@ -896,6 +987,10 @@ export class FirmwareService {
       }, 1000);
       resumeFacilityRetryTimers.set(facilityId, timer);
     }
+
+    if (verifyingPushes.length > 0) {
+      this.notifyVerifyingPushesAwaitingStatus(facilityId, verifyingPushes);
+    }
     } finally {
       resumeFacilityRunsInFlight.delete(facilityId);
     }
@@ -913,16 +1008,45 @@ export class FirmwareService {
 
     const now = Date.now();
     for (const push of activePushes) {
+      if (push.status === 'transferring') {
+        const updatedAtMs = push.updated_at ? new Date(push.updated_at).getTime() : now;
+        const elapsedMs = Math.max(0, now - updatedAtMs);
+        if (elapsedMs >= transferDisconnectGraceMs()) {
+          const graceSec = Math.round(transferDisconnectGraceMs() / 1000);
+          const failed = await this.pushModel.atomicFailIfActive(
+            push.id,
+            `Gateway disconnected during firmware transfer and did not reconnect within ${graceSec}s`,
+          );
+          if (failed) {
+            const latest = await this.pushModel.findById(push.id);
+            if (latest) {
+              this.broadcastProgress(
+                latest,
+                'failed',
+                latest.progress_percent || 0,
+                latest.chunks_total ?? undefined,
+                latest.chunks_sent,
+                latest.error_message || 'Firmware transfer reconnect timeout',
+              );
+            }
+          }
+        } else {
+          const remainingMs = Math.max(1000, transferDisconnectGraceMs() - elapsedMs);
+          this.scheduleTransferDisconnectGrace(push.id, remainingMs);
+        }
+        continue;
+      }
+
       if (push.status !== 'verifying') {
         continue;
       }
 
       const updatedAtMs = push.updated_at ? new Date(push.updated_at).getTime() : now;
       const elapsedMs = Math.max(0, now - updatedAtMs);
-      if (elapsedMs >= VERIFY_TIMEOUT_MS) {
+      if (elapsedMs >= verifyTimeoutForTarget(push.target_type)) {
         const failed = await this.pushModel.atomicFailIfActive(
           push.id,
-          `Gateway did not report final firmware status before timeout (${Math.round(VERIFY_TIMEOUT_MS / 1000)}s)`,
+          `Gateway did not report final firmware status before timeout (${Math.round(verifyTimeoutForTarget(push.target_type) / 1000)}s)`,
         );
         if (failed) {
           const latest = await this.pushModel.findById(push.id);
@@ -940,7 +1064,7 @@ export class FirmwareService {
         continue;
       }
 
-      const remainingMs = Math.max(1000, VERIFY_TIMEOUT_MS - elapsedMs);
+      const remainingMs = Math.max(1000, verifyTimeoutForTarget(push.target_type) - elapsedMs);
       this.scheduleVerifyingTimeout(push, remainingMs);
     }
   }
@@ -948,6 +1072,72 @@ export class FirmwareService {
   // =========================================================================
   // Private Helpers
   // =========================================================================
+
+  private static async recordGatewayStatusEvent(
+    pushId: string,
+    gwStatus: string,
+    version: string | undefined,
+    accepted: boolean,
+    reason?: string,
+  ): Promise<void> {
+    try {
+      await this.pushEventModel.createMany([{
+        push_id: pushId,
+        event_type: 'info',
+        message: accepted
+          ? `Gateway status: ${gwStatus}${version ? ` (${version})` : ''}`
+          : `Gateway status rejected: ${gwStatus}${reason ? ` — ${reason}` : ''}`,
+        metadata: { gateway_status: gwStatus, version, accepted, reason },
+        reported_at: new Date(),
+      }]);
+    } catch (err) {
+      logger.warn(`Failed to record gateway status event pushId=${pushId}`, err);
+    }
+  }
+
+  /**
+   * Resolve a push from gateway telemetry. Prefer explicit push_id; otherwise fall back to the
+   * single verifying push for the facility (optionally filtered by target_type).
+   */
+  private static async resolvePushForGatewayMessage(
+    facilityId: string,
+    pushId: string | null,
+    targetType?: FirmwareTargetType,
+  ): Promise<FirmwarePush | null> {
+    if (pushId) {
+      const push = await this.pushModel.findById(pushId);
+      if (!push) return null;
+      if (push.facility_id !== facilityId) {
+        logger.warn(
+          `Firmware gateway message facility mismatch push_id=${pushId} expected=${push.facility_id} actual=${facilityId}`,
+        );
+        return null;
+      }
+      return push;
+    }
+
+    const active = await this.pushModel.findActiveByFacilities([facilityId]);
+    const verifying = active.filter((push) => push.status === 'verifying');
+    if (verifying.length === 0) return null;
+
+    if (targetType) {
+      const match = verifying.find((push) => push.target_type === targetType);
+      if (match) {
+        logger.info(`Firmware gateway message resolved verifying push via target_type=${targetType} pushId=${match.id}`);
+        return match;
+      }
+    }
+
+    if (verifying.length === 1) {
+      logger.info(`Firmware gateway message resolved sole verifying push pushId=${verifying[0].id}`);
+      return verifying[0];
+    }
+
+    logger.warn(
+      `Firmware gateway message ambiguous: ${verifying.length} verifying pushes for facility=${facilityId} without push_id`,
+    );
+    return null;
+  }
 
   /**
    * Wait for a chunk ACK with timeout.
@@ -971,13 +1161,79 @@ export class FirmwareService {
     return status.connected;
   }
 
-  private static scheduleVerifyingTimeout(push: FirmwarePush, timeoutMs: number = VERIFY_TIMEOUT_MS): void {
+  /**
+   * After reconnect, tell the gateway which pushes still await FIRMWARE_UPDATE_STATUS.
+   * Gateways should persist push_id across reboot and resend terminal status when prompted.
+   */
+  private static notifyVerifyingPushesAwaitingStatus(facilityId: string, pushes: FirmwarePush[]): void {
+    if (pushes.length === 0) return;
+    GatewayEventsService.getInstance().unicastToFacility(facilityId, {
+      type: 'FIRMWARE_PUSH_RESUME',
+      pushes: pushes.map((push) => ({
+        push_id: push.id,
+        target_type: push.target_type,
+        status: 'verifying' as const,
+        progress_percent: push.progress_percent ?? undefined,
+      })),
+    });
+    logger.info(
+      `Notified gateway of ${pushes.length} verifying push(es) awaiting status facility=${facilityId} pushIds=${pushes.map((p) => p.id).join(',')}`,
+    );
+  }
+
+  private static scheduleTransferDisconnectGrace(pushId: string, timeoutMs: number = transferDisconnectGraceMs()): void {
+    this.clearTransferDisconnectGrace(pushId);
+    const timer = setTimeout(async () => {
+      try {
+        if (activePushes.has(pushId)) {
+          return;
+        }
+        const failed = await this.pushModel.atomicFailIfActive(
+          pushId,
+          `Gateway disconnected during firmware transfer and did not reconnect within ${Math.round(timeoutMs / 1000)}s`,
+        );
+        if (!failed) {
+          return;
+        }
+        const latest = await this.pushModel.findById(pushId);
+        if (latest) {
+          this.broadcastProgress(
+            latest,
+            'failed',
+            latest.progress_percent || 0,
+            latest.chunks_total ?? undefined,
+            latest.chunks_sent,
+            latest.error_message || 'Gateway disconnected during firmware transfer',
+          );
+        }
+      } catch (err) {
+        logger.warn(`Failed to apply firmware transfer disconnect grace for pushId=${pushId}`, err);
+      } finally {
+        transferDisconnectTimeouts.delete(pushId);
+      }
+    }, timeoutMs);
+    if (typeof (timer as any).unref === 'function') {
+      (timer as any).unref();
+    }
+    transferDisconnectTimeouts.set(pushId, timer);
+  }
+
+  private static clearTransferDisconnectGrace(pushId: string): void {
+    const timer = transferDisconnectTimeouts.get(pushId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    transferDisconnectTimeouts.delete(pushId);
+  }
+
+  private static scheduleVerifyingTimeout(push: FirmwarePush, timeoutMs: number = verifyTimeoutForTarget(push.target_type)): void {
     this.clearVerifyingTimeout(push.id);
     const timer = setTimeout(async () => {
       try {
         const failed = await this.pushModel.atomicFailIfActive(
           push.id,
-          `Gateway did not report final firmware status before timeout (${Math.round(VERIFY_TIMEOUT_MS / 1000)}s)`,
+          `Gateway did not report final firmware status before timeout (${Math.round(timeoutMs / 1000)}s)`,
         );
         if (!failed) {
           return;

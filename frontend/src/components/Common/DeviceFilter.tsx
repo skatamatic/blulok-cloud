@@ -2,11 +2,14 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CpuChipIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
+import { BluLokDeviceSummary } from '@/components/Common/BluLokDeviceSummary';
+import {
+  bluLokDeviceMatchesSearch,
+  formatBluLokLockNumberLabel,
+  type BluLokDeviceDisplayFields,
+} from '@/utils/blulokDeviceDisplay.utils';
 
-interface Device {
-  id: string;
-  device_serial: string;
-  firmware_version?: string;
+interface Device extends BluLokDeviceDisplayFields {
   device_status?: 'online' | 'offline' | 'low_battery' | 'error';
   battery_level?: number;
 }
@@ -46,13 +49,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       const norm = searchTerm.trim().toLowerCase();
-      const next = devices.filter((d) => {
-        if (!norm) return true;
-        return (
-          (d.device_serial || '').toLowerCase().includes(norm) ||
-          (d.firmware_version || '').toLowerCase().includes(norm)
-        );
-      });
+      const next = devices.filter((d) => bluLokDeviceMatchesSearch(d, norm));
       setFilteredDevices(next);
     }, 200);
     return () => clearTimeout(timeoutId);
@@ -62,7 +59,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
     if (value && devices.length > 0) {
       const d = devices.find((x) => x.id === value) || null;
       setSelectedDevice(d);
-      if (d) setSearchTerm(d.device_serial || '');
+      if (d) setSearchTerm(formatBluLokLockNumberLabel(d));
     } else if (value === '') {
       setSelectedDevice(null);
       setSearchTerm('');
@@ -130,7 +127,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
 
   const handleSelect = (device: Device) => {
     setSelectedDevice(device);
-    setSearchTerm(device.device_serial || '');
+    setSearchTerm(formatBluLokLockNumberLabel(device));
     onChange(device.id);
     setIsOpen(false);
   };
@@ -186,31 +183,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
                       selectedDevice?.id === d.id ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-900 dark:text-primary-100' : 'text-gray-900 dark:text-white'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2 min-w-0">
-                        <div className="flex-shrink-0 h-8 w-8 bg-primary-100 dark:bg-primary-900/20 rounded-full flex items-center justify-center">
-                          <span className="text-xs font-medium text-primary-800 dark:text-primary-200">
-                            {(d.device_serial || 'D').slice(-2)}
-                          </span>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                            {d.device_serial || d.id}
-                          </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {d.firmware_version ? `v${d.firmware_version}` : 'Unknown firmware'}
-                          </div>
-                          <div className="text-[11px] text-gray-400 dark:text-gray-500 truncate">
-                            {d.id}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex-shrink-0 ml-2 text-xs text-gray-500 dark:text-gray-400">
-                        <div className="text-right">
-                          <div className="font-medium">{d.device_status || 'unknown'}</div>
-                        </div>
-                      </div>
-                    </div>
+                    <BluLokDeviceSummary device={d} status={d.device_status || 'unknown'} />
                   </button>
                 ))}
               </>

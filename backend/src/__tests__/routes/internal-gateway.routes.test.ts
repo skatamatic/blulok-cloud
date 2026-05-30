@@ -28,7 +28,7 @@ jest.mock('@/services/database.service', () => ({
   },
 }));
 
-// Mock GatewayModel to avoid hitting real DB in device-sync route
+// Mock GatewayModel to avoid hitting real DB in inventory routes
 jest.mock('@/models/gateway.model', () => ({
   GatewayModel: jest.fn().mockImplementation(() => ({
     findByFacilityId: jest.fn().mockResolvedValue({ id: 'gateway-1' }),
@@ -46,7 +46,7 @@ jest.mock('@/services/gateway-telemetry-log.service', () => ({
   },
 }));
 
-// Mock DeviceSyncService to assert how device-sync normalizes payloads
+// Mock DeviceSyncService to assert how inventory/state normalizes payloads
 jest.mock('@/services/device-sync.service', () => {
   const syncGatewayDevicesMock = jest.fn().mockResolvedValue(undefined);
   const updateDeviceStatusesMock = jest.fn().mockResolvedValue(undefined);
@@ -161,128 +161,17 @@ describe('Internal Gateway Routes', () => {
       .expect(400);
   });
 
-  it('POST /api/v1/internal/gateway/device-sync requires facility_id or header and valid identifiers', async () => {
-    // Missing facility_id and header should be rejected
-    const resMissingFacility = await request(app)
-      .post('/api/v1/internal/gateway/device-sync')
-      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-      .send({ devices: [{ serial: 'DEV-1' }] });
+  // ============================================================================
+  // Device inventory + state
+  // ============================================================================
 
-    expect(resMissingFacility.status).toBe(400);
-    expect(resMissingFacility.body.success).toBe(false);
-
-    // Device without any identifier should be rejected by Joi
-    const resNoIds = await request(app)
-      .post('/api/v1/internal/gateway/device-sync')
-      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-      .send({
-        facility_id: 'facility-1',
-        devices: [{ batteryLevel: 10 }],
-      });
-
-    expect(resNoIds.status).toBe(400);
-    expect(resNoIds.body.success).toBe(false);
-    expect(String(resNoIds.body.message || '')).toContain('serial');
-
-    const resBlankSerial = await request(app)
-      .post('/api/v1/internal/gateway/device-sync')
-      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-      .send({
-        facility_id: 'facility-1',
-        devices: [{ serial: '   ' }],
-      });
-
-    expect(resBlankSerial.status).toBe(400);
-    expect(resBlankSerial.body.success).toBe(false);
-  });
-
-  it('POST /api/v1/internal/gateway/device-sync enforces facility scope for facility admins', async () => {
-    const crossFacility = await request(app)
-      .post('/api/v1/internal/gateway/device-sync')
-      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-      .send({
-        facility_id: 'facility-2',
-        devices: [{ serial: 'DEV-1' }],
-      });
-
-    expect(crossFacility.status).toBe(403);
-    expect(crossFacility.body.success).toBe(false);
-
-    const headerOverride = await request(app)
-      .post('/api/v1/internal/gateway/device-sync')
-      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-      .set('X-Gateway-Facility-Id', 'facility-1')
-      .send({
-        facility_id: 'facility-2',
-        devices: [{ serial: 'DEV-1' }],
-      });
-
-    expect(headerOverride.status).toBe(403);
-    expect(headerOverride.body.success).toBe(false);
-  });
-
-  it('POST /api/v1/internal/gateway/device-sync normalizes payload and forwards to DeviceSyncService', async () => {
-    syncGatewayDevicesMock.mockClear();
-    updateDeviceStatusesMock.mockClear();
-
-    const devicePayload = {
-      lockId: 'lock-123',
-      lock_id: 'lock-ignored',
-      serial: 'SER-123',
-      firmwareVersion: '1.2.3',
-      online: true,
-      locked: false,
-      batteryLevel: 75,
-      lastSeen: '2025-11-24T16:58:19.618Z',
-      lockNumber: 495,
-      batteryUnit: '%',
-      signalStrength: 42,
-      temperatureValue: 10.5,
-      temperatureUnit: 'C',
-      someExtraField: 'keep-me',
-    };
-
+  it('POST /api/v1/internal/gateway/device-sync is removed (use inventory + state)', async () => {
     const res = await request(app)
       .post('/api/v1/internal/gateway/device-sync')
       .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-      .send({
-        facility_id: 'facility-1',
-        devices: [devicePayload],
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-
-    expect(syncGatewayDevicesMock).toHaveBeenCalledTimes(1);
-    expect(updateDeviceStatusesMock).toHaveBeenCalledTimes(1);
-
-    const [, syncedDevices] = syncGatewayDevicesMock.mock.calls[0];
-    expect(Array.isArray(syncedDevices)).toBe(true);
-    expect(syncedDevices).toHaveLength(1);
-
-    const normalized = syncedDevices[0];
-    // Identifiers are passed through; lockId prefers original lockId over lock_id
-    expect(normalized.serial).toBe(devicePayload.serial);
-    expect(normalized.lockId).toBe(devicePayload.lockId);
-
-    // Numeric telemetry is preserved
-    expect(normalized.batteryLevel).toBe(devicePayload.batteryLevel);
-    expect(normalized.signalStrength).toBe(devicePayload.signalStrength);
-
-    // temperatureValue is normalized to temperature while original field is preserved via spread
-    expect(normalized.temperature).toBe(devicePayload.temperatureValue);
-
-    // lastSeen is converted to Date instance
-    expect(normalized.lastSeen).toBeInstanceOf(Date);
-
-    // Extra fields should still be present on the object (unknown(true))
-    expect(normalized.lockNumber).toBe(devicePayload.lockNumber);
-    expect(normalized.someExtraField).toBe(devicePayload.someExtraField);
+      .send({ facility_id: 'facility-1', devices: [] });
+    expect(res.status).toBe(404);
   });
-
-  // ============================================================================
-  // NEW ENDPOINTS TESTS
-  // ============================================================================
 
   describe('POST /api/v1/internal/gateway/devices/inventory', () => {
     beforeEach(() => {
@@ -300,7 +189,7 @@ describe('Internal Gateway Routes', () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/inventory')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ devices: [{ lock_id: 'lock-1' }] });
+        .send({ devices: [{ kind: 'lock', lock_id: 'lock-1' }] });
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
@@ -326,7 +215,7 @@ describe('Internal Gateway Routes', () => {
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
           facility_id: 'facility-1',
-          devices: [{ lock_id: '   ' }],
+          devices: [{ kind: 'lock', lock_id: '   ' }],
         });
 
       expect(res.status).toBe(400);
@@ -340,8 +229,8 @@ describe('Internal Gateway Routes', () => {
         .send({
           facility_id: 'facility-1',
           devices: [
-            { lock_id: 'lock-1', lock_number: 101, firmware_version: '1.0.0' },
-            { lock_id: 'lock-2', lock_number: 102 },
+            { kind: 'lock', lock_id: 'lock-1', lock_number: 101, firmware_version: '1.0.0' },
+            { kind: 'lock', lock_id: 'lock-2', lock_number: 102 },
           ],
         });
 
@@ -366,14 +255,14 @@ describe('Internal Gateway Routes', () => {
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
           facility_id: 'facility-2',
-          devices: [{ lock_id: 'lock-1' }],
+          devices: [{ kind: 'lock', lock_id: 'lock-1' }],
         });
 
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
     });
 
-    it('requires access_id and relay_channel for access_control inventory items', async () => {
+    it('requires access_id for access_control inventory items', async () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/inventory')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
@@ -386,6 +275,60 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.success).toBe(false);
     });
 
+    it('requires kind on lock inventory items', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [{ lock_id: 'lock-1', lock_number: 101 }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('rejects device_serial alias on access_control inventory items', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [{ kind: 'access_control', device_serial: 'KP-ALIAS', relay_channel: 1 }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('accepts access_control inventory without relay_channel (defaults to 1)', async () => {
+      syncAccessDeviceInventoryMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [{
+            kind: 'access_control',
+            access_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+            online: false,
+            last_seen: '2026-05-29T14:08:18.852437Z',
+          }],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(syncAccessDeviceInventoryMock).toHaveBeenCalledWith(
+        'gateway-1',
+        'facility-1',
+        [expect.objectContaining({
+          access_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+          relay_channel: 1,
+        })],
+      );
+    });
+
     it('performs mixed lock and access_control inventory sync', async () => {
       syncDeviceInventoryMock.mockClear();
       syncAccessDeviceInventoryMock.mockClear();
@@ -396,7 +339,7 @@ describe('Internal Gateway Routes', () => {
         .send({
           facility_id: 'facility-1',
           devices: [
-            { lock_id: 'lock-1' },
+            { kind: 'lock', lock_id: 'lock-1' },
             { kind: 'access_control', access_id: 'KP-004', relay_channel: 4 },
           ],
         });
@@ -429,20 +372,20 @@ describe('Internal Gateway Routes', () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ updates: [{ lock_id: 'lock-1', battery_level: 85 }] });
+        .send({ updates: [{ kind: 'lock', lock_id: 'lock-1', battery_level: 85 }] });
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain('facility_id');
     });
 
-    it('validates lock_state enum values', async () => {
+    it('validates state enum values', async () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
           facility_id: 'facility-1',
-          updates: [{ lock_id: 'lock-1', lock_state: 'INVALID' }],
+          updates: [{ kind: 'lock', lock_id: 'lock-1', state: 'INVALID' }],
         });
 
       expect(res.status).toBe(400);
@@ -455,7 +398,7 @@ describe('Internal Gateway Routes', () => {
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
           facility_id: 'facility-1',
-          updates: [{ lock_id: '   ', lock_state: 'LOCKED' }],
+          updates: [{ kind: 'lock', lock_id: '   ', state: 'CLOSED' }],
         });
 
       expect(res.status).toBe(400);
@@ -469,7 +412,7 @@ describe('Internal Gateway Routes', () => {
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
           facility_id: 'facility-1',
-          updates: [{ lock_id: 'lock-1', battery_level: 3423, battery_unit: 'mV' }],
+          updates: [{ kind: 'lock', lock_id: 'lock-1', battery_level: 3423, battery_unit: 'mV' }],
         });
 
       // Should be accepted (200) since we removed the 0-100 validation
@@ -484,8 +427,8 @@ describe('Internal Gateway Routes', () => {
         .send({
           facility_id: 'facility-1',
           updates: [
-            { lock_id: 'lock-1', battery_level: 85 },
-            { lock_id: 'lock-2', lock_state: 'LOCKED', online: true },
+            { kind: 'lock', lock_id: 'lock-1', battery_level: 85 },
+            { kind: 'lock', lock_id: 'lock-2', state: 'CLOSED', online: true },
           ],
         });
 
@@ -504,8 +447,9 @@ describe('Internal Gateway Routes', () => {
           facility_id: 'facility-1',
           updates: [
             {
+              kind: 'lock',
               lock_id: 'lock-1',
-              lock_state: 'LOCKED',
+              state: 'CLOSED',
               battery_level: 85,
               online: true,
               signal_strength: -65,
@@ -531,9 +475,10 @@ describe('Internal Gateway Routes', () => {
           facility_id: 'facility-1',
           updates: [
             {
+              kind: 'lock',
               lock_id: 'lock-1',
               serial: 'LOCK-ABC-105',
-              lock_state: 'LOCKED',
+              state: 'CLOSED',
               battery_level: 90,
               online: false,
             },
@@ -555,7 +500,7 @@ describe('Internal Gateway Routes', () => {
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({
           facility_id: 'facility-2',
-          updates: [{ lock_id: 'lock-1', online: true }],
+          updates: [{ kind: 'lock', lock_id: 'lock-1', online: true }],
         });
 
       expect(res.status).toBe(403);
@@ -572,7 +517,7 @@ describe('Internal Gateway Routes', () => {
         .send({
           facility_id: 'facility-1',
           updates: [
-            { lock_id: 'lock-1', online: true },
+            { kind: 'lock', lock_id: 'lock-1', online: true },
             { kind: 'access_control', access_id: 'KP-002', relay_channel: 2, locked: true },
           ],
         });
@@ -612,23 +557,12 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.message).not.toContain('"tid" is not allowed');
     });
 
-    it('accepts tid on device-sync', async () => {
-      syncGatewayDevicesMock.mockClear();
-      updateDeviceStatusesMock.mockClear();
-      const res = await request(app)
-        .post('/api/v1/internal/gateway/device-sync')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ facility_id: 'facility-1', tid: 3, devices: [{ serial: 'DEV-1' }] })
-        .expect(200);
-      expect(res.body.success).toBe(true);
-    });
-
     it('accepts tid on devices/inventory', async () => {
       syncDeviceInventoryMock.mockClear();
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/inventory')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ facility_id: 'facility-1', tid: 5, devices: [{ lock_id: 'lock-1' }] })
+        .send({ facility_id: 'facility-1', tid: 5, devices: [{ kind: 'lock', lock_id: 'lock-1' }] })
         .expect(200);
       expect(res.body.success).toBe(true);
     });
@@ -638,7 +572,7 @@ describe('Internal Gateway Routes', () => {
       const res = await request(app)
         .post('/api/v1/internal/gateway/devices/state')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ facility_id: 'facility-1', tid: 'tx-99', updates: [{ lock_id: 'lock-1', online: true }] })
+        .send({ facility_id: 'facility-1', tid: 'tx-99', updates: [{ kind: 'lock', lock_id: 'lock-1', online: true }] })
         .expect(200);
       expect(res.body.success).toBe(true);
     });
@@ -802,25 +736,6 @@ describe('Internal Gateway Routes', () => {
         .expect(400);
 
       expect(res.body.success).toBe(false);
-    });
-  });
-
-  describe('Deprecated device-sync endpoint', () => {
-    it('returns X-Deprecated header', async () => {
-      syncGatewayDevicesMock.mockClear();
-      updateDeviceStatusesMock.mockClear();
-
-      const res = await request(app)
-        .post('/api/v1/internal/gateway/device-sync')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({
-          facility_id: 'facility-1',
-          devices: [{ serial: 'DEV-1' }],
-        });
-
-      expect(res.status).toBe(200);
-      expect(res.headers['x-deprecated']).toBe('Use /devices/inventory and /devices/state');
-      expect(res.body.message).toContain('deprecated');
     });
   });
 });

@@ -464,6 +464,28 @@ describe('FirmwareService', () => {
       await FirmwareService.executePush('push-1');
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'failed', expect.stringContaining('SHA-256 mismatch'));
     });
+
+    it('resumes chunk transfer from chunks_sent after disconnect', async () => {
+      mockPushModel.findById.mockResolvedValue({
+        ...mockPush,
+        status: 'transferring',
+        chunks_total: 3,
+        chunks_sent: 2,
+        progress_percent: 66,
+      });
+
+      await FirmwareService.executePush('push-1');
+
+      // manifest + 1 remaining chunk (index 2)
+      expect(mockUnicast).toHaveBeenCalledTimes(2);
+      expect(mockUnicast.mock.calls[0][1].type).toBe('FIRMWARE_MANIFEST');
+      expect(mockUnicast.mock.calls[1][1].type).toBe('FIRMWARE_CHUNK');
+      const lastChunkPayload = (Ed25519Service.signCommandJwt as jest.Mock).mock.calls[1][0];
+      expect(lastChunkPayload.chunk_index).toBe(2);
+      expect(mockPushModel.updateProgress).toHaveBeenCalledTimes(1);
+      expect(mockPushModel.updateProgress).toHaveBeenCalledWith('push-1', 3);
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalledWith('push-1', 'transferring');
+    });
   });
 
   // =========================================================================
@@ -531,9 +553,53 @@ describe('FirmwareService', () => {
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
     });
 
-    it('rejects update when push_id is missing', async () => {
+    it('processes verifying → applying → success lifecycle (gateway developer contract)', async () => {
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'verifying', target_type: 'lock' }));
+
+      const verifying = await FirmwareService.handleUpdateStatus('fac-1', {
+        push_id: 'push-1',
+        status: 'verifying',
+        target_type: 'lock',
+        version: '1.1',
+      });
+      expect(verifying).toEqual({ accepted: true, push_id: 'push-1', push_status: 'verifying' });
+
+      const applying = await FirmwareService.handleUpdateStatus('fac-1', {
+        push_id: 'push-1',
+        status: 'applying',
+        target_type: 'lock',
+        version: '1.1',
+      });
+      expect(applying).toEqual({ accepted: true, push_id: 'push-1', push_status: 'verifying' });
+
+      const success = await FirmwareService.handleUpdateStatus('fac-1', {
+        push_id: 'push-1',
+        status: 'success',
+        target_type: 'lock',
+        version: '1.1',
+      });
+      expect(success).toEqual({ accepted: true, push_id: 'push-1', push_status: 'complete' });
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockPushEventModel.createMany).toHaveBeenCalled();
+    });
+
+    it('rejects update when push_id is missing and no verifying push exists', async () => {
+      mockPushModel.findActiveByFacilities.mockResolvedValue([]);
       await FirmwareService.handleUpdateStatus('fac-1', { status: 'success', target_type: 'gateway' });
       expect(mockPushModel.findById).not.toHaveBeenCalled();
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
+    });
+
+    it('resolves missing push_id to sole verifying push for facility', async () => {
+      mockPushModel.findActiveByFacilities.mockResolvedValue([mkVerifyingPush()]);
+      await FirmwareService.handleUpdateStatus('fac-1', { status: 'success', target_type: 'gateway' });
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+    });
+
+    it('accepts pushId camelCase alias', async () => {
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
+      await FirmwareService.handleUpdateStatus('fac-1', { pushId: 'push-1', status: 'success', target_type: 'gateway' });
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
     });
 
     it('does not re-update an already complete push', async () => {
@@ -560,9 +626,16 @@ describe('FirmwareService', () => {
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'verifying');
     });
 
-    it('logs warning for unknown status and does not update', async () => {
+    it('completes from transferring when success arrives without prior verifying', async () => {
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'transferring' }));
+      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'lock' });
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+    });
+
+    it('ignores non-success terminal aliases such as completed and applied', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
-      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'rebooting', target_type: 'gateway' });
+      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'completed', target_type: 'lock' });
+      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'applied', target_type: 'lock' });
       expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
     });
 
@@ -572,10 +645,10 @@ describe('FirmwareService', () => {
       expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
     });
 
-    it('rejects update when target_type does not match push target', async () => {
+    it('applies success even when target_type does not match push record', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ target_type: 'lock' }));
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
     });
 
     it('rejects update when push_id does not exist', async () => {
@@ -715,11 +788,10 @@ describe('FirmwareService', () => {
       expect(mockPushModel.updateProgressPercent).not.toHaveBeenCalled();
     });
 
-    it('ignores progress when target_type does not match push', async () => {
+    it('applies progress even when target_type does not match push', async () => {
       mockPushModel.findById.mockResolvedValue({ ...mockPush, target_type: 'lock' });
       await FirmwareService.handleProgress('fac-1', { push_id: 'push-1', target_type: 'gateway', progress_percent: 50 });
-      expect(mockPushEventModel.createMany).not.toHaveBeenCalled();
-      expect(mockPushModel.updateProgressPercent).not.toHaveBeenCalled();
+      expect(mockPushModel.updateProgressPercent).toHaveBeenCalledWith('push-1', 50, undefined);
     });
 
     it('skips progress for terminal push (complete)', async () => {
@@ -924,8 +996,9 @@ describe('FirmwareService', () => {
       broadcastSpy.mockRestore();
     });
 
-    it('marks active facility pushes failed and clears pending ACK resolvers', async () => {
+    it('pauses active transfers and arms reconnect grace instead of failing', async () => {
       const rejectSpy = jest.fn();
+      const graceSpy = jest.spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
       _testActivePushes.set('push-1', {
         cancel: false,
         nonce: 'n-1',
@@ -934,29 +1007,17 @@ describe('FirmwareService', () => {
           [0, { resolve: jest.fn(), reject: rejectSpy }],
         ]),
       });
-      mockPushModel.findById.mockResolvedValue({
-        id: 'push-1',
-        firmware_id: 'fw-1',
-        gateway_id: 'gw-1',
-        facility_id: 'fac-1',
-        target_type: 'gateway',
-        progress_percent: 25,
-        chunks_total: 10,
-        chunks_sent: 2,
-      });
+      mockPushModel.findActiveByFacilities.mockResolvedValue([
+        { id: 'push-v', status: 'verifying', facility_id: 'fac-1', target_type: 'gateway' },
+      ]);
 
       await FirmwareService.handleFacilityDisconnect('fac-1');
 
-      expect(mockPushModel.atomicFailIfActive).toHaveBeenCalledWith('push-1', expect.stringContaining('disconnected'));
+      expect(mockPushModel.atomicFailIfActive).not.toHaveBeenCalled();
       expect(rejectSpy).toHaveBeenCalled();
-      expect(broadcastSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'push-1' }),
-        'failed',
-        expect.any(Number),
-        expect.any(Number),
-        expect.any(Number),
-        expect.stringContaining('disconnected'),
-      );
+      expect(graceSpy).toHaveBeenCalledWith('push-1', expect.any(Number));
+      expect(broadcastSpy).not.toHaveBeenCalled();
+      graceSpy.mockRestore();
     });
   });
 
@@ -975,7 +1036,7 @@ describe('FirmwareService', () => {
       mockPushModel.findActiveByFacilities.mockResolvedValue([
         { id: 'p1', status: 'pending', facility_id: 'fac-1' },
         { id: 'p2', status: 'transferring', facility_id: 'fac-1' },
-        { id: 'p3', status: 'verifying', facility_id: 'fac-1' },
+        { id: 'p3', status: 'verifying', facility_id: 'fac-1', target_type: 'lock', progress_percent: 100 },
       ]);
 
       await FirmwareService.resumePendingForFacility('fac-1');
@@ -984,6 +1045,15 @@ describe('FirmwareService', () => {
       expect(executeSpy).toHaveBeenCalledWith('p1');
       expect(executeSpy).toHaveBeenCalledWith('p2');
       expect(executeSpy).not.toHaveBeenCalledWith('p3');
+      expect(mockUnicast).toHaveBeenCalledWith('fac-1', {
+        type: 'FIRMWARE_PUSH_RESUME',
+        pushes: [{
+          push_id: 'p3',
+          target_type: 'lock',
+          status: 'verifying',
+          progress_percent: 100,
+        }],
+      });
     });
 
     it('does not start duplicate resume tasks for same push', async () => {
@@ -1058,6 +1128,26 @@ describe('FirmwareService', () => {
         expect.any(Number),
         expect.any(String),
       );
+    });
+
+    it('re-arms transfer disconnect grace for in-flight transferring pushes', async () => {
+      const transferGraceSpy = jest
+        .spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace')
+        .mockImplementation(() => {});
+      const now = Date.now();
+      mockPushModel.findAllActive.mockResolvedValue([
+        {
+          id: 'transfer-1',
+          status: 'transferring',
+          updated_at: new Date(now - 2000),
+          target_type: 'gateway',
+        },
+      ]);
+
+      await FirmwareService.recoverInFlightStateOnStartup();
+
+      expect(transferGraceSpy).toHaveBeenCalledWith('transfer-1', expect.any(Number));
+      transferGraceSpy.mockRestore();
     });
   });
 });

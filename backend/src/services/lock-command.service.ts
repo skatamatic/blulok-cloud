@@ -26,8 +26,8 @@ interface PendingLockCommand {
  * Responsibilities:
  * - Transition devices into in-flight states ('locking' / 'unlocking') while commands are pending.
  * - Delegate command execution to GatewayService.
- * - Rely on device-sync as the source of truth for final lock status.
- * - Revert to the previous state if no device-sync arrives within a timeout window.
+ * - Rely on gateway state updates (`/devices/state`) as the source of truth for final lock status.
+ * - Revert to the previous state if no state update arrives within a timeout window.
  *
  * Design notes:
  * - This service maintains a small in-memory map of pending commands keyed by deviceId.
@@ -41,7 +41,7 @@ export class LockCommandService {
   private readonly gatewayService: GatewayService;
   private readonly pendingCommands = new Map<string, PendingLockCommand>();
 
-  // Default timeout (ms) before reverting lock status if no device-sync is received
+  // Default timeout (ms) before reverting lock status if no gateway state update is received
   private readonly defaultTimeoutMs: number;
 
   private constructor(timeoutMs?: number) {
@@ -65,7 +65,7 @@ export class LockCommandService {
    * - Loads the device and its gateway
    * - Updates lock_status to 'locking' / 'unlocking'
    * - Sends the lock command via GatewayService
-   * - Schedules a timeout to revert to previous status if no device-sync arrives
+   * - Schedules a timeout to revert to previous status if no gateway state update arrives
    */
   public async issueLockCommand(
     deviceId: string,
@@ -155,7 +155,7 @@ export class LockCommandService {
       };
     }
 
-    // Schedule timeout to revert if no device-sync resolves the transition
+    // Schedule timeout to revert if no gateway state update resolves the transition
     const timeoutHandle = setTimeout(
       () => void this.handleTimeout(deviceId, transitionalStatus, previousStatus),
       this.defaultTimeoutMs,

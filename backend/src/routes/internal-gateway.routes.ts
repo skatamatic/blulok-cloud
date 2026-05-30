@@ -18,7 +18,6 @@ import { TimeSyncService } from '@/services/time-sync.service';
 import { FallbackService } from '@/services/fallback.service';
 import {
   DeviceSyncService,
-  GatewayDeviceData,
   DeviceInventoryItem,
   DeviceStateUpdate,
   AccessDeviceInventoryItem,
@@ -126,37 +125,9 @@ router.post('/fallback-pass', authenticateToken, requireFacilityAdmin, asyncHand
   res.json({ success: true, routePass });
 }));
 
-// POST /api/v1/internal/gateway/device-sync
-// Simulate a gateway device inventory sync (used by inbound WS test app)
-const deviceSyncSchema = Joi.object({
-  tid: tidField,
-  facility_id: Joi.string().optional(),
-  devices: Joi.array().items(
-    Joi.object({
-      // Core identifiers – at least one of these is REQUIRED for proper mapping
-      serial: Joi.string().trim().min(1).optional(),
-      id: Joi.string().trim().min(1).optional(),
-      lockId: Joi.string().trim().min(1).optional(),
-
-      // Status and telemetry fields we actively use
-      firmwareVersion: Joi.string().optional(),
-      online: Joi.boolean().optional(),
-      locked: Joi.boolean().optional(),
-      batteryLevel: Joi.number().optional(),
-      lastSeen: Joi.string().optional(),
-
-      // Additional optional telemetry from gateway
-      lockNumber: Joi.number().optional(),
-      batteryUnit: Joi.string().optional(),
-      signalStrength: Joi.number().optional(),
-      temperatureValue: Joi.number().optional(),
-      temperatureUnit: Joi.string().optional(),
-    })
-      // Enforce that at least one identifier is present; otherwise reject the device payload
-      .or('serial', 'id', 'lockId')
-      .unknown(true) // Allow extra fields; we will ignore anything we don't need
-  ).required()
-});
+// ============================================================================
+// Access events + telemetry (non-inventory)
+// ============================================================================
 
 const accessEventSchema = Joi.object({
   event_id: Joi.string().required(),
@@ -218,66 +189,8 @@ const addLogSchema = Joi.alternatives().try(
   }),
 );
 
-router.post('/device-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = deviceSyncSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-
-  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
-  if (!facilityId) return;
-
-  const gatewayModel = new GatewayModel();
-  const gateway = await gatewayModel.findByFacilityId(facilityId);
-  if (!gateway) {
-    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
-    return;
-  }
-
-  // Perform sync
-  const rawDevices = value.devices as any[];
-
-  // Normalize incoming gateway device payloads into our internal GatewayDeviceData shape.
-  // - Accept both camelCase and snake_case for some fields (e.g. lockId / lock_id)
-  // - Map temperatureValue -> temperature
-  // - Preserve extra fields via spread so they are available in device_settings.gatewayData
-  const devices: GatewayDeviceData[] = rawDevices.map((d: any) => {
-    const normalized: GatewayDeviceData = {
-      ...d,
-      lockId: d.lockId ?? d.lock_id,
-      // Prefer explicit temperature field if present, otherwise fall back to temperatureValue
-      temperature: d.temperature ?? d.temperatureValue,
-    };
-
-    // Normalize lastSeen to Date when provided as string; otherwise let downstream logic handle defaults
-    if (typeof d.lastSeen === 'string') {
-      normalized.lastSeen = new Date(d.lastSeen);
-    }
-
-    return normalized;
-  });
-
-  await DeviceSyncService.getInstance().syncGatewayDevices(gateway.id, devices);
-  await DeviceSyncService.getInstance().updateDeviceStatuses(gateway.id, devices);
-
-  // Log deprecation warning
-  logger.warn(`[DEPRECATED] POST /device-sync called by facility ${facilityId} - use /devices/inventory and /devices/state instead`);
-
-  res.setHeader('X-Deprecated', 'Use /devices/inventory and /devices/state');
-  res.json({
-    success: true,
-    message: 'Device sync applied (deprecated - use /devices/inventory and /devices/state)',
-    data: {
-      gateway_id: gateway.id,
-      facility_id: facilityId,
-      received: devices.length
-    }
-  });
-}));
-
 // ============================================================================
-// NEW ENDPOINTS: Split inventory and state management
+// Device inventory and state (gateway PROXY contract)
 // ============================================================================
 
 // POST /api/v1/internal/gateway/devices/inventory
@@ -287,7 +200,6 @@ const lockInventoryFields = {
   lock_id: Joi.string().trim().min(1).required(),
   lock_number: Joi.number().optional(),
   state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
-  lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
   locked: Joi.boolean().optional(),
   battery_level: Joi.number().optional(),
   battery_unit: Joi.string().optional(),
@@ -302,7 +214,7 @@ const lockInventoryFields = {
 const accessInventoryFields = {
   kind: Joi.string().valid('access_control').required(),
   access_id: Joi.string().trim().min(1).required(),
-  relay_channel: Joi.number().integer().min(1).max(8).required(),
+  relay_channel: Joi.number().integer().min(1).max(8).default(1),
   device_type: Joi.string().valid('gate', 'door', 'elevator').optional(),
   name: Joi.string().trim().max(255).optional(),
   location_description: Joi.string().trim().max(255).optional(),
@@ -312,7 +224,7 @@ const accessInventoryFields = {
 };
 
 const lockInventoryItemSchema = Joi.object({
-  kind: Joi.string().valid('lock').optional(),
+  kind: Joi.string().valid('lock').required(),
   ...lockInventoryFields,
 });
 
@@ -331,7 +243,6 @@ const lockStateFields = {
   lock_number: Joi.number().optional(),
   serial: Joi.string().trim().min(1).optional(),
   state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
-  lock_state: Joi.string().valid('LOCKED', 'UNLOCKED', 'LOCKING', 'UNLOCKING', 'ERROR', 'UNKNOWN').optional(),
   locked: Joi.boolean().optional(),
   battery_level: Joi.number().optional(),
   battery_unit: Joi.string().optional(),
@@ -350,14 +261,14 @@ const lockStateFields = {
 const accessStateFields = {
   kind: Joi.string().valid('access_control').required(),
   access_id: Joi.string().trim().min(1).required(),
-  relay_channel: Joi.number().integer().min(1).max(8).required(),
+  relay_channel: Joi.number().integer().min(1).max(8).default(1),
   online: Joi.boolean().optional(),
   locked: Joi.boolean().optional(),
   last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
 };
 
 const lockStateUpdateSchema = Joi.object({
-  kind: Joi.string().valid('lock').optional(),
+  kind: Joi.string().valid('lock').required(),
   ...lockStateFields,
 });
 

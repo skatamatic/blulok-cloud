@@ -153,11 +153,13 @@ Unified internal routes (via `PROXY_REQUEST` or direct REST):
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /api/v1/internal/gateway/devices/inventory` | Reconcile locks (`lock_id`) and access keypads (`kind: access_control`, `access_id`, `relay_channel`) |
+**Definitive gateway payload field reference:** [`gateway-device-inventory-payload.md`](gateway-device-inventory-payload.md)
+
+| `POST /api/v1/internal/gateway/devices/inventory` | Reconcile locks (`kind: lock`, `lock_id`) and access keypads (`kind: access_control`, `access_id`, optional `relay_channel` default 1) |
 | `POST /api/v1/internal/gateway/devices/state` | Partial telemetry: locks use full telemetry; access uses `online` / `locked` only |
 | `GET /api/v1/internal/gateway/access-codes` | Poll keypad codes after access devices exist |
 
-**Removal policy:** inventory sync removes only auto-provisioned devices (`metadata.createdFromGatewaySync`, or legacy `createdFromInventorySync`). Manually created locks/access rows are never deleted by a gateway delta.
+**Removal policy:** inventory sync removes only auto-provisioned devices (`metadata.createdFromGatewaySync`). Manually created locks/access rows are never deleted by a gateway delta.
 
 **Access inventory example:**
 
@@ -165,7 +167,7 @@ Unified internal routes (via `PROXY_REQUEST` or direct REST):
 {
   "facility_id": "<uuid>",
   "devices": [
-    { "lock_id": "lock-serial-123" },
+    { "kind": "lock", "lock_id": "lock-serial-123" },
     { "kind": "access_control", "access_id": "KP-7F2A-001", "relay_channel": 2, "device_type": "door" }
   ]
 }

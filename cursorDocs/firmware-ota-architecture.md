@@ -42,6 +42,7 @@ The same firmware version string (e.g. `2.0.0`) can exist independently for diff
 
 - SHA-256 is computed at upload time and stored in the database.
 - Before starting a push, the stored binary is re-read and re-hashed to verify integrity against the database hash. If they differ, the push fails immediately.
+- Maximum upload size is **250MB** (`FIRMWARE_MAX_SIZE_MB` in `firmware-storage.factory.ts`; multer on `POST /firmware/upload` uses the same limit).
 
 ### Storage Path Safety
 
@@ -204,7 +205,7 @@ Sent from gateway to cloud to report apply/relay progress and **final outcome**.
 |-------|----------|-------------|
 | `push_id` | **Yes** | Must match `push_id` from the manifest JWT for this transfer |
 | `status` | **Yes** | See status mapping below |
-| `target_type` | Recommended | Should match manifest `target_type`; mismatches are rejected |
+| `target_type` | Recommended | Logged if mismatched; push is still updated when `push_id` matches |
 | `version` | Optional | Firmware version being applied (informational) |
 | `error` | Optional | Human-readable failure reason when `status` is `failed` or `error` |
 
@@ -219,16 +220,69 @@ Typical lock/friend_node lifecycle (gateway → cloud):
 ```
 
 `handleUpdateStatus` maps gateway status reports to push record updates:
-- `success` / `applied` → push status `complete`
+- `success` → push status `complete` (only terminal success value)
 - `failed` / `error` → push status `failed` with error message
 - `verifying` / `applying` → push status `verifying` (progress bar may already show 100% while BLE relay/install continues)
-- Any other status (e.g. `rebooting`, `completed`, `done`) → logged as unknown; push is **not** updated
+- Any other status (e.g. `completed`, `applied`, `rebooting`) → logged as unknown; push is **not** updated
 
-Terminal status updates (`success`/`applied`/`failed`/`error`) require **`push_id`** correlation to avoid mutating the wrong push.
+Terminal status updates (`success` / `failed` / `error`) require **`push_id`** correlation to avoid mutating the wrong push.
+
+The cloud replies to each `FIRMWARE_UPDATE_STATUS` with:
+
+```json
+{ "type": "FIRMWARE_UPDATE_STATUS_ACK", "push_id": "…", "accepted": true, "push_status": "complete" }
+```
+
+When `accepted` is `false`, `reason` explains why (e.g. `push not found`, `invalid push_id`). Gateways should log ACK failures — a stuck 100% UI with no `success` ACK means the status never reached the cloud.
+
+### Troubleshooting stuck at 100%
+
+The progress bar hits **100% / verifying** when the cloud finishes sending chunks — **before** any gateway status message. A stuck UI does **not** prove the gateway's `verifying` / `applying` / `success` messages were received.
+
+Check in order:
+
+1. **Gateway ACK** — after each `FIRMWARE_UPDATE_STATUS`, expect `FIRMWARE_UPDATE_STATUS_ACK`. If missing, message was not sent on `/ws/gateway` after `AUTH`, or JSON was invalid.
+2. **Backend logs** — search for `Firmware update status from facility=` with the `push_id`. No log line → message never arrived.
+3. **`push not found`** — `push_id` must match the manifest JWT `push_id`, not `nonce`.
+4. **`facility mismatch`** — `AUTH.facilityId` must match the push record's `facility_id`.
+5. **Push events API** — accepted gateway statuses are recorded as `info` events on the push (`Gateway status: success (1.1)`).
+6. **UI-only** — query `GET /firmware/push-status/:gatewayId?target_type=lock`. If DB shows `complete` but UI shows 100%, refresh or check dashboard WS connection.
+7. **Dead socket after reboot** — gateway may send `success` on a closed socket during reboot. See [Gateway reconnect hardening](#gateway-reconnect-hardening) below.
+
+### Gateway reconnect hardening
+
+If the gateway reboots while a push is `verifying`, the cloud keeps the push open (180s disconnect grace, then full verify timeout on reconnect). The gateway **must** recover terminal status itself — the cloud cannot infer install success from silence.
+
+**Recommended gateway behavior:**
+
+1. **Persist `push_id`** when the manifest JWT is accepted (flash/NVS). Keep it until `FIRMWARE_UPDATE_STATUS_ACK` confirms `accepted: true` and `push_status: "complete"`.
+2. **Reconnect WebSocket** as soon as the network stack is up after reboot.
+3. **AUTH first** — all firmware messages on a socket that has not completed `AUTH` are rejected.
+4. **On `FIRMWARE_PUSH_RESUME`** (cloud → gateway, sent after reconnect when verifying pushes exist):
+
+```json
+{
+  "type": "FIRMWARE_PUSH_RESUME",
+  "pushes": [
+    { "push_id": "…", "target_type": "lock", "status": "verifying", "progress_percent": 100 }
+  ]
+}
+```
+
+   For each listed `push_id`, if local OTA finished successfully, resend:
+
+```json
+{ "type": "FIRMWARE_UPDATE_STATUS", "push_id": "…", "target_type": "lock", "status": "success" }
+```
+
+5. **Wait for `FIRMWARE_UPDATE_STATUS_ACK`**. If missing, `accepted: false`, or socket drops again, **retry with backoff** (e.g. 2s → 5s → 15s) until ACK or local give-up timeout.
+6. **Idempotent** — resending `success` for an already-complete push is safe; cloud returns `accepted: true`.
+
+Without persist + reconnect + retry, a `success` sent on a dead socket is lost and the UI stays at 100% until verify timeout.
 
 ### 5. FIRMWARE_PROGRESS (optional)
 
-Optional gateway → cloud progress telemetry for dashboards. **Does not complete a push** — use `FIRMWARE_UPDATE_STATUS` with `status: "success"` or `"applied"` for that.
+Optional gateway → cloud progress telemetry for dashboards. **Does not complete a push** — use `FIRMWARE_UPDATE_STATUS` with `status: "success"` for that.
 
 ```json
 {
@@ -263,12 +317,20 @@ pending → transferring → verifying → complete
 
 1. **pending**: Push record created, background task spawned
 2. **transferring**: Manifest sent, chunks being delivered with ACK flow control
-3. **verifying**: All chunks delivered to the gateway. The cloud sets progress to **100%** and status to `verifying`. The gateway is applying (for `gateway` target) or BLE-relaying (for `lock`/`friend_node` targets) the firmware. Completion depends on `FIRMWARE_UPDATE_STATUS` with `push_id` and terminal `success`/`applied`; if no final status arrives before timeout (default 900s, `FIRMWARE_VERIFY_TIMEOUT_SEC`), the push is auto-failed.
-4. **complete**: Gateway confirmed firmware applied successfully via `FIRMWARE_UPDATE_STATUS` with `status: 'success'` or `'applied'` and the correct `push_id`
+3. **verifying**: All chunks delivered to the gateway. The cloud sets progress to **100%** and status to `verifying`. The gateway may report intermediate `FIRMWARE_UPDATE_STATUS` values `verifying` or `applying`. Completion requires **`status: "success"`** on `FIRMWARE_UPDATE_STATUS` (with `push_id`); that transitions to `complete` immediately even if no prior `verifying`/`applying` messages were received. If no `success` arrives before timeout (default **300s** for `gateway` via `FIRMWARE_GATEWAY_VERIFY_TIMEOUT_SEC`, **900s** for other targets via `FIRMWARE_VERIFY_TIMEOUT_SEC`), the push is auto-failed.
+4. **complete**: Gateway sent `FIRMWARE_UPDATE_STATUS` with **`status: "success"`** and the correct `push_id`.
 5. **failed**: Chunk ACK timeout after max retries, SHA-256 mismatch, gateway reported failure, gateway disconnect, or other error
 6. **cancelled**: User cancelled via API (atomic status transition); background task stops at next chunk boundary
 
-**Important:** `executePush` sets the status to `verifying` (NOT `complete`) after all chunks are sent and broadcasts **100%** progress. The final `complete` status is only set by `handleUpdateStatus` when the gateway reports `success`/`applied` with **`push_id`**. This prevents premature "complete" indicators for lock/friend_node targets where BLE relay is still in progress, and prevents `FIRMWARE_PROGRESS` alone from closing the push.
+**Important:** `executePush` sets the status to `verifying` (NOT `complete`) after all chunks are sent and broadcasts **100%** progress. Only **`FIRMWARE_UPDATE_STATUS` with `status: "success"`** closes the push. `verifying` / `applying` are optional progress signals; `FIRMWARE_PROGRESS` updates the UI only.
+
+**Gateway developer contract:** After install/reboot, send:
+
+```json
+{ "type": "FIRMWARE_UPDATE_STATUS", "push_id": "<uuid from manifest>", "target_type": "gateway", "status": "success" }
+```
+
+Use `push_id` (snake_case) or `pushId` (camelCase). Do **not** send manifest `nonce` instead of `push_id`.
 
 ## Pre-Push Checks
 
@@ -297,8 +359,10 @@ Before initiating a push, the system verifies:
 ## Gateway Disconnect Handling
 
 - When a gateway WebSocket disconnects, the transport layer notifies `FirmwareService.handleFacilityDisconnect(facilityId)`.
-- Any active firmware pushes for that facility are failed immediately (atomic non-terminal -> `failed`) and in-flight ACK waits are unblocked.
-- This avoids pushes getting stuck in `pending`/`transferring` and makes retry behavior explicit.
+- **`pending` / `transferring` pushes** (still in `activePushes`) are **paused**, not failed. In-flight chunk ACK waits are unblocked so `executePush` can unwind quickly. A **transfer reconnect grace timeout** is armed (default **10s** in development/test, **180s** in production via `FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC` or `FIRMWARE_VERIFY_DISCONNECT_GRACE_SEC`). If the gateway reconnects and re-`AUTH`s before grace expires, `resumePendingForFacility` calls `executePush`, which **resumes from `chunks_sent`** (re-sends manifest with a new `nonce`, then remaining chunks only).
+- **`verifying` pushes** (chunks already delivered; gateway may be rebooting) are **not** failed immediately. Instead a shorter grace timeout is armed (same default **180s**). On reconnect (`resumePendingForFacility`), the full verify timeout is re-armed and the cloud sends **`FIRMWARE_PUSH_RESUME`** listing verifying pushes so the gateway can resend terminal `FIRMWARE_UPDATE_STATUS`.
+- If the gateway does not reconnect within the grace window, the transfer or verify push is failed with a reconnect-timeout message.
+- This avoids pushes failing when Cloud Run / GLB recycles the WebSocket mid-transfer or mid-verify.
 
 ## Upload Race Condition Handling
 

@@ -17,7 +17,7 @@ import {
 } from '@/services/storage';
 import { logger } from '@/utils/logger';
 
-const FIRMWARE_MAX_SIZE_MB = 50;
+const FIRMWARE_MAX_SIZE_MB = 250;
 const FIRMWARE_MAX_SIZE_BYTES = FIRMWARE_MAX_SIZE_MB * 1024 * 1024;
 
 // ============================================================================

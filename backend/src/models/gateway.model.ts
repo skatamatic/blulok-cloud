@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../services/database.service';
 
 /**
@@ -124,8 +125,9 @@ export class GatewayModel {
 
   async create(data: CreateGatewayData): Promise<Gateway> {
     const knex = this.db.connection;
-    const [id] = await knex('gateways').insert(data);
-    return await this.findById(String(id)) as Gateway;
+    const id = uuidv4();
+    await knex('gateways').insert({ ...data, id });
+    return (await this.findById(id)) as Gateway;
   }
 
   async update(id: string, data: UpdateGatewayData): Promise<Gateway | null> {

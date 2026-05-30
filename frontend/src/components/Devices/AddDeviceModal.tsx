@@ -18,20 +18,26 @@ import { Modal } from '@/components/Modal/Modal';
 import { apiService } from '@/services/api.service';
 import { Facility, Gateway, Unit, CreateAccessControlDevicePayload } from '@/types/facility.types';
 import { mapDeviceApiErrorToFields } from '@/utils/deviceApiErrors';
+import { buildBluLokDeviceSettings } from '@/utils/deviceMetadataForm.utils';
 
 type HardwareKind = 'access_control' | 'blulok';
 type WizardStep = 'type' | 'location' | 'configure' | 'review';
 
 interface CreateAccessControlDeviceData extends CreateAccessControlDevicePayload {
   access_methods: Array<'app' | 'keypad' | 'fob'>;
+  supports_remote_lock: boolean;
 }
 
 interface CreateBluLokDeviceData {
   gateway_id: string;
   unit_id: string;
   device_serial: string;
+  serial: string;
+  lock_number: string;
   display_name: string;
+  location_description: string;
   firmware_version: string;
+  supports_remote_lock: boolean;
 }
 
 interface AddDeviceModalProps {
@@ -135,6 +141,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     location_description: '',
     relay_channel: 1,
     access_methods: ['app'],
+    supports_remote_lock: false,
     device_settings: {},
   });
 
@@ -142,8 +149,12 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     gateway_id: '',
     unit_id: '',
     device_serial: '',
+    serial: '',
+    lock_number: '',
     display_name: '',
+    location_description: '',
     firmware_version: '',
+    supports_remote_lock: false,
   });
 
   const [facilities, setFacilities] = useState<Facility[]>([]);
@@ -166,14 +177,19 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       location_description: '',
       relay_channel: 1,
       access_methods: ['app'],
+      supports_remote_lock: false,
       device_settings: {},
     });
     setBluLokData({
       gateway_id: '',
       unit_id: '',
       device_serial: '',
+      serial: '',
+      lock_number: '',
       display_name: '',
+      location_description: '',
       firmware_version: '',
+      supports_remote_lock: false,
     });
     setSelectedFacility(facilityId || '');
     setGateways([]);
@@ -288,6 +304,10 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
         }
       } else if (selectedDeviceType === 'blulok') {
         if (!bluLokData.device_serial.trim()) newErrors.device_serial = 'Hardware serial is required';
+        if (bluLokData.lock_number.trim()) {
+          const n = Number(bluLokData.lock_number);
+          if (!Number.isFinite(n)) newErrors.lock_number = 'Lock number must be numeric';
+        }
       }
     }
 
@@ -336,17 +356,26 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           location_description: accessControlData.location_description.trim(),
           relay_channel: accessControlData.relay_channel,
           access_methods: accessControlData.access_methods,
+          supports_remote_lock: accessControlData.supports_remote_lock,
         });
       } else {
+        const deviceSettings = buildBluLokDeviceSettings(undefined, {
+          lockNumber: bluLokData.lock_number,
+          displayName: bluLokData.display_name,
+          locationDescription: bluLokData.location_description,
+        });
         const payload: Record<string, unknown> = {
           gateway_id: bluLokData.gateway_id,
           device_serial: bluLokData.device_serial.trim(),
         };
         if (bluLokData.unit_id) payload.unit_id = bluLokData.unit_id;
+        if (bluLokData.serial.trim()) payload.serial = bluLokData.serial.trim();
         if (bluLokData.display_name.trim()) payload.name = bluLokData.display_name.trim();
         if (bluLokData.firmware_version.trim()) {
           payload.firmware_version = bluLokData.firmware_version.trim();
         }
+        if (bluLokData.supports_remote_lock) payload.supports_remote_lock = true;
+        if (Object.keys(deviceSettings).length > 0) payload.device_settings = deviceSettings;
         await apiService.createBluLokDevice(payload);
       }
 
@@ -565,7 +594,9 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Hardware serial *</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+              Hardware serial (access_id) *
+            </label>
             <input
               type="text"
               value={accessControlData.device_serial}
@@ -636,6 +667,19 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
               })}
             </div>
           </div>
+          <div className="flex items-center">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={accessControlData.supports_remote_lock}
+                onChange={(e) =>
+                  setAccessControlData((p) => ({ ...p, supports_remote_lock: e.target.checked }))
+                }
+                className="rounded border-gray-300 text-primary-600"
+              />
+              Supports remote lock (CLOSE) from cloud
+            </label>
+          </div>
         </>
       ) : (
         <>
@@ -654,7 +698,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                 htmlFor="add-blulok-serial"
                 className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
               >
-                Hardware serial <span className="text-red-500">*</span>
+                Hardware serial (lock_id) <span className="text-red-500">*</span>
               </label>
               <input
                 id="add-blulok-serial"
@@ -670,6 +714,45 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
               {errors.device_serial && (
                 <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.device_serial}</p>
               )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label
+                  htmlFor="add-blulok-lock-number"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+                >
+                  Lock number <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  id="add-blulok-lock-number"
+                  type="number"
+                  value={bluLokData.lock_number}
+                  onChange={(e) => setBluLokData((p) => ({ ...p, lock_number: e.target.value }))}
+                  className={`w-full rounded-lg border bg-white dark:bg-gray-700 px-3 py-2.5 text-gray-900 dark:text-white ${
+                    errors.lock_number ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
+                  }`}
+                  placeholder="2453"
+                />
+                {errors.lock_number && (
+                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.lock_number}</p>
+                )}
+              </div>
+              <div>
+                <label
+                  htmlFor="add-blulok-secondary-serial"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+                >
+                  Secondary serial <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  id="add-blulok-secondary-serial"
+                  type="text"
+                  value={bluLokData.serial}
+                  onChange={(e) => setBluLokData((p) => ({ ...p, serial: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 font-mono text-sm text-gray-900 dark:text-white"
+                />
+              </div>
             </div>
 
             <div>
@@ -705,6 +788,34 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                 placeholder="v2.1.0"
               />
             </div>
+
+            <div>
+              <label
+                htmlFor="add-blulok-location"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+              >
+                Location note <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                id="add-blulok-location"
+                type="text"
+                value={bluLokData.location_description}
+                onChange={(e) => setBluLokData((p) => ({ ...p, location_description: e.target.value }))}
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-gray-900 dark:text-white"
+              />
+            </div>
+
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={bluLokData.supports_remote_lock}
+                onChange={(e) =>
+                  setBluLokData((p) => ({ ...p, supports_remote_lock: e.target.checked }))
+                }
+                className="rounded border-gray-300 text-primary-600"
+              />
+              Supports remote lock (CLOSE) from cloud
+            </label>
           </div>
 
           <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
@@ -758,18 +869,23 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           ['Gateway', selectedGateway?.name || '—'],
           ...(selectedDeviceType === 'blulok'
             ? [
-                ['Serial', bluLokData.device_serial],
+                ['Serial (lock_id)', bluLokData.device_serial],
+                ['Lock number', bluLokData.lock_number || '—'],
+                ['Secondary serial', bluLokData.serial || '—'],
                 ['Display name', bluLokData.display_name.trim() || bluLokData.device_serial || '—'],
+                ['Location', bluLokData.location_description || '—'],
                 ['Unit', selectedUnit ? `Unit ${selectedUnit.unit_number}` : 'Unassigned'],
                 ['Firmware', bluLokData.firmware_version || '—'],
+                ['Remote lock', bluLokData.supports_remote_lock ? 'Yes' : 'No'],
               ]
             : [
                 ['Name', accessControlData.name],
                 ['Type', accessControlData.device_type],
-                ['Serial', accessControlData.device_serial],
+                ['Serial (access_id)', accessControlData.device_serial],
                 ['Relay', `#${accessControlData.relay_channel}`],
                 ['Location', accessControlData.location_description],
                 ['Access', accessControlData.access_methods.join(', ')],
+                ['Remote lock', accessControlData.supports_remote_lock ? 'Yes' : 'No'],
               ]),
         ].map(([label, value]) => (
           <div key={label} className="flex justify-between gap-4 bg-gray-50/50 dark:bg-gray-900/20 px-4 py-3 text-sm">

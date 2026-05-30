@@ -38,6 +38,7 @@ export interface UpdateAccessControlMetadataInput {
   location_description?: string;
   device_serial?: string;
   relay_channel?: number;
+  device_type?: 'gate' | 'elevator' | 'door';
   access_methods?: ('app' | 'keypad' | 'fob')[];
   supports_remote_lock?: boolean;
   device_settings?: Record<string, unknown>;
@@ -74,8 +75,6 @@ function applyIdentityOverrideMetadata(
 ): Record<string, unknown> {
   const next = { ...metadata };
   delete next.createdFromGatewaySync;
-  delete next.createdFromInventorySync;
-  delete next.autoCreated;
   next.adminIdentityOverride = true;
   next.previousIdentity = {
     ...previous,
@@ -288,6 +287,7 @@ export class DeviceMetadataService {
       location_description: input.location_description,
       device_serial: input.device_serial !== undefined ? nextSerial : undefined,
       relay_channel: input.relay_channel !== undefined ? nextRelay : undefined,
+      device_type: input.device_type,
       access_methods: input.access_methods,
       supports_remote_lock: input.supports_remote_lock,
       device_settings:

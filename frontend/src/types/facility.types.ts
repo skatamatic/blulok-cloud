@@ -106,6 +106,7 @@ export interface UpdateAccessControlDeviceMetadataPayload {
   location_description?: string;
   device_serial?: string;
   relay_channel?: number;
+  device_type?: 'gate' | 'elevator' | 'door';
   supports_remote_lock?: boolean;
   access_methods?: AccessMethod[];
   device_settings?: Record<string, unknown>;
@@ -274,6 +275,8 @@ export interface Unit {
   blulok_device?: {
     id: string;
     device_serial: string;
+    serial?: string;
+    device_settings?: Record<string, unknown>;
     /** Remote toggle is only valid for locked/unlocked; transitional or error states are read-only. */
     lock_status: string;
     /** When true, cloud may send remote lock. Default false — unlock-only from cloud. */

@@ -136,12 +136,9 @@ describe('DeviceSyncService', () => {
         gateway_id: gatewayId,
         device_serial: 'ABC123',
         serial: 'ABC123',
-        device_settings: JSON.stringify({ gatewayData: gatewayDevices[0] }),
-        metadata: JSON.stringify({
-          autoCreated: true,
+        metadata: {
           createdFromGatewaySync: true,
-          gatewayType: 'http'
-        }),
+        },
         supports_remote_lock: true,
       }]);
     });
@@ -544,7 +541,7 @@ describe('DeviceSyncService', () => {
         device_serial: 'LOCK-1',
         serial: 'LOCK-1',
         device_settings: { lockNumber: 101 },
-        metadata: { autoCreated: true, createdFromGatewaySync: true },
+        metadata: { createdFromGatewaySync: true },
         firmware_version: '1.0.0',
         supports_remote_lock: true,
       }]);
@@ -629,23 +626,33 @@ describe('DeviceSyncService', () => {
       });
     });
 
-    it('should not remove manual devices from empty inventory', async () => {
-      mockDeviceModel.findBluLokDevices.mockResolvedValue([
-        createDeviceWithContext({
-          id: 'device-1',
-          device_serial: 'LOCK-1',
-          metadata: {},
-        }),
+    it('should apply state fields when provisioning a new device in one inventory payload', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
+      mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        {
+          lock_id: 'LOCK-NEW',
+          lock_number: 201,
+          state: 'OPENED',
+          battery_level: 3300,
+          online: false,
+          signal_strength: -70,
+        },
       ]);
 
-      const result = await deviceSyncService.syncDeviceInventory(gatewayId, []);
-
-      expect(result.removed).toBe(0);
-      expect(result.skipped_manual).toBe(1);
-      expect(mockDeleteBluLokFromInventory).not.toHaveBeenCalled();
+      expect(result.added).toBe(1);
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalled();
+      expect(mockDeviceModel.updateBluLokDeviceState).toHaveBeenCalledWith('LOCK-NEW', {
+        lock_status: 'unlocked',
+        battery_level: 3300,
+        device_status: 'offline',
+        signal_strength: -70,
+      });
     });
 
-    it('should remove sync-managed devices from empty inventory', async () => {
+    it('should not remove manual devices from empty inventory', async () => {
       mockDeviceModel.findBluLokDevices.mockResolvedValue([
         createDeviceWithContext({
           id: 'device-1',
@@ -730,7 +737,7 @@ describe('DeviceSyncService', () => {
           relay_channel: 2,
           device_type: 'gate',
           access_methods: ['keypad'],
-          metadata: { autoCreated: true, createdFromGatewaySync: true },
+          metadata: { createdFromGatewaySync: true },
         }),
       ]);
       expect(mockPushCodesToGateway).toHaveBeenCalledWith(facilityId);
@@ -904,22 +911,22 @@ describe('DeviceSyncService', () => {
       mockDeviceModel.updateAccessControlDeviceBySerialAndRelay.mockResolvedValue(null);
 
       const result = await deviceSyncService.updateAccessDeviceStates(gatewayId, [
-        { kind: 'access_control', access_id: 'KP-MISSING', relay_channel: 9, online: false },
+        { kind: 'access_control', access_id: 'KP-MISSING', relay_channel: 2, online: false },
       ]);
 
       expect(result.updated).toBe(0);
-      expect(result.not_found).toEqual(['KP-MISSING::9']);
+      expect(result.not_found).toEqual(['KP-MISSING::2']);
     });
   });
 
   describe('updateDeviceStates', () => {
     const gatewayId = 'gateway-123';
 
-    it('should update lock_state to lock_status', async () => {
+    it('should map state to lock_status', async () => {
       mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
-        { lock_id: 'LOCK-1', lock_state: 'LOCKED' },
+        { kind: 'lock', lock_id: 'LOCK-1', state: 'CLOSED' },
       ]);
 
       expect(result.updated).toBe(1);
@@ -933,7 +940,7 @@ describe('DeviceSyncService', () => {
       mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
-        { lock_id: 'LOCK-1', online: true },
+        { kind: 'lock', lock_id: 'LOCK-1', online: true },
       ]);
 
       expect(result.updated).toBe(1);
@@ -947,8 +954,9 @@ describe('DeviceSyncService', () => {
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
         {
+          kind: 'lock',
           lock_id: 'LOCK-1',
-          lock_state: 'UNLOCKED',
+          state: 'OPENED',
           battery_level: 85,
           online: true,
           signal_strength: -65,
@@ -997,7 +1005,7 @@ describe('DeviceSyncService', () => {
       mockDeviceModel.updateBluLokDeviceState.mockResolvedValue(true);
 
       const result = await deviceSyncService.updateDeviceStates(gatewayId, [
-        { lock_id: 'LOCK-1', lock_state: 'ERROR', error_code: 'E001', error_message: 'Motor stuck' },
+        { kind: 'lock', lock_id: 'LOCK-1', state: 'ERROR', error_code: 'E001', error_message: 'Motor stuck' },
       ]);
 
       expect(result.updated).toBe(1);

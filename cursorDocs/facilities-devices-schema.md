@@ -263,17 +263,17 @@ The gateway uses two endpoints for device management:
 
 **1. Inventory Sync** (`POST /api/v1/internal/gateway/devices/inventory`)
 - Syncs the full device inventory for a gateway (locks and access control in one `devices[]` array)
-- **Locks** (`lock_id`, optional `kind: "lock"`): rows in `blulok_devices`
-- **Access control** (`kind: "access_control"`, `access_id` + `relay_channel`): rows in `access_control_devices`. Identity is **hardware serial + relay** (parallel to `lock_id` for BluLok). `relay_channel` is actuation config (which gateway output to pulse).
+- **Locks** (`kind: "lock"`, `lock_id` required): rows in `blulok_devices`
+- **Access control** (`kind: "access_control"`, `access_id` + optional `relay_channel`, default **1**): rows in `access_control_devices`. Identity is **hardware serial + relay** (parallel to `lock_id` for BluLok). `relay_channel` is actuation config (which gateway output to pulse).
 - Devices in the array that don't exist are created (access auto-provision uses `access_methods: ["keypad"]`, `metadata.createdFromGatewaySync: true`)
-- **Removal policy:** only auto-provisioned devices (`metadata.createdFromGatewaySync`, or legacy `createdFromInventorySync`) are removed when omitted; admin-created devices are preserved
+- **Removal policy:** only auto-provisioned devices (`metadata.createdFromGatewaySync`) are removed when omitted; admin-created devices are preserved
 - Include both lock and access items in the same payload when reconciling a full gateway inventory
 
 ```json
 {
   "facility_id": "uuid",
   "devices": [
-    { "lock_id": "serial-or-uuid", "lock_number": 101, "firmware_version": "1.0.0" },
+    { "kind": "lock", "lock_id": "serial-or-uuid", "lock_number": 101, "firmware_version": "1.0.0" },
     { "kind": "access_control", "access_id": "KP-7F2A-001", "relay_channel": 2, "device_type": "door", "name": "Main keypad" }
   ]
 }
@@ -290,8 +290,9 @@ Response includes lock counts at the top level and, when access items were sent,
   "facility_id": "uuid",
   "updates": [
     {
+      "kind": "lock",
       "lock_id": "serial-or-uuid",
-      "lock_state": "LOCKED",
+      "state": "CLOSED",
       "battery_level": 3423,
       "online": true
     },
@@ -305,11 +306,6 @@ Response includes lock counts at the top level and, when access items were sent,
   ]
 }
 ```
-
-**Legacy** (`POST /api/v1/internal/gateway/device-sync`) - DEPRECATED
-- Combined inventory and state sync
-- Returns `X-Deprecated` header
-- Use `/devices/inventory` + `/devices/state` instead
 
 ### Admin REST API (frontend / manual provisioning)
 

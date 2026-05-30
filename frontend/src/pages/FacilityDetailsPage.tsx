@@ -54,6 +54,10 @@ import { withReturnPath, useDetailsBackNavigation } from '@/hooks/useBackNavigat
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
+import {
+  formatBluLokDeviceSubtitle,
+  formatBluLokLockNumberLabel,
+} from '@/utils/blulokDeviceDisplay.utils';
 import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
@@ -1174,11 +1178,15 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                                 </div>
                                 <div className="ml-3">
                                   <div className="text-sm font-medium text-gray-900 dark:text-white">
-                                    {isBlulok ? `Unit ${blulokDevice.unit_number ?? blulokDevice.device_serial}` : accessDevice.name}
+                                    {isBlulok
+                                      ? formatBluLokLockNumberLabel(blulokDevice)
+                                      : accessDevice.name}
                                   </div>
                                   <div className="text-sm text-gray-500 dark:text-gray-400">
                                     {isBlulok
-                                      ? blulokDevice.device_serial
+                                      ? `${formatBluLokDeviceSubtitle(blulokDevice)}${
+                                          blulokDevice.unit_number ? ` · Unit ${blulokDevice.unit_number}` : ''
+                                        }`
                                       : formatAccessDeviceListSubtitle(accessDevice)}
                                   </div>
                                 </div>

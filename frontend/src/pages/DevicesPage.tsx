@@ -32,6 +32,10 @@ import { withReturnPath } from '@/hooks/useBackNavigation';
 import { ViewModeToggle } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
+import {
+  formatBluLokDeviceSubtitle,
+  formatBluLokLockNumberLabel,
+} from '@/utils/blulokDeviceDisplay.utils';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -544,11 +548,15 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                         </div>
                         <div className="ml-3">
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
-                            {isBlulok ? `Unit ${blulokDevice.unit_number}` : accessDevice.name}
+                            {isBlulok
+                              ? formatBluLokLockNumberLabel(blulokDevice)
+                              : accessDevice.name}
                           </div>
                           <div className="text-sm text-gray-500 dark:text-gray-400">
                             {isBlulok
-                              ? blulokDevice.device_serial
+                              ? `${formatBluLokDeviceSubtitle(blulokDevice)}${
+                                  blulokDevice.unit_number ? ` · Unit ${blulokDevice.unit_number}` : ''
+                                }`
                               : formatAccessDeviceListSubtitle(accessDevice)}
                           </div>
                         </div>

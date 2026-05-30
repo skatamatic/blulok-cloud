@@ -118,6 +118,25 @@ export type FirmwareUpdateStatusMessage = {
   message?: string;
 };
 
+export type FirmwareUpdateStatusAckMessage = {
+  type: 'FIRMWARE_UPDATE_STATUS_ACK';
+  push_id?: string;
+  accepted: boolean;
+  push_status?: 'pending' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
+  reason?: string;
+};
+
+/** Cloud → gateway: sent after reconnect when pushes await final FIRMWARE_UPDATE_STATUS. */
+export type FirmwarePushResumeMessage = {
+  type: 'FIRMWARE_PUSH_RESUME';
+  pushes: Array<{
+    push_id: string;
+    target_type: 'gateway' | 'lock' | 'friend_node' | 'access_control';
+    status: 'verifying';
+    progress_percent?: number;
+  }>;
+};
+
 export type FirmwareProgressDeviceReport = {
   device_id?: string;
   deviceId?: string;
@@ -152,6 +171,7 @@ export type GatewayOutboundMessage =
   | CommandMessage
   | FirmwareManifestMessage
   | FirmwareChunkMessage
+  | FirmwarePushResumeMessage
   | AccessCodeUpdateMessage;
 
 // Minimal runtime guards (no zod dependency)

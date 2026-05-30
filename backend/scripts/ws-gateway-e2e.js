@@ -78,6 +78,15 @@ function resolveE2eEndpoints() {
 }
 
 const { API_BASE, WS_URL, UI_WS_URL, port: E2E_RESOLVED_PORT, portSource: E2E_PORT_SOURCE } = resolveE2eEndpoints();
+
+/** Gateway PROXY inventory/state payloads require explicit kind. */
+function gwLockDevice(fields) {
+  return { kind: 'lock', ...fields };
+}
+
+function gwAccessDevice(fields) {
+  return { kind: 'access_control', ...fields };
+}
 const EMAIL = process.env.DEV_ADMIN_EMAIL || 'devadmin@blulok.com';
 const PASSWORD = process.env.DEV_ADMIN_PASSWORD || 'DevAdmin123!@#';
 const VERBOSE = process.env.E2E_VERBOSE === '1' || process.env.VERBOSE === '1' || process.argv.includes('--verbose');
@@ -514,8 +523,10 @@ async function waitForGatewayEvent(predicate, timeoutMs = 5000) {
   throw new Error('Timed out waiting for gateway WS event');
 }
 
-function deviceSync(ws, facilityId, devices, id) {
-  return proxyWs(ws, id, 'POST', `/internal/gateway/device-sync`, { body: { devices, facility_id: facilityId } });
+function inventorySync(ws, facilityId, devices, id, extra = {}) {
+  return proxyWs(ws, id, 'POST', `/internal/gateway/devices/inventory`, {
+    body: { devices, facility_id: facilityId, ...extra },
+  });
 }
 
 // Verbose HTTP logging
@@ -641,8 +652,9 @@ async function createGateway(token, facilityId, name = 'E2E Test Gateway') {
     base_url: 'http://127.0.0.1', // placeholder for dev
     status: 'online'
   }, { headers: { Authorization: `Bearer ${token}` } });
-  const gw = res.data?.gateway || res.data;
-  return gw?.id || null;
+  const gw = res.data?.gateway;
+  if (gw?.id) return gw.id;
+  throw new Error(`Gateway create failed: ${res.status} ${JSON.stringify(res.data)}`);
 }
 
 async function getFacilityHierarchy(token, facilityId) {
@@ -1312,10 +1324,11 @@ async function run() {
   step('Creating E2E test facility');
   const facilityId = await createTestFacility(token, 'E2E-Test-Facility');
   ok(`Facility created: ${facilityId}`);
-  // Ensure a gateway record exists for this facility (required by device-sync)
+  // Ensure a gateway record exists for this facility (required by inventory sync)
   step('Ensuring gateway exists for facility');
   let gatewayId = await createGateway(token, facilityId, 'E2E Test Gateway').catch(() => null);
-  ok(`Gateway record ${gatewayId ? 'created' : 'will be created by sync'}`);
+  if (!gatewayId) throw new Error('Gateway record required for inventory sync');
+  ok(`Gateway record created: ${gatewayId}`);
   // Track created resources for cleanup
   const created = {
     facilityId,
@@ -1351,7 +1364,7 @@ async function run() {
 
   heading('Environment');
   info(`Using facility=${facilityId}`);
-  info(`Gateway=${gatewayId || 'pending (after device-sync)'}`);
+  info(`Gateway=${gatewayId}`);
 
   step('Provisioning facility admin for coverage');
   const facilityAdminEmail = `fac-admin-${Date.now()}@test.com`;
@@ -1671,44 +1684,81 @@ async function run() {
     const applied = await axios.post(`${API_BASE}/fms/changes/apply`, { syncLogId, changeIds }, { headers: { Authorization: `Bearer ${token}` } });
     ok(`FMS changes applied: ${applied.data?.result?.changesApplied || changeIds.length}`);
 
-    // Phase 1: Simulate realistic gateway device syncs (add, then remove)
-    heading('Gateway Device Sync');
-    step('Initial device sync (add 3 devices)');
+    // Phase 1: Simulate realistic gateway inventory syncs (add, then remove)
+    heading('Gateway Device Inventory');
+    step('Initial inventory sync (add 3 devices)');
+    const inventoryTs = Date.now();
     const initialDevices = [
-      {
-        serial: `GW-E2E-${Date.now()}-1`,
-        firmwareVersion: '3A0-001',
+      gwLockDevice({
+        lock_id: `GW-E2E-${inventoryTs}-1`,
+        firmware_version: '3A0-001',
         online: true,
         locked: false,
-        batteryLevel: 3450,
-        lockNumber: 495,
-        batteryUnit: 'mV',
-        signalStrength: 80,
-        temperatureValue: 21.5,
-        temperatureUnit: 'C',
-        lastSeen: new Date().toISOString(),
-      },
-      { serial: `GW-E2E-${Date.now()}-2`, firmwareVersion: '3A0-001', online: false, locked: false, batteryLevel: 3400 },
-      { serial: `GW-E2E-${Date.now()}-3`, firmwareVersion: '3A0-001', online: true, locked: true, batteryLevel: 3300 },
+        battery_level: 3450,
+        lock_number: 495,
+        battery_unit: 'mV',
+        signal_strength: 80,
+        temperature_value: 21.5,
+        temperature_unit: 'C',
+        last_seen: new Date().toISOString(),
+      }),
+      gwLockDevice({
+        lock_id: `GW-E2E-${inventoryTs}-2`,
+        firmware_version: '3A0-001',
+        online: false,
+        locked: false,
+        battery_level: 3400,
+      }),
+      gwLockDevice({
+        lock_id: `GW-E2E-${inventoryTs}-3`,
+        firmware_version: '3A0-001',
+        online: true,
+        locked: true,
+        battery_level: 3300,
+      }),
     ];
-    const reqSync1 = 'req-internal-sync-1';
-    ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqSync1, method: 'POST', path: `/internal/gateway/device-sync`, body: { tid: 'sync-1', devices: initialDevices, facility_id: facilityId } }));
+    const reqSync1 = 'req-internal-inventory-1';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqSync1,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: { tid: 'sync-1', devices: initialDevices, facility_id: facilityId },
+    }));
     const respSync1 = await waitForProxyResponse(ws, reqSync1);
-    if (respSync1.status !== 200 || !respSync1.body?.success) throw new Error(`Device sync (add) failed: ${respSync1.status}`);
+    if (respSync1.status !== 200 || !respSync1.body?.success) throw new Error(`Inventory sync (add) failed: ${respSync1.status}`);
     if (respSync1.body?.data?.gateway_id) {
       gatewayId = respSync1.body.data.gateway_id;
       created.gatewayId = gatewayId;
       info(`Resolved gateway_id=${gatewayId}`);
     }
-    ok(`Added ${initialDevices.length} devices via device-sync`);
+    ok(`Added ${initialDevices.length} devices via inventory sync`);
 
     // Keep first device; remove others
-    const remainingSerial = initialDevices[0].serial;
-    step('Second device sync (remove others, keep 1)');
-    const reqSync2 = 'req-internal-sync-2';
-    ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id: reqSync2, method: 'POST', path: `/internal/gateway/device-sync`, body: { devices: [{ serial: remainingSerial, firmwareVersion: '3A0-001', online: true, locked: false, batteryLevel: 3450 }], facility_id: facilityId } }));
+    const remainingSerial = initialDevices[0].lock_id;
+    step('Second inventory sync (remove others, keep 1)');
+    const reqSync2 = 'req-internal-inventory-2';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqSync2,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        devices: [
+          gwLockDevice({
+            lock_id: remainingSerial,
+            firmware_version: '3A0-001',
+            online: true,
+            locked: false,
+            battery_level: 3450,
+            lock_number: initialDevices[0].lock_number,
+          }),
+        ],
+        facility_id: facilityId,
+      },
+    }));
     const respSync2 = await waitForProxyResponse(ws, reqSync2);
-    if (respSync2.status !== 200 || !respSync2.body?.success) throw new Error(`Device sync (remove) failed: ${respSync2.status}`);
+    if (respSync2.status !== 200 || !respSync2.body?.success) throw new Error(`Inventory sync (remove) failed: ${respSync2.status}`);
     ok('Device inventory reduced to 1');
 
     // Resolve remaining deviceId
@@ -1724,28 +1774,15 @@ async function run() {
         throw new Error('Remaining device not found in unassigned devices list');
       }
 
-      // Validate that gateway device sync telemetry and extra fields were preserved
-      const gatewayData = (match.device_settings && match.device_settings.gatewayData) || {};
-      if (!gatewayData || typeof gatewayData !== 'object') {
-        throw new Error('gatewayData missing on synced device');
+      if ((match.device_serial || '').toLowerCase() !== remainingSerial.toLowerCase()) {
+        throw new Error(`device_serial mismatch; expected ${remainingSerial}, got ${match.device_serial}`);
       }
-
-      // Check that key telemetry fields and extras came through from internal gateway/device-sync
-      if (gatewayData.serial !== remainingSerial) {
-        throw new Error(`gatewayData.serial mismatch; expected ${remainingSerial}, got ${gatewayData.serial}`);
+      const lockNumber = match.device_settings?.lockNumber;
+      if (lockNumber !== initialDevices[0].lock_number) {
+        throw new Error(`device_settings.lockNumber mismatch; expected ${initialDevices[0].lock_number}, got ${lockNumber}`);
       }
-      if (gatewayData.lockNumber !== initialDevices[0].lockNumber) {
-        throw new Error(`gatewayData.lockNumber mismatch; expected ${initialDevices[0].lockNumber}, got ${gatewayData.lockNumber}`);
-      }
-      if (gatewayData.signalStrength !== initialDevices[0].signalStrength) {
-        throw new Error(`gatewayData.signalStrength mismatch; expected ${initialDevices[0].signalStrength}, got ${gatewayData.signalStrength}`);
-      }
-      if (gatewayData.temperatureValue !== initialDevices[0].temperatureValue) {
-        throw new Error(`gatewayData.temperatureValue mismatch; expected ${initialDevices[0].temperatureValue}, got ${gatewayData.temperatureValue}`);
-      }
-      // Normalized temperature field should mirror temperatureValue
-      if (gatewayData.temperature !== initialDevices[0].temperatureValue) {
-        throw new Error(`gatewayData.temperature normalization mismatch; expected ${initialDevices[0].temperatureValue}, got ${gatewayData.temperature}`);
+      if (!match.metadata?.createdFromGatewaySync) {
+        throw new Error('Expected metadata.createdFromGatewaySync on inventory-provisioned device');
       }
     } catch {}
     if (!deviceId) throw new Error('Remaining device not found after sync');
@@ -2073,38 +2110,38 @@ async function run() {
       ok('Gateway telemetry logs E2E complete');
     }
 
-    // Negative test: device-sync should reject devices without any identifiers
-    step('Negative device-sync payload (missing identifiers) should be rejected');
-    const badSyncId = 'req-internal-sync-bad';
+    // Negative test: inventory sync should reject invalid lock items
+    step('Negative inventory payload (missing kind/lock_id) should be rejected');
+    const badSyncId = 'req-internal-inventory-bad';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
       id: badSyncId,
       method: 'POST',
-      path: `/internal/gateway/device-sync`,
+      path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
-        devices: [{ batteryLevel: 10 }],
+        devices: [{ battery_level: 10 }],
       },
     }));
     const badSyncResp = await waitForProxyResponse(ws, badSyncId);
     if (badSyncResp.status !== 400) {
-      throw new Error(`Expected 400 for invalid device-sync payload, got ${badSyncResp.status}`);
+      throw new Error(`Expected 400 for invalid inventory payload, got ${badSyncResp.status}`);
     }
-    step('Negative device-sync payload (blank identifier) should be rejected');
-    const blankIdSyncId = 'req-internal-sync-blank-id';
+    step('Negative inventory payload (blank lock_id) should be rejected');
+    const blankIdSyncId = 'req-internal-inventory-blank-id';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
       id: blankIdSyncId,
       method: 'POST',
-      path: `/internal/gateway/device-sync`,
+      path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
-        devices: [{ serial: '   ' }],
+        devices: [gwLockDevice({ lock_id: '   ' })],
       },
     }));
     const blankIdSyncResp = await waitForProxyResponse(ws, blankIdSyncId);
     if (blankIdSyncResp.status !== 400) {
-      throw new Error(`Expected 400 for blank identifier device-sync payload, got ${blankIdSyncResp.status}`);
+      throw new Error(`Expected 400 for blank lock_id inventory payload, got ${blankIdSyncResp.status}`);
     }
 
     step('Negative BluLok create payload (conflicting serial aliases) should be rejected');
@@ -2147,9 +2184,9 @@ async function run() {
         facility_id: facilityId,
         tid: 1,
         devices: [
-          { lock_id: remainingSerial }, // Keep original device!
+          gwLockDevice({ lock_id: remainingSerial }), // Keep original device!
           // New format with all state fields included in inventory
-          { 
+          gwLockDevice({ 
             lock_id: inventorySerial1, 
             lock_number: 201, 
             firmware_version: '3A0-002',
@@ -2162,15 +2199,15 @@ async function run() {
             locked: true,
             online: false,
             last_seen: new Date().toISOString(),
-          },
-          { 
+          }),
+          gwLockDevice({ 
             lock_id: inventorySerial2, 
             lock_number: 202, 
             firmware_version: '3A0-001',
             state: 'OPENED',
             battery_level: 3200,
             online: true,
-          },
+          }),
         ],
       },
     }));
@@ -2197,7 +2234,7 @@ async function run() {
         tid: 2,
         updates: [
           // New format matching gateway payload
-          { 
+          gwLockDevice({ 
             lock_id: inventorySerial1, 
             lock_number: 16136,
             state: 'CLOSED', // Maps to lock_status: 'locked'
@@ -2207,8 +2244,8 @@ async function run() {
             signal_strength: -55,
             temperature_value: 24,
             temperature_unit: '°C',
-          },
-          { 
+          }),
+          gwLockDevice({ 
             lock_id: inventorySerial2, 
             state: 'OPENED', // Maps to lock_status: 'unlocked'
             battery_level: 3200, 
@@ -2216,7 +2253,7 @@ async function run() {
             temperature_value: 22.5,
             locked: false, // Boolean fallback
             online: false,
-          },
+          }),
         ],
       },
     }));
@@ -2241,8 +2278,8 @@ async function run() {
       body: {
         facility_id: facilityId,
         devices: [
-          { lock_id: remainingSerial }, // Keep original device!
-          { lock_id: inventorySerial1, lock_number: 201 }, // Keep this one too
+          gwLockDevice({ lock_id: remainingSerial }), // Keep original device!
+          gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }), // Keep this one too
           // inventorySerial2 is removed
         ],
       },
@@ -2268,8 +2305,8 @@ async function run() {
       body: {
         facility_id: facilityId,
         devices: [
-          { lock_id: remainingSerial },
-          {
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({
             lock_id: inventorySerial1,
             lock_number: 201,
             battery_level: inventoryRefreshBattery,
@@ -2277,7 +2314,7 @@ async function run() {
             state: 'CLOSED',
             online: true,
             locked: true,
-          },
+          }),
         ],
       },
     }));
@@ -2312,8 +2349,8 @@ async function run() {
       body: {
         facility_id: facilityId,
         devices: [
-          { lock_id: remainingSerial },
-          { lock_id: inventorySerial1, lock_number: 201 },
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
         ],
       },
     }));
@@ -2342,7 +2379,7 @@ async function run() {
       body: {
         facility_id: facilityId,
         updates: [
-          { lock_id: 'NON-EXISTENT-LOCK', battery_level: 50 },
+          gwLockDevice({ lock_id: 'NON-EXISTENT-LOCK', battery_level: 50 }),
         ],
       },
     }));
@@ -2372,15 +2409,14 @@ async function run() {
       body: {
         facility_id: facilityId,
         devices: [
-          { lock_id: remainingSerial },
-          { lock_id: inventorySerial1, lock_number: 201 },
-          {
-            kind: 'access_control',
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+          gwAccessDevice({
             access_id: accessSerialMulti,
             relay_channel: accessRelayPrimary,
             device_type: 'door',
             name: 'E2E Keypad',
-          },
+          }),
         ],
       },
     }));
@@ -2404,13 +2440,12 @@ async function run() {
       body: {
         facility_id: facilityId,
         updates: [
-          {
-            kind: 'access_control',
+          gwAccessDevice({
             access_id: accessSerialMulti,
             relay_channel: accessRelayPrimary,
             online: true,
             locked: true,
-          },
+          }),
         ],
       },
     }));
@@ -2434,14 +2469,13 @@ async function run() {
       body: {
         facility_id: facilityId,
         devices: [
-          { lock_id: remainingSerial },
-          { lock_id: inventorySerial1, lock_number: 201 },
-          {
-            kind: 'access_control',
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+          gwAccessDevice({
             access_id: accessSerialMulti,
             relay_channel: accessRelaySecondary,
             device_type: 'gate',
-          },
+          }),
         ],
       },
     }));
@@ -2466,7 +2500,7 @@ async function run() {
       path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
-        devices: [{ kind: 'access_control', relay_channel: 1 }],
+        devices: [gwAccessDevice({ relay_channel: 1 })],
       },
     }));
     const respAccessInvBad = await waitForProxyResponse(ws, reqAccessInvBad);
@@ -2553,7 +2587,7 @@ async function run() {
         body: {
           facility_id: facilityId,
           devices: [
-            { lock_id: remainingSerial }, // Keep only the original device
+            gwLockDevice({ lock_id: remainingSerial }), // Keep only the original device
             // inventorySerial1 (which is assigned to unit) will be removed
           ],
         },
@@ -2628,7 +2662,7 @@ async function run() {
       path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
-        devices: [{ lock_id: remainingSerial }], // Keep only the original device
+        devices: [gwLockDevice({ lock_id: remainingSerial })], // Keep only the original device
       },
     }));
     await waitForProxyResponse(ws, reqInventoryCleanup);
@@ -2636,22 +2670,25 @@ async function run() {
 
     heading('Device commissioning — HTTP unassign and cloud inventory removal');
     const disposableSerial = `GW-E2E-HTTP-REMOVE-${Date.now()}`;
-    step('Gateway sync: add disposable lock for commissioning API tests');
+    step('Gateway inventory: add disposable lock for commissioning API tests');
     const reqDisposableSync = 'req-disposable-sync';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
       id: reqDisposableSync,
       method: 'POST',
-      path: `/internal/gateway/device-sync`,
+      path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
-        devices: [{
-          serial: disposableSerial,
-          firmwareVersion: '3A0-001',
-          online: true,
-          locked: false,
-          batteryLevel: 3400,
-        }],
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({
+            lock_id: disposableSerial,
+            firmware_version: '3A0-001',
+            online: true,
+            locked: false,
+            battery_level: 3400,
+          }),
+        ],
       },
     }));
     const respDisposableSync = await waitForProxyResponse(ws, reqDisposableSync);
@@ -2711,10 +2748,18 @@ async function run() {
         type: 'PROXY_REQUEST',
         id: reqRbacSync,
         method: 'POST',
-        path: `/internal/gateway/device-sync`,
+        path: `/internal/gateway/devices/inventory`,
         body: {
           facility_id: facilityId,
-          devices: [{ serial: rbacSerial, firmwareVersion: '3A0-001', online: true, locked: false }],
+          devices: [
+            gwLockDevice({ lock_id: remainingSerial }),
+            gwLockDevice({
+              lock_id: rbacSerial,
+              firmware_version: '3A0-001',
+              online: true,
+              locked: false,
+            }),
+          ],
         },
       }));
       const respRbacSync = await waitForProxyResponse(ws, reqRbacSync);
@@ -2747,16 +2792,18 @@ async function run() {
         type: 'PROXY_REQUEST',
         id: reqRestorePrimary,
         method: 'POST',
-        path: `/internal/gateway/device-sync`,
+        path: `/internal/gateway/devices/inventory`,
         body: {
           facility_id: facilityId,
-          devices: [{
-            serial: remainingSerial,
-            firmwareVersion: '3A0-001',
-            online: true,
-            locked: false,
-            batteryLevel: 3450,
-          }],
+          devices: [
+            gwLockDevice({
+              lock_id: remainingSerial,
+              firmware_version: '3A0-001',
+              online: true,
+              locked: false,
+              battery_level: 3450,
+            }),
+          ],
         },
       }));
       const respRestorePrimary = await waitForProxyResponse(ws, reqRestorePrimary);
@@ -2917,7 +2964,7 @@ async function run() {
       path: `/internal/gateway/devices/state`,
       body: {
         facility_id: facilityId,
-        updates: [{ lock_id: remainingSerial, lock_state: 'LOCKED' }],
+        updates: [gwLockDevice({ lock_id: remainingSerial, state: 'CLOSED' })],
       },
     }));
     const respStateLocked = await waitForProxyResponse(ws, reqStateLocked);
@@ -2949,13 +2996,13 @@ async function run() {
       body: {
         facility_id: facilityId,
         updates: [
-          {
+          gwLockDevice({
             lock_id: remainingSerial,
-            lock_state: 'UNLOCKED',
+            state: 'OPENED',
             battery_level: 92,
             signal_strength: -48,
             temperature: 24.5,
-          },
+          }),
         ],
       },
     }));
@@ -3075,10 +3122,10 @@ async function run() {
       body: {
         facility_id: facilityId,
         updates: [
-          { 
-            lock_id: remainingSerial, 
-            lock_state: 'LOCKED'
-          },
+          gwLockDevice({
+            lock_id: remainingSerial,
+            state: 'CLOSED',
+          }),
         ],
       },
     }));
@@ -5742,9 +5789,15 @@ async function run() {
       ok('Facility admin correctly blocked from uploading firmware');
     }
 
-    // Step 7: Resilience — abrupt WS disconnect during transfer should fail quickly,
-    // and a fresh push after reconnect should complete successfully.
+    // Step 7: Resilience — abrupt WS disconnect during transfer should fail after
+    // the transfer reconnect grace window (backend development default: 10s via
+    // FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC), then a fresh push after reconnect succeeds.
     step('Testing OTA disconnect failure handling and reconnect recovery');
+    const transferGraceSec =
+      Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC) > 0
+        ? Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC)
+        : 10;
+    const maxDisconnectFailPolls = Math.ceil((transferGraceSec + 15) / 0.5);
     const disconnectPromise = disconnectDuringFirmwareDelivery(ws, loginOpsPublicKey, 30000);
     const resumePushResp = await axios.post(
       `${API_BASE}/firmware/${firmwareId}/push/${created.gatewayId}`,
@@ -5760,7 +5813,7 @@ async function run() {
 
     step('Polling disconnected push status until failed');
     let disconnectedPushStatus = null;
-    for (let poll = 0; poll < 30; poll++) {
+    for (let poll = 0; poll < maxDisconnectFailPolls; poll++) {
       await delay(500);
       const statusResp = await axios.get(
         `${API_BASE}/firmware/push-status/${created.gatewayId}?target_type=gateway`,
@@ -5772,7 +5825,9 @@ async function run() {
       }
     }
     if (!disconnectedPushStatus || disconnectedPushStatus.id !== resumePushId || disconnectedPushStatus.status !== 'failed') {
-      throw new Error(`Expected disconnected push ${resumePushId} to fail, got id=${disconnectedPushStatus?.id} status=${disconnectedPushStatus?.status}`);
+      throw new Error(
+        `Expected disconnected push ${resumePushId} to fail within ${transferGraceSec + 15}s transfer grace, got id=${disconnectedPushStatus?.id} status=${disconnectedPushStatus?.status}`,
+      );
     }
     ok(`Disconnected push ${resumePushId} failed as expected`);
 

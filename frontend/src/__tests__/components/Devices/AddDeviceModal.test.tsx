@@ -40,6 +40,11 @@ describe('AddDeviceModal - BluLok wizard', () => {
     });
   }
 
+  it('renders lock number input on configure step', async () => {
+    await openBlulokConfigureStep();
+    expect(screen.getByLabelText(/Lock number/i)).toBeInTheDocument();
+  });
+
   it('renders hardware serial input on configure step', async () => {
     await openBlulokConfigureStep();
     expect(screen.getByLabelText(/Hardware serial/i)).toBeInTheDocument();
@@ -115,7 +120,31 @@ describe('AddDeviceModal - BluLok wizard', () => {
         device_serial: 'BL-TEST-002',
         unit_id: 'unit-1',
         name: 'Front lock',
+        device_settings: { displayName: 'Front lock' },
       });
+    });
+  });
+
+  it('submits lock number in device_settings on create', async () => {
+    await openBlulokConfigureStep();
+
+    fireEvent.change(screen.getByLabelText(/Hardware serial/i), { target: { value: 'BL-LOCK-NUM' } });
+    fireEvent.change(screen.getByLabelText(/Lock number/i), { target: { value: '2453' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Review & create')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create device' }));
+
+    await waitFor(() => {
+      expect(mockApiService.createBluLokDevice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          device_serial: 'BL-LOCK-NUM',
+          device_settings: expect.objectContaining({ lockNumber: 2453 }),
+        }),
+      );
     });
   });
 });

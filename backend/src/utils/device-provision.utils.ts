@@ -13,11 +13,7 @@ type ProvisionUser = {
   facilityIds?: string[];
 };
 
-const SYNC_MANAGED_METADATA_KEYS = [
-  'createdFromGatewaySync',
-  'createdFromInventorySync',
-  'autoCreated',
-] as const;
+const SYNC_MANAGED_METADATA_KEYS = ['createdFromGatewaySync'] as const;
 
 /**
  * Build metadata for manually provisioned devices (never sync-managed).

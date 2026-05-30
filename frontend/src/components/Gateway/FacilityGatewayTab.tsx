@@ -87,7 +87,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       errors: string[];
     };
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'device-sync' | 'gateway-logs' | 'firmware' | 'devtools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'devtools'>('overview');
 
   // Debug panel state
   const [fallbackJwtInput, setFallbackJwtInput] = useState('');
@@ -510,7 +510,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     { id: 'overview' as const, label: 'Overview', icon: InformationCircleIcon },
     { id: 'sync' as const, label: 'Sync', icon: CloudIcon },
     ...(isPlatformAdmin
-      ? [{ id: 'device-sync' as const, label: 'Inventory sync', icon: ClipboardDocumentListIcon }]
+      ? [{ id: 'inventory-sync' as const, label: 'Inventory sync', icon: ClipboardDocumentListIcon }]
       : []),
     ...(canManageGateway
       ? [{ id: 'gateway-logs' as const, label: 'Gateway Logs', icon: DocumentTextIcon }]
@@ -1343,10 +1343,10 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       <div className="flex-1 min-w-0">
         {activeTab === 'overview' && renderOverviewTab()}
         {activeTab === 'sync' && renderSyncTab()}
-        {activeTab === 'device-sync' && isPlatformAdmin && gateway && (
+        {activeTab === 'inventory-sync' && isPlatformAdmin && gateway && (
           <GatewayDeviceSyncHistory gatewayId={gateway.id} />
         )}
-        {activeTab === 'device-sync' && isPlatformAdmin && !gateway && (
+        {activeTab === 'inventory-sync' && isPlatformAdmin && !gateway && (
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400">Assign a gateway to view inventory sync history.</p>

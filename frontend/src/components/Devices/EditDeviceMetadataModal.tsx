@@ -7,6 +7,13 @@ import { AccessMethod } from '@/types/facility.types';
 import { isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
 import { DeviceMetadataSideEffects } from '@/types/facility.types';
 import { mapDeviceApiErrorToFields } from '@/utils/deviceApiErrors';
+import {
+  ACCESS_CONTROLLER_TYPES,
+  buildBluLokDeviceSettings,
+  readDisplayName,
+  readLocationDescription,
+  readLockNumber,
+} from '@/utils/deviceMetadataForm.utils';
 
 export type DeviceMetadataCategory = 'blulok' | 'access_control';
 
@@ -14,14 +21,23 @@ export interface EditDeviceMetadataSource {
   id: string;
   category: DeviceMetadataCategory;
   device_serial: string;
+  serial?: string;
   relay_channel?: number;
   name?: string;
   location_description?: string;
+  device_type?: 'gate' | 'elevator' | 'door';
   access_methods?: AccessMethod[];
   supports_remote_lock?: boolean;
   firmware_version?: string;
+  device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   unit_number?: string;
+  lock_status?: string;
+  device_status?: string;
+  battery_level?: number;
+  signal_strength?: number;
+  temperature?: number;
+  last_seen?: string;
 }
 
 interface EditDeviceMetadataModalProps {
@@ -33,6 +49,10 @@ interface EditDeviceMetadataModalProps {
 
 interface BluLokForm {
   device_serial: string;
+  serial: string;
+  lock_number: string;
+  display_name: string;
+  location_description: string;
   supports_remote_lock: boolean;
   firmware_version: string;
 }
@@ -42,6 +62,7 @@ interface AccessControlForm {
   location_description: string;
   device_serial: string;
   relay_channel: number;
+  device_type: 'gate' | 'elevator' | 'door';
   access_methods: AccessMethod[];
   supports_remote_lock: boolean;
 }
@@ -61,6 +82,10 @@ export function EditDeviceMetadataModal({
 }: EditDeviceMetadataModalProps) {
   const [bluForm, setBluForm] = useState<BluLokForm>({
     device_serial: '',
+    serial: '',
+    lock_number: '',
+    display_name: '',
+    location_description: '',
     supports_remote_lock: false,
     firmware_version: '',
   });
@@ -69,6 +94,7 @@ export function EditDeviceMetadataModal({
     location_description: '',
     device_serial: '',
     relay_channel: 1,
+    device_type: 'door',
     access_methods: ['app'],
     supports_remote_lock: false,
   });
@@ -83,6 +109,11 @@ export function EditDeviceMetadataModal({
     if (device.category === 'blulok') {
       setBluForm({
         device_serial: device.device_serial ?? '',
+        serial: device.serial ?? '',
+        lock_number: readLockNumber(device.device_settings),
+        display_name: readDisplayName(device.device_settings) || device.name || '',
+        location_description:
+          device.location_description ?? readLocationDescription(device.device_settings),
         supports_remote_lock: device.supports_remote_lock === true,
         firmware_version: device.firmware_version ?? '',
       });
@@ -92,6 +123,7 @@ export function EditDeviceMetadataModal({
         location_description: device.location_description ?? '',
         device_serial: device.device_serial ?? '',
         relay_channel: device.relay_channel ?? 1,
+        device_type: device.device_type ?? 'door',
         access_methods:
           device.access_methods && device.access_methods.length > 0
             ? device.access_methods
@@ -121,10 +153,22 @@ export function EditDeviceMetadataModal({
   const isDirty = useMemo(() => {
     if (!device) return false;
     if (device.category === 'blulok') {
+      const baseSettings = device.device_settings ?? {};
+      const nextSettings = buildBluLokDeviceSettings(baseSettings, {
+        lockNumber: bluForm.lock_number,
+        displayName: bluForm.display_name,
+        locationDescription: bluForm.location_description,
+      });
       return (
         bluForm.device_serial.trim() !== device.device_serial.trim() ||
+        bluForm.serial.trim() !== (device.serial ?? '').trim() ||
+        bluForm.lock_number.trim() !== readLockNumber(device.device_settings) ||
+        bluForm.display_name.trim() !== readDisplayName(device.device_settings) ||
+        bluForm.location_description.trim() !==
+          (device.location_description ?? readLocationDescription(device.device_settings)).trim() ||
         bluForm.supports_remote_lock !== (device.supports_remote_lock === true) ||
         bluForm.firmware_version.trim() !== (device.firmware_version ?? '').trim() ||
+        JSON.stringify(nextSettings) !== JSON.stringify(baseSettings) ||
         advancedMetadataJson !== JSON.stringify(device.metadata ?? {}, null, 2)
       );
     }
@@ -137,6 +181,7 @@ export function EditDeviceMetadataModal({
       acForm.location_description.trim() !== (device.location_description ?? '').trim() ||
       acForm.device_serial.trim() !== device.device_serial.trim() ||
       acForm.relay_channel !== (device.relay_channel ?? 1) ||
+      acForm.device_type !== (device.device_type ?? 'door') ||
       acForm.supports_remote_lock !== (device.supports_remote_lock === true) ||
       methodsChanged ||
       advancedMetadataJson !== JSON.stringify(device.metadata ?? {}, null, 2)
@@ -147,6 +192,10 @@ export function EditDeviceMetadataModal({
     const next: Record<string, string> = {};
     if (device?.category === 'blulok') {
       if (!bluForm.device_serial.trim()) next.device_serial = 'Serial is required';
+      if (bluForm.lock_number.trim()) {
+        const n = Number(bluForm.lock_number);
+        if (!Number.isFinite(n)) next.lock_number = 'Lock number must be numeric';
+      }
     } else {
       if (!acForm.name.trim()) next.name = 'Name is required';
       if (!acForm.device_serial.trim()) next.device_serial = 'Hardware serial is required';
@@ -178,10 +227,17 @@ export function EditDeviceMetadataModal({
       let sideEffects: DeviceMetadataSideEffects | undefined;
 
       if (device.category === 'blulok') {
+        const deviceSettings = buildBluLokDeviceSettings(device.device_settings, {
+          lockNumber: bluForm.lock_number,
+          displayName: bluForm.display_name,
+          locationDescription: bluForm.location_description,
+        });
         const res = await apiService.updateBluLokDeviceMetadata(device.id, {
           device_serial: bluForm.device_serial.trim(),
+          serial: bluForm.serial.trim() || undefined,
           supports_remote_lock: bluForm.supports_remote_lock,
           firmware_version: bluForm.firmware_version.trim() || undefined,
+          device_settings: deviceSettings,
           metadata: parsedMetadata,
         });
         sideEffects = res.sideEffects;
@@ -191,6 +247,7 @@ export function EditDeviceMetadataModal({
           location_description: acForm.location_description.trim(),
           device_serial: acForm.device_serial.trim(),
           relay_channel: acForm.relay_channel,
+          device_type: acForm.device_type,
           access_methods: acForm.access_methods,
           supports_remote_lock: acForm.supports_remote_lock,
           metadata: parsedMetadata,
@@ -266,7 +323,8 @@ export function EditDeviceMetadataModal({
               <p className="text-sm text-amber-900 dark:text-amber-200">
                 This device was provisioned from gateway inventory. Saving identity changes marks it
                 as admin-corrected so sync will not remove it if the gateway still reports the old
-                serial.
+                serial. Lock number and other settings may be overwritten when the gateway sends a
+                matching inventory update.
               </p>
             </div>
           )}
@@ -275,7 +333,7 @@ export function EditDeviceMetadataModal({
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Hardware serial *
+                  Hardware serial (lock_id) *
                 </label>
                 <input
                   type="text"
@@ -292,6 +350,53 @@ export function EditDeviceMetadataModal({
                 )}
               </div>
               <div>
+                <label
+                  htmlFor="edit-blulok-lock-number"
+                  className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Lock number
+                </label>
+                <input
+                  id="edit-blulok-lock-number"
+                  type="number"
+                  value={bluForm.lock_number}
+                  onChange={(e) => setBluForm((p) => ({ ...p, lock_number: e.target.value }))}
+                  className={`block w-full rounded-lg border px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 ${
+                    errors.lock_number ? 'border-red-300' : 'border-gray-300 dark:border-gray-600'
+                  } bg-white dark:bg-gray-700 dark:text-white`}
+                  placeholder="e.g. 2453"
+                />
+                {errors.lock_number && (
+                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.lock_number}</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Gateway inventory field <code className="font-mono">lock_number</code>
+                </p>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Secondary serial
+                </label>
+                <input
+                  type="text"
+                  value={bluForm.serial}
+                  onChange={(e) => setBluForm((p) => ({ ...p, serial: e.target.value }))}
+                  className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                  placeholder="Optional hardware serial"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Display name
+                </label>
+                <input
+                  type="text"
+                  value={bluForm.display_name}
+                  onChange={(e) => setBluForm((p) => ({ ...p, display_name: e.target.value }))}
+                  className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+              <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                   Firmware version
                 </label>
@@ -304,7 +409,24 @@ export function EditDeviceMetadataModal({
                   className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                 />
               </div>
-              <div className="flex items-center">
+              <div className="md:col-span-2">
+                <label
+                  htmlFor="edit-blulok-location"
+                  className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Location note
+                </label>
+                <input
+                  id="edit-blulok-location"
+                  type="text"
+                  value={bluForm.location_description}
+                  onChange={(e) =>
+                    setBluForm((p) => ({ ...p, location_description: e.target.value }))
+                  }
+                  className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+              <div className="md:col-span-2 flex items-center">
                 <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                   <input
                     type="checkbox"
@@ -341,6 +463,27 @@ export function EditDeviceMetadataModal({
                 {errors.name && (
                   <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.name}</p>
                 )}
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Controller type *
+                </label>
+                <select
+                  value={acForm.device_type}
+                  onChange={(e) =>
+                    setAcForm((p) => ({
+                      ...p,
+                      device_type: e.target.value as AccessControlForm['device_type'],
+                    }))
+                  }
+                  className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                >
+                  {ACCESS_CONTROLLER_TYPES.map(({ value, label }) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -382,7 +525,7 @@ export function EditDeviceMetadataModal({
               </div>
               <div className="md:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Hardware serial *
+                  Hardware serial (access_id) *
                 </label>
                 <input
                   type="text"
@@ -434,6 +577,60 @@ export function EditDeviceMetadataModal({
                   Supports remote lock (CLOSE) from cloud
                 </label>
               </div>
+            </div>
+          )}
+
+          {(device.lock_status ||
+            device.device_status ||
+            device.battery_level != null ||
+            device.signal_strength != null ||
+            device.temperature != null ||
+            device.last_seen) && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-sm font-medium text-gray-900 dark:text-white">
+                Live telemetry (gateway state sync)
+              </p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Updated by gateway inventory/state messages — edit identity fields above, not here.
+              </p>
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                {device.lock_status && (
+                  <>
+                    <dt className="text-gray-500 dark:text-gray-400">Lock status</dt>
+                    <dd className="text-gray-900 dark:text-white capitalize">{device.lock_status}</dd>
+                  </>
+                )}
+                {device.device_status && (
+                  <>
+                    <dt className="text-gray-500 dark:text-gray-400">Device status</dt>
+                    <dd className="text-gray-900 dark:text-white capitalize">{device.device_status}</dd>
+                  </>
+                )}
+                {device.battery_level != null && (
+                  <>
+                    <dt className="text-gray-500 dark:text-gray-400">Battery</dt>
+                    <dd className="text-gray-900 dark:text-white">{device.battery_level}</dd>
+                  </>
+                )}
+                {device.signal_strength != null && (
+                  <>
+                    <dt className="text-gray-500 dark:text-gray-400">Signal</dt>
+                    <dd className="text-gray-900 dark:text-white">{device.signal_strength} dBm</dd>
+                  </>
+                )}
+                {device.temperature != null && (
+                  <>
+                    <dt className="text-gray-500 dark:text-gray-400">Temperature</dt>
+                    <dd className="text-gray-900 dark:text-white">{device.temperature}°C</dd>
+                  </>
+                )}
+                {device.last_seen && (
+                  <>
+                    <dt className="text-gray-500 dark:text-gray-400">Last seen</dt>
+                    <dd className="text-gray-900 dark:text-white">{device.last_seen}</dd>
+                  </>
+                )}
+              </dl>
             </div>
           )}
 

@@ -344,7 +344,7 @@ describe('WebsocketGatewayTransport', () => {
       ws.close();
     });
 
-    it('FIRMWARE_UPDATE_STATUS is handled without error', async () => {
+    it('FIRMWARE_UPDATE_STATUS is handled and ACK is returned', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
       ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
@@ -357,7 +357,10 @@ describe('WebsocketGatewayTransport', () => {
         message: 'Firmware installed successfully',
       }));
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      const ack = await waitForMessage(ws);
+      expect(ack.type).toBe('FIRMWARE_UPDATE_STATUS_ACK');
+      expect(ack.push_id).toBe('test-push-id');
+      expect(typeof ack.accepted).toBe('boolean');
       ws.close();
     });
   });

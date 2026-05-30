@@ -2,6 +2,11 @@ import { useNavigate } from 'react-router-dom';
 import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AccessControlDevice, BluLokDevice } from '@/types/facility.types';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
+import {
+  formatBluLokDeviceSubtitle,
+  formatBluLokLockNumberLabel,
+  getBluLokLockNumber,
+} from '@/utils/blulokDeviceDisplay.utils';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -158,9 +163,12 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
           </div>
           <div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-              Unit {device.unit_number}
+              {formatBluLokLockNumberLabel(device)}
             </h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400">{device.device_serial}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {formatBluLokDeviceSubtitle(device)}
+              {device.unit_number ? ` · Unit ${device.unit_number}` : ' · Unassigned'}
+            </p>
           </div>
         </div>
         <div className="flex items-center space-x-2">
@@ -181,6 +189,12 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
       )}
 
       <div className="space-y-3">
+        {getBluLokLockNumber(device) != null && (
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-500 dark:text-gray-400">Lock Number</span>
+            <span className="font-medium text-gray-900 dark:text-white">#{getBluLokLockNumber(device)}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${(statusColors as Record<string, string>)[device.lock_status] || statusColors.unknown}`}>

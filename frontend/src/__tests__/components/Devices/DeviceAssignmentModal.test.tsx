@@ -729,8 +729,9 @@ describe('DeviceAssignmentModal', () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText(/device details/i)).toBeInTheDocument();
+        expect(screen.getByText(/selected device/i)).toBeInTheDocument();
         expect(screen.getByText(mockUnassignedDevices[0].device_serial)).toBeInTheDocument();
+        expect(screen.getByText(/FW 1\.1\.0/)).toBeInTheDocument();
       });
     });
 

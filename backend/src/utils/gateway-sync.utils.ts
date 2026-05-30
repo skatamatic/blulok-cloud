@@ -1,10 +1,21 @@
 export type GatewayDeviceKind = 'lock' | 'access_control';
 
+/** Default relay when gateway omits relay_channel (single-relay access hardware). */
+export const DEFAULT_ACCESS_RELAY_CHANNEL = 1;
+
+export function resolveAccessRelayChannel(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === '') {
+    return DEFAULT_ACCESS_RELAY_CHANNEL;
+  }
+  return Number(raw);
+}
+
 export interface AccessDeviceInventoryItem {
-  kind?: 'access_control';
-  /** Hardware serial — parallel to lock_id for BluLok devices */
+  kind: 'access_control';
+  /** Hardware serial for access control (persisted as device_serial in admin API) */
   access_id: string;
-  relay_channel: number;
+  /** Actuation channel 1–8; defaults to {@link DEFAULT_ACCESS_RELAY_CHANNEL} when omitted */
+  relay_channel?: number;
   device_type?: 'gate' | 'elevator' | 'door';
   name?: string;
   location_description?: string;
@@ -14,9 +25,9 @@ export interface AccessDeviceInventoryItem {
 }
 
 export interface AccessDeviceStateUpdate {
-  kind?: 'access_control';
+  kind: 'access_control';
   access_id: string;
-  relay_channel: number;
+  relay_channel?: number;
   online?: boolean;
   locked?: boolean;
   last_seen?: string | Date;
@@ -26,15 +37,15 @@ export function formatAccessDeviceKey(accessId: string, relayChannel: number): s
   return `${accessId}::${relayChannel}`;
 }
 
-/** Stable composite key for persisted access control rows (handles legacy missing serial). */
+/** Composite sync key for persisted access control rows ({device_serial}::{relay}). */
 export function resolveAccessDeviceKey(device: {
   device_serial?: string | null;
-  id?: string;
   relay_channel: number;
 }): string {
-  const serial =
-    (typeof device.device_serial === 'string' && device.device_serial.trim()) ||
-    (device.id ? `legacy-${String(device.id).slice(0, 8)}` : 'unknown');
+  const serial = typeof device.device_serial === 'string' ? device.device_serial.trim() : '';
+  if (!serial) {
+    throw new Error('Access control device must have device_serial');
+  }
   return formatAccessDeviceKey(serial, device.relay_channel);
 }
 
@@ -43,9 +54,9 @@ export function isValidRelayChannel(relayChannel: number): boolean {
 }
 
 export function extractAccessId(item: Record<string, unknown>): string {
-  const raw = item.access_id ?? item.device_serial;
+  const raw = item.access_id;
   if (typeof raw !== 'string' || raw.trim().length === 0) {
-    throw new Error('Access control item must include access_id (device serial)');
+    throw new Error('Access control item must include access_id');
   }
   return raw.trim();
 }
@@ -57,52 +68,19 @@ export function isGatewaySyncManaged(metadata: Record<string, unknown> | null | 
   if (metadata.adminIdentityOverride === true) {
     return false;
   }
-  return (
-    metadata.createdFromGatewaySync === true ||
-    metadata.createdFromInventorySync === true
-  );
+  return metadata.createdFromGatewaySync === true;
 }
 
 export function hasAdminIdentityOverride(metadata: Record<string, unknown> | null | undefined): boolean {
   return Boolean(metadata && typeof metadata === 'object' && metadata.adminIdentityOverride === true);
 }
 
-export function inferDeviceKind(item: Record<string, unknown>): GatewayDeviceKind {
+export function resolveGatewayDeviceKind(item: Record<string, unknown>): GatewayDeviceKind {
   const kind = item.kind;
-  if (kind === 'lock') return 'lock';
-  if (kind === 'access_control') return 'access_control';
-
-  const hasLockId = typeof item.lock_id === 'string' && String(item.lock_id).trim().length > 0;
-  const hasAccessId =
-    (typeof item.access_id === 'string' && String(item.access_id).trim().length > 0) ||
-    (typeof item.device_serial === 'string' && String(item.device_serial).trim().length > 0);
-
-  if (hasLockId && hasAccessId) {
-    throw new Error('Device item must specify kind when both lock_id and access_id are present');
+  if (kind === 'lock' || kind === 'access_control') {
+    return kind;
   }
-  if (hasAccessId) return 'access_control';
-  if (hasLockId) return 'lock';
-
-  throw new Error('Device item must include lock_id or access_id');
-}
-
-export function inferStateUpdateKind(item: Record<string, unknown>): GatewayDeviceKind {
-  const kind = item.kind;
-  if (kind === 'lock') return 'lock';
-  if (kind === 'access_control') return 'access_control';
-
-  const hasLockId = typeof item.lock_id === 'string' && String(item.lock_id).trim().length > 0;
-  const hasAccessId =
-    (typeof item.access_id === 'string' && String(item.access_id).trim().length > 0) ||
-    (typeof item.device_serial === 'string' && String(item.device_serial).trim().length > 0);
-
-  if (hasLockId && hasAccessId) {
-    throw new Error('State update must specify kind when both lock_id and access_id are present');
-  }
-  if (hasAccessId) return 'access_control';
-  if (hasLockId) return 'lock';
-
-  throw new Error('State update must include lock_id or access_id');
+  throw new Error('Device item must include kind ("lock" or "access_control")');
 }
 
 export function partitionInventoryByKind<T extends Record<string, unknown>>(
@@ -112,7 +90,7 @@ export function partitionInventoryByKind<T extends Record<string, unknown>>(
   const accessControl: T[] = [];
 
   for (const device of devices) {
-    const kind = inferDeviceKind(device);
+    const kind = resolveGatewayDeviceKind(device);
     if (kind === 'access_control') {
       accessControl.push(device);
     } else {
@@ -130,7 +108,7 @@ export function partitionStateUpdatesByKind<T extends Record<string, unknown>>(
   const accessControl: T[] = [];
 
   for (const update of updates) {
-    const kind = inferStateUpdateKind(update);
+    const kind = resolveGatewayDeviceKind(update);
     if (kind === 'access_control') {
       accessControl.push(update);
     } else {

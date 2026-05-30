@@ -160,7 +160,7 @@ export default function FirmwareManagementTab() {
               Drag and drop a firmware file here, or click to browse
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-              Any file type accepted (max 50MB)
+              Any file type accepted (max 250MB)
             </p>
             <input
               ref={fileInputRef}

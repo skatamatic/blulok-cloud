@@ -9,8 +9,6 @@ describe('device-provision.utils', () => {
     it('strips sync-managed flags and sets manuallyAdded', () => {
       const result = buildManualProvisionMetadata({
         createdFromGatewaySync: true,
-        createdFromInventorySync: true,
-        autoCreated: true,
         custom: 'keep',
       });
 

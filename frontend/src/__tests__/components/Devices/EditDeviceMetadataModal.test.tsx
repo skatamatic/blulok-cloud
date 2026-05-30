@@ -100,7 +100,7 @@ describe('EditDeviceMetadataModal', () => {
       />
     );
 
-    const relaySelect = screen.getByRole('combobox');
+    const relaySelect = screen.getAllByRole('combobox')[1];
     fireEvent.change(relaySelect, { target: { value: '2' } });
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
@@ -113,5 +113,24 @@ describe('EditDeviceMetadataModal', () => {
       expect(screen.getByText(/Relay 2 is already used/i)).toBeInTheDocument();
     });
     expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it('shows gateway sync-managed guidance including lock number overwrite', () => {
+    render(
+      <EditDeviceMetadataModal
+        isOpen
+        onClose={jest.fn()}
+        onSuccess={jest.fn()}
+        device={{
+          id: 'lock-1',
+          category: 'blulok',
+          device_serial: 'HW-1',
+          metadata: { createdFromGatewaySync: true },
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/provisioned from gateway inventory/i)).toBeInTheDocument();
+    expect(screen.getByText(/lock number and other settings may be overwritten/i)).toBeInTheDocument();
   });
 });

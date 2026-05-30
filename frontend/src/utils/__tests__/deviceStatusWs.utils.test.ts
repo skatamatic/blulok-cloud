@@ -80,12 +80,8 @@ describe('normalizeDeviceStatusWsPayload', () => {
     expect(row.temperature).toBe(22);
   });
 
-  it('supports legacy updates[] and single update', () => {
-    expect(
-      normalizeDeviceStatusWsPayload({
-        updates: [{ device_id: 'a', lock_status: 'unlocked' }],
-      })
-    ).toEqual([{ device_id: 'a', lock_status: 'unlocked' }]);
-    expect(normalizeDeviceStatusWsPayload({ update: { device_id: 'b' } })).toEqual([{ device_id: 'b' }]);
+  it('returns [] when devices array is missing', () => {
+    expect(normalizeDeviceStatusWsPayload({})).toEqual([]);
+    expect(normalizeDeviceStatusWsPayload({ updates: [{ device_id: 'a' }] })).toEqual([]);
   });
 });

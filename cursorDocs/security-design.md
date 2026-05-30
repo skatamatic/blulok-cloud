@@ -49,7 +49,6 @@ This document summarizes the new centralized trust model implemented in the back
   - Gateway Device Sync (NEW):
     - `POST /api/v1/internal/gateway/devices/inventory` - Sync lock + access_control inventory (mixed `devices[]` with `kind` discriminator; sync-managed removal only)
     - `POST /api/v1/internal/gateway/devices/state` - Partial lock and access_control state updates (`lock_id` or `access_id` + `relay_channel`)
-    - `POST /api/v1/internal/gateway/device-sync` (DEPRECATED) - Legacy combined endpoint, use `/devices/inventory` + `/devices/state`
     - `GET /api/v1/internal/gateway/access-codes` - Poll resolved active keypad codes for facility devices
   - Admin: `POST /api/v1/admin/ops-key-rotation/broadcast` (DEV_ADMIN only)
   - Dev Tools (DEV_ADMIN, non-production only): `POST /api/v1/admin/dev-tools/gateway-command` - sends DENYLIST_ADD, DENYLIST_REMOVE, LOCK, UNLOCK commands to gateway for testing

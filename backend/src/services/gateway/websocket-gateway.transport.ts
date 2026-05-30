@@ -446,7 +446,16 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           if (type === 'FIRMWARE_CHUNK_ACK') {
             await FirmwareService.handleChunkAck(authed.facilityId, msg);
           } else if (type === 'FIRMWARE_UPDATE_STATUS') {
-            await FirmwareService.handleUpdateStatus(authed.facilityId, msg);
+            const result = await FirmwareService.handleUpdateStatus(authed.facilityId, msg);
+            const ackPushId = result.push_id
+              ?? (typeof msg?.push_id === 'string' ? msg.push_id : (typeof msg?.pushId === 'string' ? msg.pushId : undefined));
+            safeSend(ws, {
+              type: 'FIRMWARE_UPDATE_STATUS_ACK',
+              push_id: ackPushId,
+              accepted: result.accepted,
+              push_status: result.push_status,
+              reason: result.reason,
+            });
           } else {
             await FirmwareService.handleProgress(authed.facilityId, msg);
           }
