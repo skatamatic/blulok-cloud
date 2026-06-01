@@ -949,14 +949,28 @@ describe('APIService', () => {
       });
     });
 
-    it('uploadFirmware posts multipart formData', async () => {
+    it('uploadFirmware uses init then multipart when storage is local', async () => {
       const file = new File(['x'], 'fw.bin', { type: 'application/octet-stream' });
-      mockAxios.post.mockResolvedValueOnce({ data: { id: 'new-fw' } });
+      mockAxios.post
+        .mockResolvedValueOnce({ data: { data: { upload_mode: 'direct_multipart' } } })
+        .mockResolvedValueOnce({ data: { id: 'new-fw' } });
       await apiService.uploadFirmware(file, { version: '2.0.0', target_type: 'gateway' });
-      expect(mockAxios.post).toHaveBeenCalledWith(
+      expect(mockAxios.post).toHaveBeenNthCalledWith(1, '/firmware/upload', expect.objectContaining({
+        phase: 'prepare',
+        version: '2.0.0',
+        filename: 'fw.bin',
+        size_bytes: file.size,
+      }));
+      expect(mockAxios.post).toHaveBeenNthCalledWith(
+        2,
         '/firmware/upload',
         expect.any(FormData),
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        expect.objectContaining({
+          headers: { 'Content-Type': 'multipart/form-data' },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          timeout: 0,
+        }),
       );
     });
   });

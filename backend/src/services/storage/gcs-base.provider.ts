@@ -5,6 +5,7 @@
  * object keys (e.g. `firmware/abc/v1.bin` → gs://bucket/firmware/abc/v1.bin).
  */
 
+import * as crypto from 'crypto';
 import { Storage, Bucket } from '@google-cloud/storage';
 import {
   BaseStorageProvider,
@@ -126,6 +127,62 @@ export class GCSBaseStorage implements BaseStorageProvider {
     const file = this.bucket.file(filePath);
     const [exists] = await file.exists();
     return exists;
+  }
+
+  async getFileSize(filePath: string): Promise<number> {
+    const file = this.bucket.file(filePath);
+    const [metadata] = await file.getMetadata();
+    const size = metadata.size;
+    const parsed = typeof size === 'number' ? size : parseInt(String(size || '0'), 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new StorageError(`Invalid file size for: ${filePath}`, StorageErrorCode.PROVIDER_ERROR);
+    }
+    return parsed;
+  }
+
+  /**
+   * V4 signed URL for browser/client PUT uploads (bypasses Cloud Run HTTP/1 32 MiB limit).
+   */
+  async getSignedUploadUrl(
+    filePath: string,
+    options: { contentType?: string; minBytes?: number; maxBytes: number; expiresSeconds?: number },
+  ): Promise<{ url: string; headers: Record<string, string> }> {
+    const file = this.bucket.file(filePath);
+    const minBytes = Math.max(1, options.minBytes ?? 1);
+    const maxBytes = Math.max(minBytes, options.maxBytes);
+    const contentType = options.contentType || this.guessContentType(filePath);
+    const expiresMs = (options.expiresSeconds ?? 3600) * 1000;
+    const lengthRange = `${minBytes},${maxBytes}`;
+
+    const [url] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'write',
+      expires: Date.now() + expiresMs,
+      contentType,
+      extensionHeaders: {
+        'X-Goog-Content-Length-Range': lengthRange,
+      },
+    });
+
+    return {
+      url,
+      headers: {
+        'Content-Type': contentType,
+        'X-Goog-Content-Length-Range': lengthRange,
+      },
+    };
+  }
+
+  async hashFileSha256(filePath: string): Promise<string> {
+    const file = this.bucket.file(filePath);
+    const hash = crypto.createHash('sha256');
+    return new Promise((resolve, reject) => {
+      file
+        .createReadStream()
+        .on('data', (chunk: Buffer) => hash.update(chunk))
+        .on('end', () => resolve(hash.digest('hex')))
+        .on('error', reject);
+    });
   }
 
   async listFiles(prefix: string): Promise<string[]> {

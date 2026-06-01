@@ -104,4 +104,32 @@ describe('GatewayTelemetryLogsTab', () => {
       );
     });
   });
+
+  it('enables Apply when JSON value is entered without clicking Add filter', async () => {
+    render(<GatewayTelemetryLogsTab gatewayId="gw-1" facilityId="fac-1" liveEnabled={false} />);
+    await screen.findByText(/Gateway heartbeat OK/i);
+
+    const applyButton = screen.getByRole('button', { name: /^Apply$/i });
+    expect(applyButton).toBeDisabled();
+
+    await userEvent.type(screen.getByPlaceholderText(/e\.g\. data\.lock_id/i), 'data.lock_id');
+    await userEvent.type(screen.getByPlaceholderText(/Filter value/i), 'lock-abc');
+
+    expect(applyButton).toBeEnabled();
+  });
+
+  it('passes source filter to the API', async () => {
+    render(<GatewayTelemetryLogsTab gatewayId="gw-1" facilityId="fac-1" liveEnabled={false} />);
+    await screen.findByText(/Gateway heartbeat OK/i);
+
+    await userEvent.selectOptions(screen.getByLabelText(/Source/i), 'cloud_system');
+    await userEvent.click(screen.getByRole('button', { name: /^Apply$/i }));
+
+    await waitFor(() => {
+      expect(apiService.getGatewayTelemetryLogs).toHaveBeenLastCalledWith(
+        'gw-1',
+        expect.objectContaining({ source: 'cloud_system' }),
+      );
+    });
+  });
 });

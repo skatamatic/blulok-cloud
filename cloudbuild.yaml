@@ -57,7 +57,7 @@ steps:
       - '--set-secrets'
       - 'DB_PASSWORD=${_DB_PASSWORD_SECRET}:latest'
       - '--memory'
-      - '1Gi'
+      - '2Gi'
       - '--cpu'
       - '1'
       - '--max-instances'

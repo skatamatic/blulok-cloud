@@ -36,6 +36,7 @@ export interface FirmwareImage {
 }
 
 export interface CreateFirmwareImageData {
+  id?: string;
   version: string;
   target_type?: FirmwareTargetType;
   filename: string;
@@ -92,11 +93,12 @@ export class FirmwareModel {
 
   async create(data: CreateFirmwareImageData): Promise<FirmwareImage> {
     const knex = this.db.connection;
-    const id = uuidv4();
+    const id = data.id || uuidv4();
     const now = new Date();
+    const { id: _ignoredId, ...insertData } = data;
     await knex('firmware_images').insert({
       id,
-      ...data,
+      ...insertData,
       target_type: data.target_type || 'gateway',
       compatible_models: data.compatible_models ? JSON.stringify(data.compatible_models) : null,
       is_active: true,

@@ -46,6 +46,7 @@ export interface GatewayTelemetryLogFilters {
   from?: string;
   to?: string;
   search?: string;
+  source?: string;
   payload_path?: string;
   payload_value?: string;
   payload_op?: 'eq' | 'contains';

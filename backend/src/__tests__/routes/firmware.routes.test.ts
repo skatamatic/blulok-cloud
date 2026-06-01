@@ -11,6 +11,8 @@ import { createMockTestData, expectUnauthorized, expectForbidden } from '@/__tes
 // Mock FirmwareService — upload/list/get return raw data; routes sanitize (strip storage_path)
 jest.mock('@/services/firmware/firmware.service', () => ({
   FirmwareService: {
+    initFirmwareUpload: jest.fn().mockResolvedValue({ upload_mode: 'direct_multipart' }),
+    completeFirmwareUpload: jest.fn(),
     uploadFirmware: jest.fn().mockResolvedValue({
       id: 'fw-1',
       version: '2.0.0',
@@ -133,7 +135,88 @@ describe('Firmware Routes', () => {
   });
 
   // =========================================================================
-  // Upload RBAC
+  // Upload init / complete (large files on Cloud Run via GCS signed URL)
+  // =========================================================================
+
+  describe('POST /api/v1/firmware/upload (large-file prepare/finalize)', () => {
+    it('returns direct_multipart when storage has no signed upload', async () => {
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      const response = await request(app)
+        .post('/api/v1/firmware/upload')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({
+          phase: 'prepare',
+          version: '2.0.0',
+          target_type: 'gateway',
+          filename: 'firmware.bin',
+          size_bytes: 1024,
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.upload_mode).toBe('direct_multipart');
+      expect(FirmwareService.initFirmwareUpload).toHaveBeenCalled();
+    });
+
+    it('returns signed_url session when storage supports direct upload', async () => {
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      FirmwareService.initFirmwareUpload.mockResolvedValueOnce({
+        upload_mode: 'signed_url',
+        upload_id: 'fw-upload-1',
+        storage_path: 'firmware/fw-upload-1/firmware.bin',
+        upload_url: 'https://storage.googleapis.com/bucket/object',
+        upload_headers: { 'Content-Type': 'application/octet-stream' },
+        expires_in_seconds: 3600,
+      });
+
+      const response = await request(app)
+        .post('/api/v1/firmware/upload')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({
+          phase: 'prepare',
+          version: '2.0.0',
+          target_type: 'gateway',
+          filename: 'firmware.bin',
+          size_bytes: 250 * 1024 * 1024,
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.upload_mode).toBe('signed_url');
+      expect(response.body.data.upload_url).toContain('storage.googleapis.com');
+    });
+
+    it('finalizes signed upload and returns catalog row', async () => {
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      FirmwareService.completeFirmwareUpload.mockResolvedValueOnce({
+        id: 'fw-upload-1',
+        version: '2.0.0',
+        target_type: 'gateway',
+        filename: 'firmware.bin',
+        sha256_hash: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        size_bytes: 1024,
+        is_active: true,
+        storage_path: 'firmware/fw-upload-1/firmware.bin',
+      });
+
+      const response = await request(app)
+        .post('/api/v1/firmware/upload')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({
+          phase: 'finalize',
+          upload_id: '550e8400-e29b-41d4-a716-446655440000',
+          version: '2.0.0',
+          target_type: 'gateway',
+          filename: 'firmware.bin',
+          size_bytes: 1024,
+        });
+
+      expect(response.status).toBe(201);
+      expect(response.body.data.id).toBe('fw-upload-1');
+      expect(FirmwareService.completeFirmwareUpload).toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // Upload RBAC (multipart)
   // =========================================================================
 
   describe('POST /api/v1/firmware/upload', () => {

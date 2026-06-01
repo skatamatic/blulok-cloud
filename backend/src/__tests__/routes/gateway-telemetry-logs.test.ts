@@ -87,6 +87,7 @@ describe('GET /api/v1/gateways/:id/telemetry-logs', () => {
       .get('/api/v1/gateways/gateway-1/telemetry-logs')
       .query({
         search: 'lock',
+        source: 'cloud_system',
         payload_path: 'data.lock_id',
         payload_value: 'abc',
         payload_op: 'contains',
@@ -102,6 +103,7 @@ describe('GET /api/v1/gateways/:id/telemetry-logs', () => {
       'gateway-1',
       expect.objectContaining({
         search: 'lock',
+        source: 'cloud_system',
         payload_path: 'data.lock_id',
         payload_value: 'abc',
         payload_op: 'contains',
@@ -114,6 +116,16 @@ describe('GET /api/v1/gateways/:id/telemetry-logs', () => {
     const res = await request(app)
       .get('/api/v1/gateways/gateway-1/telemetry-logs')
       .query({ payload_path: 'data.$invalid', payload_value: 'x' })
+      .set('Authorization', `Bearer ${testData.users.admin.token}`)
+      .expect(400);
+
+    expect(res.body.success).toBe(false);
+  });
+
+  it('rejects invalid source filter', async () => {
+    const res = await request(app)
+      .get('/api/v1/gateways/gateway-1/telemetry-logs')
+      .query({ source: 'not-a-source' })
       .set('Authorization', `Bearer ${testData.users.admin.token}`)
       .expect(400);
 

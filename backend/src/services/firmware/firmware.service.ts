@@ -163,6 +163,108 @@ export class FirmwareService {
     }
   }
 
+  /**
+   * Begin a large firmware upload. When storage supports signed URLs (GCS), the client
+   * PUTs the binary directly to object storage — required on Cloud Run (32 MiB HTTP/1 limit).
+   */
+  static async initFirmwareUpload(
+    file: { originalname: string; size: number },
+    metadata: { version: string; target_type?: FirmwareTargetType; description?: string; release_notes?: string; compatible_models?: string[]; minimum_version?: string },
+  ): Promise<
+    | { upload_mode: 'direct_multipart' }
+    | ({ upload_mode: 'signed_url' } & import('./firmware-storage.factory').FirmwareSignedUploadSession)
+  > {
+    const targetType: FirmwareTargetType = metadata.target_type || 'gateway';
+    const errors = validateFirmwareFile(file.originalname, file.size);
+    if (errors.length > 0) {
+      throw new Error(`Firmware validation failed: ${errors.join('; ')}`);
+    }
+
+    const existing = await this.firmwareModel.findByVersion(metadata.version, targetType);
+    if (existing) {
+      throw new Error(`Firmware version '${metadata.version}' already exists for target type '${targetType}'`);
+    }
+
+    const storage = await getFirmwareStorageProvider();
+    await storage.initialize();
+
+    if (!storage.supportsSignedUpload()) {
+      return { upload_mode: 'direct_multipart' };
+    }
+
+    const uploadId = uuidv4();
+    const session = await storage.createSignedUploadSession(uploadId, file.originalname, file.size);
+    return { upload_mode: 'signed_url', ...session };
+  }
+
+  /**
+   * Finalize a signed-URL firmware upload after the client PUTs the binary to GCS.
+   */
+  static async completeFirmwareUpload(
+    uploadId: string,
+    file: { originalname: string; size: number },
+    metadata: { version: string; target_type?: FirmwareTargetType; description?: string; release_notes?: string; compatible_models?: string[]; minimum_version?: string },
+    userId: string,
+  ): Promise<FirmwareImage> {
+    const targetType: FirmwareTargetType = metadata.target_type || 'gateway';
+    const errors = validateFirmwareFile(file.originalname, file.size);
+    if (errors.length > 0) {
+      throw new Error(`Firmware validation failed: ${errors.join('; ')}`);
+    }
+
+    const existing = await this.firmwareModel.findByVersion(metadata.version, targetType);
+    if (existing) {
+      throw new Error(`Firmware version '${metadata.version}' already exists for target type '${targetType}'`);
+    }
+
+    const storage = await getFirmwareStorageProvider();
+    await storage.initialize();
+    const storagePath = storage.buildStoragePath(uploadId, file.originalname);
+
+    if (!(await storage.fileExists(storagePath))) {
+      throw new Error('Uploaded firmware binary not found in storage. Complete the signed URL upload first.');
+    }
+
+    const storedSize = await storage.getStoredFileSize(storagePath);
+    if (storedSize !== file.size) {
+      try {
+        await storage.remove(storagePath);
+      } catch {
+        /* best effort */
+      }
+      throw new Error(`Uploaded size mismatch: expected ${file.size} bytes, found ${storedSize}`);
+    }
+
+    const sha256Hash = await storage.hashStoredFile(storagePath);
+
+    const data: CreateFirmwareImageData = {
+      id: uploadId,
+      version: metadata.version,
+      target_type: targetType,
+      filename: file.originalname,
+      sha256_hash: sha256Hash,
+      size_bytes: file.size,
+      description: metadata.description,
+      release_notes: metadata.release_notes,
+      compatible_models: metadata.compatible_models,
+      minimum_version: metadata.minimum_version,
+      storage_path: storagePath,
+      uploaded_by: userId,
+    };
+
+    try {
+      return await this.firmwareModel.create(data);
+    } catch (err) {
+      try {
+        await storage.remove(storagePath);
+        logger.info(`Cleaned up orphaned firmware binary after failed DB insert: ${storagePath}`);
+      } catch (cleanupErr) {
+        logger.warn(`Failed to clean up orphaned firmware binary at ${storagePath}:`, cleanupErr);
+      }
+      throw err;
+    }
+  }
+
   // =========================================================================
   // Catalog
   // =========================================================================

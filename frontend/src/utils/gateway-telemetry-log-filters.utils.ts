@@ -10,10 +10,13 @@ export interface PayloadFilterChip {
   op: 'eq' | 'contains';
 }
 
+export type TelemetryLogSourceFilter = '' | 'gateway_ws' | 'cloud_system';
+
 export interface TelemetryLogFilterState {
   from?: string;
   to?: string;
   search: string;
+  source: TelemetryLogSourceFilter;
   payloadFilters: PayloadFilterChip[];
 }
 
@@ -63,6 +66,12 @@ export function logMatchesFilters(
     if (!Number.isNaN(toMs) && loggedAt > toMs) return false;
   }
 
+  if (opts.source === 'cloud_system') {
+    if (log.source !== 'cloud_system' && log.payload?.cloud_system !== true) return false;
+  } else if (opts.source === 'gateway_ws') {
+    if (log.source === 'cloud_system' || log.payload?.cloud_system === true) return false;
+  }
+
   const payloadStr = JSON.stringify(log.payload ?? {});
   if (opts.search?.trim()) {
     const term = opts.search.trim().toLowerCase();
@@ -88,6 +97,7 @@ export function buildTelemetryLogQueryParams(filters: TelemetryLogFilterState): 
     from: datetimeLocalToIso(filters.from),
     to: datetimeLocalToIso(filters.to),
     search: filters.search.trim() || undefined,
+    source: filters.source || undefined,
     payload_path: primaryPayload?.path,
     payload_value: primaryPayload?.value,
     payload_op: primaryPayload?.op,
@@ -111,5 +121,57 @@ export function payloadStrPreview(payload: Record<string, unknown> | null): stri
 }
 
 export function isEmptyFilterState(filters: TelemetryLogFilterState): boolean {
-  return !filters.from && !filters.to && !filters.search.trim() && filters.payloadFilters.length === 0;
+  return (
+    !filters.from &&
+    !filters.to &&
+    !filters.search.trim() &&
+    !filters.source &&
+    filters.payloadFilters.length === 0
+  );
+}
+
+/** True when draft differs from applied, including an unsaved JSON path/value pair. */
+export function isTelemetryFilterDraftDirty(
+  draft: TelemetryLogFilterState,
+  applied: TelemetryLogFilterState,
+  pendingPath: string,
+  pendingValue: string,
+): boolean {
+  if (draft.from !== applied.from) return true;
+  if (draft.to !== applied.to) return true;
+  if (draft.search.trim() !== applied.search) return true;
+  if ((draft.source ?? '') !== (applied.source ?? '')) return true;
+  if (JSON.stringify(draft.payloadFilters) !== JSON.stringify(applied.payloadFilters)) return true;
+  if (pendingPath.trim() && pendingValue.trim()) return true;
+  return false;
+}
+
+/** Merge a pending JSON path/value into filter state when Apply is used. */
+export function mergePendingPayloadFilter(
+  filters: TelemetryLogFilterState,
+  pendingPath: string,
+  pendingValue: string,
+  pendingOp: 'eq' | 'contains',
+): { filters: TelemetryLogFilterState; clearedPending: boolean } {
+  const path = pendingPath.trim();
+  const value = pendingValue.trim();
+  if (!path || !value) {
+    return { filters, clearedPending: false };
+  }
+  const duplicate = filters.payloadFilters.some(
+    (chip) => chip.path === path && chip.value === value && chip.op === pendingOp,
+  );
+  if (duplicate) {
+    return { filters, clearedPending: true };
+  }
+  return {
+    filters: {
+      ...filters,
+      payloadFilters: [
+        ...filters.payloadFilters,
+        { id: `${path}-${Date.now()}`, path, value, op: pendingOp },
+      ],
+    },
+    clearedPending: true,
+  };
 }

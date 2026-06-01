@@ -1141,6 +1141,44 @@ class ApiService {
   // =========================================================================
 
   async uploadFirmware(file: File, metadata: { version: string; target_type?: string; description?: string; release_notes?: string; compatible_models?: string; minimum_version?: string }) {
+    const initPayload = {
+      phase: 'prepare' as const,
+      version: metadata.version,
+      target_type: metadata.target_type,
+      filename: file.name,
+      size_bytes: file.size,
+      description: metadata.description,
+      release_notes: metadata.release_notes,
+      compatible_models: metadata.compatible_models,
+      minimum_version: metadata.minimum_version,
+    };
+
+    const initResponse = await this.api.post('/firmware/upload', initPayload);
+    const initData = initResponse.data?.data;
+
+    if (initData?.upload_mode === 'signed_url') {
+      const putResponse = await fetch(initData.upload_url, {
+        method: 'PUT',
+        headers: initData.upload_headers,
+        body: file,
+      });
+      if (!putResponse.ok) {
+        const detail = await putResponse.text().catch(() => '');
+        throw new Error(
+          detail
+            ? `Direct storage upload failed (${putResponse.status}): ${detail}`
+            : `Direct storage upload failed (${putResponse.status})`,
+        );
+      }
+
+      const completeResponse = await this.api.post('/firmware/upload', {
+        ...initPayload,
+        phase: 'finalize',
+        upload_id: initData.upload_id,
+      });
+      return completeResponse.data;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('version', metadata.version);
@@ -1151,6 +1189,9 @@ class ApiService {
     if (metadata.minimum_version) formData.append('minimum_version', metadata.minimum_version);
     const response = await this.api.post('/firmware/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: 0,
     });
     return response.data;
   }

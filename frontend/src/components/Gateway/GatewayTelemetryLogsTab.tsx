@@ -18,7 +18,9 @@ import {
   applyClientSideTelemetryFilters,
   buildTelemetryLogQueryParams,
   isEmptyFilterState,
+  isTelemetryFilterDraftDirty,
   logMatchesFilters,
+  mergePendingPayloadFilter,
   payloadStrPreview,
   TELEMETRY_LOGS_PAGE_SIZE,
   TELEMETRY_LOGS_UI_MAX_ROWS,
@@ -31,6 +33,7 @@ const EMPTY_FILTERS: TelemetryLogFilterState = {
   from: '',
   to: '',
   search: '',
+  source: '',
   payloadFilters: [],
 };
 
@@ -202,7 +205,7 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
   useEffect(() => {
     void fetchLogs({ reset: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gatewayId, queryParams.from, queryParams.to, queryParams.search, queryParams.payload_path, queryParams.payload_value, queryParams.payload_op]);
+  }, [gatewayId, queryParams.from, queryParams.to, queryParams.search, queryParams.source, queryParams.payload_path, queryParams.payload_value, queryParams.payload_op]);
 
   useEffect(() => {
     if (!liveEnabled || !gatewayId) return;
@@ -234,12 +237,25 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
   }, [subscribe, unsubscribe, liveEnabled, gatewayId, facilityId]);
 
   const applyFilters = () => {
-    setAppliedFilters({
-      from: draftFilters.from,
-      to: draftFilters.to,
-      search: draftFilters.search.trim(),
-      payloadFilters: [...draftFilters.payloadFilters],
-    });
+    const { filters: mergedDraft, clearedPending } = mergePendingPayloadFilter(
+      draftFilters,
+      draftPath,
+      draftValue,
+      draftOp,
+    );
+    if (clearedPending) {
+      setDraftPath('');
+      setDraftValue('');
+    }
+    const nextApplied: TelemetryLogFilterState = {
+      from: mergedDraft.from,
+      to: mergedDraft.to,
+      search: mergedDraft.search.trim(),
+      source: mergedDraft.source ?? '',
+      payloadFilters: [...mergedDraft.payloadFilters],
+    };
+    setDraftFilters(nextApplied);
+    setAppliedFilters(nextApplied);
   };
 
   const clearFilters = () => {
@@ -272,11 +288,14 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
     }));
   };
 
-  const filtersDirty =
-    draftFilters.from !== appliedFilters.from ||
-    draftFilters.to !== appliedFilters.to ||
-    draftFilters.search.trim() !== appliedFilters.search ||
-    JSON.stringify(draftFilters.payloadFilters) !== JSON.stringify(appliedFilters.payloadFilters);
+  const filtersDirty = isTelemetryFilterDraftDirty(
+    draftFilters,
+    appliedFilters,
+    draftPath,
+    draftValue,
+  );
+
+  const canAddPayloadFilter = Boolean(draftPath.trim() && draftValue.trim());
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
@@ -332,7 +351,7 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
             </button>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
           <label className="block text-xs text-gray-500 dark:text-gray-400">
             From
             <input
@@ -351,13 +370,30 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
               className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
             />
           </label>
-          <label className="block text-xs text-gray-500 dark:text-gray-400 md:col-span-2">
+          <label className="block text-xs text-gray-500 dark:text-gray-400">
+            Source
+            <select
+              value={draftFilters.source ?? ''}
+              onChange={(e) =>
+                setDraftFilters((p) => ({
+                  ...p,
+                  source: e.target.value as TelemetryLogFilterState['source'],
+                }))
+              }
+              className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+            >
+              <option value="">All sources</option>
+              <option value="gateway_ws">Gateway</option>
+              <option value="cloud_system">Cloud</option>
+            </select>
+          </label>
+          <label className="block text-xs text-gray-500 dark:text-gray-400 lg:col-span-2">
             Search payload
             <input
               type="search"
               value={draftFilters.search ?? ''}
               onChange={(e) => setDraftFilters((p) => ({ ...p, search: e.target.value }))}
-              onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+              onKeyDown={(e) => e.key === 'Enter' && filtersDirty && applyFilters()}
               placeholder="Free-text search across JSON payload"
               className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
             />
@@ -399,6 +435,13 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
             <input
               value={draftValue}
               onChange={(e) => setDraftValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (canAddPayloadFilter) addPayloadFilter();
+                  else if (filtersDirty) applyFilters();
+                }
+              }}
+              placeholder="Filter value"
               className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
             />
           </label>
@@ -417,7 +460,8 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
             <button
               type="button"
               onClick={addPayloadFilter}
-              className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-white dark:hover:bg-gray-800 transition-colors"
+              disabled={!canAddPayloadFilter}
+              className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-white dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <PlusIcon className="h-4 w-4" />
               Add filter
@@ -469,8 +513,8 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
             {displayedLogs.length === 1 ? '' : 's'} (newest first)
             {logs.length >= TELEMETRY_LOGS_UI_MAX_ROWS && ' · display capped at 1,000 rows'}
           </p>
-          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700">
-            <table className="w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700 text-left">
+          <div className="status-area-scrollbar max-h-[min(32rem,calc(100vh-18rem))] overflow-y-auto overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700 isolate">
+            <table className="w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700 text-left border-collapse">
               <colgroup>
                 <col className="w-8" />
                 <col className="w-[7.5rem]" />
@@ -478,48 +522,66 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
                 <col className="w-[4.75rem]" />
                 <col />
               </colgroup>
-              <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-900 shadow-sm">
-                <tr>
-                  <th className="px-2 py-2" aria-hidden />
-                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <thead className="sticky top-0 z-20">
+                <tr className="bg-gray-50 dark:bg-gray-900">
+                  <th
+                    scope="col"
+                    className="sticky top-0 z-20 bg-gray-50 px-2 py-2 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
+                    aria-hidden
+                  />
+                  <th
+                    scope="col"
+                    className="sticky top-0 z-20 bg-gray-50 px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-900 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700"
+                  >
                     Time
                   </th>
-                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th
+                    scope="col"
+                    className="sticky top-0 z-20 bg-gray-50 px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-900 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700"
+                  >
                     Code
                   </th>
-                  <th className="px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th
+                    scope="col"
+                    className="sticky top-0 z-20 bg-gray-50 px-2 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-900 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700"
+                  >
                     Source
                   </th>
-                  <th className="px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th
+                    scope="col"
+                    className="sticky top-0 z-20 bg-gray-50 px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-900 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700"
+                  >
                     Message
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/80 bg-white dark:bg-gray-800">
+              <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-700/80 dark:bg-gray-800">
                 {displayedLogs.map((log) => (
                   <TelemetryLogRow key={log.id} log={log} />
                 ))}
+                {hasMore && (
+                  <tr className="bg-gray-50/80 dark:bg-gray-900/40">
+                    <td colSpan={5} className="px-4 py-4 text-center border-t border-gray-200 dark:border-gray-700">
+                      <button
+                        type="button"
+                        onClick={() => void fetchLogs()}
+                        disabled={loadingMore}
+                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                      >
+                        {loadingMore ? (
+                          <>
+                            <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                            Loading…
+                          </>
+                        ) : (
+                          'Load more'
+                        )}
+                      </button>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
-            {hasMore && (
-              <div className="sticky bottom-0 border-t border-gray-200 dark:border-gray-700 bg-gray-50/95 dark:bg-gray-900/95 px-4 py-3 flex justify-center backdrop-blur-sm">
-                <button
-                  type="button"
-                  onClick={() => void fetchLogs()}
-                  disabled={loadingMore}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-                >
-                  {loadingMore ? (
-                    <>
-                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                      Loading…
-                    </>
-                  ) : (
-                    'Load more'
-                  )}
-                </button>
-              </div>
-            )}
           </div>
         </div>
       )}

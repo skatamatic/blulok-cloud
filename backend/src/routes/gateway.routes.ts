@@ -202,6 +202,13 @@ router.get('/:id/telemetry-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADM
 
   const payloadOp = req.query.payload_op === 'contains' ? 'contains' : 'eq';
   const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+  const sourceRaw = typeof req.query.source === 'string' ? req.query.source.trim() : '';
+  const source =
+    sourceRaw === 'gateway_ws' || sourceRaw === 'cloud_system' ? sourceRaw : undefined;
+  if (sourceRaw && !source) {
+    res.status(400).json({ success: false, message: 'Invalid source filter' });
+    return;
+  }
 
   const { logs, total } = await GatewayTelemetryLogService.getInstance().list(
     gatewayId,
@@ -209,6 +216,7 @@ router.get('/:id/telemetry-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADM
       from,
       to,
       search,
+      source,
       payload_path: payloadPath,
       payload_value: payloadValue,
       payload_op: payloadOp,

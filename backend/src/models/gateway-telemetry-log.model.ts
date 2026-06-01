@@ -31,6 +31,7 @@ export interface GatewayTelemetryLogListFilters {
   from?: Date;
   to?: Date;
   search?: string;
+  source?: string;
   payload_path?: string;
   payload_value?: string;
   payload_op?: 'eq' | 'contains';
@@ -121,6 +122,10 @@ export class GatewayTelemetryLogModel {
       }
       if (filters.to) {
         query.where('logged_at', '<=', filters.to);
+      }
+
+      if (filters.source?.trim()) {
+        query.where('source', filters.source.trim());
       }
 
       if (filters.search?.trim()) {

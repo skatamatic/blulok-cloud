@@ -19,7 +19,7 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { FirmwareService } from '@/services/firmware/firmware.service';
-import { FIRMWARE_MAX_SIZE_BYTES } from '@/services/firmware/firmware-storage.factory';
+import { FIRMWARE_MAX_SIZE_BYTES, FIRMWARE_MAX_SIZE_MB } from '@/services/firmware/firmware-storage.factory';
 import { FirmwareTargetType } from '@/models/firmware.model';
 import { FirmwarePushEventType } from '@/models/firmware-push-event.model';
 import { GatewayModel } from '@/models/gateway.model';
@@ -118,12 +118,125 @@ const uploadSchema = Joi.object({
   minimum_version: Joi.string().max(64).optional().allow(''),
 });
 
+const initUploadSchema = uploadSchema.keys({
+  phase: Joi.string().valid('prepare').required(),
+  filename: Joi.string().max(255).required(),
+  size_bytes: Joi.number().integer().min(1).max(FIRMWARE_MAX_SIZE_BYTES).required(),
+});
+
+const completeUploadSchema = initUploadSchema.keys({
+  phase: Joi.string().valid('finalize').required(),
+  upload_id: Joi.string().uuid().required(),
+});
+
+function parseCompatibleModels(raw: string | undefined): string[] | undefined {
+  if (!raw) return undefined;
+  const models = raw.split(',').map((m: string) => m.trim()).filter(Boolean);
+  return models.length > 0 ? models : undefined;
+}
+
+function parseUploadMetadata(value: Joi.ValidationResult<any>['value']) {
+  return {
+    version: value.version,
+    target_type: value.target_type || 'gateway',
+    description: value.description || undefined,
+    release_notes: value.release_notes || undefined,
+    compatible_models: parseCompatibleModels(value.compatible_models),
+    minimum_version: value.minimum_version || undefined,
+  };
+}
+
+function handleFirmwareUploadError(err: any, res: Response): boolean {
+  if (err?.message?.includes('already exists') || err?.message?.includes('validation failed')) {
+    res.status(400).json({ success: false, message: err.message });
+    return true;
+  }
+  if (err?.message?.includes('not found in storage') || err?.message?.includes('size mismatch')) {
+    res.status(400).json({ success: false, message: err.message });
+    return true;
+  }
+  return false;
+}
+
 router.post(
   '/upload',
   authenticateToken,
   requireDevAdmin,
-  upload.single('file'),
+  (req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    if (contentType.includes('application/json')) {
+      next();
+      return;
+    }
+    upload.single('file')(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          res.status(413).json({
+            success: false,
+            message: `Firmware file exceeds maximum size of ${FIRMWARE_MAX_SIZE_MB}MB`,
+          });
+          return;
+        }
+        res.status(400).json({ success: false, message: err.message });
+        return;
+      }
+      if (err) {
+        next(err);
+        return;
+      }
+      next();
+    });
+  },
   asyncHandler(async (req: MulterRequest, res: Response): Promise<void> => {
+    const contentType = req.headers['content-type'] || '';
+
+    if (contentType.includes('application/json')) {
+      const phase = req.body?.phase;
+      if (phase === 'prepare') {
+        const { error, value } = initUploadSchema.validate(req.body);
+        if (error) {
+          res.status(400).json({ success: false, message: error.message });
+          return;
+        }
+        try {
+          const session = await FirmwareService.initFirmwareUpload(
+            { originalname: value.filename, size: value.size_bytes },
+            parseUploadMetadata(value),
+          );
+          res.status(200).json({ success: true, data: session });
+        } catch (err: any) {
+          if (handleFirmwareUploadError(err, res)) return;
+          throw err;
+        }
+        return;
+      }
+
+      if (phase === 'finalize') {
+        const { error, value } = completeUploadSchema.validate(req.body);
+        if (error) {
+          res.status(400).json({ success: false, message: error.message });
+          return;
+        }
+        try {
+          const firmware = await FirmwareService.completeFirmwareUpload(
+            value.upload_id,
+            { originalname: value.filename, size: value.size_bytes },
+            parseUploadMetadata(value),
+            req.user!.userId,
+          );
+          logger.info(`Firmware upload completed: version=${firmware.version} size=${firmware.size_bytes} by=${req.user!.userId}`);
+          res.status(201).json({ success: true, data: sanitizeFirmwareImage(firmware) });
+        } catch (err: any) {
+          if (handleFirmwareUploadError(err, res)) return;
+          throw err;
+        }
+        return;
+      }
+
+      res.status(400).json({ success: false, message: 'JSON uploads require phase "prepare" or "finalize"' });
+      return;
+    }
+
     const file = req.file;
     if (!file) {
       res.status(400).json({ success: false, message: 'No file uploaded' });
@@ -137,10 +250,7 @@ router.post(
     }
 
     // Parse compatible_models from comma-separated string
-    let compatibleModels: string[] | undefined;
-    if (value.compatible_models) {
-      compatibleModels = value.compatible_models.split(',').map((m: string) => m.trim()).filter(Boolean);
-    }
+    const compatibleModels = parseCompatibleModels(value.compatible_models);
 
     try {
       const firmware = await FirmwareService.uploadFirmware(
@@ -159,10 +269,7 @@ router.post(
       logger.info(`Firmware uploaded: version=${firmware.version} size=${firmware.size_bytes} by=${req.user!.userId}`);
       res.status(201).json({ success: true, data: sanitizeFirmwareImage(firmware) });
     } catch (err: any) {
-      if (err.message?.includes('already exists') || err.message?.includes('validation failed')) {
-        res.status(400).json({ success: false, message: err.message });
-        return;
-      }
+      if (handleFirmwareUploadError(err, res)) return;
       throw err;
     }
   }),

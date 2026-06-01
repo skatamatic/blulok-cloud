@@ -28,15 +28,31 @@ describe('gateway-telemetry-log-filters.utils', () => {
     expect(
       logMatchesFilters(log, {
         search: '',
+        source: '',
         payloadFilters: [{ id: '1', path: 'data.lock_id', value: 'abc-123', op: 'eq' }],
       }),
     ).toBe(true);
     expect(
       logMatchesFilters(log, {
         search: '',
+        source: '',
         payloadFilters: [{ id: '1', path: 'data.lock_id', value: 'missing', op: 'eq' }],
       }),
     ).toBe(false);
+  });
+
+  it('filters by source', () => {
+    const gatewayLog = sampleLog({ source: 'gateway_ws' });
+    const cloudLog = sampleLog({ id: 'cloud-1', source: 'cloud_system' });
+    expect(
+      logMatchesFilters(gatewayLog, { search: '', source: 'gateway_ws', payloadFilters: [] }),
+    ).toBe(true);
+    expect(
+      logMatchesFilters(cloudLog, { search: '', source: 'gateway_ws', payloadFilters: [] }),
+    ).toBe(false);
+    expect(
+      logMatchesFilters(cloudLog, { search: '', source: 'cloud_system', payloadFilters: [] }),
+    ).toBe(true);
   });
 
   it('applies additional client-side payload filters when multiple chips active', () => {
@@ -46,6 +62,7 @@ describe('gateway-telemetry-log-filters.utils', () => {
     ];
     const filtered = applyClientSideTelemetryFilters(logs, {
       search: '',
+      source: '',
       payloadFilters: [
         { id: '1', path: 'data.lock_id', value: 'abc', op: 'eq' },
         { id: '2', path: 'data.tid', value: '2', op: 'eq' },
