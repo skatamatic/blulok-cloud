@@ -54,6 +54,7 @@ export interface CreateAccessCodeData {
 
 export interface DeviceCodeResolution {
   device_id: string;
+  access_id: string;
   relay_channel: number;
   code: string;
   valid_from: Date;
@@ -210,14 +211,18 @@ export class AccessCodeModel {
     const knex = this.db.connection;
 
     const deviceRows = await knex('access_control_devices as d')
-      .select('d.id as device_id', 'd.relay_channel', 'g.facility_id')
+      .select('d.id as device_id', 'd.device_serial as access_id', 'd.relay_channel', 'g.facility_id')
       .join('gateways as g', 'g.id', 'd.gateway_id')
       .whereIn('d.id', deviceIds);
 
-    const devicesByFacility = new Map<string, Array<{ device_id: string; relay_channel: number }>>();
+    const devicesByFacility = new Map<string, Array<{ device_id: string; access_id: string; relay_channel: number }>>();
     for (const row of deviceRows) {
       const list = devicesByFacility.get(row.facility_id) || [];
-      list.push({ device_id: row.device_id, relay_channel: row.relay_channel });
+      list.push({
+        device_id: row.device_id,
+        access_id: String(row.access_id),
+        relay_channel: row.relay_channel,
+      });
       devicesByFacility.set(row.facility_id, list);
     }
 
@@ -268,6 +273,7 @@ export class AccessCodeModel {
           groupCodes.forEach((groupCode) => {
             resolved.push({
               device_id: device.device_id,
+              access_id: device.access_id,
               relay_channel: device.relay_channel,
               code: groupCode.code,
               valid_from: groupCode.valid_from,
@@ -287,6 +293,7 @@ export class AccessCodeModel {
           directCodes.forEach((directCode) => {
             resolved.push({
               device_id: device.device_id,
+              access_id: device.access_id,
               relay_channel: device.relay_channel,
               code: directCode.code,
               valid_from: directCode.valid_from,

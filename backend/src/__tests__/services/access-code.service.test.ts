@@ -112,6 +112,7 @@ describe('AccessCodeService', () => {
     jest.spyOn(service, 'getGatewayPollPayload').mockResolvedValue([
       {
         device_id: 'dev-1',
+        access_id: 'KP-001',
         relay_channel: 1,
         code: '123456',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -121,6 +122,7 @@ describe('AccessCodeService', () => {
       },
       {
         device_id: 'dev-2',
+        access_id: 'KP-002',
         relay_channel: 2,
         code: '654321',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -150,6 +152,7 @@ describe('AccessCodeService', () => {
         codes: [
           expect.objectContaining({
             device_id: 'dev-1',
+            access_id: 'KP-001',
             valid_codes: [
               expect.objectContaining({
                 code: '123456',
@@ -177,10 +180,59 @@ describe('AccessCodeService', () => {
     expect(mockUnicast).toHaveBeenCalledWith('fac-1', 'signed-jwt');
   });
 
+  it('pushCodesToGateway dispatches separate entries for same access_id on different relays', async () => {
+    jest.spyOn(service, 'getGatewayPollPayload').mockResolvedValue([
+      {
+        device_id: 'door-1',
+        access_id: 'KEYPAD-UUID',
+        relay_channel: 1,
+        code: '111111',
+        valid_from: new Date('2026-01-01T00:00:00Z'),
+        valid_until: new Date('2026-02-01T00:00:00Z'),
+        source_scope_type: 'device',
+        source_scope_id: 'door-1',
+      },
+      {
+        device_id: 'door-2',
+        access_id: 'KEYPAD-UUID',
+        relay_channel: 2,
+        code: '222222',
+        valid_from: new Date('2026-01-01T00:00:00Z'),
+        valid_until: new Date('2026-02-01T00:00:00Z'),
+        source_scope_type: 'device',
+        source_scope_id: 'door-2',
+      },
+    ]);
+    jest.spyOn(service as any, 'getScheduleMetaMap').mockResolvedValue(new Map());
+    jest.spyOn(service as any, 'awaitPushAcceptance').mockResolvedValue(undefined);
+
+    await service.pushCodesToGateway('fac-1');
+
+    expect(Ed25519Service.signCommandJwt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codes: [
+          expect.objectContaining({
+            device_id: 'door-1',
+            access_id: 'KEYPAD-UUID',
+            relay_channel: 1,
+            valid_codes: [expect.objectContaining({ code: '111111' })],
+          }),
+          expect.objectContaining({
+            device_id: 'door-2',
+            access_id: 'KEYPAD-UUID',
+            relay_channel: 2,
+            valid_codes: [expect.objectContaining({ code: '222222' })],
+          }),
+        ],
+      }),
+    );
+  });
+
   it('pushCodesToGateway aggregates multiple valid codes per device', async () => {
     jest.spyOn(service, 'getGatewayPollPayload').mockResolvedValue([
       {
         device_id: 'dev-1',
+        access_id: 'KP-001',
         relay_channel: 1,
         code: '111111',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -191,6 +243,7 @@ describe('AccessCodeService', () => {
       },
       {
         device_id: 'dev-1',
+        access_id: 'KP-001',
         relay_channel: 1,
         code: '222222',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -256,6 +309,7 @@ describe('AccessCodeService', () => {
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'dev-1',
+        access_id: 'KP-001',
         relay_channel: 1,
         code: '654321',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -273,6 +327,82 @@ describe('AccessCodeService', () => {
       source_scope_type: 'device_group',
       source_scope_name: 'Front Entrances',
     }));
+  });
+
+  it('getEffectiveCodesForFacility returns separate rows for same access_id on different relays', async () => {
+    const dbMock = jest.fn();
+    jest.spyOn(service as any, 'db', 'get').mockReturnValue(dbMock);
+    const devicesChain = {
+      select: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      whereRaw: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockResolvedValue([
+        {
+          id: 'door-1',
+          name: 'Main Door',
+          device_type: 'door',
+          location_description: 'Front',
+          relay_channel: 1,
+        },
+        {
+          id: 'door-2',
+          name: 'Side Door',
+          device_type: 'door',
+          location_description: 'Side',
+          relay_channel: 2,
+        },
+      ]),
+    };
+    dbMock.mockImplementation((table: string) => {
+      if (table === 'access_control_devices as d') return devicesChain;
+      return {
+        select: jest.fn().mockReturnThis(),
+        whereIn: jest.fn().mockResolvedValue([]),
+      };
+    });
+
+    model.findCodesForDevices.mockResolvedValue([
+      {
+        device_id: 'door-1',
+        access_id: 'KEYPAD-UUID',
+        relay_channel: 1,
+        code: '111111',
+        valid_from: new Date('2026-01-01T00:00:00Z'),
+        valid_until: new Date('2026-02-02T00:00:00Z'),
+        source_scope_type: 'device',
+        source_scope_id: 'door-1',
+      },
+      {
+        device_id: 'door-2',
+        access_id: 'KEYPAD-UUID',
+        relay_channel: 2,
+        code: '222222',
+        valid_from: new Date('2026-01-01T00:00:00Z'),
+        valid_until: new Date('2026-02-02T00:00:00Z'),
+        source_scope_type: 'device',
+        source_scope_id: 'door-2',
+      },
+    ]);
+
+    const result = await service.getEffectiveCodesForFacility('fac-1');
+    expect(result).toHaveLength(2);
+    expect(result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          device_id: 'door-1',
+          access_id: 'KEYPAD-UUID',
+          relay_channel: 1,
+          code: '111111',
+        }),
+        expect.objectContaining({
+          device_id: 'door-2',
+          access_id: 'KEYPAD-UUID',
+          relay_channel: 2,
+          code: '222222',
+        }),
+      ]),
+    );
   });
 
   it('getGatewayPollPayload resolves keypad device IDs then maps codes', async () => {
@@ -294,6 +424,7 @@ describe('AccessCodeService', () => {
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'dev-1',
+        access_id: 'KP-001',
         relay_channel: 1,
         code: '123456',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -345,6 +476,7 @@ describe('AccessCodeService', () => {
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',
+        access_id: 'KP-GLOBAL',
         relay_channel: 1,
         code: '111111',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -355,6 +487,7 @@ describe('AccessCodeService', () => {
       },
       {
         device_id: 'ac-scoped',
+        access_id: 'KP-SCOPED',
         relay_channel: 2,
         code: '222222',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -451,6 +584,7 @@ describe('AccessCodeService', () => {
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-multi',
+        access_id: 'KP-MULTI',
         relay_channel: 1,
         code: '111111',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -461,6 +595,7 @@ describe('AccessCodeService', () => {
       },
       {
         device_id: 'ac-multi',
+        access_id: 'KP-MULTI',
         relay_channel: 1,
         code: '222222',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -585,6 +720,7 @@ describe('AccessCodeService', () => {
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',
+        access_id: 'KP-GLOBAL',
         relay_channel: 1,
         code: '111111',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -595,6 +731,7 @@ describe('AccessCodeService', () => {
       },
       {
         device_id: 'ac-global',
+        access_id: 'KP-GLOBAL',
         relay_channel: 1,
         code: '222222',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -643,6 +780,8 @@ describe('AccessCodeService', () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual(expect.objectContaining({
       device_id: 'ac-global',
+      access_id: 'KP-GLOBAL',
+      relay_channel: 1,
       code: '222222',
       schedule_id: 'sched-2',
       schedule_name: 'After Hours',
@@ -657,6 +796,7 @@ describe('AccessCodeService', () => {
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',
+        access_id: 'KP-GLOBAL',
         relay_channel: 1,
         code: '111111',
         valid_from: new Date('2026-01-01T00:00:00Z'),
@@ -709,6 +849,7 @@ describe('AccessCodeService', () => {
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',
+        access_id: 'KP-GLOBAL',
         relay_channel: 1,
         code: '111111',
         valid_from: new Date('2026-01-01T00:00:00Z'),

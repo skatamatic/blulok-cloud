@@ -572,6 +572,7 @@ router.get('/access-codes', authenticateToken, requireFacilityAdmin, asyncHandle
       facility_id: facilityId,
       codes: codes.map((entry) => ({
         device_id: entry.device_id,
+        access_id: entry.access_id,
         relay_channel: entry.relay_channel,
         code: entry.code,
         valid_until: entry.valid_until instanceof Date ? entry.valid_until.toISOString() : entry.valid_until,

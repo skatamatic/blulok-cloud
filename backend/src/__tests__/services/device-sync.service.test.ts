@@ -821,24 +821,68 @@ describe('DeviceSyncService', () => {
       ]);
     });
 
-    it('should report relay conflict when manual device occupies the relay', async () => {
+    it('allows the same access_id on multiple relay channels (multi-door keypad)', async () => {
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([] as unknown as AccessControlDevice[]);
+      mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(2);
+
+      const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        { kind: 'access_control', access_id: 'KEYPAD-SHARED', relay_channel: 1, name: 'Main Door' },
+        { kind: 'access_control', access_id: 'KEYPAD-SHARED', relay_channel: 2, name: 'Side Door' },
+      ]);
+
+      expect(result.added).toBe(2);
+      expect(result.errors).toHaveLength(0);
+      expect(mockDeviceModel.bulkCreateAccessControlDevices).toHaveBeenCalledWith([
+        expect.objectContaining({ device_serial: 'KEYPAD-SHARED', relay_channel: 1 }),
+        expect.objectContaining({ device_serial: 'KEYPAD-SHARED', relay_channel: 2 }),
+      ]);
+    });
+
+    it('allows a new access_id on the same relay_channel as an existing manual device', async () => {
       mockDeviceModel.findAccessControlDevices.mockResolvedValue([
         {
           id: 'ac-manual',
           gateway_id: gatewayId,
           device_serial: 'MANUAL-1',
           relay_channel: 3,
-          metadata: {},
+          metadata: { manuallyAdded: true },
         },
       ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(1);
 
       const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
         { kind: 'access_control', access_id: 'NEW-SERIAL', relay_channel: 3 },
       ]);
 
-      expect(result.added).toBe(0);
-      expect(result.errors.some((e) => e.includes('Relay 3'))).toBe(true);
-      expect(mockDeviceModel.bulkCreateAccessControlDevices).not.toHaveBeenCalled();
+      expect(result.added).toBe(1);
+      expect(result.errors).toHaveLength(0);
+      expect(mockDeviceModel.bulkCreateAccessControlDevices).toHaveBeenCalledWith([
+        expect.objectContaining({ device_serial: 'NEW-SERIAL', relay_channel: 3 }),
+      ]);
+    });
+
+    it('allows two keypads that both default to relay_channel 1', async () => {
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+        {
+          id: 'ac-a',
+          gateway_id: gatewayId,
+          device_serial: 'KEYPAD-A',
+          relay_channel: 1,
+          metadata: { createdFromGatewaySync: true },
+        },
+      ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(1);
+
+      const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        { kind: 'access_control', access_id: 'KEYPAD-A', online: true },
+        { kind: 'access_control', access_id: 'KEYPAD-B', online: true },
+      ]);
+
+      expect(result.added).toBe(1);
+      expect(result.errors).toHaveLength(0);
+      expect(mockDeviceModel.bulkCreateAccessControlDevices).toHaveBeenCalledWith([
+        expect.objectContaining({ device_serial: 'KEYPAD-B', relay_channel: 1 }),
+      ]);
     });
 
     it('reconciles admin identity override device serial in place when gateway reports new serial on same relay', async () => {

@@ -24,6 +24,8 @@ type ScheduleWindowPayload = SerializedScheduleTimeWindow;
 
 export interface UserAccessCodePairing {
   device_id: string;
+  access_id: string;
+  relay_channel: number;
   facility_id?: string;
   device_name: string;
   device_type: 'gate' | 'elevator' | 'door';
@@ -48,12 +50,14 @@ type GatewayValidCodeEntry = {
 
 type GatewayDeviceCodeEntry = {
   device_id: string;
+  access_id: string;
   relay_channel: number;
   valid_codes: GatewayValidCodeEntry[];
 };
 
 export interface EffectiveFacilityAccessCode {
   device_id: string;
+  access_id: string;
   device_name: string;
   device_type: 'gate' | 'elevator' | 'door';
   location_description: string | null;
@@ -897,6 +901,8 @@ export class AccessCodeService {
         selectedResolutions.push(selected);
         pairings.push({
           device_id: device.id,
+          access_id: selected.access_id,
+          relay_channel: selected.relay_channel,
           facility_id: device.facility_id,
           device_name: device.name,
           device_type: device.device_type,
@@ -913,6 +919,8 @@ export class AccessCodeService {
         selectedResolutions.push(entry);
         pairings.push({
           device_id: device.id,
+          access_id: entry.access_id,
+          relay_channel: entry.relay_channel,
           facility_id: device.facility_id,
           device_name: device.name,
           device_type: device.device_type,
@@ -1158,6 +1166,7 @@ export class AccessCodeService {
 
         result.push({
           device_id: String(device.id),
+          access_id: entry.access_id,
           device_name: String(device.name),
           device_type: device.device_type as 'gate' | 'elevator' | 'door',
           location_description: (device.location_description as string | null) ?? null,
@@ -1205,6 +1214,7 @@ export class AccessCodeService {
       if (!existing) {
         const nextEntry: GatewayDeviceCodeEntry = {
           device_id: entry.device_id,
+          access_id: entry.access_id,
           relay_channel: entry.relay_channel,
           valid_codes: [validCode],
         };

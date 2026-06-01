@@ -16,9 +16,9 @@ describe('AccessCodeModel.findCodesForDevices', () => {
 
   it('resolves codes deterministically across duplicate and multi-group scopes', async () => {
     const deviceRows = [
-      { device_id: 'dev-1', relay_channel: 1, facility_id: 'fac-1' },
-      { device_id: 'dev-2', relay_channel: 2, facility_id: 'fac-1' },
-      { device_id: 'dev-3', relay_channel: 3, facility_id: 'fac-1' },
+      { device_id: 'dev-1', access_id: 'KP-001', relay_channel: 1, facility_id: 'fac-1' },
+      { device_id: 'dev-2', access_id: 'KP-002', relay_channel: 2, facility_id: 'fac-1' },
+      { device_id: 'dev-3', access_id: 'KP-003', relay_channel: 3, facility_id: 'fac-1' },
     ];
 
     const groupRows = [
@@ -128,8 +128,85 @@ describe('AccessCodeModel.findCodesForDevices', () => {
     expect(codesByDevice.get('dev-3')).toBeUndefined();
   });
 
+  it('resolves independent device-scoped codes for same access_id on different relays', async () => {
+    const deviceRows = [
+      { device_id: 'door-1', access_id: 'KEYPAD-UUID', relay_channel: 1, facility_id: 'fac-1' },
+      { device_id: 'door-2', access_id: 'KEYPAD-UUID', relay_channel: 2, facility_id: 'fac-1' },
+    ];
+    const activeCodes = [
+      {
+        id: 'code-door-1',
+        facility_id: 'fac-1',
+        scope_type: 'device',
+        scope_id: 'door-1',
+        code: '111111',
+        valid_from: new Date('2026-01-01T00:00:00Z'),
+        valid_until: new Date('2026-02-01T00:00:00Z'),
+        is_active: true,
+      },
+      {
+        id: 'code-door-2',
+        facility_id: 'fac-1',
+        scope_type: 'device',
+        scope_id: 'door-2',
+        code: '222222',
+        valid_from: new Date('2026-01-01T00:00:00Z'),
+        valid_until: new Date('2026-02-01T00:00:00Z'),
+        is_active: true,
+      },
+    ];
+
+    const devicesQuery = {
+      select: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      whereIn: jest.fn().mockResolvedValue(deviceRows),
+    };
+    const groupsQuery = {
+      select: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      whereIn: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      then: (resolve: (value: any) => void) => resolve([]),
+      catch: () => undefined,
+    } as any;
+    const activeCodesQuery = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockResolvedValue(activeCodes),
+    };
+
+    mockConnection.mockImplementation((table: string) => {
+      if (table === 'access_control_devices as d') return devicesQuery;
+      if (table === 'device_group_members as dgm') return groupsQuery;
+      if (table === 'access_codes') return activeCodesQuery;
+      throw new Error(`Unexpected table: ${table}`);
+    });
+
+    const model = new AccessCodeModel();
+    const result = await model.findCodesForDevices(['door-1', 'door-2']);
+
+    expect(result).toHaveLength(2);
+    expect(result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          device_id: 'door-1',
+          access_id: 'KEYPAD-UUID',
+          relay_channel: 1,
+          code: '111111',
+        }),
+        expect.objectContaining({
+          device_id: 'door-2',
+          access_id: 'KEYPAD-UUID',
+          relay_channel: 2,
+          code: '222222',
+        }),
+      ]),
+    );
+  });
+
   it('returns one active code per schedule context for a grouped device', async () => {
-    const deviceRows = [{ device_id: 'dev-1', relay_channel: 1, facility_id: 'fac-1' }];
+    const deviceRows = [{ device_id: 'dev-1', access_id: 'KP-001', relay_channel: 1, facility_id: 'fac-1' }];
     const groupRows = [{ group_id: 'grp-a', device_id: 'dev-1' }];
     const activeCodes = [
       {

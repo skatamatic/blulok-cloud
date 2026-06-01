@@ -48,11 +48,21 @@ Responses include `sideEffects`:
 
 ## Identity propagation
 
-- **Units / groups / access-code DB scope** use stable device UUIDs — no rewiring on serial change.
-- **BluLok serial** is globally unique; updates set `metadata.adminIdentityOverride` so gateway inventory sync does not delete the row when the gateway still reports the old serial.
-- **Gateway-sync-managed devices:** lock number and telemetry can be overwritten on the next gateway inventory update unless the row is admin-corrected for serial identity.
-- **Access control** updates validate `(gateway_id, relay_channel)` and `(gateway_id, serial, relay)` uniqueness, mirror serial into metadata for lock-command JWTs, and push access codes when relay/identity changes.
-- **Route passes** embed serial at issuance; users refresh passes after serial changes.
+Access control identity is **`device_serial` (`access_id`) + `relay_channel`**. Changing either in the admin edit dialog is an **identity change** — the cloud row keeps the same UUID, but the gateway-facing target changes.
+
+| Concern | Behavior on identity change |
+|---------|------------------------------|
+| **Access codes (DB scope)** | Codes remain on stable `device_id` (UUID). No code rows are moved or duplicated. |
+| **Gateway push** | `ACCESS_CODE_UPDATE` is re-sent with updated `access_id` + `relay_channel` for that UUID (push may fail silently if gateway offline; `sideEffects.accessCodesPushed` reflects success). |
+| **Effective / poll / app APIs** | Resolve from DB after update — new `access_id` and/or `relay_channel` appear immediately. |
+| **Gateway inventory sync** | Sets `metadata.adminIdentityOverride` and clears `createdFromGatewaySync` so the row is **not** removed when the gateway still reports the old `{access_id}::{relay}` key. |
+| **Conflict checks** | Rejects edits that would collide with another row’s `(gateway_id, device_serial, relay_channel)`. |
+| **Units / groups** | Membership uses stable UUID — no rewiring on serial/relay change. |
+| **Route passes / LOCK JWT** | Lock/unlock JWTs use hardware serial (`device_id` claim); users refresh passes after serial changes. Relay is not yet in LOCK/UNLOCK JWT (multi-relay same serial: use cloud UUID targeting in future if needed). |
+
+**BluLok serial** is globally unique; updates set `metadata.adminIdentityOverride` so gateway inventory sync does not delete the row when the gateway still reports the old serial.
+
+**Non-identity edits** (name, location, access methods) do not re-push access codes.
 
 ## E2E script
 
@@ -67,3 +77,5 @@ E2E_BLULOK_DEVICE_ID=<uuid> E2E_AC_DEVICE_ID=<uuid> npm run device-metadata:e2e
 ```
 
 Uses `DEV_ADMIN_EMAIL` / `DEV_ADMIN_PASSWORD` (same defaults as other backend e2e scripts).
+
+The script verifies access-control **relay** and **serial** identity edits: `sideEffects.identityChanged`, `adminIdentityOverride`, metadata mirroring, and stable `device_id`. Full access-code push verification runs in `npm run ws:e2e` (requires live gateway WebSocket).

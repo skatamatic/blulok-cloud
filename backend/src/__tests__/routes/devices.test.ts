@@ -518,6 +518,42 @@ describe('Devices Routes', () => {
         expectSuccess(response);
         expect(response.body.device.name).toBe(sanitizedName);
       });
+
+      it('should allow the same device_serial on a different relay_channel', async () => {
+        mockDeviceModel.findAccessControlIdentityConflict.mockResolvedValue(null);
+        mockDeviceModel.createAccessControlDevice
+          .mockResolvedValueOnce({
+            id: 'device-door-1',
+            ...validAccessControlData,
+            relay_channel: 1,
+          })
+          .mockResolvedValueOnce({
+            id: 'device-door-2',
+            ...validAccessControlData,
+            relay_channel: 2,
+          });
+
+        const first = await request(app)
+          .post('/api/v1/devices/access-control')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send(validAccessControlData)
+          .expect(201);
+
+        const second = await request(app)
+          .post('/api/v1/devices/access-control')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            ...validAccessControlData,
+            relay_channel: 2,
+            name: 'Second Door on Shared Keypad',
+          })
+          .expect(201);
+
+        expectSuccess(first);
+        expectSuccess(second);
+        expect(second.body.device.relay_channel).toBe(2);
+        expect(mockDeviceModel.findAccessControlIdentityConflict).toHaveBeenCalledTimes(2);
+      });
     });
 
     describe('POST /api/v1/devices/blulok - Create BluLok Device', () => {

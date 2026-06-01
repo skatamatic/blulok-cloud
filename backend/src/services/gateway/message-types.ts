@@ -95,6 +95,7 @@ export type AccessCodeUpdateValidCodeEntry = {
 
 export type AccessCodeUpdateCodeEntry = {
   device_id: string;
+  access_id: string;
   relay_channel: number;
   valid_codes: AccessCodeUpdateValidCodeEntry[];
 };

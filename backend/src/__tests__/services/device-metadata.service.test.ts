@@ -153,11 +153,103 @@ describe('DeviceMetadataService', () => {
         'ac-1',
         expect.objectContaining({
           relay_channel: 2,
+          metadata: expect.objectContaining({
+            adminIdentityOverride: true,
+            device_serial: 'KP-1',
+            previousIdentity: expect.objectContaining({
+              device_serial: 'KP-1',
+              relay_channel: 1,
+            }),
+          }),
+          device_settings: expect.objectContaining({
+            device_serial: 'KP-1',
+          }),
         })
       );
     });
 
-    it('throws ConflictError on relay conflict', async () => {
+    it('pushes access codes when device_serial changes', async () => {
+      mockFindAcWithGateway
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+          device_serial: 'OLD-ACCESS',
+          relay_channel: 1,
+          metadata: { createdFromGatewaySync: true },
+          device_settings: { device_serial: 'OLD-ACCESS' },
+        })
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+          device_serial: 'NEW-ACCESS',
+          relay_channel: 1,
+        });
+      mockFindAcConflict.mockResolvedValue(null);
+      mockUpdateAc.mockResolvedValue({
+        id: 'ac-1',
+        device_serial: 'NEW-ACCESS',
+        relay_channel: 1,
+      });
+
+      const svc = DeviceMetadataService.getInstance();
+      const result = await svc.updateAccessControlMetadata(
+        'ac-1',
+        { device_serial: 'NEW-ACCESS' },
+        { userId: 'admin-1' }
+      );
+
+      expect(result.sideEffects.identityChanged).toBe(true);
+      expect(result.sideEffects.accessCodesPushed).toBe(true);
+      expect(mockPushCodes).toHaveBeenCalledWith('fac-1');
+      expect(mockUpdateAc).toHaveBeenCalledWith(
+        'ac-1',
+        expect.objectContaining({
+          device_serial: 'NEW-ACCESS',
+          metadata: expect.objectContaining({
+            adminIdentityOverride: true,
+            device_serial: 'NEW-ACCESS',
+            serial: 'NEW-ACCESS',
+          }),
+        })
+      );
+    });
+
+    it('does not push access codes for non-identity metadata updates', async () => {
+      mockFindAcWithGateway
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+          device_serial: 'KP-1',
+          relay_channel: 1,
+          metadata: {},
+        })
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          name: 'Updated Gate',
+          device_serial: 'KP-1',
+          relay_channel: 1,
+        });
+      mockUpdateAc.mockResolvedValue({
+        id: 'ac-1',
+        name: 'Updated Gate',
+      });
+
+      const svc = DeviceMetadataService.getInstance();
+      const result = await svc.updateAccessControlMetadata(
+        'ac-1',
+        { name: 'Updated Gate' },
+        { userId: 'admin-1' }
+      );
+
+      expect(result.sideEffects.identityChanged).toBe(false);
+      expect(result.sideEffects.accessCodesPushed).toBe(false);
+      expect(mockPushCodes).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictError on duplicate access_id and relay identity', async () => {
       mockFindAcWithGateway.mockResolvedValue({
         id: 'ac-1',
         gateway_id: 'gw-1',
@@ -167,13 +259,17 @@ describe('DeviceMetadataService', () => {
         metadata: {},
       });
       mockFindAcConflict.mockResolvedValue({
-        type: 'relay',
-        device: { device_serial: 'OTHER' },
+        type: 'serial_relay',
+        device: { device_serial: 'KP-1' },
       });
 
       const svc = DeviceMetadataService.getInstance();
       await expect(
-        svc.updateAccessControlMetadata('ac-1', { relay_channel: 3 }, { userId: 'u1' })
+        svc.updateAccessControlMetadata(
+          'ac-1',
+          { device_serial: 'KP-1', relay_channel: 3 },
+          { userId: 'u1' }
+        )
       ).rejects.toBeInstanceOf(ConflictError);
     });
   });

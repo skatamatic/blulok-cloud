@@ -429,6 +429,8 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
           'd.name',
           'd.device_type',
           'd.location_description',
+          'd.device_serial',
+          'd.relay_channel',
           'd.access_methods',
           'g.facility_id',
         )
@@ -453,6 +455,9 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
         }
         return {
           id: String(row.id),
+          device_id: String(row.id),
+          access_id: String(row.device_serial),
+          relay_channel: Number(row.relay_channel),
           facility_id: String(row.facility_id),
           name: String(row.name),
           device_type: row.device_type,

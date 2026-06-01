@@ -664,6 +664,26 @@ async function getFacilityHierarchy(token, facilityId) {
   return res.data?.hierarchy || res.data?.deviceHierarchy || res.data;
 }
 
+async function findAccessControlBySerialRelay(token, facilityId, accessId, relayChannel) {
+  const hierarchy = await getFacilityHierarchy(token, facilityId);
+  const devices = hierarchy?.accessControlDevices || [];
+  return devices.find(
+    (device) =>
+      String(device.device_serial).trim() === String(accessId).trim()
+      && Number(device.relay_channel) === Number(relayChannel)
+  ) || null;
+}
+
+function registerAccessControlDeviceMeta(created, deviceId, accessId, relayChannel) {
+  if (!created.accessControlDeviceMeta) {
+    created.accessControlDeviceMeta = {};
+  }
+  created.accessControlDeviceMeta[deviceId] = {
+    access_id: accessId,
+    relay_channel: relayChannel,
+  };
+}
+
 async function createUnit(token, facilityId, unitNumber) {
   const res = await axios.post(`${API_BASE}/units`, {
     unit_number: unitNumber,
@@ -1342,6 +1362,8 @@ async function run() {
     shares: [],
     scheduleId: null,
     accessControlDeviceIds: [],
+    accessControlDeviceMeta: {},
+    multiRelayDoorDeviceIds: [],
     extraFacilityIds: [],
     facilityAdminId: null,
     facilityAdminToken: null,
@@ -1806,7 +1828,13 @@ async function run() {
         throw new Error(`${acDef.device_type} creation returned unexpected response: ${JSON.stringify(acResp.data)}`);
       }
       created.accessControlDeviceIds.push(acResp.data.device.id);
-      ok(`Created ${acDef.device_type}: ${acResp.data.device.id}`);
+      registerAccessControlDeviceMeta(
+        created,
+        acResp.data.device.id,
+        acDef.device_serial,
+        acDef.relay_channel,
+      );
+      ok(`Created ${acDef.device_type}: ${acResp.data.device.id} (access_id=${acDef.device_serial}, relay=${acDef.relay_channel})`);
     }
     if (created.accessControlDeviceIds.length !== 3) {
       throw new Error(`Expected 3 access control devices, created ${created.accessControlDeviceIds.length}`);
@@ -2459,7 +2487,114 @@ async function run() {
     }
     ok(`Access control state updated for relay ${accessRelayPrimary}`);
 
-    step('Testing POST /devices/inventory (mixed payload adds second relay, removes first)');
+    step('Testing POST /devices/inventory (same access_id, second relay coexists with first)');
+    const reqAccessInvBoth = 'req-access-inv-both';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessInvBoth,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelayPrimary,
+            device_type: 'door',
+            name: 'E2E Keypad Door',
+          }),
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            device_type: 'gate',
+            name: 'E2E Keypad Gate',
+          }),
+        ],
+      },
+    }));
+    const respAccessInvBoth = await waitForProxyResponse(ws, reqAccessInvBoth);
+    if (respAccessInvBoth.status !== 200 || !respAccessInvBoth.body?.success) {
+      throw new Error(`Access control dual-relay inventory failed: ${respAccessInvBoth.status}`);
+    }
+    const accessInvBoth = respAccessInvBoth.body?.data?.access_control;
+    if (!accessInvBoth || accessInvBoth.added < 1 || accessInvBoth.removed !== 0) {
+      throw new Error(
+        `Expected second relay added without removing first, got ${JSON.stringify(accessInvBoth)}`
+      );
+    }
+    ok(`Same access_id supports multiple relays: added relay ${accessRelaySecondary} alongside ${accessRelayPrimary}`);
+
+    step('Verifying dual-relay inventory rows have distinct cloud device IDs');
+    const multiDoorPrimary = await findAccessControlBySerialRelay(
+      token,
+      facilityId,
+      accessSerialMulti,
+      accessRelayPrimary,
+    );
+    const multiDoorSecondary = await findAccessControlBySerialRelay(
+      token,
+      facilityId,
+      accessSerialMulti,
+      accessRelaySecondary,
+    );
+    if (!multiDoorPrimary?.id || !multiDoorSecondary?.id) {
+      throw new Error('Expected both multi-relay access control rows after dual-relay inventory sync');
+    }
+    if (multiDoorPrimary.id === multiDoorSecondary.id) {
+      throw new Error('Expected distinct cloud device IDs for each relay row on the same access_id');
+    }
+    registerAccessControlDeviceMeta(
+      created,
+      multiDoorPrimary.id,
+      accessSerialMulti,
+      accessRelayPrimary,
+    );
+    registerAccessControlDeviceMeta(
+      created,
+      multiDoorSecondary.id,
+      accessSerialMulti,
+      accessRelaySecondary,
+    );
+    created.multiRelayDoorDeviceIds = [multiDoorPrimary.id, multiDoorSecondary.id];
+    ok(
+      `Dual-relay rows resolved: ${multiDoorPrimary.id} (relay ${accessRelayPrimary}), `
+      + `${multiDoorSecondary.id} (relay ${accessRelaySecondary})`,
+    );
+
+    step('Testing POST /devices/state (secondary relay on same access_id)');
+    const reqAccessState2 = 'req-access-state-2';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessState2,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            online: true,
+            locked: false,
+          }),
+        ],
+      },
+    }));
+    const respAccessState2 = await waitForProxyResponse(ws, reqAccessState2);
+    if (respAccessState2.status !== 200 || !respAccessState2.body?.success) {
+      throw new Error(`Access control secondary relay state update failed: ${respAccessState2.status}`);
+    }
+    const accessState2 = respAccessState2.body?.data?.access_control;
+    if (!accessState2 || accessState2.updated < 1) {
+      throw new Error(
+        `Expected access_control.updated >= 1 for secondary relay, got ${JSON.stringify(accessState2)}`,
+      );
+    }
+    ok(`Access control state updated independently for relay ${accessRelaySecondary}`);
+
+    step('Testing POST /devices/inventory (mixed payload removes first relay when omitted)');
     const reqAccessInv2 = 'req-access-inv-2';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -2484,12 +2619,15 @@ async function run() {
       throw new Error(`Access control inventory delta failed: ${respAccessInv2.status}`);
     }
     const accessInv2 = respAccessInv2.body?.data?.access_control;
-    if (!accessInv2 || accessInv2.added < 1 || accessInv2.removed < 1) {
+    if (!accessInv2 || accessInv2.removed < 1) {
       throw new Error(
-        `Expected access_control add+remove delta, got ${JSON.stringify(accessInv2)}`
+        `Expected relay ${accessRelayPrimary} removed when omitted from inventory, got ${JSON.stringify(accessInv2)}`,
       );
     }
-    ok(`Access control inventory delta: added relay ${accessRelaySecondary}, removed relay ${accessRelayPrimary}`);
+    ok(
+      `Access control inventory removed relay ${accessRelayPrimary} when omitted; `
+      + `relay ${accessRelaySecondary} retained (unchanged=${accessInv2.unchanged ?? 0})`,
+    );
 
     step('Negative: access_control inventory item missing access_id');
     const reqAccessInvBad = 'req-access-inv-bad';
@@ -6185,6 +6323,296 @@ async function run() {
     }
     ok('Keypad methods enabled on target devices');
 
+    const getEffectiveCodesMap = async () => {
+      const effectiveResp = await axios.get(
+        `${API_BASE}/access-codes/effective`,
+        {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+          params: { facility_id: created.facilityId },
+        },
+      );
+      const rows = effectiveResp.data?.data || [];
+      return new Map(rows.map((row) => [row.device_id, row]));
+    };
+
+    const getAccessControlMeta = (deviceId) => {
+      const meta = created.accessControlDeviceMeta?.[deviceId];
+      if (!meta) throw new Error(`Missing access control meta for device ${deviceId}`);
+      return meta;
+    };
+
+    const assertNoLegacyTopLevelCodeFields = (cmd) => {
+      if (!cmd || !Array.isArray(cmd.codes)) return;
+      cmd.codes.forEach((entry) => {
+        if (
+          Object.prototype.hasOwnProperty.call(entry, 'code')
+          || Object.prototype.hasOwnProperty.call(entry, 'valid_from')
+          || Object.prototype.hasOwnProperty.call(entry, 'valid_until')
+          || Object.prototype.hasOwnProperty.call(entry, 'schedule_id')
+          || Object.prototype.hasOwnProperty.call(entry, 'schedule')
+          || Object.prototype.hasOwnProperty.call(entry, 'schedule_name')
+          || Object.prototype.hasOwnProperty.call(entry, 'time_windows')
+        ) {
+          throw new Error('ACCESS_CODE_UPDATE should not include legacy top-level code fields');
+        }
+      });
+    };
+
+    const assertAccessCodeTargetFields = (entry, deviceId, context) => {
+      const meta = getAccessControlMeta(deviceId);
+      if (entry.device_id !== deviceId) {
+        throw new Error(`${context}: expected device_id ${deviceId}, got ${entry.device_id}`);
+      }
+      if (typeof entry.access_id !== 'string' || !entry.access_id.trim()) {
+        throw new Error(`${context}: missing access_id for device ${deviceId}`);
+      }
+      if (entry.access_id !== meta.access_id) {
+        throw new Error(`${context}: expected access_id ${meta.access_id}, got ${entry.access_id}`);
+      }
+      const relay = Number(entry.relay_channel);
+      if (!Number.isInteger(relay) || relay < 1 || relay > 8) {
+        throw new Error(`${context}: invalid relay_channel ${entry.relay_channel}`);
+      }
+      if (relay !== meta.relay_channel) {
+        throw new Error(`${context}: expected relay_channel ${meta.relay_channel}, got ${relay}`);
+      }
+    };
+
+    const assertAccessCodeUpdateCommand = (cmd, context = 'ACCESS_CODE_UPDATE') => {
+      if (!cmd || cmd.cmd_type !== 'ACCESS_CODE_UPDATE' || !Array.isArray(cmd.codes)) {
+        throw new Error(`${context}: expected ACCESS_CODE_UPDATE with codes[]`);
+      }
+      assertNoLegacyTopLevelCodeFields(cmd);
+      cmd.codes.forEach((entry) => {
+        assertAccessCodeTargetFields(entry, entry.device_id, context);
+        if (!Array.isArray(entry.valid_codes) || entry.valid_codes.length === 0) {
+          throw new Error(`${context}: expected non-empty valid_codes for device ${entry.device_id}`);
+        }
+      });
+    };
+
+    const assertAccessCodePairing = (entry, context) => {
+      assertAccessCodeTargetFields(entry, entry.device_id, context);
+    };
+
+    const normalizeCodeRowsForDevice = (cmd, deviceId) => {
+      if (!cmd || !Array.isArray(cmd.codes)) return [];
+      const rows = [];
+      cmd.codes
+        .filter((entry) => entry.device_id === deviceId)
+        .forEach((entry) => {
+          if (!Array.isArray(entry.valid_codes) || entry.valid_codes.length === 0) return;
+          entry.valid_codes.forEach((validCode) => {
+            rows.push({
+              ...validCode,
+              device_id: deviceId,
+              access_id: entry.access_id,
+              relay_channel: entry.relay_channel,
+            });
+          });
+        });
+      return rows;
+    };
+
+    heading('Multi-door keypad (same access_id, different relay codes)');
+    const multiDoorAccessId = `E2E-MULTI-DOOR-${Date.now()}`;
+    const multiDoorRelayA = 4;
+    const multiDoorRelayB = 5;
+    let multiDoorDeviceA = null;
+    let multiDoorDeviceB = null;
+
+    step('Provisioning two relay rows for one access_id via gateway inventory PROXY');
+    const reqMultiDoorInv = 'req-multi-door-inv';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqMultiDoorInv,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: created.facilityId,
+        devices: [
+          gwAccessDevice({
+            access_id: multiDoorAccessId,
+            relay_channel: multiDoorRelayA,
+            device_type: 'door',
+            name: 'Multi-door relay A',
+            online: true,
+          }),
+          gwAccessDevice({
+            access_id: multiDoorAccessId,
+            relay_channel: multiDoorRelayB,
+            device_type: 'door',
+            name: 'Multi-door relay B',
+            online: true,
+          }),
+        ],
+      },
+    }));
+    const respMultiDoorInv = await waitForProxyResponse(ws, reqMultiDoorInv);
+    if (respMultiDoorInv.status !== 200 || !respMultiDoorInv.body?.success) {
+      throw new Error(`Multi-door inventory sync failed: ${respMultiDoorInv.status}`);
+    }
+    const multiDoorInv = respMultiDoorInv.body?.data?.access_control;
+    if (!multiDoorInv || multiDoorInv.added < 2) {
+      throw new Error(`Expected two multi-door rows added, got ${JSON.stringify(multiDoorInv)}`);
+    }
+    multiDoorDeviceA = await findAccessControlBySerialRelay(
+      created.facilityAdminToken,
+      created.facilityId,
+      multiDoorAccessId,
+      multiDoorRelayA,
+    );
+    multiDoorDeviceB = await findAccessControlBySerialRelay(
+      created.facilityAdminToken,
+      created.facilityId,
+      multiDoorAccessId,
+      multiDoorRelayB,
+    );
+    if (!multiDoorDeviceA?.id || !multiDoorDeviceB?.id || multiDoorDeviceA.id === multiDoorDeviceB.id) {
+      throw new Error('Expected distinct cloud device rows for each relay on the same access_id');
+    }
+    registerAccessControlDeviceMeta(created, multiDoorDeviceA.id, multiDoorAccessId, multiDoorRelayA);
+    registerAccessControlDeviceMeta(created, multiDoorDeviceB.id, multiDoorAccessId, multiDoorRelayB);
+    created.multiRelayDoorDeviceIds.push(multiDoorDeviceA.id, multiDoorDeviceB.id);
+    ok(`Multi-door inventory synced: ${multiDoorDeviceA.id} (relay ${multiDoorRelayA}), ${multiDoorDeviceB.id} (relay ${multiDoorRelayB})`);
+
+    step('Enabling keypad access on both multi-door relay rows');
+    await axios.put(
+      `${API_BASE}/devices/access-control/${multiDoorDeviceA.id}`,
+      { access_methods: ['app', 'keypad'] },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    await axios.put(
+      `${API_BASE}/devices/access-control/${multiDoorDeviceB.id}`,
+      { access_methods: ['app', 'keypad'] },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    ok('Keypad methods enabled on both multi-door relay rows');
+
+    step('Setting distinct device-scoped codes per relay row');
+    const multiDoorCodeA = '444444';
+    const multiDoorCodeB = '555555';
+    const expectMultiDoorCodeA = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'ACCESS_CODE_UPDATE'
+        && Array.isArray(cmd.codes)
+        && normalizeCodeRowsForDevice(cmd, multiDoorDeviceA.id).some((entry) => entry.code === multiDoorCodeA),
+      15000,
+    );
+    await axios.put(
+      `${API_BASE}/access-codes/manual/set`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device',
+        scope_id: multiDoorDeviceA.id,
+        code: multiDoorCodeA,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const multiDoorCmdA = await expectMultiDoorCodeA;
+    assertAccessCodeUpdateCommand(multiDoorCmdA, 'ACCESS_CODE_UPDATE (multi-door relay A)');
+
+    const expectMultiDoorCodeB = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'ACCESS_CODE_UPDATE'
+        && Array.isArray(cmd.codes)
+        && normalizeCodeRowsForDevice(cmd, multiDoorDeviceB.id).some((entry) => entry.code === multiDoorCodeB),
+      15000,
+    );
+    await axios.put(
+      `${API_BASE}/access-codes/manual/set`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device',
+        scope_id: multiDoorDeviceB.id,
+        code: multiDoorCodeB,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const multiDoorCmdB = await expectMultiDoorCodeB;
+    assertAccessCodeUpdateCommand(multiDoorCmdB, 'ACCESS_CODE_UPDATE (multi-door relay B)');
+
+    const multiDoorEffective = await getEffectiveCodesMap();
+    const effectiveDoorA = multiDoorEffective.get(multiDoorDeviceA.id);
+    const effectiveDoorB = multiDoorEffective.get(multiDoorDeviceB.id);
+    if (!effectiveDoorA || effectiveDoorA.code !== multiDoorCodeA) {
+      throw new Error('Expected relay A effective code to match device-scoped override');
+    }
+    if (!effectiveDoorB || effectiveDoorB.code !== multiDoorCodeB) {
+      throw new Error('Expected relay B effective code to match device-scoped override');
+    }
+    if (effectiveDoorA.access_id !== multiDoorAccessId || effectiveDoorB.access_id !== multiDoorAccessId) {
+      throw new Error('Expected both multi-door effective rows to share the same access_id');
+    }
+    if (effectiveDoorA.relay_channel === effectiveDoorB.relay_channel) {
+      throw new Error('Expected multi-door effective rows to have different relay_channel values');
+    }
+    assertAccessCodeTargetFields(effectiveDoorA, multiDoorDeviceA.id, 'GET /access-codes/effective (multi-door A)');
+    assertAccessCodeTargetFields(effectiveDoorB, multiDoorDeviceB.id, 'GET /access-codes/effective (multi-door B)');
+
+    step('Pushing multi-door access codes and asserting same access_id with distinct relay targets');
+    const expectMultiDoorPush = waitForCommand(
+      ws,
+      (cmd) => {
+        if (cmd.cmd_type !== 'ACCESS_CODE_UPDATE' || !Array.isArray(cmd.codes)) return false;
+        const rowA = cmd.codes.find((entry) => entry.device_id === multiDoorDeviceA.id);
+        const rowB = cmd.codes.find((entry) => entry.device_id === multiDoorDeviceB.id);
+        if (!rowA || !rowB) return false;
+        return rowA.access_id === multiDoorAccessId
+          && rowB.access_id === multiDoorAccessId
+          && Number(rowA.relay_channel) === multiDoorRelayA
+          && Number(rowB.relay_channel) === multiDoorRelayB
+          && normalizeCodeRowsForDevice(cmd, multiDoorDeviceA.id).some((entry) => entry.code === multiDoorCodeA)
+          && normalizeCodeRowsForDevice(cmd, multiDoorDeviceB.id).some((entry) => entry.code === multiDoorCodeB);
+      },
+      15000,
+    );
+    await axios.post(
+      `${API_BASE}/access-codes/push/${created.facilityId}`,
+      {},
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const multiDoorPushCmd = await expectMultiDoorPush;
+    assertAccessCodeUpdateCommand(multiDoorPushCmd, 'ACCESS_CODE_UPDATE (multi-door push)');
+    ok('Multi-door keypad: distinct device-scoped codes pushed per relay on shared access_id');
+
+    step('Admin UI metadata edit: relay change re-pushes access codes with updated relay target');
+    const adminEditedRelay = 6;
+    const expectAdminRelayEditPush = waitForCommand(
+      ws,
+      (cmd) => {
+        if (cmd.cmd_type !== 'ACCESS_CODE_UPDATE' || !Array.isArray(cmd.codes)) return false;
+        const row = cmd.codes.find((entry) => entry.device_id === multiDoorDeviceA.id);
+        return !!row
+          && row.access_id === multiDoorAccessId
+          && Number(row.relay_channel) === adminEditedRelay
+          && normalizeCodeRowsForDevice(cmd, multiDoorDeviceA.id).some((entry) => entry.code === multiDoorCodeA);
+      },
+      15000,
+    );
+    const adminRelayEditResp = await axios.put(
+      `${API_BASE}/devices/access-control/${multiDoorDeviceA.id}/metadata`,
+      {
+        name: 'Multi-door relay A',
+        location_description: 'Admin relay edit',
+        device_serial: multiDoorAccessId,
+        relay_channel: adminEditedRelay,
+        access_methods: ['app', 'keypad'],
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    if (adminRelayEditResp.status !== 200 || !adminRelayEditResp.data?.sideEffects?.identityChanged) {
+      throw new Error(
+        `Expected admin relay metadata edit to succeed with identityChanged, got ${JSON.stringify(adminRelayEditResp.data)}`,
+      );
+    }
+    const adminRelayEditCmd = await expectAdminRelayEditPush;
+    assertAccessCodeUpdateCommand(adminRelayEditCmd, 'ACCESS_CODE_UPDATE (admin relay edit)');
+    registerAccessControlDeviceMeta(created, multiDoorDeviceA.id, multiDoorAccessId, adminEditedRelay);
+    ok('Admin metadata relay edit propagated to ACCESS_CODE_UPDATE with stable device_id');
+
     step('Creating a device group and assigning two access-control devices');
     const groupCreateResp = await axios.post(
       `${API_BASE}/device-groups`,
@@ -6305,52 +6733,6 @@ async function run() {
     }
     ok('Facility admin route pass includes user_role=facility_admin');
 
-    const getEffectiveCodesMap = async () => {
-      const effectiveResp = await axios.get(
-        `${API_BASE}/access-codes/effective`,
-        {
-          headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
-          params: { facility_id: created.facilityId },
-        },
-      );
-      const rows = effectiveResp.data?.data || [];
-      return new Map(rows.map((row) => [row.device_id, row]));
-    };
-
-    const normalizeCodeRowsForDevice = (cmd, deviceId) => {
-      if (!cmd || !Array.isArray(cmd.codes)) return [];
-      const rows = [];
-      cmd.codes
-        .filter((entry) => entry.device_id === deviceId)
-        .forEach((entry) => {
-          if (!Array.isArray(entry.valid_codes) || entry.valid_codes.length === 0) return;
-          entry.valid_codes.forEach((validCode) => {
-            rows.push({
-              ...validCode,
-              device_id: deviceId,
-            });
-          });
-        });
-      return rows;
-    };
-
-    const assertNoLegacyTopLevelCodeFields = (cmd) => {
-      if (!cmd || !Array.isArray(cmd.codes)) return;
-      cmd.codes.forEach((entry) => {
-        if (
-          Object.prototype.hasOwnProperty.call(entry, 'code')
-          || Object.prototype.hasOwnProperty.call(entry, 'valid_from')
-          || Object.prototype.hasOwnProperty.call(entry, 'valid_until')
-          || Object.prototype.hasOwnProperty.call(entry, 'schedule_id')
-          || Object.prototype.hasOwnProperty.call(entry, 'schedule')
-          || Object.prototype.hasOwnProperty.call(entry, 'schedule_name')
-          || Object.prototype.hasOwnProperty.call(entry, 'time_windows')
-        ) {
-          throw new Error('ACCESS_CODE_UPDATE should not include legacy top-level code fields');
-        }
-      });
-    };
-
     step('Setting group-scoped code and asserting gateway fan-out to all keypad members');
     const manualGroupCode = '333333';
     const expectManualGroup = waitForCommand(
@@ -6373,7 +6755,7 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     const manualGroupCmd = await expectManualGroup;
-    assertNoLegacyTopLevelCodeFields(manualGroupCmd);
+    assertAccessCodeUpdateCommand(manualGroupCmd);
     const effectiveAfterGroup = await getEffectiveCodesMap();
     const groupEffectiveA = effectiveAfterGroup.get(keypadDeviceA);
     const groupEffectiveB = effectiveAfterGroup.get(keypadDeviceB);
@@ -6383,7 +6765,9 @@ async function run() {
     if (!groupEffectiveB || groupEffectiveB.source_scope_type !== 'device_group' || groupEffectiveB.code !== manualGroupCode) {
       throw new Error('Expected keypadDeviceB effective code to resolve from device_group after group set');
     }
-    ok('Group-scoped code fan-out and effective resolution validated');
+    assertAccessCodeTargetFields(groupEffectiveA, keypadDeviceA, 'GET /access-codes/effective');
+    assertAccessCodeTargetFields(groupEffectiveB, keypadDeviceB, 'GET /access-codes/effective');
+    ok('Group-scoped code fan-out and effective resolution validated (device_id, access_id, relay_channel)');
 
     if (keypadDeviceC) {
       step('Adding new access-control member auto-syncs to current group code');
@@ -6485,6 +6869,7 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     const multiGroupCmd = await expectSecondaryGroupCode;
+    assertAccessCodeUpdateCommand(multiGroupCmd, 'ACCESS_CODE_UPDATE (multi-group)');
     const multiGroupRows = normalizeCodeRowsForDevice(multiGroupCmd, keypadDeviceA);
     if (multiGroupRows.length < 2) {
       throw new Error('Expected multi-group device payload to include multiple valid_codes entries');
@@ -6546,6 +6931,7 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     const scopedRotateCmd = await expectScopedRotate;
+    assertAccessCodeUpdateCommand(scopedRotateCmd, 'ACCESS_CODE_UPDATE (scoped rotate)');
     const scopedRotateEntriesA = normalizeCodeRowsForDevice(scopedRotateCmd, keypadDeviceA);
     const scopedRotateEntriesB = normalizeCodeRowsForDevice(scopedRotateCmd, keypadDeviceB);
     const scopedScheduleSetA = new Set(scopedRotateEntriesA.map((entry) => entry.schedule_id || null));
@@ -6862,6 +7248,7 @@ async function run() {
       if (!scheduledEntry || scheduledEntry.code !== scheduledGroupCode) {
         throw new Error('Expected tenant /access-codes/app/my to resolve schedule-scoped group code for assigned schedule');
       }
+      assertAccessCodePairing(scheduledEntry, 'GET /access-codes/app/my (tenant schedule-scoped)');
       ok('Schedule-scoped code payload and tenant schedule resolution validated');
     } else {
       ok('Skipped schedule-scoped access-code E2E branch (missing schedule or primary tenant context)');
@@ -6917,6 +7304,7 @@ async function run() {
     if (!Array.isArray(myCodes) || myCodes.length === 0) {
       throw new Error('Expected /access-codes/my to return at least one device/code pairing');
     }
+    myCodes.forEach((entry) => assertAccessCodePairing(entry, 'GET /access-codes/my'));
     ok(`/access-codes/my returned ${myCodes.length} pairing(s)`);
     const myCodesFacilityScopedResp = await axios.get(
       `${API_BASE}/access-codes/my`,
@@ -6929,6 +7317,7 @@ async function run() {
     if (!Array.isArray(myCodesFacilityScoped) || myCodesFacilityScoped.length === 0) {
       throw new Error('Expected /access-codes/my?facility_id=... to return at least one pairing');
     }
+    myCodesFacilityScoped.forEach((entry) => assertAccessCodePairing(entry, 'GET /access-codes/my?facility_id'));
     if (primaryToken) {
       const tenantMyCodesResp = await axios.get(
         `${API_BASE}/access-codes/my`,
@@ -6941,6 +7330,7 @@ async function run() {
       if (!Array.isArray(tenantMyCodes) || tenantMyCodes.length === 0) {
         throw new Error('Expected tenant /access-codes/my to return at least one pairing in assigned facility');
       }
+      tenantMyCodes.forEach((entry) => assertAccessCodePairing(entry, 'GET /access-codes/my (tenant)'));
       ok(`Tenant /access-codes/my returned ${tenantMyCodes.length} pairing(s)`);
     }
 
@@ -6956,6 +7346,7 @@ async function run() {
     if (!Array.isArray(appFacilityAdminCodes) || appFacilityAdminCodes.length < 2) {
       throw new Error('Expected facility_admin /access-codes/app/my to return both keypad devices in facility');
     }
+    appFacilityAdminCodes.forEach((entry) => assertAccessCodePairing(entry, 'GET /access-codes/app/my (facility_admin)'));
 
     const appMyDevAdminResp = await axios.get(
       `${API_BASE}/access-codes/app/my`,
@@ -6997,6 +7388,7 @@ async function run() {
         if (!entry.device_id || !entry.device_name || !entry.code) {
           throw new Error('Tenant /access-codes/app/my returned entry missing device_id/device_name/code');
         }
+        assertAccessCodePairing(entry, 'GET /access-codes/app/my (tenant)');
         if (!entry.schedule_id) {
           throw new Error('Tenant /access-codes/app/my should not return always-on access code entries');
         }
@@ -7099,15 +7491,28 @@ async function run() {
     if (!Array.isArray(pollCodes) || pollCodes.length === 0) {
       throw new Error('Expected internal gateway poll endpoint to return resolved codes');
     }
-    ok(`Internal gateway poll returned ${pollCodes.length} device code mapping(s)`);
+    pollCodes.forEach((entry) => {
+      assertAccessCodeTargetFields(entry, entry.device_id, 'GET /internal/gateway/access-codes');
+      if (!entry.code || !entry.valid_until) {
+        throw new Error('Gateway poll entry missing code or valid_until');
+      }
+    });
+    ok(`Internal gateway poll returned ${pollCodes.length} device code mapping(s) with device_id, access_id, relay_channel`);
 
     step('Pushing access code update command to gateway');
+    const expectPushUpdate = waitForCommand(
+      ws,
+      (cmd) => cmd.cmd_type === 'ACCESS_CODE_UPDATE' && Array.isArray(cmd.codes) && cmd.codes.length > 0,
+      15000,
+    );
     await axios.post(
       `${API_BASE}/access-codes/push/${created.facilityId}`,
       {},
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
-    ok('Access code push command dispatched');
+    const pushCmd = await expectPushUpdate;
+    assertAccessCodeUpdateCommand(pushCmd, 'ACCESS_CODE_UPDATE (manual push)');
+    ok('Access code push command dispatched with device_id, access_id, relay_channel');
 
     heading('Mixed Chaos Stress (Firmware Progress + Subscription Spam + Access-Code Push)');
     step('Preparing active firmware push for high-rate progress updates');

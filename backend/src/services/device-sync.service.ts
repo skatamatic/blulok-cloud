@@ -751,7 +751,7 @@ export class DeviceSyncService {
 
       let remainingDevices = await this.deviceModel.findAccessControlDevices({ gateway_id: gatewayId });
 
-      // Remove sync-managed rows omitted from inventory before adds (relay channel is unique per gateway).
+      // Remove sync-managed rows omitted from inventory before adds.
       for (const device of remainingDevices) {
         const key = resolveAccessDeviceKey(device);
         if (incomingMap.has(key)) {
@@ -802,11 +802,13 @@ export class DeviceSyncService {
           const accessId = extractAccessId(item as unknown as Record<string, unknown>);
           const relayChannel = resolveAccessRelayChannel(item.relay_channel);
 
-          const overrideOnRelay = remainingDevices.find(
+          const overridesOnRelay = remainingDevices.filter(
             (d) =>
               d.relay_channel === relayChannel &&
               hasAdminIdentityOverride(d.metadata as Record<string, unknown> | undefined)
           );
+          const overrideOnRelay =
+            overridesOnRelay.length === 1 ? overridesOnRelay[0] : undefined;
 
           if (overrideOnRelay) {
             try {
@@ -838,23 +840,6 @@ export class DeviceSyncService {
                 `Failed to reconcile admin override on relay ${relayChannel}: ${error.message}`
               );
             }
-            continue;
-          }
-
-          const relayConflict = remainingDevices.find(
-            (d) => d.relay_channel === relayChannel && resolveAccessDeviceKey(d) !== key
-          );
-          if (relayConflict) {
-            result.errors.push(
-              `Relay ${relayChannel} is already used by device ${relayConflict.device_serial}`
-            );
-            result.entries!.push({
-              action: 'error',
-              device_kind: 'access_control',
-              identifier: formatAccessDeviceKey(accessId, relayChannel),
-              label: item.name,
-              reason: `Relay ${relayChannel} already used by ${relayConflict.device_serial}`,
-            });
             continue;
           }
 

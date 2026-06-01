@@ -728,18 +728,15 @@ export class DeviceModel {
   }
 
   /**
-   * Find access control row occupying the same relay or serial+relay on a gateway (excluding self).
+   * Find access control row with the same gateway + serial + relay identity (excluding self).
+   * Relay channels are per device (access_id), not globally unique on the gateway.
    */
   async findAccessControlIdentityConflict(
     gatewayId: string,
     deviceSerial: string,
     relayChannel: number,
     excludeId: string
-  ): Promise<{ type: 'relay' | 'serial_relay'; device: AccessControlDevice } | null> {
-    const relayConflict = await this.findAccessControlByRelayChannel(gatewayId, relayChannel);
-    if (relayConflict && relayConflict.id !== excludeId) {
-      return { type: 'relay', device: relayConflict };
-    }
+  ): Promise<{ type: 'serial_relay'; device: AccessControlDevice } | null> {
     const serialRelay = await this.findAccessControlBySerialAndRelay(
       gatewayId,
       deviceSerial,

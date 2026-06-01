@@ -3,7 +3,8 @@
  * Device metadata editing E2E
  *
  * Exercises PUT /devices/blulok/:id/metadata and /devices/access-control/:id/metadata
- * against a running backend.
+ * against a running backend, including access-control identity changes that must
+ * propagate to access codes (stable device UUID, updated access_id + relay_channel).
  *
  * When E2E_BLULOK_DEVICE_ID is unset, provisions a disposable facility + devices and cleans up.
  *
@@ -135,13 +136,14 @@ async function provisionTestDevices(token) {
       device_type: 'door',
       relay_channel: 1,
       location_description: 'E2E metadata door',
+      access_methods: ['app', 'keypad'],
     },
     { headers },
   );
   const acId = acRes.data?.device?.id;
   if (!acId) throw new Error('Failed to create E2E access control device');
 
-  return { facilityId, blulokId, acId };
+  return { facilityId, gatewayId, blulokId, acId, acSerial };
 }
 
 async function hardDeleteFacility(token, facilityId) {
@@ -190,6 +192,9 @@ async function runAccessControlMetadataTests(token, acId, headers) {
   assert(!!ac?.device_serial, 'Load access control device');
   if (!ac?.device_serial) return;
 
+  const originalSerial = ac.device_serial;
+  const originalRelay = ac.relay_channel;
+
   const putAc = await axios.put(
     `${API_BASE}/devices/access-control/${acId}/metadata`,
     {
@@ -197,12 +202,70 @@ async function runAccessControlMetadataTests(token, acId, headers) {
       location_description: ac.location_description || 'E2E location',
       device_serial: ac.device_serial,
       relay_channel: ac.relay_channel,
-      access_methods: ac.access_methods || ['app'],
+      access_methods: ac.access_methods || ['app', 'keypad'],
     },
     { headers },
   );
   assert(putAc.status === 200, 'PUT access-control metadata (no-op) returns 200');
   assert(putAc.data?.device?.id === acId, 'Access control device id stable');
+  assert(putAc.data?.sideEffects?.identityChanged === false, 'No-op update does not change identity');
+
+  const nextRelay = originalRelay === 2 ? 3 : 2;
+  const relayPut = await axios.put(
+    `${API_BASE}/devices/access-control/${acId}/metadata`,
+    {
+      name: ac.name,
+      location_description: ac.location_description || 'E2E location',
+      device_serial: originalSerial,
+      relay_channel: nextRelay,
+      access_methods: ac.access_methods || ['app', 'keypad'],
+    },
+    { headers },
+  );
+  assert(relayPut.status === 200, 'PUT access-control relay change returns 200');
+  assert(relayPut.data?.sideEffects?.identityChanged === true, 'Relay change flags identityChanged');
+  assert(relayPut.data?.device?.relay_channel === nextRelay, 'Relay updated in response');
+  assert(
+    relayPut.data?.device?.metadata?.adminIdentityOverride === true,
+    'Relay change sets adminIdentityOverride',
+  );
+  assert(
+    relayPut.data?.sideEffects?.previousIdentity?.relay_channel === originalRelay,
+    'Relay change records previous relay in sideEffects',
+  );
+
+  const nextSerial = `${originalSerial}-EDIT`;
+  const serialPut = await axios.put(
+    `${API_BASE}/devices/access-control/${acId}/metadata`,
+    {
+      name: ac.name,
+      location_description: ac.location_description || 'E2E location',
+      device_serial: nextSerial,
+      relay_channel: nextRelay,
+      access_methods: ac.access_methods || ['app', 'keypad'],
+    },
+    { headers },
+  );
+  assert(serialPut.status === 200, 'PUT access-control serial change returns 200');
+  assert(serialPut.data?.sideEffects?.identityChanged === true, 'Serial change flags identityChanged');
+  assert(serialPut.data?.device?.device_serial === nextSerial, 'Serial updated in response');
+  assert(
+    serialPut.data?.device?.metadata?.device_serial === nextSerial,
+    'Serial mirrored into metadata for gateway commands',
+  );
+
+  const revertPut = await axios.put(
+    `${API_BASE}/devices/access-control/${acId}/metadata`,
+    {
+      name: ac.name,
+      location_description: ac.location_description || 'E2E location',
+      device_serial: originalSerial,
+      relay_channel: originalRelay,
+      access_methods: ac.access_methods || ['app', 'keypad'],
+    },
+    { headers },
+  );
+  assert(revertPut.status === 200, 'Revert access-control identity');
 }
 
 async function main() {
@@ -243,7 +306,12 @@ async function main() {
 
   if (acId) {
     try {
-      await runAccessControlMetadataTests(token, acId, headers);
+      const facilityId = provisionedFacilityId;
+      if (!facilityId) {
+        bad('Access-control identity tests require auto-provisioned facility (unset E2E_AC_DEVICE_ID override)');
+      } else {
+        await runAccessControlMetadataTests(token, acId, headers);
+      }
     } catch (err) {
       bad(`Access-control metadata tests failed: ${err?.response?.data?.message || err.message}`);
     }

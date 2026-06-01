@@ -240,9 +240,6 @@ export class DeviceMetadataService {
         String(input.device_serial).trim() !== String(existing.device_serial).trim()) ||
       (input.relay_channel !== undefined && Number(input.relay_channel) !== existing.relay_channel);
 
-    const relayChanged =
-      input.relay_channel !== undefined && Number(input.relay_channel) !== existing.relay_channel;
-
     if (identityChanged) {
       const conflict = await this.deviceModel.findAccessControlIdentityConflict(
         existing.gateway_id,
@@ -250,11 +247,6 @@ export class DeviceMetadataService {
         nextRelay,
         deviceId
       );
-      if (conflict?.type === 'relay') {
-        throw new ConflictError(
-          `Relay ${nextRelay} is already used by device ${conflict.device.device_serial}`
-        );
-      }
       if (conflict?.type === 'serial_relay') {
         throw new ConflictError(
           `Device serial "${nextSerial}" on relay ${nextRelay} is already in use`
@@ -318,7 +310,7 @@ export class DeviceMetadataService {
     }
 
     let accessCodesPushed = false;
-    if ((identityChanged || relayChanged) && existing.facility_id) {
+    if (identityChanged && existing.facility_id) {
       try {
         await AccessCodeService.getInstance().pushCodesToGateway(existing.facility_id);
         accessCodesPushed = true;

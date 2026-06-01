@@ -354,6 +354,32 @@ describe('Internal Gateway Routes', () => {
         [expect.objectContaining({ access_id: 'KP-004', relay_channel: 4 })]
       );
     });
+
+    it('accepts same access_id on multiple relay channels in one inventory payload', async () => {
+      syncAccessDeviceInventoryMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [
+            { kind: 'access_control', access_id: 'KP-SHARED', relay_channel: 1 },
+            { kind: 'access_control', access_id: 'KP-SHARED', relay_channel: 2 },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(syncAccessDeviceInventoryMock).toHaveBeenCalledWith(
+        'gateway-1',
+        'facility-1',
+        [
+          expect.objectContaining({ access_id: 'KP-SHARED', relay_channel: 1 }),
+          expect.objectContaining({ access_id: 'KP-SHARED', relay_channel: 2 }),
+        ],
+      );
+    });
   });
 
   describe('POST /api/v1/internal/gateway/devices/state', () => {

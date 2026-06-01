@@ -122,7 +122,7 @@ Stored in `access_control_devices`. Identity: **`access_id` + `relay_channel`** 
 |-------|----------|------|---------|-------------------|---------------|
 | `kind` | **yes** | string | — | `"access_control"` | Discriminator |
 | `access_id` | **yes** | string | — | non-empty trim | `device_serial` |
-| `relay_channel` | no | integer | **1** | **1–8** | `relay_channel` (which gateway output to pulse) |
+| `relay_channel` | no | integer | **1** | **1–8** | `relay_channel` (relay output on **this** keypad; not globally unique on the gateway) |
 | `device_type` | no | string | **`door`** on create | `gate`, `door`, `elevator` | `device_type` |
 | `name` | no | string | **`"{access_id} relay {n}"`** | max 255 | `name` |
 | `location_description` | no | string | **`"Gateway relay {n}"`** | max 255 | `location_description` |
@@ -140,6 +140,8 @@ Stored in `access_control_devices`. Identity: **`access_id` + `relay_channel`** 
 | `relay_channel` | **1** if omitted |
 
 After access inventory changes, the cloud **pushes access codes** to the gateway.
+
+**Identity key:** `{access_id}::{relay_channel}` (relay defaults to **1**). Two keypads on the same gateway may both omit `relay_channel` or send `relay_channel: 1` — they remain distinct rows because `access_id` differs.
 
 **Removal:** Same policy as locks — only sync-managed rows removed when omitted.
 
@@ -276,6 +278,55 @@ Unknown composite key → `not_found[]` entry like `KP-001::2`.
   }
 }
 ```
+
+### Multi-door keypad (same `access_id`, different relays)
+
+One physical keypad managing multiple doors appears in cloud inventory as **separate rows** per relay output:
+
+```json
+{
+  "devices": [
+    { "kind": "access_control", "access_id": "f759bd50-a70e-5bba-81c5-25e9a7c695c1", "relay_channel": 1, "name": "Main Door" },
+    { "kind": "access_control", "access_id": "f759bd50-a70e-5bba-81c5-25e9a7c695c1", "relay_channel": 2, "name": "Side Door" }
+  ]
+}
+```
+
+Cloud keys: `f759bd50-...::1` and `f759bd50-...::2`. Each row has its own cloud `device_id`; access codes are resolved and pushed per **`device_id` + `access_id` + `relay_channel`**. For **different codes per door**, use **device-scoped** overrides or separate access-code groups — a single group assigns the same code to all member rows.
+
+---
+
+## Inventory sync behavior (access control)
+
+Each sync is a **full reconcile** of what the gateway reports in `devices[]`:
+
+1. **Identity key:** `{access_id}::{relay_channel}` — if `relay_channel` is omitted, cloud uses **1**.
+2. **Remove:** Sync-managed rows (`metadata.createdFromGatewaySync`) missing from the payload are deleted. Manually added admin rows (`metadata.manuallyAdded` or not sync-managed) are **kept** and reported as `skipped_manual`.
+3. **Add:** Each incoming key not already in the DB is auto-provisioned (unless admin identity override applies — see below).
+4. **Update:** Matching keys get state/metadata updates; reported as `unchanged`.
+
+### Two keypads on one gateway
+
+Send **one inventory item per keypad**. Both may use the default relay:
+
+```json
+{
+  "devices": [
+    { "kind": "access_control", "access_id": "KEYPAD-A-UUID", "online": true },
+    { "kind": "access_control", "access_id": "KEYPAD-B-UUID", "online": true }
+  ]
+}
+```
+
+Cloud stores two rows: `KEYPAD-A-UUID::1` and `KEYPAD-B-UUID::1`. Relay **1** on keypad A is unrelated to relay **1** on keypad B — uniqueness is per `(gateway, access_id, relay_channel)`, not relay alone.
+
+Include `relay_channel` only when that keypad uses a non-default output (2–8).
+
+### Admin identity override (reconcile)
+
+If an admin manually created a device on relay N with a placeholder serial and `metadata.adminIdentityOverride`, the **first** gateway inventory item for that relay with a new `access_id` updates that row in place (reason: `"Admin identity override reconciled to gateway inventory serial"`). This applies only when exactly **one** override device exists on that relay.
+
+---
 
 ## Common validation errors
 

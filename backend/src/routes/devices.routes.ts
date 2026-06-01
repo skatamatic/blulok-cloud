@@ -479,11 +479,6 @@ router.post('/access-control', requireAdminOrFacilityAdmin, asyncHandler(async (
     relayChannel,
     ''
   );
-  if (conflict?.type === 'relay') {
-    throw new ConflictError(
-      `Relay ${relayChannel} is already used by device ${conflict.device.device_serial}`
-    );
-  }
   if (conflict?.type === 'serial_relay') {
     throw new ConflictError(
       `Device serial "${deviceSerial}" on relay ${relayChannel} is already in use`

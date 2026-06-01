@@ -79,7 +79,7 @@ describe('EditDeviceMetadataModal', () => {
     const axiosError = new axios.AxiosError('Conflict');
     axiosError.response = {
       status: 409,
-      data: { message: 'Relay 2 is already used by device KP-OTHER' },
+      data: { message: 'Device serial "KP-1" on relay 2 is already in use' },
     } as never;
     (apiService.updateAccessControlDeviceMetadata as jest.Mock).mockRejectedValue(axiosError);
 
@@ -110,7 +110,7 @@ describe('EditDeviceMetadataModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /save identity change/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Relay 2 is already used/i)).toBeInTheDocument();
+      expect(screen.getByText(/Device serial "KP-1" on relay 2 is already in use/i)).toBeInTheDocument();
     });
     expect(onSuccess).not.toHaveBeenCalled();
   });

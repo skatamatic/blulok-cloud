@@ -181,6 +181,7 @@ export interface AccessCode {
 
 export interface EffectiveAccessCode {
   device_id: string;
+  access_id: string;
   device_name: string;
   device_type: 'gate' | 'elevator' | 'door';
   location_description: string | null;
@@ -198,6 +199,8 @@ export interface EffectiveAccessCode {
 
 export interface UserAccessCode {
   device_id: string;
+  access_id: string;
+  relay_channel: number;
   device_name: string;
   device_type: 'gate' | 'elevator' | 'door';
   location_description: string | null;

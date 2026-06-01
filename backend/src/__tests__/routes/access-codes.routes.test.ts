@@ -75,6 +75,8 @@ describe('Access Codes Routes', () => {
     mockGetCodesForUser.mockResolvedValueOnce([
       {
         device_id: 'dev-1',
+        access_id: 'KP-001',
+        relay_channel: 2,
         device_name: 'Front Gate',
         device_type: 'gate',
         location_description: 'Main entrance',
@@ -93,6 +95,8 @@ describe('Access Codes Routes', () => {
     expect(Array.isArray(response.body.data)).toBe(true);
     expect(response.body.data[0]).toEqual(expect.objectContaining({
       device_id: 'dev-1',
+      access_id: 'KP-001',
+      relay_channel: 2,
       device_type: 'gate',
     }));
   });
@@ -110,6 +114,8 @@ describe('Access Codes Routes', () => {
     mockGetAppCodesForUser.mockResolvedValueOnce([
       {
         device_id: 'dev-2',
+        access_id: 'KP-002',
+        relay_channel: 1,
         device_name: 'Elevator 1',
         device_type: 'elevator',
         location_description: 'Lobby',
@@ -128,6 +134,8 @@ describe('Access Codes Routes', () => {
     expect(Array.isArray(response.body.data)).toBe(true);
     expect(response.body.data[0]).toEqual(expect.objectContaining({
       device_id: 'dev-2',
+      access_id: 'KP-002',
+      relay_channel: 1,
       device_type: 'elevator',
     }));
   });

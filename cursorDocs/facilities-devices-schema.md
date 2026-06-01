@@ -105,14 +105,13 @@ CREATE TABLE access_control_devices (
   metadata JSON,
   created_at TIMESTAMP,
   updated_at TIMESTAMP,
-  UNIQUE(gateway_id, relay_channel), -- One relay output per gateway
-  UNIQUE(gateway_id, device_serial, relay_channel) -- Sync identity: serial + relay
+  UNIQUE(gateway_id, device_serial, relay_channel) -- Sync identity: access_id + relay per device
 );
 ```
 
 **Key Features**:
 - **Device Types**: Gates, elevators, doors with specific UI treatment
-- **Relay Mapping**: Each device maps to a specific relay channel
+- **Relay Mapping**: Each access control device has its own relay channel (1–8). Multiple keypads on the same gateway may share the same relay number; identity is **`device_serial` + `relay_channel`**, not relay alone.
 - **Configurable Access Methods**: Per-device support for app, keypad, and fob access (any combination)
 - **Lock State**: Current locked/unlocked status
 - **Activity Tracking**: Last activity timestamps for auditing
@@ -264,7 +263,7 @@ The gateway uses two endpoints for device management:
 **1. Inventory Sync** (`POST /api/v1/internal/gateway/devices/inventory`)
 - Syncs the full device inventory for a gateway (locks and access control in one `devices[]` array)
 - **Locks** (`kind: "lock"`, `lock_id` required): rows in `blulok_devices`
-- **Access control** (`kind: "access_control"`, `access_id` + optional `relay_channel`, default **1**): rows in `access_control_devices`. Identity is **hardware serial + relay** (parallel to `lock_id` for BluLok). `relay_channel` is actuation config (which gateway output to pulse).
+- **Access control** (`kind: "access_control"`, `access_id` + optional `relay_channel`, default **1**): rows in `access_control_devices`. Identity is **hardware serial + relay** (parallel to `lock_id` for BluLok). `relay_channel` is the relay output on **that keypad device** (defaults to 1 for single-relay hardware); it is **not** globally unique per gateway.
 - Devices in the array that don't exist are created (access auto-provision uses `access_methods: ["keypad"]`, `metadata.createdFromGatewaySync: true`)
 - **Removal policy:** only auto-provisioned devices (`metadata.createdFromGatewaySync`) are removed when omitted; admin-created devices are preserved
 - Include both lock and access items in the same payload when reconciling a full gateway inventory
@@ -454,7 +453,7 @@ Scope rules:
 ### Device Management
 - **Gateway Requirement**: All devices must be connected through a facility's gateway
 - **Unique Constraints**: One gateway per facility, one BluLok per unit
-- **Relay Channels**: Access control devices use unique relay channels per gateway
+- **Relay Channels**: Uniqueness is `(gateway_id, device_serial, relay_channel)` — two keypads may both use relay `1`
 - **Status Synchronization**: Device status updates propagate to related entities
 
 ### Data Integrity
@@ -503,8 +502,17 @@ Scope rules:
 
 ### ACCESS_CODE_UPDATE payload contract
 
-Gateway command entries now include schedule context:
-- `device_id`, `relay_channel`, `code`, `valid_from`, `valid_until`
+Device targeting uses **both** cloud and gateway identifiers:
+
+- `device_id` — cloud UUID (`access_control_devices.id`)
+- `access_id` — gateway hardware serial (`access_control_devices.device_serial`, same as inventory/state sync)
+- `relay_channel` — gateway relay output (1–8)
+
+Per device in `ACCESS_CODE_UPDATE`: `device_id`, `access_id`, `relay_channel`, `valid_codes[]`
+
+App-facing code APIs (`GET /access-codes/my`, `GET /access-codes/app/my`) return the same pairing keys.
+
+Gateway command entries include schedule context in nested `valid_codes`:
 - `schedule_id`, `schedule_name`
 - `time_windows[]` (`day_of_week`, `start_time`, `end_time`)
 

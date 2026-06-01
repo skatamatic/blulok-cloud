@@ -690,7 +690,7 @@ export function EditDeviceMetadataModal({
         message={
           device.category === 'blulok'
             ? `Change hardware serial from "${device.device_serial}" to "${bluForm.device_serial.trim()}"? This affects gateway commands and route passes; users may need to refresh mobile passes.`
-            : `Change identity from serial "${device.device_serial}" relay ${device.relay_channel ?? 1} to serial "${acForm.device_serial.trim()}" relay ${acForm.relay_channel}? Access codes will be re-pushed to the gateway if the relay changed.`
+            : `Change identity from serial "${device.device_serial}" relay ${device.relay_channel ?? 1} to serial "${acForm.device_serial.trim()}" relay ${acForm.relay_channel}? Access codes will be re-pushed to the gateway with the updated access_id and relay target.`
         }
         confirmText="Save identity change"
         variant="info"
