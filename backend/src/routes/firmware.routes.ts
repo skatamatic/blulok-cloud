@@ -155,6 +155,20 @@ function handleFirmwareUploadError(err: any, res: Response): boolean {
     res.status(400).json({ success: false, message: err.message });
     return true;
   }
+  const message = String(err?.message || '');
+  if (
+    message.includes('signBlob')
+    || message.includes('Failed to create upload session')
+    || err?.code === 'PERMISSION_DENIED'
+  ) {
+    res.status(503).json({
+      success: false,
+      message:
+        'Firmware storage is not configured for direct uploads. Grant the Cloud Run service account '
+        + 'storage.objectCreator (and storage.objectViewer for finalize) on the firmware bucket.',
+    });
+    return true;
+  }
   return false;
 }
 
@@ -199,9 +213,11 @@ router.post(
           return;
         }
         try {
+          const clientOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
           const session = await FirmwareService.initFirmwareUpload(
             { originalname: value.filename, size: value.size_bytes },
             parseUploadMetadata(value),
+            clientOrigin,
           );
           res.status(200).json({ success: true, data: session });
         } catch (err: any) {

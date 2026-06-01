@@ -44,7 +44,7 @@ The same firmware version string (e.g. `2.0.0`) can exist independently for diff
 - Before starting a push, the stored binary is re-read and re-hashed to verify integrity against the database hash. If they differ, the push fails immediately.
 - Maximum upload size is **250MB** (`FIRMWARE_MAX_SIZE_MB` in `firmware-storage.factory.ts`; multer on `POST /firmware/upload` uses the same limit).
 - **Cloud Run (HTTP/1) rejects request bodies over 32 MiB** with HTTP 413 before they reach the app. End-to-end HTTP/2 on Cloud Run is **not compatible with gateway WebSockets** (Google documents: do not enable HTTP/2 when using WebSockets).
-- Large uploads on Cloud Run therefore use **`POST /firmware/upload` with JSON `phase: "prepare"`** → client PUT to a signed GCS URL → **`POST /firmware/upload` with JSON `phase: "finalize"`**. The DevTools frontend hides this in `apiService.uploadFirmware()`. **Gateways never call this route** — they receive OTA via WebSocket chunk push after a dev admin initiates push.
+- Large uploads on Cloud Run therefore use **`POST /firmware/upload` with JSON `phase: "prepare"`** → client PUT to a GCS resumable upload session URL → **`POST /firmware/upload` with JSON `phase: "finalize"`**. The DevTools frontend hides this in `apiService.uploadFirmware()`. **Gateways never call this route** — they receive OTA via WebSocket chunk push after a dev admin initiates push.
 - Local / non-GCS storage uses multipart `POST /firmware/upload` directly (`upload_mode: direct_multipart` from prepare).
 - **GCS bucket CORS** must allow `PUT` from DevTools / frontend origins (see deployment notes below).
 
@@ -424,16 +424,16 @@ Migration `046_seed_default_storage_config.ts` seeds the default local provider 
 - **FirmwareManagementTab** (DevTools, DEV_ADMIN): Upload form with target type selector, catalog with colored target type badges and filter bar
 - **GatewayFirmwareTab** (Gateway detail): Tab selector for Gateway/Lock/Friend Node, each showing available firmware, active push progress, and push history for that target type
 
-## GCS bucket CORS (signed upload)
+## GCS bucket CORS (direct browser upload)
 
-Browser DevTools uploads PUT directly to `storage.googleapis.com`. Configure CORS on the firmware bucket, e.g.:
+Browser DevTools uploads PUT directly to a GCS resumable session URL (`storage.googleapis.com`). Configure CORS on the firmware bucket, e.g.:
 
 ```json
 [
   {
     "origin": ["https://*.run.app", "http://localhost:5173", "http://localhost:3001"],
     "method": ["PUT", "GET", "HEAD"],
-    "responseHeader": ["Content-Type", "X-Goog-Content-Length-Range"],
+    "responseHeader": ["Content-Type", "Content-Range", "Range", "Location"],
     "maxAgeSeconds": 3600
   }
 ]
@@ -441,7 +441,7 @@ Browser DevTools uploads PUT directly to `storage.googleapis.com`. Configure COR
 
 Apply with `gcloud storage buckets update gs://YOUR_BUCKET --cors-file=cors.json` (or `gsutil cors set cors.json gs://YOUR_BUCKET`).
 
-The Cloud Run service account needs `storage.objectCreator` (upload) and read access for finalize hashing.
+The Cloud Run service account needs **`storage.objectCreator`** (create resumable session + upload) and **`storage.objectViewer`** (read/hash on finalize). Unlike V4 signed URLs, resumable sessions do **not** require `iam.serviceAccounts.signBlob` / `roles/iam.serviceAccountTokenCreator`.
 
 ## Key Files
 

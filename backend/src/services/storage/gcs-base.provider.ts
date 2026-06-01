@@ -141,36 +141,35 @@ export class GCSBaseStorage implements BaseStorageProvider {
   }
 
   /**
-   * V4 signed URL for browser/client PUT uploads (bypasses Cloud Run HTTP/1 32 MiB limit).
+   * Resumable upload session for browser PUT uploads (bypasses Cloud Run HTTP/1 32 MiB limit).
+   * Uses OAuth via the runtime service account — no iam.serviceAccounts.signBlob required.
    */
-  async getSignedUploadUrl(
+  async createResumableUploadSession(
     filePath: string,
-    options: { contentType?: string; minBytes?: number; maxBytes: number; expiresSeconds?: number },
+    options: { contentType?: string; origin?: string },
   ): Promise<{ url: string; headers: Record<string, string> }> {
     const file = this.bucket.file(filePath);
-    const minBytes = Math.max(1, options.minBytes ?? 1);
-    const maxBytes = Math.max(minBytes, options.maxBytes);
     const contentType = options.contentType || this.guessContentType(filePath);
-    const expiresMs = (options.expiresSeconds ?? 3600) * 1000;
-    const lengthRange = `${minBytes},${maxBytes}`;
-
-    const [url] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'write',
-      expires: Date.now() + expiresMs,
-      contentType,
-      extensionHeaders: {
-        'X-Goog-Content-Length-Range': lengthRange,
-      },
-    });
-
-    return {
-      url,
-      headers: {
-        'Content-Type': contentType,
-        'X-Goog-Content-Length-Range': lengthRange,
-      },
+    const createOptions: { metadata: { contentType: string }; origin?: string } = {
+      metadata: { contentType },
     };
+    if (options.origin) {
+      createOptions.origin = options.origin;
+    }
+
+    try {
+      const [url] = await file.createResumableUpload(createOptions);
+      return {
+        url,
+        headers: { 'Content-Type': contentType },
+      };
+    } catch (error: any) {
+      throw new StorageError(
+        `Failed to create upload session: ${error.message}`,
+        StorageErrorCode.PERMISSION_DENIED,
+        { originalError: error.message },
+      );
+    }
   }
 
   async hashFileSha256(filePath: string): Promise<string> {

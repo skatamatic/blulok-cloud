@@ -37,7 +37,12 @@ export interface FirmwareStorageProvider {
   initialize(): Promise<void>;
   supportsSignedUpload(): boolean;
   buildStoragePath(firmwareId: string, filename: string): string;
-  createSignedUploadSession(firmwareId: string, filename: string, sizeBytes: number): Promise<FirmwareSignedUploadSession>;
+  createSignedUploadSession(
+    firmwareId: string,
+    filename: string,
+    sizeBytes: number,
+    clientOrigin?: string,
+  ): Promise<FirmwareSignedUploadSession>;
   fileExists(storagePath: string): Promise<boolean>;
   getStoredFileSize(storagePath: string): Promise<number>;
   hashStoredFile(storagePath: string): Promise<string>;
@@ -73,24 +78,23 @@ class FirmwareStorageAdapter implements FirmwareStorageProvider {
   async createSignedUploadSession(
     firmwareId: string,
     filename: string,
-    sizeBytes: number,
+    _sizeBytes: number,
+    clientOrigin?: string,
   ): Promise<FirmwareSignedUploadSession> {
     if (!this.supportsSignedUpload()) {
       throw new Error('Signed upload is not supported for this storage provider');
     }
     const storagePath = this.buildStoragePath(firmwareId, filename);
     const gcs = this.base as import('@/services/storage/gcs-base.provider').GCSBaseStorage;
-    const signed = await gcs.getSignedUploadUrl(storagePath, {
+    const session = await gcs.createResumableUploadSession(storagePath, {
       contentType: 'application/octet-stream',
-      minBytes: 1,
-      maxBytes: sizeBytes,
-      expiresSeconds: 3600,
+      origin: clientOrigin,
     });
     return {
       upload_id: firmwareId,
       storage_path: storagePath,
-      upload_url: signed.url,
-      upload_headers: signed.headers,
+      upload_url: session.url,
+      upload_headers: session.headers,
       expires_in_seconds: 3600,
     };
   }

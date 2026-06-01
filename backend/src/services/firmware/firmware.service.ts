@@ -164,12 +164,13 @@ export class FirmwareService {
   }
 
   /**
-   * Begin a large firmware upload. When storage supports signed URLs (GCS), the client
-   * PUTs the binary directly to object storage — required on Cloud Run (32 MiB HTTP/1 limit).
+   * Begin a large firmware upload. When storage is GCS, the client PUTs the binary
+   * to a resumable upload session — required on Cloud Run (32 MiB HTTP/1 limit).
    */
   static async initFirmwareUpload(
     file: { originalname: string; size: number },
     metadata: { version: string; target_type?: FirmwareTargetType; description?: string; release_notes?: string; compatible_models?: string[]; minimum_version?: string },
+    clientOrigin?: string,
   ): Promise<
     | { upload_mode: 'direct_multipart' }
     | ({ upload_mode: 'signed_url' } & import('./firmware-storage.factory').FirmwareSignedUploadSession)
@@ -193,7 +194,12 @@ export class FirmwareService {
     }
 
     const uploadId = uuidv4();
-    const session = await storage.createSignedUploadSession(uploadId, file.originalname, file.size);
+    const session = await storage.createSignedUploadSession(
+      uploadId,
+      file.originalname,
+      file.size,
+      clientOrigin,
+    );
     return { upload_mode: 'signed_url', ...session };
   }
 

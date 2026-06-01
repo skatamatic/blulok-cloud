@@ -17,6 +17,9 @@ jest.mock('@google-cloud/storage', () => {
     delete: jest.fn().mockResolvedValue(undefined),
     exists: jest.fn().mockResolvedValue([true]),
     getMetadata: jest.fn().mockResolvedValue([{ size: 100 }]),
+    createResumableUpload: jest.fn().mockResolvedValue([
+      'https://storage.googleapis.com/upload/storage/v1/b/test-bucket/o?uploadType=resumable&upload_id=abc',
+    ]),
   };
   const mockBucket = {
     exists: jest.fn().mockResolvedValue([true]),
@@ -338,6 +341,44 @@ describe('GCSBaseStorage', () => {
 
       await expect(storage.deleteDirectory('empty-dir')).resolves.not.toThrow();
       expect(mockBucket.getFiles).toHaveBeenCalledWith({ prefix: 'empty-dir/' });
+    });
+  });
+
+  describe('createResumableUploadSession', () => {
+    beforeEach(() => {
+      storage = new GCSBaseStorage(baseConfig);
+    });
+
+    it('returns session URL and Content-Type header', async () => {
+      const result = await storage.createResumableUploadSession('firmware/abc/v1.bin', {
+        contentType: 'application/octet-stream',
+      });
+
+      expect(result.url).toContain('uploadType=resumable');
+      expect(result.headers).toEqual({ 'Content-Type': 'application/octet-stream' });
+      expect(mockFile.createResumableUpload).toHaveBeenCalledWith({
+        metadata: { contentType: 'application/octet-stream' },
+      });
+    });
+
+    it('passes browser origin for CORS when provided', async () => {
+      await storage.createResumableUploadSession('firmware/abc/v1.bin', {
+        contentType: 'application/octet-stream',
+        origin: 'https://app.example.com',
+      });
+
+      expect(mockFile.createResumableUpload).toHaveBeenCalledWith({
+        metadata: { contentType: 'application/octet-stream' },
+        origin: 'https://app.example.com',
+      });
+    });
+
+    it('throws PERMISSION_DENIED when session creation fails', async () => {
+      mockFile.createResumableUpload.mockRejectedValue(new Error('Access denied'));
+
+      await expect(
+        storage.createResumableUploadSession('firmware/abc/v1.bin', {}),
+      ).rejects.toMatchObject({ code: StorageErrorCode.PERMISSION_DENIED });
     });
   });
 
