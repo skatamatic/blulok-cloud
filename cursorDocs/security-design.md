@@ -109,7 +109,7 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 ### Firmware OTA Security
 - Firmware binaries are uploaded by DEV_ADMIN via DevTools and stored with SHA-256 hash.
 - Before delivery, a manifest JWT is signed with the Ops Ed25519 key: `{ cmd_type:'FIRMWARE_MANIFEST', push_id, target_type, version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`.
-- Binary is split into 128KB raw chunks; each chunk is signed as a JWT: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`.
+- Binary is split into ~2.25 MB raw chunks (`FIRMWARE_CHUNK_SIZE_BYTES`, 80% of default 5 MB WS budget); each chunk is signed as a JWT: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`.
 - The manifest `nonce` correlates chunk ACKs; the manifest `push_id` correlates `FIRMWARE_UPDATE_STATUS` / `FIRMWARE_PROGRESS` messages (do not substitute one for the other).
 - Gateway verifies each JWT using the Ops public key received in `AUTH_OK`.
 - After reassembly, gateway verifies full SHA-256 against manifest, then verifies manufacturer signature on the binary.
@@ -131,7 +131,7 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
   - `ApiProxyService` handles loopback proxying with optional `GATEWAY_PROXY_BASE_URL` override.
   - `FacilityGuardService` centrally enforces facility scoping for FACILITY_ADMIN proxy calls.
 - Defaults and limits:
-  - `GATEWAY_MAX_MESSAGE_BYTES` (default 512KB).
+  - `GATEWAY_MAX_MESSAGE_BYTES` (default 5MB).
   - Keepalive strategy (hardcoded best-practice values, not env-configurable):
     - **RFC6455 `ping` frames every 20s** per connection: helps **LB/NAT/proxy idle** paths (many only count WebSocket control frames, not JSON). **Does not** reset **Cloud Run’s per-request `timeout`** (default 300s); raise `--timeout` on the backend service (see `cursorDocs/gateway-integration.md`).
     - **JSON `PING` after 10s idle**: application-level health check; gateway responds with JSON `PONG`.

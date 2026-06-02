@@ -15,6 +15,7 @@ jest.mock('@/services/firmware/firmware-storage.factory');
 jest.mock('uuid', () => ({ v4: jest.fn(() => 'mock-uuid') }));
 
 import * as crypto from 'crypto';
+import { FIRMWARE_CHUNK_SIZE_BYTES } from '@/constants/firmware-chunk.constants';
 import { FirmwareService, _testActivePushes, _testResumeInFlightPushes } from '@/services/firmware/firmware.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
@@ -357,7 +358,7 @@ describe('FirmwareService', () => {
   // executePush — chunking, signing, progress
   // =========================================================================
   describe('executePush', () => {
-    const CHUNK = 128 * 1024;
+    const CHUNK = FIRMWARE_CHUNK_SIZE_BYTES;
     // Small binary: 2 full chunks + partial = 3 chunks; hash must match firmware.sha256_hash
     const binSize = CHUNK * 2 + 100;
     const mockBinary = Buffer.alloc(binSize, 0xAB);

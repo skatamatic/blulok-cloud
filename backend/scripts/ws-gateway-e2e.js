@@ -20,6 +20,16 @@ const dotenv = require('dotenv');
  */
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
+/** Keep aligned with backend/src/constants/firmware-chunk.constants.ts */
+const FIRMWARE_CHUNK_SIZE_BYTES = 2356320;
+const FIRMWARE_BULK_E2E_SIZE_BYTES = 50 * 1024 * 1024;
+const FIRMWARE_BULK_E2E_MIN_THROUGHPUT_MBPS = Number(process.env.FIRMWARE_E2E_50MB_MIN_MBPS) > 0
+  ? Number(process.env.FIRMWARE_E2E_50MB_MIN_MBPS)
+  : 1.0;
+const FIRMWARE_BULK_E2E_MAX_SECONDS = Number(process.env.FIRMWARE_E2E_50MB_MAX_SECONDS) > 0
+  ? Number(process.env.FIRMWARE_E2E_50MB_MAX_SECONDS)
+  : 600;
+
 function parsePortNum(value) {
   const p = parseInt(String(value ?? '').trim(), 10);
   return Number.isFinite(p) && p > 0 && p <= 65535 ? p : null;
@@ -1151,6 +1161,235 @@ function handleFirmwareDelivery(ws, opsKeyB64, timeoutMs = 60000) {
     const onErr = (err) => { cleanup(); reject(err); };
     const cleanup = () => {
       clearTimeout(timer);
+      ws.removeListener('message', onMsg);
+      ws.removeListener('error', onErr);
+    };
+
+    ws.on('message', onMsg);
+    ws.on('error', onErr);
+  });
+}
+
+function formatTransferMbps(bytes, durationMs) {
+  if (!durationMs || durationMs <= 0) return 0;
+  return (bytes / (1024 * 1024)) / (durationMs / 1000);
+}
+
+function expectedFirmwareChunkBytes(manifest, chunkIndex) {
+  const chunkSize = manifest.chunk_size;
+  const totalSize = manifest.size;
+  const chunkCount = manifest.chunk_count;
+  if (chunkIndex < 0 || chunkIndex >= chunkCount) {
+    throw new Error(`Chunk index out of range: ${chunkIndex}/${chunkCount}`);
+  }
+  if (chunkIndex < chunkCount - 1) return chunkSize;
+  const consumed = chunkSize * (chunkCount - 1);
+  const remainder = totalSize - consumed;
+  if (remainder <= 0 || remainder > chunkSize) {
+    throw new Error(`Invalid final chunk size ${remainder} for manifest.size=${totalSize} chunk_size=${chunkSize}`);
+  }
+  return remainder;
+}
+
+/**
+ * Gateway-side firmware receiver with strict chunk accounting, timing metrics,
+ * optional FIRMWARE_PROGRESS simulation, and push-status cross-checks.
+ */
+function handleFirmwareDeliveryInstrumented(ws, opsKeyB64, options = {}) {
+  const crypto = require('crypto');
+  const {
+    timeoutMs = 600000,
+    sendProgressUpdates = false,
+    progressPhasesSent = new Set(),
+    pushStatusPoll = null,
+  } = options;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Instrumented firmware delivery timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const metrics = {
+      startedAt: Date.now(),
+      manifestAt: null,
+      firstChunkAt: null,
+      completedAt: null,
+      ackCount: 0,
+      totalPayloadBytes: 0,
+      chunkTimings: [],
+      receivedIndexes: [],
+      duplicateIndexes: [],
+      progressUpdatesSent: 0,
+      maxObservedChunksSent: 0,
+    };
+
+    let manifest = null;
+    const chunks = [];
+    let expectedChunks = 0;
+    let pushStatusPollActive = true;
+
+    const startPushStatusPoll = () => {
+      if (!pushStatusPoll?.token || !pushStatusPoll?.gatewayId || !pushStatusPoll?.pushId) return;
+      (async () => {
+        while (pushStatusPollActive) {
+          try {
+            const statusResp = await axios.get(
+              `${API_BASE}/firmware/push-status/${pushStatusPoll.gatewayId}?target_type=${pushStatusPoll.targetType || 'gateway'}`,
+              { headers: { Authorization: `Bearer ${pushStatusPoll.token}` } },
+            );
+            const row = statusResp.data?.data;
+            const activePushId = manifest?.push_id || pushStatusPoll.pushId;
+            if (activePushId && row?.id === activePushId && typeof row.chunks_sent === 'number') {
+              if (row.chunks_sent > metrics.maxObservedChunksSent) {
+                metrics.maxObservedChunksSent = row.chunks_sent;
+              }
+              if (row.chunks_sent > metrics.ackCount + 1) {
+                throw new Error(
+                  `push-status chunks_sent (${row.chunks_sent}) ran ahead of gateway ACK count (${metrics.ackCount})`,
+                );
+              }
+            }
+          } catch (err) {
+            if (!pushStatusPollActive) break;
+            cleanup();
+            reject(err);
+            return;
+          }
+          await delay(400);
+        }
+      })();
+    };
+
+    const maybeSendProgressUpdate = (receivedCount) => {
+      if (!sendProgressUpdates || !manifest?.push_id) return;
+      const pct = Math.round((receivedCount / expectedChunks) * 100);
+      const milestones = [25, 50, 75, 100];
+      for (const milestone of milestones) {
+        if (pct >= milestone && !progressPhasesSent.has(milestone)) {
+          progressPhasesSent.add(milestone);
+          ws.send(JSON.stringify({
+            type: 'FIRMWARE_PROGRESS',
+            push_id: manifest.push_id,
+            target_type: manifest.target_type || 'gateway',
+            progress_percent: milestone,
+            phase: milestone < 100 ? 'downloading' : 'verifying',
+            message: `E2E bulk transfer ${milestone}%`,
+          }));
+          metrics.progressUpdatesSent += 1;
+        }
+      }
+    };
+
+    const onMsg = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === 'FIRMWARE_MANIFEST' && msg.jwt) {
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type !== 'FIRMWARE_MANIFEST') throw new Error(`Expected cmd_type FIRMWARE_MANIFEST, got ${payload.cmd_type}`);
+          if (!payload.sha256 || !payload.version || !payload.nonce || !payload.push_id) {
+            throw new Error('Manifest missing required fields (sha256, version, nonce, push_id)');
+          }
+          if (typeof payload.chunk_count !== 'number' || payload.chunk_count < 1) {
+            throw new Error(`Invalid chunk_count: ${payload.chunk_count}`);
+          }
+          if (typeof payload.chunk_size !== 'number' || payload.chunk_size !== FIRMWARE_CHUNK_SIZE_BYTES) {
+            throw new Error(`Unexpected manifest chunk_size: ${payload.chunk_size} (expected ${FIRMWARE_CHUNK_SIZE_BYTES})`);
+          }
+          if (payload.size !== payload.chunk_size * (payload.chunk_count - 1) + expectedFirmwareChunkBytes(payload, payload.chunk_count - 1)) {
+            throw new Error('Manifest size/chunk_count/chunk_size relationship is inconsistent');
+          }
+          manifest = payload;
+          expectedChunks = payload.chunk_count;
+          metrics.manifestAt = Date.now();
+          if (VERBOSE) {
+            console.log(`[FW+] Manifest: version=${payload.version} size=${payload.size} chunks=${expectedChunks}`);
+          }
+          startPushStatusPoll();
+          return;
+        }
+
+        if (msg.type === 'FIRMWARE_CHUNK' && msg.jwt) {
+          if (!manifest) throw new Error('Received FIRMWARE_CHUNK before FIRMWARE_MANIFEST');
+
+          const chunkReceivedAt = Date.now();
+          const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
+          if (payload.cmd_type !== 'FIRMWARE_CHUNK') throw new Error(`Expected cmd_type FIRMWARE_CHUNK, got ${payload.cmd_type}`);
+          if (payload.nonce !== manifest.nonce) throw new Error(`Chunk nonce mismatch: expected ${manifest.nonce}, got ${payload.nonce}`);
+          if (typeof payload.chunk_index !== 'number') throw new Error('FIRMWARE_CHUNK missing chunk_index');
+          if (payload.chunk_index < 0 || payload.chunk_index >= expectedChunks) {
+            throw new Error(`Chunk index out of range: ${payload.chunk_index} (expected 0..${expectedChunks - 1})`);
+          }
+          if (manifest.target_type && payload.target_type !== manifest.target_type) {
+            throw new Error(`Chunk target_type mismatch: expected ${manifest.target_type}, got ${payload.target_type}`);
+          }
+          if (chunks[payload.chunk_index]) {
+            metrics.duplicateIndexes.push(payload.chunk_index);
+            throw new Error(`Duplicate delivery for chunk index ${payload.chunk_index}`);
+          }
+
+          const chunkBuf = Buffer.from(payload.data, 'base64');
+          const chunkHash = crypto.createHash('sha256').update(chunkBuf).digest('hex');
+          if (chunkHash !== payload.chunk_sha256) {
+            throw new Error(`Chunk ${payload.chunk_index} SHA-256 mismatch: expected ${payload.chunk_sha256}, got ${chunkHash}`);
+          }
+
+          const expectedBytes = expectedFirmwareChunkBytes(manifest, payload.chunk_index);
+          if (chunkBuf.length !== expectedBytes) {
+            throw new Error(
+              `Chunk ${payload.chunk_index} size mismatch: expected ${expectedBytes} bytes, got ${chunkBuf.length}`,
+            );
+          }
+
+          chunks[payload.chunk_index] = chunkBuf;
+          metrics.receivedIndexes.push(payload.chunk_index);
+          metrics.totalPayloadBytes += chunkBuf.length;
+          if (!metrics.firstChunkAt) metrics.firstChunkAt = chunkReceivedAt;
+
+          ws.send(JSON.stringify({
+            type: 'FIRMWARE_CHUNK_ACK',
+            nonce: payload.nonce,
+            chunkIndex: payload.chunk_index,
+            status: 'ok',
+          }));
+          metrics.ackCount += 1;
+
+          metrics.chunkTimings.push({
+            index: payload.chunk_index,
+            bytes: chunkBuf.length,
+            receivedAt: chunkReceivedAt,
+            ackAt: Date.now(),
+          });
+
+          const receivedCount = chunks.filter((c) => c !== undefined).length;
+          maybeSendProgressUpdate(receivedCount);
+
+          if (VERBOSE) {
+            console.log(`[FW+] Chunk ${payload.chunk_index + 1}/${expectedChunks} (${chunkBuf.length} bytes)`);
+          }
+
+          if (receivedCount === expectedChunks) {
+            for (let i = 0; i < expectedChunks; i += 1) {
+              if (!chunks[i]) throw new Error(`Missing chunk index ${i} after delivery appeared complete`);
+            }
+            cleanup();
+            const reassembled = Buffer.concat(chunks);
+            const finalHash = crypto.createHash('sha256').update(reassembled).digest('hex');
+            metrics.completedAt = Date.now();
+            resolve({ manifest, reassembled, finalHash, metrics });
+          }
+        }
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+
+    const onErr = (err) => { cleanup(); reject(err); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      pushStatusPollActive = false;
       ws.removeListener('message', onMsg);
       ws.removeListener('error', onErr);
     };
@@ -5713,8 +5952,8 @@ async function run() {
     if (delivery.manifest.target_type !== 'gateway') throw new Error(`Manifest target_type mismatch: expected gateway, got ${delivery.manifest.target_type}`);
     if (delivery.manifest.version !== testVersion) throw new Error(`Manifest version mismatch: expected ${testVersion}, got ${delivery.manifest.version}`);
     if (delivery.manifest.size !== 512 * 1024) throw new Error(`Manifest size mismatch: expected ${512 * 1024}, got ${delivery.manifest.size}`);
-    if (delivery.manifest.chunk_count !== Math.ceil((512 * 1024) / (128 * 1024))) throw new Error(`Manifest chunk_count mismatch: expected 4, got ${delivery.manifest.chunk_count}`);
-    if (delivery.manifest.chunk_size !== 128 * 1024) throw new Error(`Manifest chunk_size mismatch: expected ${128 * 1024}, got ${delivery.manifest.chunk_size}`);
+    if (delivery.manifest.chunk_count !== Math.ceil((512 * 1024) / FIRMWARE_CHUNK_SIZE_BYTES)) throw new Error(`Manifest chunk_count mismatch: expected ${Math.ceil((512 * 1024) / FIRMWARE_CHUNK_SIZE_BYTES)}, got ${delivery.manifest.chunk_count}`);
+    if (delivery.manifest.chunk_size !== FIRMWARE_CHUNK_SIZE_BYTES) throw new Error(`Manifest chunk_size mismatch: expected ${FIRMWARE_CHUNK_SIZE_BYTES}, got ${delivery.manifest.chunk_size}`);
     if (!delivery.manifest.exp) throw new Error('Manifest JWT missing exp claim');
     if (delivery.manifest.exp <= delivery.manifest.iat) throw new Error('Manifest JWT exp must be after iat');
     ok(`Manifest verified: target_type=${delivery.manifest.target_type} version=${delivery.manifest.version} size=${delivery.manifest.size} chunks=${delivery.manifest.chunk_count} exp=${delivery.manifest.exp}`);
@@ -6156,6 +6395,250 @@ async function run() {
     if (delResp.status !== 200) throw new Error(`Delete status expected 200 got ${delResp.status}`);
     ok('Gateway firmware deleted');
     firmwareId = null;
+
+    // =====================================================================
+    // 50 MB bulk firmware OTA — isolated facility/gateway, strict chunk audit
+    // =====================================================================
+    heading('Firmware OTA — 50MB bulk transfer');
+    let bulkFacilityId = null;
+    let bulkGatewayId = null;
+    let bulkWs = null;
+    let bulkFirmwareId = null;
+
+    try {
+      step('Creating isolated facility for 50MB OTA test');
+      bulkFacilityId = await createTestFacility(token, `E2E-FW-50MB-${Date.now()}`);
+      created.extraFacilityIds.push(bulkFacilityId);
+      ok(`Bulk OTA facility created: ${bulkFacilityId}`);
+
+      step('Creating gateway record for bulk OTA facility');
+      bulkGatewayId = await createGateway(token, bulkFacilityId, 'E2E 50MB Firmware Gateway');
+      ok(`Bulk OTA gateway created: ${bulkGatewayId}`);
+
+      step('Connecting fake gateway websocket for bulk OTA facility');
+      bulkWs = await connectGatewayWsAndAuth(WS_URL, token, bulkFacilityId);
+      ok('Bulk OTA gateway authenticated on /ws/gateway');
+
+      step(`Generating ${FIRMWARE_BULK_E2E_SIZE_BYTES / (1024 * 1024)}MB firmware binary`);
+      const bulkGenerateStarted = Date.now();
+      const bulkBinary = crypto.randomBytes(FIRMWARE_BULK_E2E_SIZE_BYTES);
+      const bulkSha256 = crypto.createHash('sha256').update(bulkBinary).digest('hex');
+      const bulkGenerateMs = Date.now() - bulkGenerateStarted;
+      const expectedBulkChunks = Math.ceil(FIRMWARE_BULK_E2E_SIZE_BYTES / FIRMWARE_CHUNK_SIZE_BYTES);
+      info(`Generated ${bulkBinary.length} bytes in ${bulkGenerateMs}ms (sha256=${bulkSha256.substring(0, 12)}...)`);
+      info(`Expected OTA chunks: ${expectedBulkChunks} @ ${FIRMWARE_CHUNK_SIZE_BYTES} bytes/chunk`);
+
+      const bulkVersion = `e2e-bulk-50mb-${Date.now()}`;
+      step('Uploading 50MB firmware to backend (local storage)');
+      const bulkForm = new FormData();
+      bulkForm.append('file', bulkBinary, {
+        filename: 'bulk-50mb-firmware.bin',
+        contentType: 'application/octet-stream',
+      });
+      bulkForm.append('version', bulkVersion);
+      bulkForm.append('target_type', 'gateway');
+      bulkForm.append('description', 'E2E 50MB bulk firmware throughput test');
+      const bulkUploadStarted = Date.now();
+      const bulkUploadResp = await axios.post(`${API_BASE}/firmware/upload`, bulkForm, {
+        headers: { Authorization: `Bearer ${token}`, ...bulkForm.getHeaders() },
+        maxContentLength: 120 * 1024 * 1024,
+        maxBodyLength: 120 * 1024 * 1024,
+        timeout: 180000,
+      });
+      const bulkUploadMs = Date.now() - bulkUploadStarted;
+      if (bulkUploadResp.status !== 201) throw new Error(`Bulk upload status expected 201 got ${bulkUploadResp.status}`);
+      const bulkFwData = bulkUploadResp.data?.data;
+      if (!bulkFwData?.id) throw new Error('Bulk firmware upload missing id');
+      if (bulkFwData.size_bytes !== FIRMWARE_BULK_E2E_SIZE_BYTES) {
+        throw new Error(`Bulk upload size mismatch: expected ${FIRMWARE_BULK_E2E_SIZE_BYTES}, got ${bulkFwData.size_bytes}`);
+      }
+      if (bulkFwData.sha256_hash !== bulkSha256) {
+        throw new Error('Bulk upload SHA-256 mismatch vs locally generated binary');
+      }
+      bulkFirmwareId = bulkFwData.id;
+      ok(`Bulk firmware uploaded in ${(bulkUploadMs / 1000).toFixed(1)}s (${formatTransferMbps(bulkBinary.length, bulkUploadMs).toFixed(2)} MB/s HTTP)`);
+
+      const bulkDeliveryTimeoutMs = Math.max(
+        FIRMWARE_BULK_E2E_MAX_SECONDS * 1000,
+        expectedBulkChunks * 45000,
+      );
+      let bulkPushId = null;
+      const bulkProgressPhases = new Set();
+
+      step('Starting instrumented gateway-side delivery listener');
+      const bulkDeliveryPromise = handleFirmwareDeliveryInstrumented(bulkWs, loginOpsPublicKey, {
+        timeoutMs: bulkDeliveryTimeoutMs,
+        sendProgressUpdates: true,
+        progressPhasesSent: bulkProgressPhases,
+        pushStatusPoll: {
+          token,
+          gatewayId: bulkGatewayId,
+          targetType: 'gateway',
+        },
+      });
+
+      step('Initiating 50MB firmware push');
+      const bulkPushStarted = Date.now();
+      const bulkPushResp = await axios.post(
+        `${API_BASE}/firmware/${bulkFirmwareId}/push/${bulkGatewayId}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (bulkPushResp.status !== 200) throw new Error(`Bulk push status expected 200 got ${bulkPushResp.status}`);
+      bulkPushId = bulkPushResp.data?.data?.id;
+      if (!bulkPushId) throw new Error('Bulk push initiated but no pushId returned');
+      ok(`Bulk push initiated: pushId=${bulkPushId}`);
+
+      step('Awaiting full 50MB delivery (manifest + all chunks + ACKs)');
+      const bulkDelivery = await bulkDeliveryPromise;
+      const bulkTransferMs = Date.now() - bulkPushStarted;
+      const { metrics: bulkMetrics } = bulkDelivery;
+      const bulkThroughputMbps = formatTransferMbps(bulkDelivery.reassembled.length, bulkTransferMs);
+      const chunkOnlyMs = bulkMetrics.completedAt && bulkMetrics.firstChunkAt
+        ? bulkMetrics.completedAt - bulkMetrics.firstChunkAt
+        : bulkTransferMs;
+      const chunkThroughputMbps = formatTransferMbps(bulkDelivery.reassembled.length, chunkOnlyMs);
+
+      if (bulkDelivery.manifest.chunk_count !== expectedBulkChunks) {
+        throw new Error(`Bulk manifest chunk_count mismatch: expected ${expectedBulkChunks}, got ${bulkDelivery.manifest.chunk_count}`);
+      }
+      if (bulkDelivery.manifest.chunk_size !== FIRMWARE_CHUNK_SIZE_BYTES) {
+        throw new Error(`Bulk manifest chunk_size mismatch: expected ${FIRMWARE_CHUNK_SIZE_BYTES}, got ${bulkDelivery.manifest.chunk_size}`);
+      }
+      if (bulkDelivery.manifest.size !== FIRMWARE_BULK_E2E_SIZE_BYTES) {
+        throw new Error(`Bulk manifest size mismatch: expected ${FIRMWARE_BULK_E2E_SIZE_BYTES}, got ${bulkDelivery.manifest.size}`);
+      }
+      if (bulkMetrics.ackCount !== expectedBulkChunks) {
+        throw new Error(`Bulk ACK count mismatch: expected ${expectedBulkChunks}, got ${bulkMetrics.ackCount}`);
+      }
+      if (bulkMetrics.receivedIndexes.length !== expectedBulkChunks) {
+        throw new Error(`Bulk received index count mismatch: expected ${expectedBulkChunks}, got ${bulkMetrics.receivedIndexes.length}`);
+      }
+      const sortedIndexes = [...bulkMetrics.receivedIndexes].sort((a, b) => a - b);
+      for (let i = 0; i < expectedBulkChunks; i += 1) {
+        if (sortedIndexes[i] !== i) {
+          throw new Error(`Bulk chunk index gap/out-of-order: expected ${i}, got ${sortedIndexes[i]}`);
+        }
+      }
+      if (bulkDelivery.reassembled.length !== bulkBinary.length) {
+        throw new Error(`Bulk reassembled size mismatch: expected ${bulkBinary.length}, got ${bulkDelivery.reassembled.length}`);
+      }
+      if (bulkDelivery.finalHash !== bulkSha256) {
+        throw new Error(`Bulk reassembled SHA-256 mismatch: expected ${bulkSha256}, got ${bulkDelivery.finalHash}`);
+      }
+      if (!bulkDelivery.reassembled.equals(bulkBinary)) {
+        throw new Error('Bulk reassembled binary does not match uploaded payload byte-for-byte');
+      }
+      if (bulkTransferMs > FIRMWARE_BULK_E2E_MAX_SECONDS * 1000) {
+        throw new Error(
+          `Bulk transfer exceeded max duration: ${(bulkTransferMs / 1000).toFixed(1)}s > ${FIRMWARE_BULK_E2E_MAX_SECONDS}s`,
+        );
+      }
+      if (bulkThroughputMbps < FIRMWARE_BULK_E2E_MIN_THROUGHPUT_MBPS) {
+        throw new Error(
+          `Bulk transfer throughput too low: ${bulkThroughputMbps.toFixed(2)} MB/s < ${FIRMWARE_BULK_E2E_MIN_THROUGHPUT_MBPS} MB/s`,
+        );
+      }
+      if (bulkMetrics.progressUpdatesSent < 4) {
+        throw new Error(`Expected at least 4 FIRMWARE_PROGRESS updates during bulk transfer, got ${bulkMetrics.progressUpdatesSent}`);
+      }
+
+      const perChunkMs = bulkMetrics.chunkTimings.map((row) => row.ackAt - row.receivedAt);
+      const avgChunkAckMs = perChunkMs.reduce((sum, v) => sum + v, 0) / Math.max(perChunkMs.length, 1);
+      const maxChunkAckMs = Math.max(...perChunkMs);
+      info(`Bulk transfer: ${expectedBulkChunks} chunks, ${(bulkTransferMs / 1000).toFixed(1)}s total, ${bulkThroughputMbps.toFixed(2)} MB/s end-to-end`);
+      info(`Chunk stream only: ${(chunkOnlyMs / 1000).toFixed(1)}s, ${chunkThroughputMbps.toFixed(2)} MB/s`);
+      info(`Per-chunk ACK latency: avg=${avgChunkAckMs.toFixed(1)}ms max=${maxChunkAckMs}ms`);
+      ok(`50MB OTA delivered with contiguous ${expectedBulkChunks} chunks and verified integrity`);
+
+      step('Polling bulk push status until verifying');
+      let bulkVerifyStatus = null;
+      for (let poll = 0; poll < 40; poll += 1) {
+        await delay(500);
+        const statusResp = await axios.get(
+          `${API_BASE}/firmware/push-status/${bulkGatewayId}?target_type=gateway`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        bulkVerifyStatus = statusResp.data?.data;
+        if (bulkVerifyStatus?.id === bulkPushId
+          && (bulkVerifyStatus.status === 'verifying' || bulkVerifyStatus.status === 'complete')) {
+          break;
+        }
+      }
+      if (!bulkVerifyStatus || bulkVerifyStatus.id !== bulkPushId) {
+        throw new Error(`Bulk push-status did not resolve to pushId=${bulkPushId}`);
+      }
+      if (bulkVerifyStatus.chunks_sent !== expectedBulkChunks || bulkVerifyStatus.chunks_total !== expectedBulkChunks) {
+        throw new Error(
+          `Bulk push-status chunk counters mismatch: sent=${bulkVerifyStatus.chunks_sent} total=${bulkVerifyStatus.chunks_total} expected=${expectedBulkChunks}`,
+        );
+      }
+      ok(`Bulk push status after delivery: ${bulkVerifyStatus.status}, chunks ${bulkVerifyStatus.chunks_sent}/${bulkVerifyStatus.chunks_total}`);
+
+      step('Sending bulk FIRMWARE_UPDATE_STATUS lifecycle (verifying → applying → success)');
+      bulkWs.send(JSON.stringify({
+        type: 'FIRMWARE_UPDATE_STATUS',
+        push_id: bulkDelivery.manifest.push_id,
+        target_type: 'gateway',
+        status: 'verifying',
+        version: bulkVersion,
+      }));
+      await delay(60);
+      bulkWs.send(JSON.stringify({
+        type: 'FIRMWARE_UPDATE_STATUS',
+        push_id: bulkDelivery.manifest.push_id,
+        target_type: 'gateway',
+        status: 'applying',
+        version: bulkVersion,
+      }));
+      await delay(60);
+      bulkWs.send(JSON.stringify({
+        type: 'FIRMWARE_UPDATE_STATUS',
+        push_id: bulkDelivery.manifest.push_id,
+        target_type: 'gateway',
+        status: 'success',
+        version: bulkVersion,
+      }));
+
+      step('Polling bulk push status until complete');
+      let bulkFinalStatus = null;
+      for (let poll = 0; poll < 40; poll += 1) {
+        await delay(500);
+        const statusResp = await axios.get(
+          `${API_BASE}/firmware/push-status/${bulkGatewayId}?target_type=gateway`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        bulkFinalStatus = statusResp.data?.data;
+        if (bulkFinalStatus?.id === bulkPushId && bulkFinalStatus.status === 'complete') break;
+      }
+      if (!bulkFinalStatus || bulkFinalStatus.id !== bulkPushId || bulkFinalStatus.status !== 'complete') {
+        throw new Error(`Bulk push expected complete, got id=${bulkFinalStatus?.id} status=${bulkFinalStatus?.status}`);
+      }
+      ok(`Bulk push completed: pushId=${bulkPushId}`);
+
+      step('Verifying bulk push events captured transfer + terminal status');
+      const bulkEventsResp = await axios.get(
+        `${API_BASE}/firmware/push/${bulkPushId}/events`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const bulkEvents = bulkEventsResp.data?.data?.events || [];
+      if (!Array.isArray(bulkEvents) || bulkEvents.length < 2) {
+        throw new Error(`Expected bulk push events, got ${bulkEvents.length}`);
+      }
+      ok(`Bulk push events recorded: ${bulkEvents.length}`);
+
+      step('Deleting bulk test firmware');
+      await axios.delete(`${API_BASE}/firmware/${bulkFirmwareId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      bulkFirmwareId = null;
+      ok('Bulk test firmware deleted');
+    } finally {
+      if (bulkWs) {
+        try { bulkWs.close(); } catch {}
+        bulkWs = null;
+      }
+    }
 
     // =====================================================================
     // Lock Firmware Target Type — verify protocol carries target_type: 'lock'
@@ -6609,8 +7092,14 @@ async function run() {
       );
     }
     const adminRelayEditCmd = await expectAdminRelayEditPush;
-    assertAccessCodeUpdateCommand(adminRelayEditCmd, 'ACCESS_CODE_UPDATE (admin relay edit)');
     registerAccessControlDeviceMeta(created, multiDoorDeviceA.id, multiDoorAccessId, adminEditedRelay);
+    assertAccessCodeUpdateCommand(adminRelayEditCmd, 'ACCESS_CODE_UPDATE (admin relay edit)');
+    const postRelayEditEffective = await getEffectiveCodesMap();
+    assertAccessCodeTargetFields(
+      postRelayEditEffective.get(multiDoorDeviceA.id),
+      multiDoorDeviceA.id,
+      'GET /access-codes/effective (post admin relay edit)',
+    );
     ok('Admin metadata relay edit propagated to ACCESS_CODE_UPDATE with stable device_id');
 
     step('Creating a device group and assigning two access-control devices');

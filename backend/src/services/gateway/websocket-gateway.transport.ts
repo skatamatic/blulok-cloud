@@ -8,6 +8,7 @@ import { logger } from '@/utils/logger';
 import { ApiProxyService } from './api-proxy.service';
 import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { GATEWAY_WS_MAX_MESSAGE_BYTES_DEFAULT } from '@/constants/firmware-chunk.constants';
 
 type JWTPayload = {
   userId: string;
@@ -66,7 +67,11 @@ export class WebsocketGatewayTransport implements GatewayTransport {
 
   public initialize(server: HTTPServer): void {
     if (this.wss) return;
-    this.wss = new WebSocketServer({ noServer: true, path: this.path, maxPayload: Number(process.env.GATEWAY_MAX_MESSAGE_BYTES) || 512 * 1024 });
+    this.wss = new WebSocketServer({
+      noServer: true,
+      path: this.path,
+      maxPayload: Number(process.env.GATEWAY_MAX_MESSAGE_BYTES) || GATEWAY_WS_MAX_MESSAGE_BYTES_DEFAULT,
+    });
 
     // Upgrade handshake: accept TCP, then let AUTH message establish identity
     server.on('upgrade', (request, socket, head) => {

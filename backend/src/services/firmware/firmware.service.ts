@@ -16,9 +16,9 @@ import { GatewayEventsService } from '@/services/gateway/gateway-events.service'
 import { GatewayModel } from '@/models/gateway.model';
 import { getFirmwareStorageProvider, validateFirmwareFile } from './firmware-storage.factory';
 import { logger } from '@/utils/logger';
+import { FIRMWARE_CHUNK_SIZE_BYTES } from '@/constants/firmware-chunk.constants';
 
-/** 128KB raw chunk size — base64 encoding yields ~171KB, well within 512KB WS limit */
-const CHUNK_SIZE_BYTES = 128 * 1024;
+const CHUNK_SIZE_BYTES = FIRMWARE_CHUNK_SIZE_BYTES;
 const MAX_CHUNK_RETRIES = 3;
 /** ACK timeout per chunk in milliseconds */
 const CHUNK_ACK_TIMEOUT_MS = 30_000;

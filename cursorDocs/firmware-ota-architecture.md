@@ -138,7 +138,7 @@ JWT payload fields:
 | `sha256`           | string | SHA-256 hex hash of the full binary        |
 | `size`             | number | Binary size in bytes                       |
 | `chunk_count`      | number | Total number of chunks                     |
-| `chunk_size`       | number | Chunk size in bytes (128KB)                |
+| `chunk_size`       | number | Chunk size in bytes (~2.25 MB; 80% of 5 MB WS budget) |
 | `nonce`            | string | UUID for chunk ACK correlation only (`FIRMWARE_CHUNK_ACK`) — **not** a substitute for `push_id` |
 | `filename`         | string | Original firmware filename (optional)    |
 | `compatible_models`| array  | Compatible device models (optional)        |
@@ -356,9 +356,26 @@ Before initiating a push, the system verifies:
 
 ## Chunk Size
 
-- **CHUNK_SIZE_BYTES = 128KB** raw data
-- Base64 encoding yields ~171KB, well within the 512KB WebSocket frame limit
-- A 1MB firmware binary produces 8 chunks
+- **`FIRMWARE_CHUNK_SIZE_BYTES = 2,356,320`** (~2.25 MB raw data)
+- Sized to ~**80%** of the default **5 MB** gateway WebSocket `maxPayload` (`GATEWAY_MAX_MESSAGE_BYTES`), leaving ~20% margin for JWT + JSON envelope growth
+- Signed chunk messages land at ~**4.19 MB** on the wire (validated with real Ed25519 JWTs)
+- A 512 KB test firmware binary produces **1** chunk
+
+## E2E bulk transfer (`ws:e2e`)
+
+`backend/scripts/ws-gateway-e2e.js` includes a **50 MB** gateway OTA scenario on an **isolated facility + gateway**:
+
+1. Generates a 50 MB binary, uploads via `POST /firmware/upload` (local storage in E2E).
+2. Connects a fake gateway WS, ACKs every chunk with strict index/contiguity checks, per-chunk SHA-256 validation, and JWT verification.
+3. Simulates `FIRMWARE_PROGRESS` milestones and the `FIRMWARE_UPDATE_STATUS` lifecycle (`verifying` → `applying` → `success`).
+4. Asserts push-status `chunks_sent`/`chunks_total`, throughput floor, and byte-for-byte reassembly integrity.
+
+Tunables (optional env):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `FIRMWARE_E2E_50MB_MIN_MBPS` | `1.0` | Minimum end-to-end transfer throughput (MB/s) |
+| `FIRMWARE_E2E_50MB_MAX_SECONDS` | `600` | Maximum allowed push+delivery duration |
 
 ## Gateway Disconnect Handling
 
