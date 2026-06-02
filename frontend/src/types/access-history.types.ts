@@ -40,10 +40,10 @@ export interface AccessLog {
   primary_tenant_name?: string;
   primary_tenant_email?: string;
   device_name?: string;
+  device_serial?: string;
   device_location?: string;
   gateway_name?: string;
   actor_type?: string;
-  device_location?: string;
 }
 
 export interface AccessHistoryFilters {
