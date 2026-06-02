@@ -241,7 +241,7 @@ const DETAIL_PANEL_CLASS =
   'rounded-lg border border-gray-100 bg-white/80 p-3 dark:border-gray-700/60 dark:bg-gray-800/50';
 
 /** Shared card height in the expand row (lg+) so tenant, device, and activity align. */
-const EXPAND_DETAIL_CARD_CLASS = `${DETAIL_PANEL_CLASS} min-h-[7.5rem] lg:h-[11rem] lg:overflow-y-auto`;
+const EXPAND_DETAIL_CARD_CLASS = `${DETAIL_PANEL_CLASS} min-h-[9.375rem] lg:h-[13.75rem] lg:overflow-y-auto`;
 
 /** Single-family type scale: label (xs caps) · body (sm) · meta (xs muted). */
 const TYPE = {

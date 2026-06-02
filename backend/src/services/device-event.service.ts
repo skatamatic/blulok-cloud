@@ -355,10 +355,11 @@ export class DeviceEventService extends EventEmitter {
     const blulokDevice = await deviceModel.findBluLokDeviceById(event.deviceId);
     const acDevice = blulokDevice ? null : await deviceModel.findAccessControlDeviceWithGateway(event.deviceId);
     const deviceType = acDevice && !blulokDevice ? 'access_control' : 'blulok';
+    const unitId = event.unitId || blulokDevice?.unit_id || undefined;
 
     await ActivityService.getInstance().logLockEvent(
       event.deviceId,
-      event.unitId || undefined,
+      unitId,
       gateway.facility_id,
       isLocked,
       'gateway',

@@ -42,6 +42,8 @@ export interface AccessLog {
   device_name?: string;
   device_location?: string;
   gateway_name?: string;
+  actor_type?: string;
+  device_location?: string;
 }
 
 export interface AccessHistoryFilters {

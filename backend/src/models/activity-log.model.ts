@@ -132,6 +132,8 @@ export interface ActivityLogFilters {
 export interface ActivityLogWithContext extends ActivityLog {
   unit_number?: string;
   device_serial?: string;
+  blulok_device_name?: string;
+  device_location?: string;
   access_control_device_name?: string;
   facility_name?: string;
 }
@@ -294,6 +296,8 @@ export class ActivityLogModel {
         'activity_logs.*',
         'units.unit_number',
         'blulok_devices.device_serial',
+        'blulok_devices.name as blulok_device_name',
+        'blulok_devices.location_description as device_location',
         'access_control_devices.name as access_control_device_name',
         'facilities.name as facility_name'
       )
@@ -323,6 +327,8 @@ export class ActivityLogModel {
       ...this.parseActivityLog(l),
       unit_number: l.unit_number,
       device_serial: l.device_serial,
+      blulok_device_name: l.blulok_device_name,
+      device_location: l.device_location,
       access_control_device_name: l.access_control_device_name,
       facility_name: l.facility_name,
     }));

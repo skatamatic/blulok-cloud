@@ -15,6 +15,9 @@ import { Responsive, WidthProvider, Layout } from 'react-grid-layout';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
+/** Debounce restoring persisted/user layout after viewport changes (not per-frame). */
+const PREFERRED_LAYOUT_RESYNC_MS = 200;
+
 export interface WidgetLayout {
   i: string;
   x: number;
@@ -159,6 +162,10 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
   const scrollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const scrollDelayRef = useRef<NodeJS.Timeout | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const preferredResyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const lastObservedWidthRef = useRef<number | null>(null);
   const isInitialLoadRef = useRef(true);
   const prevLayoutSigRef = useRef<string | null>(null);
   const ignoreLayoutEchoUntilRef = useRef(0);
@@ -182,13 +189,8 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     prevLayoutSigRef.current = layoutSig;
   }, [layoutSig]);
 
-  const shouldIgnoreLayoutEvent = useCallback(() => {
-    if (Date.now() < ignoreLayoutEchoUntilRef.current) return true;
-    if (isInitialLoadRef.current) {
-      isInitialLoadRef.current = false;
-      return true;
-    }
-    return false;
+  useEffect(() => {
+    isInitialLoadRef.current = false;
   }, []);
 
   const saveToWindowStorage = useCallback(
@@ -239,21 +241,28 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     setLayoutResyncOverride(null);
   }, []);
 
-  /**
-   * RGL keeps the rejected layout in internal state after drag/resize stop.
-   * Remounting the whole grid to fix that re-initialises every widget. Instead,
-   * briefly pass the rejected layout through props (step 1) then restore the
-   * committed layouts from the parent (step 2) so Responsive + RGL resync.
-   */
-  const resyncGridLayoutAfterReject = useCallback(
-    (rejectedLayout: Layout[]) => {
-      cancelLayoutResync();
-      const rejected = {
-        lg: rejectedLayout,
-        md: rejectedLayout,
-        sm: rejectedLayout,
+  const buildResponsiveLayouts = useCallback(
+    (lgLayout: Layout[]): { [key: string]: Layout[] } => {
+      const lg = lgLayout as WidgetLayout[];
+      return {
+        lg,
+        md: (layouts.md ?? lg) as Layout[],
+        sm: (layouts.sm ?? lg) as Layout[],
       };
-      setLayoutResyncOverride(rejected);
+    },
+    [layouts.md, layouts.sm]
+  );
+
+  /**
+   * RGL keeps stale internal state after reject or viewport-driven mutations.
+   * Remounting the whole grid re-initialises every widget. Instead, briefly
+   * pass a layout through props (step 1) then restore the parent preferred
+   * layouts (step 2) so Responsive + RGL resync.
+   */
+  const resyncGridLayoutFromSource = useCallback(
+    (source: { [key: string]: Layout[] }) => {
+      cancelLayoutResync();
+      setLayoutResyncOverride(source);
       layoutResyncRafRef.current = requestAnimationFrame(() => {
         layoutResyncRafRef.current = null;
         setLayoutResyncOverride(null);
@@ -264,12 +273,39 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     [cancelLayoutResync]
   );
 
+  const resyncGridLayoutAfterReject = useCallback(
+    (rejectedLayout: Layout[]) => {
+      resyncGridLayoutFromSource(buildResponsiveLayouts(rejectedLayout));
+    },
+    [buildResponsiveLayouts, resyncGridLayoutFromSource]
+  );
+
+  /** Snap RGL back to the parent-owned preferred layout (persistence / manual edits). */
+  const resyncGridLayoutToPreferred = useCallback(() => {
+    if (isInteractingRef.current) return;
+    const lg = (layouts.lg ?? []) as Layout[];
+    if (lg.length === 0) return;
+    resyncGridLayoutFromSource(buildResponsiveLayouts(lg));
+  }, [layouts.lg, buildResponsiveLayouts, resyncGridLayoutFromSource]);
+
+  const schedulePreferredLayoutResync = useCallback(() => {
+    if (isInteractingRef.current) return;
+    if (preferredResyncTimerRef.current) {
+      clearTimeout(preferredResyncTimerRef.current);
+    }
+    preferredResyncTimerRef.current = setTimeout(() => {
+      preferredResyncTimerRef.current = null;
+      resyncGridLayoutToPreferred();
+    }, PREFERRED_LAYOUT_RESYNC_MS);
+  }, [resyncGridLayoutToPreferred]);
+
   const snapshotPreGestureLayout = useCallback(() => {
     preGestureLayoutRef.current = (layouts.lg ?? []).map((item) => ({ ...item }));
   }, [layouts.lg]);
 
   const commitLayout = useCallback(
     (layout: Layout[]) => {
+      isInitialLoadRef.current = false;
       const merged: { [key: string]: Layout[] } = {
         ...layouts,
         lg: layout,
@@ -512,6 +548,8 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     } ${className}`.trim(),
     style: gridStyle,
     layouts: layoutsWithStatic,
+    // Dashboard geometry is always 12×6; never morph layouts on narrower breakpoints.
+    breakpoint: 'lg' as const,
     breakpoints,
     cols,
     rowHeight,
@@ -555,11 +593,10 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
       setPlacementInvalid(false);
       onResizeGestureEnd?.();
     },
-    onLayoutChange: (layout: Layout[], _layouts: { [key: string]: Layout[] }) => {
-      if (isInteractingRef.current) return;
-      if (shouldIgnoreLayoutEvent()) return;
-      commitLayout(layout);
-    },
+    // Ignore RGL breakpoint/width-driven onLayoutChange — parent owns preferred
+    // geometry; user commits only via onDragStop / onResizeStop. Viewport resync
+    // is debounced in the ResizeObserver below.
+    onLayoutChange: () => {},
     onDragStart: (...args: [Layout[], Layout, Layout, Layout, MouseEvent]) => {
       const e = args[4];
       isInteractingRef.current = true;
@@ -604,7 +641,6 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     rowHeight,
     maxRows,
     placementInvalid,
-    shouldIgnoreLayoutEvent,
     commitLayout,
     runLiveDockUpdate,
     clearLiveDockOverrides,
@@ -671,11 +707,36 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
   };
 
   useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width <= 0) return;
+      if (lastObservedWidthRef.current === width) return;
+      lastObservedWidthRef.current = width;
+      schedulePreferredLayoutResync();
+    });
+    ro.observe(el);
+
+    return () => {
+      ro.disconnect();
+      if (preferredResyncTimerRef.current) {
+        clearTimeout(preferredResyncTimerRef.current);
+        preferredResyncTimerRef.current = null;
+      }
+    };
+  }, [schedulePreferredLayoutResync]);
+
+  useEffect(() => {
     return () => {
       stopAutoScroll();
       cancelPendingGestureFrame();
       cancelLayoutResync();
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (preferredResyncTimerRef.current) {
+        clearTimeout(preferredResyncTimerRef.current);
+      }
     };
   }, [cancelPendingGestureFrame, cancelLayoutResync]);
 

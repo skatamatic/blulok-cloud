@@ -8,8 +8,17 @@ import { withReturnPath } from '@/hooks/useBackNavigation';
 import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import {
+  buildAccessLogDetailItems,
+  formatAccessAction,
+  formatAccessMethod,
+  getAccessLocationDisplay,
+  getAccessLogMetadata,
+  getAccessUserDisplay,
+} from '@/utils/access-history-display.utils';
 import {
   ArrowDownTrayIcon,
   ClockIcon,
@@ -30,7 +39,6 @@ import {
   ChevronUpIcon,
   ChevronRightIcon,
   LinkIcon,
-  MapPinIcon,
   CpuChipIcon,
   HomeIcon,
 } from '@heroicons/react/24/outline';
@@ -49,34 +57,6 @@ interface FilterState {
   search?: string;
   limit?: number;
   offset?: number;
-}
-
-interface AccessLogMetadata {
-  user?: {
-    id: string;
-    name: string;
-    email?: string;
-    navigation_url: string;
-  };
-  facility?: {
-    id: string;
-    name: string;
-    navigation_url: string;
-  };
-  unit?: {
-    id: string;
-    number: string;
-    type?: string;
-    navigation_url: string;
-  };
-  device?: {
-    id: string;
-    name: string;
-    type?: string;
-    location?: string;
-    navigation_url: string;
-  };
-  description?: string;
 }
 
 const actionIcons = {
@@ -153,45 +133,6 @@ const methodColors = {
 
 type SortableColumn = 'occurred_at' | 'action' | 'user_name' | 'facility_name' | 'success';
 
-interface SortableHeaderProps {
-  label: string;
-  sortKey: SortableColumn;
-  currentSortBy: SortableColumn;
-  currentSortOrder: 'asc' | 'desc';
-  onSort: (key: SortableColumn) => void;
-}
-
-const SortableHeader: React.FC<SortableHeaderProps> = ({ 
-  label, 
-  sortKey, 
-  currentSortBy, 
-  currentSortOrder, 
-  onSort 
-}) => {
-  const isActive = currentSortBy === sortKey;
-  const isAsc = currentSortOrder === 'asc';
-  
-  return (
-    <th 
-      className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors duration-200"
-      onClick={() => onSort(sortKey)}
-    >
-      <div className="flex items-center space-x-1">
-        <span>{label}</span>
-        {isActive ? (
-          isAsc ? (
-            <ChevronUpIcon className="h-4 w-4" />
-          ) : (
-            <ChevronDownIcon className="h-4 w-4" />
-          )
-        ) : (
-          <div className="h-4 w-4" />
-        )}
-      </div>
-    </th>
-  );
-};
-
 const defaultAccessHistoryDateFilters = (): Pick<FilterState, 'date_from' | 'date_to' | 'limit'> => ({
   date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
   date_to: new Date().toISOString().split('T')[0],
@@ -232,6 +173,7 @@ export default function AccessHistoryPage() {
 
   const isFacilityAdmin = authState.user?.role === 'facility_admin';
   const isTenant = authState.user?.role === 'tenant';
+  const isFacilityScoped = !!selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID;
 
   useEffect(() => {
     const unitId = searchParams.get('unit_id') ?? undefined;
@@ -756,7 +698,7 @@ export default function AccessHistoryPage() {
       </div>
 
       {/* Access Logs Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+      <div className="bg-white dark:bg-gray-800 shadow overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
         {loading ? (
           <div className="p-8 text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
@@ -775,39 +717,42 @@ export default function AccessHistoryPage() {
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-900">
                 <tr>
-                  <SortableHeader
+                  <SortableTableTh
                     label="Action"
-                    sortKey="action"
-                    currentSortBy={sortBy}
-                    currentSortOrder={sortOrder}
-                    onSort={handleSort}
+                    columnKey="action"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={(key) => handleSort(key as SortableColumn)}
                   />
-                  <SortableHeader
+                  <SortableTableTh
                     label="User"
-                    sortKey="user_name"
-                    currentSortBy={sortBy}
-                    currentSortOrder={sortOrder}
-                    onSort={handleSort}
+                    columnKey="user_name"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={(key) => handleSort(key as SortableColumn)}
                   />
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Unit/Access Point
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    {isFacilityScoped ? 'Unit / Device' : 'Unit / Access Point'}
                   </th>
-                  <SortableHeader
+                  <SortableTableTh
                     label="Status"
-                    sortKey="success"
-                    currentSortBy={sortBy}
-                    currentSortOrder={sortOrder}
-                    onSort={handleSort}
+                    columnKey="success"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={(key) => handleSort(key as SortableColumn)}
                   />
-                  <SortableHeader
+                  <SortableTableTh
                     label="Time"
-                    sortKey="occurred_at"
-                    currentSortBy={sortBy}
-                    currentSortOrder={sortOrder}
-                    onSort={handleSort}
+                    columnKey="occurred_at"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={(key) => handleSort(key as SortableColumn)}
                   />
+                  <th className="relative px-4 py-3 w-10">
+                    <span className="sr-only">Expand</span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -815,204 +760,186 @@ export default function AccessHistoryPage() {
                   const ActionIcon = getActionIcon(log.action);
                   const MethodIcon = getMethodIcon(log.method);
                   const isExpanded = expandedRow === log.id;
-                  const metadata = (log.metadata || {}) as AccessLogMetadata;
-                  const metadataUser = metadata.user;
-                  const metadataFacility = metadata.facility;
-                  const metadataUnit = metadata.unit;
-                  const metadataDevice = metadata.device;
+                  const metadata = getAccessLogMetadata(log);
+                  const userDisplay = getAccessUserDisplay(log);
+                  const locationDisplay = getAccessLocationDisplay(log, { hideFacility: isFacilityScoped });
+                  const detailItems = buildAccessLogDetailItems(log, isFacilityScoped);
                   
                   return (
                     <Fragment key={log.id}>
                       <tr 
-                        key={log.id}
                         id={generateHighlightId('access-log', log.id)}
-                        className="group transition-all duration-200 cursor-pointer hover:shadow-sm border-b border-gray-200 dark:border-gray-700 last:border-b-0"
+                        className="group transition-all duration-200 cursor-pointer hover:bg-blue-50/70 dark:hover:bg-blue-900/10"
                         onClick={() => toggleRowExpansion(log.id)}
                       >
-                        <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
-                            <ActionIcon className={`h-5 w-5 mr-3 ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-400'}`} />
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700 mr-3">
+                              <ActionIcon className={`h-5 w-5 ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-400'}`} />
+                            </div>
                             <div>
                               <div className={`text-sm font-medium ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-900 dark:text-white'}`}>
-                                {log.action.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                {formatAccessAction(log.action)}
                               </div>
                               {log.denial_reason && (
                                 <div className="text-xs text-red-600 dark:text-red-400">
-                                  {log.denial_reason.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                  {formatAccessAction(log.denial_reason)}
                                 </div>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
-                            <UserIcon className="h-4 w-4 text-gray-400 mr-2" />
+                            <UserIcon className="h-4 w-4 text-gray-400 mr-2 flex-shrink-0" />
                             <div>
-                              {metadataUser ? (
+                              {metadata.user ? (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleNavigation(metadataUser.navigation_url, metadataUser.id, 'user');
+                                    handleNavigation(metadata.user!.navigation_url, metadata.user!.id, 'user');
                                   }}
                                   className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                 >
-                                  {metadataUser.name}
+                                  {userDisplay.primary}
                                   <LinkIcon className="h-3 w-3 ml-1" />
                                 </button>
                               ) : (
                                 <div className="text-sm font-medium text-gray-900 dark:text-white">
-                                  {log.user_name || 'System'}
+                                  {userDisplay.primary}
                                 </div>
                               )}
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {metadataUser?.email || log.user_email || 'N/A'}
-                              </div>
+                              {userDisplay.secondary && (
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  {userDisplay.secondary}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             {log.device_type === 'blulok' ? (
-                              <BuildingStorefrontIcon className="h-4 w-4 text-gray-400 mr-2" />
+                              <BuildingStorefrontIcon className="h-4 w-4 text-gray-400 mr-2 flex-shrink-0" />
                             ) : (
-                              <CpuChipIcon className="h-4 w-4 text-gray-400 mr-2" />
+                              <CpuChipIcon className="h-4 w-4 text-gray-400 mr-2 flex-shrink-0" />
                             )}
                             <div>
-                              {metadataFacility ? (
+                              {!isFacilityScoped && metadata.facility ? (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleNavigation(metadataFacility.navigation_url, metadataFacility.id, 'facility');
+                                    handleNavigation(metadata.facility!.navigation_url, metadata.facility!.id, 'facility');
                                   }}
                                   className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                 >
-                                  {metadataFacility.name}
+                                  {locationDisplay.primary}
                                   <LinkIcon className="h-3 w-3 ml-1" />
                                 </button>
                               ) : (
                                 <div className="text-sm font-medium text-gray-900 dark:text-white">
-                                  {log.facility_name || 'Unknown Facility'}
+                                  {metadata.unit ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleNavigation(metadata.unit!.navigation_url, metadata.unit!.id, 'unit');
+                                      }}
+                                      className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 inline-flex items-center"
+                                    >
+                                      {locationDisplay.primary}
+                                      <LinkIcon className="h-3 w-3 ml-1" />
+                                    </button>
+                                  ) : metadata.device ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleNavigation(metadata.device!.navigation_url, metadata.device!.id, 'device');
+                                      }}
+                                      className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 inline-flex items-center"
+                                    >
+                                      {locationDisplay.primary}
+                                      <LinkIcon className="h-3 w-3 ml-1" />
+                                    </button>
+                                  ) : (
+                                    locationDisplay.primary
+                                  )}
                                 </div>
                               )}
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {metadataUnit ? (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleNavigation(metadataUnit.navigation_url, metadataUnit.id, 'unit');
-                                    }}
-                                    className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
-                                  >
-                                    Unit {metadataUnit.number} ({metadataUnit.type || 'N/A'})
-                                    <LinkIcon className="h-3 w-3 ml-1" />
-                                  </button>
-                                ) : log.device_type === 'access_control' ? (
-                                  metadataDevice?.name || 'Access Control Device'
-                                ) : (
-                                  `Unit ${log.unit_number || 'N/A'}`
-                                )}
-                              </div>
+                              {locationDisplay.secondary && (
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  {locationDisplay.secondary}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                          <div className="flex items-center">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                            log.success
+                              ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                              : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                          }`}>
                             {log.success ? (
-                              <CheckCircleIcon className="h-4 w-4 text-green-500 mr-2" />
+                              <CheckCircleIcon className="h-3.5 w-3.5 mr-1" />
                             ) : (
-                              <XCircleIcon className="h-4 w-4 text-red-500 mr-2" />
+                              <XCircleIcon className="h-3.5 w-3.5 mr-1" />
                             )}
-                            <span className={`text-sm font-medium ${log.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                              {log.success ? 'Success' : 'Failed'}
-                            </span>
-                          </div>
+                            {log.success ? 'Success' : 'Failed'}
+                          </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-gray-900 dark:text-white">
                             {formatDate(log.occurred_at)}
                           </div>
-                          {log.duration_seconds && (
+                          {log.duration_seconds ? (
                             <div className="text-xs text-gray-500 dark:text-gray-400">
                               Duration: {formatDuration(log.duration_seconds)}
                             </div>
-                          )}
+                          ) : null}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                          <div className="transition-transform duration-200 ease-in-out">
-                            {isExpanded ? (
-                              <ChevronUpIcon className="h-4 w-4 text-gray-400" />
-                            ) : (
-                              <ChevronRightIcon className="h-4 w-4 text-gray-400" />
-                            )}
-                          </div>
+                        <td className="px-4 py-4 whitespace-nowrap text-center">
+                          {isExpanded ? (
+                            <ChevronUpIcon className="h-4 w-4 text-gray-400 mx-auto" />
+                          ) : (
+                            <ChevronRightIcon className="h-4 w-4 text-gray-400 mx-auto" />
+                          )}
                         </td>
                       </tr>
                       
-                      {/* Expanded Row Details */}
                       {isExpanded && (
-                        <tr className="bg-gray-50 dark:bg-gray-700">
-                          <td colSpan={6} className="px-6 py-4">
-                            <div 
-                              className="space-y-4 transition-all duration-300 ease-out transform"
-                              style={{
-                                animation: 'slideDown 0.3s ease-out'
-                              }}
-                            >
-                              {/* Device Information */}
-                              {metadataDevice && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                  <div>
-                                    <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Device Information</h4>
-                                    <div className="space-y-2">
-                                      <div className="flex items-center">
-                                        <CpuChipIcon className="h-4 w-4 text-gray-400 mr-2" />
-                                        <span className="text-sm text-gray-600 dark:text-gray-400">Name:</span>
-                                        <button
-                                          onClick={() => handleNavigation(metadataDevice.navigation_url, metadataDevice.id, 'device')}
-                                          className="ml-2 text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
-                                        >
-                                          {metadataDevice.name}
-                                          <LinkIcon className="h-3 w-3 ml-1" />
-                                        </button>
-                                      </div>
-                                      <div className="flex items-center">
-                                        <MapPinIcon className="h-4 w-4 text-gray-400 mr-2" />
-                                        <span className="text-sm text-gray-600 dark:text-gray-400">Location:</span>
-                                        <span className="ml-2 text-sm text-gray-900 dark:text-white">{metadataDevice.location || 'N/A'}</span>
-                                      </div>
-                                      <div className="flex items-center">
-                                        <span className="text-sm text-gray-600 dark:text-gray-400">Type:</span>
-                                        <span className="ml-2 text-sm text-gray-900 dark:text-white capitalize">{metadataDevice.type || 'unknown'}</span>
-                                      </div>
-                                    </div>
+                        <tr className="bg-gray-50/80 dark:bg-gray-900/40">
+                          <td colSpan={6} className="px-6 py-5">
+                            <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+                              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                                {detailItems.map((item) => (
+                                  <div key={item.label} className="min-w-0">
+                                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                      {item.label}
+                                    </dt>
+                                    <dd className="mt-1 text-sm text-gray-900 dark:text-white break-words">
+                                      {item.value}
+                                    </dd>
                                   </div>
-                                  
-                                  {/* Method Information */}
-                                  <div>
-                                    <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Access Method</h4>
-                                    <div className="flex items-center">
-                                      <MethodIcon className={`h-4 w-4 mr-2 ${methodColors[log.method as keyof typeof methodColors] || 'text-gray-400'}`} />
-                                      <span className={`text-sm ${methodColors[log.method as keyof typeof methodColors] || 'text-gray-900 dark:text-white'}`}>
-                                        {log.method.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                                      </span>
-                                    </div>
-                                    {log.ip_address && (
-                                      <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                                        IP: {log.ip_address}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                              
-                              {/* Additional Context */}
-                              {metadata.description && (
-                                <div>
-                                  <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Description</h4>
-                                  <p className="text-sm text-gray-600 dark:text-gray-400">{metadata.description}</p>
-                                </div>
-                              )}
-                              
+                                ))}
+                              </div>
+                              <div className="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex items-center gap-2">
+                                <MethodIcon className={`h-4 w-4 ${methodColors[log.method as keyof typeof methodColors] || 'text-gray-400'}`} />
+                                <span className="text-sm text-gray-600 dark:text-gray-300">
+                                  Access via {formatAccessMethod(log.method)}
+                                </span>
+                                {metadata.device && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleNavigation(metadata.device!.navigation_url, metadata.device!.id, 'device');
+                                    }}
+                                    className="ml-auto text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
+                                  >
+                                    View device
+                                    <LinkIcon className="h-3 w-3 ml-1" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>

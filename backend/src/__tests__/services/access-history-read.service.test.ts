@@ -39,11 +39,16 @@ describe('AccessHistoryReadService', () => {
         activity_type: 'lock',
         entity_id: 'dev-1',
         device_id: 'dev-1',
+        actor_type: 'gateway',
+        actor_name: 'Gateway',
         result: 'success',
         occurred_at: new Date(),
         created_at: new Date(),
         updated_at: new Date(),
-        metadata: {},
+        metadata: { device_type: 'blulok' },
+        device_serial: 'GW-123',
+        blulok_device_name: 'Front Gate Lock',
+        facility_name: 'Petrolia Storage Facility',
       },
     ]);
 
@@ -51,6 +56,10 @@ describe('AccessHistoryReadService', () => {
     const result = await service.query('user-1', UserRole.ADMIN, undefined, { action: 'lock' });
     expect(result.logs).toHaveLength(1);
     expect(result.logs[0].action).toBe('lock');
+    expect(result.logs[0].method).toBe('automatic');
+    expect(result.logs[0].device_name).toBe('Front Gate Lock');
+    expect(result.logs[0].metadata?.actor).toEqual({ type: 'gateway', name: 'Gateway' });
+    expect(result.logs[0].metadata?.device).toMatchObject({ name: 'Front Gate Lock' });
   });
 
   it('returns enriched lock/unlock records from findById', async () => {

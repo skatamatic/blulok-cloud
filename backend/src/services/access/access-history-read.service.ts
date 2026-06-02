@@ -42,7 +42,10 @@ export type AccessHistoryRecord = {
   unit_number?: string;
   user_name?: string;
   user_email?: string;
+  actor_type?: string;
   device_name?: string;
+  device_location?: string;
+  device_serial?: string;
 };
 
 export class AccessHistoryReadService {
@@ -292,16 +295,24 @@ export class AccessHistoryReadService {
       ? (metadata.actor as Record<string, unknown>)
       : undefined;
 
-    const userName = actor && typeof actor.name === 'string' ? actor.name : row.actor_name || undefined;
+    const userName = row.actor_name
+      || (actor && typeof actor.name === 'string' ? actor.name : undefined);
     const userIdFromActor = actor && typeof actor.user_id === 'string' ? actor.user_id : undefined;
     const deviceType = this.inferDeviceType(metadata);
     const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : new Date(row.created_at).toISOString();
     const updatedAt = row.updated_at instanceof Date ? row.updated_at.toISOString() : new Date(row.updated_at).toISOString();
 
     const ctx = row as ActivityLogWithContext;
-    const deviceName =
-      ctx.access_control_device_name ||
-      (ctx.device_serial ? `Lock ${ctx.device_serial}` : undefined);
+    const deviceName = this.resolveDeviceName(ctx, deviceType);
+    const presentationMetadata = this.buildPresentationMetadata(
+      row,
+      ctx,
+      metadata,
+      deviceType,
+      deviceName,
+      userName,
+      userIdFromActor || row.actor_id || undefined,
+    );
 
     return {
       id: row.id,
@@ -315,7 +326,7 @@ export class AccessHistoryReadService {
       success: row.result === 'success',
       denial_reason: denialReason,
       reason: reasonMessage,
-      metadata,
+      metadata: presentationMetadata,
       occurred_at: row.occurred_at.toISOString(),
       created_at: createdAt,
       updated_at: updatedAt,
@@ -323,8 +334,81 @@ export class AccessHistoryReadService {
       unit_number: ctx.unit_number,
       user_name: userName,
       user_email: undefined,
+      actor_type: row.actor_type,
       device_name: deviceName,
+      device_location: ctx.device_location || undefined,
+      device_serial: ctx.device_serial || undefined,
     };
+  }
+
+  private resolveDeviceName(ctx: ActivityLogWithContext, deviceType: 'blulok' | 'access_control'): string | undefined {
+    if (ctx.access_control_device_name) return ctx.access_control_device_name;
+    if (ctx.blulok_device_name) return ctx.blulok_device_name;
+    if (ctx.device_serial) return `Lock ${ctx.device_serial}`;
+    return deviceType === 'access_control' ? 'Access control device' : undefined;
+  }
+
+  private buildPresentationMetadata(
+    row: ActivityLog,
+    ctx: ActivityLogWithContext,
+    baseMetadata: Record<string, unknown>,
+    deviceType: 'blulok' | 'access_control',
+    deviceName: string | undefined,
+    userName: string | undefined,
+    userId: string | undefined,
+  ): Record<string, unknown> {
+    const presentation: Record<string, unknown> = { ...baseMetadata };
+
+    if (row.actor_type === 'user' && userId && userName) {
+      presentation.user = {
+        id: userId,
+        name: userName,
+        navigation_url: `/users?highlight=${userId}`,
+      };
+    } else if (row.actor_type) {
+      presentation.actor = {
+        type: row.actor_type,
+        name: userName || row.actor_name || row.actor_type,
+      };
+    }
+
+    if (row.facility_id && ctx.facility_name) {
+      presentation.facility = {
+        id: row.facility_id,
+        name: ctx.facility_name,
+        navigation_url: `/facilities/${row.facility_id}`,
+      };
+    }
+
+    if (row.unit_id && ctx.unit_number) {
+      presentation.unit = {
+        id: row.unit_id,
+        number: ctx.unit_number,
+        navigation_url: `/units/${row.unit_id}`,
+      };
+    }
+
+    if (row.device_id && deviceName) {
+      presentation.device = {
+        id: row.device_id,
+        name: deviceName,
+        type: deviceType,
+        location: ctx.device_location || undefined,
+        serial: ctx.device_serial || undefined,
+        navigation_url: deviceType === 'blulok'
+          ? `/devices/blulok/${row.device_id}`
+          : `/devices/access-control/${row.device_id}`,
+      };
+    }
+
+    const description = typeof row.description === 'string' && row.description.trim().length > 0
+      ? row.description
+      : row.title;
+    if (typeof description === 'string' && description.trim().length > 0) {
+      presentation.description = description;
+    }
+
+    return presentation;
   }
 
   private extractMetadata(row: ActivityLog): Record<string, unknown> {
@@ -340,7 +424,9 @@ export class AccessHistoryReadService {
 
   private extractMethod(row: ActivityLog, metadata: Record<string, unknown>): string {
     if (row.activity_type === 'lock' || row.activity_type === 'unlock') {
-      return 'device';
+      if (row.actor_type === 'gateway') return 'automatic';
+      if (row.actor_type === 'user') return 'app';
+      return 'automatic';
     }
     const method = metadata.method;
     return typeof method === 'string' ? method : 'app';
