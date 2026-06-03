@@ -166,32 +166,9 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
     null
   );
   const lastObservedWidthRef = useRef<number | null>(null);
-  const isInitialLoadRef = useRef(true);
-  const prevLayoutSigRef = useRef<string | null>(null);
-  const ignoreLayoutEchoUntilRef = useRef(0);
   // RGL emits many onLayoutChange events during a drag/resize; we only want to
   // run the reflow engine once when the gesture ends.
   const isInteractingRef = useRef(false);
-
-  const layoutSig = useMemo(
-    () =>
-      (layouts.lg ?? [])
-        .map((i) => `${i.i}@${i.x},${i.y},${i.w}x${i.h}`)
-        .join('|'),
-    [layouts.lg]
-  );
-
-  useEffect(() => {
-    if (prevLayoutSigRef.current !== null && prevLayoutSigRef.current !== layoutSig) {
-      ignoreLayoutEchoUntilRef.current = Date.now() + 150;
-      isInitialLoadRef.current = true;
-    }
-    prevLayoutSigRef.current = layoutSig;
-  }, [layoutSig]);
-
-  useEffect(() => {
-    isInitialLoadRef.current = false;
-  }, []);
 
   const saveToWindowStorage = useCallback(
     (allLayouts: { [key: string]: Layout[] }) => {
@@ -267,8 +244,6 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
         layoutResyncRafRef.current = null;
         setLayoutResyncOverride(null);
       });
-      ignoreLayoutEchoUntilRef.current = Date.now() + 400;
-      isInitialLoadRef.current = true;
     },
     [cancelLayoutResync]
   );
@@ -305,7 +280,6 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
 
   const commitLayout = useCallback(
     (layout: Layout[]) => {
-      isInitialLoadRef.current = false;
       const merged: { [key: string]: Layout[] } = {
         ...layouts,
         lg: layout,
@@ -316,12 +290,10 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({
         return;
       }
       saveToWindowStorage(merged);
-      if (onLayoutSave && !isInitialLoadRef.current) {
+      if (onLayoutSave) {
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => onLayoutSave(merged), 500);
       }
-      // Suppress the echo onLayoutChange RGL fires right after the gesture.
-      ignoreLayoutEchoUntilRef.current = Date.now() + 250;
     },
     [layouts, onLayoutChange, onLayoutSave, saveToWindowStorage, resyncGridLayoutAfterReject]
   );

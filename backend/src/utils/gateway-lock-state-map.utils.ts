@@ -1,4 +1,5 @@
 import type { DeviceModel } from '@/models/device.model';
+import { parseGatewayLastSeen } from '@/utils/gateway-timestamp.utils';
 
 /** Partial gateway lock telemetry fields shared by inventory items and state updates. */
 export type GatewayLockStateFields = {
@@ -63,8 +64,10 @@ export function mapGatewayLockStateFieldsToDbUpdate(fields: GatewayLockStateFiel
     dbUpdates.error_message = fields.error_message;
   }
   if (fields.last_seen !== undefined) {
-    dbUpdates.last_seen =
-      typeof fields.last_seen === 'string' ? new Date(fields.last_seen) : fields.last_seen;
+    const lastSeen = parseGatewayLastSeen(fields.last_seen);
+    if (lastSeen !== undefined) {
+      dbUpdates.last_seen = lastSeen;
+    }
   }
   if (fields.serial !== undefined) {
     dbUpdates.serial = fields.serial;

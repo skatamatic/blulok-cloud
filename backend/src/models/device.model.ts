@@ -213,6 +213,8 @@ export interface UpdateAccessControlDeviceData {
   status?: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked?: boolean;
   supports_remote_lock?: boolean;
+  /** Gateway `last_seen` maps here (access_control has no last_seen column). */
+  last_activity?: Date;
   device_settings?: Record<string, any>;
   access_methods?: AccessMethod[];
   metadata?: Record<string, any>;
@@ -658,17 +660,14 @@ export class DeviceModel {
   async updateAccessControlDevice(deviceId: string, data: UpdateAccessControlDeviceData): Promise<AccessControlDevice | null> {
     const knex = this.db.connection;
 
-    let prevLocked: boolean | undefined;
-    let gatewayId: string | undefined;
-    let facilityId: string | undefined;
-    if (data.is_locked !== undefined) {
-      const before = await this.findAccessControlDeviceWithGateway(deviceId);
-      if (before) {
-        prevLocked = before.is_locked;
-        gatewayId = before.gateway_id;
-        facilityId = before.facility_id;
-      }
-    }
+    const hasTelemetryChange =
+      data.status !== undefined ||
+      data.is_locked !== undefined ||
+      data.last_activity !== undefined;
+
+    const before = hasTelemetryChange
+      ? await this.findAccessControlDeviceWithGateway(deviceId)
+      : null;
 
     const updatePayload: Record<string, unknown> = { updated_at: new Date() };
 
@@ -679,24 +678,51 @@ export class DeviceModel {
     if (data.device_type !== undefined) updatePayload.device_type = data.device_type;
     if (data.status !== undefined) updatePayload.status = data.status;
     if (data.is_locked !== undefined) updatePayload.is_locked = data.is_locked;
+    if (data.last_activity !== undefined) updatePayload.last_activity = data.last_activity;
     if (data.supports_remote_lock !== undefined) updatePayload.supports_remote_lock = data.supports_remote_lock;
     if (data.device_settings !== undefined) updatePayload.device_settings = JSON.stringify(data.device_settings);
     if (data.access_methods !== undefined) updatePayload.access_methods = JSON.stringify(data.access_methods);
     if (data.metadata !== undefined) updatePayload.metadata = JSON.stringify(data.metadata);
 
+    const meaningfulKeys = Object.keys(updatePayload).filter((k) => k !== 'updated_at');
+    if (meaningfulKeys.length === 0) {
+      return this.findAccessControlDeviceById(deviceId);
+    }
+
     await knex('access_control_devices').where('id', deviceId).update(updatePayload);
 
-    if (
-      data.is_locked !== undefined &&
-      prevLocked !== undefined &&
-      data.is_locked !== prevLocked &&
-      gatewayId
-    ) {
-      this.eventService.emitDeviceTelemetryUpdated({
-        deviceId,
-        gatewayId,
-        facilityId,
-      });
+    if (before) {
+      const gatewayId = before.gateway_id;
+      const facilityId = before.facility_id;
+      let statusChanged = false;
+
+      if (data.status !== undefined && data.status !== before.status) {
+        this.eventService.emitDeviceStatusChanged({
+          deviceId,
+          deviceType: 'access_control',
+          oldStatus: before.status || 'unknown',
+          newStatus: data.status,
+          gatewayId,
+        });
+        statusChanged = true;
+      }
+
+      if (data.is_locked !== undefined && data.is_locked !== before.is_locked) {
+        this.eventService.emitDeviceTelemetryUpdated({
+          deviceId,
+          gatewayId,
+          facilityId,
+        });
+        statusChanged = true;
+      }
+
+      if (!statusChanged && data.last_activity !== undefined) {
+        this.eventService.emitDeviceTelemetryUpdated({
+          deviceId,
+          gatewayId,
+          facilityId,
+        });
+      }
     }
 
     return this.findAccessControlDeviceById(deviceId);
@@ -865,7 +891,9 @@ export class DeviceModel {
     // Update the device
     await knex(table).where('id', deviceId).update({
       [statusField]: status,
-      last_seen: new Date(),
+      ...(deviceType === 'access_control'
+        ? { last_activity: new Date() }
+        : { last_seen: new Date() }),
       updated_at: new Date()
     });
 

@@ -39,6 +39,17 @@ describe('gateway-lock-state-map.utils', () => {
     it('returns empty object when no fields provided', () => {
       expect(mapGatewayLockStateFieldsToDbUpdate({})).toEqual({});
     });
+
+    it('skips invalid last_seen', () => {
+      expect(mapGatewayLockStateFieldsToDbUpdate({ last_seen: 'bad-timestamp' })).toEqual({});
+    });
+
+    it('maps valid last_seen to Date', () => {
+      const mapped = mapGatewayLockStateFieldsToDbUpdate({
+        last_seen: '2025-12-10T14:30:00.000Z',
+      });
+      expect(mapped.last_seen).toBeInstanceOf(Date);
+    });
   });
 
   describe('resolveOutboundGatewayLockNumber', () => {

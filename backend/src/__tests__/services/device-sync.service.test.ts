@@ -872,6 +872,10 @@ describe('DeviceSyncService', () => {
         },
       ] as unknown as AccessControlDevice[]);
       mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(1);
+      mockDeviceModel.updateAccessControlDeviceBySerialAndRelay.mockImplementation(
+        async (_gatewayId, accessId) =>
+          ({ id: `ac-${accessId}` }) as AccessControlDevice
+      );
 
       const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
         { kind: 'access_control', access_id: 'KEYPAD-A', online: true },
@@ -928,6 +932,40 @@ describe('DeviceSyncService', () => {
       expect(result.added).toBe(0);
       expect(mockDeviceModel.bulkCreateAccessControlDevices).not.toHaveBeenCalled();
     });
+
+    it('should apply online and last_seen during access control inventory sync', async () => {
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+        {
+          id: 'ac-1',
+          gateway_id: gatewayId,
+          device_serial: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+          relay_channel: 1,
+          metadata: { createdFromGatewaySync: true },
+        },
+      ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.updateAccessControlDeviceBySerialAndRelay.mockResolvedValue({
+        id: 'ac-1',
+      } as AccessControlDevice);
+
+      await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        {
+          kind: 'access_control',
+          access_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+          online: true,
+          last_seen: '2026-06-02T15:18:11.039532Z',
+        },
+      ]);
+
+      expect(mockDeviceModel.updateAccessControlDeviceBySerialAndRelay).toHaveBeenCalledWith(
+        gatewayId,
+        'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+        1,
+        {
+          status: 'online',
+          last_activity: expect.any(Date),
+        }
+      );
+    });
   });
 
   describe('updateAccessDeviceStates', () => {
@@ -939,7 +977,14 @@ describe('DeviceSyncService', () => {
       } as AccessControlDevice);
 
       const result = await deviceSyncService.updateAccessDeviceStates(gatewayId, [
-        { kind: 'access_control', access_id: 'KP-003', relay_channel: 3, online: true, locked: false },
+        {
+          kind: 'access_control',
+          access_id: 'KP-003',
+          relay_channel: 3,
+          online: true,
+          locked: false,
+          last_seen: '2026-06-02T15:18:11.039532Z',
+        },
       ]);
 
       expect(result.updated).toBe(1);
@@ -947,7 +992,11 @@ describe('DeviceSyncService', () => {
         gatewayId,
         'KP-003',
         3,
-        { status: 'online', is_locked: false }
+        {
+          status: 'online',
+          is_locked: false,
+          last_activity: expect.any(Date),
+        }
       );
     });
 

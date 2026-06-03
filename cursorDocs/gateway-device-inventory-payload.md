@@ -128,7 +128,7 @@ Stored in `access_control_devices`. Identity: **`access_id` + `relay_channel`** 
 | `location_description` | no | string | **`"Gateway relay {n}"`** | max 255 | `location_description` |
 | `online` | no | boolean | — | — | `status` online/offline |
 | `locked` | no | boolean | — | — | `is_locked` |
-| `last_seen` | no | string (ISO-8601) or Date | — | — | accepted on inventory; state merge via `online`/`locked` |
+| `last_seen` | no | string (ISO-8601) or Date | — | — | `last_activity` (invalid timestamps skipped; triggers WebSocket when changed) |
 
 ### Access control auto-provision defaults (new inventory row)
 
@@ -200,9 +200,13 @@ Partial update by **`access_id` + `relay_channel`**.
 | `relay_channel` | no | integer | **1** | **1–8** | lookup key |
 | `online` | no | boolean | — | — | `status` online/offline |
 | `locked` | no | boolean | — | — | `is_locked` |
-| `last_seen` | no | ISO-8601 / Date | — | — | accepted |
+| `last_seen` | no | ISO-8601 / Date | — | — | `last_activity` (invalid timestamps skipped) |
 
 Unknown composite key → `not_found[]` entry like `KP-001::2`.
+
+### Access control telemetry side effects
+
+When `online`, `locked`, or `last_seen` change on an existing row, the cloud persists the update and emits WebSocket **`device_status_update`** (via `device_status` subscription) so admin UI lists refresh. Invalid `last_seen` values are ignored. Heartbeat-only `last_seen` updates (status unchanged) still broadcast telemetry.
 
 ---
 

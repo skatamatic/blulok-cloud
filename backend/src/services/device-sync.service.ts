@@ -17,6 +17,7 @@ import {
   mapGatewayLockStateFieldsToDbUpdate,
   resolveOutboundGatewayLockNumber,
 } from '../utils/gateway-lock-state-map.utils';
+import { mapGatewayAccessStateFieldsToDbUpdate } from '../utils/gateway-access-state-map.utils';
 import type { DeviceSyncLogEntry } from '../types/gateway-device-sync.types';
 
 export type { AccessDeviceInventoryItem, AccessDeviceStateUpdate };
@@ -686,30 +687,13 @@ export class DeviceSyncService {
   private mapAccessInventoryToStateUpdate(
     item: AccessDeviceInventoryItem
   ): Parameters<DeviceModel['updateAccessControlDevice']>[1] {
-    const updates: Parameters<DeviceModel['updateAccessControlDevice']>[1] = {};
-    if (item.online !== undefined) {
-      updates.status = item.online ? 'online' : 'offline';
-    }
-    if (item.locked !== undefined) {
-      updates.is_locked = item.locked;
-    }
-    if (item.last_seen !== undefined) {
-      // last_activity updated via metadata merge if needed - use update payload via model
-    }
-    return updates;
+    return mapGatewayAccessStateFieldsToDbUpdate(item);
   }
 
   private mapAccessStateUpdate(
     update: AccessDeviceStateUpdate
   ): Parameters<DeviceModel['updateAccessControlDevice']>[1] {
-    const dbUpdates: Parameters<DeviceModel['updateAccessControlDevice']>[1] = {};
-    if (update.online !== undefined) {
-      dbUpdates.status = update.online ? 'online' : 'offline';
-    }
-    if (update.locked !== undefined) {
-      dbUpdates.is_locked = update.locked;
-    }
-    return dbUpdates;
+    return mapGatewayAccessStateFieldsToDbUpdate(update);
   }
 
   /**
@@ -795,7 +779,6 @@ export class DeviceSyncService {
       );
 
       const devicesToAdd: CreateAccessControlDeviceData[] = [];
-      const devicesToUpdate: Array<{ key: string; item: AccessDeviceInventoryItem }> = [];
 
       for (const [key, item] of incomingMap) {
         if (!existingMap.has(key)) {
@@ -857,7 +840,6 @@ export class DeviceSyncService {
             },
           });
         } else {
-          devicesToUpdate.push({ key, item });
           result.unchanged++;
           result.entries!.push({
             action: 'unchanged',
@@ -906,20 +888,27 @@ export class DeviceSyncService {
         }
       }
 
-      for (const { key, item } of devicesToUpdate) {
+      // Apply state/telemetry for every incoming row (including rows just bulk-added).
+      for (const [key, item] of incomingMap) {
         const stateUpdate = this.mapAccessInventoryToStateUpdate(item);
-        if (Object.keys(stateUpdate).length > 0) {
-          try {
-            const accessId = extractAccessId(item as unknown as Record<string, unknown>);
-            await this.deviceModel.updateAccessControlDeviceBySerialAndRelay(
-              gatewayId,
-              accessId,
-              resolveAccessRelayChannel(item.relay_channel),
-              stateUpdate
+        if (Object.keys(stateUpdate).length === 0) {
+          continue;
+        }
+        try {
+          const accessId = extractAccessId(item as unknown as Record<string, unknown>);
+          const updated = await this.deviceModel.updateAccessControlDeviceBySerialAndRelay(
+            gatewayId,
+            accessId,
+            resolveAccessRelayChannel(item.relay_channel),
+            stateUpdate
+          );
+          if (!updated) {
+            result.errors.push(
+              `Failed to update access control ${key}: device not found after inventory sync`
             );
-          } catch (error: any) {
-            result.errors.push(`Failed to update access control ${key}: ${error.message}`);
           }
+        } catch (error: any) {
+          result.errors.push(`Failed to update access control ${key}: ${error.message}`);
         }
       }
 
