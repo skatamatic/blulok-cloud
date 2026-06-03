@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
@@ -97,7 +98,7 @@ function formatDateLabel(dateStr: string, timePeriod: TimePeriod, detailed = fal
   }
 }
 
-function HistogramBarTooltip({
+function HistogramBarTooltipContent({
   date,
   dayData,
   timePeriod,
@@ -112,35 +113,39 @@ function HistogramBarTooltip({
   const rows = [...dayData].sort((a, b) => b.activityCount - a.activityCount);
 
   return (
-    <div className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-20 w-max max-w-[240px] -translate-x-1/2 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
-        <p className="text-xs font-semibold text-gray-900 dark:text-white">
-          {formatDateLabel(date, timePeriod, true)}
-        </p>
-        <ul className="mt-2 space-y-1.5">
-          {rows.map((item) => (
-            <li key={item.facilityId} className="flex items-center justify-between gap-3 text-xs">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-sm ${facilityColors[colorIndex(item.facilityId) % facilityColors.length]}`}
-                />
-                <span className="truncate text-gray-600 dark:text-gray-300">{item.facilityName}</span>
-              </span>
-              <span className="shrink-0 tabular-nums font-medium text-gray-900 dark:text-white">
-                {item.activityCount}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 text-xs dark:border-gray-700">
-          <span className="text-gray-500 dark:text-gray-400">Total events</span>
-          <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{total}</span>
-        </div>
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
+      <p className="text-xs font-semibold text-gray-900 dark:text-white">
+        {formatDateLabel(date, timePeriod, true)}
+      </p>
+      <ul className="mt-2 space-y-1.5">
+        {rows.map((item) => (
+          <li key={item.facilityId} className="flex items-center justify-between gap-3 text-xs">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={`h-2 w-2 shrink-0 rounded-sm ${facilityColors[colorIndex(item.facilityId) % facilityColors.length]}`}
+              />
+              <span className="truncate text-gray-600 dark:text-gray-300">{item.facilityName}</span>
+            </span>
+            <span className="shrink-0 tabular-nums font-medium text-gray-900 dark:text-white">
+              {item.activityCount}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 text-xs dark:border-gray-700">
+        <span className="text-gray-500 dark:text-gray-400">Total events</span>
+        <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{total}</span>
       </div>
-      <div className="mx-auto h-2 w-2 rotate-45 border-b border-r border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-900" />
     </div>
   );
 }
+
+type HistogramTooltipState = {
+  date: string;
+  dayData: HistogramData[];
+  anchorX: number;
+  anchorY: number;
+};
 const timePeriodLabels: Record<TimePeriod, string> = {
   day: 'Last 24 Hours',
   week: 'Last Week',
@@ -192,6 +197,24 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   const [histogramData, setHistogramData] = useState<HistogramData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<HistogramTooltipState | null>(null);
+
+  const showBarTooltip = useCallback(
+    (date: string, dayData: HistogramData[], target: HTMLElement) => {
+      const rect = target.getBoundingClientRect();
+      setTooltip({
+        date,
+        dayData,
+        anchorX: rect.left + rect.width / 2,
+        anchorY: rect.top,
+      });
+    },
+    [],
+  );
+
+  const hideBarTooltip = useCallback(() => {
+    setTooltip(null);
+  }, []);
 
   const chartFacilities = useMemo(() => {
     const fromAuth =
@@ -316,7 +339,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
       readOnly={readOnly}
-      className="group"
       enhancedMenu={
         <motion.div className="space-y-3">
           <button
@@ -393,17 +415,15 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                   return (
                     <div
                       key={date}
-                      className="group relative flex h-full min-w-0 max-w-10 flex-1 flex-col items-center justify-end hover:z-10 focus-within:z-10"
+                      className="relative flex h-full min-w-0 max-w-10 flex-1 flex-col items-center justify-end hover:z-10 focus-within:z-10"
                       tabIndex={0}
                       role="img"
                       aria-label={`${formatDateLabel(date, timePeriod, true)}: ${totalEvents} events`}
+                      onMouseEnter={(e) => showBarTooltip(date, dayData, e.currentTarget)}
+                      onMouseLeave={hideBarTooltip}
+                      onFocus={(e) => showBarTooltip(date, dayData, e.currentTarget)}
+                      onBlur={hideBarTooltip}
                     >
-                      <HistogramBarTooltip
-                        date={date}
-                        dayData={dayData}
-                        timePeriod={timePeriod}
-                        colorIndex={facilityColorIndex}
-                      />
                       <div
                         className="flex w-full flex-col justify-end gap-px"
                         style={{ height: barAreaHeightPx }}
@@ -414,7 +434,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                             initial={{ height: 0 }}
                             animate={{ height: getBarHeightPx(item.activityCount) }}
                             transition={{ duration: 0.4, delay: index * 0.03 }}
-                            className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90 transition-opacity group-hover:opacity-100`}
+                            className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90 transition-opacity hover:opacity-100`}
                           />
                         ))}
                       </div>
@@ -422,6 +442,27 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                   );
                 })}
               </div>
+              {tooltip &&
+                createPortal(
+                  <div
+                    className="pointer-events-none fixed z-[9999] w-max max-w-[240px]"
+                    style={{
+                      left: tooltip.anchorX,
+                      top: tooltip.anchorY,
+                      transform: 'translate(-50%, calc(-100% - 10px))',
+                    }}
+                    role="tooltip"
+                  >
+                    <HistogramBarTooltipContent
+                      date={tooltip.date}
+                      dayData={tooltip.dayData}
+                      timePeriod={timePeriod}
+                      colorIndex={facilityColorIndex}
+                    />
+                    <div className="mx-auto mt-[-1px] h-2 w-2 rotate-45 border-b border-r border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-900" />
+                  </div>,
+                  document.body,
+                )}
               <div className="mt-1.5 flex shrink-0 gap-0.5 px-1">
                 {chartEntries.map(([date]) => (
                   <span

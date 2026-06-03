@@ -150,6 +150,32 @@ describe('HistogramWidget', () => {
       });
     });
 
+    it('shows a floating breakdown tooltip when hovering a bar', async () => {
+      renderWithProviders(
+        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
+      );
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
+      });
+
+      const bars = screen.getAllByRole('img');
+      expect(bars.length).toBeGreaterThan(0);
+
+      fireEvent.mouseEnter(bars[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('tooltip')).toBeInTheDocument();
+        expect(screen.getAllByText('Total events').length).toBeGreaterThan(0);
+      });
+
+      fireEvent.mouseLeave(bars[0]);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+      });
+    });
+
     it('handles empty data gracefully', async () => {
       mockGetActivityStats.mockResolvedValue({
         success: true,
