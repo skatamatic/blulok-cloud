@@ -277,7 +277,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
         ) : (
           <>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 shrink-0">
-              Access attempts by facility
+              Lock, unlock, and access activity by facility
             </p>
             <div className={`${chartAreaClass} relative`}>
               <div className="absolute inset-0 flex items-end justify-between px-1 pb-6">
@@ -293,7 +293,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                             animate={{ height: getBarHeight(item.activityCount) }}
                             transition={{ duration: 0.5, delay: index * 0.05 }}
                             className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-80`}
-                            title={`${item.facilityName}: ${item.activityCount} access attempts`}
+                            title={`${item.facilityName}: ${item.activityCount} events`}
                           />
                         ))}
                       </motion.div>

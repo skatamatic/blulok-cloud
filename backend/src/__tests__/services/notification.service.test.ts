@@ -200,6 +200,17 @@ describe('NotificationService', () => {
       expect(result!.id).toBe('notification-1');
     });
 
+    it('returns null for backend_error when viewer is not dev_admin', async () => {
+      mockNotificationModel.findById.mockResolvedValue({
+        ...mockNotification,
+        notification_type: 'backend_error',
+      });
+
+      const result = await service.getNotificationById('admin-1', UserRole.ADMIN, 'notification-1');
+
+      expect(result).toBeNull();
+    });
+
     it('should format reference correctly in response', async () => {
       const result = await service.getNotificationById('user-1', UserRole.TENANT, 'notification-1');
 
@@ -232,6 +243,22 @@ describe('NotificationService', () => {
       expect(result.notifications).toHaveLength(1);
       expect(result.total).toBe(1);
       expect(result.unreadCount).toBe(5);
+    });
+
+    it('excludes backend_error notifications for non-dev admins', async () => {
+      await service.getUserNotifications(
+        'user-1',
+        UserRole.ADMIN,
+        undefined,
+        'user-1',
+        {},
+      );
+
+      expect(mockNotificationModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          exclude_notification_types: ['backend_error'],
+        }),
+      );
     });
 
     it('should throw error when non-admin tries to view other user notifications', async () => {
@@ -542,18 +569,31 @@ describe('NotificationService', () => {
 
   describe('getUnreadCount', () => {
     it('should return unread count for user', async () => {
-      const result = await service.getUnreadCount('user-1');
+      const result = await service.getUnreadCount('user-1', UserRole.TENANT);
 
       expect(result).toBe(5);
-      expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1', undefined);
+      expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1', {
+        excludeNotificationTypes: ['backend_error'],
+      });
     });
 
     it('should return unread count scoped to facility', async () => {
-      const result = await service.getUnreadCount('user-1', { facilityId: 'facility-1' });
+      const result = await service.getUnreadCount('user-1', UserRole.TENANT, {
+        facilityId: 'facility-1',
+      });
 
       expect(result).toBe(5);
       expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1', {
         facilityId: 'facility-1',
+        excludeNotificationTypes: ['backend_error'],
+      });
+    });
+
+    it('excludes backend_error from unread count for non-dev admins', async () => {
+      await service.getUnreadCount('user-1', UserRole.ADMIN);
+
+      expect(mockNotificationModel.getUnreadCount).toHaveBeenCalledWith('user-1', {
+        excludeNotificationTypes: ['backend_error'],
       });
     });
   });

@@ -528,6 +528,7 @@ export default function DeviceDetailsPage() {
                   pendingRemoteUnlockRef.current = true;
                   scheduleUnlockWatch(() => deviceLockStatusRef.current, () => {
                     pendingRemoteUnlockRef.current = false;
+                    void loadDeviceDetails();
                   });
 
                   setDevice(prev =>

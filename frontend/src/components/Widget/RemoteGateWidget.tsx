@@ -176,12 +176,10 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   }, [gates, selectedGate]);
 
   useEffect(() => {
-    // Auto-select first online gate
+    // Prefer first online gate; otherwise show the first gate (offline still visible).
     if (gates.length > 0 && !selectedGate) {
-      const onlineGate = gates.find(g => g.status === 'online');
-      if (onlineGate) {
-        setSelectedGate(onlineGate.id);
-      }
+      const preferred = gates.find((g) => g.status === 'online') ?? gates[0];
+      setSelectedGate(preferred.id);
     }
   }, [gates, selectedGate]);
 
@@ -345,8 +343,24 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
       ) : size === 'medium' ? (
         /* Compact gate control for medium widgets */
-        <div className="h-full flex flex-col justify-center">
-          {selectedGateData && selectedGateData.status === 'online' ? (
+        <div className="h-full flex flex-col min-h-0 justify-center gap-2">
+          {gates.length > 1 && (
+            <select
+              value={selectedGate}
+              onChange={(e) => setSelectedGate(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-xs"
+            >
+              <option value="">Choose a gate</option>
+              {gates.map((gate) => (
+                <option key={gate.id} value={gate.id}>
+                  {gate.name} ({gate.status})
+                </option>
+              ))}
+            </select>
+          )}
+
+          {selectedGateData ? (
+            selectedGateData.status === 'online' ? (
             <div className="text-center space-y-2">
               <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
                 {selectedGateData.name}
@@ -383,11 +397,27 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                     : 'Open'}
               </button>
             </div>
+            ) : (
+              <div className="text-center space-y-1">
+                <div className="flex items-center justify-center gap-1.5">
+                  {getStatusIcon(selectedGateData.status)}
+                  <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                    {selectedGateData.name}
+                  </span>
+                </div>
+                <p className="text-xs text-red-600 dark:text-red-400 capitalize">
+                  Gate {selectedGateData.status}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Remote control unavailable while offline
+                </p>
+              </div>
+            )
           ) : (
             <div className="text-center">
               <BoltIcon className="h-6 w-6 text-gray-400 mx-auto mb-1" />
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                {gates.length === 0 ? 'No gates found' : onlineGates.length === 0 ? 'No gates online' : 'Select gate'}
+                {gates.length === 0 ? 'No gates found' : 'Select a gate'}
               </p>
             </div>
           )}
@@ -510,9 +540,9 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                   No access control devices found
                 </p>
               )}
-              {onlineGates.length === 0 && gates.length > 0 && (
-                <p className="text-xs text-red-500 dark:text-red-400 mt-1">
-                  No gates online
+              {gates.length > 0 && onlineGates.length === 0 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  All gates are offline — status shown; remote control disabled
                 </p>
               )}
             </div>

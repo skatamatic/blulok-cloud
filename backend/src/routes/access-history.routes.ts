@@ -52,6 +52,7 @@ import { MAX_HISTOGRAM_FACILITIES } from '@/constants/access-history.constants';
 import { ActivityLogModel } from '@/models/activity-log.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { AuthService } from '@/services/auth.service';
 
 const router = Router();
 let accessHistoryReadService: AccessHistoryReadService | null = null;
@@ -295,13 +296,19 @@ router.get('/stats/activity', async (req: AuthenticatedRequest, res: Response): 
         ? [req.query.facility_ids]
         : [];
 
-    const allowedFacilityIds = user.role === UserRole.FACILITY_ADMIN
-      ? requestedFacilityIds.length > 0
+    let allowedFacilityIds: string[] | undefined;
+
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      allowedFacilityIds = requestedFacilityIds.length > 0
         ? requestedFacilityIds.filter((id) => user.facilityIds?.includes(id))
-        : user.facilityIds
-      : requestedFacilityIds.length > 0
+        : user.facilityIds;
+    } else if (AuthService.canAccessAllFacilities(user.role)) {
+      allowedFacilityIds = requestedFacilityIds.length > 0 ? requestedFacilityIds : undefined;
+    } else {
+      allowedFacilityIds = requestedFacilityIds.length > 0
         ? requestedFacilityIds
         : user.facilityIds;
+    }
 
     const cappedFacilityIds =
       allowedFacilityIds && allowedFacilityIds.length > MAX_HISTOGRAM_FACILITIES

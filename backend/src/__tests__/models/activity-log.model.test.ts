@@ -222,7 +222,7 @@ describe('ActivityLogModel', () => {
 
       expect(whereIn).toHaveBeenCalledWith(
         'activity_logs.activity_type',
-        ['access_attempt', 'lock', 'unlock'],
+        ['access_attempt', 'lock', 'unlock', 'locking', 'unlocking'],
       );
     });
   });

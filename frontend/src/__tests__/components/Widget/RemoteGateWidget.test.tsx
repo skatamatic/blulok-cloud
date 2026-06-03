@@ -489,6 +489,29 @@ describe('RemoteGateWidget', () => {
       }, { timeout: 3000 });
     });
 
+    it('shows offline gate in medium layout when no gates are online', async () => {
+      mockGetDevices.mockResolvedValue({
+        devices: [
+          {
+            ...mockAccessControlDevices[2],
+            id: 'main-gate-offline',
+            name: 'Main Gate',
+          },
+        ],
+        total: 1,
+      });
+
+      renderWithProviders(
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" initialSize="medium" />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Main Gate')).toBeInTheDocument();
+        expect(screen.getByText(/Gate offline/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/No gates online/i)).not.toBeInTheDocument();
+    });
+
     it('disables operations for offline gates', async () => {
       // Use only the offline gate
       mockGetDevices.mockResolvedValue({

@@ -6,17 +6,22 @@ import {
   XMarkIcon,
   EyeIcon,
   ArrowPathIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { useDashboardFacilityScope } from '@/hooks/useDashboardFacilityScope';
+import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
+  filterNotificationsForViewer,
+  getNotificationDetailLines,
   mapApiNotificationToDashboardView,
+  notificationMessageNeedsExpansion,
 } from '@/utils/notification-display.utils';
 import {
   getWidgetLayoutProfile,
@@ -26,6 +31,185 @@ import {
 } from '@/utils/widget-layout.utils';
 
 type DisplayNotification = ReturnType<typeof mapApiNotificationToDashboardView>;
+
+const NotificationCard: React.FC<{
+  notification: DisplayNotification;
+  expanded: boolean;
+  compact: boolean;
+  index: number;
+  onToggle: () => void;
+  onMarkRead: () => void;
+  onDismiss: () => void;
+  formatTimestamp: (timestamp: Date) => string;
+  getNotificationIcon: (displayType: string) => React.ReactElement;
+}> = ({
+  notification,
+  expanded,
+  compact,
+  index,
+  onToggle,
+  onMarkRead,
+  onDismiss,
+  formatTimestamp,
+  getNotificationIcon,
+}) => {
+  const expandable = notificationMessageNeedsExpansion(notification.message);
+  const detailLines = getNotificationDetailLines(notification);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
+      transition={{ delay: index * 0.05, duration: 0.3 }}
+      className={`relative border rounded-lg transition-all group hover:shadow-sm ${
+        compact ? 'p-2' : 'p-3'
+      } ${
+        notification.isRead
+          ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
+          : 'border-primary-200 dark:border-primary-700 bg-primary-50 dark:bg-primary-900/10'
+      } ${expanded ? 'ring-1 ring-[#147FD4]/20 border-[#147FD4]/40' : ''}`}
+    >
+      <div className={`flex items-start ${compact ? 'space-x-2' : 'space-x-3'}`}>
+        <div className="flex-shrink-0 mt-0.5">
+          {React.cloneElement(getNotificationIcon(notification.displayType), {
+            className: compact ? 'h-3 w-3' : 'h-4 w-4',
+          })}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="no-drag w-full text-left"
+            aria-expanded={expanded}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <h4
+                className={`${compact ? 'text-xs' : 'text-sm'} font-medium ${
+                  notification.isRead
+                    ? 'text-gray-900 dark:text-white'
+                    : 'text-gray-900 dark:text-white font-semibold'
+                }`}
+              >
+                {notification.title}
+              </h4>
+              {(expandable || detailLines.length > 1) && (
+                <motion.span
+                  animate={{ rotate: expanded ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="shrink-0 text-gray-400"
+                >
+                  <ChevronDownIcon className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+                </motion.span>
+              )}
+            </div>
+
+            {!expanded && (
+              <p
+                className={`${compact ? 'text-xs mt-0.5' : 'text-xs mt-1'} text-gray-600 dark:text-gray-400 leading-relaxed line-clamp-2`}
+              >
+                {notification.message}
+              </p>
+            )}
+          </button>
+
+          <AnimatePresence initial={false}>
+            {expanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                className="overflow-hidden"
+              >
+                <div className={`space-y-2 ${compact ? 'mt-1.5' : 'mt-2'}`}>
+                  <p className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap break-words">
+                    {notification.message}
+                  </p>
+                  {detailLines.length > 1 && (
+                    <div className="rounded-md border border-gray-100 bg-gray-50/80 px-2.5 py-2 dark:border-gray-700/80 dark:bg-gray-900/40">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                        Details
+                      </p>
+                      <ul className="mt-1 space-y-0.5">
+                        {detailLines.slice(1).map((line) => (
+                          <li
+                            key={line}
+                            className="text-[11px] text-gray-600 dark:text-gray-400 break-words font-mono"
+                          >
+                            {line}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className={`flex items-center justify-between ${compact ? 'mt-1' : 'mt-2'}`}>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {compact
+                ? formatTimestamp(notification.timestamp).split(' ')[0]
+                : formatTimestamp(notification.timestamp)}
+            </span>
+
+            {notification.actionRequired && !compact && (
+              <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 rounded-full">
+                Action Required
+              </span>
+            )}
+          </div>
+        </div>
+
+        {compact ? (
+          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismiss();
+              }}
+              className="p-0.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+              title="Dismiss"
+            >
+              <XMarkIcon className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {!notification.isRead && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMarkRead();
+                }}
+                className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                title="Mark as read"
+              >
+                <EyeIcon className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismiss();
+              }}
+              className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+              title="Dismiss"
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+};
 
 interface NotificationsWidgetProps {
   id: string;
@@ -80,6 +264,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   facilityFilter,
 }) => {
   const { wsFilters, matchesFacilityScope } = useDashboardFacilityScope(facilityFilter);
+  const { authState } = useAuth();
+  const viewerRole = authState.user?.role;
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
     initialSize,
@@ -92,6 +278,24 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'unread' | 'actionRequired'>('all');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+
+  const toggleExpanded = useCallback((notificationId: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(notificationId)) {
+        next.delete(notificationId);
+      } else {
+        next.add(notificationId);
+      }
+      return next;
+    });
+  }, []);
+
+  const visibleForViewer = useCallback(
+    (items: UserNotificationApi[]) => filterNotificationsForViewer(items, viewerRole),
+    [viewerRole],
+  );
 
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
 
@@ -106,6 +310,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       prev.forEach((p) => map.set(p.id, p));
       incoming.forEach((raw) => {
         if (!matchesScope(raw)) return;
+        if (!filterNotificationsForViewer([raw], viewerRole).length) return;
         const v = mapApiNotificationToDashboardView(raw);
         map.set(v.id, v);
       });
@@ -113,7 +318,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
       );
     });
-  }, [matchesScope]);
+  }, [matchesScope, viewerRole]);
 
   const loadNotifications = useCallback(
     async (opts?: { silent?: boolean; append?: boolean; offset?: number }) => {
@@ -135,7 +340,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           offset,
         });
         if (response.success && response.notifications) {
-          const mapped = response.notifications
+          const mapped = visibleForViewer(response.notifications)
             .filter((n) => matchesScope(n))
             .map(mapApiNotificationToDashboardView);
 
@@ -176,7 +381,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         }
       }
     },
-    [facilityFilter, matchesScope]
+    [facilityFilter, matchesScope, visibleForViewer]
   );
 
   useEffect(() => {
@@ -216,6 +421,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             createdAt: String(data.timestamp ?? new Date().toISOString()),
           };
           if (!matchesScope(apiRow)) break;
+          if (!filterNotificationsForViewer([apiRow], viewerRole).length) break;
           mergeById([apiRow]);
           break;
         }
@@ -251,7 +457,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           break;
       }
     },
-    [matchesScope, mergeById, loadNotifications]
+    [matchesScope, mergeById, loadNotifications, viewerRole]
   );
 
   useEffect(() => {
@@ -450,97 +656,18 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-2`}>
             <AnimatePresence>
                 {displayedNotifications.map((notification, index) => (
-                  <motion.div
+                  <NotificationCard
                     key={notification.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
-                    transition={{ delay: index * 0.05, duration: 0.3 }}
-                    className={`relative ${
-                      size === 'medium' ? 'p-2' : 'p-3'
-                    } border rounded-lg transition-all group hover:shadow-sm ${
-                      notification.isRead
-                        ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
-                        : 'border-primary-200 dark:border-primary-700 bg-primary-50 dark:bg-primary-900/10'
-                    }`}
-                  >
-                    <div className={`flex items-start ${size === 'medium' ? 'space-x-2' : 'space-x-3'}`}>
-                      <div className="flex-shrink-0 mt-0.5">
-                        {React.cloneElement(getNotificationIcon(notification.displayType), {
-                          className: size === 'medium' ? 'h-3 w-3' : 'h-4 w-4',
-                        })}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between">
-                          <h4
-                            className={`${size === 'medium' ? 'text-xs' : 'text-sm'} font-medium truncate ${
-                              notification.isRead
-                                ? 'text-gray-900 dark:text-white'
-                                : 'text-gray-900 dark:text-white font-semibold'
-                            }`}
-                          >
-                            {notification.title}
-                          </h4>
-                        </div>
-
-                        {size === 'medium' ? (
-                          <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5 truncate">
-                            {notification.message}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 leading-relaxed">
-                            {notification.message}
-                          </p>
-                        )}
-
-                        <div className={`flex items-center justify-between ${size === 'medium' ? 'mt-1' : 'mt-2'}`}>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">
-                            {size === 'medium'
-                              ? formatTimestamp(notification.timestamp).split(' ')[0]
-                              : formatTimestamp(notification.timestamp)}
-                          </span>
-
-                          {notification.actionRequired && size !== 'medium' && (
-                            <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 rounded-full">
-                              Action Required
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {size === 'medium' ? (
-                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => dismissNotification(notification.id)}
-                            className="p-0.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                            title="Dismiss"
-                          >
-                            <XMarkIcon className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {!notification.isRead && (
-                            <button
-                              onClick={() => markAsRead(notification.id)}
-                              className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                              title="Mark as read"
-                            >
-                              <EyeIcon className="h-4 w-4" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => dismissNotification(notification.id)}
-                            className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                            title="Dismiss"
-                          >
-                            <XMarkIcon className="h-4 w-4" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
+                    notification={notification}
+                    expanded={expandedIds.has(notification.id)}
+                    compact={size === 'medium'}
+                    index={index}
+                    onToggle={() => toggleExpanded(notification.id)}
+                    onMarkRead={() => void markAsRead(notification.id)}
+                    onDismiss={() => void dismissNotification(notification.id)}
+                    formatTimestamp={formatTimestamp}
+                    getNotificationIcon={getNotificationIcon}
+                  />
                 ))}
             </AnimatePresence>
           </div>

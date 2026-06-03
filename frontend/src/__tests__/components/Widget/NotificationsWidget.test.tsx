@@ -58,6 +58,7 @@ jest.mock('@/contexts/AuthContext', () => ({
 jest.mock('framer-motion', () => ({
   motion: {
     div: ({ children, ...props }: React.PropsWithChildren<object>) => <div {...props}>{children}</div>,
+    span: ({ children, ...props }: React.PropsWithChildren<object>) => <span {...props}>{children}</span>,
   },
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -176,6 +177,34 @@ describe('NotificationsWidget', () => {
     renderWithProviders(<NotificationsWidget id="w1" title="Notifications" />);
     await waitFor(() => {
       expect(screen.getByText('Failed to load notifications')).toBeInTheDocument();
+    });
+  });
+
+  it('expands a notification card to show full message', async () => {
+    mockGetNotifications.mockResolvedValueOnce({
+      success: true,
+      notifications: [
+        baseNotification({
+          id: 'long-1',
+          title: 'Gateway offline',
+          message: 'Main gateway has been offline for more than five minutes. Check power and network connectivity at the facility entrance.',
+        }),
+      ],
+      total: 1,
+      unreadCount: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(screen.getByText('Gateway offline')).toBeInTheDocument());
+
+    expect(screen.getByText(/Check power and network connectivity/)).toHaveClass('line-clamp-2');
+
+    fireEvent.click(screen.getByRole('button', { name: /Gateway offline/i }));
+    await waitFor(() => {
+      const full = screen.getByText(/Check power and network connectivity/);
+      expect(full).toHaveClass('whitespace-pre-wrap');
     });
   });
 });

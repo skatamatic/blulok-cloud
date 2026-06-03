@@ -19,6 +19,10 @@ import { UserRole } from '@/types/auth.types';
 import { AuthService } from '@/services/auth.service';
 import { AccessDeniedError, NotFoundError } from '@/middleware/error.middleware';
 import { logger } from '@/utils/logger';
+import {
+  canViewNotificationType,
+  excludedNotificationTypesForRole,
+} from '@/utils/in-app-notification-visibility.utils';
 
 /**
  * Notification response format for API
@@ -141,6 +145,8 @@ export class NotificationService {
       throw new AccessDeniedError('Cannot view other user notifications');
     }
 
+    const excludedTypes = excludedNotificationTypesForRole(requestingUserRole);
+
     // Build filters
     const filters: NotificationFilters = {
       user_id: targetUserId,
@@ -148,6 +154,7 @@ export class NotificationService {
       priority: options.priority,
       is_read: options.isRead,
       include_expired: options.includeExpired === true,
+      exclude_notification_types: excludedTypes.length > 0 ? excludedTypes : undefined,
       limit: options.limit || 50,
       offset: options.offset || 0,
       sortBy: 'created_at',
@@ -168,10 +175,18 @@ export class NotificationService {
     }
 
     const unreadScope = facilityScope.facilityId
-      ? { facilityId: facilityScope.facilityId }
+      ? {
+          facilityId: facilityScope.facilityId,
+          excludeNotificationTypes: excludedTypes.length > 0 ? excludedTypes : undefined,
+        }
       : facilityScope.facilityIds?.length
-        ? { facilityIds: facilityScope.facilityIds }
-        : undefined;
+        ? {
+            facilityIds: facilityScope.facilityIds,
+            excludeNotificationTypes: excludedTypes.length > 0 ? excludedTypes : undefined,
+          }
+        : excludedTypes.length > 0
+          ? { excludeNotificationTypes: excludedTypes }
+          : undefined;
 
     const [notifications, total, unreadCount] = await Promise.all([
       this.notificationModel.find(filters),
@@ -203,6 +218,10 @@ export class NotificationService {
     // Check access
     if (notification.user_id !== requestingUserId && !AuthService.isAdmin(requestingUserRole)) {
       throw new AccessDeniedError('Cannot view this notification');
+    }
+
+    if (!canViewNotificationType(requestingUserRole, notification.notification_type)) {
+      return null;
     }
 
     return this.formatNotification(notification);
@@ -322,9 +341,14 @@ export class NotificationService {
    */
   async getUnreadCount(
     userId: string,
+    userRole: UserRole,
     scope?: { facilityId?: string; facilityIds?: string[] },
   ): Promise<number> {
-    return this.notificationModel.getUnreadCount(userId, scope);
+    const excludedTypes = excludedNotificationTypesForRole(userRole);
+    return this.notificationModel.getUnreadCount(userId, {
+      ...scope,
+      excludeNotificationTypes: excludedTypes.length > 0 ? excludedTypes : undefined,
+    });
   }
 
   /**

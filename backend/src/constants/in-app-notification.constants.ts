@@ -40,6 +40,11 @@ export const GLOBAL_OPERATOR_ROLES: UserRole[] = [
   UserRole.DEV_ADMIN,
 ];
 
+/** In-app types with technical detail — visible only to dev_admin. */
+export const DEV_ADMIN_ONLY_NOTIFICATION_TYPES: readonly InAppNotificationType[] = [
+  'backend_error',
+];
+
 export const LOW_BATTERY_THRESHOLD_PERCENT = 20;
 
 /** @deprecated Import from access-history.constants.ts */

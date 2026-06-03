@@ -361,21 +361,28 @@ export class ActivityLogModel {
     }
 
     let query = knex('activity_logs')
+      .leftJoin('units', 'activity_logs.unit_id', 'units.id')
       .select(
         knex.raw(`${dateTrunc} as date`),
-        'activity_logs.facility_id',
+        knex.raw('COALESCE(activity_logs.facility_id, units.facility_id) as facility_id'),
         'facilities.name as facility_name',
         knex.raw('COUNT(*) as activity_count'),
       )
-      .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id')
+      .leftJoin('facilities', function (this: import('knex').Knex.JoinClause) {
+        this.on('facilities.id', '=', knex.raw('COALESCE(activity_logs.facility_id, units.facility_id)'));
+      })
       .whereIn('activity_logs.activity_type', DASHBOARD_ACTIVITY_TYPES)
       .whereBetween('activity_logs.occurred_at', [options.startDate, options.endDate])
-      .whereNotNull('activity_logs.facility_id')
-      .groupByRaw(`${dateTrunc}, activity_logs.facility_id, facilities.name`)
+      .whereRaw('COALESCE(activity_logs.facility_id, units.facility_id) IS NOT NULL')
+      .groupByRaw(`${dateTrunc}, COALESCE(activity_logs.facility_id, units.facility_id), facilities.name`)
       .orderByRaw(`${dateTrunc} ASC, facilities.name ASC`);
 
     if (options.facilityIds && options.facilityIds.length > 0) {
-      query = query.whereIn('activity_logs.facility_id', options.facilityIds);
+      const placeholders = options.facilityIds.map(() => '?').join(', ');
+      query = query.whereRaw(
+        `COALESCE(activity_logs.facility_id, units.facility_id) IN (${placeholders})`,
+        options.facilityIds,
+      );
     }
 
     const results = await query;

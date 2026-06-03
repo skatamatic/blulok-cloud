@@ -118,41 +118,51 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
     Boolean(enhancedMenu) ||
     Boolean(onRemove);
 
+  const estimateDropdownHeight = useCallback(() => {
+    if (dropdownRef.current) {
+      return dropdownRef.current.offsetHeight;
+    }
+    if (enhancedMenu) {
+      return 280;
+    }
+    return 40 + dockSizes.length * 40 + (onRemove ? 48 : 0);
+  }, [enhancedMenu, dockSizes.length, onRemove]);
+
   const updateDropdownPosition = useCallback(() => {
-    if (isOpen && buttonRef.current) {
-      const buttonRect = buttonRef.current.getBoundingClientRect();
-      const dropdownWidth = enhancedMenu ? 288 : 208;
+    if (!buttonRef.current) {
+      return;
+    }
 
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      const margin = 8;
+    const buttonRect = buttonRef.current.getBoundingClientRect();
+    const dropdownWidth = enhancedMenu ? 288 : 208;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 8;
+    const dropdownHeight = estimateDropdownHeight();
 
-      let left = buttonRect.right - dropdownWidth;
-      if (left < margin) {
-        left = buttonRect.left;
-      }
-      if (left + dropdownWidth > viewportWidth - margin) {
-        left = viewportWidth - dropdownWidth - margin;
-      }
+    let left = buttonRect.right - dropdownWidth;
+    if (left < margin) {
+      left = buttonRect.left;
+    }
+    if (left + dropdownWidth > viewportWidth - margin) {
+      left = Math.max(margin, viewportWidth - dropdownWidth - margin);
+    }
 
-      let top = buttonRect.bottom + 8;
-      const estimatedHeight = enhancedMenu ? 320 : 40 + dockSizes.length * 40 + (onRemove ? 48 : 0);
+    const preferredBelow = buttonRect.bottom + margin;
+    const preferredAbove = buttonRect.top - dropdownHeight - margin;
+    let top = preferredBelow;
 
-      if (top + estimatedHeight > viewportHeight - margin) {
-        const spaceAbove = buttonRect.top - margin - 8;
-        if (spaceAbove >= estimatedHeight) {
-          top = buttonRect.top - estimatedHeight - 8;
-        } else {
-          top = margin;
-        }
-      }
-
-      setDropdownPosition({ top, left });
-      if (!isPositioned) {
-        setIsPositioned(true);
+    if (preferredBelow + dropdownHeight > viewportHeight - margin) {
+      if (preferredAbove >= margin) {
+        top = preferredAbove;
+      } else {
+        top = Math.max(margin, viewportHeight - dropdownHeight - margin);
       }
     }
-  }, [isOpen, isPositioned, enhancedMenu, dockSizes.length, onRemove]);
+
+    setDropdownPosition({ top, left });
+    setIsPositioned(true);
+  }, [enhancedMenu, estimateDropdownHeight]);
 
   useEffect(() => {
     if (isOpen) {
@@ -161,6 +171,11 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
       setIsPositioned(false);
     }
   }, [isOpen, updateDropdownPosition]);
+
+  useEffect(() => {
+    if (!isOpen || !isPositioned) return;
+    updateDropdownPosition();
+  }, [isOpen, isPositioned, updateDropdownPosition]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -214,7 +229,7 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
   );
 
   const renderDropdown = () => {
-    if (!isPositioned) return null;
+    if (!isOpen) return null;
 
     const hasDockSection = dockSizes.length > 0;
     const hasRemoveSection = Boolean(onRemove);
@@ -227,7 +242,7 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
         ref={dropdownRef}
         className={`dropdown-menu bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-600 py-1 ${
           enhancedMenu ? 'w-72' : 'w-52'
-        }`}
+        } ${isPositioned ? '' : 'invisible'}`}
         style={{
           position: 'fixed',
           top: dropdownPosition.top,
@@ -306,7 +321,9 @@ export const WidgetSizeDropdown: React.FC<WidgetSizeDropdownProps> = ({
           if (isOpen) {
             closeDropdown();
           } else {
+            setIsPositioned(false);
             openDropdown(widgetId);
+            requestAnimationFrame(() => updateDropdownPosition());
           }
         }}
         className={`${actionPadding} rounded-md text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 relative opacity-0 group-hover:opacity-100`}

@@ -417,14 +417,19 @@ export class AccessHistoryReadService {
   }
 
   private extractAction(row: ActivityLog, metadata: Record<string, unknown>): string {
-    if (row.activity_type === 'lock') return 'lock';
-    if (row.activity_type === 'unlock') return 'unlock';
+    if (row.activity_type === 'lock' || row.activity_type === 'locking') return 'lock';
+    if (row.activity_type === 'unlock' || row.activity_type === 'unlocking') return 'unlock';
     const action = metadata.action;
     return typeof action === 'string' ? action : 'access_granted';
   }
 
   private extractMethod(row: ActivityLog, metadata: Record<string, unknown>): string {
-    if (row.activity_type === 'lock' || row.activity_type === 'unlock') {
+    if (
+      row.activity_type === 'lock' ||
+      row.activity_type === 'unlock' ||
+      row.activity_type === 'locking' ||
+      row.activity_type === 'unlocking'
+    ) {
       if (row.actor_type === 'gateway') return 'automatic';
       if (row.actor_type === 'user') return 'app';
       return 'automatic';

@@ -63,6 +63,7 @@ export function useRemoteUnlockAction(options?: UseRemoteUnlockActionOptions) {
 
       scheduleUnlockWatch(getLockStatus, () => {
         clearWatch();
+        void refresh?.();
       });
 
       applyOptimisticUnlocking();

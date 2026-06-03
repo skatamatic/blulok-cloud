@@ -1,4 +1,4 @@
-import { deriveActionRequired, mapApiNotificationToDashboardView } from '@/utils/notification-display.utils';
+import { deriveActionRequired, filterNotificationsForViewer, mapApiNotificationToDashboardView } from '@/utils/notification-display.utils';
 import type { UserNotificationApi } from '@/types/notifications.types';
 
 const api = (o: Partial<UserNotificationApi>): UserNotificationApi => ({
@@ -33,5 +33,15 @@ describe('notification-display.utils', () => {
     );
     expect(v.actionRequired).toBe(true);
     expect(v.displayType).toBe('error');
+    expect(v.notificationType).toBe('security_alert');
+  });
+
+  it('filterNotificationsForViewer hides backend_error from non-dev admins', () => {
+    const rows = [
+      api({ id: 'a', type: 'general' }),
+      api({ id: 'b', type: 'backend_error' }),
+    ];
+    expect(filterNotificationsForViewer(rows, 'admin')).toHaveLength(1);
+    expect(filterNotificationsForViewer(rows, 'dev_admin')).toHaveLength(2);
   });
 });

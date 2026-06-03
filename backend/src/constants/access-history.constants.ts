@@ -7,4 +7,10 @@ export const MAX_HISTOGRAM_FACILITIES = 50;
 export const MAX_ACCESS_HISTORY_EXPORT = 5000;
 
 /** Activity types shown in Activity Monitor, histogram, and live activity feeds. */
-export const DASHBOARD_ACTIVITY_TYPES: ActivityType[] = ['access_attempt', 'lock', 'unlock'];
+export const DASHBOARD_ACTIVITY_TYPES: ActivityType[] = [
+  'access_attempt',
+  'lock',
+  'unlock',
+  'locking',
+  'unlocking',
+];

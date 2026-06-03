@@ -212,8 +212,13 @@ export class DeviceEventService extends EventEmitter {
         console.error('Failed to broadcast units update:', error);
       }
 
-      // Log activity for lock status changes (lock/unlock only, not transitional states)
-      if (event.newStatus === 'locked' || event.newStatus === 'unlocked') {
+      // Log activity for lock status changes (settled and in-flight remote/gateway commands)
+      if (
+        event.newStatus === 'locked' ||
+        event.newStatus === 'unlocked' ||
+        event.newStatus === 'locking' ||
+        event.newStatus === 'unlocking'
+      ) {
         this.logLockActivity(event).catch(err =>
           logger.error('Failed to log lock activity:', err)
         );
@@ -337,8 +342,7 @@ export class DeviceEventService extends EventEmitter {
   // ============================================
 
   /**
-   * Log a lock/unlock activity when a device lock status changes.
-   * Uses dynamic import to avoid circular dependency issues at startup.
+   * Log lock/unlock activity (including in-flight locking/unlocking) when device status changes.
    */
   private async logLockActivity(event: LockStatusChangedEvent): Promise<void> {
     const { ActivityService } = await import('@/services/activity.service');
@@ -351,28 +355,44 @@ export class DeviceEventService extends EventEmitter {
       return;
     }
 
-    const isLocked = event.newStatus === 'locked';
     const blulokDevice = await deviceModel.findBluLokDeviceById(event.deviceId);
     const acDevice = blulokDevice ? null : await deviceModel.findAccessControlDeviceWithGateway(event.deviceId);
     const deviceType = acDevice && !blulokDevice ? 'access_control' : 'blulok';
     const unitId = event.unitId || blulokDevice?.unit_id || undefined;
 
-    await ActivityService.getInstance().logLockEvent(
-      event.deviceId,
+    const activityType = event.newStatus as 'lock' | 'unlock' | 'locking' | 'unlocking';
+    const titleByStatus: Record<typeof activityType, string> = {
+      lock: 'Device Locked',
+      unlock: 'Device Unlocked',
+      locking: 'Device Locking',
+      unlocking: 'Device Unlocking',
+    };
+    const verbByStatus: Record<typeof activityType, string> = {
+      lock: 'locked',
+      unlock: 'unlocked',
+      locking: 'locking',
+      unlocking: 'unlocking',
+    };
+
+    await ActivityService.getInstance().logActivity({
+      entityType: 'device',
+      entityId: event.deviceId,
+      activityType,
+      title: titleByStatus[activityType],
+      description: `Device was ${verbByStatus[activityType]} by Gateway`,
+      actorType: 'gateway',
+      actorName: 'Gateway',
+      result: activityType === 'locking' || activityType === 'unlocking' ? 'pending' : 'success',
+      facilityId: gateway.facility_id,
       unitId,
-      gateway.facility_id,
-      isLocked,
-      'gateway',
-      undefined,
-      'Gateway',
-      'success',
-      {
+      deviceId: event.deviceId,
+      metadata: {
         oldStatus: event.oldStatus,
         newStatus: event.newStatus,
         gatewayId: event.gatewayId,
         device_type: deviceType,
-      }
-    );
+      },
+    });
   }
 
   /**

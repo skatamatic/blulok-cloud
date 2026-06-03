@@ -9,6 +9,10 @@ import {
 import { NotificationModel, Notification } from '@/models/notification.model';
 import { NotificationEventsService, NotificationCreatedEvent } from '@/services/events/notification-events.service';
 import { logger } from '@/utils/logger';
+import {
+  canViewNotificationType,
+  excludedNotificationTypesForRole,
+} from '@/utils/in-app-notification-visibility.utils';
 
 type NotificationSubscriptionFilters = {
   facilityId?: string;
@@ -182,9 +186,14 @@ export class NotificationSubscriptionManager extends BaseSubscriptionManager {
   ): Promise<void> {
     try {
       const scope = this.subscriptionFilters.get(subscriptionId) ?? {};
+      const excludedTypes = excludedNotificationTypesForRole(client.userRole);
+      const excludeNotificationTypes =
+        excludedTypes.length > 0 ? excludedTypes : undefined;
+
       const unreadCount = await this.notificationModel.getUnreadCount(client.userId, {
         facilityId: scope.facilityId,
         facilityIds: scope.facilityIds,
+        excludeNotificationTypes,
       });
 
       const recentNotifications = await this.notificationModel.find({
@@ -192,6 +201,7 @@ export class NotificationSubscriptionManager extends BaseSubscriptionManager {
         facility_id: scope.facilityId,
         facility_ids: scope.facilityId ? undefined : scope.facilityIds,
         include_expired: true,
+        exclude_notification_types: excludeNotificationTypes,
         limit: 50,
         sortBy: 'created_at',
         sortOrder: 'desc',
@@ -219,6 +229,8 @@ export class NotificationSubscriptionManager extends BaseSubscriptionManager {
     for (const subscriptionId of activeSubscriptions) {
       const client = this.clientContext.get(subscriptionId);
       if (!client || client.userId !== event.userId) continue;
+
+      if (!canViewNotificationType(client.userRole, event.notificationType)) continue;
 
       const scope = this.subscriptionFilters.get(subscriptionId);
       if (!this.matchesFacilityScope(event.facilityId, scope, client)) continue;
@@ -321,10 +333,14 @@ export class NotificationSubscriptionManager extends BaseSubscriptionManager {
       const client = this.clientContext.get(subscriptionId);
       if (!client || client.userId !== userId) continue;
       const scope = this.subscriptionFilters.get(subscriptionId) ?? {};
+      const excludedTypes = excludedNotificationTypesForRole(client.userRole);
+      const excludeNotificationTypes =
+        excludedTypes.length > 0 ? excludedTypes : undefined;
 
       const unreadCount = await this.notificationModel.getUnreadCount(userId, {
         facilityId: scope.facilityId,
         facilityIds: scope.facilityIds,
+        excludeNotificationTypes,
       });
 
       const watchers = this.watchers.get(subscriptionId);

@@ -69,4 +69,14 @@ export class InAppNotificationAudienceService {
       .where('is_active', true);
     return rows.map((row: { id: string }) => row.id);
   }
+
+  /** Dev admins only — for technical backend_error alerts. */
+  public async resolveDevAdmins(): Promise<string[]> {
+    const knex = this.db.connection;
+    const rows = await knex('users')
+      .select('id')
+      .where('role', UserRole.DEV_ADMIN)
+      .where('is_active', true);
+    return rows.map((row: { id: string }) => row.id);
+  }
 }

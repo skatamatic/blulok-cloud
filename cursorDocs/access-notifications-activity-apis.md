@@ -507,9 +507,11 @@ The following integrations are wired up automatically — no manual calls needed
 | Gateway offline/online | `GatewayEventsService` → `InAppNotificationDispatcher` | Facility operators notified |
 | Device low battery (≤20%) | `DeviceModel` → `InAppNotificationDispatcher` | Facility operators notified (deduped 24h) |
 
-**Facility scoping:** REST and WebSocket notification subscriptions filter by `facilityId` (single facility) or the user's assigned `facilityIds` (all-facilities mode). Histogram stats read from `activity_logs` via `ActivityLogModel.getActivityStats()` using the same activity types as Activity Monitor (`access_attempt`, `lock`, `unlock` — not legacy `access_logs`).
+**Facility scoping:** REST and WebSocket notification subscriptions filter by `facilityId` (single facility) or the user's assigned `facilityIds` (all-facilities mode). Activity histogram uses the same `activity_logs` types as Activity Monitor (`access_attempt`, `lock`, `unlock`, `locking`, `unlocking`), resolves facility via unit when `facility_id` is null, and global admins in all-facilities mode are not limited to JWT `facilityIds`.
 
 **Extensibility:** Add new operational alerts in `InAppNotificationDispatcher` (`backend/src/services/notifications/in-app-notification-dispatcher.service.ts`) and register types in `IN_APP_NOTIFICATION_TYPES`.
+
+**Technical alerts:** `backend_error` notifications are created for **dev_admin only** (`notifyDevAdmins`) and are excluded from REST/WebSocket payloads for all other roles via `in-app-notification-visibility.utils.ts`.
 
 **Important notes:**
 - All side-effect calls are fire-and-forget — they never block the primary operation

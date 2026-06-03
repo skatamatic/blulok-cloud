@@ -81,6 +81,8 @@ export interface NotificationFilters {
   reference_id?: string;
   include_deleted?: boolean;
   include_expired?: boolean;
+  /** Exclude these notification types from results */
+  exclude_notification_types?: NotificationType[];
   limit?: number;
   offset?: number;
   sortBy?: 'created_at' | 'priority' | 'read_at';
@@ -158,6 +160,10 @@ export class NotificationModel {
 
     if (filters.notification_type) {
       query = query.where('notification_type', filters.notification_type);
+    }
+
+    if (filters.exclude_notification_types && filters.exclude_notification_types.length > 0) {
+      query = query.whereNotIn('notification_type', filters.exclude_notification_types);
     }
 
     if (filters.priority) {
@@ -272,12 +278,20 @@ export class NotificationModel {
   /**
    * Get unread notification count for a user
    */
-  async getUnreadCount(userId: string, scope?: { facilityId?: string; facilityIds?: string[] }): Promise<number> {
+  async getUnreadCount(
+    userId: string,
+    scope?: {
+      facilityId?: string;
+      facilityIds?: string[];
+      excludeNotificationTypes?: NotificationType[];
+    },
+  ): Promise<number> {
     return this.count({
       user_id: userId,
       is_read: false,
       facility_id: scope?.facilityId,
       facility_ids: scope?.facilityId ? undefined : scope?.facilityIds,
+      exclude_notification_types: scope?.excludeNotificationTypes,
     });
   }
 

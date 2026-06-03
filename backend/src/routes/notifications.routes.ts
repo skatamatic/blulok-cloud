@@ -148,7 +148,7 @@ router.get(
       : !AuthService.canAccessAllFacilities(user.role) && user.facilityIds?.length
         ? { facilityIds: user.facilityIds }
         : undefined;
-    const count = await service.getUnreadCount(user.userId, scope);
+    const count = await service.getUnreadCount(user.userId, user.role, scope);
 
     res.json({
       success: true,

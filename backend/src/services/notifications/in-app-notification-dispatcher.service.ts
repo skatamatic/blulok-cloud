@@ -110,6 +110,20 @@ export class InAppNotificationDispatcher {
 
 
 
+  /** Fan-out technical alerts to dev_admin only. */
+
+  public async notifyDevAdmins(payload: GlobalAlertPayload): Promise<void> {
+
+    const userIds = await this.audienceService.resolveDevAdmins();
+
+    const dedupMinutes = DEDUP_MINUTES[payload.type];
+
+    await this.dispatchToUsers(userIds, payload, dedupMinutes);
+
+  }
+
+
+
   private async dispatchToUsers(
 
     userIds: string[],
@@ -420,7 +434,7 @@ export class InAppNotificationDispatcher {
 
   ): Promise<void> {
 
-    await this.notifyGlobalOperators({
+    await this.notifyDevAdmins({
 
       type: 'backend_error',
 

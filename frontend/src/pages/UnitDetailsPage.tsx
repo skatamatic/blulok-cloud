@@ -310,6 +310,7 @@ export default function UnitDetailsPage() {
       pendingUnitUnlockRef.current = true;
       scheduleUnlockWatch(() => unitLockStatusRef.current, () => {
         pendingUnitUnlockRef.current = false;
+        void loadUnitDetails();
       });
       setUnit((prev) =>
         prev?.blulok_device

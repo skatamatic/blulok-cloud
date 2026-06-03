@@ -12,6 +12,7 @@ describe('InAppNotificationDispatcher', () => {
   const mockHasRecentDuplicate = jest.fn().mockResolvedValue(false);
   const mockResolveFacility = jest.fn().mockResolvedValue(['user-1', 'user-2']);
   const mockResolveGlobal = jest.fn().mockResolvedValue(['admin-1']);
+  const mockResolveDevAdmins = jest.fn().mockResolvedValue(['dev-admin-1']);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -24,6 +25,7 @@ describe('InAppNotificationDispatcher', () => {
     (InAppNotificationAudienceService.getInstance as jest.Mock).mockReturnValue({
       resolveFacilityOperators: mockResolveFacility,
       resolveGlobalOperators: mockResolveGlobal,
+      resolveDevAdmins: mockResolveDevAdmins,
     });
   });
 
@@ -34,12 +36,13 @@ describe('InAppNotificationDispatcher', () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('notifies global operators for backend errors', async () => {
+  it('notifies dev admins only for backend errors', async () => {
     const dispatcher = InAppNotificationDispatcher.getInstance();
     await dispatcher.notifyBackendError('Critical', 'Something broke', { path: '/api/test' });
-    expect(mockResolveGlobal).toHaveBeenCalled();
+    expect(mockResolveDevAdmins).toHaveBeenCalled();
+    expect(mockResolveGlobal).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'backend_error', userId: 'admin-1' }),
+      expect.objectContaining({ type: 'backend_error', userId: 'dev-admin-1' }),
     );
   });
 });
