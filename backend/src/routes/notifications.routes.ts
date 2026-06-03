@@ -68,6 +68,19 @@ const idParamSchema = Joi.object({
 // Apply authentication to all routes
 router.use(authenticateToken);
 
+const parseBooleanQuery = (value: unknown): boolean | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === true || value === 'true') {
+    return true;
+  }
+  if (value === false || value === 'false') {
+    return false;
+  }
+  return undefined;
+};
+
 /**
  * GET /api/v1/notifications
  * 
@@ -91,15 +104,10 @@ router.get(
       {
         type: type as any,
         priority: priority as any,
-        isRead: typeof isRead === 'boolean' ? isRead : isRead === 'true' ? true : isRead === 'false' ? false : undefined,
+        isRead: parseBooleanQuery(isRead),
         facilityId: facilityId as string | undefined,
         facilityIds: !facilityId && !AuthService.canAccessAllFacilities(user.role) ? user.facilityIds : undefined,
-        includeExpired:
-          includeExpired === true || includeExpired === 'true'
-            ? true
-            : includeExpired === false || includeExpired === 'false'
-              ? false
-              : undefined,
+        includeExpired: parseBooleanQuery(includeExpired),
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
       }
