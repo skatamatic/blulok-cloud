@@ -41,6 +41,10 @@ import { authenticateToken, requireRoles } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '../services/database.service';
+import {
+  MAX_LOCK_COMMAND_TIMEOUT_SEC,
+  MIN_LOCK_COMMAND_TIMEOUT_SEC,
+} from '../constants/lock-command.constants';
 
 const router = Router();
 const facilityModel = new FacilityModel();
@@ -58,6 +62,11 @@ const createFacilitySchema = Joi.object({
   contact_email: Joi.string().email().allow('').optional(),
   contact_phone: Joi.string().allow('').max(50).optional(),
   status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
+  lock_command_timeout_sec: Joi.number()
+    .integer()
+    .min(MIN_LOCK_COMMAND_TIMEOUT_SEC)
+    .max(MAX_LOCK_COMMAND_TIMEOUT_SEC)
+    .optional(),
   metadata: Joi.object().optional(),
 });
 
@@ -72,6 +81,11 @@ const updateFacilitySchema = Joi.object({
   contact_email: Joi.string().email().allow('').optional(),
   contact_phone: Joi.string().allow('').max(50).optional(),
   status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
+  lock_command_timeout_sec: Joi.number()
+    .integer()
+    .min(MIN_LOCK_COMMAND_TIMEOUT_SEC)
+    .max(MAX_LOCK_COMMAND_TIMEOUT_SEC)
+    .optional(),
   metadata: Joi.object().optional(),
 }).min(1);
 

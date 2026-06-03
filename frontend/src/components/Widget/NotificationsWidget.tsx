@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { useDashboardFacilityScope } from '@/hooks/useDashboardFacilityScope';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import type { UserNotificationApi } from '@/types/notifications.types';
@@ -37,6 +38,7 @@ const NotificationCard: React.FC<{
   expanded: boolean;
   compact: boolean;
   index: number;
+  facilityLabel?: string | null;
   onToggle: () => void;
   onMarkRead: () => void;
   onDismiss: () => void;
@@ -47,6 +49,7 @@ const NotificationCard: React.FC<{
   expanded,
   compact,
   index,
+  facilityLabel,
   onToggle,
   onMarkRead,
   onDismiss,
@@ -149,18 +152,28 @@ const NotificationCard: React.FC<{
             )}
           </AnimatePresence>
 
-          <div className={`flex items-center justify-between ${compact ? 'mt-1' : 'mt-2'}`}>
+          <div className={`flex items-center justify-between gap-2 ${compact ? 'mt-1' : 'mt-2'}`}>
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {compact
                 ? formatTimestamp(notification.timestamp).split(' ')[0]
                 : formatTimestamp(notification.timestamp)}
             </span>
 
-            {notification.actionRequired && !compact && (
-              <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 rounded-full">
-                Action Required
-              </span>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {facilityLabel && (
+                <span
+                  className="max-w-[140px] truncate text-xs text-gray-400 dark:text-gray-500"
+                  title={facilityLabel}
+                >
+                  {facilityLabel}
+                </span>
+              )}
+              {notification.actionRequired && !compact && (
+                <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 rounded-full">
+                  Action Required
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -265,6 +278,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
 }) => {
   const { wsFilters, matchesFacilityScope } = useDashboardFacilityScope(facilityFilter);
   const { authState } = useAuth();
+  const { facilities } = useGlobalFacility();
   const viewerRole = authState.user?.role;
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
@@ -547,6 +561,22 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     return timestamp.toLocaleDateString();
   };
 
+  const showFacilityInCards = !facilityFilter;
+
+  const resolveFacilityLabel = useCallback(
+    (facilityId: string | null | undefined): string | null => {
+      if (!showFacilityInCards || !facilityId) return null;
+      const fromGlobal = facilities.find((f) => f.id === facilityId)?.name;
+      if (fromGlobal) return fromGlobal;
+      const userIds = authState.user?.facilityIds ?? [];
+      const userNames = authState.user?.facilityNames ?? [];
+      const idx = userIds.indexOf(facilityId);
+      if (idx >= 0 && userNames[idx]) return userNames[idx];
+      return null;
+    },
+    [showFacilityInCards, facilities, authState.user?.facilityIds, authState.user?.facilityNames],
+  );
+
   return (
     <Widget
       id={id}
@@ -662,6 +692,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                     expanded={expandedIds.has(notification.id)}
                     compact={size === 'medium'}
                     index={index}
+                    facilityLabel={resolveFacilityLabel(notification.facilityId)}
                     onToggle={() => toggleExpanded(notification.id)}
                     onMarkRead={() => void markAsRead(notification.id)}
                     onDismiss={() => void dismissNotification(notification.id)}

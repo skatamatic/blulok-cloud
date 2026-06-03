@@ -22,6 +22,10 @@ import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityC
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -37,7 +41,7 @@ const statusColors = {
 export default function UnitsManagementPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
-  const { selectedFacilityId } = useGlobalFacility();
+  const { selectedFacilityId, facilities: globalFacilities } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);
@@ -73,6 +77,15 @@ export default function UnitsManagementPage() {
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
   const loadUnitsRef = useRef<(opts?: { background?: boolean }) => Promise<void>>(async () => {});
+  const unitsDataRef = useRef<Unit[]>([]);
+  unitsDataRef.current = units;
+  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+    timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+    errorToast: () => ({
+      type: 'error' as const,
+      title: 'Could not update lock',
+    }),
+  });
 
   const debouncedWsUnitsManagementRefresh = useCallback(() => {
     void loadUnitsRef.current({ background: true });
@@ -213,18 +226,70 @@ export default function UnitsManagementPage() {
     setCurrentPage(1);
   };
 
-
+  const patchUnitLockOptimistic = (unitId: string, lockStatus: string) => {
+    const patch = (list: Unit[]) =>
+      list.map((u) =>
+        u.id === unitId && u.blulok_device
+          ? { ...u, blulok_device: { ...u.blulok_device, lock_status: lockStatus } }
+          : u,
+      );
+    setUnits(patch);
+    setAllUnits(patch);
+  };
 
   const handleRemoteUnlock = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;
-    if (unit.blulok_device.lock_status !== 'locked') return;
-    try {
-      await apiService.updateLockStatus(unit.blulok_device.id, 'unlocked');
+    if (!canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
+
+    const previousStatus = unit.blulok_device.lock_status ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+
+    const refreshAfterUnlockAttempt = async () => {
       await loadUnits();
-    } catch (error) {
-      console.error('Failed to unlock:', error);
-    }
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      const revert = (list: Unit[]) =>
+        list.map((u) => {
+          if (u.id !== unit.id || !u.blulok_device) return u;
+          const status = u.blulok_device.lock_status;
+          if (status === 'unlocking' || status === 'locking') {
+            return {
+              ...u,
+              blulok_device: { ...u.blulok_device, lock_status: previousStatus },
+            };
+          }
+          return u;
+        });
+      setUnits(revert);
+      setAllUnits(revert);
+    };
+
+    await requestUnlock({
+      deviceId: unit.blulok_device.id,
+      watchKey: unit.id,
+      timeoutMs: resolveLockTimeoutMsForUnit(unit, globalFacilities),
+      getLockStatus: () => {
+        const cur = unitsDataRef.current.find((x) => x.id === unit.id);
+        return cur?.blulok_device?.lock_status;
+      },
+      applyOptimisticUnlocking: () => {
+        patchUnitLockOptimistic(unit.id, 'unlocking');
+      },
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchUnitLockOptimistic(unit.id, status);
+      },
+      refresh: refreshAfterUnlockAttempt,
+    });
   };
+
+  useEffect(() => {
+    for (const unit of units) {
+      if (unit.blulok_device?.lock_status) {
+        syncLockStatus(unit.id, unit.blulok_device.lock_status);
+      }
+    }
+  }, [units, syncLockStatus]);
 
   const handleTenantManagement = (unit: Unit) => {
     navigate(`/units/${unit.id}?tab=tenant`);
@@ -689,9 +754,15 @@ export default function UnitsManagementPage() {
                             e.stopPropagation();
                             void handleRemoteUnlock(unit);
                           }}
-                          disabled={unit.blulok_device.lock_status !== 'locked'}
+                          disabled={
+                            isLockTransitionPending(unit.blulok_device.lock_status) ||
+                            isSubmitting(unit.id) ||
+                            !canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                          }
                           className={`p-1 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                            unit.blulok_device.lock_status === 'locked'
+                            canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                            !isLockTransitionPending(unit.blulok_device.lock_status) &&
+                            !isSubmitting(unit.id)
                               ? 'text-green-600 hover:text-green-700'
                               : 'text-gray-400 dark:text-gray-500'
                           }`}

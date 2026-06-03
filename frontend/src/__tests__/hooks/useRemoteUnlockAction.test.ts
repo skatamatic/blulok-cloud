@@ -29,8 +29,9 @@ describe('useRemoteUnlockAction', () => {
     jest.useRealTimers();
   });
 
-  it('refreshes unit data when hardware feedback times out', async () => {
+  it('refreshes unit data and reverts optimistic state when hardware feedback times out', async () => {
     const refresh = jest.fn().mockResolvedValue(undefined);
+    const revertOptimisticLockStatus = jest.fn();
     let lockStatus = 'locked';
 
     const { result } = renderHook(() => useRemoteUnlockAction());
@@ -43,6 +44,7 @@ describe('useRemoteUnlockAction', () => {
         applyOptimisticUnlocking: () => {
           lockStatus = 'unlocking';
         },
+        revertOptimisticLockStatus,
         refresh,
       });
     });
@@ -50,16 +52,40 @@ describe('useRemoteUnlockAction', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(lockStatus).toBe('unlocking');
 
-    lockStatus = 'locked';
-
     await act(async () => {
       jest.advanceTimersByTime(LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS);
     });
 
+    expect(revertOptimisticLockStatus).toHaveBeenCalledWith('locked');
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(mockAddToast).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'No confirmation yet' }),
     );
+  });
+
+  it('reverts optimistic state when the unlock API fails', async () => {
+    const refresh = jest.fn().mockResolvedValue(undefined);
+    const revertOptimisticLockStatus = jest.fn();
+    let lockStatus = 'locked';
+    mockUpdateLockStatus.mockRejectedValueOnce(new Error('gateway offline'));
+
+    const { result } = renderHook(() => useRemoteUnlockAction());
+
+    await act(async () => {
+      await result.current.requestUnlock({
+        deviceId: 'dev-1',
+        watchKey: 'unit-1',
+        getLockStatus: () => lockStatus,
+        applyOptimisticUnlocking: () => {
+          lockStatus = 'unlocking';
+        },
+        revertOptimisticLockStatus,
+        refresh,
+      });
+    });
+
+    expect(revertOptimisticLockStatus).toHaveBeenCalledWith('locked');
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it('does not refresh again on timeout when unlock already confirmed', async () => {
@@ -88,5 +114,36 @@ describe('useRemoteUnlockAction', () => {
     });
 
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the watch when status returns to locked during a pending unlock', async () => {
+    const refresh = jest.fn().mockResolvedValue(undefined);
+    let lockStatus = 'locked';
+
+    const { result } = renderHook(() => useRemoteUnlockAction());
+
+    await act(async () => {
+      await result.current.requestUnlock({
+        deviceId: 'dev-1',
+        watchKey: 'unit-1',
+        getLockStatus: () => lockStatus,
+        applyOptimisticUnlocking: () => {
+          lockStatus = 'unlocking';
+        },
+        refresh,
+      });
+    });
+
+    lockStatus = 'locked';
+
+    await act(async () => {
+      result.current.syncLockStatus('unit-1', 'locked');
+      jest.advanceTimersByTime(LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS);
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(mockAddToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'No confirmation yet' }),
+    );
   });
 });

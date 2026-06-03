@@ -49,6 +49,8 @@ export interface Facility {
   contact_phone?: string;
   /** Operational status of the facility */
   status: 'active' | 'inactive' | 'maintenance';
+  /** Seconds to wait for gateway lock/unlock confirmation before reverting (default 10). */
+  lock_command_timeout_sec?: number;
   /** Extensible metadata for facility-specific configuration */
   metadata?: Record<string, any>;
   /** Record creation timestamp */
@@ -84,6 +86,7 @@ export interface CreateFacilityData {
   contact_phone?: string;
   /** Initial operational status (defaults to 'active') */
   status?: 'active' | 'inactive' | 'maintenance';
+  lock_command_timeout_sec?: number;
   /** Initial metadata configuration */
   metadata?: Record<string, any>;
 }

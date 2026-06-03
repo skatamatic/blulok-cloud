@@ -7,6 +7,7 @@ import { LockCommandService } from '@/services/lock-command.service';
 const mockUpdateLockStatus = jest.fn().mockResolvedValue(undefined);
 const mockUpdateAccessControlDevice = jest.fn().mockResolvedValue({});
 const sendLockCommand = jest.fn();
+const mockNotifyRemoteLockCommandFailed = jest.fn().mockResolvedValue(undefined);
 
 let knexInvocation = 0;
 const buildJoinFirst = (row: Record<string, unknown> | null) => ({
@@ -24,6 +25,13 @@ const buildTimeoutQuery = (lockStatus: string) => ({
 
 const mockKnex = jest.fn((table: string) => {
   knexInvocation += 1;
+  if (table === 'facilities') {
+    return {
+      where: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 10 }),
+    };
+  }
   if (knexInvocation === 1 && table === 'blulok_devices') {
     return buildJoinFirst({
       id: 'dev-1',
@@ -55,8 +63,20 @@ jest.mock('@/services/gateway/gateway.service', () => ({
   },
 }));
 
+jest.mock('@/services/notifications/in-app-notification-dispatcher.service', () => ({
+  InAppNotificationDispatcher: {
+    getInstance: jest.fn(() => ({
+      notifyRemoteLockCommandFailed: mockNotifyRemoteLockCommandFailed,
+    })),
+  },
+}));
+
 function resetSingleton() {
   (LockCommandService as unknown as { instance?: LockCommandService }).instance = undefined;
+}
+
+async function flushAsyncNotifications(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 describe('LockCommandService', () => {
@@ -66,6 +86,7 @@ describe('LockCommandService', () => {
     jest.clearAllMocks();
     mockUpdateLockStatus.mockResolvedValue(undefined);
     sendLockCommand.mockReset();
+    mockNotifyRemoteLockCommandFailed.mockClear();
     jest.useRealTimers();
   });
 
@@ -111,10 +132,38 @@ describe('LockCommandService', () => {
     const svc = LockCommandService.getInstance();
     const res = await svc.issueLockCommand('dev-1', 'locked');
 
+    await flushAsyncNotifications();
+
     expect(res.success).toBe(false);
-    expect(res.message).toContain('gw-busy');
     expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'locking');
     expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
+    expect(mockNotifyRemoteLockCommandFailed).toHaveBeenCalledWith(
+      'fac-1',
+      'dev-1',
+      'locked',
+      'gw-busy',
+      { gatewayId: 'gw-1', unitId: undefined },
+    );
+  });
+
+  it('notifies facility operators when gateway throws', async () => {
+    sendLockCommand.mockRejectedValueOnce(new Error('Gateway gw-1 not found'));
+
+    const svc = LockCommandService.getInstance();
+    const res = await svc.issueLockCommand('dev-1', 'unlocked');
+
+    await flushAsyncNotifications();
+
+    expect(res.success).toBe(false);
+    expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocking');
+    expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
+    expect(mockNotifyRemoteLockCommandFailed).toHaveBeenCalledWith(
+      'fac-1',
+      'dev-1',
+      'unlocked',
+      'Gateway gw-1 not found',
+      { gatewayId: 'gw-1', unitId: undefined },
+    );
   });
 
   it('accepts command and schedules timeout; reverts if sync never arrives', async () => {
@@ -173,6 +222,7 @@ describe('LockCommandService', () => {
           return buildJoinFirst({
             id: 'ac-1',
             gateway_id: 'gw-1',
+            facility_id: 'fac-1',
             is_locked: true,
             supports_remote_lock: true,
           });
@@ -231,9 +281,17 @@ describe('LockCommandService', () => {
       sendLockCommand.mockResolvedValueOnce({ success: false, error: 'gw-offline' });
       const svc = LockCommandService.getInstance();
       const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked');
+      await flushAsyncNotifications();
       expect(res.success).toBe(false);
       expect(res.message).toContain('gw-offline');
       expect(mockUpdateAccessControlDevice).not.toHaveBeenCalled();
+      expect(mockNotifyRemoteLockCommandFailed).toHaveBeenCalledWith(
+        'fac-1',
+        'ac-1',
+        'unlocked',
+        'gw-offline',
+        { gatewayId: 'gw-1', unitId: undefined },
+      );
     });
   });
 });

@@ -21,7 +21,9 @@ import { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
 import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
-import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
+import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
@@ -155,18 +157,18 @@ export default function DeviceDetailsPage() {
   const [removingFromInventory, setRemovingFromInventory] = useState(false);
 
   const deviceLockStatusRef = useRef<DeviceDetails['lock_status'] | undefined>(undefined);
-  const pendingRemoteUnlockRef = useRef(false);
-  const { scheduleUnlockWatch, cancelWatch } = useLockHardwareFeedback();
+  const { facilities: globalFacilities, selectedFacility } = useGlobalFacility();
+  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+    errorToast: lockHardwareFeedbackToasts.failedToUpdateLockStatus,
+  });
 
   deviceLockStatusRef.current = device?.lock_status;
 
   useEffect(() => {
-    if (!pendingRemoteUnlockRef.current) return;
-    if (device?.lock_status === 'unlocked') {
-      cancelWatch();
-      pendingRemoteUnlockRef.current = false;
+    if (deviceId && device?.lock_status) {
+      syncLockStatus(deviceId, device.lock_status);
     }
-  }, [device?.lock_status, cancelWatch]);
+  }, [deviceId, device?.lock_status, syncLockStatus]);
 
   // Handle tab from URL query parameter
   useEffect(() => {
@@ -365,6 +367,52 @@ export default function DeviceDetailsPage() {
     }
   };
 
+  const handleRemoteUnlock = useCallback(async () => {
+    if (!device || !deviceId || !canRequestRemoteUnlock(device.lock_status)) return;
+    if (deviceCategory === 'access_control' && device.device_status !== 'online') return;
+
+    const previousStatus = device.lock_status ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+    const facilityForTimeout =
+      globalFacilities.find((f) => f.id === device.facility_id) ?? selectedFacility;
+
+    const patchLockStatus = (lockStatus: DeviceDetails['lock_status']) => {
+      setDevice((prev) => (prev ? { ...prev, lock_status: lockStatus } : prev));
+    };
+
+    const refreshAfterUnlockAttempt = async () => {
+      await loadDeviceDetails();
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      setDevice((prev) => {
+        if (!prev) return prev;
+        if (prev.lock_status === 'unlocking' || prev.lock_status === 'locking') {
+          return { ...prev, lock_status: previousStatus as DeviceDetails['lock_status'] };
+        }
+        return prev;
+      });
+    };
+
+    await requestUnlock({
+      deviceId: device.id,
+      watchKey: deviceId,
+      timeoutMs: resolveLockTimeoutMsForFacility(facilityForTimeout),
+      getLockStatus: () => deviceLockStatusRef.current,
+      applyOptimisticUnlocking: () => patchLockStatus('unlocking'),
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchLockStatus(status as DeviceDetails['lock_status']);
+      },
+      sendUnlockCommand: async (id) => {
+        if (deviceCategory === 'blulok') {
+          return apiService.updateLockStatus(id, 'unlocked');
+        }
+        return apiService.updateAccessControlLockStatus(id, 'unlocked');
+      },
+      refresh: refreshAfterUnlockAttempt,
+    });
+  }, [device, deviceId, deviceCategory, globalFacilities, selectedFacility, requestUnlock]);
+
   const loadDenylist = async () => {
     if (!deviceId || deviceCategory !== 'blulok') return;
 
@@ -519,56 +567,19 @@ export default function DeviceDetailsPage() {
               disabled={
                 !canRequestRemoteUnlock(device.lock_status) ||
                 isLockTransitionPending(device.lock_status) ||
+                isSubmitting(deviceId) ||
                 (deviceCategory === 'access_control' && device.device_status !== 'online')
               }
-              onClick={async () => {
-                if (!canRequestRemoteUnlock(device.lock_status)) return;
-                if (deviceCategory === 'access_control' && device.device_status !== 'online') return;
-                try {
-                  pendingRemoteUnlockRef.current = true;
-                  scheduleUnlockWatch(() => deviceLockStatusRef.current, () => {
-                    pendingRemoteUnlockRef.current = false;
-                    void loadDeviceDetails();
-                  });
-
-                  setDevice(prev =>
-                    prev
-                      ? {
-                          ...prev,
-                          lock_status: 'unlocking',
-                        }
-                      : prev,
-                  );
-
-                  const response =
-                    deviceCategory === 'blulok'
-                      ? await apiService.updateLockStatus(device.id, 'unlocked')
-                      : await apiService.updateAccessControlLockStatus(device.id, 'unlocked');
-
-                  const nextStatus =
-                    (response?.lock_status as DeviceDetails['lock_status']) || 'unlocking';
-
-                  setDevice(prev =>
-                    prev ? { ...prev, lock_status: nextStatus } : prev,
-                  );
-
-                  addToast(lockHardwareFeedbackToasts.unlockCommandSent());
-                } catch (e) {
-                  pendingRemoteUnlockRef.current = false;
-                  cancelWatch();
-                  await loadDeviceDetails();
-                  addToast(lockHardwareFeedbackToasts.failedToUpdateLockStatus());
-                }
-              }}
+              onClick={() => void handleRemoteUnlock()}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                isLockTransitionPending(device.lock_status)
+                isLockTransitionPending(device.lock_status) || isSubmitting(deviceId)
                   ? 'bg-blue-600 text-white animate-pulse'
                   : canRequestRemoteUnlock(device.lock_status)
                     ? 'bg-green-600 hover:bg-green-700 text-white'
                     : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
               }`}
             >
-              {isLockTransitionPending(device.lock_status)
+              {isLockTransitionPending(device.lock_status) || isSubmitting(deviceId)
                 ? 'Unlocking…'
                 : canRequestRemoteUnlock(device.lock_status)
                   ? 'Unlock'

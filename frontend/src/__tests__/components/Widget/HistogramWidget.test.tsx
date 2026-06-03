@@ -121,7 +121,6 @@ describe('HistogramWidget', () => {
       await waitFor(() => {
         expect(mockGetActivityStats).toHaveBeenCalledWith({
           period: 'month',
-          facility_ids: expect.any(Array),
         });
       });
     });
@@ -253,10 +252,27 @@ describe('HistogramWidget', () => {
       await waitFor(() => {
         expect(mockGetActivityStats).toHaveBeenCalledWith(
           expect.objectContaining({
-            facility_ids: ['facility-1', 'facility-2', 'facility-3'],
+            period: 'month',
           })
         );
       });
+    });
+
+    it('hides facility legend when a single facility is selected', async () => {
+      renderWithProviders(
+        <HistogramWidget
+          id="test-widget"
+          title="Activity Histogram"
+          initialSize="large"
+          facilityFilter="facility-1"
+        />
+      );
+
+      await waitFor(() => {
+        expect(document.querySelector('[title*="Downtown Storage"]')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText('Downtown Storage')).not.toBeInTheDocument();
     });
   });
 
@@ -279,8 +295,7 @@ describe('HistogramWidget', () => {
       );
       
       await waitFor(() => {
-        // Bars should have title attributes with activity counts
-        const bars = document.querySelectorAll('[title*="access attempts"]');
+        const bars = document.querySelectorAll('[title*="events"]');
         expect(bars.length).toBeGreaterThan(0);
       });
     });

@@ -424,6 +424,56 @@ export class InAppNotificationDispatcher {
 
 
 
+  public async notifyRemoteLockCommandFailed(
+
+    facilityId: string,
+
+    deviceId: string,
+
+    requestedStatus: 'locked' | 'unlocked',
+
+    errorMessage: string,
+
+    metadata?: { gatewayId?: string; unitId?: string },
+
+  ): Promise<void> {
+
+    const actionLabel = requestedStatus === 'locked' ? 'lock' : 'unlock';
+
+    await this.notifyFacilityOperators({
+
+      type: 'gateway_alert',
+
+      title: `Remote ${actionLabel} failed`,
+
+      message: errorMessage,
+
+      priority: 'high',
+
+      referenceType: 'device',
+
+      referenceId: deviceId,
+
+      facilityId,
+
+      metadata: {
+
+        requestedStatus,
+
+        errorMessage,
+
+        ...metadata,
+
+      },
+
+      expiresInDays: 7,
+
+    });
+
+  }
+
+
+
   public async notifyBackendError(
 
     title: string,

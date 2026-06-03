@@ -22,7 +22,7 @@ export const lockHardwareFeedbackToasts = {
     type: 'warning',
     title: 'No confirmation yet',
     message:
-      'The lock did not report open within 10 seconds. Check the unit and refresh if needed.',
+      'The lock did not report open before the timeout. Check the unit and refresh if needed.',
   }),
 
   accessPointOpenTimeout: (): LockHardwareFeedbackToast => ({

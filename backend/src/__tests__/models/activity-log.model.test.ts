@@ -205,7 +205,7 @@ describe('ActivityLogModel', () => {
         leftJoin: jest.fn().mockReturnThis(),
         whereIn,
         whereBetween: jest.fn().mockReturnThis(),
-        whereNotNull: jest.fn().mockReturnThis(),
+        whereRaw: jest.fn().mockReturnThis(),
         groupByRaw: jest.fn().mockReturnThis(),
         orderByRaw: jest.fn().mockReturnThis(),
       };

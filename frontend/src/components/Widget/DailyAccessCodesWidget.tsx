@@ -13,6 +13,7 @@ import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityC
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { useToast } from '@/contexts/ToastContext';
+import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
 
 interface DailyAccessCodeEntry extends UserAccessCode {
   facility_id?: string;
@@ -70,6 +71,11 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
       }
       setError(null);
       setPartialWarning(null);
+
+      if (isAllFacilitiesSelected) {
+        setEntries([]);
+        return;
+      }
 
       let collected: DailyAccessCodeEntry[] = [];
 
@@ -146,6 +152,26 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
 
   const displayed = entries.slice(0, maxItems);
 
+  if (isAllFacilitiesSelected) {
+    return (
+      <Widget
+        id="daily-access-codes-widget-scope"
+        title="Daily Access Codes"
+        size={currentSize}
+        onSizeChange={onSizeChange}
+        availableSizes={availableSizes}
+        onRemove={onRemove}
+        readOnly={readOnly}
+      >
+        <DashboardFacilityScopePlaceholder
+          icon={KeyIcon}
+          title="Select a facility"
+          message="Choose a facility from the header to view daily access codes for that site."
+        />
+      </Widget>
+    );
+  }
+
   if (loading) {
     return (
       <Widget
@@ -203,9 +229,6 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
     >
       <div className="flex h-full flex-col">
         <div className="mb-3 flex items-center justify-end">
-          {isAdminLike && isAllFacilitiesSelected && (
-            <p className="mr-auto text-xs text-gray-500 dark:text-gray-400">All facilities</p>
-          )}
           <button
             type="button"
             onClick={() => loadCodes(true)}
@@ -244,7 +267,6 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
                     <p className="text-xs text-gray-500 dark:text-gray-400">
                       {entry.device_type}
                       {entry.location_description ? ` • ${entry.location_description}` : ''}
-                      {isAllFacilitiesSelected && entry.facility_name ? ` • ${entry.facility_name}` : ''}
                       {` • ${entry.schedule_name || 'Always-on'}`}
                     </p>
                   </div>

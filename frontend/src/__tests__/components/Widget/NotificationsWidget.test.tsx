@@ -55,6 +55,18 @@ jest.mock('@/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  ...jest.requireActual('@/contexts/GlobalFacilityContext'),
+  useGlobalFacility: () => ({
+    facilities: [
+      { id: 'fac-123', name: '621 Sandbox' },
+      { id: 'fac-456', name: 'Site B' },
+    ],
+    selectedFacilityId: '__ALL_FACILITIES__',
+    isAllFacilitiesSelected: true,
+  }),
+}));
+
 jest.mock('framer-motion', () => ({
   motion: {
     div: ({ children, ...props }: React.PropsWithChildren<object>) => <div {...props}>{children}</div>,
@@ -159,6 +171,13 @@ describe('NotificationsWidget', () => {
       expect(screen.getByText('Security')).toBeInTheDocument();
     });
     expect(screen.queryByText('FYI')).not.toBeInTheDocument();
+  });
+
+  it('shows facility name in card footer when viewing all facilities', async () => {
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
+    await waitFor(() => {
+      expect(screen.getAllByText('621 Sandbox').length).toBeGreaterThan(0);
+    });
   });
 
   it('passes facility filter to API when provided', async () => {

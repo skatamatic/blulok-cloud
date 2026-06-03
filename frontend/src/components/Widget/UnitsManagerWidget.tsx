@@ -32,6 +32,7 @@ import {
 } from '@/utils/widget-layout.utils';
 import { compareNaturalStrings } from '@/utils/naturalStringCompare';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
+import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 type LockState = 'locked' | 'unlocked' | 'unknown' | 'unlocking' | 'locking';
 
@@ -40,6 +41,7 @@ interface UnitRow {
   unit_number: string;
   facility_id: string;
   facility_name?: string;
+  facility_lock_command_timeout_sec?: number | null;
   status?: string;
   lock_status?: LockState | string | null;
   battery_level?: number | null;
@@ -1113,29 +1115,63 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
     const deviceId = unit.blulok_device?.id;
     if (!deviceId) return;
 
+    const previousStatus = deviceLockStatus(unit) ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+
+    const patchUnitLockStatus = (lockStatus: string) => {
+      setUnits((prev) =>
+        prev.map((u) =>
+          u.id === unit.id
+            ? {
+                ...u,
+                lock_status: lockStatus,
+                blulok_device: u.blulok_device
+                  ? { ...u.blulok_device, lock_status: lockStatus }
+                  : u.blulok_device,
+              }
+            : u,
+        ),
+      );
+    };
+
+    const refreshAfterUnlockAttempt = async () => {
+      await fetchUnits();
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      setUnits((prev) =>
+        prev.map((u) => {
+          if (u.id !== unit.id) return u;
+          const status = deviceLockStatus(u);
+          if (status === 'unlocking' || status === 'locking') {
+            return {
+              ...u,
+              lock_status: previousStatus,
+              blulok_device: u.blulok_device
+                ? { ...u.blulok_device, lock_status: previousStatus }
+                : u.blulok_device,
+            };
+          }
+          return u;
+        }),
+      );
+    };
+
     await requestUnlock({
       deviceId,
       watchKey: unit.id,
+      timeoutMs: resolveLockTimeoutMsForUnit(unit, globalFacilities),
       getLockStatus: () => {
         const cur = unitsRef.current.find((u) => u.id === unit.id);
         return deviceLockStatus(cur ?? unit);
       },
       applyOptimisticUnlocking: () => {
-        setUnits((prev) =>
-          prev.map((u) =>
-            u.id === unit.id
-              ? {
-                  ...u,
-                  lock_status: 'unlocking',
-                  blulok_device: u.blulok_device
-                    ? { ...u.blulok_device, lock_status: 'unlocking' }
-                    : u.blulok_device,
-                }
-              : u,
-          ),
-        );
+        patchUnitLockStatus('unlocking');
       },
-      refresh: fetchUnits,
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchUnitLockStatus(status);
+      },
+      refresh: refreshAfterUnlockAttempt,
     });
   };
 

@@ -387,11 +387,37 @@ export class ActivityLogModel {
 
     const results = await query;
     return results.map((row: any) => ({
-      date: typeof row.date === 'string' ? row.date : row.date?.toISOString?.()?.split('T')[0] || String(row.date),
+      date: ActivityLogModel.formatStatsBucketDate(row.date, options.groupBy),
       facility_id: row.facility_id,
       facility_name: row.facility_name || 'Unknown Facility',
       activity_count: parseInt(row.activity_count, 10) || 0,
     }));
+  }
+
+  /** Normalize MySQL bucket values for chart labels and grouping. */
+  static formatStatsBucketDate(value: unknown, groupBy: 'hour' | 'day' | 'week'): string {
+    if (value == null) return '';
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (value instanceof Date) {
+      if (groupBy === 'hour') {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:00:00`;
+      }
+      if (groupBy === 'week') {
+        const day = value.getDay();
+        const diff = day === 0 ? -6 : 1 - day;
+        const weekStart = new Date(value);
+        weekStart.setDate(value.getDate() + diff);
+        weekStart.setHours(0, 0, 0, 0);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${weekStart.getFullYear()}-${pad(weekStart.getMonth() + 1)}-${pad(weekStart.getDate())}`;
+      }
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+    }
+    return String(value);
   }
 
   /**

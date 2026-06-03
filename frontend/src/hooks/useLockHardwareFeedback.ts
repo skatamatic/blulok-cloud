@@ -27,7 +27,11 @@ export function useLockHardwareFeedback(options?: UseLockHardwareFeedbackOptions
   }, []);
 
   const scheduleUnlockWatch = useCallback(
-    (getLockStatus: () => string | undefined, onTimeoutExtra?: () => void) => {
+    (
+      getLockStatus: () => string | undefined,
+      onTimeoutExtra?: () => void,
+      timeoutMs?: number,
+    ) => {
       cancelRef.current?.();
       cancelRef.current = startLockHardwareFeedbackWatch(
         'unlocked',
@@ -36,6 +40,7 @@ export function useLockHardwareFeedback(options?: UseLockHardwareFeedbackOptions
           addToast(timeoutToast());
           onTimeoutExtra?.();
         },
+        timeoutMs,
       );
     },
     [addToast, timeoutToast],

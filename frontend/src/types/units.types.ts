@@ -3,6 +3,7 @@ export interface Unit {
   unit_number: string;
   unit_type: string;
   facility_id: string;
+  facility_lock_command_timeout_sec?: number | null;
   device_id?: string;
   status: 'locked' | 'unlocked' | 'maintenance' | 'offline';
   battery_level?: number;

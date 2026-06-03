@@ -1,6 +1,7 @@
 import { DeviceModel } from '@/models/device.model';
 import { GatewayService } from '@/services/gateway/gateway.service';
 import { logger } from '@/utils/logger';
+import { lockCommandTimeoutMs } from '@/utils/facility-lock-timeout.utils';
 
 type LockStatus =
   | 'locked'
@@ -41,13 +42,9 @@ export class LockCommandService {
   private readonly gatewayService: GatewayService;
   private readonly pendingCommands = new Map<string, PendingLockCommand>();
 
-  // Default timeout (ms) before reverting lock status if no gateway state update is received
-  private readonly defaultTimeoutMs: number;
-
-  private constructor(timeoutMs?: number) {
+  private constructor() {
     this.deviceModel = new DeviceModel();
     this.gatewayService = GatewayService.getInstance();
-    this.defaultTimeoutMs = timeoutMs ?? 10_000;
   }
 
   public static getInstance(): LockCommandService {
@@ -84,6 +81,7 @@ export class LockCommandService {
         'blulok_devices.id',
         'blulok_devices.lock_status',
         'blulok_devices.supports_remote_lock',
+        'blulok_devices.unit_id',
         'gateways.id as gateway_id',
         'gateways.facility_id',
       )
@@ -104,6 +102,8 @@ export class LockCommandService {
 
     const previousStatus = (deviceRow.lock_status || 'unknown') as LockStatus;
     const gatewayId = String(deviceRow.gateway_id);
+    const facilityId = String((deviceRow as { facility_id: string }).facility_id);
+    const unitId = (deviceRow as { unit_id?: string | null }).unit_id ?? undefined;
 
     // Determine transitional status
     const transitionalStatus: LockStatus =
@@ -137,17 +137,34 @@ export class LockCommandService {
           requestedStatus,
           error: result.error,
         });
+        void this.notifyLockCommandFailure({
+          facilityId,
+          deviceId,
+          unitId,
+          gatewayId,
+          requestedStatus,
+          errorMessage: message,
+        });
         return { success: false, message };
       }
     } catch (error: any) {
       // Revert on unexpected errors
       await this.deviceModel.updateLockStatus(deviceId, previousStatus);
+      const failureMessage = error?.message || 'Failed to send lock command to gateway';
       logger.error('LockCommandService: error sending lock command', {
         deviceId,
         gatewayId,
         previousStatus,
         requestedStatus,
-        error: error?.message || String(error),
+        error: failureMessage,
+      });
+      void this.notifyLockCommandFailure({
+        facilityId,
+        deviceId,
+        unitId,
+        gatewayId,
+        requestedStatus,
+        errorMessage: failureMessage,
       });
       return {
         success: false,
@@ -156,9 +173,10 @@ export class LockCommandService {
     }
 
     // Schedule timeout to revert if no gateway state update resolves the transition
+    const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
     const timeoutHandle = setTimeout(
       () => void this.handleTimeout(deviceId, transitionalStatus, previousStatus),
-      this.defaultTimeoutMs,
+      timeoutMs,
     );
 
     this.pendingCommands.set(deviceId, {
@@ -190,6 +208,7 @@ export class LockCommandService {
       .select(
         'access_control_devices.id',
         'gateways.id as gateway_id',
+        'gateways.facility_id',
         'access_control_devices.is_locked',
         'access_control_devices.supports_remote_lock',
       )
@@ -209,26 +228,43 @@ export class LockCommandService {
     }
 
     const gatewayId = String(deviceRow.gateway_id);
+    const facilityId = String((deviceRow as { facility_id: string }).facility_id);
     const command: 'OPEN' | 'CLOSE' = requestedStatus === 'locked' ? 'CLOSE' : 'OPEN';
 
     try {
       const result = await this.gatewayService.sendLockCommand(gatewayId, deviceId, command);
       if (!result.success) {
+        const message = result.error || 'Gateway reported failure executing lock command';
         logger.warn('LockCommandService: access-control gateway command failed', {
           deviceId,
           gatewayId,
           error: result.error,
         });
+        void this.notifyLockCommandFailure({
+          facilityId,
+          deviceId,
+          gatewayId,
+          requestedStatus,
+          errorMessage: message,
+        });
         return {
           success: false,
-          message: result.error || 'Gateway reported failure executing lock command',
+          message,
         };
       }
     } catch (error: any) {
+      const failureMessage = error?.message || 'Failed to send lock command to gateway';
       logger.error('LockCommandService: access-control lock command error', {
         deviceId,
         gatewayId,
-        error: error?.message || String(error),
+        error: failureMessage,
+      });
+      void this.notifyLockCommandFailure({
+        facilityId,
+        deviceId,
+        gatewayId,
+        requestedStatus,
+        errorMessage: failureMessage,
       });
       return { success: false, message: 'Failed to send lock command to gateway' };
     }
@@ -248,9 +284,57 @@ export class LockCommandService {
     return { success: true, message: 'Lock command accepted' };
   }
 
-  /**
-   * Clear any pending timeout for a given device.
-   */
+  private async resolveFacilityLockTimeoutMs(facilityId: string): Promise<number> {
+    try {
+      const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
+      const row = await knex('facilities')
+        .where('id', facilityId)
+        .select('lock_command_timeout_sec')
+        .first();
+      return lockCommandTimeoutMs(row?.lock_command_timeout_sec);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('LockCommandService: failed to resolve facility lock timeout; using default', {
+        facilityId,
+        error: message,
+      });
+      return lockCommandTimeoutMs(undefined);
+    }
+  }
+
+  private notifyLockCommandFailure(params: {
+    facilityId: string;
+    deviceId: string;
+    requestedStatus: 'locked' | 'unlocked';
+    errorMessage: string;
+    gatewayId?: string;
+    unitId?: string;
+  }): void {
+    void (async () => {
+      try {
+        const { InAppNotificationDispatcher } = await import(
+          '@/services/notifications/in-app-notification-dispatcher.service'
+        );
+        await InAppNotificationDispatcher.getInstance().notifyRemoteLockCommandFailed(
+          params.facilityId,
+          params.deviceId,
+          params.requestedStatus,
+          params.errorMessage,
+          {
+            gatewayId: params.gatewayId,
+            unitId: params.unitId,
+          },
+        );
+      } catch (notifyErr: unknown) {
+        const message = notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+        logger.error('LockCommandService: failed to dispatch lock command failure notification', {
+          deviceId: params.deviceId,
+          error: message,
+        });
+      }
+    })();
+  }
+
   private clearPending(deviceId: string): void {
     const pending = this.pendingCommands.get(deviceId);
     if (pending) {

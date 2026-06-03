@@ -28,6 +28,8 @@ import {
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { UserRole } from '@/types/auth.types';
+import { FacilityLockTimeoutSetting } from '@/components/Facility/FacilityLockTimeoutSetting';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
@@ -52,7 +54,8 @@ import {
 } from '@/components/Common/DetailsPageLayout';
 import { withReturnPath, useDetailsBackNavigation } from '@/hooks/useBackNavigation';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
-import { useLockHardwareFeedback } from '@/hooks/useLockHardwareFeedback';
+import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 import {
   formatBluLokDeviceSubtitle,
@@ -214,13 +217,26 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const facilityUnitsRef = useRef<Unit[]>([]);
   facilityUnitsRef.current = facilityUnitsPageData;
 
-  const unitUnlockWatchIdRef = useRef<string | null>(null);
-  const { scheduleUnlockWatch: scheduleUnitUnlockWatch, cancelWatch: cancelUnitUnlockWatch } =
-    useLockHardwareFeedback({
-      timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
-    });
+  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+    timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+  });
+
+  useEffect(() => {
+    for (const unit of facilityUnitsPageData) {
+      if (unit.blulok_device?.lock_status) {
+        syncLockStatus(unit.id, unit.blulok_device.lock_status);
+      }
+    }
+  }, [facilityUnitsPageData, syncLockStatus]);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const canEditFacilitySettings = (() => {
+    if (!canManage || !id) return false;
+    if (authState.user?.role === UserRole.FACILITY_ADMIN) {
+      return authState.user.facilityIds?.includes(id) ?? false;
+    }
+    return true;
+  })();
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
   const canManageGateway = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
@@ -326,15 +342,6 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     debouncedRefresh: debouncedFacilityUnitsWsRefresh,
     debounceMs: 500,
   });
-
-  useEffect(() => {
-    if (!unitUnlockWatchIdRef.current) return;
-    const u = facilityUnitsPageData.find((x) => x.id === unitUnlockWatchIdRef.current);
-    if (u?.blulok_device?.lock_status === 'unlocked') {
-      cancelUnitUnlockWatch();
-      unitUnlockWatchIdRef.current = null;
-    }
-  }, [facilityUnitsPageData, cancelUnitUnlockWatch]);
 
   const loadFacilityData = useCallback(async (facilityId?: string) => {
     const targetId = facilityId || id;
@@ -479,36 +486,59 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
 
   const handleFacilityUnitUnlock = async (unit: Unit) => {
     if (!unit.blulok_device || !canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
-    setFacilityUnitsPageData((prev) =>
-      prev.map((u) =>
-        u.id === unit.id && u.blulok_device
-          ? { ...u, blulok_device: { ...u.blulok_device, lock_status: 'unlocking' } }
-          : u,
-      ),
-    );
-    unitUnlockWatchIdRef.current = unit.id;
-    scheduleUnitUnlockWatch(
-      () => {
+
+    const previousStatus = unit.blulok_device.lock_status ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+
+    const patchUnitLockStatus = (lockStatus: string) => {
+      setFacilityUnitsPageData((prev) =>
+        prev.map((u) =>
+          u.id === unit.id && u.blulok_device
+            ? { ...u, blulok_device: { ...u.blulok_device, lock_status: lockStatus } }
+            : u,
+        ),
+      );
+    };
+
+    const refreshAfterUnlockAttempt = async () => {
+      await loadFacilityUnitsPageData();
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      setFacilityUnitsPageData((prev) =>
+        prev.map((u) => {
+          if (u.id !== unit.id || !u.blulok_device) return u;
+          const status = u.blulok_device.lock_status;
+          if (status === 'unlocking' || status === 'locking') {
+            return {
+              ...u,
+              blulok_device: { ...u.blulok_device, lock_status: previousStatus },
+            };
+          }
+          return u;
+        }),
+      );
+    };
+
+    await requestUnlock({
+      deviceId: unit.blulok_device.id,
+      watchKey: unit.id,
+      timeoutMs: resolveLockTimeoutMsForFacility(facility),
+      getLockStatus: () => {
         const cur = facilityUnitsRef.current.find((x) => x.id === unit.id);
         return cur?.blulok_device?.lock_status;
       },
-      () => {
-        unitUnlockWatchIdRef.current = null;
-        void loadFacilityUnitsPageData();
+      applyOptimisticUnlocking: () => {
+        patchUnitLockStatus('unlocking');
       },
-    );
-    try {
-      await apiService.updateLockStatus(unit.blulok_device.id, 'unlocked');
-      addToast(lockHardwareFeedbackToasts.unlockCommandSent());
-      await loadFacilityUnitsPageData();
-      await loadFacilityData();
-    } catch (error) {
-      cancelUnitUnlockWatch();
-      unitUnlockWatchIdRef.current = null;
-      console.error('Failed to unlock unit:', error);
-      addToast(lockHardwareFeedbackToasts.couldNotUnlockUnit());
-      await loadFacilityUnitsPageData();
-    }
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchUnitLockStatus(status);
+      },
+      refresh: async () => {
+        await refreshAfterUnlockAttempt();
+        await loadFacilityData();
+      },
+    });
   };
 
   const openDeleteConfirm = async () => {
@@ -779,18 +809,19 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               disabled={
                 !canRequestRemoteUnlock(unit.blulok_device.lock_status) ||
                 unit.blulok_device.lock_status === 'unlocking' ||
-                unit.blulok_device.lock_status === 'locking'
+                unit.blulok_device.lock_status === 'locking' ||
+                isSubmitting(unit.id)
               }
               onClick={() => void handleFacilityUnitUnlock(unit)}
               className={`inline-flex items-center rounded-lg border border-transparent px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                unit.blulok_device.lock_status === 'unlocking'
+                unit.blulok_device.lock_status === 'unlocking' || isSubmitting(unit.id)
                   ? 'bg-blue-600 text-white animate-pulse'
                   : canRequestRemoteUnlock(unit.blulok_device.lock_status)
                     ? 'bg-blue-600 text-white hover:bg-blue-700'
                     : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
               }`}
             >
-              {unit.blulok_device.lock_status === 'unlocking' ? (
+              {unit.blulok_device.lock_status === 'unlocking' || isSubmitting(unit.id) ? (
                 'Unlocking…'
               ) : canRequestRemoteUnlock(unit.blulok_device.lock_status) ? (
                 <>
@@ -894,6 +925,14 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                 )}
               </dl>
             </div>
+
+            {!isTenant && (
+              <FacilityLockTimeoutSetting
+                facility={facility}
+                canEdit={canEditFacilitySettings}
+                onUpdated={(updated) => setFacility(updated)}
+              />
+            )}
 
             {!isTenant && deviceHierarchy?.gateway && (
               <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">

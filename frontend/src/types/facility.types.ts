@@ -10,6 +10,8 @@ export interface Facility {
   contact_email?: string;
   contact_phone?: string;
   status: 'active' | 'inactive' | 'maintenance';
+  /** Seconds to wait for remote lock/unlock gateway confirmation (default 10). */
+  lock_command_timeout_sec?: number;
   metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -254,6 +256,7 @@ export interface BluLokDevice {
 export interface Unit {
   id: string;
   facility_id: string;
+  facility_lock_command_timeout_sec?: number | null;
   unit_number: string;
   unit_type?: string;
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';

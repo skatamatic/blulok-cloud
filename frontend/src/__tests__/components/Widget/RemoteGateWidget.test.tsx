@@ -32,11 +32,20 @@ jest.mock('@/contexts/WebSocketContext', () => ({
   WebSocketProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-const renderWithProviders = (component: React.ReactElement) => {
+const renderWithProviders = (
+  component: React.ReactElement,
+  options?: { allFacilitiesMode?: boolean },
+) => {
+  const child =
+    !options?.allFacilitiesMode &&
+    component.type === RemoteGateWidget &&
+    component.props.facilityFilter === undefined
+      ? React.cloneElement(component, { facilityFilter: 'facility-1' })
+      : component;
   return render(
     <ThemeProvider>
       <DropdownProvider>
-        <ToastProvider>{component}</ToastProvider>
+        <ToastProvider>{child}</ToastProvider>
       </DropdownProvider>
     </ThemeProvider>
   );
@@ -134,6 +143,7 @@ describe('RemoteGateWidget', () => {
         expect(mockGetDevices).toHaveBeenCalledWith({
           device_type: 'access_control',
           limit: 200,
+          facility_id: 'facility-1',
         });
       });
     });
@@ -156,17 +166,14 @@ describe('RemoteGateWidget', () => {
       });
     });
 
-    it('omits facility_id when no facilityFilter (dashboard all-facilities scope; backend scopes by user)', async () => {
+    it('does not load gates when no facility is selected (all-facilities dashboard mode)', async () => {
       renderWithProviders(
-        <RemoteGateWidget id="test-widget" title="Remote Gate Control" />
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" />,
+        { allFacilitiesMode: true },
       );
 
-      await waitFor(() => {
-        expect(mockGetDevices).toHaveBeenCalledWith({
-          device_type: 'access_control',
-          limit: 200,
-        });
-      });
+      expect(screen.getByText('Select a facility')).toBeInTheDocument();
+      expect(mockGetDevices).not.toHaveBeenCalled();
     });
 
     it('lists gates from multiple facilities in the selector when API returns them (large widget)', async () => {
@@ -703,10 +710,23 @@ describe('RemoteGateWidget', () => {
     });
   });
 
+  describe('Facility scope', () => {
+    it('shows select-facility placeholder when no facility is selected', async () => {
+      renderWithProviders(
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" />,
+        { allFacilitiesMode: true },
+      );
+
+      expect(screen.getByText('Select a facility')).toBeInTheDocument();
+      expect(screen.getByText(/Choose a facility from the header/i)).toBeInTheDocument();
+      expect(mockGetDevices).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Refresh Functionality', () => {
     it('refreshes data when refresh button is clicked', async () => {
       renderWithProviders(
-        <RemoteGateWidget id="test-widget" title="Remote Gate Control" />
+        <RemoteGateWidget id="test-widget" title="Remote Gate Control" facilityFilter="facility-1" />
       );
       
       await waitFor(() => {

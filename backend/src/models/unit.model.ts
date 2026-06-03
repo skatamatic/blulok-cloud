@@ -491,6 +491,7 @@ export class UnitModel {
           ),
           'f.name as facility_name',
           'f.address as facility_address',
+          'f.lock_command_timeout_sec as facility_lock_command_timeout_sec',
           'bd.id as device_id',
           'bd.device_serial',
           'bd.serial as blulok_serial',
@@ -699,6 +700,7 @@ export class UnitModel {
         facility_id: row.facility_id,
         facility_name: row.facility_name,
         facility_address: row.facility_address,
+        facility_lock_command_timeout_sec: row.facility_lock_command_timeout_sec,
         created_at: row.created_at,
         updated_at: row.updated_at,
         // Add fields expected by frontend widgets
@@ -1076,6 +1078,7 @@ export class UnitModel {
           ),
           'f.name as facility_name',
           'f.address as facility_address',
+          'f.lock_command_timeout_sec as facility_lock_command_timeout_sec',
           'bd.id as device_id',
           'bd.device_serial',
           'bd.serial as blulok_serial',
@@ -1183,6 +1186,7 @@ export class UnitModel {
         facility_id: result.facility_id,
         facility_name: result.facility_name,
         facility_address: result.facility_address,
+        facility_lock_command_timeout_sec: result.facility_lock_command_timeout_sec,
         created_at: result.created_at,
         updated_at: result.updated_at,
         // Add fields expected by frontend

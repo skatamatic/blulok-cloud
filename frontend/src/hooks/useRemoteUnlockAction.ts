@@ -11,6 +11,7 @@ import {
   type UseLockHardwareFeedbackOptions,
 } from '@/hooks/useLockHardwareFeedback';
 import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
+import { resolveLockCommandTimeoutMs } from '@/utils/facilityLockTimeout.utils';
 
 export type RemoteUnlockRequest = {
   deviceId: string;
@@ -18,6 +19,12 @@ export type RemoteUnlockRequest = {
   watchKey: string;
   getLockStatus: () => string | undefined;
   applyOptimisticUnlocking: () => void;
+  /** Reset transitional UI when unlock stalls or fails. */
+  revertOptimisticLockStatus?: (previousStatus: string) => void;
+  /** Facility-specific hardware-ack timeout (ms). Defaults to 10s. */
+  timeoutMs?: number;
+  /** Override default BluLok unlock API (e.g. access-control devices). */
+  sendUnlockCommand?: (deviceId: string) => Promise<unknown>;
   refresh?: () => Promise<void>;
 };
 
@@ -52,27 +59,40 @@ export function useRemoteUnlockAction(options?: UseRemoteUnlockActionOptions) {
       watchKey,
       getLockStatus,
       applyOptimisticUnlocking,
+      revertOptimisticLockStatus,
+      timeoutMs,
+      sendUnlockCommand,
       refresh,
     }: RemoteUnlockRequest) => {
       if (!canRequestRemoteUnlock(getLockStatus())) return;
+
+      const previousStatus = getLockStatus() ?? 'locked';
+      const feedbackTimeoutMs = timeoutMs ?? resolveLockCommandTimeoutMs();
 
       setSubmittingKey(watchKey);
       pendingRef.current = true;
       watchGetStatusRef.current = getLockStatus;
       setActiveWatchKey(watchKey);
 
-      scheduleUnlockWatch(getLockStatus, () => {
-        clearWatch();
-        void refresh?.();
-      });
+      scheduleUnlockWatch(
+        getLockStatus,
+        () => {
+          revertOptimisticLockStatus?.(previousStatus);
+          clearWatch();
+          void refresh?.();
+        },
+        feedbackTimeoutMs,
+      );
 
       applyOptimisticUnlocking();
 
       try {
-        await apiService.updateLockStatus(deviceId, 'unlocked');
+        const unlock = sendUnlockCommand ?? ((id: string) => apiService.updateLockStatus(id, 'unlocked'));
+        await unlock(deviceId);
         addToast(lockHardwareFeedbackToasts.unlockCommandSent());
         await refresh?.();
       } catch (error: unknown) {
+        revertOptimisticLockStatus?.(previousStatus);
         clearWatch();
         addToast({
           ...errorToast(),
@@ -90,7 +110,7 @@ export function useRemoteUnlockAction(options?: UseRemoteUnlockActionOptions) {
   const syncLockStatus = useCallback(
     (watchKey: string, lockStatus: string | undefined) => {
       if (!pendingRef.current || activeWatchKey !== watchKey) return;
-      if (lockStatus === 'unlocked') {
+      if (lockStatus === 'unlocked' || lockStatus === 'locked') {
         clearWatch();
       }
     },

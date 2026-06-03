@@ -299,6 +299,7 @@ describe('Notifications Routes', () => {
 
       expect(mockService.getUnreadCount).toHaveBeenCalledWith(
         testData.users.tenant.id,
+        testData.users.tenant.role,
         { facilityId }
       );
     });

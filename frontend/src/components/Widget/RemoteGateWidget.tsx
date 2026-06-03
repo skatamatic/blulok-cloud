@@ -20,6 +20,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { startHardwareAckWatch, LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS } from '@/utils/lockHardwareFeedback.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
 
 interface GateDevice {
   id: string;
@@ -114,6 +115,13 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   }, [gates]);
 
   const loadGates = useCallback(async () => {
+    if (!facilityFilter) {
+      gateIdsRef.current = new Set();
+      setGates([]);
+      setIsLoading(false);
+      return;
+    }
+
     setError(null);
     
     try {
@@ -322,8 +330,14 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
       }
     >
-      {/* Loading State */}
-      {isLoading && gates.length === 0 ? (
+      {/* All-facilities mode requires a single facility selection */}
+      {!facilityFilter ? (
+        <DashboardFacilityScopePlaceholder
+          icon={BoltIcon}
+          title="Select a facility"
+          message="Choose a facility from the header to view and control gates at that site."
+        />
+      ) : isLoading && gates.length === 0 ? (
         <div className="h-full flex items-center justify-center">
           <div className="text-center">
             <ArrowPathIcon className="h-8 w-8 text-gray-400 mx-auto mb-2 animate-spin" />

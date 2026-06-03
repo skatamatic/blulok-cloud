@@ -1,6 +1,12 @@
 import { EventEmitter } from 'events';
 import { WebSocketService } from './websocket.service';
 import { logger } from '@/utils/logger';
+import {
+  isLoggableLockStatusTransition,
+  lockActivityTitle,
+  lockActivityVerb,
+  mapLockStatusToActivityType,
+} from '@/utils/lock-status-activity.utils';
 
 /**
  * Device Event Types
@@ -213,12 +219,7 @@ export class DeviceEventService extends EventEmitter {
       }
 
       // Log activity for lock status changes (settled and in-flight remote/gateway commands)
-      if (
-        event.newStatus === 'locked' ||
-        event.newStatus === 'unlocked' ||
-        event.newStatus === 'locking' ||
-        event.newStatus === 'unlocking'
-      ) {
+      if (isLoggableLockStatusTransition(event.newStatus)) {
         this.logLockActivity(event).catch(err =>
           logger.error('Failed to log lock activity:', err)
         );
@@ -360,26 +361,17 @@ export class DeviceEventService extends EventEmitter {
     const deviceType = acDevice && !blulokDevice ? 'access_control' : 'blulok';
     const unitId = event.unitId || blulokDevice?.unit_id || undefined;
 
-    const activityType = event.newStatus as 'lock' | 'unlock' | 'locking' | 'unlocking';
-    const titleByStatus: Record<typeof activityType, string> = {
-      lock: 'Device Locked',
-      unlock: 'Device Unlocked',
-      locking: 'Device Locking',
-      unlocking: 'Device Unlocking',
-    };
-    const verbByStatus: Record<typeof activityType, string> = {
-      lock: 'locked',
-      unlock: 'unlocked',
-      locking: 'locking',
-      unlocking: 'unlocking',
-    };
+    const activityType = mapLockStatusToActivityType(event.newStatus);
+    if (!activityType) {
+      return;
+    }
 
     await ActivityService.getInstance().logActivity({
       entityType: 'device',
       entityId: event.deviceId,
       activityType,
-      title: titleByStatus[activityType],
-      description: `Device was ${verbByStatus[activityType]} by Gateway`,
+      title: lockActivityTitle(activityType),
+      description: `Device was ${lockActivityVerb(activityType)} by Gateway`,
       actorType: 'gateway',
       actorName: 'Gateway',
       result: activityType === 'locking' || activityType === 'unlocking' ? 'pending' : 'success',

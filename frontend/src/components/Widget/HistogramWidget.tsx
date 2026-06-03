@@ -39,6 +39,20 @@ type TimePeriod = 'day' | 'week' | 'month' | 'year';
 const MAX_HISTOGRAM_FACILITIES = DASHBOARD_FACILITY_SCOPE_LIMIT;
 const MAX_LEGEND_FACILITIES = 8;
 
+function normalizeHistogramDateKey(raw: string): string {
+  if (!raw) return raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) return raw;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  if (raw.includes(':')) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:00:00`;
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+}
+
 const timePeriodLabels: Record<TimePeriod, string> = {
   day: 'Last 24 Hours',
   week: 'Last Week',
@@ -113,6 +127,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
 
   const legendFacilities = useMemo(() => chartFacilities.slice(0, MAX_LEGEND_FACILITIES), [chartFacilities]);
   const legendOverflow = Math.max(0, chartFacilities.length - MAX_LEGEND_FACILITIES);
+  const showFacilityLegend = !facilityFilter && chartFacilities.length > 1;
 
   const facilityColorIndex = useCallback(
     (facilityId: string) => {
@@ -133,7 +148,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
       if (response.success && response.data) {
         setHistogramData(
           response.data.map((item) => ({
-            date: item.date,
+            date: normalizeHistogramDateKey(item.date),
             facilityId: item.facility_id,
             facilityName: item.facility_name,
             activityCount: item.activity_count,
@@ -176,7 +191,24 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     return Math.max(...totals, 1);
   }, [groupedData]);
 
-  const getBarHeight = (value: number): string => `${(value / maxValue) * 100}%`;
+  const chartEntries = useMemo(
+    () => Object.entries(groupedData).sort(([a], [b]) => a.localeCompare(b)).slice(-20),
+    [groupedData],
+  );
+
+  const layout = getWidgetLayoutProfile(size);
+  const barAreaHeightPx = layout.isDock
+    ? 96
+    : layout.isTall
+      ? 220
+      : layout.density === 'micro' || layout.density === 'compact'
+        ? 128
+        : 176;
+
+  const getBarHeightPx = (value: number): number => {
+    if (value <= 0) return 0;
+    return Math.max(3, Math.round((value / maxValue) * barAreaHeightPx));
+  };
 
   const formatDateLabel = (dateStr: string): string => {
     const date = new Date(dateStr);
@@ -193,7 +225,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     }
   };
 
-  const layout = getWidgetLayoutProfile(size);
   const chartAreaClass = layout.isDock
     ? 'h-24 flex-shrink-0'
     : layout.isTall
@@ -280,30 +311,32 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
               Lock, unlock, and access activity by facility
             </p>
             <div className={`${chartAreaClass} relative`}>
-              <div className="absolute inset-0 flex items-end justify-between px-1 pb-6">
-                {Object.entries(groupedData)
-                  .slice(-20)
-                  .map(([date, dayData], index) => (
-                    <div key={date} className="flex flex-col items-center flex-1 max-w-8">
-                      <motion.div className="flex flex-col-reverse items-center w-full space-y-reverse space-y-0.5 mb-1">
-                        {dayData.map((item) => (
-                          <motion.div
-                            key={`${item.facilityId}-${date}`}
-                            initial={{ height: 0 }}
-                            animate={{ height: getBarHeight(item.activityCount) }}
-                            transition={{ duration: 0.5, delay: index * 0.05 }}
-                            className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-80`}
-                            title={`${item.facilityName}: ${item.activityCount} events`}
-                          />
-                        ))}
-                      </motion.div>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 transform rotate-45 origin-left whitespace-nowrap">
-                        {formatDateLabel(date)}
-                      </span>
+              <div className="absolute inset-0 flex items-end justify-between gap-0.5 px-1 pb-7">
+                {chartEntries.map(([date, dayData], index) => (
+                  <div key={date} className="flex h-full min-w-0 max-w-10 flex-1 flex-col items-center">
+                    <div
+                      className="flex w-full flex-1 flex-col-reverse justify-end gap-0.5"
+                      style={{ minHeight: barAreaHeightPx }}
+                    >
+                      {dayData.map((item) => (
+                        <motion.div
+                          key={`${item.facilityId}-${date}`}
+                          initial={{ height: 0 }}
+                          animate={{ height: getBarHeightPx(item.activityCount) }}
+                          transition={{ duration: 0.5, delay: index * 0.05 }}
+                          className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90`}
+                          title={`${item.facilityName}: ${item.activityCount} events`}
+                        />
+                      ))}
                     </div>
-                  ))}
+                    <span className="mt-1 max-w-full truncate text-[10px] text-gray-500 dark:text-gray-400 sm:text-xs">
+                      {formatDateLabel(date)}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
+            {showFacilityLegend && (
             <div className="pt-4 border-t border-gray-200 dark:border-gray-600 shrink-0">
               <div className="flex flex-wrap gap-2 max-h-16 overflow-y-auto">
                 {legendFacilities.map((facility, index) => (
@@ -321,6 +354,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                 )}
               </div>
             </div>
+            )}
           </>
         )}
       </div>

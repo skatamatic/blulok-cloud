@@ -86,7 +86,7 @@ describe('DailyAccessCodesWidget', () => {
     });
   });
 
-  it('supports admin all-facilities scope', async () => {
+  it('shows select-facility placeholder in all-facilities mode', async () => {
     mockUseAuth.mockReturnValue({
       authState: {
         user: {
@@ -100,90 +100,12 @@ describe('DailyAccessCodesWidget', () => {
       selectedFacility: null,
       isAllFacilitiesSelected: true,
     });
-    mockGetFacilities.mockResolvedValue({
-      facilities: [
-        { id: 'facility-1', name: 'Facility One' },
-        { id: 'facility-2', name: 'Facility Two' },
-      ],
-    });
-    mockGetAppAccessCodes
-      .mockResolvedValueOnce({
-        data: [
-          {
-            device_id: 'device-1',
-            device_name: 'Gate A',
-            device_type: 'gate',
-            code: '1111',
-            valid_until: new Date(Date.now() + 3600_000).toISOString(),
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            device_id: 'device-2',
-            device_name: 'Door B',
-            device_type: 'door',
-            code: '2222',
-            valid_until: new Date(Date.now() + 3600_000).toISOString(),
-          },
-        ],
-      });
 
     renderWithProviders(<DailyAccessCodesWidget currentSize="medium" onSizeChange={() => undefined} />);
 
-    await waitFor(() => {
-      expect(mockGetFacilities).toHaveBeenCalled();
-      expect(mockGetAppAccessCodes).toHaveBeenCalledWith('facility-1');
-      expect(mockGetAppAccessCodes).toHaveBeenCalledWith('facility-2');
-      expect(screen.getByText('1111')).toBeInTheDocument();
-      expect(screen.getByText('2222')).toBeInTheDocument();
-    });
-  });
-
-  it('shows partial warning when one facility request fails', async () => {
-    mockUseAuth.mockReturnValue({
-      authState: {
-        user: {
-          id: 'user-2',
-          role: 'admin',
-        },
-      },
-    });
-    mockUseGlobalFacility.mockReturnValue({
-      selectedFacilityId: '__ALL_FACILITIES__',
-      selectedFacility: null,
-      isAllFacilitiesSelected: true,
-    });
-    mockGetFacilities.mockResolvedValue({
-      facilities: [
-        { id: 'facility-1', name: 'Facility One' },
-        { id: 'facility-2', name: 'Facility Two' },
-      ],
-    });
-    mockGetAppAccessCodes
-      .mockResolvedValueOnce({
-        data: [
-          {
-            device_id: 'device-1',
-            device_name: 'Gate A',
-            device_type: 'gate',
-            code: '1111',
-            valid_until: new Date(Date.now() + 3600_000).toISOString(),
-          },
-        ],
-      })
-      .mockRejectedValueOnce(new Error('facility-2-failure'));
-
-    renderWithProviders(<DailyAccessCodesWidget currentSize="medium" onSizeChange={() => undefined} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('1111')).toBeInTheDocument();
-      expect(screen.getByText(/Some facilities failed to load/i)).toBeInTheDocument();
-      expect(mockAddToast).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'warning',
-      }));
-    });
+    expect(screen.getByText('Select a facility')).toBeInTheDocument();
+    expect(screen.getByText(/Choose a facility from the header/i)).toBeInTheDocument();
+    expect(mockGetAppAccessCodes).not.toHaveBeenCalled();
   });
 
   it('refresh button reloads data', async () => {

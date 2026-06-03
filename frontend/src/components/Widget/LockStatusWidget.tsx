@@ -7,14 +7,15 @@ import { Unit } from '@/types/units.types';
 import { UserRole } from '@/types/auth.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
-import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
-import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { getScopedFacilityId } from '@/utils/globalFacilityScope.utils';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 interface LockStatusWidgetProps {
   currentSize: WidgetSize;
@@ -46,16 +47,23 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   readOnly = false,
 }) => {
   const { authState } = useAuth();
-  const { selectedFacilityId, isLoading: facilitiesLoading } = useGlobalFacility();
+  const { selectedFacilityId, isLoading: facilitiesLoading, facilities: globalFacilities } = useGlobalFacility();
   const scopedFacilityId = getScopedFacilityId(selectedFacilityId);
-  const { addToast } = useToast();
   const { isConnected } = useWebSocket();
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const availableSizes: WidgetSize[] = ['small', 'medium', 'large', 'medium-tall'];
   const fetchRequestIdRef = useRef(0);
+  const unitsRef = useRef<Unit[]>([]);
+  unitsRef.current = units;
+  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+    timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+    errorToast: () => ({
+      type: 'error' as const,
+      title: 'Could not update lock',
+    }),
+  });
 
   const fetchUnits = useCallback(async (opts?: { background?: boolean }) => {
     const requestId = ++fetchRequestIdRef.current;
@@ -208,41 +216,77 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   const deviceIdForLock = (u: Unit) => u.blulok_device?.id ?? u.device_id;
 
   const handleRemoteUnlock = async (unitId: string) => {
-    const unit = units.find((u) => u.id === unitId);
+    const unit = unitsRef.current.find((u) => u.id === unitId);
     if (!unit) return;
     const deviceId = deviceIdForLock(unit);
     const ls = deviceLockStatus(unit);
     if (!deviceId || !canRequestRemoteUnlock(ls)) return;
 
-    try {
-      setActionLoading(unitId);
-      await apiService.updateLockStatus(deviceId, 'unlocked');
+    const previousStatus = ls ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+
+    const patchUnitLockStatus = (lockStatus: string) => {
       setUnits((prev) =>
         prev.map((u) =>
           u.id === unitId
             ? {
                 ...u,
-                status: 'unlocked' as const,
-                lock_status: 'unlocked',
-                last_seen: new Date().toISOString(),
+                lock_status: lockStatus as Unit['lock_status'],
                 ...(u.blulok_device
-                  ? { blulok_device: { ...u.blulok_device, lock_status: 'unlocked' } }
+                  ? { blulok_device: { ...u.blulok_device, lock_status: lockStatus } }
                   : {}),
               }
             : u,
         ),
       );
-    } catch (err) {
-      console.error('Error unlocking:', err);
-      addToast({
-        type: 'error',
-        title: 'Could not update lock',
-        message: getApiErrorMessage(err, 'Try again in a moment.'),
-      });
-    } finally {
-      setActionLoading(null);
-    }
+    };
+
+    const refreshAfterUnlockAttempt = async () => {
+      await fetchUnits({ background: true });
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      setUnits((prev) =>
+        prev.map((u) => {
+          if (u.id !== unitId) return u;
+          const status = deviceLockStatus(u);
+          if (status === 'unlocking' || status === 'locking') {
+            return {
+              ...u,
+              lock_status: previousStatus as Unit['lock_status'],
+              ...(u.blulok_device
+                ? { blulok_device: { ...u.blulok_device, lock_status: previousStatus } }
+                : {}),
+            };
+          }
+          return u;
+        }),
+      );
+    };
+
+    await requestUnlock({
+      deviceId,
+      watchKey: unitId,
+      timeoutMs: resolveLockTimeoutMsForUnit(unit, globalFacilities),
+      getLockStatus: () => {
+        const cur = unitsRef.current.find((u) => u.id === unitId);
+        return deviceLockStatus(cur ?? unit);
+      },
+      applyOptimisticUnlocking: () => {
+        patchUnitLockStatus('unlocking');
+      },
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchUnitLockStatus(status);
+      },
+      refresh: refreshAfterUnlockAttempt,
+    });
   };
+
+  useEffect(() => {
+    for (const unit of units) {
+      syncLockStatus(unit.id, deviceLockStatus(unit));
+    }
+  }, [units, syncLockStatus]);
 
   const handleRefresh = async () => {
     await fetchUnits();
@@ -362,7 +406,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                   type="button"
                   onClick={() => void handleRemoteUnlock(unit.id)}
                   disabled={
-                    actionLoading === unit.id ||
+                    isSubmitting(unit.id) ||
                     !deviceIdForLock(unit) ||
                     isLockTransitionPending(deviceLockStatus(unit)) ||
                     !canRequestRemoteUnlock(deviceLockStatus(unit))
@@ -373,7 +417,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                       : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400'
                   }`}
                 >
-                  {actionLoading === unit.id
+                  {isSubmitting(unit.id)
                     ? '...'
                     : isLockTransitionPending(deviceLockStatus(unit))
                       ? '…'
@@ -442,7 +486,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                     type="button"
                     onClick={() => void handleRemoteUnlock(unit.id)}
                     disabled={
-                      actionLoading === unit.id ||
+                      isSubmitting(unit.id) ||
                       !deviceIdForLock(unit) ||
                       isLockTransitionPending(deviceLockStatus(unit)) ||
                       !canRequestRemoteUnlock(deviceLockStatus(unit))
@@ -453,7 +497,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                         : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400'
                     }`}
                   >
-                    {actionLoading === unit.id
+                    {isSubmitting(unit.id)
                       ? '...'
                       : isLockTransitionPending(deviceLockStatus(unit))
                         ? 'Unlocking…'
