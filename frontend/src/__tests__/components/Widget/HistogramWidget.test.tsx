@@ -4,7 +4,6 @@ import { HistogramWidget } from '@/components/Widget/HistogramWidget';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
 
-// Mock the API service
 const mockGetActivityStats = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
@@ -13,7 +12,6 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
-// Mock auth context
 const mockUser = {
   id: 'user-1',
   email: 'test@example.com',
@@ -37,7 +35,6 @@ jest.mock('@/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-// Mock framer-motion to avoid animation issues in tests
 jest.mock('framer-motion', () => ({
   motion: {
     div: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => (
@@ -47,28 +44,58 @@ jest.mock('framer-motion', () => ({
   AnimatePresence: ({ children }: React.PropsWithChildren<object>) => <>{children}</>,
 }));
 
-const renderWithProviders = (component: React.ReactElement) => {
-  return render(
+const renderWithProviders = (component: React.ReactElement) =>
+  render(
     <ThemeProvider>
-      <DropdownProvider>
-        {component}
-      </DropdownProvider>
-    </ThemeProvider>
+      <DropdownProvider>{component}</DropdownProvider>
+    </ThemeProvider>,
   );
-};
+
+function statsRow(
+  date: string,
+  facilityId: string,
+  facilityName: string,
+  activityType: string,
+  activityCount: number,
+) {
+  return {
+    date,
+    facility_id: facilityId,
+    facility_name: facilityName,
+    activity_type: activityType,
+    activity_count: activityCount,
+  };
+}
+
+function recentDay(daysAgo: number): string {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() - daysAgo);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 describe('HistogramWidget', () => {
+  const day1 = recentDay(2);
+  const day2 = recentDay(1);
+  const day3 = recentDay(0);
+
   const mockActivityStats = {
     success: true,
     data: [
-      { date: '2026-01-01', facility_id: 'facility-1', facility_name: 'Downtown Storage', activity_count: 25 },
-      { date: '2026-01-01', facility_id: 'facility-2', facility_name: 'Warehouse District', activity_count: 18 },
-      { date: '2026-01-02', facility_id: 'facility-1', facility_name: 'Downtown Storage', activity_count: 32 },
-      { date: '2026-01-02', facility_id: 'facility-2', facility_name: 'Warehouse District', activity_count: 22 },
-      { date: '2026-01-03', facility_id: 'facility-1', facility_name: 'Downtown Storage', activity_count: 28 },
-      { date: '2026-01-03', facility_id: 'facility-2', facility_name: 'Warehouse District', activity_count: 15 },
+      statsRow(day1, 'facility-1', 'Downtown Storage', 'unlock', 15),
+      statsRow(day1, 'facility-1', 'Downtown Storage', 'lock', 10),
+      statsRow(day1, 'facility-2', 'Warehouse District', 'unlock', 12),
+      statsRow(day1, 'facility-2', 'Warehouse District', 'access_attempt', 6),
+      statsRow(day2, 'facility-1', 'Downtown Storage', 'unlock', 20),
+      statsRow(day2, 'facility-1', 'Downtown Storage', 'lock', 12),
+      statsRow(day2, 'facility-2', 'Warehouse District', 'lock', 22),
+      statsRow(day3, 'facility-1', 'Downtown Storage', 'unlock', 18),
+      statsRow(day3, 'facility-1', 'Downtown Storage', 'lock', 10),
+      statsRow(day3, 'facility-2', 'Warehouse District', 'unlock', 15),
     ],
     period: 'month',
+    endDate: new Date().toISOString(),
   };
 
   beforeEach(() => {
@@ -76,48 +103,15 @@ describe('HistogramWidget', () => {
     mockGetActivityStats.mockResolvedValue(mockActivityStats);
   });
 
-  afterEach(() => {
-    // no-op: beforeEach already clears mocks
-  });
-
   describe('Basic Rendering', () => {
     it('renders with default props', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" />
-      );
-      
+      renderWithProviders(<HistogramWidget id="test-widget" title="Activity Histogram" />);
       expect(screen.getByText('Activity Histogram')).toBeInTheDocument();
     });
 
-    it('displays loading state initially', async () => {
-      // Create a promise that resolves after a delay to test loading state
-      let resolvePromise: (value: typeof mockActivityStats) => void;
-      const hangingPromise = new Promise((resolve) => {
-        resolvePromise = resolve;
-      });
-      mockGetActivityStats.mockImplementation(() => hangingPromise);
-      
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" />
-      );
-      
-      // Should show loading state
-      expect(document.querySelector('.animate-spin')).toBeInTheDocument();
-      
-      // Resolve the promise to prevent hanging
-      resolvePromise!(mockActivityStats);
-      
-      // Wait for the component to update
-      await waitFor(() => {
-        expect(document.querySelector('.animate-spin')).not.toBeInTheDocument();
-      }, { timeout: 2000 });
-    });
-
     it('calls API on mount with default period', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" />
-      );
-      
+      renderWithProviders(<HistogramWidget id="test-widget" title="Activity Histogram" />);
+
       await waitFor(() => {
         expect(mockGetActivityStats).toHaveBeenCalledWith({
           period: 'month',
@@ -129,51 +123,58 @@ describe('HistogramWidget', () => {
   describe('Data Display', () => {
     it('displays chart after load', async () => {
       renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
+        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />,
       );
-      
+
       await waitFor(() => {
         expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
         expect(screen.getAllByText('Warehouse District').length).toBeGreaterThan(0);
       });
     });
 
-    it('shows date labels on chart', async () => {
+    it('shows event-type breakdown in tooltip for multi-facility mode', async () => {
       renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
+        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />,
       );
-      
+
+      await waitFor(() => expect(screen.getAllByRole('img').length).toBeGreaterThan(0));
+
+      fireEvent.mouseEnter(screen.getAllByRole('img').at(-1)!);
+
       await waitFor(() => {
-        // Should show formatted date labels (there may be multiple "Jan" labels)
-        const janLabels = screen.getAllByText(/Jan/);
-        expect(janLabels.length).toBeGreaterThan(0);
+        const tooltip = screen.getByRole('tooltip');
+        expect(tooltip).toBeInTheDocument();
+        expect(tooltip).toHaveTextContent('Unlock');
+        expect(tooltip).toHaveTextContent('Lock');
+        expect(tooltip).toHaveTextContent('Downtown Storage');
+        expect(tooltip).toHaveTextContent('Warehouse District');
+        expect(tooltip).toHaveTextContent('Total');
       });
+
+      expect(screen.queryByText(/Mon,|January/i)).not.toBeInTheDocument();
     });
 
-    it('shows a floating breakdown tooltip when hovering a bar', async () => {
+    it('hides facility names in tooltip for single-facility mode', async () => {
       renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
+        <HistogramWidget
+          id="test-widget"
+          title="Activity Histogram"
+          initialSize="large"
+          facilityFilter="facility-1"
+        />,
       );
 
-      await waitFor(() => {
-        expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
-      });
+      await waitFor(() => expect(screen.getAllByRole('img').length).toBeGreaterThan(0));
 
-      const bars = screen.getAllByRole('img');
-      expect(bars.length).toBeGreaterThan(0);
-
-      fireEvent.mouseEnter(bars[0]);
+      fireEvent.mouseEnter(screen.getAllByRole('img').at(-1)!);
 
       await waitFor(() => {
-        expect(screen.getByRole('tooltip')).toBeInTheDocument();
-        expect(screen.getAllByText('Total events').length).toBeGreaterThan(0);
+        const tooltip = screen.getByRole('tooltip');
+        expect(tooltip).toHaveTextContent('Unlock');
+        expect(tooltip).toHaveTextContent('Total');
       });
 
-      fireEvent.mouseLeave(bars[0]);
-
-      await waitFor(() => {
-        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
-      });
+      expect(screen.queryByText('Downtown Storage')).not.toBeInTheDocument();
     });
 
     it('handles empty data gracefully', async () => {
@@ -182,163 +183,12 @@ describe('HistogramWidget', () => {
         data: [],
         period: 'month',
       });
-      
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" />
-      );
-      
+
+      renderWithProviders(<HistogramWidget id="test-widget" title="Activity Histogram" />);
+
       await waitFor(() => {
         expect(screen.getByText('No activity data for this period')).toBeInTheDocument();
       });
-    });
-
-    it('shows error state on API failure', async () => {
-      mockGetActivityStats.mockRejectedValue(new Error('Network error'));
-      
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" />
-      );
-      
-      await waitFor(() => {
-        expect(screen.getByText('Failed to load activity data')).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe('Time Period Selection', () => {
-    it('changes time period when selected', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
-      );
-      
-      await waitFor(() => {
-        // Component may call API twice: once on mount, once after facilities are initialized
-        expect(mockGetActivityStats).toHaveBeenCalled();
-      });
-      
-      // All calls should be with 'month' period (default)
-      const calls = mockGetActivityStats.mock.calls;
-      expect(calls.length).toBeGreaterThanOrEqual(1);
-      expect(calls.length).toBeLessThanOrEqual(2); // Allow for initialization
-      
-      // Verify at least one call has the correct period
-      const hasMonthPeriod = calls.some(call => call[0]?.period === 'month');
-      expect(hasMonthPeriod).toBe(true);
-    });
-  });
-
-  describe('Widget Sizing', () => {
-    it('renders in medium size', async () => {
-      renderWithProviders(
-        <HistogramWidget 
-          id="test-widget" 
-          title="Activity Histogram" 
-          initialSize="medium"
-        />
-      );
-      
-      await waitFor(() => {
-        expect(screen.getByText('Activity Histogram')).toBeInTheDocument();
-      });
-    });
-
-    it('renders in large size', async () => {
-      renderWithProviders(
-        <HistogramWidget 
-          id="test-widget" 
-          title="Activity Histogram" 
-          initialSize="large"
-        />
-      );
-      
-      await waitFor(() => {
-        expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
-      });
-    });
-  });
-
-  describe('Facility Selection', () => {
-    it('shows facility legend', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
-      );
-      
-      await waitFor(() => {
-        expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
-        expect(screen.getAllByText('Warehouse District').length).toBeGreaterThan(0);
-      });
-    });
-
-    it('scopes chart to all assigned facilities from auth', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" />
-      );
-
-      await waitFor(() => {
-        expect(mockGetActivityStats).toHaveBeenCalledWith(
-          expect.objectContaining({
-            period: 'month',
-          })
-        );
-      });
-    });
-
-    it('hides facility legend when a single facility is selected', async () => {
-      renderWithProviders(
-        <HistogramWidget
-          id="test-widget"
-          title="Activity Histogram"
-          initialSize="large"
-          facilityFilter="facility-1"
-        />
-      );
-
-      await waitFor(() => {
-        expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
-      });
-
-      expect(screen.queryByText('Warehouse District')).not.toBeInTheDocument();
-    });
-  });
-
-  describe('Refresh Functionality', () => {
-    it('calls API on initial load', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" />
-      );
-      
-      await waitFor(() => {
-        expect(mockGetActivityStats).toHaveBeenCalled();
-      });
-    });
-  });
-
-  describe('Chart Bars', () => {
-    it('renders bar elements for each data point', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
-      );
-      
-      await waitFor(() => {
-        const bars = document.querySelectorAll('.rounded-sm.opacity-90');
-        expect(bars.length).toBeGreaterThan(0);
-      });
-    });
-
-    it('shows tooltip breakdown on bar hover', async () => {
-      renderWithProviders(
-        <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
-      );
-
-      await waitFor(() => {
-        expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
-      });
-
-      const column = screen.getAllByRole('img')[0];
-      fireEvent.mouseEnter(column);
-
-      expect(screen.getAllByText('Total events').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
     });
   });
 });

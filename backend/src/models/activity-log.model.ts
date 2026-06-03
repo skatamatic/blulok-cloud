@@ -343,7 +343,15 @@ export class ActivityLogModel {
     endDate: Date;
     facilityIds?: string[];
     groupBy: 'hour' | 'day' | 'week';
-  }): Promise<Array<{ date: string; facility_id: string; facility_name: string; activity_count: number }>> {
+  }): Promise<
+    Array<{
+      date: string;
+      facility_id: string;
+      facility_name: string;
+      activity_type: ActivityType;
+      activity_count: number;
+    }>
+  > {
     const knex = this.db.connection;
 
     let dateTrunc: string;
@@ -366,6 +374,7 @@ export class ActivityLogModel {
         knex.raw(`${dateTrunc} as date`),
         knex.raw('COALESCE(activity_logs.facility_id, units.facility_id) as facility_id'),
         'facilities.name as facility_name',
+        'activity_logs.activity_type as activity_type',
         knex.raw('COUNT(*) as activity_count'),
       )
       .leftJoin('facilities', function (this: import('knex').Knex.JoinClause) {
@@ -374,7 +383,9 @@ export class ActivityLogModel {
       .whereIn('activity_logs.activity_type', DASHBOARD_ACTIVITY_TYPES)
       .whereBetween('activity_logs.occurred_at', [options.startDate, options.endDate])
       .whereRaw('COALESCE(activity_logs.facility_id, units.facility_id) IS NOT NULL')
-      .groupByRaw(`${dateTrunc}, COALESCE(activity_logs.facility_id, units.facility_id), facilities.name`)
+      .groupByRaw(
+        `${dateTrunc}, COALESCE(activity_logs.facility_id, units.facility_id), facilities.name, activity_logs.activity_type`,
+      )
       .orderByRaw(`${dateTrunc} ASC, facilities.name ASC`);
 
     if (options.facilityIds && options.facilityIds.length > 0) {
@@ -390,6 +401,7 @@ export class ActivityLogModel {
       date: ActivityLogModel.formatStatsBucketDate(row.date, options.groupBy),
       facility_id: row.facility_id,
       facility_name: row.facility_name || 'Unknown Facility',
+      activity_type: row.activity_type,
       activity_count: parseInt(row.activity_count, 10) || 0,
     }));
   }

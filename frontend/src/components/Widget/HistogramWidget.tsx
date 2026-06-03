@@ -14,12 +14,21 @@ import { useDashboardFacilityScope, DASHBOARD_FACILITY_SCOPE_LIMIT } from '@/hoo
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
 import { getWidgetLayoutProfile, WIDGET_BODY_CLASS } from '@/utils/widget-layout.utils';
+import {
+  getHistogramTypeBreakdown,
+  type HistogramActivityType,
+} from '@/utils/histogram-activity-type.utils';
+import {
+  buildHistogramChartEntries,
+  shouldShowHistogramAxisLabel,
+} from '@/utils/histogram-timeline.utils';
 
 interface HistogramData {
   date: string;
   facilityId: string;
   facilityName: string;
   activityCount: number;
+  byType: Partial<Record<HistogramActivityType, number>>;
 }
 
 interface HistogramWidgetProps {
@@ -99,41 +108,75 @@ function formatDateLabel(dateStr: string, timePeriod: TimePeriod, detailed = fal
 }
 
 function HistogramBarTooltipContent({
-  date,
   dayData,
-  timePeriod,
+  singleFacilityMode,
   colorIndex,
 }: {
-  date: string;
   dayData: HistogramData[];
-  timePeriod: TimePeriod;
+  singleFacilityMode: boolean;
   colorIndex: (facilityId: string) => number;
 }) {
   const total = dayData.reduce((sum, item) => sum + item.activityCount, 0);
-  const rows = [...dayData].sort((a, b) => b.activityCount - a.activityCount);
+  const facilities = [...dayData].sort((a, b) => b.activityCount - a.activityCount);
 
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
-      <p className="text-xs font-semibold text-gray-900 dark:text-white">
-        {formatDateLabel(date, timePeriod, true)}
-      </p>
-      <ul className="mt-2 space-y-1.5">
-        {rows.map((item) => (
-          <li key={item.facilityId} className="flex items-center justify-between gap-3 text-xs">
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span
-                className={`h-2 w-2 shrink-0 rounded-sm ${facilityColors[colorIndex(item.facilityId) % facilityColors.length]}`}
-              />
-              <span className="truncate text-gray-600 dark:text-gray-300">{item.facilityName}</span>
-            </span>
-            <span className="shrink-0 tabular-nums font-medium text-gray-900 dark:text-white">
-              {item.activityCount}
-            </span>
+  const TypeRows = ({ byType, activityCount }: { byType: HistogramData['byType']; activityCount: number }) => {
+    const rows = getHistogramTypeBreakdown(byType);
+    const displayRows =
+      rows.length > 0
+        ? rows
+        : activityCount > 0
+          ? [{ type: 'access_attempt' as HistogramActivityType, label: 'Activity', count: activityCount }]
+          : [];
+
+    return (
+      <ul className="mt-1.5 space-y-1">
+        {displayRows.map((row) => (
+          <li key={row.type} className="flex items-center justify-between gap-4 text-xs">
+            <span className="text-gray-600 dark:text-gray-300">{row.label}</span>
+            <span className="shrink-0 tabular-nums font-medium text-gray-900 dark:text-white">{row.count}</span>
           </li>
         ))}
       </ul>
+    );
+  };
+
+  if (singleFacilityMode) {
+    const facility = facilities[0];
+    if (!facility) return null;
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
+        <TypeRows byType={facility.byType} activityCount={facility.activityCount} />
+        <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 text-xs dark:border-gray-700">
+          <span className="text-gray-500 dark:text-gray-400">Total</span>
+          <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{total}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
+      <div className="flex divide-x divide-gray-100 dark:divide-gray-700">
+        {facilities.map((facility) => (
+          <div key={facility.facilityId} className="min-w-[108px] px-3 first:pl-0 last:pr-0">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={`h-2 w-2 shrink-0 rounded-sm ${facilityColors[colorIndex(facility.facilityId) % facilityColors.length]}`}
+              />
+              <span className="truncate text-xs font-semibold text-gray-900 dark:text-white" title={facility.facilityName}>
+                {facility.facilityName}
+              </span>
+            </div>
+            <TypeRows byType={facility.byType} activityCount={facility.activityCount} />
+            <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-1.5 text-[11px] dark:border-gray-700">
+              <span className="text-gray-500 dark:text-gray-400">Subtotal</span>
+              <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{facility.activityCount}</span>
+            </div>
+          </div>
+        ))}
+      </div>
       <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 text-xs dark:border-gray-700">
-        <span className="text-gray-500 dark:text-gray-400">Total events</span>
+        <span className="text-gray-500 dark:text-gray-400">Total</span>
         <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{total}</span>
       </div>
     </div>
@@ -141,11 +184,40 @@ function HistogramBarTooltipContent({
 }
 
 type HistogramTooltipState = {
-  date: string;
   dayData: HistogramData[];
   anchorX: number;
   anchorY: number;
 };
+
+function mergeActivityStatsRows(
+  rows: ActivityStatsResponse['data'],
+): HistogramData[] {
+  const merged = new Map<string, HistogramData>();
+
+  for (const row of rows) {
+    const date = normalizeHistogramDateKey(row.date);
+    const key = `${date}|${row.facility_id}`;
+    let entry = merged.get(key);
+    if (!entry) {
+      entry = {
+        date,
+        facilityId: row.facility_id,
+        facilityName: row.facility_name,
+        activityCount: 0,
+        byType: {},
+      };
+      merged.set(key, entry);
+    }
+
+    entry.activityCount += row.activity_count;
+    if (row.activity_type) {
+      const type = row.activity_type as HistogramActivityType;
+      entry.byType[type] = (entry.byType[type] ?? 0) + row.activity_count;
+    }
+  }
+
+  return Array.from(merged.values());
+}
 const timePeriodLabels: Record<TimePeriod, string> = {
   day: 'Last 24 Hours',
   week: 'Last Week',
@@ -172,9 +244,11 @@ interface ActivityStatsResponse {
     date: string;
     facility_id: string;
     facility_name: string;
+    activity_type?: HistogramActivityType;
     activity_count: number;
   }>;
   period: string;
+  endDate?: string;
 }
 
 export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
@@ -198,16 +272,11 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<HistogramTooltipState | null>(null);
+  const [statsAnchorDate, setStatsAnchorDate] = useState<Date>(() => new Date());
 
   const showBarTooltip = useCallback(
-    (date: string, dayData: HistogramData[], target: HTMLElement) => {
-      const rect = target.getBoundingClientRect();
-      setTooltip({
-        date,
-        dayData,
-        anchorX: rect.left + rect.width / 2,
-        anchorY: rect.top,
-      });
+    (dayData: HistogramData[], anchorX: number, anchorY: number) => {
+      setTooltip({ dayData, anchorX, anchorY });
     },
     [],
   );
@@ -239,6 +308,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   const legendFacilities = useMemo(() => chartFacilities.slice(0, MAX_LEGEND_FACILITIES), [chartFacilities]);
   const legendOverflow = Math.max(0, chartFacilities.length - MAX_LEGEND_FACILITIES);
   const showFacilityLegend = !facilityFilter && chartFacilities.length > 1;
+  const singleFacilityMode = chartFacilities.length <= 1;
 
   const facilityColorIndex = useCallback(
     (facilityId: string) => {
@@ -257,14 +327,10 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
         facility_ids: facilityIdsForApi,
       });
       if (response.success && response.data) {
-        setHistogramData(
-          response.data.map((item) => ({
-            date: normalizeHistogramDateKey(item.date),
-            facilityId: item.facility_id,
-            facilityName: item.facility_name,
-            activityCount: item.activity_count,
-          }))
-        );
+        setHistogramData(mergeActivityStatsRows(response.data));
+        if (response.endDate) {
+          setStatsAnchorDate(new Date(response.endDate));
+        }
       } else {
         setHistogramData([]);
       }
@@ -295,39 +361,62 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     return grouped;
   }, [histogramData, facilityIdsForApi]);
 
-  const maxValue = useMemo(() => {
-    const totals = Object.values(groupedData).map((dayData) =>
-      dayData.reduce((sum, item) => sum + item.activityCount, 0)
-    );
-    return Math.max(...totals, 1);
-  }, [groupedData]);
-
   const chartEntries = useMemo(
-    () => Object.entries(groupedData).sort(([a], [b]) => a.localeCompare(b)).slice(-20),
-    [groupedData],
+    () => buildHistogramChartEntries(timePeriod, groupedData, statsAnchorDate),
+    [groupedData, timePeriod, statsAnchorDate],
+  );
+
+  const slotCount = chartEntries.length;
+  const chartGridStyle = useMemo(
+    () => ({ gridTemplateColumns: `repeat(${slotCount}, minmax(0, 1fr))` }),
+    [slotCount],
   );
 
   const layout = getWidgetLayoutProfile(size);
-  const barAreaHeightPx = layout.isDock
-    ? 96
+  const minChartHeightPx = layout.isDock
+    ? 88
     : layout.isTall
-      ? 220
+      ? 200
       : layout.density === 'micro' || layout.density === 'compact'
-        ? 128
-        : 176;
+        ? 120
+        : 160;
 
-  const getBarHeightPx = (value: number): number => {
-    if (value <= 0) return 0;
-    return Math.max(3, Math.round((value / maxValue) * barAreaHeightPx));
-  };
+  const maxValue = useMemo(() => {
+    const totals = chartEntries.map(([, dayData]) =>
+      dayData.reduce((sum, item) => sum + item.activityCount, 0),
+    );
+    return Math.max(...totals, 1);
+  }, [chartEntries]);
 
-  const chartAreaClass = layout.isDock
-    ? 'h-24 flex-shrink-0'
-    : layout.isTall
-      ? 'flex-1 min-h-0'
-      : layout.density === 'micro' || layout.density === 'compact'
-        ? 'h-32 flex-shrink-0'
-        : 'h-48 flex-shrink-0';
+  const getBarHeightPercent = useCallback(
+    (value: number): number => {
+      if (value <= 0) return 0;
+      return Math.max(2, (value / maxValue) * 100);
+    },
+    [maxValue],
+  );
+
+  const getStackHeightPercent = useCallback(
+    (dayData: HistogramData[]): number =>
+      dayData.reduce((sum, item) => sum + getBarHeightPercent(item.activityCount), 0),
+    [getBarHeightPercent],
+  );
+
+  const positionBarTooltip = useCallback(
+    (dayData: HistogramData[], column: HTMLElement) => {
+      const stack = column.querySelector('[data-bar-stack]');
+      if (!stack) return;
+      const stackRect = stack.getBoundingClientRect();
+      const stackHeightPercent = getStackHeightPercent(dayData);
+      const stackPixelHeight = (stackHeightPercent / 100) * stackRect.height;
+      showBarTooltip(
+        dayData,
+        stackRect.left + stackRect.width / 2,
+        stackRect.bottom - stackPixelHeight,
+      );
+    },
+    [showBarTooltip, getStackHeightPercent],
+  );
 
   return (
     <Widget
@@ -401,51 +490,98 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
             <p className="text-sm text-gray-500 dark:text-gray-400">No activity data for this period</p>
           </div>
         ) : (
-          <>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 shrink-0">
-              Lock, unlock, and access activity by facility
-            </p>
-            <div className={`${chartAreaClass} flex min-h-0 flex-col`}>
+          <div className="flex flex-1 min-h-0 flex-col">
+            <div className="relative flex flex-1 min-h-0 flex-col rounded-lg border border-gray-200/80 bg-gradient-to-b from-gray-50/70 to-white px-2 pb-1.5 pt-2 dark:border-gray-700/80 dark:from-gray-900/35 dark:to-transparent">
+              {showFacilityLegend && (
+                <div className="absolute right-2 top-1.5 z-10 flex max-w-[72%] flex-wrap items-center justify-end gap-x-2.5 gap-y-0.5 rounded-md border border-gray-200/60 bg-white/85 px-2 py-1 shadow-sm backdrop-blur-sm dark:border-gray-600/60 dark:bg-gray-900/85">
+                  {legendFacilities.map((facility, index) => (
+                    <div key={facility.id} className="flex items-center gap-1">
+                      <div className={`h-2 w-2 rounded-sm ${facilityColors[index % facilityColors.length]}`} />
+                      <span className="text-[10px] text-gray-600 dark:text-gray-300 truncate max-w-[96px]">
+                        {facility.name}
+                      </span>
+                    </div>
+                  ))}
+                  {legendOverflow > 0 && (
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                      +{legendOverflow}
+                    </span>
+                  )}
+                </div>
+              )}
               <div
-                className="relative flex flex-1 items-end gap-0.5 border-b border-gray-200/80 px-1 dark:border-gray-700/80"
-                style={{ minHeight: barAreaHeightPx }}
+                className="relative grid flex-1 w-full items-end gap-px"
+                style={{ ...chartGridStyle, minHeight: minChartHeightPx }}
               >
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 top-0 bottom-5 flex flex-col justify-between"
+                >
+                  {[0, 1, 2, 3].map((line) => (
+                    <div
+                      key={line}
+                      className="border-t border-gray-200/50 dark:border-gray-700/50"
+                    />
+                  ))}
+                </div>
+
                 {chartEntries.map(([date, dayData], index) => {
                   const totalEvents = dayData.reduce((sum, item) => sum + item.activityCount, 0);
+                  const hasData = totalEvents > 0;
+
                   return (
                     <div
                       key={date}
-                      className="relative flex h-full min-w-0 max-w-10 flex-1 flex-col items-center justify-end hover:z-10 focus-within:z-10"
-                      tabIndex={0}
-                      role="img"
-                      aria-label={`${formatDateLabel(date, timePeriod, true)}: ${totalEvents} events`}
-                      onMouseEnter={(e) => showBarTooltip(date, dayData, e.currentTarget)}
-                      onMouseLeave={hideBarTooltip}
-                      onFocus={(e) => showBarTooltip(date, dayData, e.currentTarget)}
-                      onBlur={hideBarTooltip}
+                      className={`relative flex h-full min-w-0 flex-col justify-end ${
+                        hasData ? 'hover:z-10 focus-within:z-10' : ''
+                      }`}
+                      tabIndex={hasData ? 0 : -1}
+                      role={hasData ? 'img' : undefined}
+                      aria-label={
+                        hasData
+                          ? `${formatDateLabel(date, timePeriod, true)}: ${totalEvents} events`
+                          : undefined
+                      }
+                      onMouseEnter={
+                        hasData
+                          ? (e) => positionBarTooltip(dayData, e.currentTarget)
+                          : undefined
+                      }
+                      onMouseLeave={hasData ? hideBarTooltip : undefined}
+                      onFocus={
+                        hasData
+                          ? (e) => positionBarTooltip(dayData, e.currentTarget)
+                          : undefined
+                      }
+                      onBlur={hasData ? hideBarTooltip : undefined}
                     >
                       <div
-                        className="flex w-full flex-col justify-end gap-px"
-                        style={{ height: barAreaHeightPx }}
+                        data-bar-stack
+                        className="flex h-full w-full flex-col justify-end gap-px px-px"
                       >
-                        {dayData.map((item) => (
-                          <motion.div
-                            key={`${item.facilityId}-${date}`}
-                            initial={{ height: 0 }}
-                            animate={{ height: getBarHeightPx(item.activityCount) }}
-                            transition={{ duration: 0.4, delay: index * 0.03 }}
-                            className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90 transition-opacity hover:opacity-100`}
-                          />
-                        ))}
+                        {hasData ? (
+                          dayData.map((item) => (
+                            <motion.div
+                              key={`${item.facilityId}-${date}`}
+                              initial={{ height: 0 }}
+                              animate={{ height: `${getBarHeightPercent(item.activityCount)}%` }}
+                              transition={{ duration: 0.35, delay: index * 0.015 }}
+                              className={`w-full min-h-[2px] ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90 transition-opacity hover:opacity-100`}
+                            />
+                          ))
+                        ) : (
+                          <div className="h-0.5 w-full rounded-full bg-gray-200/60 dark:bg-gray-700/60" />
+                        )}
                       </div>
                     </div>
                   );
                 })}
               </div>
+
               {tooltip &&
                 createPortal(
                   <div
-                    className="pointer-events-none fixed z-[9999] w-max max-w-[240px]"
+                    className={`pointer-events-none fixed z-[9999] w-max ${singleFacilityMode ? 'max-w-[220px]' : 'max-w-[min(92vw,640px)]'}`}
                     style={{
                       left: tooltip.anchorX,
                       top: tooltip.anchorY,
@@ -454,20 +590,27 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                     role="tooltip"
                   >
                     <HistogramBarTooltipContent
-                      date={tooltip.date}
                       dayData={tooltip.dayData}
-                      timePeriod={timePeriod}
+                      singleFacilityMode={singleFacilityMode}
                       colorIndex={facilityColorIndex}
                     />
                     <div className="mx-auto mt-[-1px] h-2 w-2 rotate-45 border-b border-r border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-900" />
                   </div>,
                   document.body,
                 )}
-              <div className="mt-1.5 flex shrink-0 gap-0.5 px-1">
-                {chartEntries.map(([date]) => (
+
+              <div
+                className="mt-1.5 grid w-full gap-px border-t border-gray-200/60 pt-1 dark:border-gray-700/60"
+                style={chartGridStyle}
+              >
+                {chartEntries.map(([date], index) => (
                   <span
                     key={`label-${date}`}
-                    className="min-w-0 max-w-10 flex-1 truncate text-center text-[10px] leading-tight text-gray-500 dark:text-gray-400 sm:text-[11px]"
+                    className={`min-w-0 truncate text-center text-[9px] leading-tight sm:text-[10px] ${
+                      shouldShowHistogramAxisLabel(index, slotCount, timePeriod)
+                        ? 'text-gray-500 dark:text-gray-400'
+                        : 'text-transparent select-none'
+                    }`}
                     title={formatDateLabel(date, timePeriod, true)}
                   >
                     {formatDateLabel(date, timePeriod)}
@@ -475,26 +618,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                 ))}
               </div>
             </div>
-            {showFacilityLegend && (
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-600 shrink-0">
-              <div className="flex flex-wrap gap-2 max-h-16 overflow-y-auto">
-                {legendFacilities.map((facility, index) => (
-                  <div key={facility.id} className="flex items-center space-x-1">
-                    <div className={`h-3 w-3 rounded-sm ${facilityColors[index % facilityColors.length]}`} />
-                    <span className="text-xs text-gray-600 dark:text-gray-300 truncate max-w-[120px]">
-                      {facility.name}
-                    </span>
-                  </div>
-                ))}
-                {legendOverflow > 0 && (
-                  <span className="text-xs text-gray-500 dark:text-gray-400 self-center">
-                    +{legendOverflow} more
-                  </span>
-                )}
-              </div>
-            </div>
-            )}
-          </>
+          </div>
         )}
       </div>
     </Widget>

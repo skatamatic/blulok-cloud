@@ -224,6 +224,9 @@ describe('ActivityLogModel', () => {
         'activity_logs.activity_type',
         ['access_attempt', 'lock', 'unlock', 'locking', 'unlocking'],
       );
+      expect(mockQueryBuilder.groupByRaw).toHaveBeenCalledWith(
+        expect.stringContaining('activity_logs.activity_type'),
+      );
     });
   });
 
