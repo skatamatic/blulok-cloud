@@ -4,6 +4,7 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import UnitDetailsPage from '@/pages/UnitDetailsPage';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
@@ -19,6 +20,11 @@ jest.mock('@/services/api.service', () => ({
 jest.mock('@/contexts/AuthContext', () => ({
   ...jest.requireActual('@/contexts/AuthContext'),
   useAuth: jest.fn(),
+}));
+
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  ...jest.requireActual('@/contexts/GlobalFacilityContext'),
+  useGlobalFacility: jest.fn(),
 }));
 
 jest.mock('@/contexts/WebSocketContext', () => ({
@@ -66,6 +72,7 @@ jest.mock('react-router-dom', () => ({
 
 const mockApiService = apiService as jest.Mocked<typeof apiService>;
 const mockUseAuth = useAuth as jest.Mock;
+const mockUseGlobalFacility = useGlobalFacility as jest.Mock;
 
 const adminUser = {
   id: 'admin-1',
@@ -118,6 +125,16 @@ const unitWithoutPrimary = {
 describe('UnitDetailsPage shared access', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseGlobalFacility.mockReturnValue({
+      facilities: [{ id: 'facility-1', name: 'Main Facility', lock_command_timeout_sec: 10 }],
+      selectedFacilityId: 'facility-1',
+      selectedFacility: { id: 'facility-1', name: 'Main Facility', lock_command_timeout_sec: 10 },
+      isAllFacilitiesSelected: false,
+      isLoading: false,
+      hasMultipleFacilities: false,
+      setSelectedFacilityId: jest.fn(),
+      refreshFacilities: jest.fn(),
+    });
     mockApiService.assignTenantToUnit.mockResolvedValue({ success: true } as any);
     mockApiService.removeTenantFromUnit.mockResolvedValue({ success: true } as any);
     mockApiService.getDeviceGroups.mockResolvedValue({ data: [] } as any);

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { SidebarProvider } from '@/contexts/SidebarContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
+import { ToastProvider } from '@/contexts/ToastContext';
 import UnitsManagementPage from '@/pages/UnitsManagementPage';
 
 // Mock react-router-dom
@@ -91,11 +92,13 @@ const renderWithProviders = (component: React.ReactElement) => {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <ThemeProvider>
-          <SidebarProvider>
-            <DropdownProvider>
-              {component}
-            </DropdownProvider>
-          </SidebarProvider>
+          <ToastProvider>
+            <SidebarProvider>
+              <DropdownProvider>
+                {component}
+              </DropdownProvider>
+            </SidebarProvider>
+          </ToastProvider>
         </ThemeProvider>
       </BrowserRouter>
     </QueryClientProvider>

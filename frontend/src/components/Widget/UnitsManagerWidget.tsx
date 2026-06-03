@@ -982,7 +982,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
   const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
-  const { isAllFacilitiesSelected } = useGlobalFacility();
+  const { isAllFacilitiesSelected, facilities: globalFacilities } = useGlobalFacility();
   const isAllFacilitiesMode = isAllFacilitiesSelected && !facilityFilter;
 
   useEffect(() => {

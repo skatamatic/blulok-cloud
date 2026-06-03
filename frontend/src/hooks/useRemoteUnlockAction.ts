@@ -121,7 +121,7 @@ export function useRemoteUnlockAction(options?: UseRemoteUnlockActionOptions) {
     requestUnlock,
     syncLockStatus,
     submittingKey,
-    isSubmitting: (key: string) => submittingKey === key,
+    isSubmitting: (key: string | null | undefined) => Boolean(key) && submittingKey === key,
     cancelWatch: clearWatch,
   };
 }

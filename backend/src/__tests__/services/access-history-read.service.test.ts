@@ -16,15 +16,15 @@ describe('AccessHistoryReadService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    (ActivityLogModel as jest.Mock).mockImplementation(() => ({
+    (ActivityLogModel as unknown as jest.Mock).mockImplementation(() => ({
       findWithContext: mockFindWithContext,
       count: mockCount,
       findById: mockFindById,
     }));
-    (AccessEventScopeService as jest.Mock).mockImplementation(() => ({
+    (AccessEventScopeService as unknown as jest.Mock).mockImplementation(() => ({
       buildScope: mockBuildScope,
     }));
-    (AccessLogModel as jest.Mock).mockImplementation(() => ({
+    (AccessLogModel as unknown as jest.Mock).mockImplementation(() => ({
       findById: jest.fn().mockResolvedValue(null),
       findAll: jest.fn(),
     }));

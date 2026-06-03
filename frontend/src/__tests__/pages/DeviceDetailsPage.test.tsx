@@ -4,6 +4,7 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import DeviceDetailsPage from '@/pages/DeviceDetailsPage';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 
 const mockNavigate = jest.fn();
 
@@ -13,6 +14,11 @@ const mockApiService = apiService as jest.Mocked<typeof apiService>;
 jest.mock('@/contexts/AuthContext', () => ({
   ...jest.requireActual('@/contexts/AuthContext'),
   useAuth: jest.fn(),
+}));
+
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  ...jest.requireActual('@/contexts/GlobalFacilityContext'),
+  useGlobalFacility: jest.fn(),
 }));
 
 // Mock WebSocket context
@@ -159,6 +165,17 @@ describe('DeviceDetailsPage', () => {
       success: true,
       message: 'Lock removed from cloud inventory',
     } as never);
+
+    (useGlobalFacility as jest.Mock).mockReturnValue({
+      facilities: [{ id: 'facility-1', name: 'Main Facility', lock_command_timeout_sec: 10 }],
+      selectedFacilityId: 'facility-1',
+      selectedFacility: { id: 'facility-1', name: 'Main Facility', lock_command_timeout_sec: 10 },
+      isAllFacilitiesSelected: false,
+      isLoading: false,
+      hasMultipleFacilities: false,
+      setSelectedFacilityId: jest.fn(),
+      refreshFacilities: jest.fn(),
+    });
   });
 
   it('renders device overview tab by default', async () => {

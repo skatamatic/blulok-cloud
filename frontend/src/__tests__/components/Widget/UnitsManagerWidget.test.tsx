@@ -118,6 +118,7 @@ describe('UnitsManagerWidget', () => {
     mockNavigate.mockReset();
     mockUseGlobalFacility.mockReturnValue({
       isAllFacilitiesSelected: false,
+      facilities: [{ id: 'fac-1', name: 'Riverside', lock_command_timeout_sec: 10 }],
     });
     mockGetUnits.mockResolvedValue(sampleUnits);
     mockGetUnitAccessHistory.mockResolvedValue({ logs: [] });
@@ -196,7 +197,9 @@ describe('UnitsManagerWidget', () => {
       fireEvent.click(btn);
     });
 
-    expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
+    await waitFor(() => {
+      expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
+    });
   });
 
   it('filters by device serial in search', async () => {
