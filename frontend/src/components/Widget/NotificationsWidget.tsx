@@ -11,9 +11,9 @@ import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
+import { useDashboardFacilityScope } from '@/hooks/useDashboardFacilityScope';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
-import { useAuth } from '@/contexts/AuthContext';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
   mapApiNotificationToDashboardView,
@@ -46,6 +46,8 @@ type WsNotificationEvent = {
   payload?: unknown;
 };
 
+const NOTIFICATION_PAGE_SIZE = 100;
+
 function toApiNotification(
   n: UserNotificationApi | Record<string, unknown>
 ): UserNotificationApi {
@@ -65,27 +67,6 @@ function toApiNotification(
   };
 }
 
-function matchesFacilityFilter(
-  n: UserNotificationApi,
-  facilityFilter: string | undefined,
-  allowedFacilityIds: string[] | undefined,
-  canAccessAllFacilities: boolean,
-): boolean {
-  if (facilityFilter) {
-    return n.facilityId === facilityFilter;
-  }
-  if (canAccessAllFacilities) {
-    return true;
-  }
-  if (!n.facilityId) {
-    return false;
-  }
-  if (!allowedFacilityIds?.length) {
-    return false;
-  }
-  return allowedFacilityIds.includes(n.facilityId);
-}
-
 export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   id,
   title,
@@ -98,37 +79,26 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   readOnly,
   facilityFilter,
 }) => {
-  const { authState } = useAuth();
-  const canAccessAllFacilities =
-    authState.user?.role === 'admin' || authState.user?.role === 'dev_admin';
-  const allowedFacilityIds = authState.user?.facilityIds;
-
-  const notificationWsFilters = useMemo(() => {
-    if (facilityFilter) {
-      return { facilityId: facilityFilter };
-    }
-    if (!canAccessAllFacilities && allowedFacilityIds?.length) {
-      return { facilityIds: allowedFacilityIds };
-    }
-    return undefined;
-  }, [facilityFilter, canAccessAllFacilities, allowedFacilityIds]);
-
-  const matchesScope = useCallback(
-    (n: UserNotificationApi) =>
-      matchesFacilityFilter(n, facilityFilter, allowedFacilityIds, canAccessAllFacilities),
-    [facilityFilter, allowedFacilityIds, canAccessAllFacilities],
-  );
+  const { wsFilters, matchesFacilityScope } = useDashboardFacilityScope(facilityFilter);
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
     initialSize,
     onSizeChange
   );
   const [rows, setRows] = useState<DisplayNotification[]>([]);
+  const [totalAvailable, setTotalAvailable] = useState(0);
+  const [loadedOffset, setLoadedOffset] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'unread' | 'actionRequired'>('unread');
+  const [filter, setFilter] = useState<'all' | 'unread' | 'actionRequired'>('all');
 
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
+
+  const matchesScope = useCallback(
+    (n: UserNotificationApi) => matchesFacilityScope(n.facilityId),
+    [matchesFacilityScope],
+  );
 
   const mergeById = useCallback((incoming: UserNotificationApi[]) => {
     setRows((prev) => {
@@ -145,39 +115,77 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     });
   }, [matchesScope]);
 
-  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
-    const silent = opts?.silent === true;
-    if (!silent) setError(null);
-    try {
-      const response = await apiService.getNotifications({
-        facilityId: facilityFilter,
-        limit: 50,
-        offset: 0,
-      });
-      if (response.success && response.notifications) {
-        const mapped = response.notifications
-          .filter((n) => matchesScope(n))
-          .map(mapApiNotificationToDashboardView);
-        setRows(mapped);
-      } else {
-        setRows([]);
+  const loadNotifications = useCallback(
+    async (opts?: { silent?: boolean; append?: boolean; offset?: number }) => {
+      const silent = opts?.silent === true;
+      const append = opts?.append === true;
+      const offset = opts?.offset ?? 0;
+
+      if (append) {
+        setIsLoadingMore(true);
+      } else if (!silent) {
+        setError(null);
       }
-    } catch (err) {
-      console.error('Failed to load notifications:', err);
-      if (!silent) {
-        setError('Failed to load notifications');
-        setRows([]);
+
+      try {
+        const response = await apiService.getNotifications({
+          facilityId: facilityFilter,
+          includeExpired: true,
+          limit: NOTIFICATION_PAGE_SIZE,
+          offset,
+        });
+        if (response.success && response.notifications) {
+          const mapped = response.notifications
+            .filter((n) => matchesScope(n))
+            .map(mapApiNotificationToDashboardView);
+
+          setTotalAvailable(response.total);
+          setLoadedOffset(offset + response.notifications.length);
+
+          if (append) {
+            setRows((prev) => {
+              const map = new Map<string, DisplayNotification>();
+              prev.forEach((p) => map.set(p.id, p));
+              mapped.forEach((n) => map.set(n.id, n));
+              return Array.from(map.values()).sort(
+                (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+              );
+            });
+          } else {
+            setRows(mapped);
+          }
+        } else if (!append) {
+          setRows([]);
+          setTotalAvailable(0);
+          setLoadedOffset(0);
+        }
+      } catch (err) {
+        console.error('Failed to load notifications:', err);
+        if (!silent && !append) {
+          setError('Failed to load notifications');
+          setRows([]);
+          setTotalAvailable(0);
+          setLoadedOffset(0);
+        }
+      } finally {
+        if (!silent && !append) {
+          setIsLoading(false);
+        }
+        if (append) {
+          setIsLoadingMore(false);
+        }
       }
-    } finally {
-      if (!silent) setIsLoading(false);
-    }
-  }, [facilityFilter, matchesScope]);
+    },
+    [facilityFilter, matchesScope]
+  );
 
   useEffect(() => {
     setRows([]);
+    setTotalAvailable(0);
+    setLoadedOffset(0);
     setIsLoading(true);
-    loadNotifications();
-  }, [loadNotifications]);
+    void loadNotifications({ offset: 0 });
+  }, [facilityFilter, matchesScope, loadNotifications]);
 
   const handleWs = useCallback(
     (message: WsNotificationEvent) => {
@@ -231,7 +239,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           break;
         }
         case 'notifications_count_update':
-          void loadNotifications({ silent: true });
+          void loadNotifications({ silent: true, offset: 0 });
           break;
         case 'notification_deleted': {
           const nid = data?.notificationId as string | undefined;
@@ -248,9 +256,9 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
 
   useEffect(() => {
     if (!isConnected) return;
-    const subId = subscribe('notifications', handleWs, undefined, notificationWsFilters);
+    const subId = subscribe('notifications', handleWs, undefined, wsFilters);
     return () => unsubscribe(subId);
-  }, [subscribe, unsubscribe, isConnected, handleWs, notificationWsFilters]);
+  }, [subscribe, unsubscribe, isConnected, handleWs, wsFilters]);
 
   const markAsRead = async (notificationId: string) => {
     try {
@@ -287,8 +295,15 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
 
   const handleRefresh = async () => {
     setIsLoading(true);
-    await loadNotifications({ silent: false });
+    await loadNotifications({ silent: false, offset: 0 });
   };
+
+  const handleLoadMore = async () => {
+    if (isLoadingMore || loadedOffset >= totalAvailable) return;
+    await loadNotifications({ append: true, offset: loadedOffset });
+  };
+
+  const hasMoreNotifications = loadedOffset < totalAvailable;
 
   const layout = getWidgetLayoutProfile(size);
 
@@ -554,6 +569,19 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             </div>
           )
         ) : null}
+
+        {hasMoreNotifications && displayedNotifications.length > 0 && (
+          <div className="mt-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleLoadMore}
+              disabled={isLoadingMore}
+              className="w-full rounded-lg border border-gray-200 bg-white py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {isLoadingMore ? 'Loading…' : `Load more (${totalAvailable - loadedOffset} remaining)`}
+            </button>
+          </div>
+        )}
 
         {(size === 'medium-tall' || size === 'large' || size === 'huge' || size.includes('wide')) &&
           unreadCount > 0 && (

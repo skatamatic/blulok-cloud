@@ -9,6 +9,7 @@ import {
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
+import { useDashboardFacilityScope, DASHBOARD_FACILITY_SCOPE_LIMIT } from '@/hooks/useDashboardFacilityScope';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
 import { getWidgetLayoutProfile, WIDGET_BODY_CLASS } from '@/utils/widget-layout.utils';
@@ -35,7 +36,7 @@ interface HistogramWidgetProps {
 
 type TimePeriod = 'day' | 'week' | 'month' | 'year';
 
-const MAX_HISTOGRAM_FACILITIES = 50;
+const MAX_HISTOGRAM_FACILITIES = DASHBOARD_FACILITY_SCOPE_LIMIT;
 const MAX_LEGEND_FACILITIES = 8;
 
 const timePeriodLabels: Record<TimePeriod, string> = {
@@ -82,18 +83,13 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   facilityFilter,
 }) => {
   const { authState } = useAuth();
+  const { facilityIdsForApi } = useDashboardFacilityScope(facilityFilter);
   const { size, handleSizeChange } = useWidgetSizeState(currentSize, initialSize, onSizeChange);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('month');
   const [showTimePeriodDropdown, setShowTimePeriodDropdown] = useState(false);
   const [histogramData, setHistogramData] = useState<HistogramData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const facilityIdsForApi = useMemo(() => {
-    if (facilityFilter) return [facilityFilter];
-    const ids = authState.user?.facilityIds?.slice(0, MAX_HISTOGRAM_FACILITIES);
-    return ids?.length ? ids : undefined;
-  }, [facilityFilter, authState.user?.facilityIds]);
 
   const chartFacilities = useMemo(() => {
     const fromAuth =

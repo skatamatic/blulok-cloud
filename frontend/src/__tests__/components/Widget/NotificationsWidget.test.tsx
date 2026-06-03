@@ -116,11 +116,15 @@ describe('NotificationsWidget', () => {
     mockMarkAllNotificationsRead.mockResolvedValue({ success: true, markedCount: 2 });
   });
 
-  it('loads from notifications API', async () => {
+  it('loads from notifications API with historical scope', async () => {
     renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
     await waitFor(() => {
       expect(mockGetNotifications).toHaveBeenCalledWith(
-        expect.objectContaining({ limit: 50, offset: 0 })
+        expect.objectContaining({
+          limit: 100,
+          offset: 0,
+          includeExpired: true,
+        })
       );
     });
   });
@@ -137,14 +141,10 @@ describe('NotificationsWidget', () => {
     });
   });
 
-  it('shows items from API', async () => {
+  it('shows items from API including read notifications by default', async () => {
     renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
     await waitFor(() => {
       expect(screen.getByText('Security')).toBeInTheDocument();
-    });
-    // Default filter is "unread" — read items are hidden until "All" is selected
-    fireEvent.click(screen.getByRole('button', { name: /All \(\d+\)/ }));
-    await waitFor(() => {
       expect(screen.getByText('FYI')).toBeInTheDocument();
     });
   });

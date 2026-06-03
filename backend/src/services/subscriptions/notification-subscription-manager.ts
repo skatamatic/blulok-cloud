@@ -191,7 +191,8 @@ export class NotificationSubscriptionManager extends BaseSubscriptionManager {
         user_id: client.userId,
         facility_id: scope.facilityId,
         facility_ids: scope.facilityId ? undefined : scope.facilityIds,
-        limit: 10,
+        include_expired: true,
+        limit: 50,
         sortBy: 'created_at',
         sortOrder: 'desc',
       });

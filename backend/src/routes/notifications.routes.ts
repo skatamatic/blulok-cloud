@@ -43,6 +43,7 @@ const listQuerySchema = Joi.object({
   priority: Joi.string().valid('low', 'normal', 'high', 'urgent').optional(),
   isRead: Joi.boolean().optional(),
   facilityId: Joi.string().uuid().optional(),
+  includeExpired: Joi.boolean().optional(),
   limit: Joi.number().integer().min(1).max(100).default(50),
   offset: Joi.number().integer().min(0).default(0),
 });
@@ -78,7 +79,7 @@ router.get(
   validate(listQuerySchema, 'query'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
-    const { type, priority, isRead, facilityId, limit, offset } = req.query;
+    const { type, priority, isRead, facilityId, includeExpired, limit, offset } = req.query;
 
     const service = NotificationService.getInstance();
 
@@ -93,6 +94,12 @@ router.get(
         isRead: typeof isRead === 'boolean' ? isRead : isRead === 'true' ? true : isRead === 'false' ? false : undefined,
         facilityId: facilityId as string | undefined,
         facilityIds: !facilityId && !AuthService.canAccessAllFacilities(user.role) ? user.facilityIds : undefined,
+        includeExpired:
+          includeExpired === true || includeExpired === 'true'
+            ? true
+            : includeExpired === false || includeExpired === 'false'
+              ? false
+              : undefined,
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
       }

@@ -63,6 +63,8 @@ export interface QueryNotificationsOptions {
   facilityId?: string;
   /** All-facilities mode: restrict to these facility IDs */
   facilityIds?: string[];
+  /** Include expired notifications (for historical views) */
+  includeExpired?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -145,6 +147,7 @@ export class NotificationService {
       notification_type: options.type,
       priority: options.priority,
       is_read: options.isRead,
+      include_expired: options.includeExpired === true,
       limit: options.limit || 50,
       offset: options.offset || 0,
       sortBy: 'created_at',
