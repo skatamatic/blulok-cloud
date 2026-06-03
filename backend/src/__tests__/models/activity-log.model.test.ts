@@ -197,6 +197,31 @@ describe('ActivityLogModel', () => {
     });
   });
 
+  describe('findWithContext', () => {
+    it('selects device context from valid schema columns', async () => {
+      const mockQueryBuilder = {
+        select: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+      };
+      (mockQueryBuilder as any).then = (resolve: any) => Promise.resolve([]).then(resolve);
+
+      mockKnex.mockReturnValue(mockQueryBuilder);
+
+      await model.findWithContext({ facility_id: 'facility-1', limit: 5 });
+
+      const selectArgs = mockQueryBuilder.select.mock.calls[0] as string[];
+      expect(selectArgs).toContain('blulok_devices.device_serial');
+      expect(selectArgs).toContain('blulok_devices.device_serial as blulok_device_name');
+      expect(selectArgs).toContain('access_control_devices.location_description as device_location');
+      expect(selectArgs).not.toContain('blulok_devices.name as blulok_device_name');
+      expect(selectArgs).not.toContain('blulok_devices.location_description as device_location');
+    });
+  });
+
   describe('getUnitActivity', () => {
     it('should get activity for a specific unit', async () => {
       const mockLogsWithContext = [

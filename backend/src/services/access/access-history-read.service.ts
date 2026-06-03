@@ -299,8 +299,9 @@ export class AccessHistoryReadService {
       || (actor && typeof actor.name === 'string' ? actor.name : undefined);
     const userIdFromActor = actor && typeof actor.user_id === 'string' ? actor.user_id : undefined;
     const deviceType = this.inferDeviceType(metadata);
-    const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : new Date(row.created_at).toISOString();
-    const updatedAt = row.updated_at instanceof Date ? row.updated_at.toISOString() : new Date(row.updated_at).toISOString();
+    const createdAt = this.toIsoString(row.created_at);
+    const updatedAt = this.toIsoString(row.updated_at);
+    const occurredAt = this.toIsoString(row.occurred_at);
 
     const ctx = row as ActivityLogWithContext;
     const deviceName = this.resolveDeviceName(ctx, deviceType);
@@ -327,7 +328,7 @@ export class AccessHistoryReadService {
       denial_reason: denialReason,
       reason: reasonMessage,
       metadata: presentationMetadata,
-      occurred_at: row.occurred_at.toISOString(),
+      occurred_at: occurredAt,
       created_at: createdAt,
       updated_at: updatedAt,
       facility_name: ctx.facility_name,
@@ -440,5 +441,18 @@ export class AccessHistoryReadService {
   private inferDeviceType(metadata: Record<string, unknown>): 'blulok' | 'access_control' {
     const type = metadata.device_type;
     return type === 'access_control' ? 'access_control' : 'blulok';
+  }
+
+  private toIsoString(value: Date | string | null | undefined): string {
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    if (typeof value === 'string' || typeof value === 'number') {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toISOString();
+      }
+    }
+    return new Date(0).toISOString();
   }
 }

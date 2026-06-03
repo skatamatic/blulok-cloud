@@ -296,9 +296,9 @@ export class ActivityLogModel {
         'activity_logs.*',
         'units.unit_number',
         'blulok_devices.device_serial',
-        'blulok_devices.name as blulok_device_name',
-        'blulok_devices.location_description as device_location',
+        'blulok_devices.device_serial as blulok_device_name',
         'access_control_devices.name as access_control_device_name',
+        'access_control_devices.location_description as device_location',
         'facilities.name as facility_name'
       )
       .leftJoin('units', 'activity_logs.unit_id', 'units.id')

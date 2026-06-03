@@ -240,8 +240,11 @@ const METRIC_GRID_COLS = `${DEVICE_STATUS_COL} ${LAST_ACCESS_COL}`;
 const DETAIL_PANEL_CLASS =
   'rounded-lg border border-gray-100 bg-white/80 p-3 dark:border-gray-700/60 dark:bg-gray-800/50';
 
-/** Recent access is capped so long lists scroll instead of stretching the expand row. */
-const ACCESS_HISTORY_PANEL_CLASS = `${DETAIL_PANEL_CLASS} max-h-[13.75rem] overflow-y-auto`;
+/** Expand row: columns stretch to the tallest card; access scrolls inside its card. */
+const EXPAND_COLUMN_CLASS = 'flex min-h-0 flex-col';
+const ACCESS_EXPAND_COLUMN_CLASS = `${EXPAND_COLUMN_CLASS} lg:overflow-hidden`;
+const EXPAND_DETAIL_CARD_CLASS = `${DETAIL_PANEL_CLASS} min-h-0 flex-1`;
+const ACCESS_HISTORY_DETAIL_CARD_CLASS = `${EXPAND_DETAIL_CARD_CLASS} overflow-y-auto lg:h-0`;
 
 /** Single-family type scale: label (xs caps) · body (sm) · meta (xs muted). */
 const TYPE = {
@@ -786,8 +789,8 @@ const ExpandedDetails: React.FC<{
       className="overflow-hidden border-t border-gray-100 dark:border-gray-700/80"
     >
       <div className="bg-gradient-to-b from-[#147FD4]/[0.04] to-transparent px-3 pb-3 pt-3 dark:from-[#147FD4]/10 lg:px-4 lg:pb-4">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start lg:gap-4">
-        <div className="flex flex-col">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-stretch lg:gap-4">
+        <div className={ACCESS_EXPAND_COLUMN_CLASS}>
           <ExpandSectionHeader
             title="Recent access"
             action={
@@ -798,7 +801,7 @@ const ExpandedDetails: React.FC<{
             }
           />
 
-          <div className={ACCESS_HISTORY_PANEL_CLASS}>
+          <div className={ACCESS_HISTORY_DETAIL_CARD_CLASS}>
             {logsLoading ? (
               <ul className="space-y-1.5">
                 {[0, 1, 2].map((i) => (
@@ -826,7 +829,7 @@ const ExpandedDetails: React.FC<{
           </div>
         </div>
 
-        <div className="flex flex-col">
+        <div className={EXPAND_COLUMN_CLASS}>
           <ExpandSectionHeader
             title="Tenant"
             action={
@@ -838,7 +841,7 @@ const ExpandedDetails: React.FC<{
               ) : undefined
             }
           />
-          <div className={`${DETAIL_PANEL_CLASS} space-y-2`}>
+          <div className={`${EXPAND_DETAIL_CARD_CLASS} space-y-2`}>
             <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
               <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
               <span className="truncate">{tenantName}</span>
@@ -867,8 +870,8 @@ const ExpandedDetails: React.FC<{
           </div>
         </div>
 
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col">
+        <div className={`${EXPAND_COLUMN_CLASS} gap-3 lg:h-full`}>
+          <div className={`${EXPAND_COLUMN_CLASS} min-h-0 flex-1`}>
             <ExpandSectionHeader
               title="Device"
               action={
@@ -877,13 +880,9 @@ const ExpandedDetails: React.FC<{
                 ) : undefined
               }
             />
-            <div className={`${DETAIL_PANEL_CLASS} flex flex-col space-y-2.5`}>
+            <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2.5`}>
                 {metrics.hasDevice ? (
                   <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <DeviceStatusBadge status={metrics.status} />
-                      <UnitStatusChip status={unit.status} compact />
-                    </div>
                     {metrics.serial && (
                       <p className={`truncate ${TYPE.meta}`} title={metrics.serial}>
                         <span className="text-gray-400 dark:text-gray-500">Serial · </span>
@@ -916,15 +915,6 @@ const ExpandedDetails: React.FC<{
                         </span>
                       </p>
                     )}
-                    <p className={TYPE.meta}>
-                      Last activity ·{' '}
-                      <span
-                        className="text-gray-700 dark:text-gray-300"
-                        title={formatExactTime(unit.last_activity)}
-                      >
-                        {formatRelativeTime(unit.last_activity)}
-                      </span>
-                    </p>
                   </>
                 ) : (
                   <p className={TYPE.meta}>No BluLok device linked.</p>
@@ -945,7 +935,7 @@ const ExpandedDetails: React.FC<{
             </div>
           </div>
 
-          <div className="mt-auto flex justify-end">
+          <div className="flex shrink-0 justify-end">
             <SectionNavLink
               label="Unit details"
               compact
