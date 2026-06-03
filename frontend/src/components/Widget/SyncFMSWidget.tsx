@@ -20,6 +20,8 @@ import { getFmsSyncHistoryDetectedSuffix } from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { usePressWithoutDrag } from '@/hooks/usePressWithoutDrag';
+import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
+import { DASHBOARD_SELECT_FACILITY_TITLE } from '@/constants/dashboard-facility-scope.constants';
 import { StatTinyContent } from '@/components/Widget/widget-content.utils';
 
 const FMS_SYNC_TINT_ACTIVE =
@@ -639,18 +641,19 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
         }
       >
         <div className="h-full min-h-0 flex flex-col space-y-3 overflow-hidden">
+          {selectedFacilityId === ALL_FACILITIES_ID ? (
+            <DashboardFacilityScopePlaceholder
+              icon={ArrowPathIcon}
+              title={DASHBOARD_SELECT_FACILITY_TITLE}
+              message="Choose a facility from the header to view FMS sync status and run manual syncs."
+            />
+          ) : (
+            <>
           {size === 'small' && !effectiveFacilityId && (
             <p className="text-xs text-gray-500 dark:text-gray-400 text-center px-2">
               Select a facility to sync
             </p>
           )}
-          {/* Show message if "All Facilities" is selected */}
-          {selectedFacilityId === ALL_FACILITIES_ID && (
-            <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
-              Please select a specific facility to view FMS sync status
-            </div>
-          )}
-          
           {/* Small: single compact row — only when this facility has FMS (avoid stacking with empty-state blocks) */}
           {size === 'small' && effectiveFacilityId && hasAnyFMSConfigured && fmsConfigured && (
             <div className="flex min-h-0 flex-1 shrink-0 items-center justify-center gap-2 overflow-hidden px-1 py-0">
@@ -827,6 +830,8 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
                 <span>{syncing ? 'Syncing...' : 'Sync Now'}</span>
               </FmsSyncActionButton>
             </div>
+          )}
+            </>
           )}
         </div>
       </Widget>

@@ -68,23 +68,31 @@ export function useRemoteUnlockAction(options?: UseRemoteUnlockActionOptions) {
 
       const previousStatus = getLockStatus() ?? 'locked';
       const feedbackTimeoutMs = timeoutMs ?? resolveLockCommandTimeoutMs();
+      const oneShot = feedbackTimeoutMs === 0;
 
       setSubmittingKey(watchKey);
-      pendingRef.current = true;
-      watchGetStatusRef.current = getLockStatus;
-      setActiveWatchKey(watchKey);
 
-      scheduleUnlockWatch(
-        getLockStatus,
-        () => {
-          revertOptimisticLockStatus?.(previousStatus);
-          clearWatch();
-          void refresh?.();
-        },
-        feedbackTimeoutMs,
-      );
+      if (oneShot) {
+        pendingRef.current = false;
+        watchGetStatusRef.current = null;
+        setActiveWatchKey(null);
+      } else {
+        pendingRef.current = true;
+        watchGetStatusRef.current = getLockStatus;
+        setActiveWatchKey(watchKey);
 
-      applyOptimisticUnlocking();
+        scheduleUnlockWatch(
+          getLockStatus,
+          () => {
+            revertOptimisticLockStatus?.(previousStatus);
+            clearWatch();
+            void refresh?.();
+          },
+          feedbackTimeoutMs,
+        );
+
+        applyOptimisticUnlocking();
+      }
 
       try {
         const unlock = sendUnlockCommand ?? ((id: string) => apiService.updateLockStatus(id, 'unlocked'));
@@ -92,8 +100,10 @@ export function useRemoteUnlockAction(options?: UseRemoteUnlockActionOptions) {
         addToast(lockHardwareFeedbackToasts.unlockCommandSent());
         await refresh?.();
       } catch (error: unknown) {
-        revertOptimisticLockStatus?.(previousStatus);
-        clearWatch();
+        if (!oneShot) {
+          revertOptimisticLockStatus?.(previousStatus);
+          clearWatch();
+        }
         addToast({
           ...errorToast(),
           message: getApiErrorMessage(error, 'Try again in a moment.'),

@@ -274,6 +274,22 @@ describe('NotificationModel', () => {
     });
   });
 
+  describe('retention', () => {
+    it('purgeStaleForUser hard-deletes rows outside per-user windows', async () => {
+      const mockDel = jest.fn().mockResolvedValue(2);
+      mockKnex.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        del: mockDel,
+      });
+
+      const deleted = await model.purgeStaleForUser('user-1');
+
+      expect(deleted).toBe(2);
+      expect(mockKnex).toHaveBeenCalledWith('notifications');
+      expect(mockDel).toHaveBeenCalled();
+    });
+  });
+
   describe('getUnreadCount', () => {
     it('should return unread count for user', async () => {
       mockKnex.mockReturnValue({

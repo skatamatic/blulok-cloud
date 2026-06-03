@@ -116,6 +116,38 @@ describe('useRemoteUnlockAction', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it('does not apply optimistic unlocking or schedule watch when timeout is 0', async () => {
+    const refresh = jest.fn().mockResolvedValue(undefined);
+    const revertOptimisticLockStatus = jest.fn();
+    let lockStatus = 'locked';
+
+    const { result } = renderHook(() => useRemoteUnlockAction());
+
+    await act(async () => {
+      await result.current.requestUnlock({
+        deviceId: 'dev-1',
+        watchKey: 'unit-1',
+        getLockStatus: () => lockStatus,
+        applyOptimisticUnlocking: () => {
+          lockStatus = 'unlocking';
+        },
+        revertOptimisticLockStatus,
+        refresh,
+        timeoutMs: 0,
+      });
+    });
+
+    expect(lockStatus).toBe('locked');
+    expect(revertOptimisticLockStatus).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS);
+    });
+
+    expect(revertOptimisticLockStatus).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it('clears the watch when status returns to locked during a pending unlock', async () => {
     const refresh = jest.fn().mockResolvedValue(undefined);
     let lockStatus = 'locked';

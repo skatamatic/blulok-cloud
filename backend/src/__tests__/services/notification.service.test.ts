@@ -53,6 +53,7 @@ describe('NotificationService', () => {
       markMultipleAsRead: jest.fn().mockResolvedValue(3),
       markAllAsRead: jest.fn().mockResolvedValue(10),
       delete: jest.fn().mockResolvedValue(true),
+      purgeStaleForUser: jest.fn().mockResolvedValue(0),
     } as any;
 
     mockEventService = {

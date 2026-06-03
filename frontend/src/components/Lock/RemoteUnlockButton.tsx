@@ -65,10 +65,10 @@ export const RemoteUnlockButton: React.FC<RemoteUnlockButtonProps> = ({
   const disabled = !hasDevice || !remoteSupported || busy || !canUnlock;
 
   const toneClass = busy
-    ? 'bg-[#147FD4] text-white animate-pulse'
+    ? 'btn-primary animate-pulse'
     : canUnlock
-      ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
-      : 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500';
+      ? 'btn-primary'
+      : 'cursor-not-allowed bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border border-transparent';
 
   return (
     <motion.button
@@ -83,7 +83,7 @@ export const RemoteUnlockButton: React.FC<RemoteUnlockButtonProps> = ({
         if (disabled) return;
         onUnlock();
       }}
-      className={`no-drag inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${sizeClasses[size]} ${toneClass} ${
+      className={`no-drag inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors ${sizeClasses[size]} ${toneClass} ${
         fullWidth ? 'w-full' : ''
       } ${className}`}
     >

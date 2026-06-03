@@ -17,6 +17,7 @@ export const IN_APP_NOTIFICATION_TYPES = [
   'gateway_restored',
   'gateway_alert',
   'backend_error',
+  'device_inventory_sync_error',
 ] as const;
 
 export type InAppNotificationType = (typeof IN_APP_NOTIFICATION_TYPES)[number];

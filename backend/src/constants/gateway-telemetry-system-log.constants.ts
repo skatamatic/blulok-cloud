@@ -17,3 +17,6 @@ export type GatewayTelemetrySystemEventType =
   | 'gateway_disconnected'
   | 'gateway_status_changed'
   | 'device_inventory_sync_completed';
+
+/** Hide inbound WS disconnect→connect pairs closer than this (routine Cloud Run recycle). */
+export const GATEWAY_WS_ROUTINE_RECONNECT_MAX_MS = 30_000;

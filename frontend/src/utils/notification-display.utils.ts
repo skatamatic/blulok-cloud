@@ -8,6 +8,7 @@ const ACTION_REQUIRED_TYPES = new Set([
   'device_low_battery',
   'gateway_offline',
   'gateway_alert',
+  'device_inventory_sync_error',
   'backend_error',
 ]);
 
@@ -54,6 +55,7 @@ function mapApiTypeToTone(
     notificationType === 'security_alert' ||
     notificationType === 'fms_sync_failed' ||
     notificationType === 'gateway_offline' ||
+    notificationType === 'device_inventory_sync_error' ||
     notificationType === 'backend_error' ||
     priority === 'urgent'
   ) {

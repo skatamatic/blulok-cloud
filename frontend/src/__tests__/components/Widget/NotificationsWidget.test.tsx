@@ -9,6 +9,12 @@ const mockGetNotifications = jest.fn();
 const mockMarkNotificationRead = jest.fn();
 const mockDeleteNotification = jest.fn();
 const mockMarkAllNotificationsRead = jest.fn();
+const mockAddToast = jest.fn();
+
+jest.mock('@/contexts/ToastContext', () => ({
+  ...jest.requireActual('@/contexts/ToastContext'),
+  useToast: () => ({ addToast: mockAddToast }),
+}));
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
@@ -225,5 +231,36 @@ describe('NotificationsWidget', () => {
       const full = screen.getByText(/Check power and network connectivity/);
       expect(full).toHaveClass('whitespace-pre-wrap');
     });
+  });
+
+  it('marks notification read when X is clicked', async () => {
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
+    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }));
+
+    await waitFor(() => {
+      expect(mockMarkNotificationRead).toHaveBeenCalledWith('a');
+    });
+  });
+
+  it('shows toast when mark read fails', async () => {
+    mockMarkNotificationRead.mockRejectedValueOnce(new Error('network'));
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
+    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }));
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', title: 'Could not mark as read' }),
+      );
+    });
+  });
+
+  it('does not show Hide Read control', async () => {
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /Hide Read/i })).not.toBeInTheDocument();
   });
 });

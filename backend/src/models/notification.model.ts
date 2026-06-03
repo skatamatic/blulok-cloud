@@ -17,6 +17,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 import { InAppNotificationType } from '@/constants/in-app-notification.constants';
+import {
+  NOTIFICATION_READ_RETENTION_DAYS,
+  NOTIFICATION_UNREAD_RETENTION_DAYS,
+} from '@/constants/notification-retention.constants';
 
 /**
  * Notification types supported by the system
@@ -85,6 +89,8 @@ export interface NotificationFilters {
   exclude_notification_types?: NotificationType[];
   limit?: number;
   offset?: number;
+  /** When false (default), hide notifications outside per-user retention windows. */
+  include_archived?: boolean;
   sortBy?: 'created_at' | 'priority' | 'read_at';
   sortOrder?: 'asc' | 'desc';
 }
@@ -200,7 +206,53 @@ export class NotificationModel {
       });
     }
 
+    if (!filters.include_archived) {
+      query = this.applyRetentionFilter(query);
+    }
+
     return query;
+  }
+
+  /**
+   * Per-user rolling retention: read ≤ 30 days, unread ≤ 90 days.
+   */
+  private applyRetentionFilter(query: any): any {
+    const readCutoff = new Date(Date.now() - NOTIFICATION_READ_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const unreadCutoff = new Date(Date.now() - NOTIFICATION_UNREAD_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+    return query.where(function(this: any) {
+      this.where(function(this: any) {
+        this.where('is_read', true).whereRaw('COALESCE(read_at, created_at) >= ?', [readCutoff]);
+      }).orWhere(function(this: any) {
+        this.where('is_read', false).where('created_at', '>=', unreadCutoff);
+      });
+    });
+  }
+
+  /**
+   * Hard-delete notifications outside per-user retention windows.
+   */
+  async purgeStaleForUser(userId: string): Promise<number> {
+    const knex = this.db.connection;
+    const readCutoff = new Date(Date.now() - NOTIFICATION_READ_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const unreadCutoff = new Date(Date.now() - NOTIFICATION_UNREAD_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+    const deleted = await knex('notifications')
+      .where('user_id', userId)
+      .where(function(this: any) {
+        this.where(function(this: any) {
+          this.where('is_read', true).whereRaw('COALESCE(read_at, created_at) < ?', [readCutoff]);
+        }).orWhere(function(this: any) {
+          this.where('is_read', false).where('created_at', '<', unreadCutoff);
+        });
+      })
+      .del();
+
+    if (deleted > 0) {
+      logger.info(`Purged ${deleted} stale notifications for user ${userId}`);
+    }
+
+    return deleted;
   }
 
   /**

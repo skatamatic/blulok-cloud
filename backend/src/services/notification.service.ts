@@ -194,6 +194,10 @@ export class NotificationService {
       this.notificationModel.getUnreadCount(targetUserId, unreadScope),
     ]);
 
+    void this.notificationModel.purgeStaleForUser(targetUserId).catch((err) => {
+      logger.warn(`Failed to purge stale notifications for user ${targetUserId}:`, err);
+    });
+
     return {
       notifications: notifications.map(n => this.formatNotification(n)),
       total,

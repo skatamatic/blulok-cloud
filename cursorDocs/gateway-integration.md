@@ -250,6 +250,8 @@ The backend also appends **BluLok cloud–originated** lines to the same stream 
 
 Disconnect `data.reason` uses transport codes (`auth_ok`, `heartbeat_timeout`, `replaced`, `close_event`, …) with a human `reason_label`.
 
+**Routine reconnect noise:** Pairs of `CLD02` (disconnect) followed by `CLD01` (connect) within **30 seconds** are hidden in the Gateway Logs UI and in the list API response. This filters normal GCP instance recycle / TCP teardown without hiding real outages. Backend: `filterRoutineGatewayWsReconnectLogs` in `gateway-telemetry-system-log.utils.ts`; frontend applies the same rule only when merging **live WebSocket** tail rows (API responses are pre-filtered).
+
 ## Automated regression tests
 
 - **Inbound WS → DB status:** `backend/src/__tests__/services/gateway-events.service.inbound-db-sync.test.ts` — connect/disconnect updates `gateways.status` for physical/simulated, skips HTTP and missing rows; uses `jest.unmock('@/models/gateway.model')` because global `setup-mocks` replaces `GatewayModel` with a plain factory (no real prototype for `jest.spyOn`).

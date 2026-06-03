@@ -4,7 +4,6 @@ import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   XMarkIcon,
-  EyeIcon,
   ArrowPathIcon,
   ChevronDownIcon,
 } from '@heroicons/react/24/outline';
@@ -15,6 +14,7 @@ import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { useDashboardFacilityScope } from '@/hooks/useDashboardFacilityScope';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
+import { useToast } from '@/contexts/ToastContext';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import type { UserNotificationApi } from '@/types/notifications.types';
@@ -41,7 +41,6 @@ const NotificationCard: React.FC<{
   facilityLabel?: string | null;
   onToggle: () => void;
   onMarkRead: () => void;
-  onDismiss: () => void;
   formatTimestamp: (timestamp: Date) => string;
   getNotificationIcon: (displayType: string) => React.ReactElement;
 }> = ({
@@ -52,7 +51,6 @@ const NotificationCard: React.FC<{
   facilityLabel,
   onToggle,
   onMarkRead,
-  onDismiss,
   formatTimestamp,
   getNotificationIcon,
 }) => {
@@ -177,45 +175,21 @@ const NotificationCard: React.FC<{
           </div>
         </div>
 
-        {compact ? (
+        {!notification.isRead && (
           <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onDismiss();
+                onMarkRead();
               }}
-              className="p-0.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-              title="Dismiss"
+              className={`text-gray-400 hover:text-[#147FD4] dark:hover:text-[#147FD4] transition-colors ${
+                compact ? 'p-0.5' : 'p-1'
+              }`}
+              title="Mark as read"
+              aria-label="Mark as read"
             >
-              <XMarkIcon className="h-3 w-3" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {!notification.isRead && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMarkRead();
-                }}
-                className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                title="Mark as read"
-              >
-                <EyeIcon className="h-4 w-4" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDismiss();
-              }}
-              className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-              title="Dismiss"
-            >
-              <XMarkIcon className="h-4 w-4" />
+              <XMarkIcon className={compact ? 'h-3 w-3' : 'h-4 w-4'} />
             </button>
           </div>
         )}
@@ -279,6 +253,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   const { wsFilters, matchesFacilityScope } = useDashboardFacilityScope(facilityFilter);
   const { authState } = useAuth();
   const { facilities } = useGlobalFacility();
+  const { addToast } = useToast();
   const viewerRole = authState.user?.role;
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
@@ -481,6 +456,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   }, [subscribe, unsubscribe, isConnected, handleWs, wsFilters]);
 
   const markAsRead = async (notificationId: string) => {
+    const target = rows.find((n) => n.id === notificationId);
+    if (target?.isRead) return;
     try {
       await apiService.markNotificationRead(notificationId);
       setRows((prev) =>
@@ -488,15 +465,11 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       );
     } catch (e) {
       console.error('Mark read failed', e);
-    }
-  };
-
-  const dismissNotification = async (notificationId: string) => {
-    try {
-      await apiService.deleteNotification(notificationId);
-      setRows((prev) => prev.filter((n) => n.id !== notificationId));
-    } catch (e) {
-      console.error('Delete notification failed', e);
+      addToast({
+        type: 'error',
+        title: 'Could not mark as read',
+        message: 'Try again in a moment.',
+      });
     }
   };
 
@@ -506,11 +479,12 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       setRows((prev) => prev.map((n) => ({ ...n, isRead: true })));
     } catch (e) {
       console.error('Mark all read failed', e);
+      addToast({
+        type: 'error',
+        title: 'Could not mark all as read',
+        message: 'Try again in a moment.',
+      });
     }
-  };
-
-  const clearRead = () => {
-    setRows((prev) => prev.filter((n) => !n.isRead || n.actionRequired));
   };
 
   const handleRefresh = async () => {
@@ -695,7 +669,6 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                     facilityLabel={resolveFacilityLabel(notification.facilityId)}
                     onToggle={() => toggleExpanded(notification.id)}
                     onMarkRead={() => void markAsRead(notification.id)}
-                    onDismiss={() => void dismissNotification(notification.id)}
                     formatTimestamp={formatTimestamp}
                     getNotificationIcon={getNotificationIcon}
                   />
@@ -744,20 +717,13 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         {(size === 'medium-tall' || size === 'large' || size === 'huge' || size.includes('wide')) &&
           unreadCount > 0 && (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3 shrink-0">
-              <div className="flex space-x-2">
-                <button
-                  onClick={markAllAsRead}
-                  className="flex-1 py-2 px-3 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-                >
-                  Mark All Read
-                </button>
-                <button
-                  onClick={clearRead}
-                  className="flex-1 py-2 px-3 text-xs font-medium text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/40 rounded-lg transition-colors"
-                >
-                  Hide Read
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => void markAllAsRead()}
+                className="w-full py-2 px-3 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                Mark all read
+              </button>
             </div>
           )}
 

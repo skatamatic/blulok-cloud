@@ -8,8 +8,10 @@ import { SubscriptionRegistry } from '@/services/subscriptions/subscription-regi
 import { GatewayTelemetryLogSubscriptionManager } from '@/services/subscriptions/gateway-telemetry-log-subscription-manager';
 import { GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH } from '@/constants/gateway-telemetry-log.constants';
 import { GATEWAY_TELEMETRY_CLOUD_SYSTEM_SOURCE } from '@/constants/gateway-telemetry-system-log.constants';
+import { GATEWAY_TELEMETRY_LOG_RETENTION } from '@/constants/gateway-telemetry-log.constants';
 import {
   buildGatewayTelemetrySystemLogPayload,
+  filterRoutineGatewayWsReconnectLogs,
   type BuildGatewayTelemetrySystemLogInput,
 } from '@/utils/gateway-telemetry-system-log.utils';
 import { logger } from '@/utils/logger';
@@ -59,7 +61,21 @@ export class GatewayTelemetryLogService {
     filters: GatewayTelemetryLogListFilters,
     options: { limit?: number; offset?: number } = {},
   ) {
-    return this.model.listByGateway(gatewayId, filters, options);
+    const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
+    const offset = Math.max(options.offset ?? 0, 0);
+
+    // Load all rows matching filters (per-gateway retention cap) so reconnect-pair filtering
+    // and pagination totals stay accurate.
+    const { logs: rawLogs } = await this.model.listByGateway(gatewayId, filters, {
+      limit: GATEWAY_TELEMETRY_LOG_RETENTION,
+      offset: 0,
+    });
+
+    const filtered = filterRoutineGatewayWsReconnectLogs(rawLogs);
+    const total = filtered.length;
+    const logs = filtered.slice(offset, offset + limit);
+
+    return { logs, total };
   }
 
   /**

@@ -10,9 +10,15 @@ describe('facility-lock-timeout.utils', () => {
     expect(normalizeLockCommandTimeoutSec('nope')).toBe(10);
   });
 
+  it('allows 0 for one-shot commands', () => {
+    expect(normalizeLockCommandTimeoutSec(0)).toBe(0);
+    expect(normalizeLockCommandTimeoutSec(-5)).toBe(0);
+    expect(lockCommandTimeoutMs(0)).toBe(0);
+  });
+
   it('clamps values to the allowed range', () => {
-    expect(normalizeLockCommandTimeoutSec(3)).toBe(5);
-    expect(normalizeLockCommandTimeoutSec(999)).toBe(120);
+    expect(normalizeLockCommandTimeoutSec(3)).toBe(3);
+    expect(normalizeLockCommandTimeoutSec(9999)).toBe(3600);
     expect(normalizeLockCommandTimeoutSec(15.7)).toBe(16);
   });
 

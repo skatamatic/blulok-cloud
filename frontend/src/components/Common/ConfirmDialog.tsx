@@ -53,8 +53,8 @@ export function ConfirmDialog({
 
   const confirmClass =
     confirmTone === 'danger'
-      ? 'bg-red-600 hover:bg-red-700 focus:ring-red-400'
-      : 'bg-primary-600 hover:bg-primary-700 focus:ring-primary-400';
+      ? 'btn-danger'
+      : 'btn-primary';
 
   return createPortal(
     <div
@@ -94,14 +94,14 @@ export function ConfirmDialog({
             type="button"
             data-confirm-dialog-cancel
             onClick={onCancel}
-            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+            className="btn-secondary !px-3 !py-2"
           >
             {cancelLabel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className={`rounded-lg px-3 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 ${confirmClass}`}
+            className={`${confirmClass} !px-3 !py-2`}
           >
             {confirmLabel}
           </button>

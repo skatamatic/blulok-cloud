@@ -6,6 +6,10 @@ import { InAppNotificationAudienceService } from '@/services/notifications/in-ap
 
 import { InAppNotificationType, LOW_BATTERY_THRESHOLD_PERCENT } from '@/constants/in-app-notification.constants';
 
+import { NOTIFICATION_UNREAD_RETENTION_DAYS } from '@/constants/notification-retention.constants';
+
+import { UserRole } from '@/types/auth.types';
+
 import { logger } from '@/utils/logger';
 
 
@@ -41,6 +45,8 @@ const DEDUP_MINUTES: Partial<Record<InAppNotificationType, number>> = {
   fms_sync_failed: 15,
 
   backend_error: 15,
+
+  device_inventory_sync_error: 60,
 
 };
 
@@ -503,6 +509,82 @@ export class InAppNotificationDispatcher {
       expiresInDays: 30,
 
     });
+
+  }
+
+
+
+  /** Loud alert when gateway inventory sync hits duplicate serials or similar commissioning issues. */
+
+  public async notifyDeviceInventorySyncError(params: {
+
+    facilityId: string;
+
+    gatewayId: string;
+
+    syncLogId: string;
+
+    deviceSerial: string;
+
+    deviceKind: 'blulok' | 'access_control';
+
+    title: string;
+
+    message: string;
+
+    priority: 'urgent' | 'high';
+
+    metadata?: Record<string, unknown>;
+
+  }): Promise<void> {
+
+    const userIds = await this.audienceService.resolveFacilityOperators(params.facilityId, {
+
+      roles: [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN],
+
+    });
+
+    const dedupMinutes = DEDUP_MINUTES.device_inventory_sync_error;
+
+    await this.dispatchToUsers(
+
+      userIds,
+
+      {
+
+        type: 'device_inventory_sync_error',
+
+        title: params.title,
+
+        message: params.message,
+
+        priority: params.priority,
+
+        referenceType: 'device_serial',
+
+        referenceId: params.deviceSerial,
+
+        facilityId: params.facilityId,
+
+        metadata: {
+
+          gatewayId: params.gatewayId,
+
+          syncLogId: params.syncLogId,
+
+          deviceKind: params.deviceKind,
+
+          ...params.metadata,
+
+        },
+
+        expiresInDays: NOTIFICATION_UNREAD_RETENTION_DAYS,
+
+      },
+
+      dedupMinutes,
+
+    );
 
   }
 

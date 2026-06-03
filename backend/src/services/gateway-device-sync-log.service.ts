@@ -1,6 +1,8 @@
 import { GatewayDeviceSyncLogModel } from '../models/gateway-device-sync-log.model';
 import type { DeviceSyncLogEntry, InventorySyncSummary } from '../types/gateway-device-sync.types';
 import type { InventorySyncResult } from './device-sync.service';
+import { InventorySyncNotificationService } from './notifications/inventory-sync-notification.service';
+import { logger } from '@/utils/logger';
 
 export class GatewayDeviceSyncLogService {
   private static instance: GatewayDeviceSyncLogService;
@@ -17,6 +19,7 @@ export class GatewayDeviceSyncLogService {
     gatewayId: string;
     facilityId: string;
     source?: string;
+    facilityName?: string;
     lockResult: InventorySyncResult | null;
     accessResult: InventorySyncResult | null;
   }): Promise<void> {
@@ -60,7 +63,7 @@ export class GatewayDeviceSyncLogService {
       };
     };
 
-    await this.model.create({
+    const log = await this.model.create({
       gateway_id: params.gatewayId,
       facility_id: params.facilityId,
       sync_kind: 'inventory',
@@ -71,6 +74,25 @@ export class GatewayDeviceSyncLogService {
       },
       entries,
     });
+
+    void InventorySyncNotificationService.getInstance()
+      .notifyInventorySyncErrors({
+        facilityId: params.facilityId,
+        gatewayId: params.gatewayId,
+        syncLogId: log.id,
+        lockResult,
+        accessResult,
+        entries,
+        facilityName: params.facilityName,
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn('[DEVICE-SYNC] Failed to dispatch inventory sync notifications', {
+          facilityId: params.facilityId,
+          gatewayId: params.gatewayId,
+          error: message,
+        });
+      });
   }
 
   async listForGateway(

@@ -506,7 +506,10 @@ describe('SyncFMSWidget', () => {
       renderWithProviders(<SyncFMSWidget {...defaultProps} />);
 
       await waitFor(() => {
-        expect(screen.getByText(/Please select a specific facility/i)).toBeInTheDocument();
+        expect(screen.getByText('Select a facility')).toBeInTheDocument();
+        expect(
+          screen.getByText(/view FMS sync status and run manual syncs/i),
+        ).toBeInTheDocument();
       });
     });
   });

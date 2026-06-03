@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { HistogramWidget } from '@/components/Widget/HistogramWidget';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
@@ -133,9 +133,8 @@ describe('HistogramWidget', () => {
       );
       
       await waitFor(() => {
-        // Should show facility names in legend
-        expect(screen.getByText('Downtown Storage')).toBeInTheDocument();
-        expect(screen.getByText('Warehouse District')).toBeInTheDocument();
+        expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Warehouse District').length).toBeGreaterThan(0);
       });
     });
 
@@ -227,7 +226,7 @@ describe('HistogramWidget', () => {
       );
       
       await waitFor(() => {
-        expect(screen.getByText('Downtown Storage')).toBeInTheDocument();
+        expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
       });
     });
   });
@@ -239,8 +238,8 @@ describe('HistogramWidget', () => {
       );
       
       await waitFor(() => {
-        expect(screen.getByText('Downtown Storage')).toBeInTheDocument();
-        expect(screen.getByText('Warehouse District')).toBeInTheDocument();
+        expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Warehouse District').length).toBeGreaterThan(0);
       });
     });
 
@@ -269,10 +268,10 @@ describe('HistogramWidget', () => {
       );
 
       await waitFor(() => {
-        expect(document.querySelector('[title*="Downtown Storage"]')).toBeInTheDocument();
+        expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
       });
 
-      expect(screen.queryByText('Downtown Storage')).not.toBeInTheDocument();
+      expect(screen.queryByText('Warehouse District')).not.toBeInTheDocument();
     });
   });
 
@@ -295,21 +294,25 @@ describe('HistogramWidget', () => {
       );
       
       await waitFor(() => {
-        const bars = document.querySelectorAll('[title*="events"]');
+        const bars = document.querySelectorAll('.rounded-sm.opacity-90');
         expect(bars.length).toBeGreaterThan(0);
       });
     });
 
-    it('shows tooltip on bar hover', async () => {
+    it('shows tooltip breakdown on bar hover', async () => {
       renderWithProviders(
         <HistogramWidget id="test-widget" title="Activity Histogram" initialSize="large" />
       );
-      
+
       await waitFor(() => {
-        // Find bars with title attribute
-        const barWithTooltip = document.querySelector('[title*="Downtown Storage"]');
-        expect(barWithTooltip).toBeInTheDocument();
+        expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
       });
+
+      const column = screen.getAllByRole('img')[0];
+      fireEvent.mouseEnter(column);
+
+      expect(screen.getAllByText('Total events').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Downtown Storage').length).toBeGreaterThan(0);
     });
   });
 });

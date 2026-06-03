@@ -13,6 +13,7 @@ import {
 import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { Button } from '@/components/Common/Button';
 import type { GatewayTelemetryLogRecord } from '@/types/gateway.types';
 import {
   applyClientSideTelemetryFilters,
@@ -28,6 +29,7 @@ import {
   type PayloadFilterChip,
   type TelemetryLogFilterState,
 } from '@/utils/gateway-telemetry-log-filters.utils';
+import { filterRoutineGatewayWsReconnectLogs } from '@/utils/gateway-telemetry-reconnect-filter.utils';
 
 const EMPTY_FILTERS: TelemetryLogFilterState = {
   from: '',
@@ -223,8 +225,12 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
             (log) => !existing.has(log.id) && logMatchesFilters(log, filters),
           );
           if (fresh.length === 0) return prev;
-          setServerTotal((t) => t + fresh.length);
-          return [...fresh, ...prev].slice(0, TELEMETRY_LOGS_UI_MAX_ROWS);
+          const merged = filterRoutineGatewayWsReconnectLogs([...fresh, ...prev]);
+          const addedCount = merged.length - prev.length;
+          if (addedCount > 0) {
+            setServerTotal((t) => t + addedCount);
+          }
+          return merged.slice(0, TELEMETRY_LOGS_UI_MAX_ROWS);
         });
       },
       undefined,
@@ -324,15 +330,17 @@ export function GatewayTelemetryLogsTab({ gatewayId, facilityId, liveEnabled = t
             Live updates appear while this tab is open.
           </p>
         </div>
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={() => void fetchLogs({ reset: true, background: true })}
           disabled={refreshing}
-          className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-2"
         >
           <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           Refresh
-        </button>
+        </Button>
       </div>
 
       <div className="mb-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-4">

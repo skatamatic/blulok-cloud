@@ -182,6 +182,40 @@ describe('LockCommandService', () => {
     expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
   });
 
+  it('sends one-shot command without transitional state when facility timeout is 0', async () => {
+    knexInvocation = 0;
+    mockKnex.mockImplementation((table: string) => {
+      knexInvocation += 1;
+      if (table === 'facilities') {
+        return {
+          where: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 0 }),
+        };
+      }
+      if (knexInvocation === 1 && table === 'blulok_devices') {
+        return buildJoinFirst({
+          id: 'dev-1',
+          lock_status: 'unlocked',
+          supports_remote_lock: true,
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+        });
+      }
+      return buildTimeoutQuery('locked');
+    });
+
+    sendLockCommand.mockResolvedValueOnce({ success: true });
+
+    const svc = LockCommandService.getInstance();
+    const res = await svc.issueLockCommand('dev-1', 'locked');
+
+    expect(res.success).toBe(true);
+    expect(res.lock_status).toBe('unlocked');
+    expect(mockUpdateLockStatus).not.toHaveBeenCalled();
+    expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'dev-1', 'CLOSE');
+  });
+
   it('does not revert on timeout if lock_status already changed (sync won)', async () => {
     jest.useFakeTimers();
     knexInvocation = 0;

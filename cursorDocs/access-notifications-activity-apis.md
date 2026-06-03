@@ -511,6 +511,10 @@ The following integrations are wired up automatically — no manual calls needed
 
 **Extensibility:** Add new operational alerts in `InAppNotificationDispatcher` (`backend/src/services/notifications/in-app-notification-dispatcher.service.ts`) and register types in `IN_APP_NOTIFICATION_TYPES`.
 
+**Inventory sync errors:** Duplicate device serials during gateway inventory sync emit `device_inventory_sync_error` (urgent) to admin, dev_admin, and facility_admin via `InventorySyncNotificationService`. Messages are human-readable and name the facility that already owns the serial, plus the assigned unit when one exists (or note when unassigned).
+
+**Retention (per user):** Read notifications are kept 30 days; unread 90 days. Queries apply rolling windows; stale rows are purged on list fetch. Read receipts are per `user_id` — marking read affects only that user's row.
+
 **Technical alerts:** `backend_error` notifications are created for **dev_admin only** (`notifyDevAdmins`) and are excluded from REST/WebSocket payloads for all other roles via `in-app-notification-visibility.utils.ts`.
 
 **Important notes:**

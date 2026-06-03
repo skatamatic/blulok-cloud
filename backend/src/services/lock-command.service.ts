@@ -105,12 +105,15 @@ export class LockCommandService {
     const facilityId = String((deviceRow as { facility_id: string }).facility_id);
     const unitId = (deviceRow as { unit_id?: string | null }).unit_id ?? undefined;
 
-    // Determine transitional status
+    const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
+    const oneShot = timeoutMs === 0;
+
     const transitionalStatus: LockStatus =
       requestedStatus === 'locked' ? 'locking' : 'unlocking';
 
-    // Update DB to transitional state immediately
-    await this.deviceModel.updateLockStatus(deviceId, transitionalStatus);
+    if (!oneShot) {
+      await this.deviceModel.updateLockStatus(deviceId, transitionalStatus);
+    }
 
     // Clear any existing pending command for this device
     this.clearPending(deviceId);
@@ -126,8 +129,9 @@ export class LockCommandService {
       );
 
       if (!result.success) {
-        // Revert immediately on explicit gateway failure
-        await this.deviceModel.updateLockStatus(deviceId, previousStatus);
+        if (!oneShot) {
+          await this.deviceModel.updateLockStatus(deviceId, previousStatus);
+        }
         const message =
           result.error || 'Gateway reported failure executing lock command';
         logger.warn('LockCommandService: gateway command failed', {
@@ -148,8 +152,9 @@ export class LockCommandService {
         return { success: false, message };
       }
     } catch (error: any) {
-      // Revert on unexpected errors
-      await this.deviceModel.updateLockStatus(deviceId, previousStatus);
+      if (!oneShot) {
+        await this.deviceModel.updateLockStatus(deviceId, previousStatus);
+      }
       const failureMessage = error?.message || 'Failed to send lock command to gateway';
       logger.error('LockCommandService: error sending lock command', {
         deviceId,
@@ -172,8 +177,16 @@ export class LockCommandService {
       };
     }
 
+    if (oneShot) {
+      return {
+        success: true,
+        message: 'Lock command sent',
+        lock_status: previousStatus,
+        previous_status: previousStatus,
+      };
+    }
+
     // Schedule timeout to revert if no gateway state update resolves the transition
-    const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
     const timeoutHandle = setTimeout(
       () => void this.handleTimeout(deviceId, transitionalStatus, previousStatus),
       timeoutMs,

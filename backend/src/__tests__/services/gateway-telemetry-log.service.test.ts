@@ -60,11 +60,54 @@ describe('GatewayTelemetryLogService', () => {
     expect(mockInsertAndTrim).not.toHaveBeenCalled();
   });
 
-  it('delegates list to model', async () => {
-    mockListByGateway.mockResolvedValue({ logs: [], total: 0 });
-    const filters = { search: 'lock' };
-    await GatewayTelemetryLogService.getInstance().list('gw-1', filters, { limit: 100, offset: 0 });
-    expect(mockListByGateway).toHaveBeenCalledWith('gw-1', filters, { limit: 100, offset: 0 });
+  it('filters routine reconnect pairs and paginates in memory', async () => {
+    const rawLogs = [
+      {
+        id: 'disc-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        logged_at: new Date('2026-06-03T08:06:57.000Z'),
+        created_at: new Date('2026-06-03T08:06:57.000Z'),
+        source: 'cloud_system',
+        payload: {
+          cloud_system: true,
+          header: 'CLD02',
+          data: { event: 'gateway_disconnected' },
+        },
+      },
+      {
+        id: 'conn-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        logged_at: new Date('2026-06-03T08:07:02.000Z'),
+        created_at: new Date('2026-06-03T08:07:02.000Z'),
+        source: 'cloud_system',
+        payload: {
+          cloud_system: true,
+          header: 'CLD01',
+          data: { event: 'gateway_connected' },
+        },
+      },
+      {
+        id: 'other-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        logged_at: new Date('2026-06-03T08:07:03.000Z'),
+        created_at: new Date('2026-06-03T08:07:03.000Z'),
+        source: 'gateway_ws',
+        payload: { message: 'heartbeat' },
+      },
+    ];
+    mockListByGateway.mockResolvedValue({ logs: rawLogs, total: rawLogs.length });
+
+    const result = await GatewayTelemetryLogService.getInstance().list('gw-1', {}, { limit: 50, offset: 0 });
+
+    expect(mockListByGateway).toHaveBeenCalledWith('gw-1', {}, {
+      limit: expect.any(Number),
+      offset: 0,
+    });
+    expect(result.total).toBe(1);
+    expect(result.logs.map((l) => l.id)).toEqual(['other-1']);
   });
 
   it('recordSystemEvent persists cloud_system rows and broadcasts', async () => {

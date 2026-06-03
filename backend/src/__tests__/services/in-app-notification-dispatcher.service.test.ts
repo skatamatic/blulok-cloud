@@ -45,4 +45,29 @@ describe('InAppNotificationDispatcher', () => {
       expect.objectContaining({ type: 'backend_error', userId: 'dev-admin-1' }),
     );
   });
+
+  it('fans out inventory duplicate serial alerts to facility operator roles', async () => {
+    const dispatcher = InAppNotificationDispatcher.getInstance();
+    await dispatcher.notifyDeviceInventorySyncError({
+      facilityId: 'fac-1',
+      gatewayId: 'gw-1',
+      syncLogId: 'log-1',
+      deviceSerial: 'serial-abc',
+      deviceKind: 'blulok',
+      title: 'Duplicate lock serial blocked',
+      message: 'Human readable message',
+      priority: 'urgent',
+    });
+
+    expect(mockResolveFacility).toHaveBeenCalledWith('fac-1', {
+      roles: expect.arrayContaining(['admin', 'dev_admin', 'facility_admin']),
+    });
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'device_inventory_sync_error',
+        priority: 'urgent',
+        referenceId: 'serial-abc',
+      }),
+    );
+  });
 });

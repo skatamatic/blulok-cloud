@@ -53,6 +53,94 @@ function normalizeHistogramDateKey(raw: string): string {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
 }
 
+function parseChartDate(dateStr: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return new Date(`${dateStr}T12:00:00`);
+  }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateStr)) {
+    return new Date(dateStr.replace(' ', 'T'));
+  }
+  return new Date(dateStr);
+}
+
+function formatDateLabel(dateStr: string, timePeriod: TimePeriod, detailed = false): string {
+  const date = parseChartDate(dateStr);
+  if (Number.isNaN(date.getTime())) return dateStr;
+
+  switch (timePeriod) {
+    case 'day':
+      return detailed
+        ? date.toLocaleString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            hour12: true,
+          })
+        : date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+    case 'week':
+    case 'month':
+      return detailed
+        ? date.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          })
+        : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    case 'year':
+      return detailed
+        ? date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        : date.toLocaleDateString('en-US', { month: 'short' });
+    default:
+      return dateStr;
+  }
+}
+
+function HistogramBarTooltip({
+  date,
+  dayData,
+  timePeriod,
+  colorIndex,
+}: {
+  date: string;
+  dayData: HistogramData[];
+  timePeriod: TimePeriod;
+  colorIndex: (facilityId: string) => number;
+}) {
+  const total = dayData.reduce((sum, item) => sum + item.activityCount, 0);
+  const rows = [...dayData].sort((a, b) => b.activityCount - a.activityCount);
+
+  return (
+    <div className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-20 w-max max-w-[240px] -translate-x-1/2 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
+        <p className="text-xs font-semibold text-gray-900 dark:text-white">
+          {formatDateLabel(date, timePeriod, true)}
+        </p>
+        <ul className="mt-2 space-y-1.5">
+          {rows.map((item) => (
+            <li key={item.facilityId} className="flex items-center justify-between gap-3 text-xs">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-sm ${facilityColors[colorIndex(item.facilityId) % facilityColors.length]}`}
+                />
+                <span className="truncate text-gray-600 dark:text-gray-300">{item.facilityName}</span>
+              </span>
+              <span className="shrink-0 tabular-nums font-medium text-gray-900 dark:text-white">
+                {item.activityCount}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 text-xs dark:border-gray-700">
+          <span className="text-gray-500 dark:text-gray-400">Total events</span>
+          <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{total}</span>
+        </div>
+      </div>
+      <div className="mx-auto h-2 w-2 rotate-45 border-b border-r border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-900" />
+    </div>
+  );
+}
 const timePeriodLabels: Record<TimePeriod, string> = {
   day: 'Last 24 Hours',
   week: 'Last Week',
@@ -210,21 +298,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     return Math.max(3, Math.round((value / maxValue) * barAreaHeightPx));
   };
 
-  const formatDateLabel = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    switch (timePeriod) {
-      case 'day':
-        return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
-      case 'week':
-      case 'month':
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      case 'year':
-        return date.toLocaleDateString('en-US', { month: 'short' });
-      default:
-        return dateStr;
-    }
-  };
-
   const chartAreaClass = layout.isDock
     ? 'h-24 flex-shrink-0'
     : layout.isTall
@@ -310,29 +383,54 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 shrink-0">
               Lock, unlock, and access activity by facility
             </p>
-            <div className={`${chartAreaClass} relative`}>
-              <div className="absolute inset-0 flex items-end justify-between gap-0.5 px-1 pb-7">
-                {chartEntries.map(([date, dayData], index) => (
-                  <div key={date} className="flex h-full min-w-0 max-w-10 flex-1 flex-col items-center">
+            <div className={`${chartAreaClass} flex min-h-0 flex-col`}>
+              <div
+                className="relative flex flex-1 items-end gap-0.5 border-b border-gray-200/80 px-1 dark:border-gray-700/80"
+                style={{ minHeight: barAreaHeightPx }}
+              >
+                {chartEntries.map(([date, dayData], index) => {
+                  const totalEvents = dayData.reduce((sum, item) => sum + item.activityCount, 0);
+                  return (
                     <div
-                      className="flex w-full flex-1 flex-col-reverse justify-end gap-0.5"
-                      style={{ minHeight: barAreaHeightPx }}
+                      key={date}
+                      className="group relative flex h-full min-w-0 max-w-10 flex-1 flex-col items-center justify-end hover:z-10 focus-within:z-10"
+                      tabIndex={0}
+                      role="img"
+                      aria-label={`${formatDateLabel(date, timePeriod, true)}: ${totalEvents} events`}
                     >
-                      {dayData.map((item) => (
-                        <motion.div
-                          key={`${item.facilityId}-${date}`}
-                          initial={{ height: 0 }}
-                          animate={{ height: getBarHeightPx(item.activityCount) }}
-                          transition={{ duration: 0.5, delay: index * 0.05 }}
-                          className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90`}
-                          title={`${item.facilityName}: ${item.activityCount} events`}
-                        />
-                      ))}
+                      <HistogramBarTooltip
+                        date={date}
+                        dayData={dayData}
+                        timePeriod={timePeriod}
+                        colorIndex={facilityColorIndex}
+                      />
+                      <div
+                        className="flex w-full flex-col justify-end gap-px"
+                        style={{ height: barAreaHeightPx }}
+                      >
+                        {dayData.map((item) => (
+                          <motion.div
+                            key={`${item.facilityId}-${date}`}
+                            initial={{ height: 0 }}
+                            animate={{ height: getBarHeightPx(item.activityCount) }}
+                            transition={{ duration: 0.4, delay: index * 0.03 }}
+                            className={`w-full ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90 transition-opacity group-hover:opacity-100`}
+                          />
+                        ))}
+                      </div>
                     </div>
-                    <span className="mt-1 max-w-full truncate text-[10px] text-gray-500 dark:text-gray-400 sm:text-xs">
-                      {formatDateLabel(date)}
-                    </span>
-                  </div>
+                  );
+                })}
+              </div>
+              <div className="mt-1.5 flex shrink-0 gap-0.5 px-1">
+                {chartEntries.map(([date]) => (
+                  <span
+                    key={`label-${date}`}
+                    className="min-w-0 max-w-10 flex-1 truncate text-center text-[10px] leading-tight text-gray-500 dark:text-gray-400 sm:text-[11px]"
+                    title={formatDateLabel(date, timePeriod, true)}
+                  >
+                    {formatDateLabel(date, timePeriod)}
+                  </span>
                 ))}
               </div>
             </div>
