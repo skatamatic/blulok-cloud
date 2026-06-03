@@ -134,20 +134,17 @@ describe('UnitsManagerWidget', () => {
     expect(screen.getAllByTitle(/Locked|Unlocked/).length).toBeGreaterThan(0);
   });
 
-  it('shows device details link in grid and expanded panel', async () => {
+  it('shows device details link in expanded panel only', async () => {
     renderWidget();
     await waitFor(() => screen.getByText(/Unit A-101/));
 
-    const gridLinks = screen.getAllByRole('button', { name: /^Details$/i });
-    expect(gridLinks.length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /^Details$/i })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Unit A-101/ }));
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Unit details/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /View tenant/i })).toBeInTheDocument();
-      expect(screen.getAllByRole('button', { name: /Device details/i }).length).toBeGreaterThanOrEqual(
-        1
-      );
+      expect(screen.getByRole('button', { name: /Device details/i })).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: /View tenant/i }));

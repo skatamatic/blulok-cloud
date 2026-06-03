@@ -240,8 +240,8 @@ const METRIC_GRID_COLS = `${DEVICE_STATUS_COL} ${LAST_ACCESS_COL}`;
 const DETAIL_PANEL_CLASS =
   'rounded-lg border border-gray-100 bg-white/80 p-3 dark:border-gray-700/60 dark:bg-gray-800/50';
 
-/** Shared card height in the expand row (lg+) so tenant, device, and activity align. */
-const EXPAND_DETAIL_CARD_CLASS = `${DETAIL_PANEL_CLASS} min-h-[9.375rem] lg:h-[13.75rem] lg:overflow-y-auto`;
+/** Recent access is capped so long lists scroll instead of stretching the expand row. */
+const ACCESS_HISTORY_PANEL_CLASS = `${DETAIL_PANEL_CLASS} max-h-[13.75rem] overflow-y-auto`;
 
 /** Single-family type scale: label (xs caps) · body (sm) · meta (xs muted). */
 const TYPE = {
@@ -798,7 +798,7 @@ const ExpandedDetails: React.FC<{
             }
           />
 
-          <div className={EXPAND_DETAIL_CARD_CLASS}>
+          <div className={ACCESS_HISTORY_PANEL_CLASS}>
             {logsLoading ? (
               <ul className="space-y-1.5">
                 {[0, 1, 2].map((i) => (
@@ -838,7 +838,7 @@ const ExpandedDetails: React.FC<{
               ) : undefined
             }
           />
-          <div className={`${EXPAND_DETAIL_CARD_CLASS} space-y-2`}>
+          <div className={`${DETAIL_PANEL_CLASS} space-y-2`}>
             <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
               <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
               <span className="truncate">{tenantName}</span>
@@ -877,7 +877,7 @@ const ExpandedDetails: React.FC<{
                 ) : undefined
               }
             />
-            <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2.5`}>
+            <div className={`${DETAIL_PANEL_CLASS} flex flex-col space-y-2.5`}>
                 {metrics.hasDevice ? (
                   <>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1416,13 +1416,6 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                               {!showDeviceColumn && (
                                 <DeviceStatusBadge status={metrics.status} compact />
                               )}
-                              {!showDeviceColumn && unit.blulok_device?.id && (
-                                <DeviceDetailsLink
-                                  deviceId={unit.blulok_device.id}
-                                  label="Details"
-                                  compact
-                                />
-                              )}
                             </div>
                           )}
                         </div>
@@ -1434,15 +1427,8 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                         )}
 
                         {showDeviceColumn && (
-                          <div className="flex min-w-0 flex-col items-center gap-1">
+                          <div className="flex min-w-0 flex-col items-center">
                             <DeviceStatusBadge status={metrics.status} compact />
-                            {unit.blulok_device?.id && (
-                              <DeviceDetailsLink
-                                deviceId={unit.blulok_device.id}
-                                label="Details"
-                                compact
-                              />
-                            )}
                           </div>
                         )}
 
