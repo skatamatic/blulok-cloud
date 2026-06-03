@@ -13,6 +13,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { DASHBOARD_ACTIVITY_TYPES } from '@/constants/access-history.constants';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 
@@ -335,7 +336,7 @@ export class ActivityLogModel {
   }
 
   /**
-   * Aggregated access-attempt counts for histogram (canonical activity_logs source).
+   * Aggregated dashboard activity counts for histogram (matches Activity Monitor scope).
    */
   async getActivityStats(options: {
     startDate: Date;
@@ -367,7 +368,7 @@ export class ActivityLogModel {
         knex.raw('COUNT(*) as activity_count'),
       )
       .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id')
-      .where('activity_logs.activity_type', 'access_attempt')
+      .whereIn('activity_logs.activity_type', DASHBOARD_ACTIVITY_TYPES)
       .whereBetween('activity_logs.occurred_at', [options.startDate, options.endDate])
       .whereNotNull('activity_logs.facility_id')
       .groupByRaw(`${dateTrunc}, activity_logs.facility_id, facilities.name`)

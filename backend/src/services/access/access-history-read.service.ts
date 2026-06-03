@@ -3,7 +3,7 @@ import { UserRole } from '@/types/auth.types';
 import { AccessEventScopeService, AccessEventScope } from '@/services/access/access-event-scope.service';
 import { AuthService } from '@/services/auth.service';
 import { AccessLogFilters, AccessLogModel } from '@/models/access-log.model';
-import { MAX_ACCESS_HISTORY_EXPORT } from '@/constants/access-history.constants';
+import { DASHBOARD_ACTIVITY_TYPES, MAX_ACCESS_HISTORY_EXPORT } from '@/constants/access-history.constants';
 
 export type QueryFilters = {
   facility_id?: string;
@@ -53,7 +53,7 @@ export class AccessHistoryReadService {
   private readonly scopeService = new AccessEventScopeService();
   private readonly legacyAccessLogModel = new AccessLogModel();
 
-  static readonly DASHBOARD_ACTIVITY_TYPES: ActivityType[] = ['access_attempt', 'lock', 'unlock'];
+  static readonly DASHBOARD_ACTIVITY_TYPES = DASHBOARD_ACTIVITY_TYPES;
 
   public async query(
     userId: string,

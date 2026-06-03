@@ -507,7 +507,7 @@ The following integrations are wired up automatically — no manual calls needed
 | Gateway offline/online | `GatewayEventsService` → `InAppNotificationDispatcher` | Facility operators notified |
 | Device low battery (≤20%) | `DeviceModel` → `InAppNotificationDispatcher` | Facility operators notified (deduped 24h) |
 
-**Facility scoping:** REST and WebSocket notification subscriptions filter by `facilityId` (single facility) or the user's assigned `facilityIds` (all-facilities mode). Histogram stats read from `activity_logs` via `ActivityLogModel.getActivityStats()` (not legacy `access_logs`).
+**Facility scoping:** REST and WebSocket notification subscriptions filter by `facilityId` (single facility) or the user's assigned `facilityIds` (all-facilities mode). Histogram stats read from `activity_logs` via `ActivityLogModel.getActivityStats()` using the same activity types as Activity Monitor (`access_attempt`, `lock`, `unlock` — not legacy `access_logs`).
 
 **Extensibility:** Add new operational alerts in `InAppNotificationDispatcher` (`backend/src/services/notifications/in-app-notification-dispatcher.service.ts`) and register types in `IN_APP_NOTIFICATION_TYPES`.
 

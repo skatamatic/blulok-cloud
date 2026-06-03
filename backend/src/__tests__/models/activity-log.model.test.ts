@@ -197,6 +197,36 @@ describe('ActivityLogModel', () => {
     });
   });
 
+  describe('getActivityStats', () => {
+    it('aggregates lock, unlock, and access_attempt activity types', async () => {
+      const whereIn = jest.fn().mockReturnThis();
+      const mockQueryBuilder = {
+        select: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        whereIn,
+        whereBetween: jest.fn().mockReturnThis(),
+        whereNotNull: jest.fn().mockReturnThis(),
+        groupByRaw: jest.fn().mockReturnThis(),
+        orderByRaw: jest.fn().mockReturnThis(),
+      };
+      (mockQueryBuilder as any).then = (resolve: any) => Promise.resolve([]).then(resolve);
+
+      mockKnex.mockReturnValue(mockQueryBuilder);
+      mockKnex.raw = jest.fn((sql: string) => sql);
+
+      await model.getActivityStats({
+        startDate: new Date('2024-01-01'),
+        endDate: new Date('2024-01-31'),
+        groupBy: 'day',
+      });
+
+      expect(whereIn).toHaveBeenCalledWith(
+        'activity_logs.activity_type',
+        ['access_attempt', 'lock', 'unlock'],
+      );
+    });
+  });
+
   describe('findWithContext', () => {
     it('selects device context from valid schema columns', async () => {
       const mockQueryBuilder = {
