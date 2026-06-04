@@ -1236,7 +1236,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
       enhancedMenu={
         <div className="space-y-1">
           <button
-            onClick={fetchUnits}
+            onClick={() => void fetchUnits()}
             disabled={loading}
             className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center gap-2 disabled:opacity-50"
           >
