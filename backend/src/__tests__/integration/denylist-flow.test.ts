@@ -95,8 +95,7 @@ describe('Denylist Flow Integration', () => {
       bulkRemove: jest.fn().mockResolvedValue(1),
       pruneExpired: jest.fn().mockResolvedValue(0),
     } as any;
-    (AccessControlZoneAccessService.getBluLokDeviceIdsForUnits as jest.Mock).mockResolvedValue(['device-1']);
-    (AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits as jest.Mock).mockResolvedValue([]);
+    (AccessControlZoneAccessService.getDenylistDeviceIdsForUnits as jest.Mock).mockResolvedValue(['device-1']);
     (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValue(new Map([['device-1', 'facility-1']]));
 
 

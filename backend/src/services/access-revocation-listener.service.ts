@@ -54,11 +54,7 @@ export class AccessRevocationListenerService {
     this.events.onTenantUnassigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        const [bluLokDeviceIds, accessControlDeviceIds] = await Promise.all([
-          AccessControlZoneAccessService.getBluLokDeviceIdsForUnits([event.unitId]),
-          AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits([event.unitId]),
-        ]);
-        const deviceIds = Array.from(new Set([...bluLokDeviceIds, ...accessControlDeviceIds]));
+        const deviceIds = await AccessControlZoneAccessService.getDenylistDeviceIdsForUnits([event.unitId]);
 
         if (deviceIds.length === 0) {
           logger.info(`No devices found for unit ${event.unitId}, skipping denylist update`);
@@ -103,11 +99,7 @@ export class AccessRevocationListenerService {
     this.events.onTenantAssigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        const [bluLokDeviceIds, accessControlDeviceIds] = await Promise.all([
-          AccessControlZoneAccessService.getBluLokDeviceIdsForUnits([event.unitId]),
-          AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits([event.unitId]),
-        ]);
-        const deviceIds = Array.from(new Set([...bluLokDeviceIds, ...accessControlDeviceIds]));
+        const deviceIds = await AccessControlZoneAccessService.getDenylistDeviceIdsForUnits([event.unitId]);
 
         if (deviceIds.length === 0) {
           return;

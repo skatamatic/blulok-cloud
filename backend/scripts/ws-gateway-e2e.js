@@ -901,9 +901,14 @@ async function requestRoutePass(userToken, appDeviceId) {
 
 async function revokeShare(token, shareId) {
   const res = await axios.delete(`${API_BASE}/key-sharing/${shareId}`, {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}` },
+    validateStatus: () => true,
   });
-  if (res.data?.error) throw new Error(`Revoke share failed: ${res.data?.error}`);
+  if (res.status !== 200 || res.data?.success === false) {
+    throw new Error(
+      `Revoke share failed: status=${res.status} body=${JSON.stringify(res.data)}`,
+    );
+  }
 }
 
 async function reactivateShare(token, shareId) {
@@ -7223,7 +7228,7 @@ async function run() {
     ok('Facility admin route pass includes user_role=facility_admin');
 
     step('Setting group-scoped code and asserting gateway fan-out to all keypad members');
-    const manualGroupCode = '333333';
+    let manualGroupCode = '333333';
     const expectManualGroup = waitForCommand(
       ws,
       (cmd) =>
@@ -7257,6 +7262,97 @@ async function run() {
     assertAccessCodeTargetFields(groupEffectiveA, keypadDeviceA, 'GET /access-codes/effective');
     assertAccessCodeTargetFields(groupEffectiveB, keypadDeviceB, 'GET /access-codes/effective');
     ok('Group-scoped code fan-out and effective resolution validated (device_id, access_id, relay_channel)');
+
+    heading('Access code outbox — admin manual/set while gateway offline');
+    accessCodeAckMode = 'accept';
+    const offlineAdminCode = '778899';
+
+    step('Disconnecting gateway WS (site offline — no ACCESS_CODE_UPDATE delivery yet)');
+    try {
+      ws.close(1000, 'e2e-offline-outbox');
+    } catch {
+      /* ignore */
+    }
+    await delay(750);
+
+    step('Verifying inbound gateway session is disconnected');
+    const offlineConnResp = await axios.get(
+      `${API_BASE}/gateways/status/${created.facilityId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (offlineConnResp.data?.connected !== false) {
+      throw new Error(
+        `Expected gateway WS disconnected for facility ${created.facilityId}, got connected=${offlineConnResp.data?.connected}`,
+      );
+    }
+    ok('Gateway inbound WS reported disconnected');
+
+    step('Facility admin sets group code via PUT /access-codes/manual/set (same path as Access Code UI)');
+    const offlineSetResp = await axios.put(
+      `${API_BASE}/access-codes/manual/set`,
+      {
+        facility_id: created.facilityId,
+        scope_type: 'device_group',
+        scope_id: accessCodeGroupId,
+        code: offlineAdminCode,
+      },
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        validateStatus: () => true,
+      },
+    );
+    if (offlineSetResp.status !== 200 || offlineSetResp.data?.success !== true) {
+      throw new Error(
+        `Expected manual/set while gateway offline to persist + queue outbox, got status=${offlineSetResp.status} body=${JSON.stringify(offlineSetResp.data)}`,
+      );
+    }
+
+    const effectiveWhileOffline = await getEffectiveCodesMap();
+    if (effectiveWhileOffline.get(keypadDeviceA)?.code !== offlineAdminCode) {
+      throw new Error('Expected effective code on keypadDeviceA to update in DB while gateway offline');
+    }
+    if (effectiveWhileOffline.get(keypadDeviceB)?.code !== offlineAdminCode) {
+      throw new Error('Expected effective code on keypadDeviceB to update in DB while gateway offline');
+    }
+
+    const pendingWhileOfflineResp = await axios.get(
+      `${API_BASE}/access-codes/push-state/${created.facilityId}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    if (pendingWhileOfflineResp.data?.data?.status !== 'pending') {
+      throw new Error(
+        `Expected push-state=pending after manual/set while offline, got ${pendingWhileOfflineResp.data?.data?.status}`,
+      );
+    }
+    ok('manual/set persisted new codes with push-state pending (outbox row, no WS unicast while offline)');
+
+    step('Gateway reconnects; AUTH_OK flush should dequeue outbox and unicast ACCESS_CODE_UPDATE');
+    gatewayWsEvents.length = 0;
+    const expectDeferredOutboxPush = waitForGatewayEvent((msg) => {
+      const cmd = normalizeCmd(msg);
+      return (
+        !!cmd
+        && cmd.cmd_type === 'ACCESS_CODE_UPDATE'
+        && Array.isArray(cmd.codes)
+        && normalizeCodeRowsForDevice(cmd, keypadDeviceA).some((entry) => entry.code === offlineAdminCode)
+        && normalizeCodeRowsForDevice(cmd, keypadDeviceB).some((entry) => entry.code === offlineAdminCode)
+      );
+    }, 20000);
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    const deferredOutboxCmd = normalizeCmd(await expectDeferredOutboxPush);
+    assertAccessCodeUpdateCommand(deferredOutboxCmd, 'ACCESS_CODE_UPDATE (offline outbox reconnect)');
+
+    const activeAfterReconnectResp = await axios.get(
+      `${API_BASE}/access-codes/push-state/${created.facilityId}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    if (activeAfterReconnectResp.data?.data?.status !== 'active') {
+      throw new Error(
+        `Expected push-state=active after reconnect delivery, got ${activeAfterReconnectResp.data?.data?.status}`,
+      );
+    }
+    ok('Deferred ACCESS_CODE_UPDATE delivered on AUTH_OK outbox flush with push-state active');
+    manualGroupCode = offlineAdminCode;
 
     if (keypadDeviceC) {
       step('Adding new access-control member auto-syncs to current group code');
@@ -8455,7 +8551,7 @@ async function run() {
       // Revoke any remaining shares
       for (const shareId of created.shares) {
         step(`Revoking share ${shareId}`);
-        await revokeShare(token, shareId).catch(() => {});
+        await revokeShare(token, shareId);
         ok(`Revoked share ${shareId}`);
       }
       // Unassign device

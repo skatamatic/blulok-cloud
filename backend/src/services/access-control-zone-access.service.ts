@@ -16,6 +16,14 @@ export class AccessControlZoneAccessService {
     return rows.map((row) => String(row.id));
   }
 
+  /**
+   * Device IDs that may be stored in `device_denylist_entries` (FK → blulok_devices).
+   * Zone-linked access_control devices are excluded; app-entry revocation is handled via route passes.
+   */
+  public static async getDenylistDeviceIdsForUnits(unitIds: string[]): Promise<string[]> {
+    return this.getBluLokDeviceIdsForUnits(unitIds);
+  }
+
   public static async getAccessControlDeviceIdsForBluLokDevices(bluLokDeviceIds: string[]): Promise<string[]> {
     if (bluLokDeviceIds.length === 0) return [];
     const rows = await this.db('device_group_members as zone_access')

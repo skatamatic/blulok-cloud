@@ -29,8 +29,7 @@ jest.mock('@/models/denylist-entry.model', () => ({
 }));
 jest.mock('@/services/access-control-zone-access.service', () => ({
   AccessControlZoneAccessService: {
-    getBluLokDeviceIdsForUnits: jest.fn().mockResolvedValue(['dev-123']),
-    getAccessControlDeviceIdsForUnits: jest.fn().mockResolvedValue([]),
+    getDenylistDeviceIdsForUnits: jest.fn().mockResolvedValue(['dev-123']),
     getDeviceFacilityIds: jest.fn().mockResolvedValue(new Map([['dev-123', 'fac-1']])),
   },
 }));
@@ -132,8 +131,7 @@ describe('AccessRevocationListenerService', () => {
 
     it('skips denylist if no devices found for unit', async () => {
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      (AccessControlZoneAccessService.getBluLokDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce([]);
-      (AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce([]);
+      (AccessControlZoneAccessService.getDenylistDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce([]);
 
       mockDb.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
@@ -381,8 +379,7 @@ describe('AccessRevocationListenerService', () => {
         (entry: any) => entry?.id === 'entry-expired',
       );
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      (AccessControlZoneAccessService.getBluLokDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce(['dev-123', 'dev-456']);
-      (AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce([]);
+      (AccessControlZoneAccessService.getDenylistDeviceIdsForUnits as jest.Mock).mockResolvedValueOnce(['dev-123', 'dev-456']);
       (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValueOnce(
         new Map([
           ['dev-123', 'fac-1'],

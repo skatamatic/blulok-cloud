@@ -104,6 +104,17 @@ describe('AccessControlZoneAccessService', () => {
     expect(result).toEqual(['ac-a']);
   });
 
+  it('getDenylistDeviceIdsForUnits returns only bluLok locks (denylist FK target)', async () => {
+    const lockSpy = jest
+      .spyOn(AccessControlZoneAccessService, 'getBluLokDeviceIdsForUnits')
+      .mockResolvedValue(['lock-a']);
+
+    const result = await AccessControlZoneAccessService.getDenylistDeviceIdsForUnits(['unit-a']);
+
+    expect(lockSpy).toHaveBeenCalledWith(['unit-a']);
+    expect(result).toEqual(['lock-a']);
+  });
+
   it('returns empty facility map when no device IDs provided', async () => {
     const db = jest.fn();
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });

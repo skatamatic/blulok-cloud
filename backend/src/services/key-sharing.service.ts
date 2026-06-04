@@ -25,12 +25,8 @@ export class KeySharingService {
     return KeySharingService.instance;
   }
 
-  private async getEntitledDeviceIdsForUnit(unitId: string): Promise<string[]> {
-    const [bluLokDeviceIds, accessControlDeviceIds] = await Promise.all([
-      AccessControlZoneAccessService.getBluLokDeviceIdsForUnits([unitId]),
-      AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits([unitId]),
-    ]);
-    return Array.from(new Set([...bluLokDeviceIds, ...accessControlDeviceIds]));
+  private async getDenylistDeviceIdsForUnit(unitId: string): Promise<string[]> {
+    return AccessControlZoneAccessService.getDenylistDeviceIdsForUnits([unitId]);
   }
 
   /**
@@ -170,7 +166,7 @@ export class KeySharingService {
         const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
 
         const denylistModel = new DenylistEntryModel();
-        const unitDeviceIds = await this.getEntitledDeviceIdsForUnit(unitId);
+        const unitDeviceIds = await this.getDenylistDeviceIdsForUnit(unitId);
         if (unitDeviceIds.length > 0) {
           const entries = (await denylistModel.findByUser(invitee.id))
             .filter((entry) => unitDeviceIds.includes(entry.device_id));
@@ -369,7 +365,7 @@ export class KeySharingService {
 
       if (becameActive && unexpired) {
         const denylistModel = new DenylistEntryModel();
-        const unitDeviceIds = await this.getEntitledDeviceIdsForUnit(existingSharing.unit_id);
+        const unitDeviceIds = await this.getDenylistDeviceIdsForUnit(existingSharing.unit_id);
         const entries = (await denylistModel.findByUser(existingSharing.shared_with_user_id))
           .filter((entry) => unitDeviceIds.includes(entry.device_id));
         if (entries.length > 0) {
@@ -426,7 +422,7 @@ export class KeySharingService {
     if (!success) return false;
 
     try {
-      const deviceIds = await this.getEntitledDeviceIdsForUnit(existingSharing.unit_id);
+      const deviceIds = await this.getDenylistDeviceIdsForUnit(existingSharing.unit_id);
       if (deviceIds.length === 0) return true;
 
       const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
