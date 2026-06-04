@@ -1,17 +1,19 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { getScopedFacilityId } from '@/utils/globalFacilityScope.utils';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { ScopedGeneralStatsData } from '@/types/dashboard.types';
 
 export type { ScopedGeneralStatsData } from '@/types/dashboard.types';
 
 /**
- * Hook that provides general stats data without managing WebSocket subscriptions.
- * Subscriptions are managed by the parent (e.g. DashboardPage via widgetSubscriptionManager).
- * Performs an initial REST load so the dashboard is not stuck on spinners when WS is slow.
+ * Dashboard general stats: initial REST load plus WebSocket-driven updates.
+ * Aggregate (all facilities) stats apply `general_stats_update` payloads directly.
+ * Facility-scoped stats refetch via REST when `device_status` / `units` signals arrive,
+ * because WS broadcasts are user-scoped rather than per-facility.
  */
 export const useGeneralStatsData = () => {
   const { authState } = useAuth();
@@ -27,6 +29,45 @@ export const useGeneralStatsData = () => {
     authState.user?.role === UserRole.FACILITY_ADMIN ||
     authState.user?.role === UserRole.MAINTENANCE;
 
+  const refetchStats = useCallback(
+    async (options?: { background?: boolean }) => {
+      if (!canAccess || !authState.user) {
+        return;
+      }
+
+      try {
+        if (!options?.background) {
+          setLoading(true);
+          setError(null);
+        }
+
+        const res = await apiService.getDashboardGeneralStats(
+          scopedFacilityId ? { facility_id: scopedFacilityId } : undefined,
+        );
+
+        if (res.success && res.data) {
+          setStats(res.data);
+          setError(null);
+        } else if (!options?.background) {
+          setError('Could not load dashboard statistics');
+        }
+      } catch (e) {
+        if (!options?.background) {
+          const msg = e instanceof Error ? e.message : 'Failed to load dashboard statistics';
+          setError(msg);
+        }
+      } finally {
+        if (!options?.background) {
+          setLoading(false);
+        }
+      }
+    },
+    [canAccess, authState.user, scopedFacilityId],
+  );
+
+  const refetchStatsRef = useRef(refetchStats);
+  refetchStatsRef.current = refetchStats;
+
   useEffect(() => {
     if (!canAccess || !authState.user) {
       setStats(null);
@@ -35,48 +76,29 @@ export const useGeneralStatsData = () => {
       return;
     }
 
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const res = await apiService.getDashboardGeneralStats(
-          scopedFacilityId ? { facility_id: scopedFacilityId } : undefined
-        );
-        if (cancelled) return;
-        if (res.success && res.data) {
-          setStats(res.data);
-        } else {
-          setError('Could not load dashboard statistics');
-        }
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : 'Failed to load dashboard statistics';
-          setError(msg);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    })();
+    void refetchStats();
+  }, [canAccess, authState.user?.id, scopedFacilityId, refetchStats]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [canAccess, authState.user?.id, scopedFacilityId]);
+  useLockDeviceRealtime({
+    enabled: canAccess && !!scopedFacilityId,
+    facilityId: scopedFacilityId,
+    debouncedRefresh: () => {
+      void refetchStatsRef.current({ background: true });
+    },
+    debounceMs: 500,
+  });
 
   const handleStatsUpdate = useCallback(
     (data: ScopedGeneralStatsData) => {
       if (scopedFacilityId) {
-        // WebSocket broadcasts are not facility-scoped; avoid overwriting REST-loaded facility stats.
+        // Facility-scoped REST is authoritative; WS aggregate must not overwrite.
         return;
       }
       setStats(data);
       setLoading(false);
       setError(null);
     },
-    [scopedFacilityId]
+    [scopedFacilityId],
   );
 
   const handleError = useCallback((err: string) => {
@@ -89,7 +111,7 @@ export const useGeneralStatsData = () => {
       onData: handleStatsUpdate,
       onError: handleError,
     }),
-    [handleStatsUpdate, handleError]
+    [handleStatsUpdate, handleError],
   );
 
   return {

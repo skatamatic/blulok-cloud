@@ -184,6 +184,27 @@ CREATE TABLE access_codes (
 );
 ```
 
+**Push outbox** (migration `075`): one active row per facility while delivery is pending.
+
+```sql
+CREATE TABLE access_code_push_outbox (
+  id UUID PRIMARY KEY,
+  facility_id UUID NOT NULL REFERENCES facilities(id),
+  status ENUM('pending', 'in_progress', 'failed', 'dead_letter') NOT NULL DEFAULT 'pending',
+  last_nonce VARCHAR(64) NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  next_attempt_at TIMESTAMP NULL,
+  coalesce_pending BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
+);
+```
+
+- **`enqueue`**: upserts a pending row when codes change; coalesces multiple edits while a push is **`in_progress`** via **`coalesce_pending`**.
+- **`flushPendingPushForFacility`**: sends signed JWT when gateway is online; sets in-memory push state **`pending`** when offline.
+- Scheduler scans due rows every 5s; gateway **`AUTH_OK`** triggers immediate flush.
+
 **Behavioral rules**:
 - Devices in active `access_code` groups must remain synchronized to that group's current code.
 - Device-scoped overrides are rejected when the target device is already in an active access-code group.

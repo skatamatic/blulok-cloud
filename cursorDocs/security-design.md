@@ -15,7 +15,7 @@ This document summarizes the new centralized trust model implemented in the back
 - Flow D (Revocation): Cloud pushes signed Denylist Update Command to Gateway to target locks.
 - Flow E (Time Sync): Cloud issues signed Secure Time Sync Command; Gateway broadcasts periodically; locks reject older timestamps.
 - Flow F (Firmware OTA): Cloud signs firmware manifest and chunked binary data as EdDSA JWTs; Gateway verifies each JWT using the Ops public key received in AUTH_OK; Gateway reassembles binary, verifies SHA-256 integrity, verifies manufacturer signature, then distributes to lock hardware.
-- Flow G (Keypad Access Codes): Cloud resolves active keypad access codes per relay target, signs `ACCESS_CODE_UPDATE` command JWT, and unicasts to the facility gateway; gateway can also poll the same resolved code mappings via internal route.
+- Flow G (Keypad Access Codes): Cloud resolves active keypad access codes per relay target, signs `ACCESS_CODE_UPDATE` command JWT, and unicasts to the facility gateway; gateway can also poll the same resolved code mappings via internal route. Code mutations persist in the database immediately; delivery is tracked in a durable **`access_code_push_outbox`** per facility until the gateway ACKs or the row reaches **`dead_letter`** after max retries. On gateway reconnect (`AUTH_OK`), the outbox is flushed (same pattern as firmware OTA resume).
 
 ### Data Artifacts
 - Route Pass (JWT, Ed25519): `iss`, `sub`, `aud[]`, `iat`, `exp`, `jti`, `device_pubkey`, `user_role` (lowercase underscore-separated role, e.g. `facility_admin`, aligned with `UserRole`).

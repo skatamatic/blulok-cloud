@@ -9,9 +9,36 @@ jest.mock('@/services/database.service', () => ({
   },
 }));
 
+const flushPendingPushForFacility = jest.fn().mockResolvedValue(undefined);
+const processDueOutboxPushes = jest.fn().mockResolvedValue(undefined);
+let connectionChangeListener: ((event: {
+  facilityId: string;
+  connected: boolean;
+  reason?: string;
+  atMs?: number;
+}) => void) | undefined;
+
+jest.mock('@/services/gateway/gateway-events.service', () => ({
+  GatewayEventsService: {
+    getInstance: jest.fn(() => ({
+      getConnectedFacilityIds: jest.fn(() => []),
+      onFacilityConnectionChange: jest.fn((listener: typeof connectionChangeListener) => {
+        connectionChangeListener = listener;
+        return jest.fn();
+      }),
+    })),
+  },
+}));
+
 jest.mock('@/services/access-code.service', () => ({
   AccessCodeService: {
-    getInstance: jest.fn(() => ({ forceRotate, getGroupConfig, isGatewayOnline })),
+    getInstance: jest.fn(() => ({
+      forceRotate,
+      getGroupConfig,
+      isGatewayOnline,
+      flushPendingPushForFacility,
+      processDueOutboxPushes,
+    })),
   },
 }));
 
@@ -20,6 +47,7 @@ import { AccessCodeSchedulerService } from '@/services/access-code-scheduler.ser
 describe('AccessCodeSchedulerService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    connectionChangeListener = undefined;
     isGatewayOnline.mockReturnValue(true);
     (AccessCodeSchedulerService as any).instance = undefined;
   });
@@ -206,7 +234,7 @@ describe('AccessCodeSchedulerService', () => {
     expect(runSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('skips rotations while gateway is offline without scheduling retry spam', async () => {
+  it('rotates due groups while gateway is offline and queues push delivery', async () => {
     const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
     const groupsQuery = {
       select: jest.fn().mockReturnThis(),
@@ -235,92 +263,67 @@ describe('AccessCodeSchedulerService', () => {
       rotation_minute: 0,
     });
     isGatewayOnline.mockReturnValue(false);
-
-    const scheduler = AccessCodeSchedulerService.getInstance() as any;
-    await scheduler.run();
-
-    expect(forceRotate).not.toHaveBeenCalled();
-    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
-  });
-
-  it('continues to skip offline rotations on repeated ticks', async () => {
-    const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
-    const groupsQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockResolvedValue(groupRows),
-    };
-    const latestCodeQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      orderBy: jest.fn().mockReturnThis(),
-      first: jest.fn().mockResolvedValue({
-        created_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
-      }),
-    };
-    dbMock.mockImplementation((table: string) => {
-      if (table === 'device_groups') return groupsQuery;
-      if (table === 'access_codes') return latestCodeQuery;
-      throw new Error(`Unexpected table ${table}`);
-    });
-    getGroupConfig.mockResolvedValue({
-      is_enabled: true,
-      digit_count: 6,
-      rotation_interval_hours: 24,
-      rotation_hour: 0,
-      rotation_minute: 0,
-    });
-    isGatewayOnline.mockReturnValue(false);
-
-    const scheduler = AccessCodeSchedulerService.getInstance() as any;
-    await scheduler.run();
-
-    await scheduler.run();
-    expect(forceRotate).not.toHaveBeenCalled();
-    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
-  });
-
-  it('retries immediately when gateway comes back online', async () => {
-    const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
-    const groupsQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockResolvedValue(groupRows),
-    };
-    const latestCodeQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      orderBy: jest.fn().mockReturnThis(),
-      first: jest.fn().mockResolvedValue({
-        created_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
-      }),
-    };
-    dbMock.mockImplementation((table: string) => {
-      if (table === 'device_groups') return groupsQuery;
-      if (table === 'access_codes') return latestCodeQuery;
-      throw new Error(`Unexpected table ${table}`);
-    });
-    getGroupConfig.mockResolvedValue({
-      is_enabled: true,
-      digit_count: 6,
-      rotation_interval_hours: 24,
-      rotation_hour: 0,
-      rotation_minute: 0,
-    });
     forceRotate.mockResolvedValue(undefined);
 
     const scheduler = AccessCodeSchedulerService.getInstance() as any;
-    isGatewayOnline.mockReturnValue(false);
     await scheduler.run();
-    expect(forceRotate).not.toHaveBeenCalled();
-    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
 
-    isGatewayOnline.mockReturnValue(true);
-    await scheduler.run();
     expect(forceRotate).toHaveBeenCalledWith('fac-1', 'device_group', 'grp-1');
     expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
   });
-});
 
+  it('does not repeat offline rotation until interval elapses', async () => {
+    const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
+    const groupsQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockResolvedValue(groupRows),
+    };
+    const latestCodeQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({
+        created_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      }),
+    };
+    dbMock.mockImplementation((table: string) => {
+      if (table === 'device_groups') return groupsQuery;
+      if (table === 'access_codes') return latestCodeQuery;
+      throw new Error(`Unexpected table ${table}`);
+    });
+    getGroupConfig.mockResolvedValue({
+      is_enabled: true,
+      digit_count: 6,
+      rotation_interval_hours: 24,
+      rotation_hour: 0,
+      rotation_minute: 0,
+    });
+    isGatewayOnline.mockReturnValue(false);
+    forceRotate.mockResolvedValue(undefined);
+
+    const scheduler = AccessCodeSchedulerService.getInstance() as any;
+    await scheduler.run();
+
+    await scheduler.run();
+    expect(forceRotate).toHaveBeenCalledTimes(1);
+    expect(scheduler.retryAtByGroup.get('grp-1')).toBeUndefined();
+  });
+
+  it('flushes outbox when gateway reconnects', async () => {
+    const scheduler = AccessCodeSchedulerService.getInstance() as any;
+    scheduler.start();
+    flushPendingPushForFacility.mockClear();
+
+    connectionChangeListener?.({
+      facilityId: 'fac-1',
+      connected: true,
+      reason: 'auth_ok',
+      atMs: Date.now(),
+    });
+
+    expect(flushPendingPushForFacility).toHaveBeenCalledWith('fac-1');
+    scheduler.stop();
+  });
+});

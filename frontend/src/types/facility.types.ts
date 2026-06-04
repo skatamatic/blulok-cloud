@@ -295,6 +295,7 @@ export interface Unit {
 
 export interface DeviceHierarchy {
   facility: Facility;
+  /** Assigned gateway metadata for device tree / modals — not used for live connectivity badges (see `useFacilityGatewayLiveStatus`). */
   gateway: Gateway | null;
   accessControlDevices: AccessControlDevice[];
   blulokDevices: BluLokDevice[];

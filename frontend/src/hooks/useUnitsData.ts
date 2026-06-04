@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api.service';
-// import { widgetSubscriptionManager } from '@/services/widget-subscription-manager'; // Temporarily disabled
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 
 export interface UnlockedUnit {
   id: string;
@@ -45,34 +45,32 @@ export const useUnitsData = (facilityId?: string | null): UseUnitsDataReturn => 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchUnitsData = useCallback(async () => {
+  const fetchUnitsData = useCallback(async (options?: { background?: boolean }) => {
     try {
-      setLoading(true);
-      setError(null);
+      if (!options?.background) {
+        setLoading(true);
+        setError(null);
+      }
 
       const params = facilityId ? { facility_id: facilityId } : undefined;
 
-      // Fetch all units first (scoped when global facility is selected)
       const allUnitsResponse = await apiService.get('/units', params ? { params } : undefined);
-
-      // Fetch unlocked units using the dedicated endpoint
       const unlockedUnitsResponse = await apiService.get('/units/unlocked', params ? { params } : undefined);
-      
+
       if (allUnitsResponse.success && unlockedUnitsResponse.success) {
         const allUnits = allUnitsResponse.units || [];
         const unlockedUnits = unlockedUnitsResponse.units || [];
-        
-        // Compute stats client-side
+
         const totalUnits = allUnits.length;
-        const occupiedUnits = allUnits.filter((u: any) => u.status === 'occupied').length;
-        const availableUnits = allUnits.filter((u: any) => u.status === 'available').length;
-        const maintenanceUnits = allUnits.filter((u: any) => u.status === 'maintenance').length;
-        const reservedUnits = allUnits.filter((u: any) => u.status === 'reserved').length;
+        const occupiedUnits = allUnits.filter((u: { status?: string }) => u.status === 'occupied').length;
+        const availableUnits = allUnits.filter((u: { status?: string }) => u.status === 'available').length;
+        const maintenanceUnits = allUnits.filter((u: { status?: string }) => u.status === 'maintenance').length;
+        const reservedUnits = allUnits.filter((u: { status?: string }) => u.status === 'reserved').length;
         const unlockedCount = unlockedUnits.length;
         const lockedCount = totalUnits - unlockedCount;
-        
-        const unitsData: UnitsData = {
-          unlockedUnits: unlockedUnits,
+
+        setData({
+          unlockedUnits,
           totalUnits,
           occupiedUnits,
           availableUnits,
@@ -80,34 +78,37 @@ export const useUnitsData = (facilityId?: string | null): UseUnitsDataReturn => 
           reservedUnits,
           unlockedCount,
           lockedCount,
-          lastUpdated: new Date().toISOString()
-        };
-        
-        setData(unitsData);
-      } else {
+          lastUpdated: new Date().toISOString(),
+        });
+      } else if (!options?.background) {
         setError('Failed to fetch units data');
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch units data';
-      setError(errorMessage);
-      console.error('Error fetching units data:', err);
+      if (!options?.background) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch units data';
+        setError(errorMessage);
+        console.error('Error fetching units data:', err);
+      }
     } finally {
-      setLoading(false);
+      if (!options?.background) {
+        setLoading(false);
+      }
     }
   }, [facilityId]);
+
+  const fetchUnitsDataRef = useRef(fetchUnitsData);
+  fetchUnitsDataRef.current = fetchUnitsData;
 
   const lockUnit = useCallback(async (unitId: string): Promise<boolean> => {
     try {
       const response = await apiService.post(`/units/${unitId}/lock`);
-      
+
       if (response.success) {
-        // Refresh data after successful lock
         await fetchUnitsData();
         return true;
-      } else {
-        setError(response.message || 'Failed to lock unit');
-        return false;
       }
+      setError(response.message || 'Failed to lock unit');
+      return false;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to lock unit';
       setError(errorMessage);
@@ -126,18 +127,16 @@ export const useUnitsData = (facilityId?: string | null): UseUnitsDataReturn => 
   }, []);
 
   useEffect(() => {
-    fetchUnitsData();
+    void fetchUnitsData();
   }, [fetchUnitsData]);
 
-  // Set up WebSocket subscription for real-time updates
-  // TEMPORARILY DISABLED TO DEBUG COUNT ISSUE
-  // useEffect(() => {
-  //   widgetSubscriptionManager.subscribe('units', onData, onError);
-  //   
-  //   return () => {
-  //     widgetSubscriptionManager.unsubscribe('units');
-  //   };
-  // }, [onData, onError]);
+  useLockDeviceRealtime({
+    facilityId: facilityId ?? undefined,
+    debouncedRefresh: () => {
+      void fetchUnitsDataRef.current({ background: true });
+    },
+    debounceMs: 500,
+  });
 
   return {
     data,
@@ -146,6 +145,6 @@ export const useUnitsData = (facilityId?: string | null): UseUnitsDataReturn => 
     refetch: fetchUnitsData,
     lockUnit,
     onData,
-    onError
+    onError,
   };
 };

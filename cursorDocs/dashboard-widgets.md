@@ -42,8 +42,9 @@
 - **Dashboard**: `DashboardPage` computes `effectiveFacilityId` (undefined when “All facilities”) and passes **`facilityFilter`** into widgets that support it (activity monitor, remote gate, histogram, notifications, battery, unlocked units).
 - **Shared hook**: `useDashboardFacilityScope(facilityFilter)` — single facility → that ID; global admin + all facilities → no filter; scoped roles + all facilities → user's `facilityIds`. Used by notifications widget and histogram (fixes global admins being incorrectly limited to profile `facilityIds`).
 - **Notifications widget**: loads up to 100 rows per page from REST with **`includeExpired: true`** (historical + expired alerts); default tab is **All**; WebSocket merges live updates. Not the same data as Activity Monitor.
-- **Hooks**: `useUnitsData(facilityId)` forwards **`facility_id`** to `GET /units` and `GET /units/unlocked`.
-- **General stats**: `useGeneralStatsData` passes optional **`facility_id`** to **`GET /dashboard/general-stats`** when a single facility is selected. WebSocket **`general_stats`** updates are **ignored** while facility-scoped (WS is aggregate-only); rely on REST for per-facility numbers.
+- **Hooks**: `useUnitsData(facilityId)` forwards **`facility_id`** to `GET /units` and `GET /units/unlocked`, and refreshes on **`device_status` / `units`** via `useLockDeviceRealtime`.
+- **General stats**: `useGeneralStatsData` passes optional **`facility_id`** to **`GET /dashboard/general-stats`** when a single facility is selected. WebSocket **`general_stats`** updates apply only for “all facilities”; when facility-scoped, **`device_status` / `units`** trigger debounced REST refetch.
+- **Histogram / activity widgets**: subscribe to **`activity`** (with `facility_id` when scoped) and debounce **`getActivityStats`** / access-history REST reloads.
 
 ## Backend: dashboard general stats
 

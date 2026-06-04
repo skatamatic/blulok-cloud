@@ -8,6 +8,21 @@ import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { getWsBaseUrl } from '@/services/appConfig';
 import { useAuth } from '@/contexts/AuthContext';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
+import type { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStatus';
+
+type FacilityGatewayLiveStatus = ReturnType<typeof useFacilityGatewayLiveStatus>;
+
+function createLiveStatus(overrides: Partial<FacilityGatewayLiveStatus> = {}): FacilityGatewayLiveStatus {
+  return {
+    gateway: null,
+    wsConnected: false,
+    lastActivityAt: null,
+    effectiveStatus: 'offline',
+    loading: false,
+    reload: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
 
 // Mock the API service
 jest.mock('@/services/api.service');
@@ -86,7 +101,11 @@ describe('FacilityGatewayTab', () => {
         gateways: [mockGateway],
       });
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({
+        gateway: mockGateway as any,
+        effectiveStatus: 'online',
+        wsConnected: true,
+      }));
 
       // First wait for the gateway to load
       await waitFor(() => {
@@ -110,13 +129,17 @@ describe('FacilityGatewayTab', () => {
     }, 20_000);
   });
 
-  const renderComponent = (canManageGateway = true) => {
+  const renderComponent = (
+    canManageGateway = true,
+    liveStatus: FacilityGatewayLiveStatus = createLiveStatus(),
+  ) => {
     return render(
       <WebSocketProvider>
         <FacilityGatewayTab
           facilityId={facilityId}
           facilityName={facilityName}
           canManageGateway={canManageGateway}
+          liveStatus={liveStatus}
         />
       </WebSocketProvider>
     );
@@ -124,16 +147,9 @@ describe('FacilityGatewayTab', () => {
 
   describe('Rendering', () => {
     it('should render loading state initially', async () => {
-      renderComponent();
+      renderComponent(true, createLiveStatus({ loading: true }));
       await waitFor(() => {
         expect(screen.getByText('Loading gateway configuration...')).toBeInTheDocument();
-      });
-    });
-
-    it('should load gateway configuration on mount', async () => {
-      renderComponent();
-      await waitFor(() => {
-        expect(mockApiService.getGateways).toHaveBeenCalledWith({ facility_id: facilityId });
       });
     });
 
@@ -146,14 +162,10 @@ describe('FacilityGatewayTab', () => {
     });
 
     it('shows inbound WebSocket banner when no gateway row but session is connected', async () => {
-      mockApiService.getGatewayWsStatus = jest.fn().mockResolvedValue({
-        success: true,
-        facilityId,
-        connected: true,
-        lastPongAt: '2025-01-01T12:00:00.000Z',
-      });
-
-      renderComponent();
+      renderComponent(true, createLiveStatus({
+        wsConnected: true,
+        lastActivityAt: new Date('2025-01-01T12:00:00.000Z').getTime(),
+      }));
 
       await waitFor(() => {
         expect(screen.getByRole('status')).toBeInTheDocument();
@@ -162,25 +174,22 @@ describe('FacilityGatewayTab', () => {
       });
     });
 
-    it('shows Gateway connection (websocket) when a gateway row exists', async () => {
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [
-          {
-            id: 'gateway-1',
-            facility_id: facilityId,
-            name: 'Row Gateway',
-            status: 'online',
-            gateway_type: 'physical',
-          },
-        ],
-      });
-
-      renderComponent();
+    it('shows gateway status when a gateway row exists', async () => {
+      renderComponent(true, createLiveStatus({
+        gateway: {
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Row Gateway',
+          status: 'online',
+          gateway_type: 'physical',
+        },
+        wsConnected: false,
+        effectiveStatus: 'offline',
+      }));
 
       await waitFor(() => {
-        expect(screen.getByText('Gateway connection')).toBeInTheDocument();
-        expect(screen.getByText('disconnected')).toBeInTheDocument();
+        expect(screen.getByText('Gateway status')).toBeInTheDocument();
+        expect(screen.getByText('offline')).toBeInTheDocument();
         expect(screen.getAllByText('Row Gateway').length).toBeGreaterThan(0);
       });
     });
@@ -215,16 +224,12 @@ describe('FacilityGatewayTab', () => {
         gateway_type: 'http',
       };
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway],
-      });
       mockApiService.getGatewayReassignmentCandidates.mockResolvedValue({
         success: true,
         gateways: [{ id: 'gateway-3', facility_id: null, name: 'Unassigned Gateway', status: 'online' }],
       } as any);
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'online' }));
 
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: 'Replace Gateway' })).toBeInTheDocument();
@@ -233,31 +238,23 @@ describe('FacilityGatewayTab', () => {
       });
     });
 
-    it('shows connected when websocket session is active', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Test Gateway',
-        status: 'online',
-        gateway_type: 'http',
-        ip_address: '192.168.1.100'
-      };
-
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-      mockApiService.getGatewayWsStatus = jest.fn().mockResolvedValue({
-        success: true,
-        facilityId,
-        connected: true,
-        lastPongAt: Date.now(),
-      });
-
-      renderComponent();
+    it('shows online when websocket session is active for physical gateway', async () => {
+      renderComponent(true, createLiveStatus({
+        gateway: {
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Test Gateway',
+          status: 'offline',
+          gateway_type: 'physical',
+          ip_address: '192.168.1.100',
+        },
+        wsConnected: true,
+        effectiveStatus: 'online',
+        lastActivityAt: Date.now(),
+      }));
       await waitFor(() => {
         expect(screen.getAllByText('Test Gateway').length).toBeGreaterThan(0);
-        expect(screen.getByText('connected')).toBeInTheDocument();
+        expect(screen.getByText('online')).toBeInTheDocument();
       });
     });
 
@@ -282,17 +279,12 @@ describe('FacilityGatewayTab', () => {
         status: 'online'
       };
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
       mockApiService.syncGateway.mockResolvedValue({
         success: true,
         message: 'Gateway synchronization completed successfully'
       });
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'online' }));
       // Wait for gateway to load, then navigate to Sync tab
       await waitFor(() => {
         expect(screen.getByText('Sync')).toBeInTheDocument();
@@ -328,11 +320,6 @@ describe('FacilityGatewayTab', () => {
         status: 'error'
       };
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
       const errorMessage = 'Sync failed: Network error';
       mockApiService.syncGateway.mockRejectedValue({
         response: {
@@ -343,7 +330,7 @@ describe('FacilityGatewayTab', () => {
         }
       });
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'error' }));
       // Wait for gateway to load, then navigate to Sync tab
       await waitFor(() => {
         expect(screen.getByText('Sync')).toBeInTheDocument();
@@ -377,17 +364,12 @@ describe('FacilityGatewayTab', () => {
         last_seen: new Date().toISOString()
       };
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
       mockApiService.syncGateway.mockResolvedValue({
         success: true,
         message: 'Sync completed'
       });
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'online' }));
       // Wait for gateway to load, then navigate to Sync tab
       await waitFor(() => {
         expect(screen.getByText('Sync')).toBeInTheDocument();
@@ -413,11 +395,10 @@ describe('FacilityGatewayTab', () => {
   describe('Gateway Actions', () => {
     it('should invoke time sync endpoints', async () => {
       const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
-      mockApiService.getGateways.mockResolvedValue({ success: true, gateways: [mockGateway] } as any);
       mockApiService.getSecureTimeSyncPacket.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 1, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
       mockApiService.requestTimeSyncForLock.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 2, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online' }));
       // Wait for gateway to load, then click DevTools/Diag tab
       await waitFor(() => {
         expect(screen.getByText('DevTools/Diag')).toBeInTheDocument();
@@ -445,7 +426,6 @@ describe('FacilityGatewayTab', () => {
 
     it('should submit fallback and rotation from debug panel', async () => {
       const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
-      mockApiService.getGateways.mockResolvedValue({ success: true, gateways: [mockGateway] } as any);
       mockApiService.requestFallbackPass.mockResolvedValue({ success: true } as any);
       mockApiService.rotateOpsKey.mockResolvedValue({
         payload: { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'pub', ts: 1700000000 },
@@ -466,6 +446,7 @@ describe('FacilityGatewayTab', () => {
             facilityId={facilityId}
             facilityName={facilityName}
             canManageGateway={true}
+            liveStatus={createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online' })}
           />
         </WebSocketProvider>
       );

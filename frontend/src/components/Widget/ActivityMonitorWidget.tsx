@@ -193,14 +193,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   }, [facilityFilter, maxEntries]);
 
   useEffect(() => {
-    loadActivities();
-    
-    // Refresh every 60 seconds for near-real-time updates
-    const interval = setInterval(() => {
-      loadActivities();
-    }, 60000);
-
-    return () => clearInterval(interval);
+    void loadActivities();
   }, [loadActivities]);
 
   useEffect(() => {

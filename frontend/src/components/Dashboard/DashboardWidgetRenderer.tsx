@@ -166,6 +166,7 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
         <AccessHistoryWidget
           currentSize={widget.size as WidgetSize}
           readOnly={!layoutEditable}
+          facilityFilter={effectiveFacilityId}
           onSizeChange={layoutEditable ? (size) => onSizeChange(widget.id, size) : undefined}
           onRemove={layoutEditable && onRemove ? () => onRemove(widget.id) : undefined}
         />

@@ -134,7 +134,23 @@ Use **`wss://`** to match **`https://`** on the same host. Mixed `ws` to `https`
 
 ## Gateway row `status` vs inbound WebSocket
 
-The dashboard shows **one** “Cloud connection” state derived from the **`gateways`** row for **physical** and **simulated** gateways: when a facility completes **`AUTH`** on `/ws/gateway`, the backend sets that gateway’s **`status`** to **`online`** and updates **`last_seen`**; on disconnect it sets **`offline`**. **HTTP** gateways are unchanged (their liveness still comes from outbound polling), so inbound WS does not overwrite their DB status.
+There are **three** backend representations of gateway connectivity; only one path should drive **live UI badges**:
+
+| Source | What it is | Use in UI |
+|--------|------------|-----------|
+| **`GET /facilities/:id` → `deviceHierarchy.gateway.status`** | Snapshot of the `gateways` row bundled with the device tree | **Do not use for liveness badges** — loaded once with the facility page; stale after reconnect; never reflected inbound WS for HTTP gateways |
+| **`GET /gateways/status/:facilityId`** | In-memory inbound `/ws/gateway` session (`GatewayEventsService`) | **Yes** — polled by `useFacilityGatewayLiveStatus` for physical/simulated live session |
+| **`gateway_status` WebSocket + `gateways.status` row** | DB inventory status; broadcast after connect/disconnect/poll | **Yes** — subscription keeps inventory row fresh; display merged via `resolveEffectiveGatewayStatus` |
+
+### Why the old Facility tab was wrong
+
+The Facility tab previously showed **`deviceHierarchy.gateway.status`** from the initial **`getFacility`** response, with an optional **`gateway_status`** patch to React state. The Gateway tab showed **`GET /gateways/status`** as “connected/disconnected”. Those were **different signals with different labels**, so the mesh could be live while the Facility card still read **offline** (stale snapshot, missed WS patch, or HTTP gateway where inbound WS does not update the row).
+
+**Removed from UI:** reading `deviceHierarchy.gateway.status` for badges. **`deviceHierarchy.gateway` remains** for device tree context (Add Device modal, access-control lists) — identity and membership, not live liveness.
+
+### DB sync (backend, unchanged)
+
+For **physical** and **simulated** gateways, **`AUTH`** on `/ws/gateway` still sets the row **`status` → online** and **`last_seen`**; disconnect sets **`offline`**. **HTTP** gateways keep liveness from outbound polling only — inbound WS does not overwrite their DB status.
 
 **`AUTH` does not set `gateways.facility_id`** (no auto-link of unassigned inventory on first connect). The facility must **already** have a gateway row (admin **reassign**, `POST /gateways`, seed, etc.) for **`findByFacilityId`** to resolve.
 
@@ -146,6 +162,19 @@ The dashboard shows **one** “Cloud connection” state derived from the **`gat
 - So you can create a **new facility**, point the mesh at that facility UUID, and the **inbound WebSocket session is “connected”** from the cloud’s point of view (`GET /api/v1/gateways/status/:facilityId` reads in-memory state).
 - The **Facility → Gateway** tab loads **`GET /api/v1/gateways?facility_id=...`**. If no gateway row exists yet, the UI shows **“No Gateway Configured”** even though the mesh session is up — unless you also created/assigned a gateway record.
 - **Two different things:** (1) **session connected** = someone authenticated to `/ws/gateway` for this facility; (2) **gateway configured** = a **`gateways`** row exists with `facility_id` set (needed for device sync, firmware targeting, etc.). The dashboard now calls out this split when a session is active but no record exists.
+
+## Facility UI gateway status (Facility tab + Gateway tab)
+
+Both tabs on the facility details page share **`useFacilityGatewayLiveStatus`**, which loads the assigned gateway via **`GET /gateways?facility_id=`**, polls **`GET /gateways/status/:facilityId`** every 5s for inbound `/ws/gateway` session liveness, and subscribes to **`gateway_status`** WebSocket updates.
+
+**Display rule (`resolveEffectiveGatewayStatus`):**
+
+| Gateway type | Badge source |
+|--------------|--------------|
+| `physical` / `simulated` | Inbound WebSocket session (`connected` → **online**) |
+| `http` | `gateways.status` row (outbound polling) |
+
+Both tabs show the same **`online` / `offline` / `error` / `maintenance`** badge labels.
 
 ## Gateway device sync (locks + access control)
 
@@ -173,7 +202,7 @@ Unified internal routes (via `PROXY_REQUEST` or direct REST):
 }
 ```
 
-After access inventory changes, the backend pushes access codes to the gateway (same as admin device create).
+After access inventory changes, the backend enqueues an access-code push in **`access_code_push_outbox`** and attempts immediate WebSocket delivery when the gateway is online. If the gateway is offline, the row stays **`pending`** until reconnect (`AUTH_OK` flush) or the scheduler retries due rows. The gateway can still poll **`GET /api/v1/internal/gateway/access-codes`** as a fallback.
 
 ## Gateway telemetry logs
 

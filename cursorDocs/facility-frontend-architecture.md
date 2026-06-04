@@ -211,6 +211,23 @@ Facility
 4. **Export/Import**: Data export and reporting
 5. **Third-party Integrations**: External system connections
 
+## Real-time data (WebSocket)
+
+Aggregate REST snapshots (facility stats, histogram buckets, dashboard stats scoped to one facility) are **signals to refetch**, not live payloads. Use `useLockDeviceRealtime` or an `activity` subscription with debounced REST reload.
+
+| Surface | Subscription | Refresh strategy |
+|---------|--------------|------------------|
+| Facility overview stats sidebar | `device_status`, `units` (facility-scoped) | Debounced `getFacility` background reload |
+| Device groups / access codes device lists | Same | Reload `deviceHierarchy` via background `getFacility` |
+| Devices / Units tabs | `device_status`, `units` | Debounced list API reload (existing) |
+| Gateway card | `gateway_status` + live status hook | See `cursorDocs/gateway-integration.md` |
+| Dashboard stats widgets | `general_stats` (all facilities) or `device_status`/`units` (single facility) | WS payload vs debounced REST |
+| Unlocked units / units manager widgets | `device_status`, `units` | Debounced REST via `useUnitsData` / widget hook |
+| Activity monitor, histogram, access history | `activity` (with `facility_id` when scoped) | Debounced REST |
+| Lock status, battery, gates, notifications | `device_status`, `battery_status`, etc. | Direct WS or `useLockDeviceRealtime` |
+
+**No WS today:** access-code push outbox state (4s poll on Access Code tab until a subscription exists).
+
 ## Testing Strategy
 
 ### Unit Tests

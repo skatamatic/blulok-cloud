@@ -158,9 +158,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   }, [loadGates]);
 
   useEffect(() => {
-    loadGates();
-    const interval = setInterval(loadGates, 30000);
-    return () => clearInterval(interval);
+    void loadGates();
   }, [loadGates]);
 
   useLockDeviceRealtime({

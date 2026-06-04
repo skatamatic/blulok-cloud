@@ -410,6 +410,11 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             logger.warn(`Failed to resume firmware pushes for facility=${facilityId}`, err);
           });
         }).catch(() => {});
+        import('@/services/access-code.service').then(({ AccessCodeService }) => {
+          AccessCodeService.getInstance().flushPendingPushForFacility(facilityId).catch((err) => {
+            logger.warn(`Failed to flush access code outbox for facility=${facilityId}`, err);
+          });
+        }).catch(() => {});
         return;
       }
 

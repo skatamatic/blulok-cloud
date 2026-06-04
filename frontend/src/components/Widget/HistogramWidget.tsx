@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
@@ -13,6 +13,7 @@ import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { useDashboardFacilityScope, DASHBOARD_FACILITY_SCOPE_LIMIT } from '@/hooks/useDashboardFacilityScope';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { getWidgetLayoutProfile, WIDGET_BODY_CLASS } from '@/utils/widget-layout.utils';
 import {
   getHistogramTypeBreakdown,
@@ -265,6 +266,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   facilityFilter,
 }) => {
   const { authState } = useAuth();
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const { facilityIdsForApi } = useDashboardFacilityScope(facilityFilter);
   const { size, handleSizeChange } = useWidgetSizeState(currentSize, initialSize, onSizeChange);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('month');
@@ -319,8 +321,10 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     [chartFacilities]
   );
 
-  const loadActivityStats = useCallback(async () => {
-    setIsLoading(true);
+  const loadActivityStats = useCallback(async (options?: { background?: boolean }) => {
+    if (!options?.background) {
+      setIsLoading(true);
+    }
     setError(null);
     try {
       const response: ActivityStatsResponse = await apiService.getActivityStats({
@@ -337,16 +341,45 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
       }
     } catch (err) {
       console.error('Failed to load activity stats:', err);
-      setError('Failed to load activity data');
-      setHistogramData([]);
+      if (!options?.background) {
+        setError('Failed to load activity data');
+        setHistogramData([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (!options?.background) {
+        setIsLoading(false);
+      }
     }
   }, [timePeriod, facilityIdsForApi]);
 
+  const loadActivityStatsRef = useRef(loadActivityStats);
+  loadActivityStatsRef.current = loadActivityStats;
+
   useEffect(() => {
-    loadActivityStats();
+    void loadActivityStats();
   }, [loadActivityStats]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const activityFilters =
+      facilityFilter != null && facilityFilter !== ''
+        ? { facility_id: facilityFilter }
+        : facilityIdsForApi?.length === 1
+          ? { facility_id: facilityIdsForApi[0] }
+          : undefined;
+
+    const subscriptionId = subscribe(
+      'activity',
+      () => {
+        void loadActivityStatsRef.current({ background: true });
+      },
+      undefined,
+      activityFilters,
+    );
+
+    return () => unsubscribe(subscriptionId);
+  }, [isConnected, subscribe, unsubscribe, facilityFilter, facilityIdsForApi]);
 
   const groupedData = useMemo(() => {
     const grouped: Record<string, HistogramData[]> = {};

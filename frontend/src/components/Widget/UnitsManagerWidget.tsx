@@ -33,6 +33,7 @@ import {
 import { compareNaturalStrings } from '@/utils/naturalStringCompare';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 
 type LockState = 'locked' | 'unlocked' | 'unknown' | 'unlocking' | 'locking';
 
@@ -994,34 +995,51 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
     onSizeChange?.(next);
   };
 
-  const fetchUnits = React.useCallback(async () => {
+  const fetchUnits = React.useCallback(async (options?: { background?: boolean }) => {
     const reqId = ++reqIdRef.current;
-    setLoading(true);
-    setError(null);
+    if (!options?.background) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const params: Record<string, unknown> = { limit: 200, offset: 0 };
       if (facilityFilter) params.facility_id = facilityFilter;
       const res = await apiService.getUnits(params);
       if (reqId !== reqIdRef.current) return;
       if (res?.success === false) {
-        setError(res.message ?? 'Failed to load units');
-        setUnits([]);
+        if (!options?.background) {
+          setError(res.message ?? 'Failed to load units');
+          setUnits([]);
+        }
         return;
       }
       const list = (res?.units ?? []) as UnitRow[];
       setUnits(list);
     } catch (err: unknown) {
       if (reqId !== reqIdRef.current) return;
-      const msg = err instanceof Error ? err.message : 'Failed to load units';
-      setError(msg);
+      if (!options?.background) {
+        const msg = err instanceof Error ? err.message : 'Failed to load units';
+        setError(msg);
+      }
     } finally {
-      if (reqId === reqIdRef.current) setLoading(false);
+      if (reqId === reqIdRef.current && !options?.background) setLoading(false);
     }
   }, [facilityFilter]);
 
+  const fetchUnitsRef = useRef(fetchUnits);
+  fetchUnitsRef.current = fetchUnits;
+
   useEffect(() => {
-    fetchUnits();
+    void fetchUnits();
   }, [fetchUnits]);
+
+  useLockDeviceRealtime({
+    facilityId: facilityFilter,
+    debouncedRefresh: () => {
+      void fetchUnitsRef.current({ background: true });
+    },
+    debounceMs: 500,
+  });
 
   useEffect(() => {
     if (!isAllFacilitiesMode) {

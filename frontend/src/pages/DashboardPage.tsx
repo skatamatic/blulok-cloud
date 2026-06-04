@@ -143,15 +143,12 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!canAccess) {
       widgetSubscriptionManager.unsubscribe('general_stats');
-      widgetSubscriptionManager.unsubscribe('units');
       return;
     }
 
     const instances = pages.flatMap((p) => p.widgetInstances);
     const statsWidgetTypes = ['stats-facilities', 'stats-devices', 'stats-users', 'stats-alerts'];
-    const unitsWidgetTypes = ['unlocked-units'];
-    const batteryWidgetTypes = ['battery-status'];
-    
+
     const subscriptions: string[] = [];
     const subscriptionMap: Record<
       string,
@@ -167,26 +164,6 @@ export default function DashboardPage() {
       };
     } else {
       widgetSubscriptionManager.unsubscribe('general_stats');
-    }
-
-    if (instances.some((w) => unitsWidgetTypes.includes(w.type))) {
-      subscriptions.push('units');
-      subscriptionMap['units'] = {
-        handler: () => {},
-        errorHandler: (error: string) => console.error('Units subscription error:', error),
-      };
-    } else {
-      widgetSubscriptionManager.unsubscribe('units');
-    }
-
-    if (instances.some((w) => batteryWidgetTypes.includes(w.type))) {
-      subscriptions.push('battery_status');
-      subscriptionMap['battery_status'] = {
-        handler: () => {},
-        errorHandler: (error: string) => console.error('Battery subscription error:', error),
-      };
-    } else {
-      widgetSubscriptionManager.unsubscribe('battery_status');
     }
 
     if (subscriptions.length > 0) {

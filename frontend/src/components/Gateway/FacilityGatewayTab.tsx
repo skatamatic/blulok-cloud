@@ -24,6 +24,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '@/components/Modal/Modal';
 import { getApiBaseUrl, getWsBaseUrl } from '@/services/appConfig';
 import { UserRole } from '@/types/auth.types';
+import { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStatus';
+import { gatewayOperationalStatusColors } from '@/utils/facility-gateway-live-status.utils';
 
 interface Gateway {
   id: string;
@@ -67,14 +69,21 @@ interface FacilityGatewayTabProps {
   facilityId: string;
   facilityName: string;
   canManageGateway: boolean;
+  liveStatus: ReturnType<typeof useFacilityGatewayLiveStatus>;
 }
 
-function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: FacilityGatewayTabProps) {
+function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveStatus }: FacilityGatewayTabProps) {
   const { addToast } = useToast();
   const ws = useWebSocket();
+  const {
+    gateway,
+    wsConnected,
+    lastActivityAt,
+    effectiveStatus,
+    loading,
+    reload,
+  } = liveStatus;
 
-  const [gateway, setGateway] = useState<Gateway | null>(null);
-  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
@@ -109,8 +118,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [reassigningGateway, setReassigningGateway] = useState(false);
 
-  // Inbound WS status (gateway connects to cloud)
-  const [wsStatus, setWsStatus] = useState<{ connected: boolean; lastPongAt?: number } | null>(null);
   // Gateway debug stream (DEV tools)
   const [gatewayDebugEvents, setGatewayDebugEvents] = useState<any[]>([]);
   const [lastGatewayActivityAt, setLastGatewayActivityAt] = useState<number | null>(null);
@@ -179,25 +186,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
     }
   };
 
-  useEffect(() => {
-    const shouldMonitorGatewayStatus = activeTab === 'overview' || activeTab === 'sync' || activeTab === 'devtools';
-    if (!shouldMonitorGatewayStatus) {
-      return;
-    }
-
-    const poll = async () => {
-      try {
-        const res = await apiService.getGatewayWsStatus(facilityId);
-        if (res?.success) setWsStatus({ connected: !!res.connected, lastPongAt: res.lastPongAt });
-      } catch {
-        setWsStatus(null);
-      }
-    };
-    poll();
-    const timer = setInterval(poll, 5000);
-    return () => clearInterval(timer);
-  }, [facilityId, activeTab]);
-
   // Subscribe to gateway debug WS stream (DEV admin only)
   useEffect(() => {
     if (!ws || !isDevAdmin) return;
@@ -232,29 +220,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       }
     };
   }, [ws, facilityId, isDevAdmin]);
-
-  useEffect(() => {
-    loadGateway();
-  }, [facilityId]);
-
-  const loadGateway = async () => {
-    try {
-      setLoading(true);
-      const response = await apiService.getGateways({ facility_id: facilityId });
-      const facilityGateways = response.gateways || [];
-      if (facilityGateways.length > 0) {
-        const gw = facilityGateways[0];
-        setGateway(gw);
-      } else {
-        setGateway(null);
-      }
-    } catch (error) {
-      console.error('Failed to load gateway:', error);
-      addToast({ type: 'error', title: 'Failed to load gateway configuration' });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const loadReassignmentCandidates = useCallback(async () => {
     if (!canReassignGateway) {
@@ -300,7 +265,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       setReassigningGateway(true);
       await apiService.reassignGateway(selectedCandidateGatewayId, facilityId);
       addToast({ type: 'success', title: gateway ? 'Gateway replaced successfully' : 'Gateway assigned successfully' });
-      await Promise.all([loadGateway(), loadReassignmentCandidates()]);
+      await Promise.all([reload(), loadReassignmentCandidates()]);
     } catch (error: any) {
       const message = error?.response?.data?.message || (gateway ? 'Failed to replace gateway' : 'Failed to assign gateway');
       addToast({ type: 'error', title: message });
@@ -356,32 +321,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       </div>
     );
   };
-
-  // Subscribe to realtime gateway status updates for local state only
-  useEffect(() => {
-    const shouldSubscribeGatewayStatus = activeTab === 'overview' || activeTab === 'sync' || activeTab === 'devtools';
-    if (!ws || !shouldSubscribeGatewayStatus) return;
-
-    const subscriptionId = ws.subscribe(
-      'gateway_status',
-      (data: any) => {
-        try {
-          const gateways = data?.gateways || [];
-          gateways.forEach((g: any) => {
-            // Update local gateway state only (toasts are handled by app-wide listener)
-            setGateway(prevGw => (prevGw && prevGw.id === g.id ? { ...prevGw, status: g.status as any, last_seen: g.lastSeen as any } : prevGw));
-          });
-        } catch (e) {
-          console.error('Failed to process gateway status update', e);
-        }
-      },
-      undefined // no error handler needed
-    );
-
-    return () => {
-      if (subscriptionId) ws.unsubscribe(subscriptionId);
-    };
-  }, [ws, activeTab]);
 
   const handleManualSync = async () => {
     if (!gateway) return;
@@ -525,7 +464,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       return (
         <div className="space-y-6">
           {renderGatewayAssignmentCard()}
-          {wsStatus?.connected && (
+          {wsConnected && (
             <div
               className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
               role="status"
@@ -535,9 +474,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
                 A gateway has authenticated to this facility for <code className="text-xs font-mono px-1 rounded bg-white/60 dark:bg-black/20">/ws/gateway</code>, but this facility
                 does not have a gateway record. Assign a gateway below (if your role allows) or contact BluLok so device sync and firmware can run.
               </p>
-              {wsStatus.lastPongAt && (
+              {lastActivityAt && (
                 <p className="mt-2 text-xs text-amber-800/80 dark:text-amber-300/80">
-                  Last activity: {new Date(wsStatus.lastPongAt).toLocaleString()}
+                  Last activity: {new Date(lastActivityAt).toLocaleString()}
                 </p>
               )}
             </div>
@@ -554,11 +493,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
       );
     }
 
-    const wsConnected = Boolean(wsStatus?.connected);
-    const statusLabel = wsConnected ? 'connected' : 'disconnected';
-    const connectionBadgeClass = wsConnected
-      ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-      : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
+    const connectionBadgeClass = gatewayOperationalStatusColors[effectiveStatus];
 
     return (
       <div className="space-y-6">
@@ -615,17 +550,17 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway }: Faci
 
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 px-4 py-3">
           <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Gateway connection</div>
+            <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Gateway status</div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${connectionBadgeClass}`}>
-                {statusLabel}
+                {effectiveStatus}
               </span>
-              {wsConnected && wsStatus?.lastPongAt && (
+              {effectiveStatus === 'online' && lastActivityAt && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Last activity: {new Date(wsStatus.lastPongAt).toLocaleString()}
+                  Last activity: {new Date(lastActivityAt).toLocaleString()}
                 </span>
               )}
-              {!wsConnected && gateway.last_seen && (
+              {effectiveStatus === 'offline' && gateway.last_seen && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
                   Last seen (inventory): {new Date(gateway.last_seen).toLocaleString()}
                 </span>

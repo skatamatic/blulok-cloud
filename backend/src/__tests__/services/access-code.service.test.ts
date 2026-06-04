@@ -1,3 +1,24 @@
+const mockEnqueue = jest.fn();
+const mockFindActiveForFacility = jest.fn();
+const mockFindById = jest.fn();
+const mockMarkInProgress = jest.fn();
+const mockMarkDelivered = jest.fn();
+const mockScheduleRetry = jest.fn();
+
+jest.mock('@/models/access-code-push-outbox.model', () => ({
+  AccessCodePushOutboxModel: jest.fn().mockImplementation(() => ({
+    enqueue: mockEnqueue,
+    findActiveForFacility: mockFindActiveForFacility,
+    findById: mockFindById,
+    markInProgress: mockMarkInProgress,
+    markDelivered: mockMarkDelivered,
+    scheduleRetry: mockScheduleRetry,
+    recoverStaleInProgress: jest.fn().mockResolvedValue(0),
+    findDue: jest.fn().mockResolvedValue([]),
+    hasPendingForFacility: jest.fn().mockResolvedValue(false),
+  })),
+}));
+
 jest.mock('@/models/access-code.model', () => ({
   AccessCodeModel: jest.fn().mockImplementation(() => ({
     getConfig: jest.fn(),
@@ -58,8 +79,43 @@ describe('AccessCodeService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (AccessCodeService as any).instance = undefined;
+    mockGatewayConnectionStatus.mockReturnValue({ connected: true });
+    mockEnqueue.mockResolvedValue({
+      id: 'outbox-1',
+      facility_id: 'fac-1',
+      status: 'pending',
+      attempt_count: 0,
+    });
+    mockFindActiveForFacility.mockResolvedValue({
+      id: 'outbox-1',
+      facility_id: 'fac-1',
+      status: 'pending',
+      attempt_count: 0,
+    });
+    mockFindById.mockResolvedValue({
+      id: 'outbox-1',
+      facility_id: 'fac-1',
+      status: 'failed',
+      attempt_count: 1,
+    });
+    mockMarkInProgress.mockResolvedValue(undefined);
+    mockMarkDelivered.mockImplementation(async () => {
+      mockFindActiveForFacility.mockResolvedValue(null);
+    });
+    mockScheduleRetry.mockResolvedValue('failed');
     service = AccessCodeService.getInstance();
     model = (service as any).model;
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    const pendingByNonce = (service as any)?.pendingPushAcksByNonce as Map<string, { timer: NodeJS.Timeout }> | undefined;
+    if (pendingByNonce) {
+      for (const pending of pendingByNonce.values()) {
+        clearTimeout(pending.timer);
+      }
+      pendingByNonce.clear();
+    }
   });
 
   it('generateCode returns digits of configured length', () => {
@@ -885,13 +941,17 @@ describe('AccessCodeService', () => {
     expect(result).toEqual([]);
   });
 
-  it('sets push state to error when gateway is offline', async () => {
+  it('queues push when gateway is offline', async () => {
     mockGatewayConnectionStatus.mockReturnValueOnce({ connected: false });
     jest.spyOn(service, 'getGatewayPollPayload').mockResolvedValue([]);
-    await expect(service.pushCodesToGateway('fac-1')).rejects.toBeInstanceOf(Error);
+
+    await service.pushCodesToGateway('fac-1');
+
+    expect(mockEnqueue).toHaveBeenCalledWith('fac-1');
+    expect(mockUnicast).not.toHaveBeenCalled();
     expect(service.getPushState('fac-1')).toEqual(expect.objectContaining({
       facility_id: 'fac-1',
-      status: 'error',
+      status: 'pending',
     }));
   });
 
@@ -932,7 +992,7 @@ describe('AccessCodeService', () => {
   });
 
   it('sets push state to error when gateway ACK times out', async () => {
-    await expect((service as any).awaitPushAcceptance('fac-1', 'nonce-timeout', 5))
+    await expect((service as any).awaitPushAcceptance('fac-1', 'nonce-timeout', undefined, 5))
       .rejects
       .toThrow('timed out waiting for gateway acceptance');
 
@@ -955,7 +1015,7 @@ describe('AccessCodeService', () => {
     });
     jest.spyOn(service as any, 'getActiveScheduleIdsForFacility').mockResolvedValue(['sched-1', 'sched-2']);
     const createScopeCodeSpy = jest.spyOn(service as any, 'createScopeCode').mockResolvedValue(undefined);
-    const pushSpy = jest.spyOn(service, 'pushCodesToGateway').mockResolvedValue(undefined);
+    const pushSpy = jest.spyOn(service, 'requestGatewayPush').mockResolvedValue(undefined);
 
     await service.forceRotate('fac-1', 'device_group', 'grp-1', 'user-1');
 
@@ -999,4 +1059,3 @@ describe('AccessCodeService', () => {
     expect(pushSpy).toHaveBeenCalledWith('fac-1');
   });
 });
-

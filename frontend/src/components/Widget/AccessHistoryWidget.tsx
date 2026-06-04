@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { ClockIcon, UserIcon, LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
@@ -13,6 +13,8 @@ interface AccessHistoryWidgetProps {
   onSizeChange?: (size: WidgetSize) => void;
   onRemove?: () => void;
   readOnly?: boolean;
+  /** When set, scopes REST + activity subscription to one facility */
+  facilityFilter?: string;
 }
 
 export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
@@ -20,6 +22,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   onSizeChange,
   onRemove,
   readOnly = false,
+  facilityFilter,
 }) => {
   const { authState } = useAuth();
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
@@ -28,45 +31,57 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   const [error, setError] = useState<string | null>(null);
   const availableSizes: WidgetSize[] = ['small', 'medium', 'large', 'medium-tall'];
 
-  useEffect(() => {
-    const fetchAccessHistory = async () => {
-      try {
+  const fetchAccessHistory = useCallback(async (options?: { background?: boolean }) => {
+    try {
+      if (!options?.background) {
         setLoading(true);
         setError(null);
-        
-        // Get access history based on user role
-        const response = await apiService.getAccessHistory({
-          limit: 20, // Get more than we need for filtering
-        });
-        
-        setAccessHistory(response.logs || []);
-      } catch (err) {
-        console.error('Error fetching access history:', err);
+      }
+
+      const response = await apiService.getAccessHistory({
+        limit: 20,
+        ...(facilityFilter ? { facility_id: facilityFilter } : {}),
+      });
+
+      setAccessHistory(response.logs || []);
+    } catch (err) {
+      console.error('Error fetching access history:', err);
+      if (!options?.background) {
         setError('Failed to load access history');
-      } finally {
+      }
+    } finally {
+      if (!options?.background) {
         setLoading(false);
       }
-    };
+    }
+  }, [facilityFilter]);
 
-    fetchAccessHistory();
-  }, [authState.user]);
+  const fetchAccessHistoryRef = useRef(fetchAccessHistory);
+  fetchAccessHistoryRef.current = fetchAccessHistory;
+
+  useEffect(() => {
+    void fetchAccessHistory();
+  }, [fetchAccessHistory, authState.user?.id]);
+
+  const activityWsFilters = useMemo(
+    () => (facilityFilter ? { facility_id: facilityFilter } : undefined),
+    [facilityFilter],
+  );
 
   useEffect(() => {
     if (!isConnected) return;
 
-    const subscriptionId = subscribe('activity', () => {
-      void (async () => {
-        try {
-          const response = await apiService.getAccessHistory({ limit: 20 });
-          setAccessHistory(response.logs || []);
-        } catch {
-          // Ignore transient websocket refresh failures.
-        }
-      })();
-    });
+    const subscriptionId = subscribe(
+      'activity',
+      () => {
+        void fetchAccessHistoryRef.current({ background: true });
+      },
+      undefined,
+      activityWsFilters,
+    );
 
     return () => unsubscribe(subscriptionId);
-  }, [isConnected, subscribe, unsubscribe]);
+  }, [isConnected, subscribe, unsubscribe, activityWsFilters]);
 
   const layout = getWidgetLayoutProfile(currentSize);
 

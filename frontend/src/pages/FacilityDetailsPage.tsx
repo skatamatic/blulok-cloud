@@ -40,7 +40,6 @@ import { SchedulesHubTab } from '@/components/Schedules/SchedulesHubTab';
 import { AccessCodeManagementTab } from '@/components/AccessCodes/AccessCodeManagementTab';
 import { MyAccessCodes } from '@/components/AccessCodes/MyAccessCodes';
 import { DeviceGroupManager } from '@/components/AccessCodes/DeviceGroupManager';
-import { useWebSocket } from '@/contexts/WebSocketContext';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
@@ -63,6 +62,8 @@ import {
 } from '@/utils/blulokDeviceDisplay.utils';
 import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStatus';
+import { gatewayOperationalStatusColors } from '@/utils/facility-gateway-live-status.utils';
 import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
@@ -123,7 +124,6 @@ const sanitizeFilters = (filters: Record<string, unknown>) => {
 };
 
 export default function FacilityDetailsPage() {
-  const ws = useWebSocket();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -240,11 +240,17 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
   const canManageGateway = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
+  const facilityGatewayLiveStatus = useFacilityGatewayLiveStatus(facility?.id, {
+    enabled: !isTenant && !!facility?.id,
+  });
   const canDelete = ['admin', 'dev_admin'].includes(authState.user?.role || '');
 
   // Refs for debouncing WebSocket-triggered refreshes
   const loadDevicesRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
   const loadUnitsRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
+  const loadFacilityDataRef = useRef<
+    (facilityId?: string, options?: { background?: boolean }) => void | Promise<void>
+  >(async () => {});
   const hasInitialSyncRef = useRef(false);
 
   // Sync route ID with global context on initial mount only (one-way: route -> context)
@@ -292,34 +298,6 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     }
   }, [location.search, location.pathname, navigate, facility]);
 
-  // Subscribe to gateway status updates for the facility tab gateway card
-  useEffect(() => {
-    if (!ws) return;
-    const subscriptionId = ws.subscribe(
-      'gateway_status',
-      (data: unknown) => {
-        const gateways = ((data as { gateways?: Array<{ id: string; status: 'online' | 'offline' | 'error' | 'maintenance' }> })?.gateways) || [];
-        gateways.forEach((g) => {
-          // Update deviceHierarchy gateway status for facility tab
-          setDeviceHierarchy(prev => {
-            if (!prev?.gateway || prev.gateway.id !== g.id) return prev;
-            return {
-              ...prev,
-              gateway: {
-                ...prev.gateway,
-                status: g.status
-              }
-            };
-          });
-        });
-      },
-      undefined // no error handler needed
-    );
-    return () => {
-      if (subscriptionId) ws.unsubscribe(subscriptionId);
-    };
-  }, [ws]);
-
   const debouncedFacilityDevicesWsRefresh = useCallback(() => {
     void loadDevicesRef.current({ background: true });
   }, []);
@@ -343,17 +321,36 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     debounceMs: 500,
   });
 
-  const loadFacilityData = useCallback(async (facilityId?: string) => {
+  const needsOverviewRealtime =
+    (activeTab === 'facility' || activeTab === 'device-groups' || activeTab === 'access-codes') &&
+    !!facility?.id;
+
+  const debouncedOverviewWsRefresh = useCallback(() => {
+    if (facility?.id) {
+      void loadFacilityDataRef.current(facility.id, { background: true });
+    }
+  }, [facility?.id]);
+
+  useLockDeviceRealtime({
+    enabled: needsOverviewRealtime,
+    facilityId: facility?.id,
+    debouncedRefresh: debouncedOverviewWsRefresh,
+    debounceMs: 500,
+  });
+
+  const loadFacilityData = useCallback(async (facilityId?: string, options?: { background?: boolean }) => {
     const targetId = facilityId || id;
     if (!targetId) return;
-    
+
     try {
-      setLoading(true);
+      if (!options?.background) {
+        setLoading(true);
+      }
       const [facilityResponse, unitsResponse] = await Promise.all([
         apiService.getFacility(targetId),
         apiService.getUnits({ facility_id: targetId })
       ]);
-      
+
       setFacility(facilityResponse.facility);
       setDeviceHierarchy(facilityResponse.deviceHierarchy);
       const allUnits: Unit[] = unitsResponse.units || [];
@@ -361,9 +358,15 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     } catch (error) {
       console.error('Failed to load facility data:', error);
     } finally {
-      setLoading(false);
+      if (!options?.background) {
+        setLoading(false);
+      }
     }
   }, [id, isTenant]);
+
+  useEffect(() => {
+    loadFacilityDataRef.current = loadFacilityData;
+  }, [loadFacilityData]);
 
   useEffect(() => {
     // Use global context facility ID if available, otherwise use route ID
@@ -934,7 +937,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               />
             )}
 
-            {!isTenant && deviceHierarchy?.gateway && (
+            {!isTenant && facilityGatewayLiveStatus.gateway && (
               <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway status</h3>
                 <div className="flex items-center justify-between">
@@ -943,12 +946,17 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                       <ServerIcon className="h-6 w-6 text-primary-600 dark:text-primary-400" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-medium text-gray-900 dark:text-white">{deviceHierarchy.gateway.name}</h4>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">{deviceHierarchy.gateway.ip_address}</p>
+                      <h4 className="text-sm font-medium text-gray-900 dark:text-white">{facilityGatewayLiveStatus.gateway.name}</h4>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{facilityGatewayLiveStatus.gateway.ip_address}</p>
+                      {facilityGatewayLiveStatus.lastActivityAt && facilityGatewayLiveStatus.effectiveStatus === 'online' && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                          Last activity: {new Date(facilityGatewayLiveStatus.lastActivityAt).toLocaleString()}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColors[deviceHierarchy.gateway.status]}`}>
-                    {deviceHierarchy.gateway.status}
+                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${gatewayOperationalStatusColors[facilityGatewayLiveStatus.effectiveStatus]}`}>
+                    {facilityGatewayLiveStatus.effectiveStatus}
                   </span>
                 </div>
               </div>
@@ -1578,6 +1586,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
           facilityId={facility.id}
           facilityName={facility.name}
           canManageGateway={canManageGateway}
+          liveStatus={facilityGatewayLiveStatus}
         />
       )}
 

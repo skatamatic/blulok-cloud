@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useRef } from 'react';
+import { Fragment, useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
@@ -175,6 +175,22 @@ export default function AccessHistoryPage() {
   const isTenant = authState.user?.role === 'tenant';
   const isFacilityScoped = !!selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID;
 
+  const activityWsFilters = useMemo(() => {
+    if (filters.unit_id) {
+      return {
+        unit_id: filters.unit_id,
+        ...(filters.facility_id ? { facility_id: filters.facility_id } : {}),
+      };
+    }
+    if (isFacilityScoped) {
+      return { facility_id: selectedFacilityId };
+    }
+    if (filters.facility_id) {
+      return { facility_id: filters.facility_id };
+    }
+    return undefined;
+  }, [filters.unit_id, filters.facility_id, isFacilityScoped, selectedFacilityId]);
+
   useEffect(() => {
     const unitId = searchParams.get('unit_id') ?? undefined;
     const facilityId = searchParams.get('facility_id') ?? undefined;
@@ -198,11 +214,17 @@ export default function AccessHistoryPage() {
 
   useEffect(() => {
     if (!isConnected) return;
-    const subscriptionId = subscribe('activity', () => {
-      setRefreshNonce((prev) => prev + 1);
-    });
+
+    const subscriptionId = subscribe(
+      'activity',
+      () => {
+        setRefreshNonce((prev) => prev + 1);
+      },
+      undefined,
+      activityWsFilters,
+    );
     return () => unsubscribe(subscriptionId);
-  }, [isConnected, subscribe, unsubscribe]);
+  }, [isConnected, subscribe, unsubscribe, activityWsFilters]);
 
   // Handle highlighting when page loads
   useHighlight(logs, (log) => log.id, (id) => generateHighlightId('access-log', id));

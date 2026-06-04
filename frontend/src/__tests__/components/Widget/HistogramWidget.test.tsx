@@ -35,6 +35,14 @@ jest.mock('@/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+jest.mock('@/contexts/WebSocketContext', () => ({
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => 'sub-1'),
+    unsubscribe: jest.fn(),
+    isConnected: false,
+  }),
+}));
+
 jest.mock('framer-motion', () => ({
   motion: {
     div: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => (

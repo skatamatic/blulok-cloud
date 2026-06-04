@@ -23,6 +23,10 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+jest.mock('@/hooks/useLockDeviceRealtime', () => ({
+  useLockDeviceRealtime: jest.fn(),
+}));
+
 const mockUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 const mockUseGlobalFacility = useGlobalFacility as jest.MockedFunction<typeof useGlobalFacility>;
 const mockGetStats = apiService.getDashboardGeneralStats as jest.MockedFunction<typeof apiService.getDashboardGeneralStats>;

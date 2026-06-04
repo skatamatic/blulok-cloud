@@ -1,5 +1,8 @@
-import { DatabaseService } from '@/services/database.service';
+import {
+  ACCESS_CODE_PUSH_OUTBOX_SCAN_MS,
+} from '@/constants/access-code-push-outbox.constants';
 import { AccessCodePushDeliveryError, AccessCodeService } from '@/services/access-code.service';
+import { DatabaseService } from '@/services/database.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { logger } from '@/utils/logger';
 
@@ -30,6 +33,7 @@ export class AccessCodeSchedulerService {
   private retryFailureCountByGroup = new Map<string, number>();
   private onlineFacilityIds = new Set<string>();
   private connectionChangeUnsubscribe?: () => void;
+  private outboxScanCounter = 0;
 
   // Resolve DB lazily to avoid construction-time dependency on DB initialization order
   private get db() {
@@ -58,6 +62,9 @@ export class AccessCodeSchedulerService {
 
       // Run immediately on online transitions to catch overdue rotations.
       if (event.connected) {
+        void this.accessCodes.flushPendingPushForFacility(event.facilityId).catch((err) => {
+          logger.warn(`Access code outbox flush on connect failed for facility=${event.facilityId}`, err);
+        });
         this.runSafe('Connection-triggered access code rotation failed (non-fatal):');
       }
     });
@@ -95,11 +102,7 @@ export class AccessCodeSchedulerService {
   }
 
   private syncRunLoopState(): void {
-    if (this.onlineFacilityIds.size > 0) {
-      this.startRunLoop();
-      return;
-    }
-    this.stopRunLoop();
+    this.startRunLoop();
   }
 
   private shouldRotate(
@@ -240,11 +243,6 @@ export class AccessCodeSchedulerService {
         continue;
       }
 
-      if (!gatewayOnline) {
-        this.clearRetryState(groupId);
-        continue;
-      }
-
       try {
         await this.accessCodes.forceRotate(facilityId, 'device_group', groupId);
         this.lastRunByGroup.set(groupId, now.getTime());
@@ -260,6 +258,12 @@ export class AccessCodeSchedulerService {
         }
         throw error;
       }
+    }
+
+    this.outboxScanCounter += this.CHECK_INTERVAL_MS;
+    if (this.outboxScanCounter >= ACCESS_CODE_PUSH_OUTBOX_SCAN_MS) {
+      this.outboxScanCounter = 0;
+      await this.accessCodes.processDueOutboxPushes();
     }
 
     if (discoveredOnlineFacility) {

@@ -17,6 +17,10 @@ import {
   type SerializedSchedule,
   type SerializedScheduleTimeWindow,
 } from '@/services/schedules/schedule-serialization.service';
+import {
+  ACCESS_CODE_PUSH_ACK_TIMEOUT_MS,
+} from '@/constants/access-code-push-outbox.constants';
+import { AccessCodePushOutboxModel } from '@/models/access-code-push-outbox.model';
 
 type RotationScope = { scopeType: AccessCodeScopeType; scopeId?: string | null; scheduleId?: string | null };
 
@@ -93,6 +97,7 @@ export interface AccessCodePushState {
 
 type PendingPushAck = {
   facilityId: string;
+  outboxId?: string;
   resolve: () => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
@@ -110,8 +115,10 @@ export class AccessCodeService {
   private model = new AccessCodeModel();
   private groups = new DeviceGroupModel();
   private activityLogs = new ActivityLogModel();
+  private pushOutbox = new AccessCodePushOutboxModel();
   private pushStateByFacility = new Map<string, AccessCodePushState>();
   private pendingPushAcksByNonce = new Map<string, PendingPushAck>();
+  private flushInProgressByFacility = new Set<string>();
 
   // Resolve DB lazily to avoid startup races before DatabaseService.initialize()
   private get db() {
@@ -161,26 +168,61 @@ export class AccessCodeService {
     if (!pending || pending.facilityId !== facilityId) return;
     clearTimeout(pending.timer);
     this.pendingPushAcksByNonce.delete(nonce);
+
+    const scheduleOutboxRetry = (error?: string) => {
+      if (!pending.outboxId) return;
+      void this.pushOutbox
+        .findById(pending.outboxId)
+        .then(async (row) => {
+          if (!row) return;
+          await this.pushOutbox.scheduleRetry(
+            pending.outboxId!,
+            error || 'gateway rejected ACCESS_CODE_UPDATE',
+            row.attempt_count,
+          );
+        })
+        .catch((err) => {
+          logger.warn('[AccessCodePush] Failed to schedule outbox retry after NACK', err);
+        });
+    };
+
     if (ack?.accepted === true) {
-      this.setPushState(facilityId, 'active', null, nonce);
       pending.resolve();
       return;
     }
     const reason = ack?.message || 'gateway rejected ACCESS_CODE_UPDATE';
     this.setPushState(facilityId, 'error', reason, nonce);
+    scheduleOutboxRetry(reason);
     pending.reject(new AccessCodePushDeliveryError(reason));
   }
 
-  private async awaitPushAcceptance(facilityId: string, nonce: string, timeoutMs = 12000): Promise<void> {
+  private async awaitPushAcceptance(
+    facilityId: string,
+    nonce: string,
+    outboxId?: string,
+    timeoutMs = ACCESS_CODE_PUSH_ACK_TIMEOUT_MS,
+  ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingPushAcksByNonce.delete(nonce);
         const message = `timed out waiting for gateway acceptance (nonce=${nonce})`;
         this.setPushState(facilityId, 'error', message, nonce);
+        if (outboxId) {
+          void this.pushOutbox
+            .findById(outboxId)
+            .then(async (row) => {
+              if (!row) return;
+              await this.pushOutbox.scheduleRetry(outboxId, message, row.attempt_count);
+            })
+            .catch((err) => {
+              logger.warn('[AccessCodePush] Failed to schedule outbox retry after timeout', err);
+            });
+        }
         reject(new AccessCodePushDeliveryError(message));
       }, timeoutMs);
       this.pendingPushAcksByNonce.set(nonce, {
         facilityId,
+        outboxId,
         resolve,
         reject,
         timer,
@@ -236,14 +278,8 @@ export class AccessCodeService {
     facilityId: string,
     mutate: () => Promise<void>,
   ): Promise<void> {
-    const snapshot = await this.model.getActiveCodesForFacility(facilityId);
     await mutate();
-    try {
-      await this.pushCodesToGateway(facilityId);
-    } catch (error) {
-      await this.restoreActiveCodesSnapshot(facilityId, snapshot);
-      throw error;
-    }
+    await this.requestGatewayPush(facilityId);
   }
 
   private sanitizeDigitCount(digitCount: number): number {
@@ -1187,17 +1223,96 @@ export class AccessCodeService {
     return result;
   }
 
-  public async pushCodesToGateway(facilityId: string): Promise<void> {
+  /**
+   * Queue a facility access-code push and attempt immediate delivery when the gateway is online.
+   * Unsent pushes persist in access_code_push_outbox until ACK or dead_letter.
+   */
+  public async requestGatewayPush(facilityId: string): Promise<void> {
+    await this.pushOutbox.enqueue(facilityId);
+    await this.flushPendingPushForFacility(facilityId);
+  }
+
+  /**
+   * Deliver the oldest pending outbox row for a facility (if gateway is online).
+   */
+  public async flushPendingPushForFacility(facilityId: string): Promise<void> {
+    if (this.flushInProgressByFacility.has(facilityId)) {
+      return;
+    }
+    if (!this.isGatewayOnline(facilityId)) {
+      this.setPushState(facilityId, 'pending', null, null);
+      return;
+    }
+
+    const row = await this.pushOutbox.findActiveForFacility(facilityId);
+    if (!row || row.status === 'in_progress') {
+      return;
+    }
+
+    this.flushInProgressByFacility.add(facilityId);
+    try {
+      await this.deliverOutboxRow(row);
+    } finally {
+      this.flushInProgressByFacility.delete(facilityId);
+    }
+
+    const remaining = await this.pushOutbox.findActiveForFacility(facilityId);
+    if (remaining && remaining.status !== 'in_progress' && this.isGatewayOnline(facilityId)) {
+      await this.flushPendingPushForFacility(facilityId);
+    }
+  }
+
+  /** Scan due outbox rows across facilities (called from scheduler). */
+  public async processDueOutboxPushes(limit = 20): Promise<void> {
+    await this.pushOutbox.recoverStaleInProgress();
+    const due = await this.pushOutbox.findDue(limit);
+    for (const row of due) {
+      if (!this.isGatewayOnline(row.facility_id)) {
+        continue;
+      }
+      try {
+        await this.flushPendingPushForFacility(row.facility_id);
+      } catch (error) {
+        logger.warn(
+          `[AccessCodePush] Outbox flush failed for facility=${row.facility_id}`,
+          error,
+        );
+      }
+    }
+  }
+
+  public async hasPendingOutboxPush(facilityId: string): Promise<boolean> {
+    return this.pushOutbox.hasPendingForFacility(facilityId);
+  }
+
+  private async deliverOutboxRow(row: { id: string; facility_id: string; attempt_count: number }): Promise<void> {
+    const facilityId = row.facility_id;
+    const nonce = crypto.randomUUID();
+    await this.pushOutbox.markInProgress(row.id, nonce);
+    this.setPushState(facilityId, 'pending', null, nonce);
+
+    const jwt = await this.buildAccessCodeUpdateJwt(facilityId, nonce);
+    GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
+    logger.info(
+      `Access code push dispatched for facility=${facilityId} outbox=${row.id} nonce=${nonce} attempt=${row.attempt_count + 1}`,
+    );
+
+    try {
+      await this.awaitPushAcceptance(facilityId, nonce, row.id);
+      await this.pushOutbox.markDelivered(row.id);
+      this.setPushState(facilityId, 'active', null, nonce);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`Access code push delivery failed for facility=${facilityId}: ${message}`);
+      throw error;
+    }
+  }
+
+  private async buildAccessCodeUpdateJwt(facilityId: string, nonce: string): Promise<string> {
     const payload = await this.getGatewayPollPayload(facilityId);
     const scheduleMetaById = await this.getScheduleMetaMap(payload.map((entry) => entry.schedule_id));
-    const nonce = crypto.randomUUID();
-    if (!this.isGatewayOnline(facilityId)) {
-      const message = 'gateway is offline; cannot push access codes';
-      this.setPushState(facilityId, 'error', message, null);
-      throw new AccessCodePushDeliveryError(message);
-    }
-    this.setPushState(facilityId, 'pending', null, nonce);
     const codesByDevice = new Map<string, GatewayDeviceCodeEntry>();
+
     this.sortResolutionsDeterministically(payload).forEach((entry) => {
       const scheduleMeta = entry.schedule_id ? (scheduleMetaById.get(entry.schedule_id) ?? null) : null;
       const validCode: GatewayValidCodeEntry = {
@@ -1212,13 +1327,12 @@ export class AccessCodeService {
 
       const existing = codesByDevice.get(entry.device_id);
       if (!existing) {
-        const nextEntry: GatewayDeviceCodeEntry = {
+        codesByDevice.set(entry.device_id, {
           device_id: entry.device_id,
           access_id: entry.access_id,
           relay_channel: entry.relay_channel,
           valid_codes: [validCode],
-        };
-        codesByDevice.set(entry.device_id, nextEntry);
+        });
         return;
       }
 
@@ -1231,11 +1345,11 @@ export class AccessCodeService {
       nonce,
       codes: Array.from(codesByDevice.values()),
     };
-    const jwt = await Ed25519Service.signCommandJwt(jwtPayload);
-    GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
-    logger.info(`Access code push dispatched for facility=${facilityId} codes=${payload.length} nonce=${nonce}`);
-    await this.awaitPushAcceptance(facilityId, nonce);
-    this.setPushState(facilityId, 'active', null, nonce);
+    return Ed25519Service.signCommandJwt(jwtPayload);
+  }
+
+  public async pushCodesToGateway(facilityId: string): Promise<void> {
+    await this.requestGatewayPush(facilityId);
   }
 }
 
