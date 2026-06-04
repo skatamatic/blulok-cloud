@@ -1,5 +1,6 @@
 import {
   buildHistogramChartEntries,
+  formatHistogramAxisLabel,
   generateHistogramSlotKeys,
   shouldShowHistogramAxisLabel,
 } from '@/utils/histogram-timeline.utils';
@@ -32,6 +33,10 @@ describe('histogram-timeline.utils', () => {
   it('thins axis labels for dense timelines', () => {
     expect(shouldShowHistogramAxisLabel(0, 30, 'month')).toBe(true);
     expect(shouldShowHistogramAxisLabel(1, 30, 'month')).toBe(false);
-    expect(shouldShowHistogramAxisLabel(4, 30, 'month')).toBe(true);
+    expect(shouldShowHistogramAxisLabel(2, 30, 'month')).toBe(true);
+  });
+
+  it('uses compact numeric labels for dense month timelines', () => {
+    expect(formatHistogramAxisLabel('2026-05-19', 'month', 30)).toBe('5/19');
   });
 });

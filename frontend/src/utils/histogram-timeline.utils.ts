@@ -99,10 +99,54 @@ export function shouldShowHistogramAxisLabel(
     case 'day':
       return index % 2 === 0;
     case 'month':
+      return index % 2 === 0;
     case 'year':
-      return index % 4 === 0;
+      return index % 3 === 0;
     case 'week':
     default:
       return true;
+  }
+}
+
+function parseHistogramChartDate(dateStr: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return new Date(`${dateStr}T12:00:00`);
+  }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateStr)) {
+    return new Date(dateStr.replace(' ', 'T'));
+  }
+  return new Date(dateStr);
+}
+
+/** Compact axis labels for dense timelines (avoids truncation in narrow columns). */
+export function formatHistogramAxisLabel(
+  dateStr: string,
+  period: HistogramTimePeriod,
+  slotCount: number,
+): string {
+  const date = parseHistogramChartDate(dateStr);
+  if (Number.isNaN(date.getTime())) return dateStr;
+
+  const compact = slotCount > 14;
+
+  switch (period) {
+    case 'day':
+      if (compact) {
+        const hour = date.getHours();
+        const suffix = hour >= 12 ? 'p' : 'a';
+        const hour12 = hour % 12 || 12;
+        return `${hour12}${suffix}`;
+      }
+      return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+    case 'week':
+    case 'month':
+      if (compact) {
+        return `${date.getMonth() + 1}/${date.getDate()}`;
+      }
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    case 'year':
+      return `${date.getMonth() + 1}/${date.getDate()}`;
+    default:
+      return dateStr;
   }
 }

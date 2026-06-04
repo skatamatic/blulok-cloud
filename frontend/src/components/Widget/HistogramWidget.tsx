@@ -20,6 +20,7 @@ import {
 } from '@/utils/histogram-activity-type.utils';
 import {
   buildHistogramChartEntries,
+  formatHistogramAxisLabel,
   shouldShowHistogramAxisLabel,
 } from '@/utils/histogram-timeline.utils';
 
@@ -606,14 +607,14 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                 {chartEntries.map(([date], index) => (
                   <span
                     key={`label-${date}`}
-                    className={`min-w-0 truncate text-center text-[9px] leading-tight sm:text-[10px] ${
+                    className={`min-w-0 text-center text-[7px] leading-none sm:text-[8px] ${
                       shouldShowHistogramAxisLabel(index, slotCount, timePeriod)
                         ? 'text-gray-500 dark:text-gray-400'
                         : 'text-transparent select-none'
                     }`}
                     title={formatDateLabel(date, timePeriod, true)}
                   >
-                    {formatDateLabel(date, timePeriod)}
+                    {formatHistogramAxisLabel(date, timePeriod, slotCount)}
                   </span>
                 ))}
               </div>
