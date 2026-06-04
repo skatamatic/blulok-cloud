@@ -25,6 +25,10 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+jest.mock('@/hooks/useLockDeviceRealtime', () => ({
+  useLockDeviceRealtime: jest.fn(),
+}));
+
 jest.mock('@/contexts/GlobalFacilityContext', () => ({
   ...jest.requireActual('@/contexts/GlobalFacilityContext'),
   useGlobalFacility: jest.fn(),
