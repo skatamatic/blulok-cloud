@@ -25,8 +25,8 @@ export class KeySharingService {
     return KeySharingService.instance;
   }
 
-  private async getDenylistDeviceIdsForUnit(unitId: string): Promise<string[]> {
-    return AccessControlZoneAccessService.getDenylistDeviceIdsForUnits([unitId]);
+  private async getDenylistTargetsForUnit(unitId: string) {
+    return AccessControlZoneAccessService.getDenylistTargetsForUnits([unitId]);
   }
 
   /**
@@ -166,7 +166,8 @@ export class KeySharingService {
         const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
 
         const denylistModel = new DenylistEntryModel();
-        const unitDeviceIds = await this.getDenylistDeviceIdsForUnit(unitId);
+        const unitTargets = await this.getDenylistTargetsForUnit(unitId);
+        const unitDeviceIds = unitTargets.map((target) => target.device_id);
         if (unitDeviceIds.length > 0) {
           const entries = (await denylistModel.findByUser(invitee.id))
             .filter((entry) => unitDeviceIds.includes(entry.device_id));
@@ -365,7 +366,8 @@ export class KeySharingService {
 
       if (becameActive && unexpired) {
         const denylistModel = new DenylistEntryModel();
-        const unitDeviceIds = await this.getDenylistDeviceIdsForUnit(existingSharing.unit_id);
+        const unitTargets = await this.getDenylistTargetsForUnit(existingSharing.unit_id);
+        const unitDeviceIds = unitTargets.map((target) => target.device_id);
         const entries = (await denylistModel.findByUser(existingSharing.shared_with_user_id))
           .filter((entry) => unitDeviceIds.includes(entry.device_id));
         if (entries.length > 0) {
@@ -422,9 +424,10 @@ export class KeySharingService {
     if (!success) return false;
 
     try {
-      const deviceIds = await this.getDenylistDeviceIdsForUnit(existingSharing.unit_id);
-      if (deviceIds.length === 0) return true;
+      const denylistTargets = await this.getDenylistTargetsForUnit(existingSharing.unit_id);
+      if (denylistTargets.length === 0) return true;
 
+      const deviceIds = denylistTargets.map((target) => target.device_id);
       const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
 
       const nowEpoch = Math.floor(Date.now() / 1000);
@@ -433,8 +436,9 @@ export class KeySharingService {
       const denylistModel = new DenylistEntryModel();
 
       // Bulk create denylist entries (single query instead of N queries)
-      await denylistModel.bulkCreate(deviceIds.map(deviceId => ({
-        device_id: deviceId,
+      await denylistModel.bulkCreate(denylistTargets.map((target) => ({
+        device_id: target.device_id,
+        device_type: target.device_type,
         user_id: existingSharing.shared_with_user_id,
         expires_at: this.db.raw('FROM_UNIXTIME(?)', [exp]),
         source: 'key_sharing_revocation' as const,

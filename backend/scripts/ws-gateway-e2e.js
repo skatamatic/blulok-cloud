@@ -1621,6 +1621,7 @@ async function run() {
   let accessCodeConfigModified = false;
   let accessCodeConfigFacilityId = null;
   let unitLinkedSwapGroupId = null;
+  let denylistZoneGroupId = null;
   let accessCodeGroupId = null;
   let globalSharedAccessCodeGroupId = null;
   let demotedGlobalSharedAccessCodeGroupId = null;
@@ -4829,17 +4830,74 @@ async function run() {
     ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
     ok('Gateway connection re-established for admin session');
 
-    // Unshare user3 -> expect DENYLIST_ADD for sub=share2Id
+    // Unshare user3 -> expect DENYLIST_ADD for sub=share2Id on unit lock + zone-linked app access_control
     heading('Denylist Command Flow');
-    const expectAddShare3 = waitForCommand(ws, (cmd) => cmd.cmd_type === 'DENYLIST_ADD' && Array.isArray(cmd.denylist_add) && cmd.denylist_add.some(e => e.sub === share2Id));
+    const denylistZoneAcDeviceId = created.accessControlDeviceIds[0];
+    if (!denylistZoneAcDeviceId || !deviceId) {
+      throw new Error('Missing blulok lock or access_control device for denylist zone setup');
+    }
+    step('Linking app-enabled access-control door to unit lock via zone group');
+    const denylistZoneGroupResp = await axios.post(
+      `${API_BASE}/device-groups`,
+      {
+        facility_id: facilityId,
+        group_type: 'zone',
+        name: `E2E Denylist Zone ${Date.now()}`,
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    denylistZoneGroupId = denylistZoneGroupResp.data?.data?.id;
+    if (!denylistZoneGroupId) throw new Error('Denylist zone group creation did not return id');
+    await axios.post(
+      `${API_BASE}/device-groups/${denylistZoneGroupId}/members`,
+      { device_id: denylistZoneAcDeviceId, device_type: 'access_control' },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    await axios.post(
+      `${API_BASE}/device-groups/${denylistZoneGroupId}/members`,
+      { device_id: deviceId, device_type: 'blulok' },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    ok(`Zone group ${denylistZoneGroupId} links lock ${deviceId} and access_control ${denylistZoneAcDeviceId}`);
+
+    const expectAddShare3 = waitForCommand(ws, (cmd) => {
+      if (cmd.cmd_type !== 'DENYLIST_ADD' || !Array.isArray(cmd.denylist_add)) return false;
+      if (!cmd.denylist_add.some((entry) => entry.sub === share2Id)) return false;
+      const targets = Array.isArray(cmd.target) ? cmd.target : [];
+      return targets.includes(deviceId) && targets.includes(denylistZoneAcDeviceId);
+    });
     await revokeShare(token, share2);
     // Remove from created.shares as it's revoked
     created.shares = created.shares.filter((id) => id !== share2);
-    await expectAddShare3;
-    ok('Received DENYLIST_ADD for share3 revoke');
+    const denylistAddCmd = await expectAddShare3;
+    ok('Received DENYLIST_ADD for share3 revoke targeting blulok lock and app access_control');
+
+    step('Verifying denylist DB rows include blulok + access_control for revoked sharee');
+    const shareeDenylistResp = await axios.get(
+      `${API_BASE}/denylist/users/${share2Id}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const shareeDenylistEntries = shareeDenylistResp.data?.entries || [];
+    const deniedDeviceIds = shareeDenylistEntries.map((entry) => entry.device_id);
+    if (!deniedDeviceIds.includes(deviceId)) {
+      throw new Error(`Expected blulok lock ${deviceId} on sharee denylist after revoke`);
+    }
+    if (!deniedDeviceIds.includes(denylistZoneAcDeviceId)) {
+      throw new Error(`Expected access_control ${denylistZoneAcDeviceId} on sharee denylist after revoke`);
+    }
+    const acDenylistEntry = shareeDenylistEntries.find((entry) => entry.device_id === denylistZoneAcDeviceId);
+    if (acDenylistEntry?.device_type !== 'access_control') {
+      throw new Error(`Expected access_control denylist row device_type=access_control, got ${acDenylistEntry?.device_type}`);
+    }
+    ok('Share revocation persisted denylist rows for blulok lock and app-enabled access_control');
 
     // Re-share user3 -> expect DENYLIST_REMOVE sub=share2Id
-    const expectRemoveShare3 = waitForCommand(ws, (cmd) => cmd.cmd_type === 'DENYLIST_REMOVE' && Array.isArray(cmd.denylist_remove) && cmd.denylist_remove.some(e => e.sub === share2Id));
+    const expectRemoveShare3 = waitForCommand(ws, (cmd) => {
+      if (cmd.cmd_type !== 'DENYLIST_REMOVE' || !Array.isArray(cmd.denylist_remove)) return false;
+      if (!cmd.denylist_remove.some((entry) => entry.sub === share2Id)) return false;
+      const targets = Array.isArray(cmd.target) ? cmd.target : [];
+      return targets.includes(deviceId) && targets.includes(denylistZoneAcDeviceId);
+    });
     try {
       const share2b = await shareKey(token, unitId, share2Id, 'limited');
       created.shares.push(share2b);
@@ -8505,6 +8563,14 @@ async function run() {
         ok('Private access-code group deleted');
       }
 
+      if (denylistZoneGroupId) {
+        step(`Deleting denylist zone group ${denylistZoneGroupId}`);
+        await axios.delete(`${API_BASE}/device-groups/${denylistZoneGroupId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+        ok(`Deleted denylist zone group ${denylistZoneGroupId}`);
+        denylistZoneGroupId = null;
+      }
       if (accessCodeGroupId) {
         step('Deleting temporary access-code group');
         await axios.delete(`${API_BASE}/device-groups/${accessCodeGroupId}`, {

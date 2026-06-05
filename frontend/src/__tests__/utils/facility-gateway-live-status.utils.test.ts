@@ -3,51 +3,37 @@ import {
 } from '@/utils/facility-gateway-live-status.utils';
 
 describe('resolveEffectiveGatewayStatus', () => {
-  it('uses inbound websocket for physical gateways when session is up', () => {
+  it('reports online whenever the live inbound session is connected (any gateway type)', () => {
     expect(
-      resolveEffectiveGatewayStatus({
-        dbStatus: 'offline',
-        wsConnected: true,
-        gatewayType: 'physical',
-      }),
+      resolveEffectiveGatewayStatus({ dbStatus: 'offline', connected: true }),
     ).toBe('online');
   });
 
-  it('shows offline for physical gateways when websocket session is down', () => {
+  it('reports offline when the live session is confirmed down', () => {
     expect(
-      resolveEffectiveGatewayStatus({
-        dbStatus: 'online',
-        wsConnected: false,
-        gatewayType: 'physical',
-      }),
+      resolveEffectiveGatewayStatus({ dbStatus: 'online', connected: false }),
     ).toBe('offline');
   });
 
-  it('keeps HTTP gateway inventory status even when inbound websocket is connected', () => {
+  it('falls back to the last persisted DB status while liveness is unknown', () => {
     expect(
-      resolveEffectiveGatewayStatus({
-        dbStatus: 'offline',
-        wsConnected: true,
-        gatewayType: 'http',
-      }),
+      resolveEffectiveGatewayStatus({ dbStatus: 'online', connected: null }),
+    ).toBe('online');
+    expect(
+      resolveEffectiveGatewayStatus({ dbStatus: 'offline', connected: null }),
+    ).toBe('offline');
+    expect(
+      resolveEffectiveGatewayStatus({ dbStatus: undefined, connected: null }),
     ).toBe('offline');
   });
 
-  it('preserves maintenance and error states', () => {
+  it('preserves admin-set maintenance and error states over live connectivity', () => {
     expect(
-      resolveEffectiveGatewayStatus({
-        dbStatus: 'maintenance',
-        wsConnected: true,
-        gatewayType: 'physical',
-      }),
+      resolveEffectiveGatewayStatus({ dbStatus: 'maintenance', connected: true }),
     ).toBe('maintenance');
 
     expect(
-      resolveEffectiveGatewayStatus({
-        dbStatus: 'error',
-        wsConnected: false,
-        gatewayType: 'simulated',
-      }),
+      resolveEffectiveGatewayStatus({ dbStatus: 'error', connected: false }),
     ).toBe('error');
   });
 });

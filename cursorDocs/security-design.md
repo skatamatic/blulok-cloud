@@ -91,6 +91,7 @@ Route Passes are scoped by role to enforce least-privilege access:
 Pass requests require authentication; device binding via `X-App-Device-Id` (preferred) or latest active device (fallback).
 
 ### Denylist Policy (Owner vs Shared Users)
+- Denylist targets include **BluLok locks on the unit** and **app-enabled access_control devices** zone-linked to those locks (immediate route-pass rejection on app-entry doors/gates, not only after pass TTL).
 - Owner deactivation:
   - Denylist the owner on devices from both primary and shared units.
   - Inactivate all active, unexpired shares granted by the owner.

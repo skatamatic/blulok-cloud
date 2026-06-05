@@ -68,7 +68,7 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {
     try {
       const gateways = await this.getScopedGateways(client);
-      const payload = this.toPayload(gateways);
+      const payload = await this.toPayload(gateways);
 
       this.sendMessage(ws, {
         type: 'gateway_status_update',
@@ -114,7 +114,7 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
         }
 
         const gateways = await this.getScopedGateways(client, facilityId, gatewayId);
-        const payload = this.toPayload(gateways, gatewayId);
+        const payload = await this.toPayload(gateways, gatewayId);
 
         const watchers = this.watchers.get(subscriptionId);
         if (!watchers) continue;
@@ -191,18 +191,51 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
     return this.allGatewaysInFlight;
   }
 
-  private toPayload(gateways: Gateway[], updatedGatewayId?: string) {
+  private async toPayload(gateways: Gateway[], updatedGatewayId?: string) {
+    // Enrich each gateway with the live inbound /ws/gateway session signal so dashboards get
+    // real-time connectivity (any traffic within the keepalive window = online) without waiting
+    // on the HTTP status poll. The DB `status`/`lastSeen` remain for inventory/history context.
+    const liveness = await this.getLivenessByFacility(gateways);
+
     return {
-      gateways: gateways.map(g => ({
-        id: g.id,
-        facilityId: g.facility_id,
-        name: g.name,
-        status: g.status,
-        lastSeen: g.last_seen,
-      })),
+      gateways: gateways.map(g => {
+        const live = g.facility_id ? liveness.get(g.facility_id) : undefined;
+        return {
+          id: g.id,
+          facilityId: g.facility_id,
+          name: g.name,
+          status: g.status,
+          lastSeen: g.last_seen,
+          // Live inbound session truth. `connected` is null when liveness can't be resolved.
+          connected: live ? live.connected : null,
+          lastActivityAt: live?.lastPongAt ?? null,
+        };
+      }),
       updatedGatewayId,
       lastUpdated: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Resolve live inbound `/ws/gateway` connectivity per facility from the gateway events transport.
+   * Uses a dynamic import to avoid a static circular dependency
+   * (GatewayEventsService → WebSocketService → subscription managers).
+   */
+  private async getLivenessByFacility(
+    gateways: Gateway[],
+  ): Promise<Map<string, { connected: boolean; lastPongAt?: number }>> {
+    const byFacility = new Map<string, { connected: boolean; lastPongAt?: number }>();
+    try {
+      const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+      const events = GatewayEventsService.getInstance();
+      for (const g of gateways) {
+        if (!g.facility_id || byFacility.has(g.facility_id)) continue;
+        byFacility.set(g.facility_id, events.getFacilityConnectionStatus(g.facility_id));
+      }
+    } catch (error) {
+      this.logger.warn('Failed to resolve live gateway connectivity for status payload:', error);
+    }
+    return byFacility;
   }
 }
 

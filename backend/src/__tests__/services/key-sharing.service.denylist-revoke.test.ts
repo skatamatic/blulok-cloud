@@ -34,7 +34,7 @@ jest.mock('@/config/environment', () => ({
 }));
 jest.mock('@/services/access-control-zone-access.service', () => ({
   AccessControlZoneAccessService: {
-    getDenylistDeviceIdsForUnits: jest.fn(),
+    getDenylistTargetsForUnits: jest.fn(),
     getDeviceFacilityIds: jest.fn(),
   },
 }));
@@ -74,15 +74,21 @@ describe('KeySharingService.revokeShare denylist targeting', () => {
     mockGateway = { unicastToFacility: jest.fn() };
     (GatewayEventsService.getInstance as jest.Mock).mockReturnValue(mockGateway);
 
-    (AccessControlZoneAccessService.getDenylistDeviceIdsForUnits as jest.Mock).mockResolvedValue(['lock-1']);
+    (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+      { device_id: 'lock-1', device_type: 'blulok' },
+      { device_id: 'ac-door-1', device_type: 'access_control' },
+    ]);
     (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValue(
-      new Map([['lock-1', 'fac-1']]),
+      new Map([
+        ['lock-1', 'fac-1'],
+        ['ac-door-1', 'fac-1'],
+      ]),
     );
 
     (KeySharingService as any).instance = undefined;
   });
 
-  it('denylists only bluLok locks (not access_control IDs)', async () => {
+  it('denylists bluLok lock and app-enabled access_control on share revoke', async () => {
     const service = KeySharingService.getInstance();
 
     await service.revokeShare(
@@ -91,17 +97,24 @@ describe('KeySharingService.revokeShare denylist targeting', () => {
       'admin-1',
     );
 
-    expect(AccessControlZoneAccessService.getDenylistDeviceIdsForUnits).toHaveBeenCalledWith(['unit-1']);
+    expect(AccessControlZoneAccessService.getDenylistTargetsForUnits).toHaveBeenCalledWith(['unit-1']);
     expect(mockDenylistModel.bulkCreate).toHaveBeenCalledWith([
       expect.objectContaining({
         device_id: 'lock-1',
+        device_type: 'blulok',
+        user_id: 'invitee-1',
+        source: 'key_sharing_revocation',
+      }),
+      expect.objectContaining({
+        device_id: 'ac-door-1',
+        device_type: 'access_control',
         user_id: 'invitee-1',
         source: 'key_sharing_revocation',
       }),
     ]);
     expect(DenylistService.buildDenylistAdd).toHaveBeenCalledWith(
       [{ sub: 'invitee-1', exp: expect.any(Number) }],
-      ['lock-1'],
+      ['lock-1', 'ac-door-1'],
     );
     expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('fac-1', 'mock-denylist-add-jwt');
   });

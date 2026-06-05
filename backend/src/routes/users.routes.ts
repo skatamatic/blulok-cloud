@@ -859,15 +859,18 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
 
       const unitIds = Array.from(new Set([...(primaryUnitIds || []), ...(sharedUnitIds || [])]));
 
-      // Get all devices from these units
-      const rows = unitIds.length === 0 ? [] : await knex('blulok_devices as bd')
-        .join('units as u', 'bd.unit_id', 'u.id')
-        .whereIn('bd.unit_id', unitIds)
-        .select('bd.id as device_id', 'u.facility_id');
-      
-      if (rows.length === 0) {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      const denylistTargets = unitIds.length === 0
+        ? []
+        : await AccessControlZoneAccessService.getDenylistTargetsForUnits(unitIds);
+
+      if (denylistTargets.length === 0) {
         return; // No devices to deny
       }
+
+      const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(
+        denylistTargets.map((target) => target.device_id),
+      );
 
       // Check if we should skip denylist command (user's last route pass is expired)
       const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(id);
@@ -880,20 +883,22 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
       const byFacility = new Map<string, string[]>();
       const performedBy = req.user!.userId;
 
-      // Create database entries and group by facility (always do this for audit trail)
-      for (const r of rows) {
-        await denylistModel.create({
-          device_id: r.device_id,
-          user_id: id,
-          expires_at: expiresAt,
-          source: 'user_deactivation',
-          created_by: performedBy,
-        });
+      await denylistModel.bulkCreate(denylistTargets.map((target) => ({
+        device_id: target.device_id,
+        device_type: target.device_type,
+        user_id: id,
+        expires_at: expiresAt,
+        source: 'user_deactivation' as const,
+        created_by: performedBy,
+      })));
 
-        const list = byFacility.get(r.facility_id) || [];
-        list.push(r.device_id);
-        byFacility.set(r.facility_id, list);
-      }
+      denylistTargets.forEach((target) => {
+        const facilityId = deviceFacilityMap.get(target.device_id);
+        if (!facilityId) return;
+        const list = byFacility.get(facilityId) || [];
+        list.push(target.device_id);
+        byFacility.set(facilityId, list);
+      });
 
       // Send denylist commands only if user's last route pass is not expired
       if (!shouldSkip) {

@@ -4,6 +4,7 @@ import { GatewayStatusSubscriptionManager } from '@/services/subscriptions/gatew
 import { UserRole } from '@/types/auth.types';
 import { WebSocket } from 'ws';
 import { GatewayModel } from '@/models/gateway.model';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 
 describe('GatewayStatusSubscriptionManager', () => {
   afterEach(() => {
@@ -107,6 +108,36 @@ describe('GatewayStatusSubscriptionManager', () => {
       expect(msg.data.gateways).toHaveLength(1);
       expect(msg.data.gateways[0].id).toBe('gw-a');
       expect(msg.data.updatedGatewayId).toBe('gw-a');
+    });
+
+    it('enriches each gateway with the live inbound session signal (connected + lastActivityAt)', async () => {
+      jest.spyOn(GatewayModel.prototype, 'findAll').mockResolvedValue([
+        { id: 'gw-a', facility_id: 'fac-1', name: 'A', status: 'offline', last_seen: new Date() },
+      ] as any);
+      const lastActivityAt = Date.now();
+      jest
+        .spyOn(GatewayEventsService.getInstance(), 'getFacilityConnectionStatus')
+        .mockReturnValue({ connected: true, lastPongAt: lastActivityAt });
+
+      const mgr = new GatewayStatusSubscriptionManager();
+      const wsMock = { readyState: WebSocket.OPEN, send: jest.fn() } as unknown as WebSocket;
+      mgr['watchers'].set('sub-admin', new Set([wsMock]));
+      mgr['clientContext'].set('sub-admin', {
+        userId: 'admin',
+        userRole: UserRole.ADMIN,
+        subscriptions: new Map(),
+        facilityIds: undefined,
+      });
+
+      await mgr.broadcastUpdate('fac-1', 'gw-a');
+
+      const msg = JSON.parse((wsMock.send as jest.Mock).mock.calls[0][0] as string);
+      expect(msg.data.gateways[0]).toMatchObject({
+        id: 'gw-a',
+        status: 'offline',
+        connected: true,
+        lastActivityAt,
+      });
     });
   });
 });

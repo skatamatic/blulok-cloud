@@ -16,7 +16,13 @@ import { AccessControlZoneAccessService } from '@/services/access-control-zone-a
 jest.mock('@/services/database.service');
 jest.mock('@/services/gateway/gateway-events.service');
 jest.mock('@/models/denylist-entry.model');
-jest.mock('@/services/access-control-zone-access.service');
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getDenylistTargetsForUnits: jest.fn(),
+    getDenylistDeviceIdsForUnits: jest.fn(),
+    getDeviceFacilityIds: jest.fn(),
+  },
+}));
 jest.mock('@/config/environment', () => ({
   config: {
     security: {
@@ -95,6 +101,9 @@ describe('Denylist Flow Integration', () => {
       bulkRemove: jest.fn().mockResolvedValue(1),
       pruneExpired: jest.fn().mockResolvedValue(0),
     } as any;
+    (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+      { device_id: 'device-1', device_type: 'blulok' },
+    ]);
     (AccessControlZoneAccessService.getDenylistDeviceIdsForUnits as jest.Mock).mockResolvedValue(['device-1']);
     (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValue(new Map([['device-1', 'facility-1']]));
 
@@ -165,6 +174,7 @@ describe('Denylist Flow Integration', () => {
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -178,6 +188,9 @@ describe('Denylist Flow Integration', () => {
       mockDenylistModel.findByUser.mockClear();
       mockDenylistModel.bulkRemove.mockClear();
       mockGatewayEvents.unicastToFacility.mockClear();
+      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+        { device_id: 'device-1', device_type: 'blulok' },
+      ]);
 
       // Simulate re-assignment
       await mockHandlers.assigned({

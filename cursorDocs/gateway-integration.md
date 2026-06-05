@@ -134,23 +134,25 @@ Use **`wss://`** to match **`https://`** on the same host. Mixed `ws` to `https`
 
 ## Gateway row `status` vs inbound WebSocket
 
-There are **three** backend representations of gateway connectivity; only one path should drive **live UI badges**:
+**Liveness has a single source of truth: the live inbound `/ws/gateway` session.** If a gateway is sending *any* traffic within the keepalive window (AUTH, PROXY, firmware/ACK messages, JSON `PONG`, or RFC6455 pong frames), it is **online** — for **every** gateway type. Outbound polling is deprecated/disabled, so it never drives liveness.
 
 | Source | What it is | Use in UI |
 |--------|------------|-----------|
-| **`GET /facilities/:id` → `deviceHierarchy.gateway.status`** | Snapshot of the `gateways` row bundled with the device tree | **Do not use for liveness badges** — loaded once with the facility page; stale after reconnect; never reflected inbound WS for HTTP gateways |
-| **`GET /gateways/status/:facilityId`** | In-memory inbound `/ws/gateway` session (`GatewayEventsService`) | **Yes** — polled by `useFacilityGatewayLiveStatus` for physical/simulated live session |
-| **`gateway_status` WebSocket + `gateways.status` row** | DB inventory status; broadcast after connect/disconnect/poll | **Yes** — subscription keeps inventory row fresh; display merged via `resolveEffectiveGatewayStatus` |
+| **`GET /facilities/:id` → `deviceHierarchy.gateway.status`** | Snapshot of the `gateways` row bundled with the device tree | **Do not use for liveness badges** — load-time snapshot; identity/membership only |
+| **`gateway_status` WebSocket (`gateway_status_update`)** | Real-time broadcast; payload now carries the per-gateway live session signal **`connected`** + **`lastActivityAt`** alongside the DB `status`/`lastSeen` row | **Primary** — pushed instantly on connect/disconnect; drives the badge in real time |
+| **`GET /gateways/status/:facilityId`** | In-memory inbound `/ws/gateway` session (`GatewayEventsService.getFacilityConnectionStatus`) | **Backstop** — polled by `useFacilityGatewayLiveStatus` every 5s to reconcile if the dashboard socket misses an event; a failed poll does **not** flip the badge offline |
 
-### Why the old Facility tab was wrong
+### Why the indicators were wrong before
 
-The Facility tab previously showed **`deviceHierarchy.gateway.status`** from the initial **`getFacility`** response, with an optional **`gateway_status`** patch to React state. The Gateway tab showed **`GET /gateways/status`** as “connected/disconnected”. Those were **different signals with different labels**, so the mesh could be live while the Facility card still read **offline** (stale snapshot, missed WS patch, or HTTP gateway where inbound WS does not update the row).
+For physical/simulated gateways the badge was driven **only** by the 5s HTTP poll — the real-time `gateway_status_update` broadcast carried just the DB row and was ignored by the resolver, so connect/disconnect never moved the badge instantly, and any transient cloud-API poll error flapped it to offline. **HTTP-typed** gateways could *never* show online: inbound WS skipped their DB status and outbound polling is disabled. Missing `gateway_type` skipped DB sync entirely.
+
+**Fix:** the broadcast payload now includes the live `connected`/`lastActivityAt` signal, the frontend resolver uses a single `connected: boolean | null` input for all gateway types (falling back to the persisted DB status only while liveness is *unknown*), and poll errors no longer force offline.
 
 **Removed from UI:** reading `deviceHierarchy.gateway.status` for badges. **`deviceHierarchy.gateway` remains** for device tree context (Add Device modal, access-control lists) — identity and membership, not live liveness.
 
-### DB sync (backend, unchanged)
+### DB sync (backend)
 
-For **physical** and **simulated** gateways, **`AUTH`** on `/ws/gateway` still sets the row **`status` → online** and **`last_seen`**; disconnect sets **`offline`**. **HTTP** gateways keep liveness from outbound polling only — inbound WS does not overwrite their DB status.
+For **all** gateway types with a `gateways` row (physical, simulated, http, or untyped), **`AUTH`** on `/ws/gateway` sets the row **`status` → online** and **`last_seen`**; disconnect/heartbeat-timeout sets **`offline`** (preserving `last_seen`). Each transition invalidates the status cache and broadcasts `gateway_status_update`.
 
 **`AUTH` does not set `gateways.facility_id`** (no auto-link of unassigned inventory on first connect). The facility must **already** have a gateway row (admin **reassign**, `POST /gateways`, seed, etc.) for **`findByFacilityId`** to resolve.
 
@@ -165,14 +167,16 @@ For **physical** and **simulated** gateways, **`AUTH`** on `/ws/gateway` still s
 
 ## Facility UI gateway status (Facility tab + Gateway tab)
 
-Both tabs on the facility details page share **`useFacilityGatewayLiveStatus`**, which loads the assigned gateway via **`GET /gateways?facility_id=`**, polls **`GET /gateways/status/:facilityId`** every 5s for inbound `/ws/gateway` session liveness, and subscribes to **`gateway_status`** WebSocket updates.
+Both tabs on the facility details page share **`useFacilityGatewayLiveStatus`**, which loads the assigned gateway via **`GET /gateways?facility_id=`**, subscribes to **`gateway_status`** WebSocket updates (primary, real-time `connected` signal), and polls **`GET /gateways/status/:facilityId`** every 5s as a reconciliation backstop.
 
-**Display rule (`resolveEffectiveGatewayStatus`):**
+**Display rule (`resolveEffectiveGatewayStatus`)** — one rule for every gateway type:
 
-| Gateway type | Badge source |
-|--------------|--------------|
-| `physical` / `simulated` | Inbound WebSocket session (`connected` → **online**) |
-| `http` | `gateways.status` row (outbound polling) |
+| `connected` (live session) | DB `status` | Badge |
+|----------------------------|-------------|-------|
+| `true` | any (except maintenance/error) | **online** |
+| `false` | any (except maintenance/error) | **offline** |
+| `null` (not yet known) | online / offline | mirrors DB `status` (no false "offline" flash) |
+| any | `maintenance` / `error` | **maintenance** / **error** (admin override wins) |
 
 Both tabs show the same **`online` / `offline` / `error` / `maintenance`** badge labels.
 
@@ -278,6 +282,13 @@ The backend also appends **BluLok cloud–originated** lines to the same stream 
 | `device_inventory_sync_completed` | After `POST /internal/gateway/devices/inventory` | `CLD04` |
 
 Disconnect `data.reason` uses transport codes (`auth_ok`, `heartbeat_timeout`, `replaced`, `close_event`, …) with a human `reason_label`.
+
+### Live debug feed (`gateway_debug`)
+
+The Facility → Gateway → **DevTools/Diag** panel (DEV_ADMIN only) streams raw WebSocket lifecycle/heartbeat/message events via the **`gateway_debug`** subscription.
+
+- **Filters:** `{ facility_id }` — **required for scoping**. The subscription is bound to a single facility and `GatewayDebugSubscriptionManager` filters every event **server-side**, so a viewer never receives traffic for gateways at other facilities. Events without a `facilityId` are not delivered to a facility-scoped subscription.
+- **Security:** debug events carry remote addresses, user IDs, and message types. Server-side facility scoping (not just a client-side guard) prevents cross-facility traffic from leaking onto the wire. The frontend also keeps a defensive client-side `facilityId` check.
 
 **Routine reconnect noise:** Pairs of `CLD02` (disconnect) followed by `CLD01` (connect) within **30 seconds** are hidden in the Gateway Logs UI and in the list API response. This filters normal GCP instance recycle / TCP teardown without hiding real outages. Backend: `filterRoutineGatewayWsReconnectLogs` in `gateway-telemetry-system-log.utils.ts`; frontend applies the same rule only when merging **live WebSocket** tail rows (API responses are pre-filtered).
 

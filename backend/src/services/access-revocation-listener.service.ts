@@ -54,12 +54,14 @@ export class AccessRevocationListenerService {
     this.events.onTenantUnassigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        const deviceIds = await AccessControlZoneAccessService.getDenylistDeviceIdsForUnits([event.unitId]);
+        const denylistTargets = await AccessControlZoneAccessService.getDenylistTargetsForUnits([event.unitId]);
 
-        if (deviceIds.length === 0) {
+        if (denylistTargets.length === 0) {
           logger.info(`No devices found for unit ${event.unitId}, skipping denylist update`);
           return;
         }
+
+        const deviceIds = denylistTargets.map((target) => target.device_id);
 
         // Calculate expiration based on route pass TTL
         const exp = this.getExpirationEpochSeconds();
@@ -67,8 +69,9 @@ export class AccessRevocationListenerService {
         const source = event.metadata?.source === 'fms_sync' ? 'fms_sync' : 'unit_unassignment';
 
         // Bulk create DB entries for all devices (single INSERT query instead of N queries)
-        await this.denylistModel.bulkCreate(deviceIds.map(deviceId => ({
-          device_id: deviceId,
+        await this.denylistModel.bulkCreate(denylistTargets.map((target) => ({
+          device_id: target.device_id,
+          device_type: target.device_type,
           user_id: event.tenantId,
           expires_at: knex.raw('FROM_UNIXTIME(?)', [exp]),
           source,
@@ -99,7 +102,8 @@ export class AccessRevocationListenerService {
     this.events.onTenantAssigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        const deviceIds = await AccessControlZoneAccessService.getDenylistDeviceIdsForUnits([event.unitId]);
+        const denylistTargets = await AccessControlZoneAccessService.getDenylistTargetsForUnits([event.unitId]);
+        const deviceIds = denylistTargets.map((target) => target.device_id);
 
         if (deviceIds.length === 0) {
           return;

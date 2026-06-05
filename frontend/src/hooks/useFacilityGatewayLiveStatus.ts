@@ -26,6 +26,10 @@ type GatewayStatusWsPayload = {
     facilityId?: string;
     status: GatewayOperationalStatus;
     lastSeen?: string;
+    // Live inbound /ws/gateway session signal (real-time). `null` when the backend
+    // could not resolve liveness for the facility.
+    connected?: boolean | null;
+    lastActivityAt?: number | null;
   }>;
 };
 
@@ -42,7 +46,9 @@ export function useFacilityGatewayLiveStatus(
   const enabled = options?.enabled !== false && !!facilityId;
   const ws = useWebSocket();
   const [gateway, setGateway] = useState<FacilityGatewayRecord | null>(null);
-  const [wsConnected, setWsConnected] = useState(false);
+  // Live inbound session connectivity. `null` = not yet known (avoids a false "offline" flash
+  // and prevents transient cloud-API poll errors from flipping the pill).
+  const [connected, setConnected] = useState<boolean | null>(null);
   const [lastActivityAt, setLastActivityAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -88,14 +94,14 @@ export function useFacilityGatewayLiveStatus(
       try {
         const res = await apiService.getGatewayWsStatus(facilityId);
         if (res?.success) {
-          setWsConnected(!!res.connected);
+          setConnected(!!res.connected);
           setLastActivityAt(
             res.lastPongAt ? new Date(res.lastPongAt as string | number).getTime() : null,
           );
         }
       } catch {
-        setWsConnected(false);
-        setLastActivityAt(null);
+        // A failed poll means we couldn't reach the cloud API — it says nothing about the
+        // gateway itself. Keep the last known connectivity instead of flapping to offline.
       }
     };
 
@@ -113,6 +119,13 @@ export function useFacilityGatewayLiveStatus(
         const gateways = (data as GatewayStatusWsPayload)?.gateways ?? [];
         gateways.forEach((row) => {
           if (row.facilityId && row.facilityId !== facilityId) return;
+          // Real-time liveness from the inbound /ws/gateway session — primary pill driver.
+          if (typeof row.connected === 'boolean') {
+            setConnected(row.connected);
+          }
+          if (typeof row.lastActivityAt === 'number') {
+            setLastActivityAt(row.lastActivityAt);
+          }
           setGateway((prev) => {
             if (!prev || prev.id !== row.id) return prev;
             return {
@@ -134,15 +147,16 @@ export function useFacilityGatewayLiveStatus(
     () =>
       resolveEffectiveGatewayStatus({
         dbStatus: gateway?.status,
-        wsConnected,
-        gatewayType: gateway?.gateway_type,
+        connected,
       }),
-    [gateway?.status, gateway?.gateway_type, wsConnected],
+    [gateway?.status, connected],
   );
 
   return {
     gateway,
-    wsConnected,
+    // True only when the inbound session is confirmed up. Consumers use this for the
+    // "session active" affordances (e.g. unassigned-gateway banner).
+    wsConnected: connected === true,
     lastActivityAt,
     effectiveStatus,
     loading,

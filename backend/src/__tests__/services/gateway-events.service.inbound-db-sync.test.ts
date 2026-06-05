@@ -91,7 +91,7 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
     expect(onlineSpy).not.toHaveBeenCalled();
   });
 
-  it('does not update DB for http gateway type', async () => {
+  it('drives http gateway DB status from inbound WS (outbound polling is deprecated)', async () => {
     jest.spyOn(GatewayModel.prototype, 'findByFacilityId').mockResolvedValue({
       id: 'gw-http-1',
       gateway_type: 'http',
@@ -109,9 +109,29 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
     });
     await flushMicrotasks();
 
-    expect(onlineSpy).not.toHaveBeenCalled();
+    expect(onlineSpy).toHaveBeenCalledWith('gw-http-1', 'online');
     expect(offlineSpy).not.toHaveBeenCalled();
-    expect(broadcastSpy).not.toHaveBeenCalled();
+    expect(broadcastSpy).toHaveBeenCalledWith('fac-1', 'gw-http-1');
+  });
+
+  it('syncs gateways with no explicit gateway_type from inbound WS', async () => {
+    jest.spyOn(GatewayModel.prototype, 'findByFacilityId').mockResolvedValue({
+      id: 'gw-untyped-1',
+    } as any);
+    const onlineSpy = jest.spyOn(GatewayModel.prototype, 'updateStatusAndLastSeen').mockResolvedValue(undefined as any);
+
+    const ws = WebSocketService.getInstance();
+    const broadcastSpy = jest.spyOn(ws, 'broadcastGatewayStatusUpdate').mockResolvedValue(undefined);
+
+    connectionCallback({
+      facilityId: 'fac-untyped',
+      connected: true,
+      timestamp: Date.now(),
+    });
+    await flushMicrotasks();
+
+    expect(onlineSpy).toHaveBeenCalledWith('gw-untyped-1', 'online');
+    expect(broadcastSpy).toHaveBeenCalledWith('fac-untyped', 'gw-untyped-1');
   });
 
   it('no-ops when no gateway row exists for facility', async () => {

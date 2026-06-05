@@ -36,13 +36,19 @@ router.get('/devices/:deviceId', asyncHandler(async (req: AuthenticatedRequest, 
   // Check access: facility admin can only view devices in their facilities
   if (AuthService.isFacilityAdmin(user.role)) {
     const knex = DatabaseService.getInstance().connection;
-    const device = await knex('blulok_devices')
+    const blulokDevice = await knex('blulok_devices')
       .join('units', 'blulok_devices.unit_id', 'units.id')
       .where('blulok_devices.id', deviceId)
       .select('units.facility_id')
       .first();
+    const accessControlDevice = blulokDevice ? null : await knex('access_control_devices as acd')
+      .join('gateways as g', 'acd.gateway_id', 'g.id')
+      .where('acd.id', deviceId)
+      .select('g.facility_id')
+      .first();
+    const facilityId = blulokDevice?.facility_id || accessControlDevice?.facility_id;
 
-    if (!device || !user.facilityIds?.includes(device.facility_id)) {
+    if (!facilityId || !user.facilityIds?.includes(facilityId)) {
       res.status(403).json({
         success: false,
         message: 'Access denied to this device'
@@ -87,16 +93,27 @@ router.get('/users/:userId', requireAdmin, asyncHandler(async (req: Authenticate
   const knex = DatabaseService.getInstance().connection;
   const enrichedEntries = await Promise.all(
     entries.map(async (entry) => {
-      const device = await knex('blulok_devices')
-        .join('units', 'blulok_devices.unit_id', 'units.id')
-        .where('blulok_devices.id', entry.device_id)
-        .select(
-          'blulok_devices.id',
-          'blulok_devices.device_serial',
-          'units.unit_number',
-          'units.facility_id'
-        )
-        .first();
+      const device = entry.device_type === 'access_control'
+        ? await knex('access_control_devices as acd')
+          .join('gateways as g', 'acd.gateway_id', 'g.id')
+          .where('acd.id', entry.device_id)
+          .select(
+            'acd.id',
+            'acd.device_serial',
+            'acd.name',
+            'g.facility_id',
+          )
+          .first()
+        : await knex('blulok_devices')
+          .join('units', 'blulok_devices.unit_id', 'units.id')
+          .where('blulok_devices.id', entry.device_id)
+          .select(
+            'blulok_devices.id',
+            'blulok_devices.device_serial',
+            'units.unit_number',
+            'units.facility_id'
+          )
+          .first();
 
       return {
         ...entry,

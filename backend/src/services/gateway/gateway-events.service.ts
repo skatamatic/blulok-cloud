@@ -261,18 +261,19 @@ export class GatewayEventsService {
     const { facilityId, connected } = event;
     try {
       const gw = await this.gatewayModel.findByFacilityId(facilityId);
-      if (!gw?.gateway_type) {
+      if (!gw) {
+        // No gateway record for this facility. The live session is still reported via
+        // getFacilityConnectionStatus() and the broadcast payload enrichment, but there is
+        // no row to persist against.
         return;
       }
 
       // Always record cloud-system telemetry for inbound /ws/gateway sessions.
       this.recordInboundWsTelemetryLog(gw.id, facilityId, event);
 
-      // HTTP gateways use outbound polling for liveness; do not drive DB status from inbound WS.
-      if (gw.gateway_type === 'http') {
-        return;
-      }
-
+      // Inbound /ws/gateway is the authoritative liveness signal for every gateway type:
+      // any traffic within the keepalive window means the gateway is online. Outbound
+      // polling is deprecated/disabled, so we do not special-case HTTP gateways here.
       const previousStatus = gw.status;
       const next: 'online' | 'offline' = connected ? 'online' : 'offline';
       if (next === 'online') {

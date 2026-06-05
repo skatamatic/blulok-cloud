@@ -1,4 +1,7 @@
 import { DatabaseService } from '@/services/database.service';
+import { DenylistDeviceTarget, DenylistDeviceType } from '@/types/denylist.types';
+
+export type { DenylistDeviceTarget, DenylistDeviceType };
 
 /**
  * Shared helper for resolving zone-linked access-control device entitlements from unit/lock context.
@@ -17,11 +20,22 @@ export class AccessControlZoneAccessService {
   }
 
   /**
-   * Device IDs that may be stored in `device_denylist_entries` (FK → blulok_devices).
-   * Zone-linked access_control devices are excluded; app-entry revocation is handled via route passes.
+   * BluLok locks plus app-enabled zone-linked access_control devices entitled for denylist
+   * revocation on a unit (offline lock unlock + app-entry route pass validation).
    */
+  public static async getDenylistTargetsForUnits(unitIds: string[]): Promise<DenylistDeviceTarget[]> {
+    const bluLokDeviceIds = await this.getBluLokDeviceIdsForUnits(unitIds);
+    const accessControlDeviceIds = await this.getAppEnabledAccessControlDeviceIdsForBluLokDevices(bluLokDeviceIds);
+    return [
+      ...bluLokDeviceIds.map((device_id) => ({ device_id, device_type: 'blulok' as const })),
+      ...accessControlDeviceIds.map((device_id) => ({ device_id, device_type: 'access_control' as const })),
+    ];
+  }
+
+  /** @deprecated Prefer getDenylistTargetsForUnits — returns device IDs only. */
   public static async getDenylistDeviceIdsForUnits(unitIds: string[]): Promise<string[]> {
-    return this.getBluLokDeviceIdsForUnits(unitIds);
+    const targets = await this.getDenylistTargetsForUnits(unitIds);
+    return targets.map((target) => target.device_id);
   }
 
   public static async getAccessControlDeviceIdsForBluLokDevices(bluLokDeviceIds: string[]): Promise<string[]> {
@@ -35,6 +49,22 @@ export class AccessControlZoneAccessService {
       .andWhere('zone_access.device_type', 'access_control')
       .andWhere('zone_lock.device_type', 'blulok')
       .whereIn('zone_lock.device_id', bluLokDeviceIds);
+    return rows.map((row) => String(row.device_id));
+  }
+
+  public static async getAppEnabledAccessControlDeviceIdsForBluLokDevices(bluLokDeviceIds: string[]): Promise<string[]> {
+    if (bluLokDeviceIds.length === 0) return [];
+    const rows = await this.db('device_group_members as zone_access')
+      .distinct('zone_access.device_id')
+      .join('device_groups as dg', 'dg.id', 'zone_access.group_id')
+      .join('device_group_members as zone_lock', 'zone_lock.group_id', 'dg.id')
+      .join('access_control_devices as acd', 'acd.id', 'zone_access.device_id')
+      .where('dg.group_type', 'zone')
+      .andWhere('dg.is_active', true)
+      .andWhere('zone_access.device_type', 'access_control')
+      .andWhere('zone_lock.device_type', 'blulok')
+      .whereIn('zone_lock.device_id', bluLokDeviceIds)
+      .whereRaw(`JSON_CONTAINS(COALESCE(acd.access_methods, '["app"]'), '"app"')`);
     return rows.map((row) => String(row.device_id));
   }
 

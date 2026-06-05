@@ -24,6 +24,7 @@
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
+import { DenylistDeviceType } from '@/types/denylist.types';
 
 export type DenylistSource = 'user_deactivation' | 'unit_unassignment' | 'fms_sync' | 'key_sharing_revocation';
 
@@ -32,6 +33,8 @@ export interface DeviceDenylistEntry {
   id: string;
   /** Device this entry applies to */
   device_id: string;
+  /** Cloud inventory type for device_id */
+  device_type: DenylistDeviceType;
   /** User denied access on this device */
   user_id: string;
   /** When this entry expires (NULL for permanent) */
@@ -58,6 +61,7 @@ export class DenylistEntryModel {
    */
   async create(data: {
     device_id: string;
+    device_type?: DenylistDeviceType;
     user_id: string;
     expires_at?: Date | string | any | null;
     source: DenylistSource;
@@ -75,6 +79,7 @@ export class DenylistEntryModel {
       const insertData: any = {
         id,
         device_id: data.device_id,
+        device_type: data.device_type ?? 'blulok',
         user_id: data.user_id,
         source: data.source,
         created_by: data.created_by || null,
@@ -220,16 +225,13 @@ export class DenylistEntryModel {
    */
   async removeForUnits(unitIds: string[], userId: string): Promise<number> {
     try {
-      // Get device IDs for these units
-      const devices = await this.db('blulok_devices')
-        .whereIn('unit_id', unitIds)
-        .select('id');
-
-      if (devices.length === 0) {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      const targets = await AccessControlZoneAccessService.getDenylistTargetsForUnits(unitIds);
+      if (targets.length === 0) {
         return 0;
       }
 
-      const deviceIds = devices.map((d: any) => d.id);
+      const deviceIds = targets.map((target) => target.device_id);
 
       return await this.db('device_denylist_entries')
         .where({ user_id: userId })
@@ -246,16 +248,13 @@ export class DenylistEntryModel {
    */
   async findByUnitsAndUser(unitIds: string[], userId: string): Promise<DeviceDenylistEntry[]> {
     try {
-      // Get device IDs for these units
-      const devices = await this.db('blulok_devices')
-        .whereIn('unit_id', unitIds)
-        .select('id');
-
-      if (devices.length === 0) {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      const targets = await AccessControlZoneAccessService.getDenylistTargetsForUnits(unitIds);
+      if (targets.length === 0) {
         return [];
       }
 
-      const deviceIds = devices.map((d: any) => d.id);
+      const deviceIds = targets.map((target) => target.device_id);
       return await this.db('device_denylist_entries')
         .where({ user_id: userId })
         .whereIn('device_id', deviceIds)
@@ -274,6 +273,7 @@ export class DenylistEntryModel {
    */
   async bulkCreate(entries: Array<{
     device_id: string;
+    device_type?: DenylistDeviceType;
     user_id: string;
     expires_at?: Date | string | any | null;
     source: DenylistSource;
@@ -300,6 +300,7 @@ export class DenylistEntryModel {
       const insertData = entries.map(data => ({
         id: randomUUID(),
         device_id: data.device_id,
+        device_type: data.device_type ?? 'blulok',
         user_id: data.user_id,
         source: data.source,
         created_by: data.created_by || null,

@@ -193,6 +193,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     const subscriptionId = ws.subscribe(
       'gateway_debug',
       (event: any) => {
+        // Server-side scoping (facility_id filter) already restricts this feed to the
+        // facility being viewed; this guard is defense-in-depth.
         if (!event || (event.facilityId && event.facilityId !== facilityId)) {
           return;
         }
@@ -211,7 +213,10 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           setLastPongTs(event.ts || Date.now());
         }
       },
-      undefined // no error handler needed
+      undefined, // no error handler needed
+      // Scope the live debug stream to this facility so traffic from other gateways
+      // never reaches this client.
+      { filters: { facility_id: facilityId } },
     );
 
     return () => {
