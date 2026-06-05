@@ -83,6 +83,7 @@ describe('Denylist Routes', () => {
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok' as const,
           user_id: testData.users.tenant.id,
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -189,6 +190,7 @@ describe('Denylist Routes', () => {
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok' as const,
           user_id: testData.users.tenant.id,
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),

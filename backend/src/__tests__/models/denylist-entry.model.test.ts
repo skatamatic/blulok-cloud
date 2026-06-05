@@ -2,6 +2,11 @@ import { DenylistEntryModel, DeviceDenylistEntry } from '@/models/denylist-entry
 import { DatabaseService } from '@/services/database.service';
 
 jest.mock('@/services/database.service');
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getDenylistTargetsForUnits: jest.fn(),
+  },
+}));
 
 describe('DenylistEntryModel', () => {
   let model: DenylistEntryModel;
@@ -24,8 +29,9 @@ describe('DenylistEntryModel', () => {
     mockKnex = jest.fn((table: string) => {
       if (table === 'blulok_devices') {
         return {
-          whereIn: jest.fn().mockReturnThis(),
-          select: jest.fn().mockResolvedValue([{ id: 'device-1' }, { id: 'device-2' }]),
+          select: jest.fn().mockReturnValue({
+            whereIn: jest.fn().mockResolvedValue([{ id: 'device-1' }, { id: 'device-2' }]),
+          }),
         };
       }
       return mockQueryBuilder;
@@ -51,6 +57,7 @@ describe('DenylistEntryModel', () => {
       const mockEntry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: new Date('2024-12-31'),
         created_at: new Date(),
@@ -80,6 +87,7 @@ describe('DenylistEntryModel', () => {
 
       const result = await model.create({
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: new Date('2024-12-31'),
         source: 'unit_unassignment',
@@ -95,6 +103,7 @@ describe('DenylistEntryModel', () => {
       const mockEntry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: null,
         created_at: new Date(),
@@ -124,6 +133,7 @@ describe('DenylistEntryModel', () => {
 
       await model.create({
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: null,
         source: 'user_deactivation',
@@ -139,6 +149,7 @@ describe('DenylistEntryModel', () => {
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -171,6 +182,7 @@ describe('DenylistEntryModel', () => {
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -202,6 +214,7 @@ describe('DenylistEntryModel', () => {
       const mockEntry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: new Date('2024-12-31'),
         created_at: new Date(),
@@ -299,15 +312,14 @@ describe('DenylistEntryModel', () => {
 
   describe('removeForUnits', () => {
     it('removes entries for devices in specified units', async () => {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+        { device_id: 'device-1', device_type: 'blulok' },
+        { device_id: 'device-2', device_type: 'blulok' },
+      ]);
+
       const delMock = jest.fn().mockResolvedValue(2);
       mockKnex.mockImplementation((table: string) => {
-        if (table === 'blulok_devices') {
-          return {
-            whereIn: jest.fn().mockReturnValue({
-              select: jest.fn().mockResolvedValue([{ id: 'device-1' }, { id: 'device-2' }]),
-            }),
-          };
-        }
         if (table === 'device_denylist_entries') {
           return {
             where: jest.fn().mockReturnValue({
@@ -325,16 +337,10 @@ describe('DenylistEntryModel', () => {
     });
 
     it('returns 0 if no devices found for units', async () => {
-      mockKnex.mockImplementation((table: string) => {
-        if (table === 'blulok_devices') {
-          return {
-            whereIn: jest.fn().mockReturnValue({
-              select: jest.fn().mockResolvedValue([]),
-            }),
-          };
-        }
-        return {};
-      });
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([]);
+
+      mockKnex.mockImplementation(() => ({}));
 
       const result = await model.removeForUnits(['unit-1'], 'user-1');
       expect(result).toBe(0);
@@ -343,10 +349,16 @@ describe('DenylistEntryModel', () => {
 
   describe('findByUnitsAndUser', () => {
     it('finds entries for devices in specified units', async () => {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+        { device_id: 'device-1', device_type: 'blulok' },
+      ]);
+
       const mockEntries: DeviceDenylistEntry[] = [
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -357,13 +369,6 @@ describe('DenylistEntryModel', () => {
       ];
 
       mockKnex.mockImplementation((table: string) => {
-        if (table === 'blulok_devices') {
-          return {
-            whereIn: jest.fn().mockReturnValue({
-              select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
-            }),
-          };
-        }
         if (table === 'device_denylist_entries') {
           const builder: any = Promise.resolve(mockEntries);
           builder.where = jest.fn().mockReturnValue(builder);

@@ -222,6 +222,7 @@ describe('AccessRevocationListenerService', () => {
         {
           id: 'entry-1',
           device_id: 'dev-123',
+          device_type: 'blulok' as const,
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -317,6 +318,7 @@ describe('AccessRevocationListenerService', () => {
         {
           id: 'entry-1',
           device_id: 'dev-123',
+          device_type: 'blulok' as const,
           user_id: 'user-1',
           expires_at: pastDate,
           created_at: new Date(),
@@ -395,6 +397,7 @@ describe('AccessRevocationListenerService', () => {
         {
           id: 'entry-active',
           device_id: 'dev-123',
+          device_type: 'blulok' as const,
           user_id: 'user-1',
           expires_at: new Date(Date.now() + 3600_000),
           created_at: new Date(),
@@ -405,6 +408,7 @@ describe('AccessRevocationListenerService', () => {
         {
           id: 'entry-expired',
           device_id: 'dev-456',
+          device_type: 'blulok' as const,
           user_id: 'user-1',
           expires_at: new Date(Date.now() - 3600_000),
           created_at: new Date(),
