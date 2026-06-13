@@ -4,6 +4,7 @@ import { GatewayModel, Gateway } from '../../models/gateway.model';
 import { GatewayFactory } from './gateways/gateway-factory';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
+import { resolveLockCommandExpiresAtForFacility } from '@/utils/facility-lock-timeout.utils';
 
 /**
  * Gateway Service
@@ -523,6 +524,10 @@ export class GatewayService extends EventEmitter {
     const start = Date.now();
     const row = await this.db('gateways').where('id', gatewayId).select('facility_id').first();
     const facilityId = row?.facility_id ? String(row.facility_id) : null;
+    const expiresAt =
+      facilityId != null
+        ? await resolveLockCommandExpiresAtForFacility(this.db, facilityId)
+        : 0;
 
     if (facilityId) {
       const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
@@ -531,7 +536,11 @@ export class GatewayService extends EventEmitter {
         const { Ed25519Service } = await import('@/services/crypto/ed25519.service');
         const cmd_type = command === 'CLOSE' ? 'LOCK' : 'UNLOCK';
         const jwtDeviceClaim = await this.resolveDeviceIdForLockCommandJwt(lockId);
-        const jwt = await Ed25519Service.signCommandJwt({ cmd_type, device_id: jwtDeviceClaim });
+        const jwt = await Ed25519Service.signCommandJwt({
+          cmd_type,
+          device_id: jwtDeviceClaim,
+          expires_at: expiresAt,
+        });
         GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
         return {
           success: true,
@@ -541,7 +550,7 @@ export class GatewayService extends EventEmitter {
       }
     }
 
-    return await this.executeDeviceCommand(gatewayId, lockId, command);
+    return await this.executeDeviceCommand(gatewayId, lockId, command, { expires_at: expiresAt });
   }
 
   /**

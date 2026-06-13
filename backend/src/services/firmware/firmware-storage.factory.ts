@@ -286,6 +286,8 @@ export async function saveFirmwareStorageConfig(
 
   // Invalidate cache so next call picks up new config
   invalidateFirmwareStorageCache();
+  const { clearProvisioningStorageCache } = await import('@/services/provisioning/provisioning-storage.factory');
+  clearProvisioningStorageCache();
 }
 
 // ============================================================================

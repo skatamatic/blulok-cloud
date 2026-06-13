@@ -33,6 +33,7 @@ import { adminWriteLimiter } from '@/middleware/security-limits';
 import { InviteService } from '@/services/invite.service';
 import { OTPService } from '@/services/otp.service';
 import { DatabaseService } from '@/services/database.service';
+import { resolveLockCommandExpiresAtForFacility } from '@/utils/facility-lock-timeout.utils';
 import { UnitModel } from '@/models/unit.model';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '@/config/environment';
@@ -431,6 +432,8 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
       if (typeof unixSeconds !== 'number' || !Number.isFinite(unixSeconds)) return null;
       return new Date(unixSeconds * 1000).toISOString();
     };
+    const db = DatabaseService.getInstance().connection;
+    const lockCommandExpiresAt = await resolveLockCommandExpiresAtForFacility(db, facilityId);
 
     switch (command) {
       case 'DENYLIST_ADD': {
@@ -584,7 +587,11 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
         const gatewaySvc = GatewayService.getInstance();
         for (const deviceId of targetDeviceIds) {
           const jwtDeviceClaim = await gatewaySvc.resolveDeviceIdForLockCommandJwt(deviceId);
-          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'LOCK', device_id: jwtDeviceClaim });
+          const jwt = await Ed25519Service.signCommandJwt({
+            cmd_type: 'LOCK',
+            device_id: jwtDeviceClaim,
+            expires_at: lockCommandExpiresAt,
+          });
           gateway.unicastToFacility(facilityId, jwt);
           jwts.push(jwt);
         }
@@ -615,7 +622,11 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
         const gatewaySvc = GatewayService.getInstance();
         for (const deviceId of targetDeviceIds) {
           const jwtDeviceClaim = await gatewaySvc.resolveDeviceIdForLockCommandJwt(deviceId);
-          const jwt = await Ed25519Service.signCommandJwt({ cmd_type: 'UNLOCK', device_id: jwtDeviceClaim });
+          const jwt = await Ed25519Service.signCommandJwt({
+            cmd_type: 'UNLOCK',
+            device_id: jwtDeviceClaim,
+            expires_at: lockCommandExpiresAt,
+          });
           gateway.unicastToFacility(facilityId, jwt);
           jwts.push(jwt);
         }

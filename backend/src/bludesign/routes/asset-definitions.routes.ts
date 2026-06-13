@@ -12,6 +12,8 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { AssetService } from '../services/asset.service';
+import { FacilityService } from '../services/facility.service';
+import { DatabaseService } from '@/services/database.service';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
 import { AssetCategory } from '../types/bludesign.types';
 import { createStorageProvider, getDefaultStorageProvider, storageConfigForProject } from '../services/storage';
@@ -208,6 +210,30 @@ router.put('/definitions/:id', asyncHandler(async (req: AuthenticatedRequest, re
 }));
 
 /**
+ * GET /definitions/:id/facilities
+ * List saved facilities that reference this asset definition.
+ */
+router.get('/definitions/:id/facilities', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const userId = req.user?.userId;
+  if (!userId) {
+    res.status(401).json({ success: false, message: 'Unauthorized' });
+    return;
+  }
+
+  const definition = await AssetService.getAssetDefinition(id);
+  if (!definition) {
+    res.status(404).json({ success: false, message: 'Asset definition not found' });
+    return;
+  }
+
+  const facilityService = new FacilityService(DatabaseService.getInstance().connection);
+  const facilities = await facilityService.listFacilitiesUsingAsset(userId, id);
+
+  res.json({ success: true, data: facilities });
+}));
+
+/**
  * DELETE /definitions/:id
  * Delete an asset definition
  */
@@ -226,6 +252,8 @@ router.delete('/definitions/:id', asyncHandler(async (req: AuthenticatedRequest,
   } catch (error: any) {
     if (error.message?.includes('Cannot delete built-in')) {
       res.status(403).json({ success: false, message: error.message });
+    } else if (error.message?.includes('Cannot delete asset: used by')) {
+      res.status(409).json({ success: false, message: error.message });
     } else {
       throw error;
     }

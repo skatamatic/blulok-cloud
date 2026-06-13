@@ -472,6 +472,7 @@ export class BluDesignEngine {
     
     // Set optimization references for ground tile selection performance
     this.selectionManager.setOptimizationReferences(this.gridSystem, this.groundTileManager);
+    this.selectionManager.setSceneManager(this.sceneManager);
     
     // Set up optimization progress callback
     // Optimization progress is mapped from 30-100% (batch placement uses 0-30%)
@@ -1255,6 +1256,7 @@ export class BluDesignEngine {
       setDataSourceConfig: (config: DataSourceConfig | null) => {
         this.dataSourceConfig = config;
       },
+      calculateSceneBounds: () => this.calculateSceneBounds(),
       emitStateUpdated: () => this.emit('state-updated', this.state),
       emitThemeMissing: (payload: { missingThemeId: string }) =>
         this.emit('theme-missing', payload),

@@ -22,6 +22,12 @@ jest.mock('@/services/denylist-optimization.service', () => ({
     shouldSkipDenylistRemove: jest.fn().mockReturnValue(false),
   },
 }));
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getDenylistTargetsForUnits: jest.fn(),
+    getDeviceFacilityIds: jest.fn(),
+  },
+}));
 jest.mock('@/config/environment', () => ({
   config: {
     security: {
@@ -37,6 +43,7 @@ import { DatabaseService } from '@/services/database.service';
 import { DenylistEntryModel } from '@/models/denylist-entry.model';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { DenylistService } from '@/services/denylist.service';
+import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
 
 describe('User Deactivation Cascades', () => {
   let app: Application;
@@ -121,10 +128,22 @@ describe('User Deactivation Cascades', () => {
 
     mockDenylistModel = {
       create: jest.fn().mockResolvedValue({ id: 'entry-1' } as any),
+      bulkCreate: jest.fn().mockResolvedValue(undefined),
       findByUnitsAndUser: jest.fn().mockResolvedValue([]),
       remove: jest.fn().mockResolvedValue(true),
     } as any;
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
+
+    (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+      { device_id: 'device-A', device_type: 'blulok' },
+      { device_id: 'device-B', device_type: 'blulok' },
+    ]);
+    (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValue(
+      new Map([
+        ['device-A', 'facility-1'],
+        ['device-B', 'facility-2'],
+      ]),
+    );
 
     app = createIntegrationTestApp();
   });
@@ -141,8 +160,11 @@ describe('User Deactivation Cascades', () => {
 
     expect(res.body.success).toBe(true);
 
+    // Fire-and-forget denylist cascade runs after the HTTP response.
+    await new Promise((resolve) => setImmediate(resolve));
+
     // Held access: entries created for devices from both facility-1 & facility-2
-    expect(mockDenylistModel.create).toHaveBeenCalled();
+    expect(mockDenylistModel.bulkCreate).toHaveBeenCalled();
     // Gateway called for both facilities for deactivated user (2 calls total)
     expect((mockGateway.unicastToFacility as jest.Mock).mock.calls.length).toBe(2);
     // Only owner denylist adds should be built (equal to facility groups)

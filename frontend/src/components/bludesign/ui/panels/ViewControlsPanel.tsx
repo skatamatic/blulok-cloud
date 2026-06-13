@@ -14,6 +14,7 @@ import {
   EyeSlashIcon,
   ArrowsPointingOutIcon,
   ViewfinderCircleIcon,
+  MapIcon,
 } from '@heroicons/react/24/outline';
 import { CameraMode, IsometricAngle } from '../../core/types';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -28,6 +29,9 @@ interface ViewControlsPanelProps {
   onToggleGrid: () => void;
   onToggleCallouts: () => void;
   onResetCamera: () => void;
+  hasImportPlan?: boolean;
+  showImportPlan?: boolean;
+  onToggleImportPlan?: () => void;
 }
 
 export const ViewControlsPanel: React.FC<ViewControlsPanelProps> = ({
@@ -40,6 +44,9 @@ export const ViewControlsPanel: React.FC<ViewControlsPanelProps> = ({
   onToggleGrid,
   onToggleCallouts,
   onResetCamera,
+  hasImportPlan,
+  showImportPlan,
+  onToggleImportPlan,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -160,6 +167,21 @@ export const ViewControlsPanel: React.FC<ViewControlsPanelProps> = ({
             {showCallouts ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
             <span>{showCallouts ? 'Labels Visible' : 'Labels Hidden'}</span>
           </button>
+          {hasImportPlan && onToggleImportPlan && (
+            <button
+              className={`flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded-md font-medium transition-all duration-150 ${
+                showImportPlan
+                  ? 'bg-primary-600/90 text-white'
+                  : isDark
+                    ? 'bg-gray-700/30 text-gray-400 hover:bg-gray-700/40'
+                    : 'bg-gray-200/40 text-gray-500 hover:bg-gray-200/60'
+              }`}
+              onClick={onToggleImportPlan}
+            >
+              <MapIcon className="w-4 h-4" />
+              <span>{showImportPlan ? 'Import Plan Open' : 'Show Import Plan'}</span>
+            </button>
+          )}
         </div>
       </div>
 

@@ -5,11 +5,11 @@
  *   and the user's accessible lock audiences. Requires Bearer User JWT.
  *   Honors `X-App-Device-Id` to bind to the correct device public key.
  *
- * RBAC Scoping:
- * - DEV_ADMIN/ADMIN: all locks
- * - FACILITY_ADMIN: locks in their assigned facilities
- * - MAINTENANCE: locks for explicitly granted units (future)
- * - TENANT: locks for FMS-assigned units
+ * RBAC Scoping (resolved from database at issuance — not from the session JWT):
+ * - DEV_ADMIN/ADMIN: all locks (+ optional facility_id filter)
+ * - FACILITY_ADMIN: app-entry access_control in assigned facilities
+ * - MAINTENANCE: locks for explicitly granted units
+ * - TENANT: locks for FMS-assigned units and active shares
  */
 import { Router, Response } from 'express';
 import Joi from 'joi';
@@ -41,8 +41,6 @@ router.post('/request', authenticateToken, passRequestLimiter, asyncHandler(asyn
   try {
     const routePass = await RoutePassOrchestrator.issueForUser({
       userId: req.user!.userId,
-      role: req.user!.role,
-      facilityIds: req.user!.facilityIds,
       facilityId: value.facility_id,
     }, rawHeader);
 

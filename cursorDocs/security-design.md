@@ -23,16 +23,21 @@ This document summarizes the new centralized trust model implemented in the back
   - Common claims: `iss: 'BluCloud:Root'`, `iat`, `cmd_type` (CAPS_CASE)
   - DENYLIST_ADD: `{ cmd_type:'DENYLIST_ADD', denylist_add:[{ sub, exp }], target: ['deviceId1', ...] }`
   - DENYLIST_REMOVE: `{ cmd_type:'DENYLIST_REMOVE', denylist_remove:[{ sub, exp }], target: ['deviceId1', ...] }`
-  - LOCK: `{ cmd_type:'LOCK', device_id: 'deviceId' }`
-  - UNLOCK: `{ cmd_type:'UNLOCK', device_id: 'deviceId' }`
+  - LOCK: `{ cmd_type:'LOCK', device_id: 'deviceId', expires_at: <unix_sec> }` — `expires_at` is `now + facility.lock_command_timeout_sec`; `0` means no command expiry
+  - UNLOCK: `{ cmd_type:'UNLOCK', device_id: 'deviceId', expires_at: <unix_sec> }` — same as LOCK; prevents stale commands from executing after the configured window (default 5 minutes)
   - SECURE_TIME_SYNC: `{ cmd_type:'SECURE_TIME_SYNC', ts }`
   - FIRMWARE_MANIFEST: `{ cmd_type:'FIRMWARE_MANIFEST', push_id, target_type, version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`
   - FIRMWARE_CHUNK: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`
+  - PROVISIONING_UPLOAD_REQUEST: `{ cmd_type:'PROVISIONING_UPLOAD_REQUEST', request_id, expires_at }`
+  - PROVISIONING_MANIFEST: `{ cmd_type:'PROVISIONING_MANIFEST', restore_id, backup_id, filename, sha256, size_bytes, chunk_count, chunk_size, nonce }`
+  - PROVISIONING_CHUNK: `{ cmd_type:'PROVISIONING_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`
   - ACCESS_CODE_UPDATE: `{ cmd_type:'ACCESS_CODE_UPDATE', facility_id, nonce, codes:[{ device_id, access_id, relay_channel, valid_codes:[...] }] }` — `access_id` is gateway hardware serial (`device_serial`); `device_id` is cloud UUID
 - WebSocket command envelope: `{ type: 'COMMAND', jwt: 'eyJ...' }`
 - WebSocket firmware envelopes: `{ type: 'FIRMWARE_MANIFEST', jwt: 'eyJ...' }`, `{ type: 'FIRMWARE_CHUNK', jwt: 'eyJ...' }`
+- WebSocket provisioning envelopes: `{ type: 'PROVISIONING_UPLOAD_REQUEST', jwt }`, `{ type: 'PROVISIONING_MANIFEST', jwt }`, `{ type: 'PROVISIONING_CHUNK', jwt }`, `{ type: 'PROVISIONING_RESTORE_RESUME', restores:[...] }`
 - WebSocket access-code envelope: `{ type: 'ACCESS_CODE_UPDATE', jwt: 'eyJ...' }`
 - Gateway firmware responses: `{ type: 'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status:'ok'|'error' }`, `{ type: 'FIRMWARE_UPDATE_STATUS', push_id, status, target_type?, version?, error? }`, `{ type: 'FIRMWARE_PROGRESS', push_id, ... }` (optional)
+- Gateway provisioning responses: `{ type: 'PROVISIONING_CHUNK_ACK', nonce, chunkIndex, status }`, `{ type: 'PROVISIONING_RESTORE_STATUS', restore_id, status, error? }` → cloud `{ type: 'PROVISIONING_RESTORE_STATUS_ACK', ... }`
 
 #### Route Pass Audience Formats
 - Direct lock access: `lock:{lockId}`
@@ -60,6 +65,14 @@ This document summarizes the new centralized trust model implemented in the back
     - `POST /api/v1/firmware/:id/push/:gatewayId` - Initiate firmware push (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
     - `GET /api/v1/firmware/push-status/:gatewayId` - Current push state for page hydration
     - `POST /api/v1/firmware/push/:pushId/cancel` - Cancel in-progress push
+  - Gateway provisioning backups (see `cursorDocs/gateway-provisioning-backup.md`):
+    - `POST /api/v1/internal/gateway/provisioning/prepare|complete` - Gateway PROXY upload (zip to GCS, max 500MB)
+    - `GET /api/v1/gateways/:gatewayId/provisioning` - List backups (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
+    - `DELETE /api/v1/gateways/:gatewayId/provisioning/:backupId` - Delete backup (ADMIN/DEV_ADMIN)
+    - `POST /api/v1/gateways/:gatewayId/provisioning/request-upload` - WS upload request JWT
+    - `POST /api/v1/gateways/:gatewayId/provisioning/:backupId/restore` - Chunk restore push
+    - `GET /api/v1/gateways/:gatewayId/provisioning/restore-status` - Active restore + history
+    - `POST /api/v1/gateways/:gatewayId/provisioning/restore/:restoreId/cancel` - Cancel restore
   - Access Codes & Groups:
     - `GET /api/v1/access-codes/my` - User-specific device/code pairings (facility-scoped RBAC)
     - `GET/PUT /api/v1/access-codes/config/:facilityId` - Access-code policy management (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
@@ -83,15 +96,19 @@ This document summarizes the new centralized trust model implemented in the back
 
 ### RBAC for Route Pass Issuance
 Route Passes are scoped by role to enforce least-privilege access:
-- **DEV_ADMIN/ADMIN**: Audience includes all locks across all facilities.
-- **FACILITY_ADMIN**: Audience limited to locks in facilities the admin is assigned to.
-- **TENANT**: Audience limited to locks for units assigned via FMS (`unit_assignments` table).
+- **DEV_ADMIN/ADMIN**: Audience includes all locks across all facilities plus app-entry access_control devices.
+- **FACILITY_ADMIN**: Audience includes **app-entry access_control devices only** in assigned facilities (not unit lock unlock).
+- **TENANT**: Audience limited to locks for units assigned via FMS (`unit_assignments` table) plus zone-linked app-entry access.
 - **MAINTENANCE**: Audience limited to explicitly granted units (future: `maintenance_unit_access` table).
+
+Facility associations for route pass issuance are always read from the database for **FACILITY_ADMIN** (not from the login JWT), so admin updates to assignments take effect on the next `POST /passes/request` even if the user has not re-authenticated.
 
 Pass requests require authentication; device binding via `X-App-Device-Id` (preferred) or latest active device (fallback).
 
-### Denylist Policy (Owner vs Shared Users)
-- Denylist targets include **BluLok locks on the unit** and **app-enabled access_control devices** zone-linked to those locks (immediate route-pass rejection on app-entry doors/gates, not only after pass TTL).
+### Denylist Policy (when denylist applies)
+Denylist is for **revoking credentials that were actually issued** to users on specific devices they had access to — primarily **tenants/maintenance on unit locks** and **shared-key invitees**. It is **not** used for facility-admin facility assignment changes (they do not receive lock audiences).
+
+Denylist targets include **BluLok locks on the unit** and **app-enabled access_control devices** zone-linked to those locks (immediate route-pass rejection on app-entry doors/gates, not only after pass TTL).
 - Owner deactivation:
   - Denylist the owner on devices from both primary and shared units.
   - Inactivate all active, unexpired shares granted by the owner.

@@ -18,6 +18,8 @@ import {
   resolveOutboundGatewayLockNumber,
 } from '../utils/gateway-lock-state-map.utils';
 import { mapGatewayAccessStateFieldsToDbUpdate } from '../utils/gateway-access-state-map.utils';
+import { mapGatewayAccessInventoryPropertiesToDbUpdate } from '../utils/gateway-access-inventory-map.utils';
+import { mapGatewayLockInventoryPropertiesToDbUpdate } from '../utils/gateway-lock-inventory-map.utils';
 import type { DeviceSyncLogEntry } from '../types/gateway-device-sync.types';
 
 export type { AccessDeviceInventoryItem, AccessDeviceStateUpdate };
@@ -85,6 +87,10 @@ export interface DeviceInventoryItem {
   firmware_version?: string;
   /** Last seen timestamp */
   last_seen?: string | Date;
+  /** Human-readable display name (stored in device_settings.displayName) */
+  name?: string;
+  /** Location note (stored in device_settings.locationDescription) */
+  location_description?: string;
 }
 
 /**
@@ -94,6 +100,7 @@ export interface InventorySyncResult {
   added: number;
   removed: number;
   unchanged: number;
+  updated?: number;
   skipped_manual?: number;
   errors: string[];
   entries?: DeviceSyncLogEntry[];
@@ -468,6 +475,7 @@ export class DeviceSyncService {
       added: 0,
       removed: 0,
       unchanged: 0,
+      updated: 0,
       skipped_manual: 0,
       errors: [],
       entries: [],
@@ -516,19 +524,54 @@ export class DeviceSyncService {
             createData.device_settings = { lockNumber: inventoryItem.lock_number };
           }
 
+          if (inventoryItem.name?.trim() || inventoryItem.location_description?.trim()) {
+            createData.device_settings = {
+              ...(createData.device_settings ?? {}),
+              ...(inventoryItem.name?.trim()
+                ? { displayName: inventoryItem.name.trim() }
+                : {}),
+              ...(inventoryItem.location_description?.trim()
+                ? { locationDescription: inventoryItem.location_description.trim() }
+                : {}),
+            };
+          }
+
           if (inventoryItem.firmware_version) {
             createData.firmware_version = inventoryItem.firmware_version;
           }
 
           devicesToAdd.push(createData);
         } else {
-          result.unchanged++;
-          result.entries!.push({
-            action: 'unchanged',
-            device_kind: 'blulok',
-            identifier: lockId,
-            label: lockId,
-          });
+          const existing = existingDeviceMap.get(lockId)!;
+          const propertyUpdate = mapGatewayLockInventoryPropertiesToDbUpdate(
+            inventoryItem,
+            existing
+          );
+          if (propertyUpdate) {
+            try {
+              await this.deviceModel.updateBluLokDevice(existing.id, propertyUpdate);
+              result.updated = (result.updated ?? 0) + 1;
+              result.entries!.push({
+                action: 'updated',
+                device_kind: 'blulok',
+                identifier: lockId,
+                label: inventoryItem.name?.trim() || lockId,
+                reason: 'Gateway inventory property sync',
+              });
+            } catch (error: any) {
+              result.errors.push(
+                `Failed to update properties for ${lockId}: ${error.message}`
+              );
+            }
+          } else {
+            result.unchanged++;
+            result.entries!.push({
+              action: 'unchanged',
+              device_kind: 'blulok',
+              identifier: lockId,
+              label: lockId,
+            });
+          }
         }
       }
 
@@ -621,7 +664,7 @@ export class DeviceSyncService {
       }
 
       console.log(
-        `[DEVICE-SYNC] Inventory sync complete: added=${result.added}, removed=${result.removed}, unchanged=${result.unchanged}`
+        `[DEVICE-SYNC] Inventory sync complete: added=${result.added}, removed=${result.removed}, updated=${result.updated ?? 0}, unchanged=${result.unchanged}`
       );
     } catch (error: any) {
       console.error(`Error in inventory sync for gateway ${gatewayId}:`, error);
@@ -708,6 +751,7 @@ export class DeviceSyncService {
       added: 0,
       removed: 0,
       unchanged: 0,
+      updated: 0,
       skipped_manual: 0,
       errors: [],
       entries: [],
@@ -840,13 +884,33 @@ export class DeviceSyncService {
             },
           });
         } else {
-          result.unchanged++;
-          result.entries!.push({
-            action: 'unchanged',
-            device_kind: 'access_control',
-            identifier: key,
-            label: item.name,
-          });
+          const existing = existingMap.get(key)!;
+          const propertyUpdate = mapGatewayAccessInventoryPropertiesToDbUpdate(item, existing);
+          if (Object.keys(propertyUpdate).length > 0) {
+            try {
+              await this.deviceModel.updateAccessControlDevice(existing.id, propertyUpdate);
+              result.updated = (result.updated ?? 0) + 1;
+              result.entries!.push({
+                action: 'updated',
+                device_kind: 'access_control',
+                identifier: key,
+                label: item.name ?? existing.name,
+                reason: 'Gateway inventory property sync',
+              });
+            } catch (error: any) {
+              result.errors.push(
+                `Failed to update access control properties ${key}: ${error.message}`
+              );
+            }
+          } else {
+            result.unchanged++;
+            result.entries!.push({
+              action: 'unchanged',
+              device_kind: 'access_control',
+              identifier: key,
+              label: item.name,
+            });
+          }
         }
       }
 

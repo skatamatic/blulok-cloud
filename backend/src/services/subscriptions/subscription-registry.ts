@@ -16,6 +16,7 @@ import { NotificationSubscriptionManager } from './notification-subscription-man
 import { ActivitySubscriptionManager } from './activity-subscription-manager';
 import { GatewayTelemetryLogSubscriptionManager } from './gateway-telemetry-log-subscription-manager';
 import { FirmwarePushSubscriptionManager } from './firmware-push-subscription-manager';
+import { ProvisioningRestoreSubscriptionManager } from './provisioning-restore-subscription-manager';
 
 /**
  * Subscription Registry
@@ -64,6 +65,7 @@ export class SubscriptionRegistry {
     this.registerManager(new NotificationSubscriptionManager());
     this.registerManager(new ActivitySubscriptionManager());
     this.registerManager(new FirmwarePushSubscriptionManager());
+    this.registerManager(new ProvisioningRestoreSubscriptionManager());
     this.registerManager(new GatewayTelemetryLogSubscriptionManager());
   }
 
@@ -167,5 +169,9 @@ export class SubscriptionRegistry {
 
   public getFirmwarePushProgressManager(): FirmwarePushSubscriptionManager | undefined {
     return this.getManager('firmware_push_progress') as FirmwarePushSubscriptionManager;
+  }
+
+  public getProvisioningRestoreProgressManager(): ProvisioningRestoreSubscriptionManager | undefined {
+    return this.getManager('provisioning_restore_progress') as ProvisioningRestoreSubscriptionManager;
   }
 }

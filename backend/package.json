@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
-    "build": "tsc && tsc-alias",
+    "build": "tsc && tsc-alias && node scripts/copy-build-assets.js",
     "start": "node dist/index.js",
     "test": "jest",
     "test:serial": "jest --maxWorkers=1",
@@ -34,10 +34,13 @@
     "ws:test": "node scripts/ws-gateway-test.js",
     "ws:e2e": "node scripts/ws-gateway-e2e.js",
     "device-metadata:e2e": "node scripts/device-metadata-e2e.js",
-    "storage:e2e": "node scripts/storage-e2e.js"
+    "storage:e2e": "node scripts/storage-e2e.js",
+    "bludesign:detect": "node -r ts-node/register -r tsconfig-paths/register scripts/bludesign-detect.ts",
+    "bludesign:detect:test": "jest --runTestsByPath src/bludesign/layout-import/__tests__/detectUnits.regression.test.ts --testPathIgnorePatterns /node_modules/"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",
+    "@techstark/opencv-js": "4.12.0-release.1",
     "@types/uuid": "^8.3.4",
     "@types/ws": "^8.18.1",
     "archiver": "^7.0.1",
@@ -58,6 +61,8 @@
     "multer": "^2.0.2",
     "mysql2": "^3.6.0",
     "oauth-1.0a": "^2.2.6",
+    "sharp": "0.34.5",
+    "tesseract.js": "7.0.0",
     "twilio": "^4.22.0",
     "unzipper": "^0.12.3",
     "uuid": "^8.3.2",

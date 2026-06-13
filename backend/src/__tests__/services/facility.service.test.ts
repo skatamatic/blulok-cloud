@@ -7,14 +7,23 @@
 
 import { FacilityService, FacilityData } from '@/bludesign/services/facility.service';
 import { FacilityStorageAdapter } from '@/bludesign/services/facility-storage.adapter';
+import { AssetService } from '@/bludesign/services/asset.service';
 
 jest.mock('uuid', () => ({ v4: () => 'test-uuid-1234' }));
+
+jest.mock('@/bludesign/services/asset.service', () => ({
+  AssetService: {
+    incrementFacilityUsage: jest.fn().mockResolvedValue(undefined),
+    decrementFacilityUsage: jest.fn().mockResolvedValue(undefined),
+    syncFacilityAssetUsage: jest.fn().mockResolvedValue(undefined),
+  },
+}));
 
 const sampleData: FacilityData = {
   name: 'My Facility',
   version: '1.0.0',
   camera: { mode: 'isometric' },
-  placedObjects: [{ id: 'obj-1' }],
+  placedObjects: [{ id: 'obj-1', assetId: 'asset-def-1' }],
   gridSize: 10,
   showGrid: true,
 };
@@ -43,6 +52,8 @@ function makeMockStorage(): jest.Mocked<FacilityStorageAdapter> {
     saveData: jest.fn().mockResolvedValue(undefined),
     loadData: jest.fn().mockResolvedValue(sampleData),
     deleteData: jest.fn().mockResolvedValue(undefined),
+    saveLayoutSource: jest.fn().mockResolvedValue(undefined),
+    loadLayoutSource: jest.fn().mockResolvedValue(Buffer.from('png')),
   } as unknown as jest.Mocked<FacilityStorageAdapter>;
 }
 
@@ -72,6 +83,7 @@ describe('FacilityService', () => {
       expect(insertedRecord).not.toHaveProperty('data');
 
       expect(storage.saveData).toHaveBeenCalledWith('user-1', 'test-uuid-1234', sampleData);
+      expect(AssetService.incrementFacilityUsage).toHaveBeenCalledWith(['asset-def-1']);
 
       expect(result.id).toBe('test-uuid-1234');
       expect(result.data).toEqual(sampleData);
@@ -112,6 +124,21 @@ describe('FacilityService', () => {
   });
 
   describe('updateFacility', () => {
+    const metaRow = {
+      id: 'fac-1',
+      user_id: 'user-1',
+      name: 'Saved',
+      thumbnail: null,
+      last_opened: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    beforeEach(() => {
+      db.query.first.mockResolvedValue(metaRow);
+      storage.loadData.mockResolvedValue(sampleData);
+    });
+
     it('should update DB timestamps and save new data to storage', async () => {
       await service.updateFacility('fac-1', 'user-1', sampleData, 'new-thumb');
 
@@ -122,6 +149,19 @@ describe('FacilityService', () => {
       expect(updates).not.toHaveProperty('data');
 
       expect(storage.saveData).toHaveBeenCalledWith('user-1', 'fac-1', sampleData);
+      expect(AssetService.syncFacilityAssetUsage).toHaveBeenCalledWith(
+        ['asset-def-1'],
+        ['asset-def-1']
+      );
+    });
+
+    it('should not write storage when facility row is missing', async () => {
+      db.query.first.mockResolvedValue(null);
+
+      await expect(service.updateFacility('missing', 'user-1', sampleData)).rejects.toThrow(
+        'Facility not found',
+      );
+      expect(storage.saveData).not.toHaveBeenCalled();
     });
 
     it('should not set thumbnail when undefined', async () => {
@@ -133,9 +173,22 @@ describe('FacilityService', () => {
   });
 
   describe('deleteFacility', () => {
-    it('should delete DB row and storage directory', async () => {
+    it('should decrement asset usage, delete DB row, and storage directory', async () => {
+      const metaRow = {
+        id: 'fac-1',
+        user_id: 'user-1',
+        name: 'Saved',
+        thumbnail: null,
+        last_opened: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      db.query.first.mockResolvedValue(metaRow);
+      storage.loadData.mockResolvedValue(sampleData);
+
       await service.deleteFacility('fac-1', 'user-1');
 
+      expect(AssetService.decrementFacilityUsage).toHaveBeenCalledWith(['asset-def-1']);
       expect(db.query.delete).toHaveBeenCalledTimes(1);
       expect(storage.deleteData).toHaveBeenCalledWith('user-1', 'fac-1');
     });
@@ -171,6 +224,38 @@ describe('FacilityService', () => {
 
       expect(result).toBeNull();
       expect(storage.loadData).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('layout source', () => {
+    it('should verify facility ownership before saving layout PNG', async () => {
+      db.query.first.mockResolvedValue({ id: 'fac-1', user_id: 'user-1', name: 'F' });
+      const png = Buffer.from('png-bytes');
+
+      await service.saveLayoutSource('fac-1', 'user-1', png);
+
+      expect(db.query.where).toHaveBeenCalledWith({ id: 'fac-1', user_id: 'user-1' });
+      expect(storage.saveLayoutSource).toHaveBeenCalledWith('user-1', 'fac-1', png);
+    });
+
+    it('should throw when saving layout source for missing facility', async () => {
+      db.query.first.mockResolvedValue(null);
+
+      await expect(service.saveLayoutSource('missing', 'user-1', Buffer.from('x'))).rejects.toThrow(
+        'Facility not found',
+      );
+      expect(storage.saveLayoutSource).not.toHaveBeenCalled();
+    });
+
+    it('should load layout source after ownership check', async () => {
+      db.query.first.mockResolvedValue({ id: 'fac-1', user_id: 'user-1', name: 'F' });
+      const png = Buffer.from('png-bytes');
+      storage.loadLayoutSource.mockResolvedValue(png);
+
+      const result = await service.loadLayoutSource('fac-1', 'user-1');
+
+      expect(storage.loadLayoutSource).toHaveBeenCalledWith('user-1', 'fac-1');
+      expect(result).toEqual(png);
     });
   });
 

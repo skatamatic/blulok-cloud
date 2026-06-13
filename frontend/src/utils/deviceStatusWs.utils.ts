@@ -5,6 +5,10 @@
 export interface LockDeviceSnapshot {
   device_id?: string;
   unit_id?: string;
+  /** BluLok display name or access-control device name */
+  name?: string;
+  location_description?: string;
+  device_settings?: Record<string, unknown>;
   lock_status?: string;
   device_status?: string;
   battery_level?: number;
@@ -29,6 +33,13 @@ export function normalizeDeviceStatusWsPayload(data: unknown): LockDeviceSnapsho
   return (d.devices as Record<string, unknown>[]).map((device) => ({
       device_id: typeof device.id === 'string' ? device.id : undefined,
       unit_id: typeof device.unit_id === 'string' ? device.unit_id : undefined,
+      name: typeof device.name === 'string' ? device.name : undefined,
+      location_description:
+        typeof device.location_description === 'string' ? device.location_description : undefined,
+      device_settings:
+        device.device_settings && typeof device.device_settings === 'object'
+          ? (device.device_settings as Record<string, unknown>)
+          : undefined,
       lock_status: typeof device.lock_status === 'string' ? device.lock_status : undefined,
       device_status: typeof device.device_status === 'string' ? device.device_status : undefined,
       battery_level: typeof device.battery_level === 'number' ? device.battery_level : undefined,

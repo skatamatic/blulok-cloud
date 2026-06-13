@@ -51,6 +51,9 @@ describe('normalizeDeviceStatusWsPayload', () => {
             firmware_version: '1.0.0',
             last_activity: '2026-01-01T00:00:00Z',
             last_seen: '2026-01-02T00:00:00Z',
+            name: 'Front lock',
+            location_description: 'North door',
+            device_settings: { displayName: 'Front lock', lockNumber: 12 },
           },
         ],
       })
@@ -58,6 +61,9 @@ describe('normalizeDeviceStatusWsPayload', () => {
       {
         device_id: 'dev-1',
         unit_id: 'u1',
+        name: 'Front lock',
+        location_description: 'North door',
+        device_settings: { displayName: 'Front lock', lockNumber: 12 },
         lock_status: 'locked',
         device_status: 'online',
         battery_level: 80,

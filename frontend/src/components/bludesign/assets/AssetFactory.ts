@@ -158,8 +158,18 @@ export class AssetFactory {
     }
     
     switch (asset.category) {
-      case AssetCategory.STORAGE_UNIT:
+      case AssetCategory.STORAGE_UNIT: {
+        // Procedural lockers carry an explicit door spec (side/width/offset) —
+        // honor it so placed/auto-generated units match the wizard preview.
+        const lockerSpec = (asset.metadata?.lockerSpec ??
+          (asset.metadata?.metadata as { lockerSpec?: LockerSpec } | undefined)?.lockerSpec) as
+          | LockerSpec
+          | undefined;
+        if (lockerSpec) {
+          return this.createCustomStorageUnit(asset.dimensions, lockerSpec, state ?? DeviceState.LOCKED);
+        }
         return this.createStorageUnit(asset, state ?? DeviceState.LOCKED);
+      }
       case AssetCategory.GATE:
         return this.createGate(asset, state ?? DeviceState.LOCKED);
       case AssetCategory.ELEVATOR:
@@ -261,7 +271,7 @@ export class AssetFactory {
     const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
     body.position.y = height / 2;
     body.castShadow = true;
-    body.receiveShadow = true;
+    body.receiveShadow = false;
     body.userData.stateDependent = true;
     body.userData.partName = 'body';
     group.add(body);
@@ -274,8 +284,8 @@ export class AssetFactory {
       doorSide === 'front' || doorSide === 'back' ? doorThickness : doorWidth
     );
     
-    const door = new THREE.Mesh(doorGeometry, MATERIALS.storageUnit.door.clone());
-    door.castShadow = true;
+    const door = new THREE.Mesh(doorGeometry, MATERIALS.storageUnit.door);
+    door.castShadow = false;
     door.userData.partName = 'door';
     
     // Calculate door position based on which side
@@ -337,7 +347,7 @@ export class AssetFactory {
     const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
     body.position.y = height / 2;
     body.castShadow = true;
-    body.receiveShadow = true;
+    body.receiveShadow = false;
     body.userData.stateDependent = true;
     body.userData.partName = 'body';  // Track part name for skinning
     group.add(body);
@@ -347,9 +357,9 @@ export class AssetFactory {
     const doorHeight = height * 0.7;
     const doorThickness = 0.05;
     const doorGeometry = new THREE.BoxGeometry(doorWidth, doorHeight, doorThickness);
-    const door = new THREE.Mesh(doorGeometry, MATERIALS.storageUnit.door.clone());
+    const door = new THREE.Mesh(doorGeometry, MATERIALS.storageUnit.door);
     door.position.set(0, height * 0.35, depth / 2 + doorThickness / 2);
-    door.castShadow = true;
+    door.castShadow = false;
     door.userData.partName = 'door';  // Track part name for skinning
     group.add(door);
     

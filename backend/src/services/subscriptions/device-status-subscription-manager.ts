@@ -149,10 +149,25 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
       let devices: any[] = [];
       
       if (filters?.deviceId) {
-        // Single device subscription
-        const device = await this.deviceModel.findBluLokDeviceById(filters.deviceId);
-        if (device) {
-          devices = [device];
+        const bluLok = await this.deviceModel.findBluLokDeviceById(filters.deviceId);
+        if (bluLok) {
+          devices = [bluLok];
+        } else {
+          const accessControl = await this.deviceModel.findAccessControlDeviceWithGateway(filters.deviceId);
+          if (accessControl) {
+            devices = [this.formatAccessControlDeviceStatus(accessControl)];
+            this.sendMessage(ws, {
+              type: 'device_status_update',
+              subscriptionId,
+              data: {
+                devices,
+                count: devices.length,
+                lastUpdated: new Date().toISOString(),
+              },
+              timestamp: new Date().toISOString(),
+            });
+            return;
+          }
         }
       } else {
         // Multiple devices subscription
@@ -182,9 +197,22 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
    * Format device data for WebSocket transmission
    */
   private formatDeviceStatus(device: any): any {
+    const deviceSettings =
+      device.device_settings && typeof device.device_settings === 'object'
+        ? device.device_settings
+        : undefined;
+    const displayName =
+      deviceSettings && typeof deviceSettings.displayName === 'string'
+        ? deviceSettings.displayName
+        : deviceSettings && typeof deviceSettings.display_name === 'string'
+          ? deviceSettings.display_name
+          : undefined;
+
     return {
       id: device.id,
       device_serial: device.device_serial,
+      name: displayName,
+      device_settings: deviceSettings,
       unit_id: device.unit_id,
       unit_number: device.unit_number,
       facility_id: device.facility_id,
@@ -210,7 +238,9 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
     const lockStatus = device.is_locked === true ? 'locked' : 'unlocked';
     return {
       id: device.id,
-      device_serial: device.name ?? device.id,
+      device_serial: device.device_serial ?? device.name ?? device.id,
+      name: device.name,
+      location_description: device.location_description,
       unit_id: null,
       unit_number: null,
       facility_id: device.facility_id,

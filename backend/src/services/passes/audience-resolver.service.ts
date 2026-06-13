@@ -41,18 +41,12 @@ export class AudienceResolver {
       if (!scopedFacilityIds || scopedFacilityIds.length === 0) {
         return [];
       }
-      const rows = await db('blulok_devices as bd')
-        .join('units as u', 'bd.unit_id', 'u.id')
-        .whereIn('u.facility_id', scopedFacilityIds)
-        .select('bd.device_serial');
-      const lockSerials = rows.map((r: any) => r.device_serial as string);
-      audiences = lockSerials.map((serial: string) => `lock:${serial}`);
+      // Facility admins use route passes for app-entry access control only — not unit lock unlock.
       const appEntryDeviceIds = (await AppEntryAccessService.resolveDeviceIds(db, {
         ...params,
         facilityIds: scopedFacilityIds,
       })) || [];
-      audiences.push(...appEntryDeviceIds.map((id) => `access_control:${id}`));
-      return Array.from(new Set(audiences));
+      return appEntryDeviceIds.map((id) => `access_control:${id}`);
     }
 
     if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {

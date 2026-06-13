@@ -3,17 +3,27 @@
  *
  * Displays the 3D facility viewer with real-time state updates when a single
  * facility is selected and that facility has a linked BluDesign model.
- * All-facilities scope and unlinked facilities show a polished empty state.
+ * Imported facilities with stored layout data can switch to a 2D plan view.
  */
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
-import { FacilityViewer3D, FacilityViewerEmptyState } from '../bludesign/viewer';
-import { BuildingOffice2Icon } from '@heroicons/react/24/outline';
+import {
+  FacilityViewer3D,
+  FacilityViewer2D,
+  FacilityViewerEmptyState,
+} from '../bludesign/viewer';
+import {
+  BuildingOffice2Icon,
+  CubeIcon,
+  MapIcon,
+} from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import * as bludesignApi from '@/api/bludesign';
+import type { FacilityResponse } from '@/api/bludesign';
+import { hasLayoutImport } from '@/components/bludesign/layout-import/layoutImportMetadata';
 
 export interface DesignFacilityOption {
   id: string;
@@ -21,6 +31,8 @@ export interface DesignFacilityOption {
   linkedBlulokId: string | null;
   linkedBlulokName: string | null;
 }
+
+export type ViewerDisplayMode = '3d' | '2d';
 
 /** Resolve the BluDesign model linked to the globally selected facility. */
 export function resolveActiveDesignFacility(
@@ -92,6 +104,10 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   const [size, setSize] = useState<WidgetSize>(currentSize ?? initialSize);
   const [designFacilities, setDesignFacilities] = useState<DesignFacilityOption[]>([]);
   const [isLoadingDesign, setIsLoadingDesign] = useState(false);
+  const [has2dLayout, setHas2dLayout] = useState(false);
+  const [cachedFacility, setCachedFacility] = useState<FacilityResponse | null>(null);
+  const [prefetchError, setPrefetchError] = useState(false);
+  const [displayMode, setDisplayMode] = useState<ViewerDisplayMode>('3d');
 
   useEffect(() => {
     if (currentSize) setSize(currentSize);
@@ -135,6 +151,48 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
     [designFacilities, isAllFacilitiesSelected, selectedFacility]
   );
 
+  useEffect(() => {
+    setDisplayMode('3d');
+    setHas2dLayout(false);
+    setCachedFacility(null);
+    setPrefetchError(false);
+    if (!activeDesignFacility) return;
+
+    let cancelled = false;
+    void bludesignApi
+      .getFacility(activeDesignFacility.id)
+      .then((facility) => {
+        if (cancelled) return;
+        setCachedFacility(facility);
+        setHas2dLayout(hasLayoutImport(facility.data));
+        setPrefetchError(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHas2dLayout(false);
+          setCachedFacility(null);
+          setPrefetchError(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDesignFacility?.id]);
+
+  const retryPrefetch = useCallback(() => {
+    if (!activeDesignFacility) return;
+    setPrefetchError(false);
+    void bludesignApi
+      .getFacility(activeDesignFacility.id)
+      .then((facility) => {
+        setCachedFacility(facility);
+        setHas2dLayout(hasLayoutImport(facility.data));
+        setPrefetchError(false);
+      })
+      .catch(() => setPrefetchError(true));
+  }, [activeDesignFacility]);
+
   const displayTitle =
     title ||
     (isAllFacilitiesSelected ? 'Facility View' : selectedFacility?.name) ||
@@ -143,6 +201,8 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   const showViewer = !isAllFacilitiesSelected && !!activeDesignFacility;
   const isLoading =
     !isAllFacilitiesSelected && (globalFacilitiesLoading || isLoadingDesign);
+  const use2d = displayMode === '2d' && has2dLayout;
+  const run3d = showViewer && !use2d && isRenderActive;
 
   const handleReady = useCallback(() => {}, []);
 
@@ -151,11 +211,41 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   }, []);
 
   const enhancedMenu = (
-    <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+    <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 space-y-2">
       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <BuildingOffice2Icon className="w-4 h-4" />
-        <span>3D Facility Viewer</span>
+        <span>{use2d ? '2D Facility View' : '3D Facility Viewer'}</span>
       </div>
+      {prefetchError && showViewer && (
+        <div className="flex items-center justify-between gap-2 text-xs text-amber-600 dark:text-amber-400">
+          <span>Could not verify 2D layout.</span>
+          <button
+            type="button"
+            onClick={retryPrefetch}
+            className="font-medium underline text-primary-500"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {has2dLayout && showViewer && (
+        <div className="flex gap-1">
+          <ModeToggle
+            active={displayMode === '3d'}
+            onClick={() => setDisplayMode('3d')}
+            icon={<CubeIcon className="w-3.5 h-3.5" />}
+            label="3D"
+            isDark={isDark}
+          />
+          <ModeToggle
+            active={displayMode === '2d'}
+            onClick={() => setDisplayMode('2d')}
+            icon={<MapIcon className="w-3.5 h-3.5" />}
+            label="2D"
+            isDark={isDark}
+          />
+        </div>
+      )}
     </div>
   );
 
@@ -182,14 +272,25 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
         {isLoading ? (
           <LoadingPlaceholder isDark={isDark} />
         ) : showViewer && activeDesignFacility ? (
-          <FacilityViewer3D
-            key={activeDesignFacility.id}
-            bluDesignFacilityId={activeDesignFacility.id}
-            bluLokFacilityId={activeDesignFacility.linkedBlulokId ?? undefined}
-            isRenderActive={isRenderActive}
-            onReady={handleReady}
-            onError={handleError}
-          />
+          use2d ? (
+            <FacilityViewer2D
+              key={`2d-${activeDesignFacility.id}`}
+              bluDesignFacilityId={activeDesignFacility.id}
+              bluLokFacilityId={activeDesignFacility.linkedBlulokId ?? undefined}
+              prefetchedFacility={cachedFacility}
+              onReady={handleReady}
+              onError={handleError}
+            />
+          ) : (
+            <FacilityViewer3D
+              key={activeDesignFacility.id}
+              bluDesignFacilityId={activeDesignFacility.id}
+              bluLokFacilityId={activeDesignFacility.linkedBlulokId ?? undefined}
+              isRenderActive={run3d}
+              onReady={handleReady}
+              onError={handleError}
+            />
+          )
         ) : (
           <FacilityViewerEmptyState
             variant={isAllFacilitiesSelected ? 'select-facility' : 'no-model'}
@@ -200,6 +301,29 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
     </Widget>
   );
 };
+
+const ModeToggle: React.FC<{
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  isDark: boolean;
+}> = ({ active, onClick, icon, label, isDark }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+      active
+        ? 'bg-[#147FD4] text-white'
+        : isDark
+          ? 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+    }`}
+  >
+    {icon}
+    {label}
+  </button>
+);
 
 const LoadingPlaceholder: React.FC<{ isDark: boolean }> = ({ isDark }) => (
   <div

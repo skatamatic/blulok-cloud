@@ -3,22 +3,18 @@ import { DatabaseService } from '@/services/database.service';
 import { AudienceResolver } from '@/services/passes/audience-resolver.service';
 import { PassesService, normalizeRoutePassUserRole } from '@/services/passes.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
-import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { UserRole } from '@/types/auth.types';
 import { resolveRoutePassSchedulesForAudiences, type RoutePassFacilitySchedule } from '@/services/passes/route-pass-schedules';
+import {
+  RoutePassError,
+  resolveAuthoritativeRoutePassScope,
+} from '@/services/passes/route-pass-context.service';
 
-export class RoutePassError extends Error {
-  public status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
-}
+export { RoutePassError };
 
 export interface RequestUserContext {
   userId: string;
-  role: UserRole;
-  facilityIds?: string[];
+  /** Optional facility filter from the client; validated against DB entitlements at issuance. */
   facilityId?: string;
 }
 
@@ -31,6 +27,12 @@ export class RoutePassOrchestrator {
     if (appDeviceIdHeader !== undefined && header.length === 0) {
       throw new RoutePassError('X-App-Device-Id header, if provided, must be non-empty', 400);
     }
+
+    const { role, facilityIds, facilityId: requestedFacilityId } = await resolveAuthoritativeRoutePassScope(
+      db,
+      userId,
+      ctx.facilityId,
+    );
 
     // Resolve device
     let device: any | undefined;
@@ -54,47 +56,15 @@ export class RoutePassOrchestrator {
       throw new RoutePassError('No registered device key', 409);
     }
 
-    // Ensure facilityIds for scoped roles
-    let facilityIds = ctx.facilityIds;
-    if (ctx.role === UserRole.FACILITY_ADMIN && (!facilityIds || facilityIds.length === 0)) {
-      facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
-    }
-
-    if (
-      (ctx.role === UserRole.TENANT || ctx.role === UserRole.MAINTENANCE)
-      && (!facilityIds || facilityIds.length === 0)
-    ) {
-      facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
-    }
-
-    let requestedFacilityId: string | undefined;
-    if (ctx.facilityId) {
-      if (ctx.role === UserRole.ADMIN || ctx.role === UserRole.DEV_ADMIN) {
-        const facility = await db('facilities')
-          .select('id')
-          .where('id', ctx.facilityId)
-          .first();
-        if (!facility) {
-          throw new RoutePassError('Requested facility was not found', 404);
-        }
-      } else {
-        if (!facilityIds?.includes(ctx.facilityId)) {
-          throw new RoutePassError('Access denied to requested facility', 403);
-        }
-      }
-      requestedFacilityId = ctx.facilityId;
-      facilityIds = [requestedFacilityId];
-    }
-
-    // Resolve audiences
+    // Resolve audiences from current DB entitlements only
     const audiences = await AudienceResolver.resolve(db, {
       userId,
-      userRole: ctx.role,
+      userRole: role,
       facilityIds,
       facilityId: requestedFacilityId,
     });
 
-    const roleNorm = normalizeRoutePassUserRole(ctx.role);
+    const roleNorm = normalizeRoutePassUserRole(role);
     let schedules: RoutePassFacilitySchedule[] | undefined;
     if (roleNorm !== 'admin' && roleNorm !== 'dev_admin') {
       const resolved = await resolveRoutePassSchedulesForAudiences(db, userId, audiences);
@@ -109,7 +79,7 @@ export class RoutePassOrchestrator {
       devicePublicKey: device.public_key,
       audiences,
       schedules,
-      userRole: ctx.role,
+      userRole: role,
     });
 
     // Log issuance

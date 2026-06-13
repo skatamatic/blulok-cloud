@@ -232,6 +232,16 @@ export default function UnitDetailsPage() {
           firmware_version: deviceUpdate.firmware_version ?? prev.blulok_device.firmware_version,
           last_activity: deviceUpdate.last_activity ?? prev.blulok_device.last_activity,
           last_seen: deviceUpdate.last_seen || prev.blulok_device.last_seen,
+          ...(deviceUpdate.device_settings !== undefined
+            ? { device_settings: deviceUpdate.device_settings }
+            : deviceUpdate.name !== undefined
+              ? {
+                  device_settings: {
+                    ...(prev.blulok_device.device_settings ?? {}),
+                    displayName: deviceUpdate.name,
+                  },
+                }
+              : {}),
         },
       };
     });

@@ -50,6 +50,8 @@ import { GatewayEventsService } from '@/services/gateway/gateway-events.service'
 import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { sanitizePayloadPath } from '@/utils/gateway-telemetry-log.parser';
+import { ProvisioningBackupService } from '@/services/provisioning/provisioning-backup.service';
+import { ProvisioningRestoreService } from '@/services/provisioning/provisioning-restore.service';
 
 const router = Router();
 const gatewayModel = new GatewayModel();
@@ -97,6 +99,128 @@ router.get('/status/:facilityId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADM
 
   const status = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
   res.json({ success: true, facilityId, ...status });
+}));
+
+async function assertGatewayFacilityAccess(
+  req: AuthenticatedRequest,
+  res: Response,
+  gatewayId: string,
+): Promise<{ gateway: Awaited<ReturnType<GatewayModel['findById']>>; facilityId: string } | null> {
+  const gateway = await gatewayModel.findById(gatewayId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found' });
+    return null;
+  }
+  if (req.user?.role === UserRole.FACILITY_ADMIN) {
+    const allowed = req.user.facilityIds || [];
+    if (!gateway.facility_id || !allowed.includes(gateway.facility_id)) {
+      res.status(403).json({ success: false, message: 'Access denied to this gateway' });
+      return null;
+    }
+  }
+  if (!gateway.facility_id) {
+    res.status(409).json({ success: false, message: 'Gateway is not assigned to a facility' });
+    return null;
+  }
+  return { gateway, facilityId: gateway.facility_id };
+}
+
+// GET /api/gateways/:gatewayId/provisioning — list provisioning backups
+router.get('/:gatewayId/provisioning', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
+  const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const result = await ProvisioningBackupService.listBackups(gatewayId, limit, offset);
+  res.json({ success: true, data: result });
+}));
+
+// DELETE /api/gateways/:gatewayId/provisioning/:backupId — platform admins only
+router.delete('/:gatewayId/provisioning/:backupId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const backupId = String(req.params.backupId);
+  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const backup = await ProvisioningBackupService.getBackup(backupId);
+  if (!backup || backup.gateway_id !== gatewayId) {
+    res.status(404).json({ success: false, message: 'Backup not found' });
+    return;
+  }
+
+  const deleted = await ProvisioningBackupService.deleteBackup(backupId);
+  res.json({ success: true, deleted });
+}));
+
+// POST /api/gateways/:gatewayId/provisioning/request-upload
+router.post('/:gatewayId/provisioning/request-upload', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
+  if (!access) return;
+
+  try {
+    const result = await ProvisioningBackupService.requestUploadFromGateway(
+      gatewayId,
+      access.facilityId,
+      req.user!.userId,
+    );
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to request upload' });
+  }
+}));
+
+// POST /api/gateways/:gatewayId/provisioning/:backupId/restore
+router.post('/:gatewayId/provisioning/:backupId/restore', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const backupId = String(req.params.backupId);
+  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
+  if (!access) return;
+
+  try {
+    const restore = await ProvisioningRestoreService.initiateRestore(
+      backupId,
+      gatewayId,
+      access.facilityId,
+      req.user!.userId,
+    );
+    res.json({ success: true, data: restore });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to initiate restore' });
+  }
+}));
+
+// GET /api/gateways/:gatewayId/provisioning/restore-status
+router.get('/:gatewayId/provisioning/restore-status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const status = await ProvisioningRestoreService.getRestoreStatus(gatewayId);
+  res.json({ success: true, data: status });
+}));
+
+// POST /api/gateways/:gatewayId/provisioning/restore/:restoreId/cancel
+router.post('/:gatewayId/provisioning/restore/:restoreId/cancel', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const restoreId = String(req.params.restoreId);
+  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const restore = await ProvisioningRestoreService.getRestoreById(restoreId);
+  if (!restore || restore.gateway_id !== gatewayId) {
+    res.status(404).json({ success: false, message: 'Restore not found' });
+    return;
+  }
+
+  try {
+    await ProvisioningRestoreService.cancelRestore(restoreId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to cancel restore' });
+  }
 }));
 
 // POST /api/gateways - Create new gateway

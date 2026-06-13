@@ -224,8 +224,14 @@ export class SceneManager {
 
   /**
    * Add an object to the scene
+   * @param trackOnly When true, registers the object for selection/data but does not add it to the scene graph (e.g. ground tile markers).
    */
-  addObject(id: string, object: THREE.Object3D, data?: PlacedObject): void {
+  addObject(
+    id: string,
+    object: THREE.Object3D,
+    data?: PlacedObject,
+    options?: { trackOnly?: boolean }
+  ): void {
     object.userData.id = id;
     object.userData.selectable = true;
     
@@ -234,7 +240,9 @@ export class SceneManager {
       this.objectData.set(id, data);
     }
     
-    this.scene.add(object);
+    if (!options?.trackOnly) {
+      this.scene.add(object);
+    }
   }
 
   /**
@@ -243,7 +251,9 @@ export class SceneManager {
   removeObject(id: string): void {
     const object = this.objects.get(id);
     if (object) {
-      this.scene.remove(object);
+      if (object.parent === this.scene) {
+        this.scene.remove(object);
+      }
       this.disposeObject(object);
       this.objects.delete(id);
       this.objectData.delete(id);

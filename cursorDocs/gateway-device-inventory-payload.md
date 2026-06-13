@@ -80,7 +80,9 @@ Stored in `blulok_devices`. Primary identity: **`lock_id`** (persisted as `devic
 |-------|----------|------|---------|-------------------|---------------|
 | `kind` | **yes** | string | — | `"lock"` | Discriminator |
 | `lock_id` | **yes** | string | — | non-empty trim | `blulok_devices.device_serial` |
-| `lock_number` | no | number | — | — | `device_settings.lockNumber` on auto-create |
+| `lock_number` | no | number | — | — | `device_settings.lockNumber` (create + inventory refresh) |
+| `name` | no | string | — | max 255 | `device_settings.displayName` (create + inventory refresh) |
+| `location_description` | no | string | — | max 255 | `device_settings.locationDescription` (create + inventory refresh) |
 | `state` | no | string | — | `CLOSED`, `OPENED`, `ERROR`, `UNKNOWN` | `lock_status`: CLOSED→locked, OPENED→unlocked, ERROR→error, UNKNOWN→unknown |
 | `locked` | no | boolean | — | — | `lock_status` locked/unlocked (if `state` absent) |
 | `battery_level` | no | number | — | raw units (typically **mV**, not %) | `battery_level` |
@@ -105,6 +107,8 @@ When `lock_id` is in the payload but not in the DB, the cloud creates the row th
 
 **Removal:** Omitted sync-managed locks are **deleted**. Manually created locks (`metadata.createdFromGatewaySync` absent) are **preserved** (`skipped_manual` in sync log).
 
+**Property refresh:** When an existing lock remains in inventory, non-identity fields (`name`, `lock_number`, `location_description`) are merged into `device_settings`. Changes emit `deviceTelemetryUpdated` → dashboard **`device_status_update`** WebSocket payloads include `name` and `device_settings`.
+
 ### Sync-managed metadata (locks and access)
 
 | Flag | Meaning |
@@ -124,8 +128,8 @@ Stored in `access_control_devices`. Identity: **`access_id` + `relay_channel`** 
 | `access_id` | **yes** | string | — | non-empty trim | `device_serial` |
 | `relay_channel` | no | integer | **1** | **1–8** | `relay_channel` (relay output on **this** keypad; not globally unique on the gateway) |
 | `device_type` | no | string | **`door`** on create | `gate`, `door`, `elevator` | `device_type` |
-| `name` | no | string | **`"{access_id} relay {n}"`** | max 255 | `name` |
-| `location_description` | no | string | **`"Gateway relay {n}"`** | max 255 | `location_description` |
+| `name` | no | string | **`"{access_id} relay {n}"`** | max 255 | `name` (create + inventory refresh) |
+| `location_description` | no | string | **`"Gateway relay {n}"`** | max 255 | `location_description` (create + inventory refresh) |
 | `online` | no | boolean | — | — | `status` online/offline |
 | `locked` | no | boolean | — | — | `is_locked` |
 | `last_seen` | no | string (ISO-8601) or Date | — | — | `last_activity` (invalid timestamps skipped; triggers WebSocket when changed) |
@@ -144,6 +148,8 @@ After access inventory changes, the cloud **pushes access codes** to the gateway
 **Identity key:** `{access_id}::{relay_channel}` (relay defaults to **1**). Two keypads on the same gateway may both omit `relay_channel` or send `relay_channel: 1` — they remain distinct rows because `access_id` differs.
 
 **Removal:** Same policy as locks — only sync-managed rows removed when omitted.
+
+**Property refresh:** Existing rows get `name`, `location_description`, and `device_type` updates when provided. Changes emit `deviceTelemetryUpdated` → dashboard **`device_status_update`** includes `name` and `location_description`.
 
 ### Valid minimal access_control inventory (single-relay hardware)
 

@@ -123,6 +123,72 @@ async function waitForDeviceStatusLockStatus(events, deviceId, expected, startLe
   return null;
 }
 
+/** Poll device_status_update until a row for `deviceId` satisfies `predicate`. */
+async function waitForDeviceStatusRow(events, deviceId, predicate, startLen, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (let i = startLen; i < events.length; i++) {
+      const d = events[i]?.data?.devices?.find((x) => x.id === deviceId);
+      if (d && predicate(d)) return d;
+    }
+    await delay(200);
+  }
+  return null;
+}
+
+function readBluLokDisplayName(device) {
+  const settings = device?.device_settings;
+  if (settings && typeof settings === 'object') {
+    return settings.displayName || settings.display_name || '';
+  }
+  if (typeof device?.name === 'string') return device.name;
+  return '';
+}
+
+async function connectDeviceStatusWatcher(token) {
+  const events = [];
+  const wsUrl = `${UI_WS_URL}?token=${token}`;
+  const ws = new WebSocket(wsUrl);
+  await new Promise((res, rej) => {
+    ws.once('open', res);
+    ws.once('error', rej);
+  });
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (VERBOSE) console.log('[WS-DEV-STATUS <-]', data.toString());
+      if (msg.type === 'device_status_update' && msg.data) {
+        events.push(msg);
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+  return { ws, events };
+}
+
+async function subscribeDeviceStatusAndWaitInitial(ws, events, deviceId, timeoutMs = 8000) {
+  ws.send(JSON.stringify({
+    type: 'subscription',
+    subscriptionType: 'device_status',
+    data: { device_id: deviceId },
+  }));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (events.some((e) => e.data?.devices?.some((d) => d.id === deviceId))) {
+      return events.find((e) => e.data?.devices?.some((d) => d.id === deviceId));
+    }
+    await delay(200);
+  }
+  return null;
+}
+
+function closeDeviceStatusWatcher(ws) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.close();
+  }
+}
+
 // Minimal ANSI color helpers (no external deps)
 const C = {
   reset: '\x1b[0m',
@@ -431,6 +497,35 @@ function assertRoutePassUserRole(claims, expectedLowerSnake) {
   }
   if (claims.user_role !== expectedLowerSnake) {
     throw new Error(`Route pass user_role expected "${expectedLowerSnake}", got "${claims.user_role}"`);
+  }
+}
+
+/**
+ * LOCK/UNLOCK command JWTs include expires_at (unix seconds): now + facility lock_command_timeout_sec.
+ * timeoutSec 0 → expires_at 0 (no expiry on device).
+ */
+function assertLockCommandExpiresAt(cmd, expectedTimeoutSec, slackSec = 15) {
+  if (!cmd || (cmd.cmd_type !== 'UNLOCK' && cmd.cmd_type !== 'LOCK')) {
+    throw new Error(`Expected LOCK/UNLOCK command, got ${JSON.stringify(cmd)}`);
+  }
+  if (typeof cmd.expires_at !== 'number') {
+    throw new Error(`Lock command missing numeric expires_at: ${JSON.stringify(cmd)}`);
+  }
+  if (expectedTimeoutSec === 0) {
+    if (cmd.expires_at !== 0) {
+      throw new Error(`Expected expires_at=0 for one-shot timeout, got ${cmd.expires_at}`);
+    }
+    return;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const expected = now + expectedTimeoutSec;
+  if (cmd.expires_at < now - 2) {
+    throw new Error(`expires_at ${cmd.expires_at} is before now (${now})`);
+  }
+  if (Math.abs(cmd.expires_at - expected) > slackSec) {
+    throw new Error(
+      `expires_at ${cmd.expires_at} not within ${slackSec}s of expected ${expected} (timeout ${expectedTimeoutSec}s)`,
+    );
   }
 }
 
@@ -752,6 +847,16 @@ async function assignUserToFacility(token, userId, facilityId) {
   await axios.post(`${API_BASE}/user-facilities/${userId}/facilities/${facilityId}`, {}, {
     headers: { Authorization: `Bearer ${token}` }
   });
+}
+
+async function setUserFacilities(token, userId, facilityIds) {
+  const res = await axios.put(`${API_BASE}/user-facilities/${userId}`, { facilityIds }, {
+    headers: { Authorization: `Bearer ${token}` },
+    validateStatus: () => true,
+  });
+  if (res.status !== 200 || !res.data?.success) {
+    throw new Error(`setUserFacilities failed: status=${res.status} body=${JSON.stringify(res.data)}`);
+  }
 }
 
 async function createBlulokDevice(token, gatewayId, unitId, serial) {
@@ -2606,6 +2711,48 @@ async function run() {
     }
     ok('Inventory re-sync refreshed battery_level on existing gateway-managed lock');
 
+    step('Testing inventory re-sync refreshes display name on existing lock');
+    const inventoryRenamed = `INV-Rename-${Date.now()}`;
+    const reqInventoryNameRefresh = 'req-inventory-name-refresh';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqInventoryNameRefresh,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({
+            lock_id: inventorySerial1,
+            lock_number: 201,
+            name: inventoryRenamed,
+            location_description: 'North aisle',
+          }),
+        ],
+      },
+    }));
+    const respInventoryNameRefresh = await waitForProxyResponse(ws, reqInventoryNameRefresh);
+    if (respInventoryNameRefresh.status !== 200 || !respInventoryNameRefresh.body?.success) {
+      throw new Error(`Inventory name refresh failed: ${respInventoryNameRefresh.status}`);
+    }
+    const nameRefreshResult = respInventoryNameRefresh.body?.data;
+    if ((nameRefreshResult?.updated ?? 0) < 1) {
+      throw new Error(
+        `Expected locks.updated >= 1 for display name refresh, got ${JSON.stringify(nameRefreshResult)}`,
+      );
+    }
+    const renamedLockDetail = await axios.get(`${API_BASE}/devices/blulok/${refreshedDevice.id}`, {
+      headers: authHeaders(token),
+    });
+    const renamedDisplay = readBluLokDisplayName(renamedLockDetail.data?.device);
+    if (renamedDisplay !== inventoryRenamed) {
+      throw new Error(
+        `Expected displayName "${inventoryRenamed}" after inventory refresh, got "${renamedDisplay}"`,
+      );
+    }
+    ok(`Inventory re-sync refreshed BluLok display name to "${inventoryRenamed}"`);
+
     step('Testing manual HTTP-created device preservation on inventory delta');
     if (!gatewayId) throw new Error('gatewayId required for manual device preservation test');
     const manualUnit = await createUnit(token, facilityId, `E2E-MANUAL-${Date.now()}`);
@@ -2838,6 +2985,64 @@ async function run() {
       );
     }
     ok(`Access control state updated independently for relay ${accessRelaySecondary}`);
+
+    step('Testing inventory re-sync refreshes access_control name on existing relay');
+    const accessRenamed = `E2E Gate Renamed ${Date.now()}`;
+    const reqAccessNameRefresh = 'req-access-name-refresh';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAccessNameRefresh,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({ lock_id: inventorySerial1, lock_number: 201, name: inventoryRenamed }),
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelayPrimary,
+            device_type: 'door',
+            name: 'E2E Keypad Door',
+          }),
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            device_type: 'gate',
+            name: accessRenamed,
+            location_description: 'South gate updated',
+          }),
+        ],
+      },
+    }));
+    const respAccessNameRefresh = await waitForProxyResponse(ws, reqAccessNameRefresh);
+    if (respAccessNameRefresh.status !== 200 || !respAccessNameRefresh.body?.success) {
+      throw new Error(`Access control name inventory refresh failed: ${respAccessNameRefresh.status}`);
+    }
+    const accessNameRefreshResult = respAccessNameRefresh.body?.data?.access_control;
+    if ((accessNameRefreshResult?.updated ?? 0) < 1) {
+      throw new Error(
+        `Expected access_control.updated >= 1 for name refresh, got ${JSON.stringify(accessNameRefreshResult)}`,
+      );
+    }
+    const renamedAccess = await findAccessControlBySerialRelay(
+      token,
+      facilityId,
+      accessSerialMulti,
+      accessRelaySecondary,
+    );
+    if (!renamedAccess?.id) {
+      throw new Error('Access control row missing after name inventory refresh');
+    }
+    if (renamedAccess.name !== accessRenamed) {
+      throw new Error(`Expected access_control name "${accessRenamed}", got "${renamedAccess.name}"`);
+    }
+    if ((renamedAccess.location_description || '') !== 'South gate updated') {
+      throw new Error(
+        `Expected location_description "South gate updated", got "${renamedAccess.location_description}"`,
+      );
+    }
+    ok(`Inventory re-sync refreshed access_control name to "${accessRenamed}"`);
 
     step('Testing POST /devices/inventory (mixed payload removes first relay when omitted)');
     const reqAccessInv2 = 'req-access-inv-2';
@@ -3316,12 +3521,24 @@ async function run() {
     ok(`WebSocket shows lock in progress (${rowAfterHttpLock.lock_status}) after HTTP cloud lock`);
 
     httpLockBaseline = deviceStatusEvents.length;
-    step('PUT /devices/blulok/:id/lock unlocked — expect device_status_update');
+    step('PUT /devices/blulok/:id/lock unlocked — expect device_status_update and UNLOCK expires_at on gateway');
+    await axios.put(
+      `${API_BASE}/facilities/${facilityId}`,
+      { lock_command_timeout_sec: 90 },
+      { headers: authHeaders(token) },
+    );
+    const expectHttpUnlockCmd = waitForCommand(
+      ws,
+      (cmd) => cmd.cmd_type === 'UNLOCK' && typeof cmd.expires_at === 'number',
+    );
     await axios.put(
       `${API_BASE}/devices/blulok/${deviceId}/lock`,
       { lock_status: 'unlocked' },
       { headers: authHeaders(token) },
     );
+    const httpUnlockCmd = await expectHttpUnlockCmd;
+    assertLockCommandExpiresAt(httpUnlockCmd, 90);
+    ok('HTTP cloud unlock delivered UNLOCK with expires_at on gateway WebSocket');
     rowAfterHttpLock = await waitForDeviceStatusLockStatus(
       deviceStatusEvents,
       deviceId,
@@ -3420,6 +3637,138 @@ async function run() {
         `Expected telemetry battery=92 signal=-48 temp≈24.5; got battery=${gwUnlockedRow.battery_level} signal=${gwUnlockedRow.signal_strength} temp=${gwUnlockedRow.temperature}`,
       );
     }
+
+    heading('Device status subscription — gateway inventory property sync (dashboard/HMI)');
+    let inventoryPropBaseline = deviceStatusEvents.length;
+    const subscribedLockRenamed = `E2E WS Lock ${Date.now()}`;
+    step('POST /internal/gateway/devices/inventory — rename subscribed BluLok while dashboard listens');
+    const reqWsLockRename = 'req-ws-lock-rename';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqWsLockRename,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          gwLockDevice({
+            lock_id: remainingSerial,
+            name: subscribedLockRenamed,
+            location_description: 'Unit row updated',
+          }),
+        ],
+      },
+    }));
+    const respWsLockRename = await waitForProxyResponse(ws, reqWsLockRename);
+    if (respWsLockRename.status !== 200 || !respWsLockRename.body?.success) {
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(`Inventory lock rename for WS test failed: ${respWsLockRename.status}`);
+    }
+    const lockDetailResp = await axios.get(`${API_BASE}/devices/blulok/${deviceId}`, {
+      headers: authHeaders(token),
+    });
+    const lockDetailName = readBluLokDisplayName(lockDetailResp.data?.device);
+    if (lockDetailName !== subscribedLockRenamed) {
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `Expected BluLok displayName "${subscribedLockRenamed}" in REST, got "${lockDetailName}"`,
+      );
+    }
+    const wsLockRenameRow = await waitForDeviceStatusRow(
+      deviceStatusEvents,
+      deviceId,
+      (row) =>
+        row.name === subscribedLockRenamed
+        || readBluLokDisplayName(row) === subscribedLockRenamed,
+      inventoryPropBaseline,
+      8000,
+    );
+    if (!wsLockRenameRow) {
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        'Did not receive device_status_update with renamed lock display name on subscribed device',
+      );
+    }
+    ok(`Dashboard device_status subscription received BluLok rename "${subscribedLockRenamed}"`);
+
+    step('Access control inventory rename — separate device_status subscription (dashboard/HMI)');
+    const acForWs = await findAccessControlBySerialRelay(
+      token,
+      facilityId,
+      accessSerialMulti,
+      accessRelaySecondary,
+    );
+    if (!acForWs?.id) {
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error('Access control device missing for WS property sync test');
+    }
+    const acWsRenamed = `E2E WS Gate ${Date.now()}`;
+    const { ws: acStatusWs, events: acStatusEvents } = await connectDeviceStatusWatcher(token);
+    const acInitial = await subscribeDeviceStatusAndWaitInitial(acStatusWs, acStatusEvents, acForWs.id);
+    if (!acInitial) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error('Did not receive initial device_status_update for access control subscription');
+    }
+    const acPropBaseline = acStatusEvents.length;
+    const reqWsAcRename = 'req-ws-ac-rename';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqWsAcRename,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial, name: subscribedLockRenamed }),
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            device_type: 'gate',
+            name: acWsRenamed,
+            location_description: 'South gate WS updated',
+          }),
+        ],
+      },
+    }));
+    const respWsAcRename = await waitForProxyResponse(ws, reqWsAcRename);
+    if (respWsAcRename.status !== 200 || !respWsAcRename.body?.success) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(`Inventory access_control rename for WS test failed: ${respWsAcRename.status}`);
+    }
+    const acDetailResp = await axios.get(`${API_BASE}/access-control/devices/${acForWs.id}`, {
+      headers: authHeaders(token),
+    });
+    const acDetail = acDetailResp.data?.device || acDetailResp.data;
+    if (acDetail?.name !== acWsRenamed) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(`Expected access_control name "${acWsRenamed}" in REST, got "${acDetail?.name}"`);
+    }
+    const wsAcRenameRow = await waitForDeviceStatusRow(
+      acStatusEvents,
+      acForWs.id,
+      (row) => row.name === acWsRenamed,
+      acPropBaseline,
+      8000,
+    );
+    if (!wsAcRenameRow) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        'Did not receive device_status_update with renamed access_control name on subscribed device',
+      );
+    }
+    if (wsAcRenameRow.location_description !== 'South gate WS updated') {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `Expected WS location_description "South gate WS updated", got "${wsAcRenameRow.location_description}"`,
+      );
+    }
+    closeDeviceStatusWatcher(acStatusWs);
+    ok(`Dashboard device_status subscription received access_control rename "${acWsRenamed}"`);
     
     step('Unsubscribing from device_status');
     deviceStatusWs.send(JSON.stringify({
@@ -4923,23 +5272,55 @@ async function run() {
     ok('Received DENYLIST_REMOVE for primary tenant activation');
 
     heading('Gateway Command DevTools Test');
-    step('Testing dev gateway command: LOCK');
+    step('Set facility lock_command_timeout_sec=120 for LOCK/UNLOCK expires_at');
+    await axios.put(
+      `${API_BASE}/facilities/${facilityId}`,
+      { lock_command_timeout_sec: 120 },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    step('Testing dev gateway command: LOCK with expires_at');
+    const expectDevLockCmd = waitForCommand(
+      ws,
+      (cmd) => cmd.cmd_type === 'LOCK' && typeof cmd.expires_at === 'number',
+    );
     const devToolsLockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
       facilityId,
       command: 'LOCK',
       targetDeviceIds: [deviceId],
     }, { headers: { Authorization: `Bearer ${token}` } });
     if (!devToolsLockRes.data?.success) throw new Error('LOCK command failed');
-    ok('LOCK gateway command sent successfully');
+    assertLockCommandExpiresAt(await expectDevLockCmd, 120);
+    ok('LOCK gateway command sent with expires_at');
 
-    step('Testing dev gateway command: UNLOCK');
+    step('Testing dev gateway command: UNLOCK with expires_at');
+    const expectDevUnlockCmd = waitForCommand(
+      ws,
+      (cmd) => cmd.cmd_type === 'UNLOCK' && typeof cmd.expires_at === 'number',
+    );
     const devToolsUnlockRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
       facilityId,
       command: 'UNLOCK',
       targetDeviceIds: [deviceId],
     }, { headers: { Authorization: `Bearer ${token}` } });
     if (!devToolsUnlockRes.data?.success) throw new Error('UNLOCK command failed');
-    ok('UNLOCK gateway command sent successfully');
+    assertLockCommandExpiresAt(await expectDevUnlockCmd, 120);
+    ok('UNLOCK gateway command sent with expires_at');
+
+    step('One-shot facility timeout (0) sends expires_at=0 on UNLOCK');
+    await axios.put(
+      `${API_BASE}/facilities/${facilityId}`,
+      { lock_command_timeout_sec: 0 },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const expectOneShotUnlock = waitForCommand(ws, (cmd) => cmd.cmd_type === 'UNLOCK');
+    await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
+      facilityId,
+      command: 'UNLOCK',
+      targetDeviceIds: [deviceId],
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    assertLockCommandExpiresAt(await expectOneShotUnlock, 0);
+    ok('UNLOCK with timeout 0 sends expires_at=0');
 
     step('Testing dev gateway command: DENYLIST_ADD');
     const denyAddRes = await axios.post(`${API_BASE}/admin/dev-tools/gateway-command`, {
@@ -6835,6 +7216,196 @@ async function run() {
     lockFirmwareId = null;
 
     // =====================================================================
+    // Gateway Provisioning Backup E2E
+    // =====================================================================
+    heading('Gateway Provisioning Backup');
+
+    let provisioningBackupId = null;
+    let provisioningRestoreId = null;
+
+    step('Creating minimal zip for provisioning upload');
+    const archiver = require('archiver');
+    const { PassThrough } = require('stream');
+    const zipBuffer = await new Promise((resolve, reject) => {
+      const chunks = [];
+      const passthrough = new PassThrough();
+      passthrough.on('data', (c) => chunks.push(c));
+      passthrough.on('end', () => resolve(Buffer.concat(chunks)));
+      passthrough.on('error', reject);
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      archive.on('error', reject);
+      archive.pipe(passthrough);
+      archive.append('e2e provisioning backup', { name: 'mesh.txt' });
+      archive.finalize();
+    });
+
+    step('Gateway PROXY prepare provisioning upload');
+    const provPrepareResp = await proxyWs(ws, `prov-prepare-${Date.now()}`, 'POST', '/internal/gateway/provisioning/prepare', {
+      body: { filename: 'e2e-mesh.zip', size_bytes: zipBuffer.length, facility_id: created.facilityId },
+    });
+    if (provPrepareResp.status !== 200) {
+      if (process.env.SKIP_PROVISIONING_E2E === '1') {
+        info(`Skipping provisioning upload E2E (prepare status ${provPrepareResp.status}: ${JSON.stringify(provPrepareResp.body)})`);
+      } else {
+        throw new Error(`Provisioning prepare failed (status ${provPrepareResp.status}): ${JSON.stringify(provPrepareResp.body)}`);
+      }
+    } else {
+      const uploadId = provPrepareResp.body?.data?.upload_id;
+      const uploadUrl = provPrepareResp.body?.data?.upload_url;
+      const uploadHeaders = provPrepareResp.body?.data?.upload_headers || {};
+      if (!uploadId || !uploadUrl) throw new Error('Provisioning prepare missing upload_id/upload_url');
+
+      step('PUT zip to upload session');
+      await axios.put(uploadUrl, zipBuffer, {
+        headers: { ...uploadHeaders, 'Content-Length': zipBuffer.length },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+      });
+
+      step('Gateway PROXY complete provisioning upload');
+      const provCompleteResp = await proxyWs(ws, `prov-complete-${Date.now()}`, 'POST', '/internal/gateway/provisioning/complete', {
+        body: {
+          upload_id: uploadId,
+          filename: 'e2e-mesh.zip',
+          size_bytes: zipBuffer.length,
+          facility_id: created.facilityId,
+        },
+      });
+      if (provCompleteResp.status !== 200) throw new Error(`Provisioning complete failed: ${JSON.stringify(provCompleteResp.body)}`);
+      provisioningBackupId = provCompleteResp.body?.data?.backup?.id;
+      if (!provisioningBackupId) throw new Error('Missing backup id after provisioning complete');
+      if (provCompleteResp.body?.data?.backup?.storage_path !== undefined) {
+        throw new Error('storage_path should not be exposed in provisioning backup API response');
+      }
+      ok(`Provisioning backup created: id=${provisioningBackupId}`);
+
+      step('Admin list provisioning backups');
+      const listResp = await axios.get(`${API_BASE}/gateways/${created.gatewayId}/provisioning`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const listed = listResp.data?.data?.backups || [];
+      if (!listed.some((b) => b.id === provisioningBackupId)) throw new Error('Created backup not found in list');
+      ok(`Listed ${listed.length} provisioning backup(s)`);
+
+      step('Request upload from gateway (WS JWT)');
+      let uploadRequestJwt = null;
+      const uploadReqListener = (raw) => {
+        try {
+          const msg = JSON.parse(raw);
+          if (msg.type === 'PROVISIONING_UPLOAD_REQUEST' && msg.jwt) {
+            uploadRequestJwt = msg.jwt;
+          }
+        } catch { /* ignore */ }
+      };
+      ws.on('message', uploadReqListener);
+      await axios.post(
+        `${API_BASE}/gateways/${created.gatewayId}/provisioning/request-upload`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      await delay(1500);
+      ws.off('message', uploadReqListener);
+      if (!uploadRequestJwt) throw new Error('Expected PROVISIONING_UPLOAD_REQUEST on gateway WS');
+      const uploadReqClaims = decodeJwtClaims(uploadRequestJwt);
+      if (uploadReqClaims.cmd_type !== 'PROVISIONING_UPLOAD_REQUEST') throw new Error('Invalid upload request cmd_type');
+      ok('PROVISIONING_UPLOAD_REQUEST received on gateway WS');
+
+      step('Initiate provisioning restore and simulate gateway chunk ACK flow');
+      let provManifest = null;
+      let provNonce = null;
+      let provRestoreId = null;
+      const provDeliveryPromise = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Provisioning restore delivery timeout')), 120000);
+        const onMsg = (raw) => {
+          try {
+            const msg = JSON.parse(raw);
+            if (msg.type === 'PROVISIONING_MANIFEST' && msg.jwt) {
+              const payload = decodeJwtClaims(msg.jwt);
+              if (payload.cmd_type !== 'PROVISIONING_MANIFEST') return;
+              provManifest = payload;
+              provNonce = payload.nonce;
+              provRestoreId = payload.restore_id;
+            }
+            if (msg.type === 'PROVISIONING_CHUNK' && msg.jwt && provNonce) {
+              const payload = decodeJwtClaims(msg.jwt);
+              if (payload.cmd_type !== 'PROVISIONING_CHUNK') return;
+              if (payload.nonce !== provNonce) return;
+              ws.send(JSON.stringify({
+                type: 'PROVISIONING_CHUNK_ACK',
+                nonce: provNonce,
+                chunkIndex: payload.chunk_index,
+                status: 'ok',
+              }));
+              if (typeof payload.chunk_index === 'number' && provManifest && payload.chunk_index + 1 >= provManifest.chunk_count) {
+                clearTimeout(timer);
+                ws.off('message', onMsg);
+                resolve({ manifest: provManifest, restoreId: provRestoreId });
+              }
+            }
+          } catch { /* ignore */ }
+        };
+        ws.on('message', onMsg);
+      });
+
+      const restoreResp = await axios.post(
+        `${API_BASE}/gateways/${created.gatewayId}/provisioning/${provisioningBackupId}/restore`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      provisioningRestoreId = restoreResp.data?.data?.id;
+      if (!provisioningRestoreId) throw new Error('Missing restore id');
+      const provDelivery = await provDeliveryPromise;
+      ok(`Provisioning restore delivered ${provDelivery.manifest.chunk_count} chunk(s)`);
+
+      step('Poll restore status until verifying before gateway success report');
+      let provVerifyStatus = null;
+      for (let i = 0; i < 30; i++) {
+        await delay(500);
+        const statusResp = await axios.get(
+          `${API_BASE}/gateways/${created.gatewayId}/provisioning/restore-status`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        provVerifyStatus = statusResp.data?.data?.active;
+        if (provVerifyStatus?.status === 'verifying' || provVerifyStatus?.status === 'complete') break;
+      }
+      if (!provVerifyStatus || (provVerifyStatus.status !== 'verifying' && provVerifyStatus.status !== 'complete')) {
+        throw new Error(`Expected provisioning restore verifying, got ${provVerifyStatus?.status}`);
+      }
+
+      step('Gateway reports PROVISIONING_RESTORE_STATUS success');
+      ws.send(JSON.stringify({
+        type: 'PROVISIONING_RESTORE_STATUS',
+        restore_id: provDelivery.restoreId || provisioningRestoreId,
+        status: 'success',
+      }));
+      await delay(1000);
+
+      step('Poll restore status until complete');
+      let provFinal = null;
+      for (let i = 0; i < 20; i++) {
+        await delay(500);
+        const statusResp = await axios.get(
+          `${API_BASE}/gateways/${created.gatewayId}/provisioning/restore-status`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        provFinal = statusResp.data?.data?.active || statusResp.data?.data?.history?.[0];
+        if (provFinal?.status === 'complete') break;
+      }
+      if (!provFinal || provFinal.status !== 'complete') {
+        throw new Error(`Expected provisioning restore complete, got ${provFinal?.status}`);
+      }
+      ok('Provisioning restore complete');
+
+      step('Admin delete provisioning backup');
+      await axios.delete(
+        `${API_BASE}/gateways/${created.gatewayId}/provisioning/${provisioningBackupId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      provisioningBackupId = null;
+      ok('Provisioning backup deleted');
+    }
+
+    // =====================================================================
     // Access Codes & Device Groups E2E
     // =====================================================================
     heading('Access Codes & Device Groups');
@@ -7264,26 +7835,61 @@ async function run() {
       ok('Facility-scoped route pass includes app-entry access_control audience and user_role');
     }
 
-    step('Verifying facility_admin route pass includes user_role=facility_admin');
+    heading('Facility admin route pass uses DB facility associations');
+    step('Creating second facility with app-entry access control for facility admin scope test');
+    const faScopeFacilityId = await createTestFacility(token, `E2E-FA-Scope-${Date.now()}`);
+    created.extraFacilityIds.push(faScopeFacilityId);
+    const faScopeGatewayId = await createGateway(token, faScopeFacilityId, 'E2E FA Scope Gateway');
+    const faScopeAcResp = await axios.post(`${API_BASE}/devices/access-control`, {
+      gateway_id: faScopeGatewayId,
+      device_serial: `E2E-FA-SCOPE-AC-${Date.now()}`,
+      name: 'FA Scope Test Door',
+      device_type: 'door',
+      location_description: 'E2E second-facility app entry',
+      relay_channel: 1,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    const faScopeAcId = faScopeAcResp.data?.device?.id;
+    if (!faScopeAcId) throw new Error('Failed to create access control device for facility admin scope test');
+
+    step('Assigning facility admin to both facilities and refreshing login token');
+    await setUserFacilities(token, created.facilityAdminId, [created.facilityId, faScopeFacilityId]);
+    const faScopeLogin = await axios.post(`${API_BASE}/auth/login`, {
+      email: facilityAdmin.email,
+      password: facilityAdminPassword,
+    });
+    const faScopeToken = faScopeLogin.data?.token;
+    if (!faScopeToken) throw new Error('Facility admin re-login failed after multi-facility assignment');
+
+    step('Requesting facility admin route pass (must include app-entry only, no lock audiences)');
     const faRouteDevId = `e2e-fa-rp-${Date.now()}`;
     const faRoutePub = Buffer.alloc(32, 7).toString('base64');
-    await registerUserDevice(created.facilityAdminToken, faRouteDevId, faRoutePub);
-    const faPassResp = await axios.post(
-      `${API_BASE}/passes/request`,
-      { facility_id: created.facilityId },
-      { headers: { Authorization: `Bearer ${created.facilityAdminToken}`, 'X-App-Device-Id': faRouteDevId } },
-    );
-    if (!faPassResp.data?.success) {
-      throw new Error(`Facility admin route pass request failed: ${JSON.stringify(faPassResp.data)}`);
+    await registerUserDevice(faScopeToken, faRouteDevId, faRoutePub);
+    const faMultiPass = await requestRoutePass(faScopeToken, faRouteDevId);
+    const faMultiClaims = decodeJwtClaims(faMultiPass);
+    assertRoutePassUserRole(faMultiClaims, 'facility_admin');
+    if (!faMultiClaims?.aud?.some((aud) => aud === `access_control:${faScopeAcId}`)) {
+      throw new Error(`Expected route pass to include access_control:${faScopeAcId} for second facility`);
     }
-    const faPassToken = faPassResp.data.routePass;
-    if (!faPassToken) throw new Error('Facility admin route pass missing routePass');
-    const faRpClaims = decodeJwtClaims(faPassToken);
-    assertRoutePassUserRole(faRpClaims, 'facility_admin');
-    if (Object.prototype.hasOwnProperty.call(faRpClaims, 'schedule') && faRpClaims.schedule != null) {
-      throw new Error('Unexpected legacy schedule claim on facility_admin route pass');
+    if ((faMultiClaims.aud || []).some((aud) => String(aud).startsWith('lock:'))) {
+      throw new Error('Facility admin route pass must not include lock:* audiences');
     }
-    ok('Facility admin route pass includes user_role=facility_admin');
+    ok('Facility admin route pass scoped to app-entry access_control audiences only');
+
+    step('Removing second facility while JWT still lists both facilities');
+    await setUserFacilities(token, created.facilityAdminId, [created.facilityId]);
+
+    step('Requesting route pass with stale JWT — must exclude removed facility (DB wins over token)');
+    const faPassAfterRemoval = await requestRoutePass(faScopeToken, faRouteDevId);
+    const faClaimsAfterRemoval = decodeJwtClaims(faPassAfterRemoval);
+    if (faClaimsAfterRemoval?.aud?.some((aud) => aud === `access_control:${faScopeAcId}`)) {
+      throw new Error(`Route pass still includes access_control:${faScopeAcId} after facility was removed`);
+    }
+    if ((faClaimsAfterRemoval.aud || []).some((aud) => String(aud).startsWith('lock:'))) {
+      throw new Error('Facility admin route pass must not include lock:* audiences after facility removal');
+    }
+    ok('Fresh facility admin route pass excludes removed-facility app-entry audiences');
+
+    created.facilityAdminToken = faScopeToken;
 
     step('Setting group-scoped code and asserting gateway fan-out to all keypad members');
     let manualGroupCode = '333333';

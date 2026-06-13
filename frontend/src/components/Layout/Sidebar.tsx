@@ -28,6 +28,7 @@ import {
   PhotoIcon,
   PencilSquareIcon,
   EyeIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 
 interface NavItem {
@@ -85,6 +86,7 @@ const bluFMSNavigation: NavItem[] = [
 const bluDesignNavigation: NavItem[] = [
   { name: 'View', href: '/bludesign/view', icon: EyeIcon },
   { name: 'Build', href: '/bludesign/build', icon: WrenchScrewdriverIcon },
+  { name: 'Import', href: '/bludesign/import', icon: SparklesIcon },
   { name: 'Assets', href: '/bludesign/assets', icon: PhotoIcon },
   { name: 'Configuration', href: '/bludesign/config', icon: Cog6ToothIcon },
 ];

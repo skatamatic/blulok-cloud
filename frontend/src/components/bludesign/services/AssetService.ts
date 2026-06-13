@@ -78,10 +78,18 @@ export interface AssetDefinition {
   /** Position offset for custom models (meters from grid origin) */
   positionOffset?: { x: number; y: number; z: number };
   isBuiltin: boolean;
+  facilityUsageCount?: number;
   thumbnail?: string;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AssetFacilityUsage {
+  id: string;
+  name: string;
+  updatedAt: string;
+  usageCount: number;
 }
 
 export interface MaterialPreset {
@@ -374,6 +382,24 @@ export class AssetService {
     }
     
     cache.invalidateDefinition(id);
+  }
+
+  static async getAssetFacilities(assetId: string): Promise<AssetFacilityUsage[]> {
+    try {
+      const response = await apiService.get(`${this.BASE_URL}/definitions/${assetId}/facilities`);
+
+      if (response?.success && Array.isArray(response.data)) {
+        return response.data;
+      }
+
+      if (Array.isArray(response)) {
+        return response;
+      }
+
+      return [];
+    } catch {
+      return [];
+    }
   }
 
   // ========================================================================

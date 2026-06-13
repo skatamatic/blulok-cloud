@@ -53,6 +53,8 @@ export class GroundTileManager implements OptimizationClient {
   
   // LOGICAL LAYOUT: Source of truth for what tiles exist (objectId -> position, category)
   private logicalTiles: Map<string, {position: GridPosition, category: AssetCategory}> = new Map();
+  /** O(1) grid cell -> objectId for picking */
+  private tileByCell: Map<string, string> = new Map();
   
   // RENDERED LAYOUT: Instanced mesh batches for rendering (separate from logical data)
   private batches: Map<AssetCategory, TileBatch> = new Map();
@@ -117,7 +119,8 @@ export class GroundTileManager implements OptimizationClient {
         id: `ground-tile-${category}`,
         cells,
         options: {
-          maxRectangleSize: this.optimizationManager.isReadonlyMode() ? undefined : 50,
+          // Solid-color tiles do not need texture tiling limits; allow full merges in edit mode.
+          maxRectangleSize: this.optimizationManager.isReadonlyMode() ? undefined : 4096,
         },
         metadata: { category },
       });
@@ -211,7 +214,8 @@ export class GroundTileManager implements OptimizationClient {
       mesh.name = `ground-tiles-${category}`;
       mesh.count = 0;
       mesh.frustumCulled = this.frustumCullingEnabled;
-      mesh.receiveShadow = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
       mesh.userData.isGroundTileBatch = true;
       mesh.userData.category = category;
       
@@ -243,20 +247,12 @@ export class GroundTileManager implements OptimizationClient {
   ): THREE.Object3D {
     // 1. Update LOGICAL LAYOUT (source of truth)
     this.logicalTiles.set(objectId, { position, category });
+    this.tileByCell.set(`${position.x},${position.z}`, objectId);
     
-    // 2. Create invisible marker for selection/raycasting
-    // Note: instanceIndex will be set correctly after optimization completes
+    // 2. Lightweight marker for selection/highlight (not added to scene graph)
     const gridSize = this.gridSystem.getGridSize();
     const worldPos = this.gridSystem.gridToWorld(position);
-    // Use shared marker geometry and material (reuse to reduce material count)
-    const markerGeometry = this.sharedGeometry; // Reuse shared geometry
-    if (!markerGeometry) {
-      throw new Error('Shared geometry not initialized');
-    }
-    const marker = new THREE.Mesh(
-      markerGeometry,
-      this.sharedMarkerMaterial! // Use shared invisible material
-    );
+    const marker = new THREE.Object3D();
     marker.position.set(
       worldPos.x + gridSize / 2,
       0,
@@ -268,6 +264,12 @@ export class GroundTileManager implements OptimizationClient {
     marker.userData.gridPosition = position;
     marker.userData.selectable = true;
     marker.userData.instanceBatch = category;
+
+    // Hitbox child for selection outlines only (not in scene graph)
+    if (this.sharedGeometry && this.sharedMarkerMaterial) {
+      const hitbox = new THREE.Mesh(this.sharedGeometry, this.sharedMarkerMaterial);
+      marker.add(hitbox);
+    }
     
     return marker;
   }
@@ -341,6 +343,7 @@ export class GroundTileManager implements OptimizationClient {
     
     // 1. Remove from LOGICAL LAYOUT (source of truth)
     this.logicalTiles.delete(objectId);
+    this.tileByCell.delete(`${tile.position.x},${tile.position.z}`);
     
     // 2. Check if this was the last tile in this category
     const hasRemainingTiles = Array.from(this.logicalTiles.values()).some(t => t.category === category);
@@ -474,8 +477,9 @@ export class GroundTileManager implements OptimizationClient {
     );
     newMesh.name = batch.mesh.name;
     newMesh.count = batch.mesh.count;
-    newMesh.frustumCulled = false;
-    newMesh.receiveShadow = true;
+    newMesh.frustumCulled = this.frustumCullingEnabled;
+    newMesh.castShadow = false;
+    newMesh.receiveShadow = false;
     newMesh.userData = { ...batch.mesh.userData };
     
     // Copy existing matrices
@@ -520,6 +524,13 @@ export class GroundTileManager implements OptimizationClient {
     });
     return ids;
   }
+
+  /**
+   * Resolve a ground tile at a grid cell (O(1) lookup for hover/click picking).
+   */
+  getTileIdAtCell(x: number, z: number): string | null {
+    return this.tileByCell.get(`${x},${z}`) ?? null;
+  }
   
   
   /**
@@ -535,6 +546,7 @@ export class GroundTileManager implements OptimizationClient {
   clear(): void {
     // Clear logical layout
     this.logicalTiles.clear();
+    this.tileByCell.clear();
     
     // Clear rendered batches
     for (const batch of this.batches.values()) {

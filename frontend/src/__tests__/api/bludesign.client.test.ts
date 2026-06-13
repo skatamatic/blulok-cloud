@@ -5,6 +5,7 @@ import {
   updateFacility,
   deleteFacility,
   getLastOpened,
+  uploadLayoutSource,
   listAssetDefinitions,
   getAssetDefinition,
   createAssetDefinition,
@@ -145,6 +146,17 @@ describe('bludesign API client', () => {
       '/bludesign/assets/aid/materials/mid/texture',
       expect.any(FormData),
       { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+  });
+
+  it('uploadLayoutSource puts FormData with size limits', async () => {
+    api.put.mockResolvedValue({ success: true });
+    const file = new File(['png'], 'layout-source.png', { type: 'image/png' });
+    await uploadLayoutSource('fac-1', file);
+    expect(api.put).toHaveBeenCalledWith(
+      '/bludesign/facilities/fac-1/layout-source',
+      expect.any(FormData),
+      { maxBodyLength: Infinity, maxContentLength: Infinity }
     );
   });
 

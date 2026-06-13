@@ -13,8 +13,10 @@ import {
   DocumentDuplicateIcon,
   CpuChipIcon,
   DocumentTextIcon,
+  ArchiveBoxIcon,
 } from '@heroicons/react/24/outline';
 import GatewayFirmwareTab from './GatewayFirmwareTab';
+import GatewayProvisioningTab from './GatewayProvisioningTab';
 import { GatewayDeviceSyncHistory } from './GatewayDeviceSyncHistory';
 import { GatewayTelemetryLogsTab } from './GatewayTelemetryLogsTab';
 import { apiService } from '@/services/api.service';
@@ -96,7 +98,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       errors: string[];
     };
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'devtools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'provisioning' | 'devtools'>('overview');
 
   // Debug panel state
   const [fallbackJwtInput, setFallbackJwtInput] = useState('');
@@ -460,6 +462,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       ? [{ id: 'gateway-logs' as const, label: 'Gateway Logs', icon: DocumentTextIcon }]
       : []),
     { id: 'firmware' as const, label: 'Firmware', icon: CpuChipIcon },
+    ...(canManageGateway
+      ? [{ id: 'provisioning' as const, label: 'Provisioning Data', icon: ArchiveBoxIcon }]
+      : []),
     { id: 'devtools' as const, label: 'DevTools/Diag', icon: WrenchScrewdriverIcon },
   ];
 
@@ -1311,6 +1316,14 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             currentFirmwareVersion={gateway.firmware_version}
             gatewayModel={gateway.model}
           />
+        )}
+        {activeTab === 'provisioning' && canManageGateway && gateway && (
+          <GatewayProvisioningTab gatewayId={gateway.id} wsConnected={wsConnected} />
+        )}
+        {activeTab === 'provisioning' && canManageGateway && !gateway && (
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-300">
+            Assign a gateway to this facility before managing provisioning backups.
+          </div>
         )}
         {activeTab === 'devtools' && renderDevtoolsTab()}
         {renderRotationModal()}

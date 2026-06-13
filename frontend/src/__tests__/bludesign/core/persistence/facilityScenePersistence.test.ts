@@ -11,6 +11,10 @@ import {
   Orientation,
 } from '../../../../components/bludesign/core/types';
 import type { Building, EditorState, PlacedObject } from '../../../../components/bludesign/core/types';
+import {
+  LAYOUT_SOURCE_FILENAME,
+  type LayoutImportMetadata,
+} from '../../../../components/bludesign/layout-import/layoutImportMetadata';
 
 jest.mock('../../../../components/bludesign/core/ThemeManager', () => ({
   getThemeManager: () => ({
@@ -100,6 +104,45 @@ describe('exportFacilitySceneData', () => {
     expect(out.buildings).toHaveLength(1);
     expect(out.activeThemeId).toBe('theme-test');
     expect(out.camera.position.x).toBe(1);
+  });
+
+  it('preserves layoutImport metadata when provided', () => {
+    const layoutImport: LayoutImportMetadata = {
+      version: 1,
+      metersPerPixel: 0.05,
+      imageWidth: 640,
+      imageHeight: 480,
+      importedAt: '2026-01-01T00:00:00.000Z',
+      sourceImageFile: LAYOUT_SOURCE_FILENAME,
+      units: [
+        {
+          placedObjectId: 'p1',
+          bounds: { cx: 10, cy: 10, width: 20, height: 20 },
+          rotationRad: 0,
+        },
+      ],
+    };
+
+    const out = exportFacilitySceneData({
+      placedObjects: [],
+      state: minimalState(),
+      buildings: [],
+      dataSourceConfig: null,
+      layoutImport,
+    });
+
+    expect(out.layoutImport).toEqual(layoutImport);
+  });
+
+  it('omits layoutImport when not provided', () => {
+    const out = exportFacilitySceneData({
+      placedObjects: [],
+      state: minimalState(),
+      buildings: [],
+      dataSourceConfig: null,
+    });
+
+    expect(out.layoutImport).toBeUndefined();
   });
 });
 

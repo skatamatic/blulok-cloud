@@ -80,6 +80,7 @@ describe('DeviceSyncService', () => {
       updateBatteryLevel: jest.fn(),
       deleteBluLokDevice: jest.fn(),
       updateBluLokDeviceState: jest.fn(),
+      updateBluLokDevice: jest.fn(),
       findBluLokDeviceByIdOrSerial: jest.fn(),
       findAccessControlDevices: jest.fn().mockResolvedValue([]),
       bulkCreateAccessControlDevices: jest.fn().mockResolvedValue(0),
@@ -582,6 +583,50 @@ describe('DeviceSyncService', () => {
       expect(mockDeleteBluLokFromInventory).not.toHaveBeenCalled();
     });
 
+    it('should update display name for existing devices from inventory', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({
+          id: 'device-1',
+          device_serial: 'LOCK-1',
+          device_settings: { displayName: 'Old Name', lockNumber: 101 },
+        }),
+      ]);
+      mockDeviceModel.updateBluLokDevice.mockResolvedValue({
+        id: 'device-1',
+        device_settings: { displayName: 'New Name', lockNumber: 101 },
+      });
+
+      const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1', name: 'New Name', lock_number: 101 },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(result.unchanged).toBe(0);
+      expect(mockDeviceModel.updateBluLokDevice).toHaveBeenCalledWith('device-1', {
+        device_settings: { displayName: 'New Name', lockNumber: 101 },
+      });
+    });
+
+    it('should set display name on newly provisioned locks from inventory', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
+
+      await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-NEW', lock_number: 42, name: 'Front Door', location_description: 'Row A' },
+      ]);
+
+      expect(mockDeviceModel.bulkCreateBluLokDevices).toHaveBeenCalledWith([
+        expect.objectContaining({
+          device_serial: 'LOCK-NEW',
+          device_settings: {
+            lockNumber: 42,
+            displayName: 'Front Door',
+            locationDescription: 'Row A',
+          },
+        }),
+      ]);
+    });
+
     it('should update firmware_version for existing devices', async () => {
       mockDeviceModel.findBluLokDevices.mockResolvedValue([
         createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1', firmware_version: '1.0.0' }),
@@ -965,6 +1010,45 @@ describe('DeviceSyncService', () => {
           last_activity: expect.any(Date),
         }
       );
+    });
+
+    it('should update access_control name and location on existing inventory rows', async () => {
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+        {
+          id: 'ac-1',
+          gateway_id: gatewayId,
+          device_serial: 'KP-RENAME',
+          relay_channel: 2,
+          name: 'Old Gate',
+          location_description: 'Old location',
+          device_type: 'gate',
+          metadata: { createdFromGatewaySync: true },
+        },
+      ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.updateAccessControlDevice.mockResolvedValue({
+        id: 'ac-1',
+        name: 'New Gate',
+      } as AccessControlDevice);
+
+      const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        {
+          kind: 'access_control',
+          access_id: 'KP-RENAME',
+          relay_channel: 2,
+          name: 'New Gate',
+          location_description: 'New location',
+          device_type: 'door',
+        },
+      ]);
+
+      expect(result.updated).toBe(1);
+      expect(result.unchanged).toBe(0);
+      expect(mockDeviceModel.updateAccessControlDevice).toHaveBeenCalledWith('ac-1', {
+        name: 'New Gate',
+        location_description: 'New location',
+        device_type: 'door',
+      });
+      expect(mockDeviceModel.updateAccessControlDeviceBySerialAndRelay).not.toHaveBeenCalled();
     });
   });
 

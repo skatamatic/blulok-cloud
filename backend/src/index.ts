@@ -79,6 +79,8 @@ async function bootstrap(): Promise<void> {
     GatewayEventsService.getInstance().initialize(server);
     const { FirmwareService } = await import('@/services/firmware/firmware.service');
     await FirmwareService.recoverInFlightStateOnStartup();
+    const { ProvisioningRestoreService } = await import('@/services/provisioning/provisioning-restore.service');
+    await ProvisioningRestoreService.recoverInFlightStateOnStartup();
 
     const loggerInterceptor = LoggerInterceptorService.getInstance();
 

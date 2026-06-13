@@ -14,6 +14,7 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy source and build
 COPY . .
 RUN npm run build
+RUN test -f dist/src/bludesign/layout-import/ocr/tessdata/eng.traineddata.gz
 
 # Production stage
 FROM node:18-alpine AS production

@@ -306,7 +306,10 @@ export interface AssetMetadata {
   canRotate: boolean;
   canStack: boolean;
   gridUnits: AssetGridUnits;
-  
+
+  /** Saved facilities referencing this asset definition (custom assets only). */
+  facilityUsageCount?: number;
+
   // Multi-floor vertical shaft properties
   /** If true, this asset spans all floors when placed in a building (e.g., elevators, stairwells) */
   spansAllFloors?: boolean;
@@ -924,6 +927,8 @@ export interface FacilityData {
   dataSource?: DataSourceConfig;
   /** Whether simulation mode is enabled */
   simulationMode?: boolean;
+  /** Pixel-space layout from an import wizard (optional). Source image stored separately. */
+  layoutImport?: import('../layout-import/layoutImportMetadata').LayoutImportMetadata;
 }
 
 /**

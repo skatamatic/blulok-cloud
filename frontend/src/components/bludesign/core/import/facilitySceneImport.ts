@@ -38,6 +38,7 @@ export interface FacilitySceneImportServices {
   /** Resolve theme id (defined); emit UI event if missing */
   resolveAndApplyTheme(activeThemeId: string): void;
   setDataSourceConfig(config: DataSourceConfig | null): void;
+  frameImportedLayout?(): void;
   emitImportComplete(): void;
 }
 
@@ -108,6 +109,10 @@ export function runFacilitySceneImport(
     s.setDataSourceConfig(data.dataSource);
   } else {
     s.setDataSourceConfig(null);
+  }
+
+  if ('layoutImport' in data && data.layoutImport) {
+    s.frameImportedLayout?.();
   }
 
   s.emitImportComplete();

@@ -1595,6 +1595,9 @@ jest.mock('../models/user-facility-association.model', () => ({
     addUserToFacility: jest.fn().mockResolvedValue({ id: 'new-association' }),
         removeUserFromFacility: jest.fn().mockImplementation((userId: string, facilityId: string) => {
           // Mock non-existent associations
+          if (facilityId === 'non-existent') {
+            return Promise.resolve(0);
+          }
           if (userId === 'tenant-1' && facilityId === 'non-existent') {
             return Promise.resolve(0);
           }
@@ -1609,6 +1612,12 @@ jest.mock('../models/user-facility-association.model', () => ({
           }
           if (userId === 'tenant-1' && facilityId === '550e8400-e29b-41d4-a716-446655440002') {
             return Promise.resolve(false);
+          }
+          if (
+            userId === 'facility-admin-2'
+            && (facilityId === '550e8400-e29b-41d4-a716-446655440001' || facilityId === 'facility-1')
+          ) {
+            return Promise.resolve(true);
           }
           return Promise.resolve(false);
         }),

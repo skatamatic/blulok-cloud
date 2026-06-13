@@ -132,15 +132,16 @@ describe('AppEntryAccessService', () => {
     expect(deviceIds).toEqual([]);
   });
 
-  it('returns empty for tenant when facility scope is empty', async () => {
+  it('returns zone-linked devices for tenant without explicit facility scope', async () => {
     const assignedRows = [{ device_id: 'lock-assigned-1' }];
     const sharedRows: any[] = [];
+    const zoneRows = [{ id: 'ac-zone-1' }];
     let zoneQuery: any;
     const db: any = jest.fn((table: string) => {
       if (table === 'unit_assignments as ua') return makeThenableQuery(assignedRows);
       if (table === 'key_sharing as ks') return makeThenableQuery(sharedRows);
       if (table === 'device_group_members as zone_access') {
-        zoneQuery = makeThenableQuery([]);
+        zoneQuery = makeThenableQuery(zoneRows);
         return zoneQuery;
       }
       throw new Error(`Unexpected table: ${table}`);
@@ -153,8 +154,8 @@ describe('AppEntryAccessService', () => {
       facilityIds: [],
     });
 
-    expect(zoneQuery.andWhereRaw).toHaveBeenCalledWith('1 = 0');
-    expect(deviceIds).toEqual([]);
+    expect(zoneQuery.andWhereRaw).not.toHaveBeenCalled();
+    expect(deviceIds).toEqual(['ac-zone-1']);
   });
 });
 

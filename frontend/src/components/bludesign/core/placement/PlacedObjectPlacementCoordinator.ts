@@ -160,8 +160,7 @@ export class PlacedObjectPlacementCoordinator {
         placedObject.position
       );
 
-      this.deps.scene.add(marker);
-      this.deps.sceneManager.addObject(placedObject.id, marker, placedObject);
+      this.deps.sceneManager.addObject(placedObject.id, marker, placedObject, { trackOnly: true });
 
       if (this.deps.gridSystem.getGridAlignment()) {
         this.deps.gridSystem.markOccupiedAlignedFootprint(
@@ -263,8 +262,7 @@ export class PlacedObjectPlacementCoordinator {
         placedObject.position
       );
 
-      this.deps.scene.add(marker);
-      this.deps.sceneManager.addObject(placedObject.id, marker, placedObject);
+      this.deps.sceneManager.addObject(placedObject.id, marker, placedObject, { trackOnly: true });
 
       const size = { x: asset.gridUnits.x, z: asset.gridUnits.z };
       const replacedGroundId = this.deps.gridSystem.markOccupied(

@@ -27,10 +27,7 @@ export class AppEntryAccessService {
     }
     if (facilityIds && facilityIds.length > 0) {
       qb.whereIn(column, facilityIds);
-      return;
     }
-    // Empty scopes should return no rows for scoped roles.
-    qb.andWhereRaw('1 = 0');
   }
 
   private static async getTenantAccessibleBluLokDeviceIds(

@@ -6,7 +6,13 @@
  */
 
 import { apiService } from '@/services/api.service';
+import { getApiBaseUrl } from '@/services/appConfig';
 import { FacilityData, FacilitySummary } from '@/components/bludesign/core/types';
+import type {
+  DetectionOptions,
+  DetectionStreamEvent,
+  LayoutImportDetectionResult,
+} from '@/components/bludesign/layout-import/types';
 
 const API_BASE = '/bludesign';
 
@@ -85,6 +91,35 @@ export async function deleteFacility(id: string): Promise<void> {
 }
 
 /**
+ * Upload the import plan raster for a saved facility.
+ */
+export async function uploadLayoutSource(facilityId: string, file: File): Promise<void> {
+  const formData = new FormData();
+  formData.append('file', file);
+  await apiService.put(`${API_BASE}/facilities/${facilityId}/layout-source`, formData, {
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+}
+
+/**
+ * Fetch the persisted import plan image as a Blob.
+ */
+export async function getLayoutSourceImage(facilityId: string): Promise<Blob> {
+  return apiService.get(`${API_BASE}/facilities/${facilityId}/layout-source`, {
+    responseType: 'blob',
+  });
+}
+
+/**
+ * Load the import plan as an object URL (caller should revoke when done).
+ */
+export async function fetchLayoutSourceObjectUrl(facilityId: string): Promise<string> {
+  const blob = await getLayoutSourceImage(facilityId);
+  return URL.createObjectURL(blob);
+}
+
+/**
  * Get the last opened facility for the current user
  */
 export async function getLastOpened(): Promise<FacilityResponse | null> {
@@ -96,6 +131,127 @@ export async function getLastOpened(): Promise<FacilityResponse | null> {
     }
     throw error;
   }
+}
+
+// ==========================================================================
+// Layout Import (image/PDF → unit detection) API
+// ==========================================================================
+
+/**
+ * Run the detection engine on an uploaded raster image. The backend returns
+ * detected unit candidates in source-image pixel space.
+ *
+ * @param file    A raster image (PNG/JPG/WEBP). PDFs must be rasterized first.
+ * @param options Optional detection tuning forwarded to the engine.
+ */
+export async function detectLayout(
+  file: File,
+  options?: DetectionOptions
+): Promise<LayoutImportDetectionResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (options) {
+    formData.append('options', JSON.stringify(options));
+  }
+  const response = await apiService.post(`${API_BASE}/layout-import/detect`, formData, {
+    timeout: 0,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+  // Endpoint responds with { success, data }.
+  return (response?.data ?? response) as LayoutImportDetectionResult;
+}
+
+/**
+ * Streaming variant of {@link detectLayout}. Posts the image and consumes a
+ * newline-delimited JSON stream of {@link DetectionStreamEvent}s, invoking
+ * `onEvent` for each so the UI can show granular progress and draw candidate
+ * boxes as they are discovered. Resolves with the final result.
+ *
+ * Uses `fetch` (not the axios client) so we can read `response.body` as a
+ * stream; the auth token and base URL are applied the same way the axios
+ * interceptor does.
+ *
+ * @param file    A raster image (PNG/JPG/WEBP). PDFs must be rasterized first.
+ * @param options Optional detection tuning forwarded to the engine.
+ * @param onEvent Called for every streamed event (stage/rectangles/unit/...).
+ * @param signal  Optional AbortSignal to cancel an in-flight detection.
+ */
+export async function detectLayoutStream(
+  file: File,
+  options: DetectionOptions | undefined,
+  onEvent: (event: DetectionStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<LayoutImportDetectionResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (options) {
+    formData.append('options', JSON.stringify(options));
+  }
+
+  const token = localStorage.getItem('authToken');
+  const url = `${getApiBaseUrl()}/api/v1${API_BASE}/layout-import/detect/stream`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    let message = `Detection failed (HTTP ${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) message = body.message;
+    } catch {
+      /* non-JSON error body; keep the generic message */
+    }
+    throw new Error(message);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: LayoutImportDetectionResult | null = null;
+
+  const handleLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let event: DetectionStreamEvent;
+    try {
+      event = JSON.parse(trimmed) as DetectionStreamEvent;
+    } catch {
+      return; // ignore partial/garbled lines defensively
+    }
+    if (event.type === 'error') {
+      throw new Error(event.message);
+    }
+    if (event.type === 'done') {
+      result = event.result;
+    }
+    onEvent(event);
+  };
+
+  // Read NDJSON: accumulate, split on newlines, parse complete lines.
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      handleLine(line);
+    }
+  }
+  // Flush any trailing line without a newline terminator.
+  if (buffer.trim()) handleLine(buffer);
+
+  if (!result) {
+    throw new Error('Detection stream ended without a result');
+  }
+  return result;
 }
 
 // ==========================================================================

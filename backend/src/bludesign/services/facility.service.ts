@@ -8,7 +8,10 @@
 
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
+import { NotFoundError } from '@/middleware/error.middleware';
 import { FacilityStorageAdapter } from './facility-storage.adapter';
+import { AssetService } from './asset.service';
+import { extractFacilityAssetIds, countAssetPlacementsInFacility } from './facilityAssetUsage';
 
 export interface FacilityData {
   name: string;
@@ -38,6 +41,14 @@ export interface FacilitySummary {
   lastOpened: Date | null;
   updatedAt: Date;
   createdAt: Date;
+}
+
+export interface AssetFacilityUsage {
+  id: string;
+  name: string;
+  updatedAt: Date;
+  /** Number of placed objects in this facility using the asset. */
+  usageCount: number;
 }
 
 export class FacilityService {
@@ -105,6 +116,7 @@ export class FacilityService {
 
     await this.db('bludesign_user_facilities').insert(dbRecord);
     await this.storage.saveData(userId, id, data);
+    await AssetService.incrementFacilityUsage(extractFacilityAssetIds(data));
 
     return {
       id,
@@ -124,6 +136,11 @@ export class FacilityService {
     data: FacilityData,
     thumbnail?: string,
   ): Promise<void> {
+    const existing = await this.getFacility(id, userId);
+    if (!existing) {
+      throw new NotFoundError('Facility');
+    }
+
     const updates: Record<string, unknown> = {
       updated_at: new Date(),
     };
@@ -132,14 +149,27 @@ export class FacilityService {
       updates.thumbnail = thumbnail;
     }
 
-    await this.db('bludesign_user_facilities')
+    const affected = await this.db('bludesign_user_facilities')
       .where({ id, user_id: userId })
       .update(updates);
 
+    if (!affected) {
+      throw new NotFoundError('Facility');
+    }
+
     await this.storage.saveData(userId, id, data);
+    await AssetService.syncFacilityAssetUsage(
+      extractFacilityAssetIds(existing.data),
+      extractFacilityAssetIds(data)
+    );
   }
 
   async deleteFacility(id: string, userId: string): Promise<void> {
+    const existing = await this.getFacility(id, userId);
+    if (existing) {
+      await AssetService.decrementFacilityUsage(extractFacilityAssetIds(existing.data));
+    }
+
     await this.db('bludesign_user_facilities')
       .where({ id, user_id: userId })
       .delete();
@@ -170,11 +200,61 @@ export class FacilityService {
     };
   }
 
+  async saveLayoutSource(id: string, userId: string, buffer: Buffer): Promise<void> {
+    const row = await this.db('bludesign_user_facilities')
+      .where({ id, user_id: userId })
+      .first();
+    if (!row) {
+      throw new NotFoundError('Facility');
+    }
+    await this.storage.saveLayoutSource(userId, id, buffer);
+  }
+
+  async loadLayoutSource(id: string, userId: string): Promise<Buffer> {
+    const row = await this.db('bludesign_user_facilities')
+      .where({ id, user_id: userId })
+      .first();
+    if (!row) {
+      throw new NotFoundError('Facility');
+    }
+    return this.storage.loadLayoutSource(userId, id);
+  }
+
   async updateLastOpened(id: string, userId: string): Promise<void> {
     await this.db('bludesign_user_facilities')
       .where({ id, user_id: userId })
       .update({
         last_opened: new Date(),
       });
+  }
+
+  /** Saved facilities whose scene data references the given asset definition id. */
+  async listFacilitiesUsingAsset(
+    userId: string,
+    assetDefinitionId: string,
+  ): Promise<AssetFacilityUsage[]> {
+    const summaries = await this.getUserFacilities(userId);
+    const matches: AssetFacilityUsage[] = [];
+
+    for (const summary of summaries) {
+      try {
+        const data = await this.storage.loadData(userId, summary.id);
+        const usageCount = countAssetPlacementsInFacility(data, assetDefinitionId);
+        if (usageCount > 0) {
+          matches.push({
+            id: summary.id,
+            name: summary.name,
+            updatedAt: summary.updatedAt,
+            usageCount,
+          });
+        }
+      } catch {
+        // Skip facilities with unreadable storage payloads.
+      }
+    }
+
+    return matches.sort(
+      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()
+    );
   }
 }

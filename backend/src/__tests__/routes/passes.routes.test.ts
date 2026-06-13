@@ -294,11 +294,16 @@ describe('Passes Routes', () => {
   });
 
   describe('FACILITY_ADMIN role', () => {
-    it('returns route pass scoped to locks in assigned facilities', async () => {
+    it('returns route pass scoped to app-entry access_control in assigned facilities only', async () => {
+      const { AppEntryAccessService } = require('@/services/passes/app-entry-access.service');
+      const { UserFacilityAssociationModel } = require('@/models/user-facility-association.model');
+      (UserFacilityAssociationModel.getUserFacilityIds as jest.Mock).mockResolvedValue(['facility-1']);
+      (AppEntryAccessService.resolveDeviceIds as jest.Mock).mockResolvedValue(['ac-fac-1']);
+
       (DatabaseService.getInstance as jest.Mock).mockReturnValue({
         connection: createMockDbConnection(
           { public_key: 'ZmFjaWw=' },
-          [{ device_serial: 'serial-fac-1' }]
+          [{ device_serial: 'serial-fac-1' }],
         ),
       });
 
@@ -310,7 +315,8 @@ describe('Passes Routes', () => {
       expect(res.body.success).toBe(true);
       const payload = await Ed25519Service.verifyJwt(res.body.routePass);
       expect(payload.user_role).toBe('facility_admin');
-      expect(payload.aud).toEqual(['lock:serial-fac-1']);
+      expect(payload.aud).toEqual(['access_control:ac-fac-1']);
+      expect(payload.aud).not.toEqual(expect.arrayContaining([expect.stringMatching(/^lock:/)]));
     });
   });
 

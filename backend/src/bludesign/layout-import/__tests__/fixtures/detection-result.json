@@ -1,0 +1,2337 @@
+{
+  "imageWidth": 2133,
+  "imageHeight": 532,
+  "units": [
+    {
+      "id": "u1",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1795.9139404296875,
+        "cy": 278.9019775390625,
+        "width": 76.42880249023438,
+        "height": 30.544689178466797
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9571131835654395,
+      "doorCountHint": 3,
+      "colorHex": "#72eeee",
+      "label": "136"
+    },
+    {
+      "id": "u2",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1856.7650146484375,
+        "cy": 267.87847900390625,
+        "width": 76.51991271972656,
+        "height": 30.87900733947754
+      },
+      "rotationRad": 1.3923858390483081,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9481628191684326,
+      "doorCountHint": 2,
+      "colorHex": "#72eeee",
+      "label": "134"
+    },
+    {
+      "id": "u3",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1826.2298583984375,
+        "cy": 273.3900451660156,
+        "width": 76.4288101196289,
+        "height": 31.170791625976562
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9415611819627246,
+      "doorCountHint": 2,
+      "colorHex": "#72eeee",
+      "label": "135"
+    },
+    {
+      "id": "u4",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2045.75390625,
+        "cy": 211.31039428710938,
+        "width": 76.39013671875,
+        "height": 30.141660690307617
+      },
+      "rotationRad": -0.060532053680847034,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9576440835815788,
+      "doorCountHint": 3,
+      "colorHex": "#eded0b",
+      "label": "93"
+    },
+    {
+      "id": "u5",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1765.8179931640625,
+        "cy": 284.3740234375,
+        "width": 76.42880249023438,
+        "height": 30.723573684692383
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.947760955648911,
+      "doorCountHint": 2,
+      "colorHex": "#71eeee",
+      "label": "137"
+    },
+    {
+      "id": "u6",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1640.0628662109375,
+        "cy": 160.01876831054688,
+        "width": 76.37769317626953,
+        "height": 30.348308563232422
+      },
+      "rotationRad": 1.3203533236741174,
+      "labelConfidence": 0.84,
+      "detectionConfidence": 0.953920685798831,
+      "doorCountHint": 3,
+      "colorHex": "#eb028c",
+      "label": "112"
+    },
+    {
+      "id": "u7",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1669.9642333984375,
+        "cy": 152.4510040283203,
+        "width": 76.1749267578125,
+        "height": 30.348308563232422
+      },
+      "rotationRad": 1.3203533236741174,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9551621807152941,
+      "doorCountHint": 3,
+      "colorHex": "#ec028d",
+      "label": "117"
+    },
+    {
+      "id": "u8",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2047.7001953125,
+        "cy": 242.10000610351562,
+        "width": 76.4283218383789,
+        "height": 30.168001174926758
+      },
+      "rotationRad": -0.06114817599903687,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.95627568493456,
+      "doorCountHint": 3,
+      "colorHex": "#eded0b",
+      "label": "92"
+    },
+    {
+      "id": "u9",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2055.19140625,
+        "cy": 365.28387451171875,
+        "width": 76.42037200927734,
+        "height": 30.141660690307617
+      },
+      "rotationRad": -0.060532053680847034,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9560713289244418,
+      "doorCountHint": 3,
+      "colorHex": "#ecec0b",
+      "label": "88"
+    },
+    {
+      "id": "u10",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1789.5269775390625,
+        "cy": 121.92335510253906,
+        "width": 75.92709350585938,
+        "height": 30.348308563232422
+      },
+      "rotationRad": 1.3203533236741174,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9550793256213208,
+      "doorCountHint": 3,
+      "colorHex": "#ea028b",
+      "label": "107"
+    },
+    {
+      "id": "u11",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1729.7528076171875,
+        "cy": 137.21078491210938,
+        "width": 76.1146240234375,
+        "height": 30.33905029296875
+      },
+      "rotationRad": 1.3197936603710374,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9539912882413194,
+      "doorCountHint": 3,
+      "colorHex": "#e9028b",
+      "label": "109"
+    },
+    {
+      "id": "u12",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1610.1776123046875,
+        "cy": 167.71722412109375,
+        "width": 76.3133316040039,
+        "height": 30.3638858795166
+      },
+      "rotationRad": 1.3197936603710374,
+      "labelConfidence": 0.94,
+      "detectionConfidence": 0.9523473350457355,
+      "doorCountHint": 3,
+      "colorHex": "#eb028c",
+      "label": "113"
+    },
+    {
+      "id": "u13",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2036.25537109375,
+        "cy": 57.34058380126953,
+        "width": 76.42037200927734,
+        "height": 30.141660690307617
+      },
+      "rotationRad": -0.060532053680847034,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.955148794437456,
+      "doorCountHint": 3,
+      "colorHex": "#eded0b",
+      "label": "98"
+    },
+    {
+      "id": "u14",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2038.151123046875,
+        "cy": 88.13360595703125,
+        "width": 76.4283218383789,
+        "height": 30.168001174926758
+      },
+      "rotationRad": -0.06114817599903687,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9546492735423021,
+      "doorCountHint": 3,
+      "colorHex": "#eeee0b",
+      "label": "97"
+    },
+    {
+      "id": "u15",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1759.653564453125,
+        "cy": 129.60028076171875,
+        "width": 76.03974914550781,
+        "height": 30.348308563232422
+      },
+      "rotationRad": 1.3203533236741174,
+      "labelConfidence": 0.67,
+      "detectionConfidence": 0.9538268420671845,
+      "doorCountHint": 3,
+      "colorHex": "#e9028b",
+      "label": "108"
+    },
+    {
+      "id": "u16",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1399.8890380859375,
+        "cy": 469.1399841308594,
+        "width": 76.34739685058594,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9560921435940294,
+      "doorCountHint": 3,
+      "colorHex": "#118ded",
+      "label": "66"
+    },
+    {
+      "id": "u17",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1322.810791015625,
+        "cy": 466.1754150390625,
+        "width": 76.34739685058594,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9560921435940294,
+      "doorCountHint": 3,
+      "colorHex": "#118dee",
+      "label": "59"
+    },
+    {
+      "id": "u18",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2043.9749755859375,
+        "cy": 180.51173400878906,
+        "width": 76.56072235107422,
+        "height": 30.168001174926758
+      },
+      "rotationRad": -0.06114817599903687,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.953214827818113,
+      "doorCountHint": 3,
+      "colorHex": "#eded0b",
+      "label": "94"
+    },
+    {
+      "id": "u19",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1917.2469482421875,
+        "cy": 465.8392028808594,
+        "width": 76.36203002929688,
+        "height": 30.177186965942383
+      },
+      "rotationRad": -1.5350972141429269,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9542650333534058,
+      "doorCountHint": 3,
+      "colorHex": "#ed0106",
+      "label": "82"
+    },
+    {
+      "id": "u20",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2057.075439453125,
+        "cy": 396.06683349609375,
+        "width": 76.44869232177734,
+        "height": 30.14763069152832
+      },
+      "rotationRad": -0.06114817599903687,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9540092923040151,
+      "doorCountHint": 3,
+      "colorHex": "#ee0106",
+      "label": "87"
+    },
+    {
+      "id": "u21",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2053.3251953125,
+        "cy": 334.4801025390625,
+        "width": 76.40795135498047,
+        "height": 30.14763069152832
+      },
+      "rotationRad": -0.06114817599903687,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9542466491042052,
+      "doorCountHint": 3,
+      "colorHex": "#eded0b",
+      "label": "89"
+    },
+    {
+      "id": "u22",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1732.2501220703125,
+        "cy": 458.75006103515625,
+        "width": 76.32633209228516,
+        "height": 30.177186965942383
+      },
+      "rotationRad": -1.5350972141429269,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9542771874572697,
+      "doorCountHint": 3,
+      "colorHex": "#ee0106",
+      "label": "76"
+    },
+    {
+      "id": "u23",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2060.836181640625,
+        "cy": 457.6529235839844,
+        "width": 76.38758087158203,
+        "height": 30.14763069152832
+      },
+      "rotationRad": -0.06114817599903687,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.954338282809689,
+      "doorCountHint": 3,
+      "colorHex": "#ed0106",
+      "label": "85"
+    },
+    {
+      "id": "u24",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1819.439208984375,
+        "cy": 114.39921569824219,
+        "width": 75.81444549560547,
+        "height": 30.348308563232422
+      },
+      "rotationRad": 1.3203533236741174,
+      "labelConfidence": 0.92,
+      "detectionConfidence": 0.9546512677800136,
+      "doorCountHint": 2,
+      "colorHex": "#e9028b",
+      "label": "106"
+    },
+    {
+      "id": "u25",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1699.854248046875,
+        "cy": 144.839599609375,
+        "width": 76.15239715576172,
+        "height": 30.348308563232422
+      },
+      "rotationRad": 1.3203533236741174,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9524158990122223,
+      "doorCountHint": 3,
+      "colorHex": "#eb028c",
+      "label": "110"
+    },
+    {
+      "id": "u26",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1091.53662109375,
+        "cy": 457.29949951171875,
+        "width": 76.34739685058594,
+        "height": 30.035486221313477
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9560072329273123,
+      "doorCountHint": 3,
+      "colorHex": "#118eee",
+      "label": "48"
+    },
+    {
+      "id": "u27",
+      "kind": "unit",
+      "bounds": {
+        "cx": 937.3800048828125,
+        "cy": 451.37042236328125,
+        "width": 76.34739685058594,
+        "height": 30.035486221313477
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9560072329273123,
+      "doorCountHint": 3,
+      "colorHex": "#118dee",
+      "label": "38"
+    },
+    {
+      "id": "u28",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1245.7318115234375,
+        "cy": 463.23052978515625,
+        "width": 76.351318359375,
+        "height": 30.063505172729492
+      },
+      "rotationRad": 0.03771795520581794,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9555028417331405,
+      "doorCountHint": 3,
+      "colorHex": "#118ded",
+      "label": "58"
+    },
+    {
+      "id": "u29",
+      "kind": "unit",
+      "bounds": {
+        "cx": 474.87115478515625,
+        "cy": 433.600830078125,
+        "width": 76.34739685058594,
+        "height": 30.07391929626465
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9550032638211523,
+      "doorCountHint": 3,
+      "colorHex": "#118eef",
+      "label": "16"
+    },
+    {
+      "id": "u30",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1454.73681640625,
+        "cy": 448.0956726074219,
+        "width": 76.34739685058594,
+        "height": 30.07391929626465
+      },
+      "rotationRad": -1.5323537337788464,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9550032638211523,
+      "doorCountHint": 3,
+      "colorHex": "#128e48",
+      "label": "67"
+    },
+    {
+      "id": "u31",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2049.547119140625,
+        "cy": 272.898681640625,
+        "width": 76.39013671875,
+        "height": 30.141660690307617
+      },
+      "rotationRad": -0.060532053680847034,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9536267557933115,
+      "doorCountHint": 3,
+      "colorHex": "#eeee0b",
+      "label": "91"
+    },
+    {
+      "id": "u32",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1886.417236328125,
+        "cy": 464.65478515625,
+        "width": 76.33441162109375,
+        "height": 30.229934692382812
+      },
+      "rotationRad": -1.5300026493954433,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.952186241198266,
+      "doorCountHint": 3,
+      "colorHex": "#ee0106",
+      "label": "81"
+    },
+    {
+      "id": "u33",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1701.42041015625,
+        "cy": 457.57330322265625,
+        "width": 76.33441162109375,
+        "height": 30.229934692382812
+      },
+      "rotationRad": -1.5300026493954433,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.952186241198266,
+      "doorCountHint": 3,
+      "colorHex": "#128e48",
+      "label": "75"
+    },
+    {
+      "id": "u34",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2001.1348876953125,
+        "cy": 492.24560546875,
+        "width": 76.38583374023438,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9549269214258658,
+      "doorCountHint": 3,
+      "colorHex": "#ee0106",
+      "label": "84"
+    },
+    {
+      "id": "u35",
+      "kind": "unit",
+      "bounds": {
+        "cx": 551.9494018554688,
+        "cy": 436.5653991699219,
+        "width": 76.34739685058594,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.954404473826838,
+      "doorCountHint": 3,
+      "colorHex": "#118ff0",
+      "label": "17"
+    },
+    {
+      "id": "u36",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1670.5714111328125,
+        "cy": 456.39703369140625,
+        "width": 76.34739685058594,
+        "height": 30.07391929626465
+      },
+      "rotationRad": -1.5323537337788464,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9544044132965809,
+      "doorCountHint": 3,
+      "colorHex": "#128e48",
+      "label": "74"
+    },
+    {
+      "id": "u37",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2058.93994140625,
+        "cy": 426.8648681640625,
+        "width": 76.45716094970703,
+        "height": 30.216936111450195
+      },
+      "rotationRad": -0.06340680291953307,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9514452270463523,
+      "doorCountHint": 3,
+      "colorHex": "#ed0106",
+      "label": "86"
+    },
+    {
+      "id": "u38",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1948.0836181640625,
+        "cy": 467.05145263671875,
+        "width": 76.33282470703125,
+        "height": 30.227909088134766
+      },
+      "rotationRad": -1.5297235542743923,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9519989751276009,
+      "doorCountHint": 3,
+      "colorHex": "#ed0106",
+      "label": "83"
+    },
+    {
+      "id": "u39",
+      "kind": "unit",
+      "bounds": {
+        "cx": 783.22265625,
+        "cy": 445.4605407714844,
+        "width": 76.34739685058594,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.95418670998591,
+      "doorCountHint": 3,
+      "colorHex": "#118eee",
+      "label": "30"
+    },
+    {
+      "id": "u40",
+      "kind": "unit",
+      "bounds": {
+        "cx": 860.3009643554688,
+        "cy": 448.4250793457031,
+        "width": 76.34739685058594,
+        "height": 30.07391929626465
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.954186649469464,
+      "doorCountHint": 3,
+      "colorHex": "#118fef",
+      "label": "31"
+    },
+    {
+      "id": "u41",
+      "kind": "unit",
+      "bounds": {
+        "cx": 397.7928466796875,
+        "cy": 430.63629150390625,
+        "width": 76.34739685058594,
+        "height": 30.07391929626465
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9541322085126848,
+      "doorCountHint": 3,
+      "colorHex": "#118eef",
+      "label": "13"
+    },
+    {
+      "id": "u42",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2040.103271484375,
+        "cy": 118.89981842041016,
+        "width": 76.38220977783203,
+        "height": 30.31585121154785
+      },
+      "rotationRad": -0.06241877015511367,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9500811362845849,
+      "doorCountHint": 3,
+      "colorHex": "#eded0b",
+      "label": "96"
+    },
+    {
+      "id": "u43",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1168.6617431640625,
+        "cy": 460.26446533203125,
+        "width": 76.36528778076172,
+        "height": 30.165645599365234
+      },
+      "rotationRad": 0.035073328052449976,
+      "labelConfidence": 0.71,
+      "detectionConfidence": 0.9524731649498299,
+      "doorCountHint": 3,
+      "colorHex": "#118eee",
+      "label": "49"
+    },
+    {
+      "id": "u44",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1547.2354736328125,
+        "cy": 451.6617736816406,
+        "width": 76.36528778076172,
+        "height": 30.165645599365234
+      },
+      "rotationRad": -1.5357229987424468,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9524731649498299,
+      "doorCountHint": 3,
+      "colorHex": "#128e48",
+      "label": "70"
+    },
+    {
+      "id": "u45",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1578.0625,
+        "cy": 452.8443908691406,
+        "width": 76.33441162109375,
+        "height": 30.18915367126465
+      },
+      "rotationRad": -1.530002641073065,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9521706850262052,
+      "doorCountHint": 3,
+      "colorHex": "#128f48",
+      "label": "71"
+    },
+    {
+      "id": "u46",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2051.428466796875,
+        "cy": 303.6937561035156,
+        "width": 76.42037200927734,
+        "height": 30.141660690307617
+      },
+      "rotationRad": -0.060532053680847034,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9523811909764986,
+      "doorCountHint": 3,
+      "colorHex": "#eded0b",
+      "label": "90"
+    },
+    {
+      "id": "u47",
+      "kind": "unit",
+      "bounds": {
+        "cx": 2042.005859375,
+        "cy": 149.71937561035156,
+        "width": 76.42037200927734,
+        "height": 30.141660690307617
+      },
+      "rotationRad": -0.060532053680847034,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9523811909764986,
+      "doorCountHint": 3,
+      "colorHex": "#eeee0b",
+      "label": "95"
+    },
+    {
+      "id": "u48",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1763.0582275390625,
+        "cy": 459.9462585449219,
+        "width": 76.29362487792969,
+        "height": 30.18915367126465
+      },
+      "rotationRad": -1.530002641073065,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.952245546611964,
+      "doorCountHint": 3,
+      "colorHex": "#ef0107",
+      "label": "77"
+    },
+    {
+      "id": "u49",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1608.9127197265625,
+        "cy": 454.0255432128906,
+        "width": 76.34739685058594,
+        "height": 30.035486221313477
+      },
+      "rotationRad": -1.5323537379400358,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9543174037437825,
+      "doorCountHint": 3,
+      "colorHex": "#128e48",
+      "label": "72"
+    },
+    {
+      "id": "u50",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1855.5684814453125,
+        "cy": 463.4738464355469,
+        "width": 76.34739685058594,
+        "height": 30.073917388916016
+      },
+      "rotationRad": -1.5323537379400358,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9536967413438222,
+      "doorCountHint": 3,
+      "colorHex": "#ed0106",
+      "label": "80"
+    },
+    {
+      "id": "u51",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1849.3284912109375,
+        "cy": 106.7554931640625,
+        "width": 75.81658172607422,
+        "height": 30.33905029296875
+      },
+      "rotationRad": 1.3197936603710374,
+      "labelConfidence": 0.93,
+      "detectionConfidence": 0.9526876184588337,
+      "doorCountHint": 2,
+      "colorHex": "#ea028b",
+      "label": "105"
+    },
+    {
+      "id": "u52",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1639.7322998046875,
+        "cy": 455.2109069824219,
+        "width": 76.34739685058594,
+        "height": 30.07391929626465
+      },
+      "rotationRad": -1.5323537337788464,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.953478917031334,
+      "doorCountHint": 3,
+      "colorHex": "#128e48",
+      "label": "73"
+    },
+    {
+      "id": "u53",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1014.4931640625,
+        "cy": 454.3260803222656,
+        "width": 76.37137603759766,
+        "height": 30.211456298828125
+      },
+      "rotationRad": 0.03388533142146306,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9509530810492586,
+      "doorCountHint": 3,
+      "colorHex": "#118dee",
+      "label": "39"
+    },
+    {
+      "id": "u54",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1879.2301025390625,
+        "cy": 99.12715911865234,
+        "width": 75.67925262451172,
+        "height": 30.348308563232422
+      },
+      "rotationRad": 1.3203533236741174,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.952764597854397,
+      "doorCountHint": 2,
+      "colorHex": "#ea028b",
+      "label": "104"
+    },
+    {
+      "id": "u55",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1793.90966796875,
+        "cy": 461.1023254394531,
+        "width": 76.34739685058594,
+        "height": 30.035486221313477
+      },
+      "rotationRad": -1.5323537379400358,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9533362126049586,
+      "doorCountHint": 3,
+      "colorHex": "#ef0106",
+      "label": "78"
+    },
+    {
+      "id": "u56",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1909.140625,
+        "cy": 91.57291412353516,
+        "width": 75.56820678710938,
+        "height": 30.3638858795166
+      },
+      "rotationRad": 1.3197936603710374,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9529669564580642,
+      "doorCountHint": 2,
+      "colorHex": "#ea028b",
+      "label": "103"
+    },
+    {
+      "id": "u57",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1824.7479248046875,
+        "cy": 462.3076171875,
+        "width": 76.30897521972656,
+        "height": 30.035486221313477
+      },
+      "rotationRad": -1.5323537379400358,
+      "labelConfidence": 0.94,
+      "detectionConfidence": 0.953434451705782,
+      "doorCountHint": 3,
+      "colorHex": "#ef0106",
+      "label": "79"
+    },
+    {
+      "id": "u58",
+      "kind": "unit",
+      "bounds": {
+        "cx": 629.0469360351562,
+        "cy": 439.53070068359375,
+        "width": 76.30897521972656,
+        "height": 30.07391929626465
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9504185505287717,
+      "doorCountHint": 3,
+      "colorHex": "#118eee",
+      "label": "22"
+    },
+    {
+      "id": "u59",
+      "kind": "unit",
+      "bounds": {
+        "cx": 706.2307739257812,
+        "cy": 442.499267578125,
+        "width": 76.59722137451172,
+        "height": 30.07391929626465
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9478729959013756,
+      "doorCountHint": 3,
+      "colorHex": "#118eee",
+      "label": "23"
+    },
+    {
+      "id": "u60",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1485.5758056640625,
+        "cy": 449.28179931640625,
+        "width": 76.34739685058594,
+        "height": 30.07391929626465
+      },
+      "rotationRad": -1.5323537337788464,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9479259394398531,
+      "doorCountHint": 3,
+      "colorHex": "#128d47",
+      "label": "68"
+    },
+    {
+      "id": "u61",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1516.4256591796875,
+        "cy": 450.45098876953125,
+        "width": 76.33441162109375,
+        "height": 30.229934692382812
+      },
+      "rotationRad": -1.5300026493954433,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9424899539542968,
+      "doorCountHint": 3,
+      "colorHex": "#118d47",
+      "label": "69"
+    },
+    {
+      "id": "u64",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1189.25,
+        "cy": 430.25,
+        "width": 37.5,
+        "height": 29.5
+      },
+      "rotationRad": 0,
+      "labelConfidence": 0.94,
+      "detectionConfidence": 0.9722033898305085,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "50"
+    },
+    {
+      "id": "u65",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1035.25,
+        "cy": 424.25,
+        "width": 37.5,
+        "height": 29.5
+      },
+      "rotationRad": 0,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9712994350282486,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "40"
+    },
+    {
+      "id": "u66",
+      "kind": "unit",
+      "bounds": {
+        "cx": 919.0479125976562,
+        "cy": 419.8019104003906,
+        "width": 38.24941635131836,
+        "height": 30.055965423583984
+      },
+      "rotationRad": 0.039978683526861784,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.947701874223012,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "37"
+    },
+    {
+      "id": "u67",
+      "kind": "unit",
+      "bounds": {
+        "cx": 764.8753662109375,
+        "cy": 413.86578369140625,
+        "width": 38.270057678222656,
+        "height": 30.09048080444336
+      },
+      "rotationRad": 0.03702011545405471,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9467555318336686,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "29"
+    },
+    {
+      "id": "u68",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1382.7308349609375,
+        "cy": 406.7292175292969,
+        "width": 38.24941635131836,
+        "height": 30.01599884033203
+      },
+      "rotationRad": 0.039978683526861784,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9480927396457562,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "64"
+    },
+    {
+      "id": "u69",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1192.887451171875,
+        "cy": 337.6783752441406,
+        "width": 38.26017379760742,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9468698622297312,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "53"
+    },
+    {
+      "id": "u70",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1073.2498779296875,
+        "cy": 425.75,
+        "width": 37.49999237060547,
+        "height": 30.499996185302734
+      },
+      "rotationRad": 0,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9495085086562556,
+      "doorCountHint": 1,
+      "colorHex": "#1089e7",
+      "label": "47"
+    },
+    {
+      "id": "u71",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1228.5750732421875,
+        "cy": 400.8009948730469,
+        "width": 38.26017379760742,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9472112677934443,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "56"
+    },
+    {
+      "id": "u72",
+      "kind": "unit",
+      "bounds": {
+        "cx": 573.8458251953125,
+        "cy": 375.6609802246094,
+        "width": 38.270057678222656,
+        "height": 30.053468704223633
+      },
+      "rotationRad": 0.03702011545405471,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.946399957419771,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "19"
+    },
+    {
+      "id": "u73",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1074.4246826171875,
+        "cy": 394.8634033203125,
+        "width": 38.31485366821289,
+        "height": 30.070114135742188
+      },
+      "rotationRad": 0.03569911265196975,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9454211655889193,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "46"
+    },
+    {
+      "id": "u74",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1037.5447998046875,
+        "cy": 362.5882568359375,
+        "width": 38.26017379760742,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9456748681401802,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "42"
+    },
+    {
+      "id": "u75",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1383.9178466796875,
+        "cy": 375.8910827636719,
+        "width": 38.26017379760742,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9460147446026167,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "63"
+    },
+    {
+      "id": "u76",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1227.402099609375,
+        "cy": 431.6445617675781,
+        "width": 38.270057678222656,
+        "height": 30.053468704223633
+      },
+      "rotationRad": 0.03702011545405471,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9454218224155475,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "57"
+    },
+    {
+      "id": "u77",
+      "kind": "unit",
+      "bounds": {
+        "cx": 727.9969482421875,
+        "cy": 381.5860900878906,
+        "width": 38.322052001953125,
+        "height": 30.120031356811523
+      },
+      "rotationRad": 0.03446910049359763,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9436770496630366,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "25"
+    },
+    {
+      "id": "u78",
+      "kind": "unit",
+      "bounds": {
+        "cx": 610.726806640625,
+        "cy": 407.92156982421875,
+        "width": 38.287593841552734,
+        "height": 30.120031356811523
+      },
+      "rotationRad": 0.034469098413003024,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9436592078131656,
+      "doorCountHint": 1,
+      "colorHex": "#1089e7",
+      "label": "21"
+    },
+    {
+      "id": "u79",
+      "kind": "unit",
+      "bounds": {
+        "cx": 418.507080078125,
+        "cy": 400.5675964355469,
+        "width": 38.26017379760742,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9449269962473187,
+      "doorCountHint": 1,
+      "colorHex": "#108ae7",
+      "label": "14"
+    },
+    {
+      "id": "u80",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1381.5462646484375,
+        "cy": 437.5498962402344,
+        "width": 38.26017379760742,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9441539665716606,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "65"
+    },
+    {
+      "id": "u81",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1708.16064453125,
+        "cy": 314.2481689453125,
+        "width": 38.304779052734375,
+        "height": 30.288726806640625
+      },
+      "rotationRad": 1.3940874658268143,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9402449495242892,
+      "doorCountHint": 1,
+      "colorHex": "#6be0e0",
+      "label": "122"
+    },
+    {
+      "id": "u82",
+      "kind": "unit",
+      "bounds": {
+        "cx": 920.25,
+        "cy": 388.75,
+        "width": 37.5,
+        "height": 30.5
+      },
+      "rotationRad": 0,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.946775956284153,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "36"
+    },
+    {
+      "id": "u83",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1191.706787109375,
+        "cy": 368.548583984375,
+        "width": 38.29540252685547,
+        "height": 30.133268356323242
+      },
+      "rotationRad": 0.03332099718350226,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9421857646572817,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "52"
+    },
+    {
+      "id": "u84",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1229.7606201171875,
+        "cy": 369.9336853027344,
+        "width": 38.29540252685547,
+        "height": 30.099952697753906
+      },
+      "rotationRad": 0.03332099718350226,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9423610720467313,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "55"
+    },
+    {
+      "id": "u85",
+      "kind": "unit",
+      "bounds": {
+        "cx": 882.25,
+        "cy": 387.75,
+        "width": 37.5,
+        "height": 30.5
+      },
+      "rotationRad": 0,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9459016393442623,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "33"
+    },
+    {
+      "id": "u86",
+      "kind": "unit",
+      "bounds": {
+        "cx": 301.6842956542969,
+        "cy": 426.95904541015625,
+        "width": 38.26017379760742,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9436216982209612,
+      "doorCountHint": 1,
+      "colorHex": "#108be9",
+      "label": "11"
+    },
+    {
+      "id": "u87",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1640.6739501953125,
+        "cy": 287.5820007324219,
+        "width": 38.32621383666992,
+        "height": 30.186922073364258
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.94,
+      "detectionConfidence": 0.9400791696603571,
+      "doorCountHint": 1,
+      "colorHex": "#6ce3e3",
+      "label": "141"
+    },
+    {
+      "id": "u88",
+      "kind": "unit",
+      "bounds": {
+        "cx": 572.6643676757812,
+        "cy": 406.47747802734375,
+        "width": 38.26017379760742,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9424157933504954,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "18"
+    },
+    {
+      "id": "u89",
+      "kind": "unit",
+      "bounds": {
+        "cx": 766.0661010742188,
+        "cy": 383.0314025878906,
+        "width": 38.26017379760742,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9424157933504954,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "28"
+    },
+    {
+      "id": "u90",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1075.6173095703125,
+        "cy": 363.995849609375,
+        "width": 38.340660095214844,
+        "height": 30.157154083251953
+      },
+      "rotationRad": 0.031239832498957006,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.939463364259219,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "45"
+    },
+    {
+      "id": "u91",
+      "kind": "unit",
+      "bounds": {
+        "cx": 456.54693603515625,
+        "cy": 402.03070068359375,
+        "width": 38.29861068725586,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.03844258885486089,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9418053441879167,
+      "doorCountHint": 1,
+      "colorHex": "#108ae7",
+      "label": "15"
+    },
+    {
+      "id": "u92",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1036.25,
+        "cy": 393.7499694824219,
+        "width": 37.49999237060547,
+        "height": 30.499996185302734
+      },
+      "rotationRad": 0,
+      "labelConfidence": 0.88,
+      "detectionConfidence": 0.9441533156401233,
+      "doorCountHint": 1,
+      "colorHex": "#108ae8",
+      "label": "41"
+    },
+    {
+      "id": "u93",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1647.4859619140625,
+        "cy": 325.29803466796875,
+        "width": 38.05787658691406,
+        "height": 30.09747886657715
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9433005758854038,
+      "doorCountHint": 1,
+      "colorHex": "#6be0e0",
+      "label": "120"
+    },
+    {
+      "id": "u94",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1343.5751953125,
+        "cy": 436.0174255371094,
+        "width": 38.31574249267578,
+        "height": 30.16796875
+      },
+      "rotationRad": 0.03029376116646317,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9386559184132455,
+      "doorCountHint": 1,
+      "colorHex": "#1087e3",
+      "label": "60"
+    },
+    {
+      "id": "u95",
+      "kind": "unit",
+      "bounds": {
+        "cx": 339.7433776855469,
+        "cy": 428.4228820800781,
+        "width": 38.26017379760742,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9410111021682461,
+      "doorCountHint": 1,
+      "colorHex": "#108ae8",
+      "label": "12"
+    },
+    {
+      "id": "u96",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1345.8486328125,
+        "cy": 374.49542236328125,
+        "width": 38.346031188964844,
+        "height": 30.137680053710938
+      },
+      "rotationRad": 0.03029375908586857,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9382081292134811,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "62"
+    },
+    {
+      "id": "u97",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1701.3218994140625,
+        "cy": 276.6459655761719,
+        "width": 38.32621383666992,
+        "height": 30.186920166015625
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9374862050964227,
+      "doorCountHint": 1,
+      "colorHex": "#6be0e0",
+      "label": "139"
+    },
+    {
+      "id": "u98",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1738.501953125,
+        "cy": 308.8860168457031,
+        "width": 37.968441009521484,
+        "height": 30.276363372802734
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9404797216876567,
+      "doorCountHint": 1,
+      "colorHex": "#6adfdf",
+      "label": "123"
+    },
+    {
+      "id": "u99",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1731.69384765625,
+        "cy": 270.9419860839844,
+        "width": 37.968441009521484,
+        "height": 30.276363372802734
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9404797216876567,
+      "doorCountHint": 1,
+      "colorHex": "#6adfdf",
+      "label": "138"
+    },
+    {
+      "id": "u100",
+      "kind": "unit",
+      "bounds": {
+        "cx": 611.9485473632812,
+        "cy": 377.0809326171875,
+        "width": 38.19481658935547,
+        "height": 30.2276554107666
+      },
+      "rotationRad": 0.047583102831798466,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9379278590702081,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "20"
+    },
+    {
+      "id": "u101",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1230.946533203125,
+        "cy": 339.1421813964844,
+        "width": 38.26017379760742,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9394826260397792,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "54"
+    },
+    {
+      "id": "u102",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1190.5159912109375,
+        "cy": 399.3371887207031,
+        "width": 38.26017379760742,
+        "height": 30.035484313964844
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9399233538129482,
+      "doorCountHint": 1,
+      "colorHex": "#108ae8",
+      "label": "51"
+    },
+    {
+      "id": "u103",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1670.9578857421875,
+        "cy": 281.89398193359375,
+        "width": 37.96843719482422,
+        "height": 30.09747886657715
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9424598623283857,
+      "doorCountHint": 1,
+      "colorHex": "#6adede",
+      "label": "140"
+    },
+    {
+      "id": "u104",
+      "kind": "unit",
+      "bounds": {
+        "cx": 881.0159912109375,
+        "cy": 418.3371887207031,
+        "width": 38.26017379760742,
+        "height": 30.073917388916016
+      },
+      "rotationRad": 0.038442593016050096,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9389394469081651,
+      "doorCountHint": 1,
+      "colorHex": "#1089e6",
+      "label": "32"
+    },
+    {
+      "id": "u105",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1344.6854248046875,
+        "cy": 405.2685241699219,
+        "width": 38.27387237548828,
+        "height": 30.08978843688965
+      },
+      "rotationRad": 0.04252753674952778,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9376741607600707,
+      "doorCountHint": 1,
+      "colorHex": "#108ae7",
+      "label": "61"
+    },
+    {
+      "id": "u106",
+      "kind": "unit",
+      "bounds": {
+        "cx": 726.853759765625,
+        "cy": 412.620849609375,
+        "width": 38.23502731323242,
+        "height": 30.56122589111328
+      },
+      "rotationRad": 0.04874184838328115,
+      "labelConfidence": 0.97,
+      "detectionConfidence": 0.9303520252617157,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "24"
+    },
+    {
+      "id": "u107",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1677.8458251953125,
+        "cy": 319.7780456542969,
+        "width": 38.05788040161133,
+        "height": 30.09747886657715
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9395901370072004,
+      "doorCountHint": 1,
+      "colorHex": "#6be1e1",
+      "label": "121"
+    },
+    {
+      "id": "u108",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1579.720703125,
+        "cy": 173.13238525390625,
+        "width": 30.1956844329834,
+        "height": 30.1956844329834
+      },
+      "rotationRad": 1.3258177307567967,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9447186888875447,
+      "doorCountHint": 1,
+      "colorHex": "#db0282",
+      "label": "115"
+    },
+    {
+      "id": "u109",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1057.7376708984375,
+        "cy": 332.5113525390625,
+        "width": 30.156307220458984,
+        "height": 25.827878952026367
+      },
+      "rotationRad": -1.523213223963098,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9345228003798726,
+      "doorCountHint": 1,
+      "colorHex": "#0f7d01",
+      "label": "43A"
+    },
+    {
+      "id": "u110",
+      "kind": "unit",
+      "bounds": {
+        "cx": 243.69888305664062,
+        "cy": 424.72100830078125,
+        "width": 29.853418350219727,
+        "height": 26.01662254333496
+      },
+      "rotationRad": -1.5182132680133398,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9329713989404759,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "9"
+    },
+    {
+      "id": "u111",
+      "kind": "unit",
+      "bounds": {
+        "cx": 166.5380401611328,
+        "cy": 421.7611083984375,
+        "width": 30.035486221313477,
+        "height": 25.96157455444336
+      },
+      "rotationRad": -1.5323537379400358,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9292821987987436,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "6"
+    },
+    {
+      "id": "u112",
+      "kind": "unit",
+      "bounds": {
+        "cx": 877.25,
+        "cy": 356.2499694824219,
+        "width": 29.499996185302734,
+        "height": 25.499996185302734
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9456632747198899,
+      "doorCountHint": 1,
+      "colorHex": "#108301",
+      "label": "34"
+    },
+    {
+      "id": "u113",
+      "kind": "unit",
+      "bounds": {
+        "cx": 928.25,
+        "cy": 358.25,
+        "width": 29.5,
+        "height": 25.5
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9454968428049185,
+      "doorCountHint": 1,
+      "colorHex": "#108301",
+      "label": "35"
+    },
+    {
+      "id": "u114",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1032.25,
+        "cy": 331.2499694824219,
+        "width": 29.499996185302734,
+        "height": 25.499996185302734
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9430045833834784,
+      "doorCountHint": 1,
+      "colorHex": "#108301",
+      "label": "43"
+    },
+    {
+      "id": "u115",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1873.85791015625,
+        "cy": 319.593994140625,
+        "width": 30.186920166015625,
+        "height": 26.072555541992188
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9200493736559886,
+      "doorCountHint": 1,
+      "colorHex": "#66d6d6",
+      "label": "128"
+    },
+    {
+      "id": "u116",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1083.218017578125,
+        "cy": 333.4707946777344,
+        "width": 30.114715576171875,
+        "height": 25.363847732543945
+      },
+      "rotationRad": -1.526381108175207,
+      "labelConfidence": 0.87,
+      "detectionConfidence": 0.932477915352713,
+      "doorCountHint": 1,
+      "colorHex": "#108301",
+      "label": "44"
+    },
+    {
+      "id": "u117",
+      "kind": "unit",
+      "bounds": {
+        "cx": 218.13925170898438,
+        "cy": 423.74383544921875,
+        "width": 29.815135955810547,
+        "height": 25.322063446044922
+      },
+      "rotationRad": -1.5152978223442457,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9377722366642505,
+      "doorCountHint": 1,
+      "colorHex": "#1088e4",
+      "label": "8"
+    },
+    {
+      "id": "u118",
+      "kind": "unit",
+      "bounds": {
+        "cx": 269.0530090332031,
+        "cy": 425.690185546875,
+        "width": 29.887666702270508,
+        "height": 25.343341827392578
+      },
+      "rotationRad": -1.5208379297809103,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9347110242235513,
+      "doorCountHint": 1,
+      "colorHex": "#0f84de",
+      "label": "10"
+    },
+    {
+      "id": "u119",
+      "kind": "unit",
+      "bounds": {
+        "cx": 141.04800415039062,
+        "cy": 420.7899169921875,
+        "width": 29.887666702270508,
+        "height": 25.343341827392578
+      },
+      "rotationRad": -1.5208379297809103,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9347110242235513,
+      "doorCountHint": 1,
+      "colorHex": "#1088e5",
+      "label": "5"
+    },
+    {
+      "id": "u120",
+      "kind": "unit",
+      "bounds": {
+        "cx": 191.94622802734375,
+        "cy": 422.7367858886719,
+        "width": 29.971683502197266,
+        "height": 25.367338180541992
+      },
+      "rotationRad": -1.527345430483546,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9312091210472552,
+      "doorCountHint": 1,
+      "colorHex": "#108ae8",
+      "label": "7"
+    },
+    {
+      "id": "u121",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1898.8939208984375,
+        "cy": 315.0419616699219,
+        "width": 30.186920166015625,
+        "height": 25.625341415405273
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9231786890028392,
+      "doorCountHint": 1,
+      "colorHex": "#65d4d4",
+      "label": "129"
+    },
+    {
+      "id": "u122",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1613.72998046875,
+        "cy": 311.8899841308594,
+        "width": 30.186920166015625,
+        "height": 26.072555541992188
+      },
+      "rotationRad": -0.17985352158324777,
+      "labelConfidence": 0.72,
+      "detectionConfidence": 0.9149671054086225,
+      "doorCountHint": 1,
+      "colorHex": "#67d9d9",
+      "label": "118"
+    },
+    {
+      "id": "u123",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1798.001953125,
+        "cy": 333.385986328125,
+        "width": 30.186920166015625,
+        "height": 26.072555541992188
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9144906427604319,
+      "doorCountHint": 1,
+      "colorHex": "#67d8d8",
+      "label": "125"
+    },
+    {
+      "id": "u124",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1609.0743408203125,
+        "cy": 286.6959228515625,
+        "width": 30.331615447998047,
+        "height": 25.399642944335938
+      },
+      "rotationRad": -0.16514874446632075,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9238560836281996,
+      "doorCountHint": 1,
+      "colorHex": "#68dbdb",
+      "label": "117"
+    },
+    {
+      "id": "u125",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1618.2979736328125,
+        "cy": 337.0140380859375,
+        "width": 30.186920166015625,
+        "height": 25.446456909179688
+      },
+      "rotationRad": -0.17985352158324777,
+      "labelConfidence": 0.92,
+      "detectionConfidence": 0.9239729859847335,
+      "doorCountHint": 1,
+      "colorHex": "#66d7d7",
+      "label": "119"
+    },
+    {
+      "id": "u126",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1822.993896484375,
+        "cy": 328.84197998046875,
+        "width": 30.186920166015625,
+        "height": 25.535898208618164
+      },
+      "rotationRad": 1.3909428052116488,
+      "labelConfidence": 0.65,
+      "detectionConfidence": 0.9205745462631402,
+      "doorCountHint": 1,
+      "colorHex": "#65d5d5",
+      "label": "126"
+    },
+    {
+      "id": "u127",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1586.750244140625,
+        "cy": 200.2500457763672,
+        "width": 30.1956844329834,
+        "height": 24.61736297607422
+      },
+      "rotationRad": -0.24497859603809996,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9342989113284142,
+      "doorCountHint": 1,
+      "colorHex": "#d6027f",
+      "label": "114"
+    },
+    {
+      "id": "u128",
+      "kind": "unit",
+      "bounds": {
+        "cx": 902.25,
+        "cy": 357.2499694824219,
+        "width": 29.499996185302734,
+        "height": 25.499996185302734
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.8919909433660814,
+      "doorCountHint": 1,
+      "colorHex": "#108101",
+      "label": "34A"
+    },
+    {
+      "id": "u131",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1573.283935546875,
+        "cy": 147.97799682617188,
+        "width": 30.284700393676758,
+        "height": 20.308565139770508
+      },
+      "rotationRad": -0.2573236792711623,
+      "labelConfidence": 0.93,
+      "detectionConfidence": 0.9162023440014312,
+      "doorCountHint": 1,
+      "colorHex": "#cc0179",
+      "label": "116"
+    },
+    {
+      "id": "u132",
+      "kind": "unit",
+      "bounds": {
+        "cx": 738.2499389648438,
+        "cy": 351.2499694824219,
+        "width": 29.499996185302734,
+        "height": 19.499996185302734
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.9426339438457706,
+      "doorCountHint": 2,
+      "colorHex": "#0e7301",
+      "label": "26A"
+    },
+    {
+      "id": "u133",
+      "kind": "unit",
+      "bounds": {
+        "cx": 99.25,
+        "cy": 419.25,
+        "width": 29.5,
+        "height": 19.5
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9402433724467623,
+      "doorCountHint": 2,
+      "colorHex": "#0f85df",
+      "label": "3"
+    },
+    {
+      "id": "u134",
+      "kind": "unit",
+      "bounds": {
+        "cx": 719.75,
+        "cy": 350.25,
+        "width": 29.5,
+        "height": 18.5
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.97,
+      "detectionConfidence": 0.961749885478699,
+      "doorCountHint": 2,
+      "colorHex": "#0f7c01",
+      "label": "26"
+    },
+    {
+      "id": "u135",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1891.8583984375,
+        "cy": 290.4436950683594,
+        "width": 30.662994384765625,
+        "height": 19.670156478881836
+      },
+      "rotationRad": -0.18822157320244023,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9139579696043634,
+      "doorCountHint": 2,
+      "colorHex": "#61cccc",
+      "label": "130"
+    },
+    {
+      "id": "u136",
+      "kind": "unit",
+      "bounds": {
+        "cx": 80.25,
+        "cy": 418.25,
+        "width": 29.5,
+        "height": 19.5
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9350282485875706,
+      "doorCountHint": 2,
+      "colorHex": "#1085e0",
+      "label": "2"
+    },
+    {
+      "id": "u137",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1884.7818603515625,
+        "cy": 251.42601013183594,
+        "width": 30.634136199951172,
+        "height": 20.169334411621094
+      },
+      "rotationRad": -0.17985352158324777,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.901079314688374,
+      "doorCountHint": 2,
+      "colorHex": "#63d0d0",
+      "label": "132"
+    },
+    {
+      "id": "u138",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1936.3677978515625,
+        "cy": 73.7205581665039,
+        "width": 30.1956844329834,
+        "height": 19.52411651611328
+      },
+      "rotationRad": -0.24497859603809996,
+      "labelConfidence": 0.94,
+      "detectionConfidence": 0.9223229200820604,
+      "doorCountHint": 2,
+      "colorHex": "#c6c609",
+      "label": "100"
+    },
+    {
+      "id": "u139",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1888.3985595703125,
+        "cy": 271.1418762207031,
+        "width": 30.496013641357422,
+        "height": 20.13887596130371
+      },
+      "rotationRad": -0.16514874446632075,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9018482415030841,
+      "doorCountHint": 2,
+      "colorHex": "#65d5d5",
+      "label": "131"
+    },
+    {
+      "id": "u140",
+      "kind": "unit",
+      "bounds": {
+        "cx": 758.2499389648438,
+        "cy": 352.2499694824219,
+        "width": 29.499996185302734,
+        "height": 19.499996185302734
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9272058640825043,
+      "doorCountHint": 2,
+      "colorHex": "#0f8001",
+      "label": "27"
+    },
+    {
+      "id": "u141",
+      "kind": "unit",
+      "bounds": {
+        "cx": 60.75,
+        "cy": 417.25,
+        "width": 29.5,
+        "height": 18.5
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.9438845625286303,
+      "doorCountHint": 2,
+      "colorHex": "#1089e6",
+      "label": "1"
+    },
+    {
+      "id": "u142",
+      "kind": "unit",
+      "bounds": {
+        "cx": 118.09903717041016,
+        "cy": 420.02392578125,
+        "width": 29.77619171142578,
+        "height": 18.944852828979492
+      },
+      "rotationRad": -1.5308176391068458,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9229212188112877,
+      "doorCountHint": 2,
+      "colorHex": "#1085e0",
+      "label": "4"
+    },
+    {
+      "id": "u143",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1941.33837890625,
+        "cy": 92.6029052734375,
+        "width": 30.1956844329834,
+        "height": 18.311439514160156
+      },
+      "rotationRad": -0.24497859603809996,
+      "labelConfidence": 0.9,
+      "detectionConfidence": 0.928468878367422,
+      "doorCountHint": 2,
+      "colorHex": "#c9c909",
+      "label": "107"
+    },
+    {
+      "id": "u144",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1946.014892578125,
+        "cy": 111.3088150024414,
+        "width": 30.1956844329834,
+        "height": 19.039045333862305
+      },
+      "rotationRad": -0.24497859603809996,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.8829842489278485,
+      "doorCountHint": 2,
+      "colorHex": "#c8c809",
+      "label": "102"
+    },
+    {
+      "id": "u145",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1881.4339599609375,
+        "cy": 233.2620086669922,
+        "width": 30.72357749938965,
+        "height": 17.217723846435547
+      },
+      "rotationRad": -0.17985352158324777,
+      "labelConfidence": 0.96,
+      "detectionConfidence": 0.9066805305382867,
+      "doorCountHint": 2,
+      "colorHex": "#5ec6c6",
+      "label": "133"
+    },
+    {
+      "id": "u129",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1772.8709716796875,
+        "cy": 337.9345703125,
+        "width": 30.2386474609375,
+        "height": 25.488513946533203
+      },
+      "rotationRad": 1.3961241182704525,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.8366978702127507,
+      "doorCountHint": 1,
+      "colorHex": "#6adfdf",
+      "label": "124"
+    },
+    {
+      "id": "u130",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1848.641845703125,
+        "cy": 324.10137939453125,
+        "width": 30.331615447998047,
+        "height": 25.399642944335938
+      },
+      "rotationRad": 1.4056475823285757,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.8209890732628539,
+      "doorCountHint": 1,
+      "colorHex": "#6bdfdf",
+      "label": "127"
+    },
+    {
+      "id": "u146",
+      "kind": "unit",
+      "bounds": {
+        "cx": 776.7499389648438,
+        "cy": 352.2499694824219,
+        "width": 29.499996185302734,
+        "height": 18.499996185302734
+      },
+      "rotationRad": 1.5707963267948966,
+      "labelConfidence": 0.85,
+      "detectionConfidence": 0.8126434242774957,
+      "doorCountHint": 2,
+      "colorHex": "#0f7d01",
+      "label": "27A"
+    },
+    {
+      "id": "u147",
+      "kind": "unit",
+      "bounds": {
+        "cx": 1931.80908203125,
+        "cy": 55.48530197143555,
+        "width": 30.1956844329834,
+        "height": 16.856224060058594
+      },
+      "rotationRad": -0.24497859603809996,
+      "labelConfidence": 0.95,
+      "detectionConfidence": 0.7780186585663201,
+      "doorCountHint": 2,
+      "colorHex": "#d3d30a",
+      "label": "99"
+    }
+  ],
+  "warnings": [
+    "Image upscaled 2× internally for detection",
+    "Excluded 116 candidate(s) inside legend/excluded region(s)",
+    "Rejected 411 candidate(s) failing area/aspect/fill/color filters",
+    "Merged 17 overlapping duplicate detection(s)",
+    "Resolved 72 nested/glyph detection(s)",
+    "12 rectangle(s) had no readable label (flagged \"likely not a unit\")",
+    "Dropped 12 shape(s) with no readable label",
+    "Rescued 4 labeled borderline cell(s) adjoining kept units",
+    "Dropped 14 non-rectangular shape(s) (e.g. circles)"
+  ]
+}

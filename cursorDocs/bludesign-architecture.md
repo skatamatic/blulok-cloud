@@ -49,6 +49,8 @@ Editor infrastructure split from the main engine file (ongoing): **`core/engine/
 
 **Rendering preferences:** **`core/rendering/applyBluDesignRenderingSettings`** applies AA pixel ratio, shadow map + directional light + mesh shadow flags, instancing toggles on building/ground managers, **`OptimizationManager`** enable/readonly, and batched frustum culling — `BluDesignEngine.applyRenderingSettings` delegates to it on init and on **`RenderingSettingsManager`** changes.
 
+**Large-scene performance (ground + lockers):** **`GroundTileManager`** renders grass/pavement/gravel via merged **`InstancedMesh`** batches (`GeometryOptimizer` rectangle merge; edit mode allows large merges up to 4096 cells per instance). Logical tiles are tracked off-scene (`SceneManager.addObject` with `trackOnly: true`); hover/click uses grid picking in **`SelectionManager`** (`getTileIdAtCell`) instead of thousands of scene meshes. Ground instanced batches skip shadow cast/receive. Storage units share door materials and avoid `receiveShadow` on body/door meshes to cut shadow-pass cost (~400 meshes for 200 lockers remains the main draw-call budget; instancing would be a follow-up).
+
 **Viewport / camera helpers:** **`core/viewport/editorViewport`** holds **`computeBluDesignSceneBounds`** (placed meshes + building footprint AABBs, default bounds when empty), **`computeFocusOrbitForPlacedObjectMesh`** / **`computeFocusOrbitForBuilding`** (camera orbit targets for focus APIs), **`computeSelectedObjectsScreenBounds`** (projection for selection overlays), and **`getHoveredPlacedObjectRotation`** (raycast against selectable meshes for placement hover yaw). **`core/viewport/captureSceneThumbnail`** implements **`captureSceneThumbnailJpeg`** (hide grid, render, scale, JPEG) and **`computeScaledThumbnailDimensions`** — **`BluDesignEngine.captureScreenshot`** delegates here. **`BluDesignEngine`** keeps floor/selection side effects and delegates pure math and raycast orchestration for the viewport helpers.
 
 **Selection move (gizmo / keyboard):** **`core/selection/PendingSelectionMoveCoordinator`** owns pending drag state, debounced commit, building move preview vs live mesh moves, validation/history/revert — wired from **`BluDesignEngine`** with translate-building and wall-selection refresh callbacks.
@@ -925,6 +927,415 @@ When state updates arrive, the viewer:
 1. Finds objects bound to the entity
 2. Updates their visual state via `engine.simulateObjectState()`
 3. Reflects changes immediately in the 3D scene
+
+## Layout Import (image/PDF → unit detection)
+
+The **layout-import detection engine** turns a raster facility site plan into
+pixel-space storage-unit candidates as the first step of importing a real plan
+into the editor. It lives entirely in the backend at
+`backend/src/bludesign/layout-import/` and emits a clean, world-agnostic contract
+(`LayoutImportDetectionResult`) that a later wizard phase will convert into
+`PlacedObject`s after a human verifies/edits the candidates.
+
+**Granularity is the door cell, not the whole unit.** A multi-door unit is drawn
+as one outlined unit subdivided into door cells; the detector recovers the **door
+cells**. On the sample plan the legend totals **95 units / 145 doors**, so the
+detection target is **145**. Grouping door cells back into multi-door units is a
+later wizard step (human in the loop).
+
+### Pipeline
+
+`detectUnits(buffer | DecodedImage, options?, deps?)` orchestrates:
+
+1. **Decode** (`image/decodeImage.ts`) — `sharp` decodes PNG/JPG/WEBP to raw RGBA
+   (ships prebuilt binaries; no node-gyp on Windows dev or Linux prod).
+2. **Internal upscale** (`image/preprocess.ts → upscaleToWidth`) — small plans are
+   integer-upscaled (≤4×, to ≥`internalUpscaleTargetWidth`) so thin cell borders
+   are not lost to sub-pixel rendering. All output geometry is mapped back to
+   **source** pixel space.
+3. **Segmentation** — default `'border'` strategy. A rectangle is defined by its
+   **dark outline**, not its fill, so the engine isolates rectangles independent of
+   fill shade: `adaptiveThreshold(BINARY_INV)` makes the strokes foreground, a
+   morphological **close** (`borderCloseKernel`) seals 1–2px gaps (tolerating
+   imperfect scans), and the grid lines form one connected mesh whose **holes are
+   the cells**. This fixes the failure mode of the old `'cells'` brightness-sweep
+   strategy, where light-grey fills merged into the page and only the text inside
+   was detected. The legacy `'cells'` (multi-threshold brightness) and `'color'`
+   (HSV mask) strategies remain selectable as fallbacks.
+4. **Rectangle fit** (`detection/detectRectangles.ts`) — `findContours` (RETR_LIST,
+   to capture nested cells/holes) → `minAreaRect`, normalized to a canonical
+   longer-axis-as-width rotated rect with rotation in radians (any angle).
+5. **Filtering** (`detection/filters.ts`) — legend/region exclusion (top-left band
+   by default), area/aspect/fill-ratio gates (reject dots/poles/bollards, the site
+   boundary, connector lines and ragged blobs), rotated-rect-IoU **NMS** (which
+   also merges the concentric outer-ring/inner-hole pair a thick border produces),
+   and **nesting resolution** (`suppressContainers`) for boxes that enclose
+   smaller boxes' centers. This is the highest-leverage filter for this style of
+   plan, because the border mesh yields, for every cell, the cell *plus* the
+   contours of the printed number inside it (and, for clustered units, the cluster
+   outline around many cells). For each enclosing box:
+   - if an enclosed box is a **substantial fraction** (≥ `NESTED_RATIO`, 0.4) — a
+     genuine nested cell or the inner ring of a thick border — drop the **outer**
+     (innermost wins);
+   - else if it encloses **≥ 2 medium boxes** (≥ `ROW_MEMBER_RATIO`, 0.18) or
+     **≥ `GROUP_MIN_MEMBERS`** (4) smaller ones — a row blob or a cluster/group
+     outline — drop the **outer** to keep the finer cells;
+   - otherwise the enclosed boxes are the number's **glyphs/fragments** → drop
+     *them* and keep the cell.
+
+   The previous "drop any container of ≥1 box" rule silently erased every cell
+   whose number was large enough to be detected (whole bright-filled rows) and
+   collapsed clustered units into a single outline; this nuanced rule recovered
+   them (sample plan: ~57 → ~118 correctly-read units of 145). The colorfulness
+   gate (`minColorSaturation`) is **off by default** (0) since the border model is
+   fill-independent; it is only relevant to the `'color'` fallback.
+6. **OCR as classification** (`ocr/readLabel.ts`, `ocr/ocrLabels.ts`,
+   `ocr/cropLabel.ts`) — each rectangle is rotated upright (its angle folded
+   into ±45° so text is horizontal), cropped to **almost the whole interior**
+   (`INNER_FRACTION` 0.9, so a number at the *bottom* of a tall portrait cell is
+   not clipped), then connected-components **ink localization** drops the cell's
+   frame lines — including **wall hairlines mid-crop** (full-span thin lines and
+   1px edge-hugging slivers from a slightly-off box, which otherwise read as
+   phantom strokes: "|3"→2) — and **crops tight to the number's ink**. The tight
+   crop is normalized to ~64px glyph height with a quiet white margin.
+   `readUnitLabel` orchestrates per cell: the standard crop first; if it yields
+   no/short labels, a **re-spaced glyph crop** (each glyph component re-typeset
+   with breathing room) rescues tightly-kerned digits the LSTM merges into a
+   letter ("71" → "n" → nothing). Stacked two-row labels ("26" over "A") are
+   detected via y-band splitting and **re-typeset side-by-side** ("26A").
+   A readable `<digits><optional letter>` label (numeric part ≥ 1 — "0"/"0A"
+   reads are rejected as border-art misreads) promotes the rectangle to
+   `kind: 'unit'`; rectangles with no readable label are kept as
+   `kind: 'rectangle'` for the human to relabel or discard.
+   - **Default provider** is `createDefaultOcrProvider()` → a `RobustOcrProvider`.
+     It reads each crop in **block + line + word** page-seg modes at 1×, plus
+     **block at 2× (lanczos)** — the LSTM resolves tightly-kerned small digits
+     far better with fatter strokes ("31" misread as "K" at 1× reads cleanly at
+     2×; `word` at 2× is skipped because it hallucinates duplicated strokes,
+     "26A"→"226A"). `chooseBestLabel` elects by **support-weighted voting**
+     (each reader contributes 1+confidence; agreement across independent modes
+     beats any single read; a small digit-count weight settles near-ties toward
+     the more complete number). **90°/270° rotations** run only when no upright
+     reader produced a multi-digit read (NOT gated on confidence — Tesseract
+     reports 0.00 on plenty of correct reads, and rotated junk would flood the
+     vote). On the sample plan this reads **143/145 labels correctly (~0.986)**;
+     the two misses are the italic trailing-1↔7 ambiguity (111→117, 101→107),
+     fixed downstream by neighbor sequence repair.
+     **Reported confidence carries an agreement-derived floor** (3+ agreeing
+     readers → 0.85, 2 → 0.65, lone read → engine score): Tesseract routinely
+     self-scores correct reads 0.00 (notably suffixed "26A"-style cells), and
+     the frontend strips labels < 0.5 before neighbor resolution — without the
+     floor, correct backend reads were discarded downstream and resolution
+     invented wrong fills for the emptied cells.
+     (`FallbackOcrProvider`, a first-valid-wins chain, is retained as a lighter
+     alternative.)
+   - **Detection vs OCR scale are decoupled.** `internalUpscaleTargetWidth`
+     defaults to **4000** (≈2× the sample plan, integer, capped 4×): heavier
+     upscaling injects cubic-interpolation noise that the adaptive border mask
+     turns into speckle inside bright fills, fragmenting those cells — and it is
+     ~8× slower (the sample plan dropped from ~150s at 4× to ~19s at 2× with no
+     loss of detected cells). OCR legibility is instead handled per-crop by the
+     tight-glyph normalization above, not by blowing up the whole working image.
+     Still feed the **native-resolution** image — a 1024-wide downsample of this
+     plan is unreadable.
+
+Geometry is computed on the upscaled working image and **mapped back to source
+pixels** before filtering/output, so the public contract is always in source
+pixel space.
+
+### Determinism / offline
+
+- `@techstark/opencv-js` exports an Emscripten module that is a *perpetual
+  thenable*; `getCv()` (`opencv.ts`) uses its `then` only as a one-shot init hook,
+  strips `then`, and then resolves — otherwise `await`-ing it (or returning it from
+  any `async` function) deadlocks.
+- Tesseract reads a **vendored** `eng.traineddata.gz`
+  (`ocr/tessdata/`) via a local `langPath` with `cacheMethod: 'none'` — no network
+  fetch in CI. The `tesseract.js-core` WASM resolves from `node_modules`.
+  `npm run build` copies the gzip into `dist/src/bludesign/layout-import/ocr/tessdata/`
+  (`scripts/copy-build-assets.js`); `Dockerfile.prod` fails the image build if it is missing.
+- Dependency versions are pinned; results are deterministic for fixed inputs.
+
+### API + tooling
+
+- **Routes** (`routes/layout-import.routes.ts`, mounted in `routes/index.ts`).
+  `multer.memoryStorage()`, 25MB limit, PNG/JPG/WEBP filter, `authenticateToken`,
+  multipart `file` (+ optional JSON `options`). No persistence yet.
+  - `POST .../detect` — synchronous; returns `LayoutImportDetectionResult`.
+  - `POST .../detect/stream` — **NDJSON streaming**. `detectUnits` accepts a
+    `deps.onEvent` sink and emits `DetectionEvent`s (`stage` → `rectangles` →
+    per-`unit` + `progress` → terminal `done`/`error`), which the route writes as
+    newline-delimited JSON and flushes per event. Lets the client show granular
+    stage progress and draw candidate boxes as they are discovered.
+- **Visual CLI**: `npm run bludesign:detect -- <image> [outDir]`
+  (`scripts/bludesign-detect.ts`) writes `annotated.png` (rotated rects colored by
+  confidence + index/label) and `result.json`. Doubles as the iteration tool and
+  the ground-truth bootstrapper.
+
+### Test harness
+
+- **Pure unit tests** (default Jest suite, fast): `geometry`/`metrics`
+  (`__tests__/metrics.test.ts`), filters + rect normalization + option resolution
+  (`__tests__/detection.test.ts`), label normalization
+  (`__tests__/normalizeLabel.test.ts`).
+- **Metrics regression** (`__tests__/detectUnits.regression.test.ts`): runs the
+  real pipeline on `__tests__/fixtures/test_site_layout.png` (full-res 2133×532),
+  scores it against `fixtures/ground-truth.json` (rotated-rect IoU ≥ 0.5 greedy
+  match → precision/recall/F1 + matched-label accuracy), and asserts
+  **ratchetable** thresholds. It is heavy (WASM + OCR, ~22s at the 2× detection
+  scale), so it is **excluded** from the default run via `testPathIgnorePatterns`
+  and invoked with `npm run bludesign:detect:test`. `ground-truth.json` is
+  currently a **bootstrapped snapshot** of the border detector's output (~171
+  boxes, ~118 of the 145 unit numbers read correctly, the rest kept flagged for
+  the human), so recall/precision/labelAccuracy act as high self-consistency
+  floors (catching drift) while the **door count (145)** is the real-world anchor
+  (current delta ~26, `doorCountTolerance` 30). Re-bootstrap the snapshot when the
+  model improves, but never hand-edit truth to make a regression pass (see
+  `fixtures/README.md`).
+- Coverage: the pure logic under `src/bludesign/layout-import/**` is held to the
+  coverage gate; the WASM/IO-bound files (decode, preprocess, detectRectangles,
+  cropLabel, ocrLabels, detectUnits, opencv) are excluded since they are exercised
+  only by the heavy regression.
+
+### Deliberately out of scope (future phases)
+
+Job persistence / async queue. The backend engine produces only the pixel-space
+candidates the frontend consumes. (PDF rasterization, the review UI, and the
+build-in-3D conversion — scale calibration, asset-size mapping, `PlacedObject`
+batch placement into the editor — are now handled on the frontend; see the
+**Build-in-3D wizard** below.)
+
+### Frontend review UI (`/bludesign/import`)
+
+The human-in-the-loop review experience lives at
+`frontend/src/pages/bludesign/BluDesignImportPage.tsx`, composed from focused,
+presentational pieces under `frontend/src/components/bludesign/layout-import/`:
+
+- **`useLayoutImport.ts`** — the single state controller. Owns source loading,
+  **streaming** detection (`api/bludesign.ts → detectLayoutStream`, consumed via a
+  `fetch` body reader with the bearer token), live `progress` + incremental unit
+  updates (boxes appear as `kind: 'rectangle'` then flip to `kind: 'unit'` as OCR
+  resolves), the editable unit list, **multi-selection** (`selectedIds: Set`),
+  hover/tool state, display prefs (show-image / show-unlabeled-rectangles /
+  show-doors), detection options, derived stats (unit / labeled / unlabeled
+  counts), problem detection (missing + duplicate labels), save/load of a
+  `.bludesign.json` project (image embedded as a data URL), and an undo/redo
+  history. There is **no confirm/reject workflow** — a box either has a unit
+  number or it doesn't. Label edits apply **live** (one undo snapshot per edit
+  session). An `AbortController` cancels a superseded/stale stream.
+- **Doors** — every unit carries an optional `door: UnitDoor`
+  (`side` ∈ top/bottom/left/right in the rect's local frame, `widthFraction`
+  default 0.8, `offsetFraction`, and an `auto` flag). After detection completes,
+  **`doorAssignment.ts`** auto-assigns doors using a **free-interval** model.
+  After detection, **`postProcessImportedUnits`** (`postProcess.ts`) runs **two
+  snap-align passes** then door assignment automatically (no manual sidebar step).
+  Crucially it reasons in **each unit's own local (un-rotated) frame** — every
+  other unit is projected into that frame so the four door sides line up with
+  real walls and adjacency is exact even for **tilted rows** (a global
+  axis-aligned model fails here: rotated row-mates' bounding boxes overlap, so
+  their shared walls wrongly look open). For each edge it subtracts the runs
+  covered by an immediately-adjacent unit (units beyond a drive aisle don't
+  count). It then prefers an **interior** edge (one with units beyond it, not
+  open exterior space — detected via `hasUnitsBeyond`, ranked by how strongly the
+  side faces the layout centroid so end-of-row units pick the aisle-facing
+  frontage rather than the long wall pointing off-plan) that has a free run,
+  aligns with neighbors, harmonizes **aisle-facing sides** along each spatial
+  row/column chain (edges not shared with chain neighbors — topology-aware, not
+  raw width/height), and places the door **centered at 80% of the short edge**
+  (capped to ~80% of min(width,height) so long row walls never render as full-width bars). This yields: doors never sit on a shared wall / point into an
+  adjacent unit; bottom/edge rows face inward (offset+smaller) rather than out;
+  opposing rows face into their shared aisle. Doors are **roll-up** (drawn as a
+  bold amber bar with jamb ticks — no hinge/swing) and render in a **layer above
+  all units** so they're never occluded. Users override side/width/offset in the
+  editor (which clears `auto`); "Re-run door placement" recomputes auto doors
+  while preserving overrides. Door geometry (world-space opening segment + facing
+  normal, offset clamping) lives in `geometry.ts`.
+- **`loadSource.ts`** — normalizes an upload into a raster the backend can decode.
+  Raster images pass through; **PDFs are rasterized client-side** (first page,
+  capped at 4000px) via `pdfjs-dist` so no backend PDF support is required. The
+  pdf.js worker is wired through Vite's `?url` import.
+- **`LayoutCanvas.tsx`** — the interactive SVG overlay. Everything is rendered in
+  source-image pixel space inside a pan/zoom `<g>`; screen↔image conversion uses the
+  live SVG CTM (`getScreenCTM().inverse()`). Supports wheel-zoom-to-cursor, pan,
+  hover detail cards, **marquee multi-select** (Shift adds), multi-move, animated
+  `focusUnit` zoom, direct manipulation (move / rotate / corner-resize via
+  `geometry.ts`), and draw-to-add. Each unit draws its **door marker** (amber
+  opening + inward swing arc), toggleable via the sidebar. Keyboard: V/A/H tools,
+  arrows to nudge the selection, Del to remove all selected, Ctrl+Z/Y undo-redo.
+  Normal boxes use a dark-blue border + light-blue fill; **problem boxes are red**;
+  unlabeled rectangles render dashed + neutral-grey.
+- **`ProblemsOverlay.tsx`** — floating, expandable panel over the canvas listing
+  validation problems (missing / duplicate unit numbers); click to locate, or
+  delete the offending box. Hidden when there are no problems.
+- **`DetectionProgressBar.tsx`** — compact, non-blocking overlay shown while a
+  stream runs: current stage label, an indeterminate shimmer for setup stages and a
+  determinate bar during the OCR pass (`done/total`), leaving the live canvas
+  visible underneath.
+- **`UnitHoverCard.tsx`** — portal card showing a unit's coordinates, size,
+  rotation, and detection/OCR confidence (labels unlabeled rectangles distinctly).
+- **`DetectionSidebar.tsx`** (+ `SelectedUnitEditor`, `UnitList`,
+  `DetectionOptionsPanel`) — source summary, save/load, live stats, a filterable
+  bounded unit list with an **inline** per-unit editor (unit number, door
+  side/width/offset, rotation, delete), display toggles (show image / unlabeled /
+  doors + re-run door placement + snap align neighbors), and an advanced "Detection settings" panel that
+  re-runs the engine with tuned options.
+- **Ingest heuristics** — after detection, shapes are pruned before review:
+  unlabeled boxes, non-rectangular contours (circle-like low fill ratio), and
+  outliers much smaller than the median unit footprint are dropped (`postProcess.ts`
+  on the backend; mirrored in frontend `labelResolution.filterUnitsForIngest`).
+- **Label auto-resolution** — up to 3 passes of neighbor inference fill numeric
+  gaps (e.g. 71, ?, 73 → 72), correct sandwiched OCR misreads (70, "2", 72 → 71),
+  fix transposed digits (30, "13", 38 → 31), and corner cells in a grid
+  (48 left + 50 above → 49). Uses **spatially adjacent row/column chains**
+  (not global cy/cx clustering) so tower blocks and base rows stay separate.
+  Duplicate labels are cleared globally by neighbor-fit score, then refilled on
+  later passes. **Single-side fill only anchors on original OCR/user labels**
+  (inferred labels are tracked and excluded as anchors) — otherwise one bad seed
+  renumbers a whole physical row in a single pass; two-sided gap fill stays
+  unrestricted since both anchors must agree. **Suffixed labels ("34A") are
+  never rewritten by sequence repair** — they mark auxiliary door cells that
+  legitimately repeat their base number between plain-numbered cells, so the
+  consecutive-integer model doesn't apply. **Endpoint adjacent-swaps never flip
+  a pair whose labels are both confident (≥0.8) original reads** — a "reversed"
+  pair at a chain end is almost always the plan's real numbering (tower top
+  rows, snake numbering), not a double misread; only the sandwiched swap case
+  (bracketed by both neighbors) may override confident reads. The end-to-end
+  seam (backend reads → strip → resolution) is guarded by
+  `labelPipeline.regression.test.ts`, which runs the full frontend pipeline on
+  the committed `detection-result.json` fixture and asserts ≥0.99 label
+  accuracy vs `ground-truth.json` (plus every suffixed cell explicitly).
+  Ingest filtering keeps borderline
+  fill/aspect boxes when they carry a confident (≥0.8) OCR label, and
+  **rescues** low-fill boxes (≥0.7) that abut a kept unit at similar size
+  (0.5–2× area, edge gap ≤2px) — real cells share walls; bollards/symbols float
+  in the aisle and are far smaller. Runs on ingest; sidebar **Fix unit numbers
+  from neighbors** re-runs when problems remain
+  (`labelResolution.resolveLabelsFromNeighbors`).
+- **Snap align** — `snapAlign.ts` uses **rotation-histogram + edge-line
+  clustering** (no chain discovery): (1) cluster unit angles in circular mod-90
+  space (area-weighted, split at >2.5° adjacent gaps) and snap each unit's
+  rotation to its cluster's weighted median (capped at `maxRotDeg`, default 5°);
+  (2) per cluster, rotate centers into the cluster frame — all members become
+  axis-aligned — then 1-D cluster every wall coordinate (left/right edges on x,
+  top/bottom on y, wall-length weighted, tolerance ≈ 24% of the median short
+  side) and snap each edge to its cluster's weighted mean line. Colinear
+  frontages collapse onto one line and abutting walls become exactly shared;
+  every move is bounded by the cluster tolerance so the layout can't be
+  re-posed (a >20% size change falls back to translation). Units with no
+  agreeing partner don't move. Runs twice after detection via `postProcess.ts`.
+  Visual iteration: `npm test -- pipeline.visual` →
+  `backend/_pipeline-visual-out/*.png` (full pipeline over a faint plan image).
+- **`colors.ts` / `geometry.ts`** — shared color tokens (unit/error/door) and pure
+  rotated-rect + door math (corners, hit-test, corner-resize, angle normalization,
+  door segment/normal/offset clamping).
+
+### Build-in-3D wizard (`layout-import/build-wizard/`)
+
+The reviewed 2D layout is turned into a saved, navigable 3D BluDesign facility by
+a full-screen multi-step wizard launched from the dormant **"Build in 3D"** action
+in `DetectionSidebar` (`onImport`, wired from `BluDesignImportPage`). The shell
+(`BuildWizard.tsx`) drives four stages via `useBuildWizard.ts`; all non-trivial
+logic lives in **pure, unit-tested helpers** so the UI stays thin (SOLID):
+
+1. **Scale (`ScaleStep` + `scale.ts`)** — produces `metersPerPixel`, the single
+   source of truth for pixel→world conversion. Two modes: a **direct ratio**
+   (a measured pixel span equals N ft/m) or **pick-a-unit** (select one unit,
+   enter its real width×depth; the ratio is averaged over both axes against that
+   unit's local pixel bounds). A sanity readout reports the resulting median unit
+   footprint in feet.
+2. **Assets (`AssetsStep` + `assetSpec.ts`)** — computes each unit's real
+   dimensions (`width = bounds.width·mpp`, `depth = bounds.height·mpp`,
+   `height` default 8 ft) and a `LockerSpec` door, then **de-duplicates** units
+   into a small set of reusable primitive `bludesign_asset_definitions`. The door
+   mapping from the 2D local frame is: side `top→back`, `bottom→front`,
+   `left→left`, `right→right`; `doorWidth = widthFraction·edgeLen·mpp`,
+   `doorPositionX = offsetFraction·edgeLen·mpp` (this is the Z axis for left/right
+   faces), `doorHeight = clamp(2 ft, height−1 ft, 7 ft)`, where
+   `edgeLen = doorEdgeLength(bounds, side)`. **Reuse bucketing** snaps every
+   linear dimension (width/depth/height/doorWidth/offset) to a tolerance grid
+   (default 0.5 ft, adjustable) and keys a bucket by those snapped values + door
+   side; units sharing a bucket share one asset. Assets are created via
+   `AssetService.createAssetDefinition` (`category: storage_unit`,
+   `modelType: 'primitive'`, `isSmart: true`, computed `gridUnits`, `lockerSpec`)
+   and **auto-named** (e.g. `Auto 10×20 ft`, with ` · Left`/` · offset`
+   qualifiers). A signature (`[autolayout:…]`) is embedded in each asset's
+   description so re-runs are **idempotent** — existing matching assets are reused
+   instead of duplicated. Resolution order in `resolveAssetIdForBucket`: exact
+   `[autolayout:…]` signature → fuzzy signature (component tolerance) → dimension
+   + `lockerSpec` match → rounded-footprint + door-side match. Locker data can be
+   recovered from the stored signature when `lockerSpec` is absent on the definition.
+   Reuse also matches **any existing primitive storage unit** with the same snapped
+   dimensions and door layout (not only autolayout signatures), so manually created
+   assets with matching footprints are picked up too. The Assets step shows **Reused**
+   vs **New** badges per bucket.
+   Each asset definition tracks a **`facility_usage_count`**: incremented when a
+   facility is saved that references the asset, decremented on facility delete, and
+   synced on facility update. The Assets catalog shows the count; the asset detail
+   **Facilities** tab lists saved facilities that reference the asset (via
+   `GET /bludesign/assets/definitions/:id/facilities`). Delete warns when in use
+   (facility names in the confirm modal) but proceeds after confirmation; scenes
+   that still reference the asset may break until re-saved.
+3. **Units (`MatchStep` + `nameMatch.ts`)** — pick a BluLok facility
+   (`getBluLokFacilities`), load its units (`getBluLokUnits`), and **name-match**
+   diagram labels to real `unit_number`s (no coordinates). Each side is normalized
+   to `{ num, suffix }` via `/(\d+)\s*([A-Za-z]?)/`; candidates rank exact key >
+   same number (0.85) > Levenshtein similarity. Assignment is **greedy one-to-one**
+   above a threshold; a confirm/correct table lets the user override. Per the
+   product decision, diagram units with **no real match are left unbound** (their
+   geometry is still placed); the wizard never creates BluLok units.
+4. **Build (`BuildStep` + `sceneBuild.ts`)** — assembles a v2 `FacilityData` and
+   saves it as a **new** BluDesign user facility (`saveFacility`), then navigates
+   directly to `/bludesign/build?facilityId=…` (`BluDesignBuildPage` reads the
+   query param into `EditorCanvas.initialFacilityId`). The wizard also persists
+   **`layoutImport`** metadata on `FacilityData` (pixel-space unit geometry +
+   scale) and uploads the raster plan to facility storage as
+   `layout-source.png` (`PUT …/facilities/:id/layout-source`).
+
+**Coordinate mapping** (validated in the live preview): world is Y-up meters,
+pixel x → world X, pixel y → world Z, 2D width → 3D width, 2D height → 3D depth.
+Each unit becomes a `SerializedPlacedObject` with `exactMeshPos` at the unit
+center in world meters (after subtracting the layout's world AABB center so the
+imported site is centered on the origin), `position` = nearest grid index,
+`rotation = -rotationRad` (the y-down→Z handedness flip), and
+`binding: { entityType: 'unit', entityId }` when matched. Initial camera
+`target` is `(0, 0, 0)`. The scene's
+`dataSource` is set to `{ type: 'blulok', facilityId, facilityName, autoConnect }`.
+
+**Mesh fix (required for correct doors):** `AssetFactory.createAssetMesh` now
+routes `STORAGE_UNIT` assets that carry a `metadata.lockerSpec` to
+`createCustomStorageUnit(dimensions, lockerSpec, state)` instead of the generic
+centered-door `createStorageUnit`. `assetDefinitionToMetadata` already forwards
+`lockerSpec` into the registry, so auto-generated and hand-built primitive lockers
+render their real door side/width/offset in both the editor and the viewer.
+
+### Import plan 2D views (editor + dashboard)
+
+Facilities saved through the import wizard carry optional `layoutImport` on
+`FacilityData`. The source PNG lives beside `data.json` in user-facility storage.
+
+- **Editor** — View panel → **Show Import Plan** opens a resizable floating panel
+  (`ImportPlanPanel`) with pan/zoom, unit labels, and a toggle for the original
+  plan image vs vector overlay only (`ImportedLayoutViewer`).
+- **Dashboard widget** — When `layoutImport` is present, the facility viewer widget
+  exposes a **3D / 2D** toggle. **2D mode** mounts `FacilityViewer2D` instead of
+  WebGL (`FacilityViewer3D` is not mounted — no GPU cost). The 2D view uses live
+  WebSocket colors (green locked/occupied, yellow unlocked, red error), unit
+  labels, smart-object search with animated focus, click-to-select, and fit-to-facility.
+  The original import image is **not** shown in the widget (vector overlay only).
+
+**Persistence:** `layoutImport` is written into `data.json` at wizard save time and
+re-attached on every editor update/auto-save via `attachLayoutImportToFacilityData`
+(Save As creates a new facility without copying import metadata). The PNG is stored
+at `layout-source.png` via `PUT /api/v1/bludesign/facilities/:id/layout-source`.
+
+**Geometry note:** 2D overlays use the import-time pixel bounds snapshot in
+`layoutImport.units`. Moving or resizing units in the 3D editor does not update
+those bounds; the 2D plan reflects the original detected layout, not live scene edits.
+The editor Import Plan panel displays a banner explaining this.
+
+**Import review UX:** Multi-page PDFs prompt for page selection before detection.
+Detection can be cancelled mid-stream. Saved `.json` project files are schema-validated on load. Import gating only blocks
+on problems among labeled/import-eligible units (unlabeled rectangles do not block).
 
 ## Future Enhancements
 

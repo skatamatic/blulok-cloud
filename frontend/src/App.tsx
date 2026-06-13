@@ -43,6 +43,7 @@ import BluFMSDashboardPage from '@/pages/blufms/BluFMSDashboardPage';
 import BluFMSFacilityMapPage from '@/pages/blufms/BluFMSFacilityMapPage';
 import BluDesignViewPage from '@/pages/bludesign/BluDesignViewPage';
 import BluDesignBuildPage from '@/pages/bludesign/BluDesignBuildPage';
+import BluDesignImportPage from '@/pages/bludesign/BluDesignImportPage';
 import BluDesignAssetsPage from '@/pages/bludesign/BluDesignAssetsPage';
 import BluDesignConfigPage from '@/pages/bludesign/BluDesignConfigPage';
 
@@ -302,6 +303,14 @@ function App() {
                           <ProtectedRoute>
                             <DashboardLayout>
                               <BluDesignBuildPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/import" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignImportPage />
                             </DashboardLayout>
                           </ProtectedRoute>
                         } />

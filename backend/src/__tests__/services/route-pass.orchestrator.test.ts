@@ -7,6 +7,11 @@ import { UserRole } from '@/types/auth.types';
 
 jest.mock('@/services/database.service');
 jest.mock('@/services/crypto/ed25519.service');
+jest.mock('@/models/user.model', () => ({
+  UserModel: {
+    findById: jest.fn(),
+  },
+}));
 jest.mock('@/models/user-facility-association.model', () => ({
   UserFacilityAssociationModel: {
     getUserFacilityIds: jest.fn(),
@@ -30,6 +35,15 @@ jest.mock('@/services/passes/app-entry-access.service', () => ({
 
 const { UserFacilityAssociationModel } = require('@/models/user-facility-association.model');
 const { UserFacilityScheduleModel } = require('@/models/user-facility-schedule.model');
+const { UserModel } = require('@/models/user.model');
+
+function mockActiveUser(userId: string, role: UserRole) {
+  (UserModel.findById as jest.Mock).mockResolvedValue({
+    id: userId,
+    role,
+    is_active: true,
+  });
+}
 
 function makeThenableBuilder(rows: any[]) {
   const b: any = {
@@ -52,7 +66,8 @@ describe('RoutePassOrchestrator', () => {
   let audienceResolveSpy: jest.SpyInstance;
 
   beforeEach(() => {
-    jest.resetAllMocks();
+    // clearAllMocks preserves global AuthService mock implementations from setup-mocks.ts
+    jest.clearAllMocks();
     issueRoutePassSpy = jest.spyOn(PassesService, 'issueRoutePass').mockResolvedValue('jwt-token' as never);
     audienceResolveSpy = jest.spyOn(AudienceResolver, 'resolve');
   });
@@ -63,6 +78,7 @@ describe('RoutePassOrchestrator', () => {
   });
 
   it('issues a route pass using preferred device header', async () => {
+    mockActiveUser('u1', UserRole.ADMIN);
     audienceResolveSpy.mockResolvedValue(['lock:serial-1']);
     const lockRows = [{ device_serial: 'serial-1', facility_id: 'fac-x' }];
     const db: any = jest.fn((table: string) => {
@@ -86,7 +102,7 @@ describe('RoutePassOrchestrator', () => {
     (Ed25519Service.verifyJwt as jest.Mock).mockResolvedValue({ jti: 'j', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
 
     const token = await RoutePassOrchestrator.issueForUser(
-      { userId: 'u1', role: UserRole.ADMIN, facilityIds: [] },
+      { userId: 'u1' },
       'phone-1',
     );
     expect(token).toBe('jwt-token');
@@ -104,6 +120,7 @@ describe('RoutePassOrchestrator', () => {
   });
 
   it('embeds compact schedules for tenant with facility-scoped locks', async () => {
+    mockActiveUser('u1', UserRole.TENANT);
     audienceResolveSpy.mockResolvedValue(['lock:serial-1']);
     const lockRows = [{ device_serial: 'serial-1', facility_id: 'fac-1' }];
     const db: any = jest.fn((table: string) => {
@@ -141,7 +158,7 @@ describe('RoutePassOrchestrator', () => {
     });
 
     await RoutePassOrchestrator.issueForUser(
-      { userId: 'u1', role: UserRole.TENANT, facilityIds: [] },
+      { userId: 'u1' },
       'phone-1',
     );
 
@@ -162,6 +179,7 @@ describe('RoutePassOrchestrator', () => {
   });
 
   it('omits schedules for admin even when facility is scoped', async () => {
+    mockActiveUser('u1', UserRole.ADMIN);
     audienceResolveSpy.mockResolvedValue(['lock:serial-1']);
     const lockRows = [{ device_serial: 'serial-1', facility_id: 'fac-2' }];
     const db: any = jest.fn((table: string) => {
@@ -196,7 +214,7 @@ describe('RoutePassOrchestrator', () => {
     });
 
     await RoutePassOrchestrator.issueForUser(
-      { userId: 'u1', role: UserRole.ADMIN, facilityId: 'fac-2', facilityIds: [] },
+      { userId: 'u1', facilityId: 'fac-2' },
       'phone-1',
     );
 
@@ -206,6 +224,7 @@ describe('RoutePassOrchestrator', () => {
   });
 
   it('omits schedules for dev_admin', async () => {
+    mockActiveUser('u1', UserRole.DEV_ADMIN);
     audienceResolveSpy.mockResolvedValue(['lock:s1']);
     const lockRows = [{ device_serial: 's1', facility_id: 'f1' }];
     const db: any = jest.fn((table: string) => {
@@ -228,11 +247,73 @@ describe('RoutePassOrchestrator', () => {
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
     (Ed25519Service.verifyJwt as jest.Mock).mockResolvedValue({ jti: 'j', iat: 1, exp: 2 });
 
-    await RoutePassOrchestrator.issueForUser({ userId: 'u1', role: UserRole.DEV_ADMIN, facilityIds: [] }, 'p1');
+    await RoutePassOrchestrator.issueForUser({ userId: 'u1' }, 'p1');
     expect(issueRoutePassSpy.mock.calls[0][0].schedules).toBeUndefined();
   });
 
+  it('loads facility admin facilityIds from DB even when JWT lists stale facilities', async () => {
+    mockActiveUser('fa-1', UserRole.FACILITY_ADMIN);
+    audienceResolveSpy.mockResolvedValue(['access_control:ac-1']);
+    const db: any = jest.fn((table: string) => {
+      if (table === 'user_devices') {
+        return {
+          where: jest.fn().mockReturnThis(),
+          whereIn: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ id: 'device-1', public_key: 'pubkey' }),
+        };
+      }
+      return makeThenableBuilder([]);
+    });
+    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
+    (Ed25519Service.verifyJwt as jest.Mock).mockResolvedValue({ jti: 'j', iat: 1, exp: 2 });
+    (UserFacilityAssociationModel.getUserFacilityIds as jest.Mock).mockResolvedValue(['fac-current']);
+
+    await RoutePassOrchestrator.issueForUser(
+      { userId: 'fa-1' },
+      'phone-1',
+    );
+
+    expect(UserFacilityAssociationModel.getUserFacilityIds).toHaveBeenCalledWith('fa-1');
+    expect(audienceResolveSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'fa-1',
+        userRole: UserRole.FACILITY_ADMIN,
+        facilityIds: ['fac-current'],
+      }),
+    );
+  });
+
+  it('uses DB role for user_role claim', async () => {
+    mockActiveUser('u1', UserRole.TENANT);
+    audienceResolveSpy.mockResolvedValue(['lock:serial-1']);
+    const db: any = jest.fn((table: string) => {
+      if (table === 'user_devices') {
+        return {
+          where: jest.fn().mockReturnThis(),
+          whereIn: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ id: 'device-1', public_key: 'pubkey' }),
+        };
+      }
+      return makeThenableBuilder([]);
+    });
+    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
+    (Ed25519Service.verifyJwt as jest.Mock).mockResolvedValue({ jti: 'j', iat: 1, exp: 2 });
+
+    await RoutePassOrchestrator.issueForUser(
+      { userId: 'u1' },
+      'phone-1',
+    );
+
+    expect(PassesService.issueRoutePass).toHaveBeenCalledWith(
+      expect.objectContaining({ userRole: UserRole.TENANT }),
+    );
+  });
+
   it('embeds schedules for multiple facilities from audiences', async () => {
+    mockActiveUser('u1', UserRole.TENANT);
     audienceResolveSpy.mockResolvedValue(['lock:a', 'lock:b']);
     const lockRows = [
       { device_serial: 'a', facility_id: 'fac-a' },
@@ -270,7 +351,16 @@ describe('RoutePassOrchestrator', () => {
       },
     );
 
-    await RoutePassOrchestrator.issueForUser({ userId: 'u1', role: UserRole.TENANT, facilityIds: [] }, 'phone-1');
+    await RoutePassOrchestrator.issueForUser({ userId: 'u1' }, 'phone-1');
+
+    expect(audienceResolveSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'u1',
+        userRole: UserRole.TENANT,
+        facilityIds: undefined,
+      }),
+    );
 
     expect(PassesService.issueRoutePass).toHaveBeenCalledWith(
       expect.objectContaining({

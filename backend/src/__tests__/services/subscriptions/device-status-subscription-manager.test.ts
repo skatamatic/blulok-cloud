@@ -12,6 +12,7 @@ describe('DeviceStatusSubscriptionManager', () => {
   const mockDevice: any = {
     id: 'device-1',
     device_serial: 'SN-12345',
+    device_settings: { displayName: 'Front Lock', lockNumber: 12 },
     unit_id: 'unit-1',
     unit_number: 'A-101',
     facility_id: 'facility-1',
@@ -50,6 +51,7 @@ describe('DeviceStatusSubscriptionManager', () => {
     mockDeviceModel = {
       findBluLokDeviceById: jest.fn(),
       findBluLokDevices: jest.fn(),
+      findAccessControlDeviceWithGateway: jest.fn(),
     } as any;
     
     // Mock the DeviceModel constructor
@@ -127,6 +129,41 @@ describe('DeviceStatusSubscriptionManager', () => {
       expect(mockWs.send).toHaveBeenCalledWith(
         expect.stringContaining('"device_serial":"SN-12345"')
       );
+    });
+
+    it('should subscribe with access_control device_id and send formatted row', async () => {
+      const mockWs = {
+        send: jest.fn(),
+        readyState: 1,
+      } as any;
+
+      mockDeviceModel.findBluLokDeviceById.mockResolvedValue(null);
+      mockDeviceModel.findAccessControlDeviceWithGateway.mockResolvedValue({
+        id: 'ac-1',
+        device_serial: 'KP-001',
+        name: 'Main Gate',
+        location_description: 'North lot',
+        facility_id: 'facility-1',
+        gateway_id: 'gateway-1',
+        is_locked: false,
+        status: 'online',
+        updated_at: new Date(),
+      });
+
+      const result = await manager.handleSubscription(
+        mockWs,
+        {
+          type: 'subscription',
+          subscriptionType: 'device_status',
+          data: { device_id: 'ac-1' },
+        },
+        mockClient
+      );
+
+      expect(result).toBe(true);
+      expect(mockDeviceModel.findAccessControlDeviceWithGateway).toHaveBeenCalledWith('ac-1');
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(payload.data.devices[0].name).toBe('Main Gate');
     });
 
     it('should subscribe with facility_id filter', async () => {
@@ -231,6 +268,28 @@ describe('DeviceStatusSubscriptionManager', () => {
       expect(device.error_code).toBeNull();
     });
 
+    it('should include display name metadata in device data', async () => {
+      const mockWs = {
+        send: jest.fn(),
+        readyState: 1,
+      } as any;
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([mockDevice]);
+
+      (manager as any).subscriptionFilters = new Map([
+        ['test-subscription', {}],
+      ]);
+
+      await (manager as any).sendInitialData(mockWs, 'test-subscription', mockClient);
+
+      const sentData = mockWs.send.mock.calls[0][0];
+      const parsed = JSON.parse(sentData);
+      const device = parsed.data.devices[0];
+
+      expect(device.name).toBe('Front Lock');
+      expect(device.device_settings).toEqual({ displayName: 'Front Lock', lockNumber: 12 });
+    });
+
     it('should handle errors gracefully', async () => {
       const mockWs = {
         send: jest.fn(),
@@ -305,6 +364,41 @@ describe('DeviceStatusSubscriptionManager', () => {
       expect(mockWs.send).toHaveBeenCalledWith(
         expect.stringContaining('"updatedDeviceId":"device-1"')
       );
+    });
+
+    it('should broadcast access_control metadata including name', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 };
+
+      (manager as any).watchers = new Map([
+        ['sub-1', new Set([mockWs])],
+      ]);
+      (manager as any).clientContext = new Map([
+        ['sub-1', mockClient],
+      ]);
+      (manager as any).subscriptionFilters = new Map([
+        ['sub-1', { deviceId: 'ac-1' }],
+      ]);
+
+      mockDeviceModel.findBluLokDeviceById.mockResolvedValue(null);
+      mockDeviceModel.findAccessControlDeviceWithGateway.mockResolvedValue({
+        id: 'ac-1',
+        device_serial: 'KP-001',
+        name: 'Main Gate',
+        location_description: 'North lot',
+        facility_id: 'facility-1',
+        gateway_id: 'gateway-1',
+        is_locked: false,
+        status: 'online',
+        updated_at: new Date(),
+      });
+
+      await manager.broadcastDeviceUpdate('ac-1', 'facility-1');
+
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      const device = payload.data.devices[0];
+      expect(device.name).toBe('Main Gate');
+      expect(device.location_description).toBe('North lot');
+      expect(device.device_serial).toBe('KP-001');
     });
 
     it('should not broadcast to subscriptions for different devices', async () => {

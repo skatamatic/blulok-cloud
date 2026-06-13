@@ -111,14 +111,11 @@ export async function runBatchAssetPlacement(
 
     const markers = deps.groundTileManager.addTilesBatch(tileData);
 
-    const markersToAdd: THREE.Object3D[] = [];
-
     for (let i = 0; i < groundTiles.length; i++) {
       const placedObject = groundTiles[i];
       const marker = markers[i];
 
-      markersToAdd.push(marker);
-      deps.sceneManager.addObject(placedObject.id, marker, placedObject);
+      deps.sceneManager.addObject(placedObject.id, marker, placedObject, { trackOnly: true });
 
       const size = { x: placedObject.assetMetadata.gridUnits.x, z: placedObject.assetMetadata.gridUnits.z };
       const replacedGroundId = deps.gridSystem.markOccupied(
@@ -152,8 +149,6 @@ export async function runBatchAssetPlacement(
         }
       }
     }
-
-    markersToAdd.forEach((marker) => deps.scene.add(marker));
   }
 
   for (const placedObject of otherObjects) {

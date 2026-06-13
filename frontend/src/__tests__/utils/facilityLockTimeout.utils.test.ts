@@ -6,9 +6,9 @@ import {
 } from '@/utils/facilityLockTimeout.utils';
 
 describe('facilityLockTimeout.utils', () => {
-  it('defaults invalid values to 10 seconds', () => {
-    expect(normalizeLockCommandTimeoutSec(undefined)).toBe(10);
-    expect(normalizeLockCommandTimeoutSec('')).toBe(10);
+  it('defaults invalid values to 5 minutes', () => {
+    expect(normalizeLockCommandTimeoutSec(undefined)).toBe(300);
+    expect(normalizeLockCommandTimeoutSec('')).toBe(300);
   });
 
   it('allows 0 for one-shot commands', () => {

@@ -5,6 +5,7 @@
  */
 
 export { FacilityViewer3D } from './FacilityViewer3D';
+export { FacilityViewer2D } from './FacilityViewer2D';
 export { FacilityViewerEmptyState } from './FacilityViewerEmptyState';
 export type { FacilityViewerEmptyVariant } from './FacilityViewerEmptyState';
 export { ViewerLoadingOverlay } from './ViewerLoadingOverlay';

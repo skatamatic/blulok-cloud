@@ -86,6 +86,8 @@ export interface AssetDefinition {
   /** Position offset for custom models (meters from grid origin) */
   positionOffset?: { x: number; y: number; z: number };
   isBuiltin: boolean;
+  /** Number of saved facilities that reference this asset definition. */
+  facilityUsageCount: number;
   thumbnail?: string;
   createdBy?: string;
   createdAt: Date;
@@ -293,6 +295,7 @@ export class AssetService {
         locker_spec: input.lockerSpec ? JSON.stringify(input.lockerSpec) : null,
         position_offset: input.positionOffset ? JSON.stringify(input.positionOffset) : null,
         is_builtin: false,
+        facility_usage_count: 0,
         thumbnail: input.thumbnail,
         created_by: input.createdBy,
         created_at: now,
@@ -346,6 +349,12 @@ export class AssetService {
       if (!asset) return false;
       if (asset.is_builtin) {
         throw new Error('Cannot delete built-in assets');
+      }
+      const usageCount = Number(asset.facility_usage_count ?? 0);
+      if (usageCount > 0) {
+        logger.warn(
+          `Deleting asset ${id} still referenced by ${usageCount} saved ${usageCount === 1 ? 'facility' : 'facilities'}`
+        );
       }
 
       // Delete associated custom model if present and not used by other asset definitions
@@ -651,6 +660,53 @@ export class AssetService {
     }
   }
 
+  /**
+   * Increment facility reference counts for the given asset definition ids.
+   */
+  static async incrementFacilityUsage(assetIds: string[]): Promise<void> {
+    if (assetIds.length === 0) return;
+    try {
+      const db = DatabaseService.getInstance().connection;
+      await db('bludesign_asset_definitions')
+        .whereIn('id', assetIds)
+        .increment('facility_usage_count', 1);
+    } catch (error) {
+      logger.error('Failed to increment asset facility usage:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Decrement facility reference counts (never below zero).
+   */
+  static async decrementFacilityUsage(assetIds: string[]): Promise<void> {
+    if (assetIds.length === 0) return;
+    try {
+      const db = DatabaseService.getInstance().connection;
+      for (const id of assetIds) {
+        await db('bludesign_asset_definitions')
+          .where('id', id)
+          .where('facility_usage_count', '>', 0)
+          .decrement('facility_usage_count', 1);
+      }
+    } catch (error) {
+      logger.error('Failed to decrement asset facility usage:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Apply a facility scene asset-id diff after an update.
+   */
+  static async syncFacilityAssetUsage(previousIds: string[], nextIds: string[]): Promise<void> {
+    const prev = new Set(previousIds);
+    const next = new Set(nextIds);
+    const toIncrement = [...next].filter((id) => !prev.has(id));
+    const toDecrement = [...prev].filter((id) => !next.has(id));
+    await this.incrementFacilityUsage(toIncrement);
+    await this.decrementFacilityUsage(toDecrement);
+  }
+
   // ========================================================================
   // Helpers
   // ========================================================================
@@ -683,6 +739,7 @@ export class AssetService {
       lockerSpec: safeParseJSON(row.locker_spec),
       positionOffset: safeParseJSON(row.position_offset),
       isBuiltin: row.is_builtin,
+      facilityUsageCount: Number(row.facility_usage_count ?? 0),
       thumbnail: row.thumbnail,
       createdBy: row.created_by,
       createdAt: new Date(row.created_at),

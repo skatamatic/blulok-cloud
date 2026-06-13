@@ -214,6 +214,7 @@ interface MenuBarProps {
   onSaveLayoutAsDefault: () => void;
   onResetPanels: () => void;
   onShowAbout: () => void;
+  onShowSelectionControls?: () => void;
   aboutInfo: Array<{ label: string; value: string }>;
   
   // Panel visibility
@@ -245,6 +246,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onSaveLayoutAsDefault,
   onResetPanels,
   onShowAbout,
+  onShowSelectionControls,
   aboutInfo,
   panelVisibility,
   onTogglePanelVisibility,
@@ -320,6 +322,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         label="Help"
         isDark={isDark}
         items={[
+          { label: 'Selection Controls...', onClick: onShowSelectionControls },
+          { divider: true },
           { label: 'About BluDesign', onClick: onShowAbout },
           { divider: true },
           ...aboutInfo.map(info => ({ 

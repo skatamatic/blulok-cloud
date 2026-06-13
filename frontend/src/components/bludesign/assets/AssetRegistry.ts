@@ -572,12 +572,15 @@ export class AssetRegistry {
   private static instance: AssetRegistry;
   private assets: Map<string, AssetMetadata> = new Map();
   private bindings: Map<string, StateBindingConfig> = new Map();
+  /** IDs shipped with the app — custom assets registered at runtime are not included. */
+  private readonly builtinAssetIds: ReadonlySet<string>;
 
   private constructor() {
     // Register built-in assets
     BUILTIN_ASSETS.forEach((asset) => {
       this.assets.set(asset.id, asset);
     });
+    this.builtinAssetIds = new Set(BUILTIN_ASSETS.map((asset) => asset.id));
     
     // Register default bindings for smart assets
     this.bindings.set(AssetCategory.STORAGE_UNIT, STORAGE_UNIT_BINDING);
@@ -610,6 +613,11 @@ export class AssetRegistry {
    */
   getAsset(id: string): AssetMetadata | undefined {
     return this.assets.get(id);
+  }
+
+  /** True only for assets shipped in {@link BUILTIN_ASSETS}, not runtime-registered custom assets. */
+  isBuiltinAsset(id: string): boolean {
+    return this.builtinAssetIds.has(id);
   }
 
   /**

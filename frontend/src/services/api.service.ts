@@ -26,6 +26,11 @@ class ApiService {
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
+        // Let the browser set multipart boundaries — the axios instance defaults
+        // to application/json which breaks FormData uploads (multer sees no file).
+        if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+          delete config.headers['Content-Type'];
+        }
         return config;
       },
       (error) => Promise.reject(error)
@@ -1247,6 +1252,39 @@ class ApiService {
     if (offset > 0) params.offset = String(offset);
     if (eventType) params.event_type = eventType;
     const response = await this.api.get(`/firmware/push/${pushId}/events`, { params });
+    return response.data;
+  }
+
+  async listGatewayProvisioningBackups(gatewayId: string, limit = 50, offset = 0) {
+    const params: Record<string, string> = {};
+    if (limit !== 50) params.limit = String(limit);
+    if (offset > 0) params.offset = String(offset);
+    const response = await this.api.get(`/gateways/${gatewayId}/provisioning`, { params });
+    return response.data;
+  }
+
+  async deleteGatewayProvisioningBackup(gatewayId: string, backupId: string) {
+    const response = await this.api.delete(`/gateways/${gatewayId}/provisioning/${backupId}`);
+    return response.data;
+  }
+
+  async requestGatewayProvisioningUpload(gatewayId: string) {
+    const response = await this.api.post(`/gateways/${gatewayId}/provisioning/request-upload`, {});
+    return response.data;
+  }
+
+  async restoreGatewayProvisioningBackup(gatewayId: string, backupId: string) {
+    const response = await this.api.post(`/gateways/${gatewayId}/provisioning/${backupId}/restore`, {});
+    return response.data;
+  }
+
+  async getGatewayProvisioningRestoreStatus(gatewayId: string) {
+    const response = await this.api.get(`/gateways/${gatewayId}/provisioning/restore-status`);
+    return response.data;
+  }
+
+  async cancelGatewayProvisioningRestore(gatewayId: string, restoreId: string) {
+    const response = await this.api.post(`/gateways/${gatewayId}/provisioning/restore/${restoreId}/cancel`, {});
     return response.data;
   }
 

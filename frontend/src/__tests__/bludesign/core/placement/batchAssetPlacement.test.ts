@@ -116,9 +116,9 @@ describe('runBatchAssetPlacement', () => {
     expect(addTilesBatch).toHaveBeenCalledWith([
       { objectId: 'g1', category: AssetCategory.GRASS, position: { x: 0, z: 0 } },
     ]);
-    expect(addObject).toHaveBeenCalledWith('g1', marker, ground);
+    expect(addObject).toHaveBeenCalledWith('g1', marker, ground, { trackOnly: true });
     expect(markOccupied).toHaveBeenCalled();
-    expect(scene.children).toContain(marker);
+    expect(scene.children).not.toContain(marker);
     expect(pushBatchPlace).toHaveBeenCalledWith([ground]);
     expect(emitObjectsPlaced).toHaveBeenCalledWith([ground]);
     expect(scheduleAutoSave).toHaveBeenCalled();

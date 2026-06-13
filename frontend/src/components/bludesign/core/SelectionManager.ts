@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { SelectionState } from './types';
 import { GridSystem } from './GridSystem';
 import { GroundTileManager } from './GroundTileManager';
+import type { SceneManager } from './SceneManager';
 
 // Selection filter type
 export type SelectionFilter = 'all' | 'smart' | 'visual';
@@ -30,6 +31,9 @@ export class SelectionManager {
   // Optional references for optimized ground tile selection
   private gridSystem: GridSystem | null = null;
   private groundTileManager: GroundTileManager | null = null;
+  private sceneManager: SceneManager | null = null;
+  private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private groundPickPoint = new THREE.Vector3();
   
   // State
   private selectedIds: Set<string> = new Set();
@@ -341,6 +345,10 @@ export class SelectionManager {
     this.gridSystem = gridSystem;
     this.groundTileManager = groundTileManager;
   }
+
+  setSceneManager(sceneManager: SceneManager): void {
+    this.sceneManager = sceneManager;
+  }
   
   /**
    * Get all selectable objects in the scene (excluding ground tile markers for performance)
@@ -366,6 +374,11 @@ export class SelectionManager {
    * Find a selectable object by its ID
    */
   private findObjectById(id: string): THREE.Object3D | null {
+    const tracked = this.sceneManager?.getObject(id);
+    if (tracked) {
+      return tracked;
+    }
+
     let found: THREE.Object3D | null = null;
     
     this.scene.traverse((object) => {
@@ -375,6 +388,28 @@ export class SelectionManager {
     });
     
     return found;
+  }
+
+  /**
+   * Grid-based ground tile pick when markers are not in the scene graph.
+   */
+  private pickGroundTileIdAtMouse(): string | null {
+    if (!this.gridSystem || !this.groundTileManager) {
+      return null;
+    }
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    if (!this.raycaster.ray.intersectPlane(this.groundPlane, this.groundPickPoint)) {
+      return null;
+    }
+
+    const gridPos = this.gridSystem.worldToGrid(this.groundPickPoint);
+    return this.groundTileManager.getTileIdAtCell(gridPos.x, gridPos.z);
+  }
+
+  private passesFilterForId(id: string): boolean {
+    const obj = this.findObjectById(id);
+    return obj ? this.passesFilter(obj) : true;
   }
 
   /**
@@ -753,6 +788,13 @@ export class SelectionManager {
       }
     }
     
+    if (hoveredId === null) {
+      const groundTileId = this.pickGroundTileIdAtMouse();
+      if (groundTileId && this.passesFilterForId(groundTileId)) {
+        hoveredId = groundTileId;
+      }
+    }
+    
     if (hoveredId !== this.hoveredId) {
       this.hoveredId = hoveredId;
       this.notifyChange();
@@ -797,6 +839,13 @@ export class SelectionManager {
       }
     }
     
+    if (selectedId === null) {
+      const groundTileId = this.pickGroundTileIdAtMouse();
+      if (groundTileId && this.passesFilterForId(groundTileId)) {
+        selectedId = groundTileId;
+      }
+    }
+
     if (selectedId) {
       // Multi-select only if enabled AND not in single-select-only mode
       if (this.isMultiSelectMode && !this.singleSelectOnly) {

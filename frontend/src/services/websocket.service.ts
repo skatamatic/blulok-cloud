@@ -147,6 +147,9 @@ class WebSocketService implements IWebSocketService {
         case 'firmware_push_progress_update':
           this.handleFirmwarePushProgressUpdate(message);
           break;
+        case 'provisioning_restore_progress_update':
+          this.handleProvisioningRestoreProgressUpdate(message);
+          break;
         case 'gateway_telemetry_log_update':
           this.handleGatewayTelemetryLogUpdate(message);
           break;
@@ -245,6 +248,13 @@ class WebSocketService implements IWebSocketService {
 
   private handleFirmwarePushProgressUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('firmware_push_progress');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleProvisioningRestoreProgressUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('provisioning_restore_progress');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }

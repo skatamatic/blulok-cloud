@@ -29,6 +29,7 @@ export type FacilityImportHost = {
   gridSystem: GridSystem;
   resetWorkingGridAlignment: () => void;
   setDataSourceConfig: (config: DataSourceConfig | null) => void;
+  calculateSceneBounds: () => THREE.Box3;
   emitStateUpdated: () => void;
   emitThemeMissing: (payload: { missingThemeId: string }) => void;
 };
@@ -106,6 +107,13 @@ export function createFacilityImportServices(host: FacilityImportHost): Facility
       }
     },
     setDataSourceConfig: (config) => host.setDataSourceConfig(config),
+    frameImportedLayout: () => {
+      const state = host.getState();
+      state.camera.mode = CameraMode.FREE;
+      host.cameraController.setMode(CameraMode.FREE);
+      const bounds = host.calculateSceneBounds();
+      host.cameraController.frameAllContent(bounds, false, 'aerial');
+    },
     emitImportComplete: () => host.emitStateUpdated(),
   };
 }

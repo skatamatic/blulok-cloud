@@ -77,6 +77,7 @@ describe('createFacilityImportServices', () => {
       gridSystem: { setVisible: jest.fn() } as never,
       resetWorkingGridAlignment: jest.fn(),
       setDataSourceConfig: jest.fn(),
+      calculateSceneBounds: () => new THREE.Box3(),
       emitStateUpdated: jest.fn(),
       emitThemeMissing: jest.fn(),
     });
@@ -92,5 +93,38 @@ describe('createFacilityImportServices', () => {
     expect(setMode).toHaveBeenCalledWith(CameraMode.ISOMETRIC);
     expect(setIso).toHaveBeenCalledWith(IsometricAngle.NORTH_EAST);
     expect(state.camera.zoom).toBe(10);
+  });
+
+  it('frameImportedLayout switches to free mode and frames aerially', () => {
+    const setMode = jest.fn();
+    const frameAllContent = jest.fn();
+    const state = minimalEditorState({ mode: CameraMode.ISOMETRIC });
+    const bounds = new THREE.Box3(new THREE.Vector3(-10, 0, -10), new THREE.Vector3(10, 5, 10));
+
+    const s = createFacilityImportServices({
+      getState: () => state,
+      sceneManager: { clearObjects: jest.fn() } as never,
+      buildingManager: { clear: jest.fn(), restoreBuilding: jest.fn() } as never,
+      floorManager: { registerFloor: jest.fn(), setFloor: jest.fn() } as never,
+      cameraController: {
+        setMode,
+        setIsometricAngle: jest.fn(),
+        frameAllContent,
+      } as never,
+      placementCoordinator: { placeFromSavedData: jest.fn() } as never,
+      skinManager: { loadFacilitySkins: jest.fn(), setActiveSkin: jest.fn() } as never,
+      gridSystem: { setVisible: jest.fn() } as never,
+      resetWorkingGridAlignment: jest.fn(),
+      setDataSourceConfig: jest.fn(),
+      calculateSceneBounds: () => bounds,
+      emitStateUpdated: jest.fn(),
+      emitThemeMissing: jest.fn(),
+    });
+
+    s.frameImportedLayout?.();
+
+    expect(state.camera.mode).toBe(CameraMode.FREE);
+    expect(setMode).toHaveBeenCalledWith(CameraMode.FREE);
+    expect(frameAllContent).toHaveBeenCalledWith(bounds, false, 'aerial');
   });
 });

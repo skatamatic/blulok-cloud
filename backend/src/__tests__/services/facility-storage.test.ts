@@ -95,4 +95,36 @@ describe('FacilityStorageAdapter', () => {
       await expect(adapter.deleteData('user-1', 'fac-1')).resolves.not.toThrow();
     });
   });
+
+  describe('layout source', () => {
+    it('should upload PNG to layout-source path', async () => {
+      const png = Buffer.from('fake-png');
+
+      await adapter.saveLayoutSource('user-1', 'fac-1', png);
+
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-1/layout-source.png',
+        png,
+        'image/png',
+      );
+    });
+
+    it('should download layout source from correct path', async () => {
+      const png = Buffer.from('fake-png');
+      mockBase.downloadFile.mockResolvedValue(png);
+
+      const result = await adapter.loadLayoutSource('user-1', 'fac-1');
+
+      expect(mockBase.downloadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-1/layout-source.png',
+      );
+      expect(result).toEqual(png);
+    });
+
+    it('should reject path traversal in layout source paths', async () => {
+      await expect(adapter.saveLayoutSource('../evil', 'fac-1', Buffer.from('x'))).rejects.toThrow(
+        'path traversal',
+      );
+    });
+  });
 });

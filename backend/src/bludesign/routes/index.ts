@@ -12,6 +12,7 @@ import userFacilitiesRouter from './facilities.routes'; // User-based save/load 
 import { bluDesignThemesRouter } from './themes.routes';
 import { bluDesignSkinsRouter } from './skins.routes';
 import { storageRouter } from './storage.routes';
+import { bluDesignLayoutImportRouter } from './layout-import.routes';
 
 const router = Router();
 
@@ -33,6 +34,9 @@ router.use('/projects/:projectId/assets', bluDesignAssetsRouter);
 
 // Storage provider routes (OAuth, testing, etc.)
 router.use('/storage', storageRouter);
+
+// Layout import: image → detected unit candidates
+router.use('/layout-import', bluDesignLayoutImportRouter);
 
 export { router as bluDesignRouter };
 

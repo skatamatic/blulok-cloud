@@ -76,6 +76,30 @@ jest.mock('@/services/device-sync.service', () => {
   };
 });
 
+jest.mock('@/services/provisioning/provisioning-backup.service', () => ({
+  ProvisioningBackupService: {
+    prepareUpload: jest.fn().mockResolvedValue({
+      upload_id: '11111111-1111-4111-8111-111111111111',
+      upload_url: 'https://storage.example/upload',
+      upload_headers: { 'Content-Type': 'application/zip' },
+      expires_in_seconds: 3600,
+      gateway_id: 'gateway-1',
+    }),
+    completeUpload: jest.fn().mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+      gateway_id: 'gateway-1',
+      facility_id: 'facility-1',
+      filename: 'mesh.zip',
+      size_bytes: 512,
+      sha256_hash: 'a'.repeat(64),
+      upload_source: 'gateway_push',
+      uploaded_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    }),
+  },
+}));
+
 // Access mocks exported by the jest factory above
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const deviceSyncModule = require('@/services/device-sync.service');
@@ -764,6 +788,49 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.success).toBe(false);
     });
   });
-});
 
+  describe('POST /api/v1/internal/gateway/provisioning', () => {
+    it('prepare rejects invalid filename', async () => {
+      const { ProvisioningBackupService } = require('@/services/provisioning/provisioning-backup.service');
+      ProvisioningBackupService.prepareUpload.mockRejectedValueOnce(new Error('Provisioning validation failed: File must have a .zip extension'));
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/provisioning/prepare')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({ filename: 'bad.bin', size_bytes: 512 })
+        .expect(400);
+
+      expect(res.body.success).toBe(false);
+    });
+
+    it('prepare returns upload session for facility-scoped gateway', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/provisioning/prepare')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({ filename: 'mesh.zip', size_bytes: 512 })
+        .expect(200);
+
+      expect(res.body.data.upload_id).toBe('11111111-1111-4111-8111-111111111111');
+      expect(res.body.data.gateway_id).toBe('gateway-1');
+    });
+
+    it('complete finalizes upload and returns sanitized backup', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/provisioning/complete')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Facility-Id', 'facility-1')
+        .send({
+          upload_id: '11111111-1111-4111-8111-111111111111',
+          filename: 'mesh.zip',
+          size_bytes: 512,
+        })
+        .expect(200);
+
+      expect(res.body.data.backup.id).toBe('11111111-1111-4111-8111-111111111111');
+      expect(res.body.data.backup.storage_path).toBeUndefined();
+    });
+  });
+});
 

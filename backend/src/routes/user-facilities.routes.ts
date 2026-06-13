@@ -52,6 +52,21 @@ const setFacilitiesSchema = Joi.object({
   facilityIds: Joi.array().items(Joi.string().min(1)).required()
 });
 
+function rejectFacilityAdminAssociationUnlessGlobalAdmin(
+  targetUser: User,
+  requesterRole: UserRole,
+  res: Response,
+): boolean {
+  if (targetUser.role === UserRole.FACILITY_ADMIN && !AuthService.isGlobalAdmin(requesterRole)) {
+    res.status(403).json({
+      success: false,
+      message: 'Only global administrators can manage facility admin associations',
+    });
+    return true;
+  }
+  return false;
+}
+
 // GET /user-facilities/:userId - Get user's facility associations
 router.get('/:userId', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { userId } = req.params;
@@ -135,12 +150,16 @@ router.put('/:userId', asyncHandler(async (req: AuthenticatedRequest, res: Respo
     return;
   }
 
-  // Facility admins can only be managed by global admins
-  if (user.role === UserRole.FACILITY_ADMIN && !AuthService.isGlobalAdmin(req.user!.role)) {
-    res.status(403).json({
+  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
+    res.status(400).json({
       success: false,
-      message: 'Only global administrators can manage facility admin associations'
+      message: 'Facility associations for tenants and maintenance users are managed automatically through unit assignments and key sharing'
     });
+    return;
+  }
+
+  // Facility admins can only be managed by global admins
+  if (rejectFacilityAdminAssociationUnlessGlobalAdmin(user, req.user!.role as UserRole, res)) {
     return;
   }
 
@@ -186,6 +205,18 @@ router.post('/:userId/facilities/:facilityId', asyncHandler(async (req: Authenti
       success: false,
       message: 'User not found'
     });
+    return;
+  }
+
+  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
+    res.status(400).json({
+      success: false,
+      message: 'Facility associations for tenants and maintenance users are managed automatically through unit assignments and key sharing'
+    });
+    return;
+  }
+
+  if (rejectFacilityAdminAssociationUnlessGlobalAdmin(user, req.user!.role as UserRole, res)) {
     return;
   }
 
@@ -245,6 +276,27 @@ router.delete('/:userId/facilities/:facilityId', asyncHandler(async (req: Authen
   }
 
   // Remove association
+  const user = await UserModel.findById(userId) as User;
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+    return;
+  }
+
+  if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
+    res.status(400).json({
+      success: false,
+      message: 'Facility associations for tenants and maintenance users are managed automatically through unit assignments and key sharing'
+    });
+    return;
+  }
+
+  if (rejectFacilityAdminAssociationUnlessGlobalAdmin(user, req.user!.role as UserRole, res)) {
+    return;
+  }
+
   const removed = await UserFacilityAssociationModel.removeUserFromFacility(userId, facilityId);
 
   if (removed === 0) {

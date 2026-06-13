@@ -7,6 +7,9 @@ module.exports = {
     '/node_modules/',
     '/__tests__/mocks/',
     '/__tests__/utils/',
+    // Heavy BluDesign detection regression (OpenCV + Tesseract over the sample
+    // plan). Excluded from the default run; invoke via `npm run bludesign:detect:test`.
+    'detectUnits\\.regression\\.test\\.ts$',
   ],
   transform: {
     '^.+\\.ts$': ['ts-jest', {
@@ -30,6 +33,19 @@ module.exports = {
     '!src/models/**',
     // BluDesign editor stack is covered by dedicated route tests + manual QA; excluding keeps the P1/P2 gate meaningful.
     '!src/bludesign/**',
+    // ...except the layout-import detection engine, whose pure logic IS unit-tested
+    // and held to the gate. The WASM/IO-bound files below are exercised only by the
+    // heavy regression (run via `bludesign:detect:test`, outside the coverage run),
+    // so they are excluded to keep the reported number meaningful.
+    'src/bludesign/layout-import/**/*.ts',
+    '!src/bludesign/layout-import/**/__tests__/**',
+    '!src/bludesign/layout-import/opencv.ts',
+    '!src/bludesign/layout-import/image/**',
+    '!src/bludesign/layout-import/detection/detectRectangles.ts',
+    '!src/bludesign/layout-import/ocr/cropLabel.ts',
+    '!src/bludesign/layout-import/ocr/ocrLabels.ts',
+    '!src/bludesign/layout-import/detectUnits.ts',
+    '!src/bludesign/layout-import/index.ts',
     // DB bootstrap / one-off migrations — not unit-tested; skew metrics.
     '!src/services/database.service.ts',
     '!src/services/migration.service.ts',

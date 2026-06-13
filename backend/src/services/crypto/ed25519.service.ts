@@ -135,7 +135,7 @@ export class Ed25519Service {
    * 
    * Payload must include:
    * - cmd_type: CAPS_CASE command type (e.g., 'DENYLIST_ADD', 'LOCK', 'UNLOCK')
-   * - Command-specific fields (e.g., denylist_add, target, device_id)
+   * - Command-specific fields (e.g., denylist_add, target, device_id, expires_at for LOCK/UNLOCK)
    * 
    * JWT will include:
    * - iss: 'BluCloud:Root'

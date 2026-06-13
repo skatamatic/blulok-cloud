@@ -633,11 +633,11 @@ export default function UserDetailsPage() {
                     This user has {userDetails.role === UserRole.DEV_ADMIN ? 'development admin' : 'global admin'} privileges and can access all facilities automatically.
                   </p>
                 </div>
-              ) : canManageUsersScope ? (
+              ) : canManageUsersScope && userDetails.role === UserRole.FACILITY_ADMIN ? (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
                   <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Manage Facility Access</h2>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                    Choose which facilities this user can access. Users without facility assignments will have no access.
+                    Choose which facilities this facility admin can manage. Route passes are rebuilt from current associations on each request (not from the login token).
                   </p>
 
                   <div className="space-y-3 max-h-96 overflow-y-auto mb-6">
@@ -718,6 +718,13 @@ export default function UserDetailsPage() {
                       )}
                     </button>
                   </div>
+                </div>
+              ) : canManageUsersScope && (userDetails.role === UserRole.TENANT || userDetails.role === UserRole.MAINTENANCE) ? (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                  <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Facility Access</h2>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    {userDetails.role === UserRole.TENANT ? 'Tenants' : 'Maintenance users'} receive facility access automatically through unit assignments and key sharing. Route passes include only the locks they can actually use.
+                  </p>
                 </div>
               ) : null}
 

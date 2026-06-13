@@ -241,8 +241,24 @@ export default function DeviceDetailsPage() {
     const deviceUpdate = rows.find((r) => r.device_id === deviceId) ?? rows[0];
     setDevice((prev) => {
       if (!prev) return prev;
+      const nextDeviceSettings =
+        deviceUpdate.device_settings !== undefined
+          ? deviceUpdate.device_settings
+          : deviceUpdate.name !== undefined
+            ? {
+                ...(prev.device_settings ?? {}),
+                displayName: deviceUpdate.name,
+              }
+            : prev.device_settings;
       return {
         ...prev,
+        ...(deviceUpdate.name !== undefined ? { name: deviceUpdate.name } : {}),
+        ...(deviceUpdate.location_description !== undefined
+          ? { location_description: deviceUpdate.location_description }
+          : {}),
+        ...(nextDeviceSettings !== prev.device_settings
+          ? { device_settings: nextDeviceSettings }
+          : {}),
         lock_status: (deviceUpdate.lock_status ?? prev.lock_status) as DeviceDetails['lock_status'],
         device_status: (deviceUpdate.device_status ?? prev.device_status) as DeviceDetails['device_status'],
         battery_level: deviceUpdate.battery_level ?? prev.battery_level,

@@ -665,7 +665,12 @@ export class DeviceModel {
       data.is_locked !== undefined ||
       data.last_activity !== undefined;
 
-    const before = hasTelemetryChange
+    const hasMetadataChange =
+      data.name !== undefined ||
+      data.location_description !== undefined ||
+      data.device_type !== undefined;
+
+    const before = hasTelemetryChange || hasMetadataChange
       ? await this.findAccessControlDeviceWithGateway(deviceId)
       : null;
 
@@ -717,6 +722,20 @@ export class DeviceModel {
       }
 
       if (!statusChanged && data.last_activity !== undefined) {
+        this.eventService.emitDeviceTelemetryUpdated({
+          deviceId,
+          gatewayId,
+          facilityId,
+        });
+      }
+
+      const metadataChanged =
+        (data.name !== undefined && data.name !== before.name) ||
+        (data.location_description !== undefined &&
+          data.location_description !== (before.location_description ?? '')) ||
+        (data.device_type !== undefined && data.device_type !== before.device_type);
+
+      if (metadataChanged) {
         this.eventService.emitDeviceTelemetryUpdated({
           deviceId,
           gatewayId,
@@ -776,6 +795,12 @@ export class DeviceModel {
 
   async updateBluLokDevice(deviceId: string, data: UpdateBluLokDeviceData): Promise<BluLokDevice | null> {
     const knex = this.db.connection;
+
+    const before =
+      data.device_settings !== undefined
+        ? await this.findBluLokDeviceById(deviceId)
+        : null;
+
     const updatePayload: Record<string, unknown> = { updated_at: new Date() };
 
     if (data.device_serial !== undefined) updatePayload.device_serial = data.device_serial;
@@ -799,6 +824,21 @@ export class DeviceModel {
     await knex('blulok_devices').where('id', deviceId).update(updatePayload);
     const device = await knex('blulok_devices').where('id', deviceId).first();
     if (!device) return null;
+
+    if (before && data.device_settings !== undefined) {
+      const oldSettings = before.device_settings ?? {};
+      const newSettings = data.device_settings ?? {};
+      const settingsChanged =
+        JSON.stringify(oldSettings) !== JSON.stringify(newSettings);
+      if (settingsChanged) {
+        this.eventService.emitDeviceTelemetryUpdated({
+          deviceId: before.id,
+          gatewayId: before.gateway_id,
+          facilityId: before.facility_id,
+        });
+      }
+    }
+
     return {
       ...(device as BluLokDevice),
       device_settings: this.safeParseJson(device.device_settings),

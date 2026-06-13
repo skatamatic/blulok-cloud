@@ -46,7 +46,13 @@ import {
   reorderDockPanelIds,
 } from './ui/panelLayoutV9';
 import { MenuBar } from './ui/MenuBar';
-import { HotkeyOverlay } from './ui/HotkeyOverlay';
+import { ImportPlanPanel } from './editor/ImportPlanPanel';
+import {
+  hasLayoutImport,
+  attachLayoutImportToFacilityData,
+  type LayoutImportMetadata,
+} from './layout-import/layoutImportMetadata';
+import { EditorHelpModal } from './ui/dialogs/EditorHelpModal';
 import { SelectionOverlay } from './ui/SelectionOverlay';
 import { SaveDialog } from './ui/dialogs/SaveDialog';
 import { LoadDialog } from './ui/dialogs/LoadDialog';
@@ -66,6 +72,7 @@ import {
   EntityBinding,
   SimulationState,
   Building,
+  FacilityData,
 } from './core/types';
 import { AssetRegistry } from './assets/AssetRegistry';
 import { AssetService } from './services/AssetService';
@@ -78,6 +85,10 @@ import {
   CubeIcon,
   CpuChipIcon,
   Squares2X2Icon,
+  RectangleStackIcon,
+  SwatchIcon,
+  ServerIcon,
+  BuildingOffice2Icon,
 } from '@heroicons/react/24/outline';
 
 interface EditorCanvasProps {
@@ -290,6 +301,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [selectedObjects, setSelectedObjects] = useState<PlacedObject[]>([]);
   const [showCallouts, setShowCallouts] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [activeThemeId, setActiveThemeId] = useState<string>('theme-default');
   const [availableAssets, setAvailableAssets] = useState(AssetRegistry.getInstance().getAllAssets());
@@ -314,6 +326,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [showThemeMissingDialog, setShowThemeMissingDialog] = useState(false);
   const [missingThemeId, setMissingThemeId] = useState<string | null>(null);
   const [showNewFacilityConfirm, setShowNewFacilityConfirm] = useState(false);
+  const [layoutImport, setLayoutImport] = useState<LayoutImportMetadata | null>(null);
+  const [showImportPlanPanel, setShowImportPlanPanel] = useState(false);
   
   // Progress overlay state for time-consuming operations
   const [progressState, setProgressState] = useState<ProgressState | null>(null);
@@ -545,6 +559,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }
     setCurrentFacilityName(null);
     setCurrentFacilityId(null);
+    setLayoutImport(null);
+    setShowImportPlanPanel(false);
     setHasUnsavedChanges(false);
     addToast({ type: 'info', title: 'New Facility', message: 'Started a new facility.' });
   }, [engine, addToast]);
@@ -565,16 +581,22 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setShowLoadDialog(true);
   }, []);
 
+  const buildSavePayload = useCallback((): FacilityData | null => {
+    if (!engine) return null;
+    const data = engine.exportSceneData();
+    data.name = currentFacilityName || 'Untitled';
+    data.dataSource = dataSourceConfig;
+    return attachLayoutImportToFacilityData(data, layoutImport);
+  }, [engine, currentFacilityName, dataSourceConfig, layoutImport]);
+
   const handleSave = useCallback(async () => {
     if (!engine) return;
     
     if (currentFacilityId && currentFacilityName) {
       // Update existing facility
       try {
-        const data = engine.exportSceneData();
-        data.name = currentFacilityName;
-        // Include data source configuration so facility linking is persisted
-        data.dataSource = dataSourceConfig;
+        const data = buildSavePayload();
+        if (!data) return;
         const thumbnail = await engine.captureScreenshot();
         await bludesignApi.updateFacility(currentFacilityId, data, thumbnail);
         setHasUnsavedChanges(false);
@@ -589,7 +611,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       // Show save dialog for new facility
       setShowSaveDialog(true);
     }
-  }, [engine, currentFacilityId, currentFacilityName, dataSourceConfig]);
+  }, [engine, currentFacilityId, currentFacilityName, buildSavePayload, addToast]);
 
   // Clipboard handlers (must be before useKeyboardShortcuts)
   const handleCopy = useCallback(() => {
@@ -758,10 +780,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setSelectionFilter(filter);
     engine?.getSelectionManager()?.setFilter(filter, true); // true = clear non-matching selections
   }, [engine]);
+
   const handleSelectAsset = useCallback((assetId: string | null) => {
     if (assetId) {
       // First check available assets (includes custom assets), then fall back to registry
-      const asset = availableAssets.find(a => a.id === assetId) 
+      const asset = availableAssets.find(a => a.id === assetId)
         || AssetRegistry.getInstance().getAsset(assetId);
       if (asset) {
         setActiveAsset(assetId, asset);
@@ -832,8 +855,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     // If we have an existing saved facility, immediately persist the data source change
     if (currentFacilityId && engine) {
       try {
-        const data = engine.exportSceneData();
-        data.name = currentFacilityName || 'Untitled';
+        const data = buildSavePayload();
+        if (!data) return;
         data.dataSource = config;
         await bludesignApi.updateFacility(currentFacilityId, data);
         // Mark as saved (not unsaved)
@@ -848,8 +871,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       // No saved facility yet, just mark as unsaved
       setHasUnsavedChanges(true);
     }
-  }, [engine, currentFacilityId, currentFacilityName]);
-  
+  }, [engine, currentFacilityId, buildSavePayload]);
+
   const handleSimulationModeChange = useCallback((enabled: boolean) => {
     setSimulationMode(enabled);
   }, []);
@@ -860,8 +883,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     try {
       const data = engine.exportSceneData();
       data.name = name;
-      // Include data source configuration so facility linking is persisted
       data.dataSource = dataSourceConfig;
+      // Save As / new facility — do not copy import metadata or source image
       const thumbnail = await engine.captureScreenshot();
       
       if (currentFacilityId) {
@@ -869,11 +892,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         const response = await bludesignApi.saveFacility(name, data, thumbnail);
         setCurrentFacilityId(response.id);
         setCurrentFacilityName(response.name);
+        setLayoutImport(null);
+        setShowImportPlanPanel(false);
       } else {
         // Save new
         const response = await bludesignApi.saveFacility(name, data, thumbnail);
         setCurrentFacilityId(response.id);
         setCurrentFacilityName(response.name);
+        setLayoutImport(null);
+        setShowImportPlanPanel(false);
       }
       
       setHasUnsavedChanges(false);
@@ -896,6 +923,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       await engine.importSceneDataAsync(facility.data);
       setCurrentFacilityId(facility.id);
       setCurrentFacilityName(facility.name);
+      setLayoutImport(hasLayoutImport(facility.data) ? facility.data.layoutImport : null);
+      setShowImportPlanPanel(false);
       setHasUnsavedChanges(false);
       setShowLoadDialog(false);
       
@@ -1043,6 +1072,13 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     
     // Small delay to make the state transition smooth
     const timer = setTimeout(() => {
+      // Layout-import handoff: open the new facility directly — never prompt for draft.
+      if (initialFacilityId) {
+        engine.clearDraft();
+        setDraftChecked(true);
+        return;
+      }
+
       const draft = engine.hasDraft();
       if (draft.exists && draft.timestamp) {
         setDraftTimestamp(draft.timestamp);
@@ -1056,7 +1092,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }, 300);
     
     return () => clearTimeout(timer);
-  }, [engine, isReady, draftChecked]);
+  }, [engine, isReady, draftChecked, initialFacilityId]);
   
   // Load custom assets from backend and merge with built-in assets
   useEffect(() => {
@@ -1187,20 +1223,29 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     floorManager.setGhostingConfig(prefs.floorGhosting);
   }, [engine]);
   
-  // Load initial facility if provided (for View mode)
+  // Load initial facility if provided (layout-import handoff or view mode)
   useEffect(() => {
-    if (!engine || !initialFacilityId || draftChecked === false) return;
-    
+    if (!engine || !initialFacilityId || !draftChecked) return;
+
+    let cancelled = false;
+
     const loadInitialFacility = async () => {
       try {
+        setLoadingState({
+          type: 'facility',
+          subtitle: 'Opening imported facility…',
+          progress: 88,
+        });
         const facility = await bludesignApi.getFacility(initialFacilityId);
-        if (facility && facility.data) {
-          // Use async import to pre-load any custom assets
+        if (cancelled) return;
+        if (facility?.data) {
+          engine.clearDraft();
           await engine.importSceneDataAsync(facility.data);
           setCurrentFacilityId(facility.id);
           setCurrentFacilityName(facility.name);
+          setLayoutImport(hasLayoutImport(facility.data) ? facility.data.layoutImport : null);
+          setShowImportPlanPanel(false);
           setHasUnsavedChanges(false);
-          // Restore data source configuration from engine (set during importSceneData)
           const restoredDataSource = engine.getDataSourceConfig();
           if (restoredDataSource) {
             setDataSourceConfig(restoredDataSource);
@@ -1209,10 +1254,19 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       } catch (error) {
         console.error('Failed to load facility:', error);
         addToast({ type: 'error', title: 'Error', message: 'Failed to load facility' });
+      } finally {
+        if (!cancelled) {
+          setLoadingState({ type: 'none', progress: 100 });
+          setInitialLoadComplete(true);
+        }
       }
     };
-    
-    loadInitialFacility();
+
+    void loadInitialFacility();
+
+    return () => {
+      cancelled = true;
+    };
   }, [engine, initialFacilityId, draftChecked, addToast]);
   
   // Set up selection overlay callbacks - drag selection box
@@ -1248,10 +1302,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     const interval = setInterval(async () => {
       if (hasUnsavedChanges && currentFacilityName) {
         try {
-          const data = engine.exportSceneData();
-          data.name = currentFacilityName;
-          // Include data source configuration in auto-save
-          data.dataSource = dataSourceConfig;
+          const data = buildSavePayload();
+          if (!data) return;
           const thumbnail = await engine.captureScreenshot();
           await bludesignApi.updateFacility(currentFacilityId, data, thumbnail);
           setHasUnsavedChanges(false);
@@ -1264,11 +1316,14 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }, 5 * 60 * 1000); // 5 minutes
     
     return () => clearInterval(interval);
-  }, [engine, currentFacilityId, currentFacilityName, hasUnsavedChanges, readonly, dataSourceConfig]);
+  }, [engine, currentFacilityId, currentFacilityName, hasUnsavedChanges, readonly, buildSavePayload]);
 
   // Auto-resume last facility on mount (only after draft check is complete)
   useEffect(() => {
     if (!engine || !isReady || readonly || !draftChecked || initialLoadComplete) return;
+
+    // Layout-import handoff loads its own facility — do not restore last session.
+    if (initialFacilityId) return;
     
     // If we already recovered a draft, don't auto-resume
     if (showDraftRecoveryDialog) return;
@@ -1299,6 +1354,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           
           setCurrentFacilityId(lastFacility.id);
           setCurrentFacilityName(lastFacility.name);
+          setLayoutImport(hasLayoutImport(lastFacility.data) ? lastFacility.data.layoutImport : null);
+          setShowImportPlanPanel(false);
           setHasUnsavedChanges(false);
           // Restore data source configuration from engine (set during importSceneData)
           const restoredDataSource = engine.getDataSourceConfig();
@@ -1331,7 +1388,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [engine, isReady, readonly, draftChecked, initialLoadComplete, showDraftRecoveryDialog]);
+  }, [engine, isReady, readonly, draftChecked, initialLoadComplete, showDraftRecoveryDialog, initialFacilityId]);
 
   const aboutInfo = useMemo(
     () => [
@@ -1575,6 +1632,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
             onToggleGrid={handleToggleGrid}
             onToggleCallouts={handleToggleCallouts}
             onResetCamera={handleResetCamera}
+            hasImportPlan={!!layoutImport}
+            showImportPlan={showImportPlanPanel}
+            onToggleImportPlan={() => setShowImportPlanPanel((v) => !v)}
           />
         );
       case 'properties':
@@ -1710,13 +1770,13 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       case 'properties':
         return { title: 'Properties', icon: <AdjustmentsHorizontalIcon className="w-4 h-4" /> };
       case 'buildingSkin':
-        return { title: 'Building Style' };
+        return { title: 'Building Style', icon: <BuildingOffice2Icon className="w-4 h-4" /> };
       case 'floors':
-        return { title: 'Floors' };
+        return { title: 'Floors', icon: <RectangleStackIcon className="w-4 h-4" /> };
       case 'skins':
-        return { title: 'Scene Theme' };
+        return { title: 'Scene Theme', icon: <SwatchIcon className="w-4 h-4" /> };
       case 'datasource':
-        return { title: 'Data Source' };
+        return { title: 'Data Source', icon: <ServerIcon className="w-4 h-4" /> };
       case 'smartobjects':
         return { title: 'Smart Objects', icon: <CpuChipIcon className="w-4 h-4" /> };
       default:
@@ -1759,6 +1819,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         onSaveLayoutAsDefault={saveLayoutAsDefault}
         onResetPanels={() => { resetLayout(); showAllPanels(); }}
         onShowAbout={() => setAboutOpen(true)}
+        onShowSelectionControls={() => setHelpOpen(true)}
         aboutInfo={aboutInfo}
         panelVisibility={{
           tools: panelLayout.tools?.visible ?? true,
@@ -2203,6 +2264,16 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 {renderPanelBody('smartobjects')}
               </FloatingPanel>
             )}
+
+            {showImportPlanPanel && layoutImport && currentFacilityId && (
+              <ImportPlanPanel
+                facilityId={currentFacilityId}
+                layoutImport={layoutImport}
+                boundsRef={canvasAreaRef}
+                visible={showImportPlanPanel}
+                onClose={() => setShowImportPlanPanel(false)}
+              />
+            )}
           </>
         )}
 
@@ -2321,16 +2392,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           </div>
         )}
 
-        {/* Hotkey Overlay - fixed bottom-left */}
-        {isReady && initialLoadComplete && (
-          <HotkeyOverlay
-            activeTool={safeState.activeTool}
-            isPlacing={!!safeState.activeAssetId}
-            hasSelection={(safeState.selection?.selectedIds?.length ?? 0) > 0}
-            hasClipboard={hasClipboard}
-          />
-        )}
       </div>
+
+      <EditorHelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {/* About modal */}
       {aboutOpen && (

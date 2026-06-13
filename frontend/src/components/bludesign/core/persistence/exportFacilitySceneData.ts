@@ -1,3 +1,5 @@
+import type { LayoutImportMetadata } from '../../layout-import/layoutImportMetadata';
+import { attachLayoutImportToFacilityData } from '../../layout-import/layoutImportMetadata';
 import type { EditorState } from '../types';
 import type {
   Building,
@@ -18,6 +20,7 @@ export type ExportFacilitySceneDataInput = {
   state: EditorState;
   buildings: Building[];
   dataSourceConfig: DataSourceConfig | null;
+  layoutImport?: LayoutImportMetadata | null;
 };
 
 /**
@@ -48,7 +51,7 @@ export function exportFacilitySceneData(input: ExportFacilitySceneDataInput): Fa
   const activeThemeId = getThemeManager().getActiveThemeId();
   const serializedBuildings = input.buildings.map((b) => serializeBuildingForFacility(b));
 
-  return {
+  const base: FacilityData = {
     name: '',
     version: '2.0.0',
     camera: camera as FacilityData['camera'],
@@ -61,4 +64,6 @@ export function exportFacilitySceneData(input: ExportFacilitySceneDataInput): Fa
     showGrid: input.state.ui.showGrid,
     dataSource: input.dataSourceConfig || undefined,
   };
+
+  return attachLayoutImportToFacilityData(base, input.layoutImport);
 }

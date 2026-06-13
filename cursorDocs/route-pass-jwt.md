@@ -16,7 +16,17 @@ Related context: [auth.md](./auth.md) (user sessions and roles), [security-desig
 | Facility scoping | Optional body or query field `facility_id` (UUID). Restricts audience resolution and facility-scoped roles to that facility when allowed by RBAC. |
 | Response | `{ "success": true, "routePass": "<jwt>" }` |
 
-Implementation: [`backend/src/routes/passes.routes.ts`](../backend/src/routes/passes.routes.ts), orchestration in [`backend/src/services/passes/route-pass.orchestrator.ts`](../backend/src/services/passes/route-pass.orchestrator.ts), signing in [`backend/src/services/passes.service.ts`](../backend/src/services/passes.service.ts) and [`backend/src/services/crypto/ed25519.service.ts`](../backend/src/services/crypto/ed25519.service.ts).
+Implementation: [`backend/src/routes/passes.routes.ts`](../backend/src/routes/passes.routes.ts), orchestration in [`backend/src/services/passes/route-pass.orchestrator.ts`](../backend/src/services/passes/route-pass.orchestrator.ts), authoritative scope in [`backend/src/services/passes/route-pass-context.service.ts`](../backend/src/services/passes/route-pass-context.service.ts), signing in [`backend/src/services/passes.service.ts`](../backend/src/services/passes.service.ts) and [`backend/src/services/crypto/ed25519.service.ts`](../backend/src/services/crypto/ed25519.service.ts).
+
+**Authoritative data at issuance:** Each `POST /passes/request` reloads the user's **role**, **active status**, and **facility scope** from the database. The route handler passes only `userId` and optional `facility_id` into the orchestrator — session JWT claims (`role`, `facilityIds`) are never forwarded. Every route pass claim is derived from DB state at request time:
+
+| Claim / field | Source at issuance |
+|---------------|-------------------|
+| `sub` | Authenticated user id (from session), cross-checked against DB active flag |
+| `user_role` | `users.role` from DB |
+| `aud[]` | Unit assignments, key shares, facility associations, and device inventory queries |
+| `schedules` | Facility schedules for facilities implied by resolved audiences (not from session JWT) |
+| `device_pubkey` | Registered `user_devices` row for the bound app device |
 
 ---
 
@@ -69,6 +79,14 @@ Each element is one entitlement target. Implementations must parse the **prefix*
 | `access_control:` | `access_control:{deviceId}` | Access to an **access control** device (UUID **id** from `access_control_devices`), e.g. app-entry doors in the user’s zone groups. |
 
 Resolution logic (who gets which audiences) lives in [`backend/src/services/passes/audience-resolver.service.ts`](../backend/src/services/passes/audience-resolver.service.ts).
+
+**Role summary:**
+
+| Role | `lock:` / `shared_key:` | `access_control:` |
+|------|-------------------------|-------------------|
+| `admin`, `dev_admin` | All locks (optional facility filter) | App-entry devices in scope |
+| `facility_admin` | **None** — managers do not unlock unit locks via route pass | App-entry devices in **currently assigned** facilities (from DB, not login JWT) |
+| `tenant`, `maintenance` | Assigned / shared unit locks only | Zone-linked app-entry for those locks |
 
 **Important:** `aud` can reference **multiple facilities** in one pass (e.g. a tenant with units in more than one site). Schedule data is **per facility** and must be evaluated against the facility of the lock or access point being used (see below).
 

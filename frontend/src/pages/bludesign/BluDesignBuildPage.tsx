@@ -1,11 +1,14 @@
 import { useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { EditorCanvas } from '@/components/bludesign';
 
 export default function BluDesignBuildPage() {
-  // const [isReady, setIsReady] = useState(false);
+  const [searchParams] = useSearchParams();
+  // When handed off from the layout-import "Build in 3D" wizard, open the
+  // freshly-created facility directly in the editor.
+  const initialFacilityId = searchParams.get('facilityId') ?? undefined;
 
   const handleReady = useCallback(() => {
-    // setIsReady(true);
     console.log('BluDesign Editor ready');
   }, []);
 
@@ -26,6 +29,7 @@ export default function BluDesignBuildPage() {
       <EditorCanvas
         readonly={false}
         onReady={handleReady}
+        initialFacilityId={initialFacilityId}
         className="w-full h-full"
       />
     </div>

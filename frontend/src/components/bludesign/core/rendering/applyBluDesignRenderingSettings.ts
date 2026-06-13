@@ -87,8 +87,13 @@ export function updateMeshShadowFlagsOnScene(
         object.receiveShadow = enabled;
       }
     } else if (object instanceof THREE.InstancedMesh) {
-      object.castShadow = enabled;
-      object.receiveShadow = enabled;
+      if (object.userData.isGroundTileBatch) {
+        object.castShadow = false;
+        object.receiveShadow = false;
+      } else {
+        object.castShadow = enabled;
+        object.receiveShadow = enabled;
+      }
     }
   });
 }

@@ -108,9 +108,10 @@ export function createApp(): Application {
   app.use('/api/v1/saved-dashboards', savedDashboardsRouter);
   app.use('/api/v1/dashboard-assignments', dashboardAssignmentsRouter);
   app.use('/api/v1/facilities', facilitiesRouter);
-  app.use('/api/v1', schedulesRouter);
-  app.use('/api/v1/gateways', gatewayRouter);
+  // Mount specific /api/v1/* routers before schedulesRouter (schedules applies auth to all /api/v1 paths)
   app.use('/api/v1/internal/gateway', internalGatewayRouter);
+  app.use('/api/v1/gateways', gatewayRouter);
+  app.use('/api/v1', schedulesRouter);
   app.use('/api/v1/admin', adminRouter);
   app.use('/api/v1/devices', devicesRouter);
     app.use('/api/v1/units', unitsRouter);

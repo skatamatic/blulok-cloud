@@ -98,4 +98,31 @@ describe('DeviceModel access control telemetry', () => {
       facilityId: 'fac-1',
     });
   });
+
+  it('emits telemetry when name changes without telemetry fields', async () => {
+    await model.updateAccessControlDevice('ac-1', { name: 'Side Gate' });
+
+    expect(mockEmitDeviceStatusChanged).not.toHaveBeenCalled();
+    expect(mockEmitDeviceTelemetryUpdated).toHaveBeenCalledWith({
+      deviceId: 'ac-1',
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+    });
+  });
+
+  it('emits telemetry when location_description changes', async () => {
+    await model.updateAccessControlDevice('ac-1', { location_description: 'South entrance' });
+
+    expect(mockEmitDeviceTelemetryUpdated).toHaveBeenCalledWith({
+      deviceId: 'ac-1',
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+    });
+  });
+
+  it('does not emit telemetry when metadata is unchanged', async () => {
+    await model.updateAccessControlDevice('ac-1', { name: 'Main Door' });
+
+    expect(mockEmitDeviceTelemetryUpdated).not.toHaveBeenCalled();
+  });
 });

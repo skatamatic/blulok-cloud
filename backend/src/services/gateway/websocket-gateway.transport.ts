@@ -275,6 +275,9 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
             void FirmwareService.handleFacilityDisconnect(authed!.facilityId);
           }).catch(() => {});
+          import('@/services/provisioning/provisioning-restore.service').then(({ ProvisioningRestoreService }) => {
+            void ProvisioningRestoreService.handleFacilityDisconnect(authed!.facilityId);
+          }).catch(() => {});
         }
       }
       try { ws.close(); } catch {}
@@ -410,6 +413,11 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             logger.warn(`Failed to resume firmware pushes for facility=${facilityId}`, err);
           });
         }).catch(() => {});
+        import('@/services/provisioning/provisioning-restore.service').then(({ ProvisioningRestoreService }) => {
+          ProvisioningRestoreService.resumePendingForFacility(facilityId).catch((err) => {
+            logger.warn(`Failed to resume provisioning restores for facility=${facilityId}`, err);
+          });
+        }).catch(() => {});
         import('@/services/access-code.service').then(({ AccessCodeService }) => {
           AccessCodeService.getInstance().flushPendingPushForFacility(facilityId).catch((err) => {
             logger.warn(`Failed to flush access code outbox for facility=${facilityId}`, err);
@@ -471,6 +479,30 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           }
         } catch (err) {
           logger.warn(`Gateway WS firmware message handling error type=${type} facility=${authed.facilityId}`, err);
+        }
+        return;
+      }
+
+      // Provisioning restore messages from gateway
+      if (type === 'PROVISIONING_CHUNK_ACK' || type === 'PROVISIONING_RESTORE_STATUS') {
+        try {
+          const { ProvisioningRestoreService } = await import('@/services/provisioning/provisioning-restore.service');
+          if (type === 'PROVISIONING_CHUNK_ACK') {
+            await ProvisioningRestoreService.handleChunkAck(authed.facilityId, msg);
+          } else {
+            const result = await ProvisioningRestoreService.handleRestoreStatus(authed.facilityId, msg);
+            const ackRestoreId = result.restore_id
+              ?? (typeof msg?.restore_id === 'string' ? msg.restore_id : (typeof msg?.restoreId === 'string' ? msg.restoreId : undefined));
+            safeSend(ws, {
+              type: 'PROVISIONING_RESTORE_STATUS_ACK',
+              restore_id: ackRestoreId,
+              accepted: result.accepted,
+              restore_status: result.restore_status,
+              reason: result.reason,
+            });
+          }
+        } catch (err) {
+          logger.warn(`Gateway WS provisioning message handling error type=${type} facility=${authed.facilityId}`, err);
         }
         return;
       }

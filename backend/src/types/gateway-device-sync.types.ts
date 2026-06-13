@@ -1,4 +1,4 @@
-export type DeviceSyncAction = 'added' | 'removed' | 'unchanged' | 'skipped_manual' | 'error';
+export type DeviceSyncAction = 'added' | 'removed' | 'unchanged' | 'updated' | 'skipped_manual' | 'error';
 
 export type DeviceSyncKind = 'blulok' | 'access_control';
 
@@ -15,6 +15,7 @@ export interface InventorySyncSummary {
   added: number;
   removed: number;
   unchanged: number;
+  updated?: number;
   skipped_manual?: number;
   errors: string[];
 }

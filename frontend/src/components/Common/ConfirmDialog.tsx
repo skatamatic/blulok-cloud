@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 interface ConfirmDialogProps {
@@ -10,6 +10,7 @@ interface ConfirmDialogProps {
   confirmTone?: 'primary' | 'danger';
   onConfirm: () => void;
   onCancel: () => void;
+  footerExtra?: ReactNode;
 }
 
 export function ConfirmDialog({
@@ -21,6 +22,7 @@ export function ConfirmDialog({
   confirmTone = 'primary',
   onConfirm,
   onCancel,
+  footerExtra,
 }: ConfirmDialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -88,6 +90,7 @@ export function ConfirmDialog({
           <p id="confirm-dialog-message" className="text-sm text-gray-700 dark:text-gray-300">
             {message}
           </p>
+          {footerExtra && <div className="mt-4">{footerExtra}</div>}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-700 px-5 py-4">
           <button

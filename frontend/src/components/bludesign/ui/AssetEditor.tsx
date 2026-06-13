@@ -18,6 +18,8 @@ import { ThumbnailGenerator } from '../utils/ThumbnailGenerator';
 import { AssetFactory } from '../assets/AssetFactory';
 import { AssetMetadata, AssetCategory } from '../core/types';
 
+import { AssetFacilitiesTab } from './AssetFacilitiesTab';
+
 interface AssetEditorProps {
   asset: AssetDefinition;
   onUpdate?: (asset: AssetDefinition) => void;
@@ -36,7 +38,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
   const isDark = effectiveTheme === 'dark';
   
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'info' | 'model'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'model' | 'facilities'>('info');
   const [partMaterials, setPartMaterials] = useState<Record<string, MaterialConfig>>({});
   
   // Extract available parts from asset
@@ -232,7 +234,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
         flex border-b
         ${isDark ? 'border-gray-700' : 'border-gray-200'}
       `}>
-        {(['info', 'model'] as const).map((tab) => (
+        {(['info', 'model', 'facilities'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -248,7 +250,7 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
               }
             `}
           >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'facilities' ? 'Facilities' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -426,6 +428,19 @@ export const AssetEditor: React.FC<AssetEditorProps> = ({
                   ))}
                 </div>
               </div>
+            </motion.div>
+          )}
+          {activeTab === 'facilities' && (
+            <motion.div
+              key="facilities"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <AssetFacilitiesTab
+                assetId={asset.id}
+                facilityUsageCount={asset.facilityUsageCount}
+              />
             </motion.div>
           )}
         </AnimatePresence>

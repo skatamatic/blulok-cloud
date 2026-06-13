@@ -20,6 +20,10 @@ import {
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { PlacedObject, AssetCategory, Building } from '../../core/types';
+import {
+  compareSmartObjectNames,
+  formatStorageUnitDisplayName,
+} from '../../core/smartObjectLabels';
 
 interface SmartObjectsPanelProps {
   /** All placed objects in the scene */
@@ -78,6 +82,14 @@ const getCategoryIcon = (category: AssetCategory) => {
   }
 };
 
+const getSmartObjectDisplayName = (obj: PlacedObject): string => {
+  const raw = obj.name ?? obj.assetMetadata?.name ?? 'Unknown';
+  if (obj.assetMetadata?.category === AssetCategory.STORAGE_UNIT) {
+    return formatStorageUnitDisplayName(raw);
+  }
+  return raw;
+};
+
 export const SmartObjectsPanel: React.FC<SmartObjectsPanelProps> = ({
   objects,
   buildings,
@@ -127,7 +139,7 @@ export const SmartObjectsPanel: React.FC<SmartObjectsPanelProps> = ({
       if (!query) return true;
       
       // Check if name matches search
-      const displayName = obj.name ?? obj.assetMetadata?.name ?? '';
+      const displayName = getSmartObjectDisplayName(obj);
       return displayName.toLowerCase().includes(query);
     });
     
@@ -146,7 +158,14 @@ export const SmartObjectsPanel: React.FC<SmartObjectsPanelProps> = ({
       .sort((a, b) => b[0] - a[0])
       .map(([floor, objs]) => ({
         floor,
-        objects: objs.sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id)),
+        objects: objs.sort((a, b) => {
+          const byLabel = compareSmartObjectNames(
+            a.name ?? a.assetMetadata?.name,
+            b.name ?? b.assetMetadata?.name
+          );
+          if (byLabel !== 0) return byLabel;
+          return a.id.localeCompare(b.id);
+        }),
       }));
   }, [objects, searchQuery]);
   
@@ -372,7 +391,7 @@ export const SmartObjectsPanel: React.FC<SmartObjectsPanelProps> = ({
                   {floorObjects.map(obj => {
                     const Icon = getCategoryIcon(obj.assetMetadata?.category ?? AssetCategory.STORAGE_UNIT);
                     const isSelected = selectedIds.includes(obj.id);
-                    const displayName = obj.name ?? obj.assetMetadata?.name ?? 'Unknown';
+                    const displayName = getSmartObjectDisplayName(obj);
                     
                     return (
                       <div

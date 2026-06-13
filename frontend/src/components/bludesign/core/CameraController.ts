@@ -434,8 +434,13 @@ export class CameraController {
    * Call this when switching to isometric or when wanting to see all content
    * @param sceneBounds - Bounding box containing all scene content
    * @param animate - Whether to animate the transition
+   * @param style - `aerial` uses a higher oblique vantage for imported layouts in free mode
    */
-  frameAllContent(sceneBounds: THREE.Box3, animate: boolean = true): void {
+  frameAllContent(
+    sceneBounds: THREE.Box3,
+    animate: boolean = true,
+    style: 'default' | 'aerial' = 'default'
+  ): void {
     const center = new THREE.Vector3();
     const size = new THREE.Vector3();
     sceneBounds.getCenter(center);
@@ -463,11 +468,19 @@ export class CameraController {
       this.applyIsometricAngle(this.isometricAngle, animate);
     } else {
       // For free mode, move camera to frame content
-      const rad = THREE.MathUtils.degToRad(225); // Default angle
+      const rad = THREE.MathUtils.degToRad(225); // Oblique NE/SW aerial
+      const horizontalDist =
+        style === 'aerial'
+          ? Math.max(this.baseIsometricDistance * 0.5, maxDim * 0.95)
+          : this.isometricDistance;
+      const height =
+        style === 'aerial'
+          ? Math.max(this.baseIsometricHeight * 0.75, maxDim * 0.55)
+          : this.isometricHeight;
       const newPosition = new THREE.Vector3(
-        center.x + Math.sin(rad) * this.isometricDistance,
-        center.y + this.isometricHeight,
-        center.z + Math.cos(rad) * this.isometricDistance
+        center.x + Math.sin(rad) * horizontalDist,
+        center.y + height,
+        center.z + Math.cos(rad) * horizontalDist
       );
       
       if (animate) {

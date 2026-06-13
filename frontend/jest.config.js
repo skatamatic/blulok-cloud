@@ -8,6 +8,8 @@ export default {
     '^@frontend/(.*)$': '<rootDir>/src/$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
     '^html2pdf\\.js$': '<rootDir>/src/test/mocks/html2pdf.js',
+    '^pdfjs-dist$': '<rootDir>/src/test/mocks/pdfjs-dist.js',
+    '^pdfjs-dist/build/pdf\\.worker\\.min\\.mjs\\?url$': '<rootDir>/src/test/mocks/pdfjs-worker-url.js',
     '^three/examples/jsm/renderers/CSS2DRenderer\\.js$': '<rootDir>/src/test/mocks/three-examples.js',
     '^three/examples/jsm/controls/OrbitControls\\.js$': '<rootDir>/src/test/mocks/three-orbit-controls.js',
     '^three/examples/jsm/loaders/(.*)$': '<rootDir>/src/test/mocks/three-loaders.js',
@@ -26,7 +28,8 @@ export default {
     '/src/__tests__/integration/setup-integration.ts',
     '/src/__tests__/integration/simple-backend-mock.ts',
     '/src/__tests__/integration/real-backend-integration.ts',
-    '/src/__tests__/integration/real-backend-integration.test.tsx'
+    '/src/__tests__/integration/real-backend-integration.test.tsx',
+    '_towerSim\\.ts$',
   ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',

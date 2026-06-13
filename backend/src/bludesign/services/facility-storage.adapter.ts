@@ -42,6 +42,12 @@ function dataPath(userId: string, facilityId: string): string {
   return `${FACILITY_PREFIX}/${userId}/${facilityId}/data.json`;
 }
 
+function layoutSourcePath(userId: string, facilityId: string): string {
+  assertSafeSegment(userId, 'userId');
+  assertSafeSegment(facilityId, 'facilityId');
+  return `${FACILITY_PREFIX}/${userId}/${facilityId}/layout-source.png`;
+}
+
 function directoryPath(userId: string, facilityId: string): string {
   assertSafeSegment(userId, 'userId');
   assertSafeSegment(facilityId, 'facilityId');
@@ -66,6 +72,26 @@ export class FacilityStorageAdapter {
     const path = dataPath(userId, facilityId);
     const buffer = await this.base.downloadFile(path);
     return JSON.parse(buffer.toString('utf-8')) as FacilityData;
+  }
+
+  async saveLayoutSource(userId: string, facilityId: string, data: Buffer): Promise<void> {
+    const path = layoutSourcePath(userId, facilityId);
+    await this.base.uploadFile(path, data, 'image/png');
+    logger.debug(`Layout source saved to storage: ${path}`);
+  }
+
+  async loadLayoutSource(userId: string, facilityId: string): Promise<Buffer> {
+    const path = layoutSourcePath(userId, facilityId);
+    return this.base.downloadFile(path);
+  }
+
+  async hasLayoutSource(userId: string, facilityId: string): Promise<boolean> {
+    try {
+      await this.loadLayoutSource(userId, facilityId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async deleteData(userId: string, facilityId: string): Promise<void> {

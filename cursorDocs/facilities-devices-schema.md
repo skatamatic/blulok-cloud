@@ -10,7 +10,7 @@ For **facility-scoped** users (e.g. `FACILITY_ADMIN`), when the query **does not
 
 ### LOCK / UNLOCK command JWT (`device_id` claim)
 
-When the cloud delivers **LOCK** / **UNLOCK** over the inbound gateway WebSocket (`{ "type": "COMMAND", "jwt": "..." }`), the signed payload’s **`device_id` claim is the hardware serial**, not the internal UUID—same idea as route passes (`lock:<device_serial>`). Resolution: **BluLok** uses `blulok_devices.device_serial`, then optional `serial`; **access control** uses `metadata` / `device_settings` keys `device_serial` or `serial` if present; otherwise the code falls back to the internal id and logs a warning. Non-WebSocket paths (e.g. HTTP mesh `send-lock-command`) still pass the internal device id to the gateway API.
+When the cloud delivers **LOCK** / **UNLOCK** over the inbound gateway WebSocket (`{ "type": "COMMAND", "jwt": "..." }`), the signed payload’s **`device_id` claim is the hardware serial**, not the internal UUID—same idea as route passes (`lock:<device_serial>`). **`expires_at`** (unix seconds) is `now + facilities.lock_command_timeout_sec` (default 5 minutes); **`0`** means the lock should not enforce command expiry (facility one-shot mode). Resolution: **BluLok** uses `blulok_devices.device_serial`, then optional `serial`; **access control** uses `metadata` / `device_settings` keys `device_serial` or `serial` if present; otherwise the code falls back to the internal id and logs a warning. Non-WebSocket paths (e.g. HTTP mesh `send-lock-command`) still pass the internal device id to the gateway API and include the same `expires_at` field when supported.
 
 
 ```
