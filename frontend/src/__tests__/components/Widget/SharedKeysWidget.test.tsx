@@ -30,6 +30,10 @@ jest.mock('@/components/Widget/Widget', () => ({
   ),
 }));
 
+jest.mock('@/hooks/useWebSocketSubscription', () => ({
+  useWebSocketSubscription: jest.fn(),
+}));
+
 describe('SharedKeysWidget', () => {
   beforeEach(() => {
     jest.clearAllMocks();

@@ -26,14 +26,110 @@ import accessHistoryRouter from '@/routes/access-history.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 
 // Mock the database service before importing routes
-jest.mock('@/services/database.service', () => ({
-  DatabaseService: {
-    getInstance: jest.fn(() => ({
-      connection: createMockKnex(),
-      healthCheck: jest.fn().mockResolvedValue(true),
-    })),
-  },
-}));
+jest.mock('@/services/database.service', () => {
+  const createMockKnex = (): jest.Mock => {
+    const mockQueryBuilder = {
+      select: jest.fn().mockReturnThis(),
+      from: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      whereIn: jest.fn().mockReturnThis(),
+      whereNotIn: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
+      whereNotNull: jest.fn().mockReturnThis(),
+      whereBetween: jest.fn().mockReturnThis(),
+      whereNotBetween: jest.fn().mockReturnThis(),
+      whereExists: jest.fn().mockReturnThis(),
+      whereNotExists: jest.fn().mockReturnThis(),
+      whereRaw: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
+      orWhereIn: jest.fn().mockReturnThis(),
+      orWhereNotIn: jest.fn().mockReturnThis(),
+      orWhereNull: jest.fn().mockReturnThis(),
+      orWhereNotNull: jest.fn().mockReturnThis(),
+      orWhereBetween: jest.fn().mockReturnThis(),
+      orWhereNotBetween: jest.fn().mockReturnThis(),
+      orWhereExists: jest.fn().mockReturnThis(),
+      orWhereNotExists: jest.fn().mockReturnThis(),
+      orWhereRaw: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      rightJoin: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      outerJoin: jest.fn().mockReturnThis(),
+      crossJoin: jest.fn().mockReturnThis(),
+      joinRaw: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      groupByRaw: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      orderByRaw: jest.fn().mockReturnThis(),
+      having: jest.fn().mockReturnThis(),
+      havingIn: jest.fn().mockReturnThis(),
+      havingNotIn: jest.fn().mockReturnThis(),
+      havingNull: jest.fn().mockReturnThis(),
+      havingNotNull: jest.fn().mockReturnThis(),
+      havingBetween: jest.fn().mockReturnThis(),
+      havingNotBetween: jest.fn().mockReturnThis(),
+      havingExists: jest.fn().mockReturnThis(),
+      havingNotExists: jest.fn().mockReturnThis(),
+      havingRaw: jest.fn().mockReturnThis(),
+      orHaving: jest.fn().mockReturnThis(),
+      orHavingIn: jest.fn().mockReturnThis(),
+      orHavingNotIn: jest.fn().mockReturnThis(),
+      orHavingNull: jest.fn().mockReturnThis(),
+      orHavingNotNull: jest.fn().mockReturnThis(),
+      orHavingBetween: jest.fn().mockReturnThis(),
+      orHavingNotBetween: jest.fn().mockReturnThis(),
+      orHavingExists: jest.fn().mockReturnThis(),
+      orHavingNotExists: jest.fn().mockReturnThis(),
+      orHavingRaw: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      union: jest.fn().mockReturnThis(),
+      unionAll: jest.fn().mockReturnThis(),
+      intersect: jest.fn().mockReturnThis(),
+      insert: jest.fn().mockReturnThis(),
+      update: jest.fn().mockReturnThis(),
+      del: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({}),
+      then: jest.fn().mockResolvedValue([]),
+      catch: jest.fn().mockResolvedValue([]),
+      finally: jest.fn().mockResolvedValue([]),
+      raw: jest.fn().mockResolvedValue([]),
+      fn: {
+        now: jest.fn().mockReturnValue('NOW()'),
+      },
+    };
+
+    const mockKnex = jest.fn((_tableName: string) => mockQueryBuilder) as jest.Mock;
+
+    Object.assign(mockKnex, {
+      transaction: jest.fn().mockImplementation((callback: (trx: jest.Mock) => unknown) => {
+        const mockTrx = createMockKnex();
+        return callback(mockTrx);
+      }),
+      migrate: {
+        latest: jest.fn().mockResolvedValue([]),
+        rollback: jest.fn().mockResolvedValue([]),
+        status: jest.fn().mockResolvedValue([]),
+      },
+      seed: {
+        run: jest.fn().mockResolvedValue([]),
+      },
+      destroy: jest.fn().mockResolvedValue(undefined),
+    });
+
+    return mockKnex;
+  };
+
+  return {
+    DatabaseService: {
+      getInstance: jest.fn(() => ({
+        connection: createMockKnex(),
+        healthCheck: jest.fn().mockResolvedValue(true),
+      })),
+    },
+  };
+});
 
 // Mock all the models
 jest.mock('@/models/user.model', () => ({
@@ -169,109 +265,6 @@ jest.mock('@/services/auth.service', () => ({
     })
   }
 }));
-
-// Mock Knex for database operations
-const createMockKnex = () => {
-  const mockQueryBuilder = {
-    select: jest.fn().mockReturnThis(),
-    from: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    whereIn: jest.fn().mockReturnThis(),
-    whereNotIn: jest.fn().mockReturnThis(),
-    whereNull: jest.fn().mockReturnThis(),
-    whereNotNull: jest.fn().mockReturnThis(),
-    whereBetween: jest.fn().mockReturnThis(),
-    whereNotBetween: jest.fn().mockReturnThis(),
-    whereExists: jest.fn().mockReturnThis(),
-    whereNotExists: jest.fn().mockReturnThis(),
-    whereRaw: jest.fn().mockReturnThis(),
-    orWhere: jest.fn().mockReturnThis(),
-    orWhereIn: jest.fn().mockReturnThis(),
-    orWhereNotIn: jest.fn().mockReturnThis(),
-    orWhereNull: jest.fn().mockReturnThis(),
-    orWhereNotNull: jest.fn().mockReturnThis(),
-    orWhereBetween: jest.fn().mockReturnThis(),
-    orWhereNotBetween: jest.fn().mockReturnThis(),
-    orWhereExists: jest.fn().mockReturnThis(),
-    orWhereNotExists: jest.fn().mockReturnThis(),
-    orWhereRaw: jest.fn().mockReturnThis(),
-    join: jest.fn().mockReturnThis(),
-    leftJoin: jest.fn().mockReturnThis(),
-    rightJoin: jest.fn().mockReturnThis(),
-    innerJoin: jest.fn().mockReturnThis(),
-    outerJoin: jest.fn().mockReturnThis(),
-    crossJoin: jest.fn().mockReturnThis(),
-    joinRaw: jest.fn().mockReturnThis(),
-    groupBy: jest.fn().mockReturnThis(),
-    groupByRaw: jest.fn().mockReturnThis(),
-    orderBy: jest.fn().mockReturnThis(),
-    orderByRaw: jest.fn().mockReturnThis(),
-    having: jest.fn().mockReturnThis(),
-    havingIn: jest.fn().mockReturnThis(),
-    havingNotIn: jest.fn().mockReturnThis(),
-    havingNull: jest.fn().mockReturnThis(),
-    havingNotNull: jest.fn().mockReturnThis(),
-    havingBetween: jest.fn().mockReturnThis(),
-    havingNotBetween: jest.fn().mockReturnThis(),
-    havingExists: jest.fn().mockReturnThis(),
-    havingNotExists: jest.fn().mockReturnThis(),
-    havingRaw: jest.fn().mockReturnThis(),
-    orHaving: jest.fn().mockReturnThis(),
-    orHavingIn: jest.fn().mockReturnThis(),
-    orHavingNotIn: jest.fn().mockReturnThis(),
-    orHavingNull: jest.fn().mockReturnThis(),
-    orHavingNotNull: jest.fn().mockReturnThis(),
-    orHavingBetween: jest.fn().mockReturnThis(),
-    orHavingNotBetween: jest.fn().mockReturnThis(),
-    orHavingExists: jest.fn().mockReturnThis(),
-    orHavingNotExists: jest.fn().mockReturnThis(),
-    orHavingRaw: jest.fn().mockReturnThis(),
-    offset: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    union: jest.fn().mockReturnThis(),
-    unionAll: jest.fn().mockReturnThis(),
-    intersect: jest.fn().mockReturnThis(),
-    insert: jest.fn().mockReturnThis(),
-    update: jest.fn().mockReturnThis(),
-    del: jest.fn().mockReturnThis(),
-    first: jest.fn().mockResolvedValue({}),
-    then: jest.fn().mockResolvedValue([]),
-    catch: jest.fn().mockResolvedValue([]),
-    finally: jest.fn().mockResolvedValue([]),
-    raw: jest.fn().mockResolvedValue([]),
-    fn: {
-      now: jest.fn().mockReturnValue('NOW()'),
-    },
-  };
-
-  const mockKnex = jest.fn((_tableName: string) => mockQueryBuilder) as any;
-  
-  // Add properties to the mock function
-  Object.assign(mockKnex, {
-    // Transaction support
-    transaction: jest.fn().mockImplementation((callback) => {
-      const mockTrx = createMockKnex();
-      return callback(mockTrx);
-    }),
-    
-    // Migration support
-    migrate: {
-      latest: jest.fn().mockResolvedValue([]),
-      rollback: jest.fn().mockResolvedValue([]),
-      status: jest.fn().mockResolvedValue([]),
-    },
-    
-    // Seed support
-    seed: {
-      run: jest.fn().mockResolvedValue([]),
-    },
-    
-    // Connection management
-    destroy: jest.fn().mockResolvedValue(undefined),
-  });
-  
-  return mockKnex;
-};
 
 export function createIntegrationTestApp(): Application {
   const app = express();

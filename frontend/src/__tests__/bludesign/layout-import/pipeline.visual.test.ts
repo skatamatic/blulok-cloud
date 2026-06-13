@@ -163,6 +163,11 @@ function range(a: number, b: number): string[] {
 
 describe('pipeline visual harness', () => {
   it('renders full-pipeline output over the plan', async () => {
+    if (!fs.existsSync(RESULT_PATH)) {
+      console.warn(`Skipping pipeline visual test: missing ${RESULT_PATH}`);
+      return;
+    }
+
     fs.mkdirSync(OUT_DIR, { recursive: true });
     const result = JSON.parse(fs.readFileSync(RESULT_PATH, 'utf8')) as {
       imageWidth: number;

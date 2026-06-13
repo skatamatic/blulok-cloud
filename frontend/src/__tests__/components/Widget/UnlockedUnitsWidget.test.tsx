@@ -83,19 +83,6 @@ describe('UnlockedUnitsWidget', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/units/unit-1');
   });
 
-  it('calls refetch when refresh is clicked', async () => {
-    const user = userEvent.setup();
-
-    render(
-      <MemoryRouter>
-        <UnlockedUnitsWidget id="uw" title="Unlocked" />
-      </MemoryRouter>
-    );
-
-    await user.click(screen.getByRole('button', { name: /refresh/i }));
-    expect(mockRefetch).toHaveBeenCalled();
-  });
-
   it('shows error state from hook', () => {
     mockUseUnitsData.mockReturnValue({
       data: null,

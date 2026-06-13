@@ -8,6 +8,7 @@ import { UserRole } from '@/types/auth.types';
 import type { DashboardLayoutApiResponse } from '@/types/widget-management.types';
 import { websocketService } from '@/services/websocket.service';
 import { DashboardLiveStatus } from '@/components/Dashboard/DashboardLiveStatus';
+import { DashboardSettingsModal } from '@/components/Dashboard/DashboardSettingsModal';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { DashboardCanvas } from '@/components/Dashboard/DashboardCanvas';
 import {

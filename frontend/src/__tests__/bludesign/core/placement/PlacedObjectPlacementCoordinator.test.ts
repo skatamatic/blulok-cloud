@@ -132,8 +132,7 @@ describe('PlacedObjectPlacementCoordinator', () => {
     coord.placeForHistory(po);
 
     expect(groundTileManager.addTile).toHaveBeenCalledWith(po.id, AssetCategory.GRASS, po.position);
-    expect(scene.children).toContain(marker);
-    expect(sceneManager.addObject).toHaveBeenCalledWith(po.id, marker, po);
+    expect(sceneManager.addObject).toHaveBeenCalledWith(po.id, marker, po, { trackOnly: true });
     expect(gridSystem.markOccupied).toHaveBeenCalled();
     expect(gridSystem.markOccupiedAlignedFootprint).not.toHaveBeenCalled();
   });

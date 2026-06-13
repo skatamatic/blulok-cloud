@@ -114,7 +114,8 @@ describe('BatteryStatusWidget Comprehensive Tests', () => {
       expect(mockSubscribe).toHaveBeenCalledWith(
         'battery_status',
         expect.any(Function),
-        expect.any(Function)
+        expect.any(Function),
+        undefined,
       );
     });
 

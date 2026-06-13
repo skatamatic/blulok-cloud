@@ -909,7 +909,8 @@ describe('SyncFMSWidget', () => {
       expect(mockWebSocketContext.subscribe).toHaveBeenCalledWith(
         'fms_sync_status',
         expect.any(Function),
-        expect.any(Function)
+        expect.any(Function),
+        undefined,
       );
     });
 

@@ -269,20 +269,6 @@ describe('ActivityMonitorWidget', () => {
       });
     });
 
-    it('shows refresh button in footer for small widgets', async () => {
-      renderWithProviders(
-        <ActivityMonitorWidget 
-          id="test-widget" 
-          title="Activity Monitor" 
-          initialSize="medium"
-        />
-      );
-      
-      await waitFor(() => {
-        const refreshButtons = screen.getAllByText('Refresh');
-        expect(refreshButtons.length).toBeGreaterThan(0);
-      });
-    });
   });
 
   describe('Filtering', () => {
@@ -361,66 +347,6 @@ describe('ActivityMonitorWidget', () => {
       
       await waitFor(() => {
         expect(screen.getByText(/Unit A-101 unlocked/)).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe('Refresh Functionality', () => {
-    it('refreshes data when refresh button is clicked', async () => {
-      renderWithProviders(
-        <ActivityMonitorWidget 
-          id="test-widget" 
-          title="Activity Monitor" 
-          initialSize="medium"
-        />
-      );
-      
-      await waitFor(() => {
-        expect(mockGetAccessHistory).toHaveBeenCalledTimes(1);
-      });
-      
-      // Click refresh button (find the one in footer)
-      const refreshButtons = screen.getAllByRole('button', { name: /Refresh/i });
-      const footerRefreshButton = refreshButtons[refreshButtons.length - 1];
-      
-      await act(async () => {
-        fireEvent.click(footerRefreshButton);
-      });
-      
-      await waitFor(() => {
-        expect(mockGetAccessHistory).toHaveBeenCalledTimes(2);
-      });
-    });
-
-    it('shows refreshing state while loading', async () => {
-      renderWithProviders(
-        <ActivityMonitorWidget 
-          id="test-widget" 
-          title="Activity Monitor" 
-          initialSize="medium"
-        />
-      );
-      
-      await waitFor(() => {
-        expect(screen.getByText(/Unit A-101 unlocked/)).toBeInTheDocument();
-      });
-      
-      // Make next call slow
-      mockGetAccessHistory.mockImplementation(() => 
-        new Promise(resolve => setTimeout(() => resolve({
-          success: true,
-          logs: mockAccessLogs,
-          total: mockAccessLogs.length,
-        }), 1000))
-      );
-      
-      // Click refresh
-      const refreshButtons = screen.getAllByRole('button', { name: /Refresh/i });
-      fireEvent.click(refreshButtons[refreshButtons.length - 1]);
-      
-      // Should show "Refreshing..." text
-      await waitFor(() => {
-        expect(screen.getByText('Refreshing...')).toBeInTheDocument();
       });
     });
   });

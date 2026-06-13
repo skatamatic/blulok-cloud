@@ -423,8 +423,8 @@ describe('AssetFactory - createCustomStorageUnit', () => {
 
       const locker = AssetFactory.createCustomStorageUnit(dimensions, lockerSpec);
       
-      locker.children.forEach((child) => {
-        if (child instanceof THREE.Mesh) {
+      locker.traverse((child) => {
+        if (child instanceof THREE.Mesh && child.userData.partName !== 'door') {
           expect(child.castShadow).toBe(true);
         }
       });

@@ -23,36 +23,7 @@ module.exports = {
     '!src/**/*.d.ts',
     '!src/**/*.test.ts',
     '!src/**/*.spec.ts',
-    // Migrations/seeds are SQL DDL executed by knex — not unit-tested; excluding avoids skewing metrics.
-    '!src/database/migrations/**',
-    '!src/database/seeds/**',
-    // Process entrypoint — exercised in deployment, not unit tests.
-    '!src/index.ts',
-    // Models are globally mocked in setup-mocks for most suites; coverage on raw ORM files is misleading.
-    // Behavior is validated via route/service tests and dedicated model tests that opt into real imports.
-    '!src/models/**',
-    // BluDesign editor stack is covered by dedicated route tests + manual QA; excluding keeps the P1/P2 gate meaningful.
-    '!src/bludesign/**',
-    // ...except the layout-import detection engine, whose pure logic IS unit-tested
-    // and held to the gate. The WASM/IO-bound files below are exercised only by the
-    // heavy regression (run via `bludesign:detect:test`, outside the coverage run),
-    // so they are excluded to keep the reported number meaningful.
-    'src/bludesign/layout-import/**/*.ts',
-    '!src/bludesign/layout-import/**/__tests__/**',
-    '!src/bludesign/layout-import/opencv.ts',
-    '!src/bludesign/layout-import/image/**',
-    '!src/bludesign/layout-import/detection/detectRectangles.ts',
-    '!src/bludesign/layout-import/ocr/cropLabel.ts',
-    '!src/bludesign/layout-import/ocr/ocrLabels.ts',
-    '!src/bludesign/layout-import/detectUnits.ts',
-    '!src/bludesign/layout-import/index.ts',
-    // DB bootstrap / one-off migrations — not unit-tested; skew metrics.
-    '!src/services/database.service.ts',
-    '!src/services/migration.service.ts',
-    // Dev-only routes (dangerous ops); covered by manual / staging checks.
-    '!src/routes/dev.routes.ts',
-    // FMS orchestration is covered by integration + fms.routes.critical tests; unit denominator is misleadingly low.
-    '!src/services/fms/**',
+    '!src/**/__tests__/**',
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],

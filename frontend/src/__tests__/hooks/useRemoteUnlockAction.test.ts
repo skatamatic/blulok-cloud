@@ -3,7 +3,7 @@
  */
 import { renderHook, act } from '@testing-library/react';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS } from '@/utils/lockHardwareFeedback.utils';
+import { resolveLockCommandTimeoutMs } from '@/utils/facilityLockTimeout.utils';
 
 const mockAddToast = jest.fn();
 const mockUpdateLockStatus = jest.fn();
@@ -53,7 +53,7 @@ describe('useRemoteUnlockAction', () => {
     expect(lockStatus).toBe('unlocking');
 
     await act(async () => {
-      jest.advanceTimersByTime(LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS);
+      jest.advanceTimersByTime(resolveLockCommandTimeoutMs());
     });
 
     expect(revertOptimisticLockStatus).toHaveBeenCalledWith('locked');
@@ -110,7 +110,7 @@ describe('useRemoteUnlockAction', () => {
 
     await act(async () => {
       result.current.syncLockStatus('unit-1', 'unlocked');
-      jest.advanceTimersByTime(LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS);
+      jest.advanceTimersByTime(resolveLockCommandTimeoutMs());
     });
 
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -141,7 +141,7 @@ describe('useRemoteUnlockAction', () => {
     expect(revertOptimisticLockStatus).not.toHaveBeenCalled();
 
     await act(async () => {
-      jest.advanceTimersByTime(LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS);
+      jest.advanceTimersByTime(resolveLockCommandTimeoutMs());
     });
 
     expect(revertOptimisticLockStatus).not.toHaveBeenCalled();
@@ -170,7 +170,7 @@ describe('useRemoteUnlockAction', () => {
 
     await act(async () => {
       result.current.syncLockStatus('unit-1', 'locked');
-      jest.advanceTimersByTime(LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS);
+      jest.advanceTimersByTime(resolveLockCommandTimeoutMs());
     });
 
     expect(refresh).toHaveBeenCalledTimes(1);

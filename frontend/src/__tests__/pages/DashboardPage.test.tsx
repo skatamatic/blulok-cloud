@@ -65,6 +65,10 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+jest.mock('@/components/Dashboard/DashboardLiveStatus', () => ({
+  DashboardLiveStatus: () => <div data-testid="dashboard-live-status" />,
+}));
+
 jest.mock('@/components/Dashboard/DashboardCanvas', () => ({
   DashboardCanvas: ({ children }: { children?: React.ReactNode }) => (
     <div data-testid="dashboard-canvas">{children}</div>
