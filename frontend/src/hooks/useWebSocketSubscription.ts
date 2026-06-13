@@ -11,9 +11,9 @@ export interface UseWebSocketSubscriptionOptions {
  * Subscribe for the lifetime of a component. Survives disconnect/reconnect without
  * tearing down server subscription intent (unsubscribe only on unmount or filter change).
  */
-export function useWebSocketSubscription(
+export function useWebSocketSubscription<T = unknown>(
   type: string,
-  onMessage: (data: unknown) => void,
+  onMessage: (data: T) => void,
   options?: UseWebSocketSubscriptionOptions,
 ): void {
   const { subscribe, unsubscribe } = useWebSocket();
@@ -29,7 +29,7 @@ export function useWebSocketSubscription(
 
     const subscriptionId = subscribe(
       type,
-      (data) => onMessageRef.current(data),
+      (data) => onMessageRef.current(data as T),
       onErrorRef.current ? (error) => onErrorRef.current?.(error) : undefined,
       options?.filters,
     );

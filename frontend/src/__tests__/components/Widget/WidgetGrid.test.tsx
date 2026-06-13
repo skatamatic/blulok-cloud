@@ -23,12 +23,16 @@ jest.mock('react-grid-layout', () => {
       const onDragStop = props.onDragStop as
         | ((layout: unknown[]) => void)
         | undefined;
+      const onResize = props.onResize as
+        | ((layout: unknown[], layouts: typeof layoutsPayload, resizingItem: unknown) => void)
+        | undefined;
       // RGL breakpoint/width mutations — must not commit to parent.
       onLayoutChange?.([{ ...item, x: 99 }], layoutsPayload);
       // User gesture — sole commit path.
       onDragStop?.([item]);
       onDragStop?.([item]);
-    }, [props.onLayoutChange, props.onDragStop]);
+      onResize?.([{ ...item, w: 4 }], layoutsPayload, { ...item, w: 4 });
+    }, [props.onLayoutChange, props.onDragStop, props.onResize]);
     return <div data-testid="mock-responsive">{props.children as ReactNode}</div>;
   };
   const WidthProvider = (Wrapped: import('react').ComponentType<Record<string, unknown>>) => {
@@ -166,5 +170,47 @@ describe('WidgetGrid', () => {
       </WidgetGrid>
     );
     expect(err).toHaveBeenCalledWith(expect.stringContaining('No lg layout'));
+  });
+
+  it('rejects layout change when validateLivePlacement returns false', async () => {
+    const onLayoutChange = jest.fn(() => false);
+    const layouts = {
+      lg: [{ i: 'w1', x: 0, y: 0, w: 3, h: 2 }],
+      md: [],
+      sm: [],
+    };
+
+    await act(async () => {
+      render(
+        <WidgetGrid
+          layouts={layouts}
+          onLayoutChange={onLayoutChange}
+          validateLivePlacement={() => false}
+        >
+          <div key="w1">A</div>
+        </WidgetGrid>
+      );
+    });
+
+    expect(onLayoutChange).toHaveBeenCalled();
+  });
+
+  it('calls onResize during resize gestures', async () => {
+    const onResize = jest.fn();
+    const layouts = {
+      lg: [{ i: 'w1', x: 0, y: 0, w: 3, h: 2 }],
+      md: [],
+      sm: [],
+    };
+
+    await act(async () => {
+      render(
+        <WidgetGrid layouts={layouts} onResize={onResize}>
+          <div key="w1">A</div>
+        </WidgetGrid>
+      );
+    });
+
+    expect(onResize).toHaveBeenCalled();
   });
 });

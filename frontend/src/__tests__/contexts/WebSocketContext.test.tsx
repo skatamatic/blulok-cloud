@@ -7,6 +7,7 @@ const mockUnsubscribe = jest.fn();
 const mockHasSubscription = jest.fn(() => false);
 const mockOnConnectionChange = jest.fn();
 const mockOnReconnectingChange = jest.fn();
+const mockIsWebSocketReconnecting = jest.fn(() => false);
 const mockOnMessage = jest.fn();
 const mockShowDebugToast = jest.fn();
 
@@ -18,7 +19,7 @@ jest.mock('@/services/websocket.service', () => ({
     hasSubscription: (...args: any[]) => mockHasSubscription(...args),
     onConnectionChange: (...args: any[]) => mockOnConnectionChange(...args),
     onReconnectingChange: (...args: any[]) => mockOnReconnectingChange(...args),
-    isWebSocketReconnecting: () => false,
+    isWebSocketReconnecting: () => mockIsWebSocketReconnecting(),
     onMessage: (...args: any[]) => mockOnMessage(...args),
   },
 }));
@@ -211,6 +212,28 @@ describe('WebSocketContext', () => {
     expect(connectionCleanup).toHaveBeenCalledTimes(1);
     expect(generalCleanups[0]).toHaveBeenCalledTimes(1);
     expect(gatewayCleanups[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it('tracks reconnecting state from websocket service', () => {
+    let reconnectHandler: ((reconnecting: boolean) => void) | undefined;
+    mockOnReconnectingChange.mockImplementation((handler: (reconnecting: boolean) => void) => {
+      reconnectHandler = handler;
+      return reconnectingCleanup;
+    });
+    mockIsWebSocketReconnecting.mockReturnValue(true);
+
+    render(
+      <WebSocketProvider>
+        <ContextProbe />
+      </WebSocketProvider>
+    );
+
+    expect(screen.getByTestId('connected-state').textContent).toContain('true');
+
+    act(() => {
+      reconnectHandler?.(false);
+    });
+    expect(screen.getByTestId('connected-state').textContent).toContain('false');
   });
 });
 

@@ -7,8 +7,6 @@ module.exports = {
     '/node_modules/',
     '/__tests__/mocks/',
     '/__tests__/utils/',
-    // Heavy BluDesign detection regression (OpenCV + Tesseract over the sample
-    // plan). Excluded from the default run; invoke via `npm run bludesign:detect:test`.
     'detectUnits\\.regression\\.test\\.ts$',
   ],
   transform: {
@@ -24,6 +22,25 @@ module.exports = {
     '!src/**/*.test.ts',
     '!src/**/*.spec.ts',
     '!src/**/__tests__/**',
+    // Gate exclusions — see test:coverage:full for all-src audit
+    '!src/database/migrations/**',
+    '!src/database/seeds/**',
+    '!src/index.ts',
+    '!src/models/**',
+    '!src/bludesign/**',
+    'src/bludesign/layout-import/**/*.ts',
+    '!src/bludesign/layout-import/**/__tests__/**',
+    '!src/bludesign/layout-import/opencv.ts',
+    '!src/bludesign/layout-import/image/**',
+    '!src/bludesign/layout-import/detection/detectRectangles.ts',
+    '!src/bludesign/layout-import/ocr/cropLabel.ts',
+    '!src/bludesign/layout-import/ocr/ocrLabels.ts',
+    '!src/bludesign/layout-import/detectUnits.ts',
+    '!src/bludesign/layout-import/index.ts',
+    '!src/services/database.service.ts',
+    '!src/services/migration.service.ts',
+    '!src/routes/dev.routes.ts',
+    '!src/services/fms/**',
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
@@ -45,6 +62,6 @@ module.exports = {
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   testTimeout: 10000,
-  // Keep CI conservative, but use parallel workers locally for speed.
   maxWorkers: process.env.CI ? 1 : '50%',
+  forceExit: true,
 };

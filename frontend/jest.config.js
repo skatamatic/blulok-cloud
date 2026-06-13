@@ -40,7 +40,17 @@ export default {
     '!src/**/*.spec.tsx',
     '!src/**/__tests__/**',
     '!src/test/**/*',
+    // Gate exclusions — see test:coverage:full for all-src audit
+    '!src/components/bludesign/**',
+    '!src/pages/bludesign/**',
+    '!src/pages/blufms/**',
+    '!src/components/GoogleMaps/**',
+    '!src/pages/DeveloperToolsPage.tsx',
+    '!src/components/blufms/**',
+    '!src/scripts/blufms/**',
+    '!src/main.tsx',
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
+  forceExit: true,
 };

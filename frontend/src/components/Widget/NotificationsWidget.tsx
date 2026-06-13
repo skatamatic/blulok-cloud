@@ -446,7 +446,9 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     [matchesScope, mergeById, loadNotifications, viewerRole]
   );
 
-  useWebSocketSubscription('notifications', handleWs, { filters: wsFilters });
+  useWebSocketSubscription('notifications', (data) => handleWs(data as WsNotificationEvent), {
+    filters: wsFilters,
+  });
 
   const markAsRead = async (notificationId: string) => {
     const target = rows.find((n) => n.id === notificationId);

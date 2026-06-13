@@ -40,5 +40,6 @@ module.exports = {
       NODE_ENV: 'test',
       VITE_API_URL: 'http://localhost:3000'
     }
-  }
+  },
+  forceExit: true,
 };

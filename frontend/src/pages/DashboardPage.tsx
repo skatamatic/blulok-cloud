@@ -455,7 +455,7 @@ export default function DashboardPage() {
         onSaveCurrentDashboard={savedDashboards.saveCurrent}
         onUpdateExistingDashboard={savedDashboards.updateExisting}
         suggestedUpdateTemplateId={assignedDashboardId}
-        onLoadSavedDashboard={async (id) => {
+        onLoadSavedDashboard={async (id: string) => {
           const ok = await savedDashboards.loadDashboard(id);
           if (ok) {
             setShowAddWidgetModal(false);

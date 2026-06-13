@@ -147,6 +147,55 @@ describe('Admin Routes', () => {
     });
   });
 
+  describe('POST /api/v1/admin/dev-tools/notifications-test-mode', () => {
+    it('should return 403 for admin token', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/notifications-test-mode')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ enabled: true })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 200 for dev_admin toggling test mode', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/notifications-test-mode')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ enabled: true })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.success).toBe(true);
+    });
+  });
+
+  describe('POST /api/v1/admin/dev-tools/gateway-command', () => {
+    it('should return 400 when body is invalid', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/gateway-command')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ facilityId: '550e8400-e29b-41d4-a716-446655440001' })
+        .expect(400);
+
+      expect(response.body.success).toBe(false);
+    });
+
+    it('should return 403 for facility_admin', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/gateway-command')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facilityId: '550e8400-e29b-41d4-a716-446655440001',
+          command: 'LOCK',
+          targetDeviceIds: ['device-1'],
+        })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+  });
+
   describe('POST /api/v1/admin/data-prune (requireAdmin)', () => {
     it('should return 401 without Authorization header', async () => {
       const response = await request(app)
@@ -175,6 +224,39 @@ describe('Admin Routes', () => {
         .expect(403);
 
       expectForbidden(response);
+    });
+
+    it('should return 200 for admin token', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/data-prune')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({})
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.message).toContain('pruning');
+    });
+  });
+
+  describe('POST /api/v1/admin/route-pass-prune', () => {
+    it('should return 403 for tenant', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/route-pass-prune')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({})
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 200 for admin', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/route-pass-prune')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({})
+        .expect(200);
+
+      expectSuccess(response);
     });
   });
 });
