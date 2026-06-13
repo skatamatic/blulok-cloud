@@ -591,10 +591,12 @@ describe('DeviceSyncService', () => {
           device_settings: { displayName: 'Old Name', lockNumber: 101 },
         }),
       ]);
-      mockDeviceModel.updateBluLokDevice.mockResolvedValue({
-        id: 'device-1',
-        device_settings: { displayName: 'New Name', lockNumber: 101 },
-      });
+      mockDeviceModel.updateBluLokDevice.mockResolvedValue(
+        createDeviceWithContext({
+          id: 'device-1',
+          device_settings: { displayName: 'New Name', lockNumber: 101 },
+        }),
+      );
 
       const result = await deviceSyncService.syncDeviceInventory(gatewayId, [
         { lock_id: 'LOCK-1', name: 'New Name', lock_number: 101 },

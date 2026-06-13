@@ -19,7 +19,12 @@ export interface BatchAssetPlacementDependencies {
     removeTile(id: string): void;
   };
   sceneManager: {
-    addObject(id: string, mesh: THREE.Object3D, data: PlacedObject): void;
+    addObject(
+      id: string,
+      mesh: THREE.Object3D,
+      data: PlacedObject,
+      options?: { trackOnly?: boolean }
+    ): void;
     removeObject(id: string): void;
   };
   gridSystem: {

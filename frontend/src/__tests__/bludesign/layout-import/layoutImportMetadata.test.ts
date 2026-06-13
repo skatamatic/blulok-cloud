@@ -7,6 +7,8 @@ import {
   type LayoutImportMetadata,
 } from '../../../components/bludesign/layout-import/layoutImportMetadata';
 import type { FacilityData } from '../../../components/bludesign/core/types';
+import { CameraMode, GridSize, IsometricAngle } from '../../../components/bludesign/core/types';
+import * as THREE from 'three';
 
 const sampleMeta: LayoutImportMetadata = {
   version: 1,
@@ -28,9 +30,18 @@ const sampleMeta: LayoutImportMetadata = {
 const baseFacility: FacilityData = {
   name: 'Test',
   version: '2.0.0',
-  camera: { mode: 'free' as never, position: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, zoom: 1 },
+  camera: {
+    mode: CameraMode.FREE,
+    isometricAngle: IsometricAngle.SOUTH_WEST,
+    position: new THREE.Vector3(0, 0, 0),
+    target: new THREE.Vector3(0, 0, 0),
+    zoom: 1,
+  },
   placedObjects: [],
-  gridSize: 10,
+  buildings: [],
+  activeFloor: 0,
+  activeSkins: {},
+  gridSize: GridSize.TINY,
   showGrid: true,
 };
 

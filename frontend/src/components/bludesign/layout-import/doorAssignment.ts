@@ -323,13 +323,12 @@ function alignWithNeighbors(
   sides: Map<string, DoorSide>,
   infoById: Map<string, SideInfo[]>,
   adj: Map<string, Set<string>>,
-  ctxById: Map<string, UnitCtx>
+  _ctxById: Map<string, UnitCtx>
 ): void {
   for (let pass = 0; pass < 4; pass++) {
     let changed = false;
     for (const [id, neighbors] of adj) {
       if (neighbors.size === 0) continue;
-      const ctx = ctxById.get(id)!;
       const votes = new Map<DoorSide, number>();
       for (const nId of neighbors) {
         const s = sides.get(nId);
@@ -440,7 +439,6 @@ function enforceChainFrontage(
   const fixUnit = (u: EditableUnit, allowed: DoorSide[]) => {
     const side = sides.get(u.id);
     if (side && allowed.includes(side)) return;
-    const ctx = ctxById.get(u.id)!;
     const candidates = allowed
       .map((s) => infoById.get(u.id)!.find((i) => i.side === s))
       .filter(

@@ -6,7 +6,7 @@ import {
   buildFacilityData,
   computeLayoutWorldCenter,
 } from '@/components/bludesign/layout-import/build-wizard/sceneBuild';
-import { GRID_UNIT_METERS, GridSize } from '@/components/bludesign/core/types';
+import { GridSize } from '@/components/bludesign/core/types';
 import type { EditableUnit } from '@/components/bludesign/layout-import/types';
 
 function unit(id: string, cx: number, cy: number, label?: string, rotationRad = 0): EditableUnit {

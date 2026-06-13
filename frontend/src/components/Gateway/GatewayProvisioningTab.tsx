@@ -826,7 +826,7 @@ export default function GatewayProvisioningTab({ gatewayId, wsConnected }: Gatew
 
       <Modal isOpen={confirmDeleteId !== null} onClose={() => setConfirmDeleteId(null)}>
 
-        <ModalHeader title="Delete backup?" />
+        <ModalHeader>Delete backup?</ModalHeader>
 
         <ModalBody>
 
@@ -870,7 +870,7 @@ export default function GatewayProvisioningTab({ gatewayId, wsConnected }: Gatew
 
       <Modal isOpen={confirmRestoreId !== null} onClose={() => setConfirmRestoreId(null)}>
 
-        <ModalHeader title="Restore provisioning data?" />
+        <ModalHeader>Restore provisioning data?</ModalHeader>
 
         <ModalBody>
 

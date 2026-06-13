@@ -4,6 +4,7 @@ import {
   userHasUnitEntitlementInFacility,
 } from '@/services/passes/route-pass-context.service';
 import { UserRole } from '@/types/auth.types';
+import type { Knex } from 'knex';
 
 jest.mock('@/models/user.model', () => ({
   UserModel: {
@@ -22,6 +23,7 @@ const { UserFacilityAssociationModel } = require('@/models/user-facility-associa
 
 describe('route-pass-context.service', () => {
   let db: jest.Mock;
+  const knex = () => db as unknown as Knex;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -51,7 +53,7 @@ describe('route-pass-context.service', () => {
       is_active: false,
     });
 
-    await expect(resolveAuthoritativeRoutePassScope(db, 'u1')).rejects.toMatchObject({
+    await expect(resolveAuthoritativeRoutePassScope(knex(), 'u1')).rejects.toMatchObject({
       status: 403,
       message: 'User account is inactive',
     });
@@ -64,7 +66,7 @@ describe('route-pass-context.service', () => {
       is_active: true,
     });
 
-    const scope = await resolveAuthoritativeRoutePassScope(db, 'u1');
+    const scope = await resolveAuthoritativeRoutePassScope(knex(), 'u1');
     expect(scope.role).toBe(UserRole.TENANT);
     expect(scope.facilityIds).toBeUndefined();
   });
@@ -77,7 +79,7 @@ describe('route-pass-context.service', () => {
     });
     (UserFacilityAssociationModel.getUserFacilityIds as jest.Mock).mockResolvedValue(['fac-a']);
 
-    const scope = await resolveAuthoritativeRoutePassScope(db, 'fa-1');
+    const scope = await resolveAuthoritativeRoutePassScope(knex(), 'fa-1');
     expect(scope.facilityIds).toEqual(['fac-a']);
   });
 
@@ -110,7 +112,7 @@ describe('route-pass-context.service', () => {
       };
     });
 
-    const scope = await resolveAuthoritativeRoutePassScope(db, 'tenant-1', 'fac-entitled');
+    const scope = await resolveAuthoritativeRoutePassScope(knex(), 'tenant-1', 'fac-entitled');
     expect(scope.facilityId).toBe('fac-entitled');
     expect(scope.facilityIds).toEqual(['fac-entitled']);
     expect(assignmentFirst).toHaveBeenCalled();
@@ -123,7 +125,7 @@ describe('route-pass-context.service', () => {
       is_active: true,
     });
 
-    await expect(resolveAuthoritativeRoutePassScope(db, 'tenant-1', 'fac-gone')).rejects.toBeInstanceOf(
+    await expect(resolveAuthoritativeRoutePassScope(knex(), 'tenant-1', 'fac-gone')).rejects.toBeInstanceOf(
       RoutePassError,
     );
   });
@@ -135,7 +137,7 @@ describe('route-pass-context.service', () => {
       is_active: true,
     });
 
-    const scope = await resolveAuthoritativeRoutePassScope(db, 'admin-1', 'fac-1');
+    const scope = await resolveAuthoritativeRoutePassScope(knex(), 'admin-1', 'fac-1');
     expect(scope.role).toBe(UserRole.ADMIN);
     expect(scope.facilityId).toBe('fac-1');
     expect(scope.facilityIds).toEqual(['fac-1']);
@@ -149,7 +151,7 @@ describe('route-pass-context.service', () => {
     });
     (UserFacilityAssociationModel.getUserFacilityIds as jest.Mock).mockResolvedValue(['fac-a']);
 
-    await expect(resolveAuthoritativeRoutePassScope(db, 'fa-1', 'fac-b')).rejects.toMatchObject({
+    await expect(resolveAuthoritativeRoutePassScope(knex(), 'fa-1', 'fac-b')).rejects.toMatchObject({
       status: 403,
       message: 'Access denied to requested facility',
     });
@@ -180,6 +182,6 @@ describe('route-pass-context.service', () => {
       throw new Error(`unexpected table ${table}`);
     });
 
-    await expect(userHasUnitEntitlementInFacility(db, 'tenant-1', 'fac-1')).resolves.toBe(true);
+    await expect(userHasUnitEntitlementInFacility(knex(), 'tenant-1', 'fac-1')).resolves.toBe(true);
   });
 });

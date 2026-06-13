@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowPathIcon,
   ClipboardDocumentIcon,
@@ -14,11 +14,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { useToast } from '@/contexts/ToastContext';
 import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
-
-interface DailyAccessCodeEntry extends UserAccessCode {
-  facility_id?: string;
-  facility_name?: string;
-}
+import {
+  DailyAccessCodeEntry,
+  formatAccessCodeExpiry,
+  groupDailyAccessCodes,
+  limitDailyAccessCodeGroups,
+  sharedValidUntil,
+} from '@/utils/daily-access-codes.utils';
+import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface DailyAccessCodesWidgetProps {
   currentSize: WidgetSize;
@@ -43,24 +46,10 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
   const [partialWarning, setPartialWarning] = useState<string | null>(null);
 
   const availableSizes: WidgetSize[] = ['small', 'medium', 'medium-tall', 'large'];
+  const layout = getWidgetLayoutProfile(currentSize);
   const isAdminLike = [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(
     authState.user?.role as UserRole,
   );
-
-  const maxItems = (() => {
-    switch (currentSize) {
-      case 'small':
-        return 2;
-      case 'medium':
-        return 4;
-      case 'medium-tall':
-        return 7;
-      case 'large':
-        return 10;
-      default:
-        return 4;
-    }
-  })();
 
   const loadCodes = useCallback(async (isManualRefresh = false) => {
     try {
@@ -121,12 +110,6 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
         collected = (res?.data || []) as DailyAccessCodeEntry[];
       }
 
-      collected.sort((a, b) => {
-        const byFacility = (a.facility_name || '').localeCompare(b.facility_name || '');
-        if (byFacility !== 0) return byFacility;
-        return a.device_name.localeCompare(b.device_name);
-      });
-
       setEntries(collected);
     } catch (err) {
       console.error('Error loading daily access codes:', err);
@@ -141,16 +124,24 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
     loadCodes().catch(() => undefined);
   }, [loadCodes, authState.user?.id]);
 
-  const handleCopy = async (code: string) => {
+  const handleCopy = async (code: string, label: string) => {
     try {
       await navigator.clipboard.writeText(code);
-      addToast({ type: 'success', title: 'Access code copied' });
+      addToast({ type: 'success', title: `${label} code copied` });
     } catch {
       addToast({ type: 'error', title: 'Failed to copy access code' });
     }
   };
 
-  const displayed = entries.slice(0, maxItems);
+  const { groups: displayedGroups, hiddenCount } = useMemo(() => {
+    const grouped = groupDailyAccessCodes(entries);
+    return limitDailyAccessCodeGroups(grouped, layout.listCap);
+  }, [entries, layout.listCap]);
+
+  const showFacilityNames = useMemo(
+    () => new Set(entries.map((entry) => entry.facility_id).filter(Boolean)).size > 1,
+    [entries],
+  );
 
   if (isAllFacilitiesSelected) {
     return (
@@ -227,20 +218,20 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
       onRemove={onRemove}
       readOnly={readOnly}
     >
-      <div className="flex h-full flex-col">
-        <div className="mb-3 flex items-center justify-end">
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="mb-1.5 flex shrink-0 items-center justify-end">
           <button
             type="button"
             onClick={() => loadCodes(true)}
             disabled={refreshing}
-            className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-[11px] text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </button>
         </div>
 
-        {displayed.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center text-gray-500 dark:text-gray-400">
             <KeyIcon className="mb-2 h-8 w-8" />
             <p className="text-sm">No active keypad codes in scope</p>
@@ -249,50 +240,96 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
             )}
           </div>
         ) : (
-          <div className="flex-1 space-y-2 overflow-y-auto">
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Codes are resolved from device groups and device-specific assignments.
-            </p>
+          <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-2.5 pr-0.5`}>
             {partialWarning && (
               <p className="text-xs text-amber-600 dark:text-amber-300">{partialWarning}</p>
             )}
-            {displayed.map((entry) => (
-              <div
-                key={`${entry.facility_id || 'scope'}-${entry.device_id}-${entry.schedule_id || 'default'}`}
-                className="rounded-md border border-gray-200 bg-gray-50 p-2.5 dark:border-gray-700 dark:bg-gray-800"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{entry.device_name}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {entry.device_type}
-                      {entry.location_description ? ` • ${entry.location_description}` : ''}
-                      {` • ${entry.schedule_name || 'Always-on'}`}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-mono text-base tracking-widest text-primary-700 dark:text-primary-300">
-                      {entry.code}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(entry.code)}
-                      className="mt-1 flex items-center justify-end gap-1 text-xs text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white"
-                    >
-                      <ClipboardDocumentIcon className="h-3.5 w-3.5" />
-                      Copy
-                    </button>
-                  </div>
+
+            {displayedGroups.map((typeGroup) => (
+              <section key={typeGroup.deviceType} aria-label={typeGroup.label}>
+                <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
+                  {typeGroup.label}
+                </h3>
+                <div className="overflow-hidden rounded-md border border-gray-200/80 bg-gray-50/70 dark:border-gray-700/70 dark:bg-gray-800/40">
+                  {typeGroup.devices.map((device, deviceIndex) => {
+                    const deviceValidUntil = sharedValidUntil(device.schedules);
+
+                    return (
+                      <div
+                        key={`${device.facilityId || 'scope'}-${device.deviceId}`}
+                        className={`px-2 py-1.5 ${
+                          deviceIndex > 0
+                            ? 'border-t border-gray-200/80 dark:border-gray-700/70'
+                            : ''
+                        }`}
+                      >
+                        <div className="mb-0.5 flex min-w-0 items-baseline gap-1.5">
+                          <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">
+                            {device.deviceName}
+                          </p>
+                          {showFacilityNames && device.facilityName && (
+                            <span className="shrink-0 truncate text-[10px] text-gray-400 dark:text-gray-500">
+                              {device.facilityName}
+                            </span>
+                          )}
+                        </div>
+
+                        <ul className="space-y-0.5">
+                          {device.schedules.map((schedule) => (
+                            <li
+                              key={`${device.deviceId}-${schedule.scheduleId || schedule.scheduleName}`}
+                              className="group flex items-center gap-2 rounded-sm px-0.5 py-0.5 transition-colors hover:bg-white/70 dark:hover:bg-gray-900/30"
+                            >
+                              <span
+                                className="min-w-0 flex-1 truncate text-[11px] text-gray-600 dark:text-gray-400"
+                                title={schedule.scheduleName}
+                              >
+                                {schedule.scheduleName}
+                              </span>
+                              <span className="shrink-0 font-mono text-sm tracking-[0.18em] text-[#147FD4] dark:text-primary-300">
+                                {schedule.code}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`Copy ${schedule.scheduleName} code for ${device.deviceName}`}
+                                onClick={() => handleCopy(schedule.code, schedule.scheduleName)}
+                                className="shrink-0 rounded p-0.5 text-gray-400 opacity-70 transition-all hover:bg-gray-100 hover:text-gray-700 group-hover:opacity-100 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                              >
+                                <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+
+                        {deviceValidUntil ? (
+                          <p className="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500">
+                            Valid until {formatAccessCodeExpiry(deviceValidUntil)}
+                          </p>
+                        ) : (
+                          device.schedules.map((schedule) => (
+                            <p
+                              key={`${schedule.scheduleId || schedule.scheduleName}-expiry`}
+                              className="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500"
+                            >
+                              {schedule.scheduleName}: until {formatAccessCodeExpiry(schedule.validUntil)}
+                            </p>
+                          ))
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Valid until {new Date(entry.valid_until).toLocaleString()}
-                </p>
-              </div>
+              </section>
             ))}
+
+            {hiddenCount > 0 && (
+              <p className="text-center text-[10px] text-gray-400 dark:text-gray-500">
+                +{hiddenCount} more schedule{hiddenCount === 1 ? '' : 's'} — resize widget to see more
+              </p>
+            )}
           </div>
         )}
       </div>
     </Widget>
   );
 };
-

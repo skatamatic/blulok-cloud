@@ -75,15 +75,68 @@ describe('DailyAccessCodesWidget', () => {
     });
   });
 
-  it('loads and displays scoped access codes', async () => {
+  it('loads and displays scoped access codes grouped by type and device', async () => {
     renderWithProviders(<DailyAccessCodesWidget currentSize="medium" onSizeChange={() => undefined} />);
 
     await waitFor(() => {
       expect(mockGetAppAccessCodes).toHaveBeenCalledWith('facility-1');
+      expect(screen.getByText('Gates')).toBeInTheDocument();
       expect(screen.getByText('Gate A')).toBeInTheDocument();
       expect(screen.getByText('1234')).toBeInTheDocument();
       expect(screen.getByText(/Always-on/)).toBeInTheDocument();
     });
+
+    expect(screen.queryByText(/Gateway relay/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/North entrance/i)).not.toBeInTheDocument();
+  });
+
+  it('groups multiple schedules under one device without repeating device headers', async () => {
+    mockGetAppAccessCodes.mockResolvedValue({
+      data: [
+        {
+          device_id: 'device-1',
+          device_name: 'Access Control 1',
+          device_type: 'door',
+          location_description: 'Gateway relay 1',
+          code: '793740',
+          schedule_id: 's1',
+          schedule_name: 'Always-on',
+          valid_until: new Date(Date.now() + 3600_000).toISOString(),
+        },
+        {
+          device_id: 'device-1',
+          device_name: 'Access Control 1',
+          device_type: 'door',
+          location_description: 'Gateway relay 1',
+          code: '031754',
+          schedule_id: 's2',
+          schedule_name: 'Default Tenant Schedule',
+          valid_until: new Date(Date.now() + 3600_000).toISOString(),
+        },
+        {
+          device_id: 'device-1',
+          device_name: 'Access Control 1',
+          device_type: 'door',
+          location_description: 'Gateway relay 1',
+          code: '393781',
+          schedule_id: 's3',
+          schedule_name: 'Maintenance Schedule',
+          valid_until: new Date(Date.now() + 3600_000).toISOString(),
+        },
+      ],
+    });
+
+    renderWithProviders(<DailyAccessCodesWidget currentSize="medium" onSizeChange={() => undefined} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Doors')).toBeInTheDocument();
+      expect(screen.getAllByText('Access Control 1')).toHaveLength(1);
+      expect(screen.getByText('793740')).toBeInTheDocument();
+      expect(screen.getByText('031754')).toBeInTheDocument();
+      expect(screen.getByText('393781')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/Gateway relay/i)).not.toBeInTheDocument();
   });
 
   it('shows select-facility placeholder in all-facilities mode', async () => {

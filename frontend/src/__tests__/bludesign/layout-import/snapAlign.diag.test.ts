@@ -59,19 +59,6 @@ function rotSpreadDeg(units: EditableUnit[]): number {
   return (Math.max(...rads) - Math.min(...rads)) * (180 / Math.PI);
 }
 
-function maxAdjacentEdgeError(units: EditableUnit[]): number {
-  const sorted = [...units].sort((a, b) => a.bounds.cx - b.bounds.cx);
-  let maxErr = 0;
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const a = sorted[i];
-    const b = sorted[i + 1];
-    const dist = Math.hypot(b.bounds.cx - a.bounds.cx, b.bounds.cy - a.bounds.cy);
-    const expected = (a.bounds.width + b.bounds.width) / 2;
-    maxErr = Math.max(maxErr, Math.abs(dist - expected));
-  }
-  return maxErr;
-}
-
 interface ClusterReport {
   perpBefore: number;
   perpAfter: number;

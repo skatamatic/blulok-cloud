@@ -33,7 +33,7 @@ export const DetectionSidebar: React.FC<DetectionSidebarProps> = ({
   onReupload,
   onFocusUnit,
   onImport,
-  disabled = false,
+  disabled: sidebarDisabled = false,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -255,7 +255,7 @@ export const DetectionSidebar: React.FC<DetectionSidebarProps> = ({
           <button
             type="button"
             onClick={onImport}
-            disabled={stats.withLabel === 0 || errors.length > 0}
+            disabled={sidebarDisabled || stats.withLabel === 0 || errors.length > 0}
             className={`
               w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold
               transition-all duration-150 bg-primary-600 text-white

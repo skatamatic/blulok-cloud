@@ -142,11 +142,15 @@ describe('DeviceStatusSubscriptionManager', () => {
         id: 'ac-1',
         device_serial: 'KP-001',
         name: 'Main Gate',
+        device_type: 'door',
+        relay_channel: 1,
         location_description: 'North lot',
         facility_id: 'facility-1',
         gateway_id: 'gateway-1',
+        gateway_name: 'Test Gateway',
         is_locked: false,
         status: 'online',
+        created_at: new Date(),
         updated_at: new Date(),
       });
 
@@ -384,11 +388,15 @@ describe('DeviceStatusSubscriptionManager', () => {
         id: 'ac-1',
         device_serial: 'KP-001',
         name: 'Main Gate',
+        device_type: 'door',
+        relay_channel: 1,
         location_description: 'North lot',
         facility_id: 'facility-1',
         gateway_id: 'gateway-1',
+        gateway_name: 'Test Gateway',
         is_locked: false,
         status: 'online',
+        created_at: new Date(),
         updated_at: new Date(),
       });
 

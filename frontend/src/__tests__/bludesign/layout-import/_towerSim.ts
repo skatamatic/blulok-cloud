@@ -34,7 +34,7 @@ const base = gt.units
   .map((u: any, i: number) => toEditable(u, `g-${u.label}-${i}`));
 
 // Simulate screenshot: missing labels on key snake cells
-const broken = base.map((u) => {
+const broken = base.map((u: EditableUnit) => {
   if (['57', '56', '54', '65'].includes(u.label!)) return { ...u, label: undefined, labelConfidence: 0 };
   return u;
 });

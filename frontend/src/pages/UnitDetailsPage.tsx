@@ -64,6 +64,7 @@ interface UnitDetails {
     temperature?: number;
     error_code?: string | null;
     error_message?: string | null;
+    device_settings?: Record<string, unknown>;
   };
   primary_tenant?: {
     id: string;

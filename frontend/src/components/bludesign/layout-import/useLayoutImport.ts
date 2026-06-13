@@ -952,6 +952,7 @@ export function useLayoutImport() {
     // history
     undo,
     redo,
+    showNotice,
     canUndo,
     canRedo,
   };

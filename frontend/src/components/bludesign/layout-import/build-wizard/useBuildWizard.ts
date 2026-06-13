@@ -24,7 +24,6 @@ import {
   bucketUnits,
   resolveAssetIdForBucket,
   signatureOf,
-  type AssetBucket,
   type ResolvedAssetBucket,
   DEFAULT_TOLERANCE_M,
 } from './assetSpec';
