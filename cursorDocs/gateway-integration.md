@@ -66,6 +66,7 @@ Any UI that shows BluLok lock or device telemetry should go through **`useLockDe
 - **`findByFacilityId`** uses **`orderBy('updated_at', 'desc')`** before `.first()` so inbound WS DB sync picks a **deterministic** row if multiple gateway rows ever share a facility (normally one per facility).
 - **`GatewayModel.updateStatus`** for non-**online** states updates **`status` + `updated_at` only** — **`last_seen`** stays as last known good contact.
 - **Heartbeat** (`websocket-gateway.transport.ts`): if a facility’s socket is **not OPEN**, the transport **removes** it and emits **`notifyConnectionChange(..., false, 'socket_not_open')`** so **`gateways.status`** can go **offline** like a normal disconnect.
+- **Offline grace (`GATEWAY_OFFLINE_GRACE_MS`, default 60s):** inbound `/ws/gateway` disconnects **do not** immediately persist `gateways.status = offline` or fan out **Gateway Offline** in-app alerts. The backend waits for reconnect; only after the grace window (still disconnected) does it update DB status, create notifications, and treat the outage as real. Dashboard **toasts** use the same 60s debounce (`useGatewayStatusToasts`). Live `connected: false` still flows over **`gateway_status_update`** for UI pills during the grace window.
 
 ## Google Cloud Run–specific issues
 

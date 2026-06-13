@@ -7,6 +7,15 @@ import { notifyGatewayStatusAfterDbUpdate } from '@/utils/gateway-status-notific
 import { WebSocketService } from '@/services/websocket.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { formatGatewayDisconnectReason } from '@/utils/gateway-telemetry-system-log.utils';
+import { GATEWAY_OFFLINE_GRACE_MS } from '@/constants/gateway-liveness.constants';
+
+type PendingOfflineEntry = {
+  timer: NodeJS.Timeout;
+  gatewayId: string;
+  gatewayName: string;
+  previousStatus: string;
+  reason?: string;
+};
 
 /**
  * Gateway Client Information Interface
@@ -57,6 +66,7 @@ export class GatewayEventsService {
   private transport: GatewayTransport;
   private readonly gatewayModel = new GatewayModel();
   private unbindTransportConnectionListener?: () => void;
+  private pendingOfflineByFacility = new Map<string, PendingOfflineEntry>();
   private connectionListeners = new Set<(event: {
     facilityId: string;
     connected: boolean;
@@ -198,6 +208,7 @@ export class GatewayEventsService {
    * Stops heartbeat timers and closes all connections.
    */
   public shutdown(): void {
+    this.clearAllPendingOffline();
     if (this.unbindTransportConnectionListener) {
       this.unbindTransportConnectionListener();
       this.unbindTransportConnectionListener = undefined;
@@ -249,6 +260,77 @@ export class GatewayEventsService {
     });
   }
 
+  private clearPendingOffline(facilityId: string): void {
+    const pending = this.pendingOfflineByFacility.get(facilityId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingOfflineByFacility.delete(facilityId);
+  }
+
+  private clearAllPendingOffline(): void {
+    for (const pending of this.pendingOfflineByFacility.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingOfflineByFacility.clear();
+  }
+
+  private schedulePendingOffline(
+    facilityId: string,
+    gateway: { id: string; name: string; status: string },
+    reason?: string,
+  ): void {
+    if (this.pendingOfflineByFacility.has(facilityId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.pendingOfflineByFacility.delete(facilityId);
+      void this.applyPendingGatewayOffline(facilityId);
+    }, GATEWAY_OFFLINE_GRACE_MS);
+    timer.unref?.();
+
+    this.pendingOfflineByFacility.set(facilityId, {
+      timer,
+      gatewayId: gateway.id,
+      gatewayName: gateway.name,
+      previousStatus: gateway.status,
+      reason,
+    });
+  }
+
+  private async applyPendingGatewayOffline(facilityId: string): Promise<void> {
+    if (this.getFacilityConnectionStatus(facilityId).connected) {
+      return;
+    }
+
+    try {
+      const gw = await this.gatewayModel.findByFacilityId(facilityId);
+      if (!gw) return;
+
+      const previousStatus = gw.status;
+      if (previousStatus === 'offline') {
+        const wsService = WebSocketService.getInstance();
+        await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+        return;
+      }
+
+      await this.gatewayModel.updateStatus(gw.id, 'offline');
+
+      void notifyGatewayStatusAfterDbUpdate({
+        facilityId,
+        gatewayId: gw.id,
+        gatewayName: gw.name,
+        previousStatus,
+        nextStatus: 'offline',
+      });
+
+      const wsService = WebSocketService.getInstance();
+      await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+    } catch (error) {
+      logger.warn(`applyPendingGatewayOffline failed facility=${facilityId}`, error);
+    }
+  }
+
   private async syncGatewayDbWithInboundConnection(event: {
     facilityId: string;
     connected: boolean;
@@ -271,27 +353,30 @@ export class GatewayEventsService {
       // Always record cloud-system telemetry for inbound /ws/gateway sessions.
       this.recordInboundWsTelemetryLog(gw.id, facilityId, event);
 
-      // Inbound /ws/gateway is the authoritative liveness signal for every gateway type:
-      // any traffic within the keepalive window means the gateway is online. Outbound
-      // polling is deprecated/disabled, so we do not special-case HTTP gateways here.
-      const previousStatus = gw.status;
-      const next: 'online' | 'offline' = connected ? 'online' : 'offline';
-      if (next === 'online') {
+      if (connected) {
+        this.clearPendingOffline(facilityId);
+
+        const previousStatus = gw.status;
         await this.gatewayModel.updateStatusAndLastSeen(gw.id, 'online');
-      } else {
-        await this.gatewayModel.updateStatus(gw.id, 'offline');
+
+        if (previousStatus !== 'online') {
+          void notifyGatewayStatusAfterDbUpdate({
+            facilityId,
+            gatewayId: gw.id,
+            gatewayName: gw.name,
+            previousStatus,
+            nextStatus: 'online',
+            reason: event.reason,
+          });
+        }
+
+        const wsService = WebSocketService.getInstance();
+        await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+        return;
       }
 
-      if (previousStatus !== next) {
-        void notifyGatewayStatusAfterDbUpdate({
-          facilityId,
-          gatewayId: gw.id,
-          gatewayName: gw.name,
-          previousStatus,
-          nextStatus: next,
-          reason: event.reason,
-        });
-      }
+      // Transient disconnect: wait for reconnect before persisting offline + alerting.
+      this.schedulePendingOffline(facilityId, gw, event.reason);
 
       const wsService = WebSocketService.getInstance();
       await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);

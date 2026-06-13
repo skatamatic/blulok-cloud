@@ -14,9 +14,7 @@ import { FMSSyncStatusBar } from '@/components/FMS/FMSSyncStatusBar';
 import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
 import { FMSChangeReviewModal } from '@/components/FMS/FMSChangeReviewModal';
 import ToastContainer from '@/components/Toast/ToastContainer';
-import { useWebSocket } from '@/contexts/WebSocketContext';
-import { useToast } from '@/contexts/ToastContext';
-import { useEffect, useRef } from 'react';
+import { useGatewayStatusToasts } from '@/hooks/useGatewayStatusToasts';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { DashboardLayout } from '@/components/Layout/DashboardLayout';
 import { UserRole } from '@/types/auth.types';
@@ -82,43 +80,9 @@ function FMSModals() {
   );
 }
 
-// Global gateway status listener to raise toasts on any view
+// Debounced gateway connectivity toasts (see useGatewayStatusToasts).
 function GatewayStatusListener() {
-  const ws = useWebSocket();
-  const { addToast } = useToast();
-  const lastStatusRef = useRef<Record<string, string>>({});
-
-  useEffect(() => {
-    const subscriptionId = ws.subscribe(
-      'gateway_status',
-      (data: any) => {
-        try {
-          const gateways = data?.gateways || [];
-          gateways.forEach((g: any) => {
-            const prev = lastStatusRef.current[g.id];
-            lastStatusRef.current[g.id] = g.status;
-            if (prev && prev !== g.status) {
-              // Only show toasts for actual status changes (online, offline, error)
-              if (g.status === 'online' || g.status === 'offline' || g.status === 'error') {
-                const statusMessage = g.status === 'online' ? 'online' : g.status === 'offline' ? 'offline' : 'error';
-                addToast({
-                  type: g.status === 'online' ? 'success' : 'error',
-                  title: `Facility gateway is now ${statusMessage}`
-                });
-              }
-            }
-          });
-        } catch (e) {
-          console.error('Failed to process gateway status update', e);
-        }
-      },
-      undefined // no error handler needed
-    );
-    return () => {
-      if (subscriptionId) ws.unsubscribe(subscriptionId);
-    };
-  }, [ws]);
-
+  useGatewayStatusToasts();
   return null;
 }
 

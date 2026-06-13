@@ -17,6 +17,7 @@ import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { getWidgetLayoutProfile, WIDGET_BODY_CLASS } from '@/utils/widget-layout.utils';
 import {
   getHistogramTypeBreakdown,
+  HISTOGRAM_SKIPPED_ACTIVITY_TYPES,
   type HistogramActivityType,
 } from '@/utils/histogram-activity-type.utils';
 import {
@@ -197,6 +198,10 @@ function mergeActivityStatsRows(
   const merged = new Map<string, HistogramData>();
 
   for (const row of rows) {
+    if (row.activity_type && HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has(row.activity_type)) {
+      continue;
+    }
+
     const date = normalizeHistogramDateKey(row.date);
     const key = `${date}|${row.facility_id}`;
     let entry = merged.get(key);

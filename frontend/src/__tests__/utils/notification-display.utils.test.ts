@@ -1,4 +1,10 @@
-import { deriveActionRequired, filterNotificationsForViewer, mapApiNotificationToDashboardView } from '@/utils/notification-display.utils';
+import {
+  deriveActionRequired,
+  filterNotificationsForViewer,
+  getNotificationCardVisual,
+  getNotificationUrgencyBadge,
+  mapApiNotificationToDashboardView,
+} from '@/utils/notification-display.utils';
 import type { UserNotificationApi } from '@/types/notifications.types';
 
 const api = (o: Partial<UserNotificationApi>): UserNotificationApi => ({
@@ -43,5 +49,34 @@ describe('notification-display.utils', () => {
     ];
     expect(filterNotificationsForViewer(rows, 'admin')).toHaveLength(1);
     expect(filterNotificationsForViewer(rows, 'dev_admin')).toHaveLength(2);
+  });
+
+  it('getNotificationCardVisual uses urgent styling for unread critical notifications', () => {
+    const view = mapApiNotificationToDashboardView(
+      api({ type: 'gateway_offline', priority: 'urgent', isRead: false }),
+    );
+    const visual = getNotificationCardVisual(view);
+    expect(visual.showPulse).toBe(true);
+    expect(visual.card).toContain('red');
+    expect(getNotificationUrgencyBadge(view)?.label).toBe('Critical');
+  });
+
+  it('getNotificationCardVisual mutes read notifications', () => {
+    const view = mapApiNotificationToDashboardView(
+      api({ type: 'gateway_offline', priority: 'urgent', isRead: true }),
+    );
+    const visual = getNotificationCardVisual(view);
+    expect(visual.showPulse).toBe(false);
+    expect(visual.card).toContain('bg-white');
+    expect(getNotificationUrgencyBadge(view)).toBeNull();
+  });
+
+  it('getNotificationCardVisual uses success styling for gateway restored', () => {
+    const view = mapApiNotificationToDashboardView(
+      api({ type: 'gateway_restored', priority: 'normal', isRead: false }),
+    );
+    const visual = getNotificationCardVisual(view);
+    expect(visual.card).toContain('emerald');
+    expect(getNotificationUrgencyBadge(view)).toBeNull();
   });
 });

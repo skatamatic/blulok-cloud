@@ -172,6 +172,139 @@ export function notificationMessageNeedsExpansion(message: string, maxPreviewLen
   return message.trim().length > maxPreviewLength || message.includes('\n');
 }
 
+export interface NotificationCardVisual {
+  card: string;
+  accentBar: string;
+  iconShell: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  expandedRing: string;
+  showPulse: boolean;
+}
+
+export interface NotificationUrgencyBadge {
+  label: string;
+  className: string;
+}
+
+function readCardVisual(tone: WidgetNotificationTone): NotificationCardVisual {
+  const accentByTone: Record<WidgetNotificationTone, string> = {
+    error: 'bg-red-300/70 dark:bg-red-800/50',
+    warning: 'bg-amber-300/70 dark:bg-amber-800/50',
+    success: 'bg-emerald-300/60 dark:bg-emerald-800/40',
+    info: 'bg-gray-300/70 dark:bg-gray-600/50',
+  };
+
+  return {
+    card: 'border-gray-200 dark:border-gray-700/80 bg-white dark:bg-gray-800/90',
+    accentBar: accentByTone[tone],
+    iconShell: 'bg-gray-100 text-gray-500 dark:bg-gray-700/80 dark:text-gray-400',
+    title: 'text-gray-700 dark:text-gray-200',
+    message: 'text-gray-500 dark:text-gray-400',
+    timestamp: 'text-gray-400 dark:text-gray-500',
+    expandedRing: 'ring-1 ring-gray-200/80 dark:ring-gray-600/60',
+    showPulse: false,
+  };
+}
+
+function unreadCardVisual(tone: WidgetNotificationTone): NotificationCardVisual {
+  switch (tone) {
+    case 'error':
+      return {
+        card: 'border-red-300/90 dark:border-red-700/70 bg-gradient-to-r from-red-50 via-red-50/80 to-white dark:from-red-950/40 dark:via-red-950/20 dark:to-gray-900/40 shadow-sm shadow-red-100/80 dark:shadow-red-950/30',
+        accentBar: 'bg-red-500 dark:bg-red-400',
+        iconShell: 'bg-red-100 text-red-600 ring-2 ring-red-200/80 dark:bg-red-900/50 dark:text-red-300 dark:ring-red-800/60',
+        title: 'text-red-950 dark:text-red-50',
+        message: 'text-red-900/80 dark:text-red-100/80',
+        timestamp: 'text-red-700/70 dark:text-red-300/70',
+        expandedRing: 'ring-2 ring-red-300/50 dark:ring-red-700/40 border-red-300/80 dark:border-red-700/60',
+        showPulse: true,
+      };
+    case 'warning':
+      return {
+        card: 'border-amber-300/90 dark:border-amber-700/60 bg-gradient-to-r from-amber-50 via-amber-50/70 to-white dark:from-amber-950/30 dark:via-amber-950/15 dark:to-gray-900/40 shadow-sm shadow-amber-100/70 dark:shadow-amber-950/20',
+        accentBar: 'bg-amber-500 dark:bg-amber-400',
+        iconShell: 'bg-amber-100 text-amber-700 ring-2 ring-amber-200/80 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800/50',
+        title: 'text-amber-950 dark:text-amber-50',
+        message: 'text-amber-900/80 dark:text-amber-100/75',
+        timestamp: 'text-amber-800/70 dark:text-amber-300/70',
+        expandedRing: 'ring-2 ring-amber-300/45 dark:ring-amber-700/35 border-amber-300/80 dark:border-amber-700/55',
+        showPulse: false,
+      };
+    case 'success':
+      return {
+        card: 'border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/70 dark:bg-emerald-950/20',
+        accentBar: 'bg-emerald-500 dark:bg-emerald-400',
+        iconShell: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/35 dark:text-emerald-300',
+        title: 'text-emerald-950 dark:text-emerald-50',
+        message: 'text-emerald-900/75 dark:text-emerald-100/70',
+        timestamp: 'text-emerald-700/70 dark:text-emerald-300/65',
+        expandedRing: 'ring-1 ring-emerald-300/40 dark:ring-emerald-700/35',
+        showPulse: false,
+      };
+    case 'info':
+    default:
+      return {
+        card: 'border-[#147FD4]/25 dark:border-[#147FD4]/35 bg-gradient-to-r from-[#147FD4]/8 via-[#147FD4]/5 to-white dark:from-[#147FD4]/15 dark:via-[#147FD4]/8 dark:to-gray-900/30',
+        accentBar: 'bg-[#147FD4]',
+        iconShell: 'bg-[#147FD4]/10 text-[#147FD4] dark:bg-[#147FD4]/20 dark:text-[#5eb3f0]',
+        title: 'text-gray-900 dark:text-white',
+        message: 'text-gray-600 dark:text-gray-300',
+        timestamp: 'text-gray-500 dark:text-gray-400',
+        expandedRing: 'ring-1 ring-[#147FD4]/25 border-[#147FD4]/30',
+        showPulse: false,
+      };
+  }
+}
+
+export function getNotificationCardVisual(
+  notification: Pick<DashboardNotificationView, 'tone' | 'isRead'>,
+): NotificationCardVisual {
+  return notification.isRead
+    ? readCardVisual(notification.tone)
+    : unreadCardVisual(notification.tone);
+}
+
+export function getNotificationUrgencyBadge(
+  notification: Pick<
+    DashboardNotificationView,
+    'tone' | 'priority' | 'isRead' | 'actionRequired'
+  >,
+): NotificationUrgencyBadge | null {
+  if (notification.isRead) {
+    return null;
+  }
+
+  if (notification.tone === 'error') {
+    const critical =
+      notification.priority === 'urgent' || notification.actionRequired;
+    return {
+      label: critical ? 'Critical' : 'Alert',
+      className:
+        'bg-red-600 text-white shadow-sm shadow-red-500/30 dark:bg-red-500 dark:text-white',
+    };
+  }
+
+  if (notification.tone === 'warning') {
+    return {
+      label: 'Attention',
+      className:
+        'bg-amber-500 text-white shadow-sm shadow-amber-500/25 dark:bg-amber-500 dark:text-white',
+    };
+  }
+
+  if (notification.actionRequired) {
+    return {
+      label: 'Action needed',
+      className:
+        'bg-orange-500 text-white shadow-sm shadow-orange-500/25 dark:bg-orange-500 dark:text-white',
+    };
+  }
+
+  return null;
+}
+
 export function mapApiNotificationToDashboardView(
   n: UserNotificationApi
 ): DashboardNotificationView & { displayType: 'info' | 'warning' | 'error' | 'success' } {

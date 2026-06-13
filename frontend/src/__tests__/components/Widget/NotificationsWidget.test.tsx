@@ -165,6 +165,7 @@ describe('NotificationsWidget', () => {
     await waitFor(() => {
       expect(screen.getByText('Security')).toBeInTheDocument();
       expect(screen.getByText('FYI')).toBeInTheDocument();
+      expect(screen.getByText('Critical')).toBeInTheDocument();
     });
   });
 
@@ -233,23 +234,25 @@ describe('NotificationsWidget', () => {
     });
   });
 
-  it('marks notification read when X is clicked', async () => {
+  it('marks notification read when expanded', async () => {
     renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
     await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }));
+    expect(screen.queryByRole('button', { name: 'Mark as read' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Security/i }));
 
     await waitFor(() => {
       expect(mockMarkNotificationRead).toHaveBeenCalledWith('a');
     });
   });
 
-  it('shows toast when mark read fails', async () => {
+  it('shows toast when mark read fails on expand', async () => {
     mockMarkNotificationRead.mockRejectedValueOnce(new Error('network'));
     renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
     await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }));
+    fireEvent.click(screen.getByRole('button', { name: /Security/i }));
 
     await waitFor(() => {
       expect(mockAddToast).toHaveBeenCalledWith(

@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { render, act } from '@testing-library/react';
 import { WidgetGrid } from '@/components/Widget/WidgetGrid';
 
@@ -14,7 +14,11 @@ let lastGridProps: Record<string, unknown> | null = null;
 jest.mock('react-grid-layout', () => {
   const Responsive = (props: Record<string, unknown>) => {
     lastGridProps = props;
+    const simulated = useRef(false);
     useEffect(() => {
+      if (simulated.current) return;
+      simulated.current = true;
+
       const item = { i: 'w1', x: 0, y: 0, w: 3, h: 2 };
       const layoutsPayload = { lg: [item], md: [item], sm: [item] };
       const onLayoutChange = props.onLayoutChange as
@@ -28,8 +32,7 @@ jest.mock('react-grid-layout', () => {
         | undefined;
       // RGL breakpoint/width mutations — must not commit to parent.
       onLayoutChange?.([{ ...item, x: 99 }], layoutsPayload);
-      // User gesture — sole commit path.
-      onDragStop?.([item]);
+      // User gesture — sole commit path (once per mount).
       onDragStop?.([item]);
       onResize?.([{ ...item, w: 4 }], layoutsPayload, { ...item, w: 4 });
     }, [props.onLayoutChange, props.onDragStop, props.onResize]);
@@ -51,6 +54,7 @@ describe('WidgetGrid', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   it('locks react-grid-layout to the lg breakpoint (12-col preferred geometry)', async () => {
@@ -87,7 +91,7 @@ describe('WidgetGrid', () => {
       );
     });
 
-    expect(onLayoutChange).toHaveBeenCalledTimes(2);
+    expect(onLayoutChange).toHaveBeenCalledTimes(1);
     expect(onLayoutChange).toHaveBeenCalledWith(
       [{ i: 'w1', x: 0, y: 0, w: 3, h: 2 }],
       expect.objectContaining({ lg: expect.any(Array) })

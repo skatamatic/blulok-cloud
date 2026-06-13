@@ -10,12 +10,14 @@ import type { ReactNode } from 'react';
 const mockGetWidgetLayouts = jest.fn();
 const mockSaveDashboard = jest.fn();
 const mockResetWidgetLayout = jest.fn();
+const mockHideWidget = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getWidgetLayouts: (...args: unknown[]) => mockGetWidgetLayouts(...args),
     saveDashboard: (...args: unknown[]) => mockSaveDashboard(...args),
     resetWidgetLayout: (...args: unknown[]) => mockResetWidgetLayout(...args),
+    hideWidget: (...args: unknown[]) => mockHideWidget(...args),
   },
 }));
 
@@ -55,6 +57,7 @@ describe('useDashboardState', () => {
     mockGetWidgetLayouts.mockResolvedValue(defaultApiResponse);
     mockSaveDashboard.mockResolvedValue({ success: true });
     mockResetWidgetLayout.mockResolvedValue(defaultApiResponse);
+    mockHideWidget.mockResolvedValue({ success: true });
   });
 
   it('loads dashboard from API when authenticated', async () => {
@@ -135,9 +138,11 @@ describe('useDashboardState', () => {
       result.current.removeWidget(widgetId!);
     });
 
-    expect(
-      result.current.activePage.widgetInstances.some((w) => w.id === widgetId)
-    ).toBe(false);
+    await waitFor(() =>
+      expect(
+        result.current.activePage.widgetInstances.some((w) => w.id === widgetId)
+      ).toBe(false)
+    );
   });
 
   it('setActivePage updates active page and slide direction', async () => {

@@ -2,7 +2,6 @@ export const HISTOGRAM_ACTIVITY_TYPE_ORDER = [
   'access_attempt',
   'unlock',
   'lock',
-  'unlocking',
   'locking',
 ] as const;
 
@@ -12,9 +11,11 @@ export const HISTOGRAM_ACTIVITY_TYPE_LABELS: Record<HistogramActivityType, strin
   access_attempt: 'Access',
   unlock: 'Unlock',
   lock: 'Lock',
-  unlocking: 'Unlocking',
   locking: 'Locking',
 };
+
+/** Transitional activity types logged elsewhere but omitted from histogram charts. */
+export const HISTOGRAM_SKIPPED_ACTIVITY_TYPES = new Set(['unlocking']);
 
 export type HistogramTypeBreakdown = {
   type: HistogramActivityType;

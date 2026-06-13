@@ -3,9 +3,15 @@ import {
   BellIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  XMarkIcon,
   ChevronDownIcon,
+  SignalSlashIcon,
+  ShieldExclamationIcon,
 } from '@heroicons/react/24/outline';
+import {
+  ExclamationTriangleIcon as ExclamationTriangleIconSolid,
+  CheckCircleIcon as CheckCircleIconSolid,
+  BellIcon as BellIconSolid,
+} from '@heroicons/react/24/solid';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -19,9 +25,12 @@ import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
   filterNotificationsForViewer,
+  getNotificationCardVisual,
   getNotificationDetailLines,
+  getNotificationUrgencyBadge,
   mapApiNotificationToDashboardView,
   notificationMessageNeedsExpansion,
+  type WidgetNotificationTone,
 } from '@/utils/notification-display.utils';
 import {
   getWidgetLayoutProfile,
@@ -32,6 +41,56 @@ import {
 
 type DisplayNotification = ReturnType<typeof mapApiNotificationToDashboardView>;
 
+function NotificationToneIcon({
+  tone,
+  notificationType,
+  compact,
+  isRead,
+  className,
+}: {
+  tone: WidgetNotificationTone;
+  notificationType: string;
+  compact: boolean;
+  isRead: boolean;
+  className: string;
+}) {
+  const sizeClass = compact ? 'h-3.5 w-3.5' : 'h-4 w-4';
+  const iconClass = `${sizeClass} ${className}`;
+
+  if (tone === 'error') {
+    if (notificationType === 'gateway_offline') {
+      return <SignalSlashIcon className={iconClass} aria-hidden />;
+    }
+    return isRead ? (
+      <ExclamationTriangleIcon className={iconClass} aria-hidden />
+    ) : (
+      <ExclamationTriangleIconSolid className={iconClass} aria-hidden />
+    );
+  }
+
+  if (tone === 'warning') {
+    return isRead ? (
+      <ExclamationTriangleIcon className={iconClass} aria-hidden />
+    ) : (
+      <ShieldExclamationIcon className={iconClass} aria-hidden />
+    );
+  }
+
+  if (tone === 'success') {
+    return isRead ? (
+      <CheckCircleIcon className={iconClass} aria-hidden />
+    ) : (
+      <CheckCircleIconSolid className={iconClass} aria-hidden />
+    );
+  }
+
+  return isRead ? (
+    <BellIcon className={iconClass} aria-hidden />
+  ) : (
+    <BellIconSolid className={iconClass} aria-hidden />
+  );
+}
+
 const NotificationCard: React.FC<{
   notification: DisplayNotification;
   expanded: boolean;
@@ -39,9 +98,7 @@ const NotificationCard: React.FC<{
   index: number;
   facilityLabel?: string | null;
   onToggle: () => void;
-  onMarkRead: () => void;
   formatTimestamp: (timestamp: Date) => string;
-  getNotificationIcon: (displayType: string) => React.ReactElement;
 }> = ({
   notification,
   expanded,
@@ -49,12 +106,12 @@ const NotificationCard: React.FC<{
   index,
   facilityLabel,
   onToggle,
-  onMarkRead,
   formatTimestamp,
-  getNotificationIcon,
 }) => {
   const expandable = notificationMessageNeedsExpansion(notification.message);
   const detailLines = getNotificationDetailLines(notification);
+  const visual = getNotificationCardVisual(notification);
+  const urgencyBadge = getNotificationUrgencyBadge(notification);
 
   return (
     <motion.div
@@ -62,19 +119,30 @@ const NotificationCard: React.FC<{
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
       transition={{ delay: index * 0.05, duration: 0.3 }}
-      className={`relative border rounded-lg transition-all group hover:shadow-sm ${
-        compact ? 'p-2' : 'p-3'
-      } ${
-        notification.isRead
-          ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
-          : 'border-primary-200 dark:border-primary-700 bg-primary-50 dark:bg-primary-900/10'
-      } ${expanded ? 'ring-1 ring-[#147FD4]/20 border-[#147FD4]/40' : ''}`}
+      className={`relative overflow-hidden border rounded-xl transition-all duration-200 group hover:shadow-md ${
+        compact ? 'p-2.5 pl-3' : 'p-3.5 pl-4'
+      } ${visual.card} ${expanded ? visual.expandedRing : ''}`}
     >
-      <div className={`flex items-start ${compact ? 'space-x-2' : 'space-x-3'}`}>
-        <div className="flex-shrink-0 mt-0.5">
-          {React.cloneElement(getNotificationIcon(notification.displayType), {
-            className: compact ? 'h-3 w-3' : 'h-4 w-4',
-          })}
+      <span
+        className={`absolute inset-y-0 left-0 w-1 rounded-l-xl ${visual.accentBar} ${
+          visual.showPulse ? 'animate-pulse' : ''
+        }`}
+        aria-hidden
+      />
+
+      <div className={`flex items-start ${compact ? 'gap-2.5' : 'gap-3'}`}>
+        <div
+          className={`flex-shrink-0 rounded-lg flex items-center justify-center ${
+            compact ? 'h-7 w-7' : 'h-9 w-9'
+          } ${visual.iconShell}`}
+        >
+          <NotificationToneIcon
+            tone={notification.tone}
+            notificationType={notification.notificationType}
+            compact={compact}
+            isRead={notification.isRead}
+            className=""
+          />
         </div>
 
         <div className="flex-1 min-w-0">
@@ -85,20 +153,28 @@ const NotificationCard: React.FC<{
             aria-expanded={expanded}
           >
             <div className="flex items-start justify-between gap-2">
-              <h4
-                className={`${compact ? 'text-xs' : 'text-sm'} font-medium ${
-                  notification.isRead
-                    ? 'text-gray-900 dark:text-white'
-                    : 'text-gray-900 dark:text-white font-semibold'
-                }`}
-              >
-                {notification.title}
-              </h4>
-              {(expandable || detailLines.length > 1) && (
+              <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+                <h4
+                  className={`${compact ? 'text-xs' : 'text-sm'} font-semibold leading-snug ${visual.title}`}
+                >
+                  {notification.title}
+                </h4>
+                {urgencyBadge && (
+                  <span
+                    className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${urgencyBadge.className}`}
+                  >
+                    {urgencyBadge.label}
+                  </span>
+                )}
+                {!notification.isRead && !urgencyBadge && (
+                  <span className="inline-flex h-1.5 w-1.5 rounded-full bg-[#147FD4] shrink-0" aria-hidden />
+                )}
+              </div>
+              {(expandable || detailLines.length > 1 || !notification.isRead) && (
                 <motion.span
                   animate={{ rotate: expanded ? 180 : 0 }}
                   transition={{ duration: 0.2 }}
-                  className="shrink-0 text-gray-400"
+                  className="shrink-0 text-gray-400 dark:text-gray-500"
                 >
                   <ChevronDownIcon className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
                 </motion.span>
@@ -107,7 +183,7 @@ const NotificationCard: React.FC<{
 
             {!expanded && (
               <p
-                className={`${compact ? 'text-xs mt-0.5' : 'text-xs mt-1'} text-gray-600 dark:text-gray-400 leading-relaxed line-clamp-2`}
+                className={`${compact ? 'text-[11px] mt-0.5' : 'text-xs mt-1'} leading-relaxed line-clamp-2 ${visual.message}`}
               >
                 {notification.message}
               </p>
@@ -124,11 +200,13 @@ const NotificationCard: React.FC<{
                 className="overflow-hidden"
               >
                 <div className={`space-y-2 ${compact ? 'mt-1.5' : 'mt-2'}`}>
-                  <p className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap break-words">
+                  <p
+                    className={`text-xs leading-relaxed whitespace-pre-wrap break-words ${visual.message}`}
+                  >
                     {notification.message}
                   </p>
                   {detailLines.length > 1 && (
-                    <div className="rounded-md border border-gray-100 bg-gray-50/80 px-2.5 py-2 dark:border-gray-700/80 dark:bg-gray-900/40">
+                    <div className="rounded-lg border border-gray-100 bg-white/70 px-2.5 py-2 dark:border-gray-700/80 dark:bg-gray-900/50">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                         Details
                       </p>
@@ -149,49 +227,25 @@ const NotificationCard: React.FC<{
             )}
           </AnimatePresence>
 
-          <div className={`flex items-center justify-between gap-2 ${compact ? 'mt-1' : 'mt-2'}`}>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+          <div className={`flex items-center justify-between gap-2 ${compact ? 'mt-1.5' : 'mt-2.5'}`}>
+            <span className={`text-[11px] tabular-nums ${visual.timestamp}`}>
               {compact
                 ? formatTimestamp(notification.timestamp).split(' ')[0]
                 : formatTimestamp(notification.timestamp)}
             </span>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 min-w-0">
               {facilityLabel && (
                 <span
-                  className="max-w-[140px] truncate text-xs text-gray-400 dark:text-gray-500"
+                  className="max-w-[140px] truncate text-[11px] text-gray-400 dark:text-gray-500"
                   title={facilityLabel}
                 >
                   {facilityLabel}
                 </span>
               )}
-              {notification.actionRequired && !compact && (
-                <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 rounded-full">
-                  Action Required
-                </span>
-              )}
             </div>
           </div>
         </div>
-
-        {!notification.isRead && (
-          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMarkRead();
-              }}
-              className={`text-gray-400 hover:text-[#147FD4] dark:hover:text-[#147FD4] transition-colors ${
-                compact ? 'p-0.5' : 'p-1'
-              }`}
-              title="Mark as read"
-              aria-label="Mark as read"
-            >
-              <XMarkIcon className={compact ? 'h-3 w-3' : 'h-4 w-4'} />
-            </button>
-          </div>
-        )}
       </div>
     </motion.div>
   );
@@ -268,17 +322,45 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   const [filter, setFilter] = useState<'all' | 'unread' | 'actionRequired'>('all');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
 
-  const toggleExpanded = useCallback((notificationId: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(notificationId)) {
-        next.delete(notificationId);
-      } else {
-        next.add(notificationId);
+  const markAsRead = useCallback(
+    async (notificationId: string) => {
+      const target = rows.find((n) => n.id === notificationId);
+      if (target?.isRead) return;
+      try {
+        await apiService.markNotificationRead(notificationId);
+        setRows((prev) =>
+          prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
+        );
+      } catch (e) {
+        console.error('Mark read failed', e);
+        addToast({
+          type: 'error',
+          title: 'Could not mark as read',
+          message: 'Try again in a moment.',
+        });
       }
-      return next;
-    });
-  }, []);
+    },
+    [rows, addToast],
+  );
+
+  const handleNotificationToggle = useCallback(
+    (notificationId: string) => {
+      setExpandedIds((prev) => {
+        const willExpand = !prev.has(notificationId);
+        if (willExpand && !readOnly) {
+          void markAsRead(notificationId);
+        }
+        const next = new Set(prev);
+        if (willExpand) {
+          next.add(notificationId);
+        } else {
+          next.delete(notificationId);
+        }
+        return next;
+      });
+    },
+    [readOnly, markAsRead],
+  );
 
   const visibleForViewer = useCallback(
     (items: UserNotificationApi[]) => filterNotificationsForViewer(items, viewerRole),
@@ -450,24 +532,6 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     filters: wsFilters,
   });
 
-  const markAsRead = async (notificationId: string) => {
-    const target = rows.find((n) => n.id === notificationId);
-    if (target?.isRead) return;
-    try {
-      await apiService.markNotificationRead(notificationId);
-      setRows((prev) =>
-        prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
-      );
-    } catch (e) {
-      console.error('Mark read failed', e);
-      addToast({
-        type: 'error',
-        title: 'Could not mark as read',
-        message: 'Try again in a moment.',
-      });
-    }
-  };
-
   const markAllAsRead = async () => {
     try {
       await apiService.markAllNotificationsRead(facilityFilter);
@@ -499,21 +563,30 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     });
   }, [rows, filter]);
 
-  const displayedNotifications = filteredNotifications.slice(0, layout.listCap);
-  const unreadCount = useMemo(() => rows.filter((n) => !n.isRead).length, [rows]);
+  const sortedNotifications = useMemo(() => {
+    const toneWeight: Record<WidgetNotificationTone, number> = {
+      error: 0,
+      warning: 1,
+      info: 2,
+      success: 3,
+    };
 
-  const getNotificationIcon = (displayType: string) => {
-    switch (displayType) {
-      case 'error':
-        return <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />;
-      case 'warning':
-        return <ExclamationTriangleIcon className="h-4 w-4 text-yellow-500" />;
-      case 'success':
-        return <CheckCircleIcon className="h-4 w-4 text-green-500" />;
-      default:
-        return <BellIcon className="h-4 w-4 text-blue-500" />;
-    }
-  };
+    return [...filteredNotifications].sort((a, b) => {
+      if (a.isRead !== b.isRead) {
+        return a.isRead ? 1 : -1;
+      }
+      const toneDiff = toneWeight[a.tone] - toneWeight[b.tone];
+      if (toneDiff !== 0) return toneDiff;
+      return b.timestamp.getTime() - a.timestamp.getTime();
+    });
+  }, [filteredNotifications]);
+
+  const displayedNotifications = sortedNotifications.slice(0, layout.listCap);
+  const unreadCount = useMemo(() => rows.filter((n) => !n.isRead).length, [rows]);
+  const criticalUnreadCount = useMemo(
+    () => rows.filter((n) => !n.isRead && n.tone === 'error').length,
+    [rows],
+  );
 
   const formatTimestamp = (timestamp: Date) => {
     const diffMs = Date.now() - timestamp.getTime();
@@ -544,7 +617,13 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   return (
     <Widget
       id={id}
-      title={`${title} ${unreadCount > 0 ? `(${unreadCount})` : ''}`}
+      title={
+        criticalUnreadCount > 0
+          ? `${title} (${unreadCount} · ${criticalUnreadCount} critical)`
+          : unreadCount > 0
+            ? `${title} (${unreadCount})`
+            : title
+      }
       size={size}
       availableSizes={availableSizes}
       onSizeChange={handleSizeChange}
@@ -648,10 +727,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                     compact={size === 'medium'}
                     index={index}
                     facilityLabel={resolveFacilityLabel(notification.facilityId)}
-                    onToggle={() => toggleExpanded(notification.id)}
-                    onMarkRead={() => void markAsRead(notification.id)}
+                    onToggle={() => handleNotificationToggle(notification.id)}
                     formatTimestamp={formatTimestamp}
-                    getNotificationIcon={getNotificationIcon}
                   />
                 ))}
             </AnimatePresence>

@@ -1,6 +1,7 @@
 import {
   getHistogramTypeBreakdown,
   HISTOGRAM_ACTIVITY_TYPE_LABELS,
+  HISTOGRAM_SKIPPED_ACTIVITY_TYPES,
 } from '@/utils/histogram-activity-type.utils';
 
 describe('histogram-activity-type.utils', () => {
@@ -15,5 +16,10 @@ describe('histogram-activity-type.utils', () => {
       { type: 'unlock', label: HISTOGRAM_ACTIVITY_TYPE_LABELS.unlock, count: 5 },
       { type: 'lock', label: HISTOGRAM_ACTIVITY_TYPE_LABELS.lock, count: 2 },
     ]);
+  });
+
+  it('skips transitional unlocking events from histogram aggregation', () => {
+    expect(HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has('unlocking')).toBe(true);
+    expect(HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has('unlock')).toBe(false);
   });
 });

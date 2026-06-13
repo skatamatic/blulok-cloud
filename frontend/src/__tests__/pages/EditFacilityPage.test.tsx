@@ -43,15 +43,18 @@ describe('EditFacilityPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockApi.getFacility.mockResolvedValue({
-      id: 'fac-1',
-      name: 'North Storage',
-      status: 'active',
-      address: '1 Main St',
-      city: 'Austin',
-      state: 'TX',
-      zip_code: '78701',
-      contact_email: 'ops@example.com',
-      contact_phone: '555-0100',
+      success: true,
+      facility: {
+        id: 'fac-1',
+        name: 'North Storage',
+        status: 'active',
+        address: '1 Main St',
+        city: 'Austin',
+        state: 'TX',
+        zip_code: '78701',
+        contact_email: 'ops@example.com',
+        contact_phone: '555-0100',
+      },
     } as any);
   });
 
@@ -62,8 +65,8 @@ describe('EditFacilityPage', () => {
     expect(screen.getByDisplayValue('Austin')).toBeInTheDocument();
   });
 
-  it('shows not found when facility missing', async () => {
-    mockApi.getFacility.mockRejectedValueOnce(new Error('not found'));
+  it('shows not found when API returns unsuccessful response', async () => {
+    mockApi.getFacility.mockResolvedValueOnce({ success: false } as any);
     renderPage();
     expect(await screen.findByText('Facility not found')).toBeInTheDocument();
   });
