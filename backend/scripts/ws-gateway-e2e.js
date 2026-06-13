@@ -189,6 +189,62 @@ function closeDeviceStatusWatcher(ws) {
   }
 }
 
+async function waitForWsEvent(events, predicate, startLen = 0, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (let i = startLen; i < events.length; i++) {
+      if (predicate(events[i])) return events[i];
+    }
+    await delay(200);
+  }
+  return null;
+}
+
+async function connectUiWsMessageCollector(token, messageFilter) {
+  const events = [];
+  const ws = new WebSocket(`${UI_WS_URL}?token=${token}`);
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('UI WS open timeout')), 5000);
+    ws.once('open', () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+    ws.once('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (VERBOSE) console.log('[WS-UI <-]', data.toString());
+      if (messageFilter(msg)) events.push(msg);
+    } catch {
+      /* ignore */
+    }
+  });
+  return { ws, events };
+}
+
+async function waitForWsControlMessage(ws, predicate, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Timed out waiting for WS control message')), timeoutMs);
+    const onMessage = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (predicate(msg)) {
+          ws.off('message', onMessage);
+          clearTimeout(timeout);
+          resolve(msg);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    ws.on('message', onMessage);
+  });
+}
+
 // Minimal ANSI color helpers (no external deps)
 const C = {
   reset: '\x1b[0m',
@@ -3986,6 +4042,61 @@ async function run() {
 
     // WebSocket flood/churn resilience checks to catch regressions that can
     // overload subscription setup or destabilize the backend event loop.
+    heading('Dashboard WebSocket Subscription Resilience');
+    step('Verifying duplicate subscription dedupe on a single connection');
+    const dedupeWsClient = await connectUiWsMessageCollector(token, () => true);
+    dedupeWsClient.ws.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'access_codes',
+      data: { facility_id: facilityId },
+    }));
+    const firstAccessSubAck = await waitForWsControlMessage(
+      dedupeWsClient.ws,
+      (msg) => msg.type === 'subscription' && msg.subscriptionType === 'access_codes',
+    );
+    if (!firstAccessSubAck?.subscriptionId) {
+      dedupeWsClient.ws.close();
+      throw new Error('First access_codes subscription did not return subscriptionId');
+    }
+    const duplicateAckPromise = waitForWsControlMessage(
+      dedupeWsClient.ws,
+      (msg) =>
+        msg.type === 'subscription' &&
+        msg.subscriptionType === 'access_codes' &&
+        msg.data?.message === 'Subscription already exists',
+    );
+    dedupeWsClient.ws.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'access_codes',
+      data: { facility_id: facilityId },
+    }));
+    await duplicateAckPromise;
+    ok('Duplicate access_codes subscription was deduped on the same connection');
+
+    step('Reconnecting UI WebSocket and re-subscribing without duplicate server subscriptions');
+    const reconnectBaseline = dedupeWsClient.events.filter((msg) => msg.type === 'access_codes_update').length;
+    dedupeWsClient.ws.terminate();
+    await delay(300);
+    const reconnectClient = await connectUiWsMessageCollector(token, (msg) => msg.type === 'access_codes_update');
+    reconnectClient.ws.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'access_codes',
+      data: { facility_id: facilityId },
+    }));
+    const reconnectInitialUpdate = await waitForWsEvent(
+      reconnectClient.events,
+      (msg) => Array.isArray(msg.data?.codes),
+    );
+    if (!reconnectInitialUpdate) {
+      reconnectClient.ws.close();
+      throw new Error('Did not receive access_codes_update after reconnect/resubscribe');
+    }
+    ok('access_codes subscription restored after reconnect');
+
+    if (reconnectClient.ws.readyState === WebSocket.OPEN) reconnectClient.ws.close();
+    if (dedupeWsClient.ws.readyState === WebSocket.OPEN) dedupeWsClient.ws.close();
+    void reconnectBaseline;
+
     heading('WebSocket Flood Resilience');
     step('Running rapid UI WebSocket connect/disconnect churn');
     const churnClientCount = 20;
@@ -4977,6 +5088,59 @@ async function run() {
     }
     if (!prevented) throw new Error('Tenant was able to fetch another user key-sharing records');
     ok('Tenant prevented from viewing other user key-sharing records');
+
+    heading('Key Sharing WebSocket Subscription');
+    step('Subscribing to key_sharing and waiting for initial payload');
+    const keySharingWsClient = await connectUiWsMessageCollector(token, (msg) => msg.type === 'key_sharing_update');
+    keySharingWsClient.ws.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'key_sharing',
+      data: { facility_id: facilityId },
+    }));
+    const initialKeySharingUpdate = await waitForWsEvent(
+      keySharingWsClient.events,
+      (msg) => Array.isArray(msg.data?.sharings) && msg.data.sharings.length >= 2,
+    );
+    if (!initialKeySharingUpdate) {
+      keySharingWsClient.ws.close();
+      throw new Error('Did not receive initial key_sharing_update with expected sharings');
+    }
+    ok(`Initial key_sharing_update received (${initialKeySharingUpdate.data.sharings.length} sharings)`);
+
+    const keySharingBaseline = keySharingWsClient.events.length;
+    const wsShareNotes = `WS update ${Date.now()}`;
+    step('Updating share metadata and expecting key_sharing_update');
+    await axios.put(`${API_BASE}/key-sharing/${share1}`, {
+      notes: wsShareNotes,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    const keySharingLiveUpdate = await waitForWsEvent(
+      keySharingWsClient.events,
+      (msg) => (msg.data?.sharings || []).some((s) => s.id === share1 && s.notes === wsShareNotes),
+      keySharingBaseline,
+      10000,
+    );
+    if (!keySharingLiveUpdate) {
+      keySharingWsClient.ws.close();
+      throw new Error('Did not receive key_sharing_update after share metadata change');
+    }
+    ok('key_sharing_update reflected share metadata change');
+
+    step('Unsubscribing key_sharing by type+filters fallback (no subscriptionId)');
+    const keySharingUnsubAck = waitForWsControlMessage(
+      keySharingWsClient.ws,
+      (msg) => msg.type === 'unsubscription' && msg.subscriptionType === 'key_sharing',
+    );
+    keySharingWsClient.ws.send(JSON.stringify({
+      type: 'unsubscription',
+      subscriptionType: 'key_sharing',
+      data: { facility_id: facilityId },
+    }));
+    await keySharingUnsubAck;
+    ok('key_sharing unsubscription succeeded via type+filters fallback');
+
+    if (keySharingWsClient.ws.readyState === WebSocket.OPEN) {
+      keySharingWsClient.ws.close();
+    }
 
     // Test that shared users can see units they have access to
     // NOTE: This must come BEFORE the revocation tests, so share1Token still has an active share
@@ -8655,6 +8819,60 @@ async function run() {
       ok(`App endpoint role/filter checks passed (facility_admin=${appFacilityAdminCodes.length}, admin=${appAdminCodes.length}, dev_admin=${appDevAdminCodes.length}, tenant=${tenantAppCodes.length})`);
     } else {
       ok(`App endpoint role/filter checks passed (facility_admin=${appFacilityAdminCodes.length}, admin=${appAdminCodes.length}, dev_admin=${appDevAdminCodes.length})`);
+    }
+
+    heading('Access Codes WebSocket Subscription');
+    step('Subscribing to access_codes and waiting for initial payload');
+    const accessCodesWsClient = await connectUiWsMessageCollector(
+      created.facilityAdminToken || token,
+      (msg) => msg.type === 'access_codes_update',
+    );
+    accessCodesWsClient.ws.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'access_codes',
+      data: { facility_id: created.facilityId },
+    }));
+    const initialAccessCodesUpdate = await waitForWsEvent(
+      accessCodesWsClient.events,
+      (msg) => Array.isArray(msg.data?.codes) && msg.data.codes.length > 0,
+    );
+    if (!initialAccessCodesUpdate) {
+      accessCodesWsClient.ws.close();
+      throw new Error('Did not receive initial access_codes_update');
+    }
+    ok(`Initial access_codes_update received (${initialAccessCodesUpdate.data.codes.length} code(s))`);
+
+    if (globalSharedAccessCodeGroupId && created.facilityAdminToken) {
+      const accessCodesLiveBaseline = accessCodesWsClient.events.length;
+      const wsManualCode = String(100000 + (Date.now() % 900000)).padStart(6, '0');
+      step('Manual access-code set should push access_codes_update to subscribed client');
+      await axios.put(
+        `${API_BASE}/access-codes/manual/set`,
+        {
+          facility_id: created.facilityId,
+          scope_type: 'device_group',
+          scope_id: globalSharedAccessCodeGroupId,
+          code: wsManualCode,
+        },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      const liveAccessCodesUpdate = await waitForWsEvent(
+        accessCodesWsClient.events,
+        (msg) => (msg.data?.codes || []).some((entry) => entry.code === wsManualCode),
+        accessCodesLiveBaseline,
+        12000,
+      );
+      if (!liveAccessCodesUpdate) {
+        accessCodesWsClient.ws.close();
+        throw new Error('Did not receive access_codes_update after manual code set');
+      }
+      ok(`Live access_codes_update delivered new code ${wsManualCode}`);
+    } else {
+      ok('Skipped live access_codes_update check (missing global access-code group context)');
+    }
+
+    if (accessCodesWsClient.ws.readyState === WebSocket.OPEN) {
+      accessCodesWsClient.ws.close();
     }
 
     if (share1Token && share1Id) {

@@ -122,11 +122,14 @@ describe('WebSocketService', () => {
       mockWebSocketInstance.readyState = WebSocket.OPEN;
     });
 
-    it('should send subscription message', () => {
+    it('should send subscription message with client subscription id', () => {
       websocketService.subscribe('general_stats');
 
       expect(mockWebSocketInstance.send).toHaveBeenCalledWith(
-        expect.stringContaining('"subscriptionType":"general_stats"')
+        expect.stringMatching(/"subscriptionType":"general_stats"/),
+      );
+      expect(mockWebSocketInstance.send).toHaveBeenCalledWith(
+        expect.stringMatching(/"subscriptionId":"general_stats-/),
       );
     });
 
@@ -315,6 +318,37 @@ describe('WebSocketService', () => {
       service.handleMessage({ data: JSON.stringify(envelope) } as MessageEvent);
 
       expect(handler).toHaveBeenCalledWith(envelope);
+    });
+
+    it('should handle access_codes update messages', () => {
+      const handler = jest.fn();
+      websocketService.onMessage('access_codes', handler);
+
+      const messageData = JSON.stringify({
+        type: 'access_codes_update',
+        subscriptionId: 'sub-1',
+        data: { codes: [{ code: '123456' }], count: 1 },
+      });
+
+      service.handleMessage({ data: messageData } as MessageEvent);
+
+      expect(handler).toHaveBeenCalledWith({ codes: [{ code: '123456' }], count: 1 });
+    });
+
+    it('should queue subscription while offline and send on reconnect', () => {
+      service.isConnected = false;
+      service.ws = null;
+
+      websocketService.subscribe('battery_status', { facility_id: 'fac-1' });
+      expect(mockWebSocketInstance.send).not.toHaveBeenCalled();
+
+      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as unknown as WebSocket;
+      service.ws = socket;
+      service.handleOpen({} as Event, socket);
+
+      expect(mockWebSocketInstance.send).toHaveBeenCalledWith(
+        expect.stringMatching(/"subscriptionType":"battery_status"/),
+      );
     });
   });
 

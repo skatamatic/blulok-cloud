@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { 
   ClockIcon,
@@ -8,7 +8,6 @@ import {
   KeyIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  ArrowPathIcon,
   XCircleIcon
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
@@ -16,7 +15,7 @@ import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import {
   getWidgetLayoutProfile,
   isWideWidgetSize,
@@ -158,15 +157,10 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   );
   const [activities, setActivities] = useState<ActivityLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'alerts' | 'access'>('all');
-  const { subscribe, unsubscribe, isConnected } = useWebSocket();
 
-  const loadActivities = useCallback(async (showRefreshState = false) => {
-    if (showRefreshState) {
-      setIsRefreshing(true);
-    }
+  const loadActivities = useCallback(async () => {
     setError(null);
     
     try {
@@ -188,26 +182,25 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
       setActivities([]);
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
     }
   }, [facilityFilter, maxEntries]);
+
+  const loadActivitiesRef = useRef(loadActivities);
+  loadActivitiesRef.current = loadActivities;
 
   useEffect(() => {
     void loadActivities();
   }, [loadActivities]);
 
-  useEffect(() => {
-    if (!isConnected) return;
-    const subscriptionId = subscribe(
-      'activity',
-      () => {
-        void loadActivities();
-      },
-      undefined,
-      facilityFilter ? { facility_id: facilityFilter } : undefined,
-    );
-    return () => unsubscribe(subscriptionId);
-  }, [isConnected, subscribe, unsubscribe, loadActivities, facilityFilter]);
+  useWebSocketSubscription(
+    'activity',
+    () => {
+      void loadActivitiesRef.current();
+    },
+    {
+      filters: facilityFilter ? { facility_id: facilityFilter } : undefined,
+    },
+  );
 
   const layout = getWidgetLayoutProfile(size);
 
@@ -264,10 +257,6 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
     return timestamp.toLocaleDateString();
   };
 
-  const handleRefresh = async () => {
-    await loadActivities(true);
-  };
-
   return (
     <Widget
       id={id}
@@ -280,15 +269,6 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           <button
             onClick={() => setFilter('all')}
             className={`w-full px-3 py-2 text-left text-sm rounded ${
@@ -365,7 +345,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
               <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
               <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
               <button
-                onClick={handleRefresh}
+                onClick={() => void loadActivities()}
                 className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
               >
                 Try again
@@ -416,29 +396,9 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
             <div className="flex flex-col items-center justify-center h-full text-center py-8">
               <ClockIcon className="h-8 w-8 text-gray-400 mb-2" />
               <p className="text-sm text-gray-500 dark:text-gray-400">No recent activity</p>
-              <button
-                onClick={handleRefresh}
-                className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-              >
-                Refresh
-              </button>
             </div>
           )}
         </div>
-
-        {/* Footer with refresh button for smaller widgets */}
-        {!['large', 'huge', 'large-wide', 'huge-wide'].includes(size) && (
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
-            <button
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              className="w-full flex items-center justify-center space-x-2 py-2 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors disabled:opacity-50"
-            >
-              <ArrowPathIcon className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
-            </button>
-          </div>
-        )}
       </div>
     </Widget>
   );

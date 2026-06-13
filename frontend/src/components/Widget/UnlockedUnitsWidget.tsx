@@ -8,7 +8,6 @@ import {
   UserIcon,
   MapPinIcon,
   LockClosedIcon,
-  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
@@ -83,7 +82,7 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
   );
   const [filter, setFilter] = useState<'all' | 'long_unlocked' | 'recent_unlocked'>('all');
   
-  const { data: unitsData, loading, error, refetch } = useUnitsData(facilityFilter);
+  const { data: unitsData, loading, error } = useUnitsData(facilityFilter);
 
 
   // Filter units based on duration
@@ -160,15 +159,6 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={refetch}
-            disabled={loading}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           {[
             { key: 'all', label: 'All Unlocked' },
             { key: 'long_unlocked', label: 'Long Unlocked (2h+)' },
@@ -339,14 +329,6 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
                       {displayedUnits.length} Unlocked
                     </span>
                   </div>
-                  <button
-                    onClick={refetch}
-                    disabled={loading}
-                    className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded"
-                    title="Refresh"
-                  >
-                    <ArrowPathIcon className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-                  </button>
                 </div>
 
                 {/* Duration Summary - More compact */}

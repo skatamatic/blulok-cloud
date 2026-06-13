@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
   Battery0Icon,
   Battery100Icon,
@@ -1233,18 +1232,6 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
       onFullscreenToggle={onFullscreenToggle}
       isFullscreen={isFullscreen}
       gridSize={gridSize}
-      enhancedMenu={
-        <div className="space-y-1">
-          <button
-            onClick={() => void fetchUnits()}
-            disabled={loading}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center gap-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-        </div>
-      }
     >
       <div className={WIDGET_BODY_CLASS}>
         <div

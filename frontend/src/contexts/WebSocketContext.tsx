@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { websocketService } from '@/services/websocket.service';
 import { websocketDebugService } from '@/services/websocket-debug.service';
+import { makeWebSocketSubscriptionKey } from '@/utils/websocket-subscription.utils';
 
 interface WebSocketContextType {
   subscribe: (type: string, onMessage: (data: any) => void, onError?: (error: string) => void, filters?: Record<string, any>) => string;
   unsubscribe: (subscriptionId: string) => void;
   isConnected: boolean;
+  isReconnecting: boolean;
 }
 
 // Metadata stored for each subscription to enable proper cleanup
@@ -31,6 +33,7 @@ interface WebSocketProviderProps {
 
 export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }) => {
   const [isConnected, setIsConnected] = useState(websocketService.isWebSocketConnected());
+  const [isReconnecting, setIsReconnecting] = useState(websocketService.isWebSocketReconnecting());
   const messageHandlerUnsubscribers = useRef<Map<string, () => void>>(new Map());
   const subscriptionMeta = useRef<Map<string, SubscriptionMeta>>(new Map());
   const serverSubscriptions = useRef<Set<string>>(new Set());
@@ -42,14 +45,28 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       console.log('🔌 WebSocketContext connection change:', connected);
       setIsConnected(connected);
 
-      // When connection is lost, clear server subscriptions so they can be recreated on reconnect
-      if (!connected) {
-        serverSubscriptions.current.clear();
+      if (connected) {
+        // After transport reconnect, re-assert server subscriptions for active local subscribers.
+        const activeKeys = new Set(
+          Array.from(subscriptionMeta.current.values()).map((meta) => meta.serverSubKey),
+        );
+        activeKeys.forEach((serverSubKey) => {
+          const meta = Array.from(subscriptionMeta.current.values()).find(
+            (entry) => entry.serverSubKey === serverSubKey,
+          );
+          if (!meta) return;
+
+          if (!websocketService.hasSubscription(meta.type, meta.filters)) {
+            websocketService.subscribe(meta.type, meta.filters);
+          }
+          serverSubscriptions.current.add(serverSubKey);
+        });
       }
     };
 
     // Add connection handler
     const removeConnectionHandler = websocketService.onConnectionChange(handleConnectionChange);
+    const removeReconnectingHandler = websocketService.onReconnectingChange(setIsReconnecting);
 
     // Immediately check current status in case WebSocket connected before this effect ran
     const currentStatus = websocketService.isWebSocketConnected();
@@ -61,6 +78,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     // Cleanup
     return () => {
       removeConnectionHandler();
+      removeReconnectingHandler();
       // Clean up all message handler unsubscribers
       messageHandlerUnsubscribers.current.forEach(unsub => unsub());
       messageHandlerUnsubscribers.current.clear();
@@ -81,7 +99,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // For subscriptions with filters (like device_status with device_id),
     // we create a unique server subscription key to avoid conflicts
-    const serverSubKey = filters ? `${type}:${JSON.stringify(filters)}` : type;
+    const serverSubKey = filters ? makeWebSocketSubscriptionKey(type, filters) : type;
 
     // Store subscription metadata for proper cleanup
     subscriptionMeta.current.set(subscriptionId, { type, serverSubKey, filters });
@@ -154,7 +172,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     subscribe,
     unsubscribe,
     isConnected,
-  }), [subscribe, unsubscribe, isConnected]);
+    isReconnecting,
+  }), [subscribe, unsubscribe, isConnected, isReconnecting]);
 
   return (
     <WebSocketContext.Provider value={value}>

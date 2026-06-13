@@ -4,7 +4,9 @@ import { WebSocketProvider, useWebSocket } from '@/contexts/WebSocketContext';
 const mockIsWebSocketConnected = jest.fn();
 const mockSubscribe = jest.fn();
 const mockUnsubscribe = jest.fn();
+const mockHasSubscription = jest.fn(() => false);
 const mockOnConnectionChange = jest.fn();
+const mockOnReconnectingChange = jest.fn();
 const mockOnMessage = jest.fn();
 const mockShowDebugToast = jest.fn();
 
@@ -13,7 +15,10 @@ jest.mock('@/services/websocket.service', () => ({
     isWebSocketConnected: () => mockIsWebSocketConnected(),
     subscribe: (...args: any[]) => mockSubscribe(...args),
     unsubscribe: (...args: any[]) => mockUnsubscribe(...args),
+    hasSubscription: (...args: any[]) => mockHasSubscription(...args),
     onConnectionChange: (...args: any[]) => mockOnConnectionChange(...args),
+    onReconnectingChange: (...args: any[]) => mockOnReconnectingChange(...args),
+    isWebSocketReconnecting: () => false,
     onMessage: (...args: any[]) => mockOnMessage(...args),
   },
 }));
@@ -30,10 +35,11 @@ let connectionHandler: ((connected: boolean) => void) | undefined;
 const messageCallbacksByType = new Map<string, Array<(data: any) => void>>();
 const messageCleanupByType = new Map<string, Array<jest.Mock>>();
 const connectionCleanup = jest.fn();
+const reconnectingCleanup = jest.fn();
 
 const ContextProbe = () => {
   latestCtx = useWebSocket();
-  return <div data-testid="connected-state">{String(latestCtx.isConnected)}</div>;
+  return <div data-testid="connected-state">{String(latestCtx.isConnected)} {String(latestCtx.isReconnecting)}</div>;
 };
 
 describe('WebSocketContext', () => {
@@ -43,6 +49,7 @@ describe('WebSocketContext', () => {
     connectionHandler = undefined;
     messageCallbacksByType.clear();
     messageCleanupByType.clear();
+    mockHasSubscription.mockReturnValue(false);
 
     mockIsWebSocketConnected.mockReturnValue(true);
     connectionCleanup.mockReset();
@@ -51,6 +58,8 @@ describe('WebSocketContext', () => {
       connectionHandler = handler;
       return connectionCleanup;
     });
+
+    mockOnReconnectingChange.mockImplementation(() => reconnectingCleanup);
 
     mockOnMessage.mockImplementation((type: string, cb: (data: any) => void) => {
       const callbacks = messageCallbacksByType.get(type) || [];
@@ -156,6 +165,28 @@ describe('WebSocketContext', () => {
       latestCtx!.unsubscribe('sub_unknown_1');
     });
     expect(mockUnsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('re-asserts server subscriptions after reconnect when transport lost them', () => {
+    render(
+      <WebSocketProvider>
+        <ContextProbe />
+      </WebSocketProvider>,
+    );
+
+    act(() => {
+      latestCtx!.subscribe('activity', jest.fn(), undefined, { facility_id: 'fac-1' });
+    });
+    expect(mockSubscribe).toHaveBeenCalledTimes(1);
+
+    mockHasSubscription.mockReturnValue(false);
+    act(() => {
+      connectionHandler?.(false);
+      connectionHandler?.(true);
+    });
+
+    expect(mockSubscribe).toHaveBeenCalledTimes(2);
+    expect(mockSubscribe).toHaveBeenLastCalledWith('activity', { facility_id: 'fac-1' });
   });
 
   it('cleans up connection and message handlers on unmount', () => {

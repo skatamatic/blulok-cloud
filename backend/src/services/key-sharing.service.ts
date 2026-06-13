@@ -213,7 +213,29 @@ export class KeySharingService {
       }
     }
 
+    this.notifyKeySharingChanged(unitId);
     return { shareId, invitee, createdUser };
+  }
+
+  private async resolveFacilityIdForUnit(unitId: string): Promise<string | undefined> {
+    try {
+      const row = await this.db('units').where({ id: unitId }).first('facility_id');
+      return row?.facility_id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private notifyKeySharingChanged(unitId: string): void {
+    void (async () => {
+      try {
+        const facilityId = await this.resolveFacilityIdForUnit(unitId);
+        const { WebSocketService } = await import('@/services/websocket.service');
+        await WebSocketService.getInstance().broadcastKeySharingUpdate(facilityId);
+      } catch (err) {
+        logger.warn(`Failed to broadcast key sharing update for unit=${unitId}`, err);
+      }
+    })();
   }
 
   // ---- Refactor endpoints into service methods ----
@@ -295,6 +317,7 @@ export class KeySharingService {
       logger.error('Failed to send access granted notification:', err)
     );
 
+    this.notifyKeySharingChanged(unit_id);
     return result;
   }
 
@@ -401,6 +424,7 @@ export class KeySharingService {
       logger.error('Failed to process denylist removal on share reactivation:', e);
     }
 
+    this.notifyKeySharingChanged(existingSharing.unit_id);
     if (updatedSharing) return updatedSharing;
     // Fallback: fetch and return latest row if dialect didn't return updated row
     const refetched = await this.keySharings.findById(id);
@@ -469,6 +493,7 @@ export class KeySharingService {
       throw new Error('Failed to enforce share revocation denylist');
     }
 
+    this.notifyKeySharingChanged(existingSharing.unit_id);
     return true;
   }
 }

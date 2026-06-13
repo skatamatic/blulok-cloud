@@ -7,7 +7,7 @@ import { getScopedFacilityId } from '@/utils/globalFacilityScope.utils';
 import { UserRole } from '@/types/auth.types';
 import type { DashboardLayoutApiResponse } from '@/types/widget-management.types';
 import { websocketService } from '@/services/websocket.service';
-import { DashboardSettingsModal } from '@/components/Dashboard/DashboardSettingsModal';
+import { DashboardLiveStatus } from '@/components/Dashboard/DashboardLiveStatus';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { DashboardCanvas } from '@/components/Dashboard/DashboardCanvas';
 import {
@@ -340,6 +340,7 @@ export default function DashboardPage() {
           </div>
           
           <div className="flex items-center space-x-2">
+            <DashboardLiveStatus />
             <button
               onClick={handleDashboardRefresh}
               className="group relative p-2.5 rounded-lg transition-all duration-200 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-green-100 dark:hover:bg-green-900/20 hover:text-green-600 dark:hover:text-green-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 hover:shadow-sm"

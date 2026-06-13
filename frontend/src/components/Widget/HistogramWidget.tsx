@@ -13,7 +13,7 @@ import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { useDashboardFacilityScope, DASHBOARD_FACILITY_SCOPE_LIMIT } from '@/hooks/useDashboardFacilityScope';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { getWidgetLayoutProfile, WIDGET_BODY_CLASS } from '@/utils/widget-layout.utils';
 import {
   getHistogramTypeBreakdown,
@@ -266,7 +266,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   facilityFilter,
 }) => {
   const { authState } = useAuth();
-  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const { facilityIdsForApi } = useDashboardFacilityScope(facilityFilter);
   const { size, handleSizeChange } = useWidgetSizeState(currentSize, initialSize, onSizeChange);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('month');
@@ -359,27 +358,20 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
     void loadActivityStats();
   }, [loadActivityStats]);
 
-  useEffect(() => {
-    if (!isConnected) return;
+  const activityFilters =
+    facilityFilter != null && facilityFilter !== ''
+      ? { facility_id: facilityFilter }
+      : facilityIdsForApi?.length === 1
+        ? { facility_id: facilityIdsForApi[0] }
+        : undefined;
 
-    const activityFilters =
-      facilityFilter != null && facilityFilter !== ''
-        ? { facility_id: facilityFilter }
-        : facilityIdsForApi?.length === 1
-          ? { facility_id: facilityIdsForApi[0] }
-          : undefined;
-
-    const subscriptionId = subscribe(
-      'activity',
-      () => {
-        void loadActivityStatsRef.current({ background: true });
-      },
-      undefined,
-      activityFilters,
-    );
-
-    return () => unsubscribe(subscriptionId);
-  }, [isConnected, subscribe, unsubscribe, facilityFilter, facilityIdsForApi]);
+  useWebSocketSubscription(
+    'activity',
+    () => {
+      void loadActivityStatsRef.current({ background: true });
+    },
+    { filters: activityFilters },
+  );
 
   const groupedData = useMemo(() => {
     const grouped: Record<string, HistogramData[]> = {};
@@ -464,15 +456,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <motion.div className="space-y-3">
-          <button
-            onClick={() => loadActivityStats()}
-            disabled={isLoading}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600" />
           <div className="relative">
             <button
               onClick={() => setShowTimePeriodDropdown(!showTimePeriodDropdown)}

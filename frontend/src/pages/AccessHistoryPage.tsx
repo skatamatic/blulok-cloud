@@ -145,7 +145,7 @@ export default function AccessHistoryPage() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { selectedFacilityId } = useGlobalFacility();
-  const { subscribe, unsubscribe, isConnected } = useWebSocket();
+  const { subscribe, unsubscribe } = useWebSocket();
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -213,8 +213,6 @@ export default function AccessHistoryPage() {
   }, [filters, currentPage, sortBy, sortOrder, selectedFacilityId, refreshNonce]);
 
   useEffect(() => {
-    if (!isConnected) return;
-
     const subscriptionId = subscribe(
       'activity',
       () => {
@@ -224,7 +222,7 @@ export default function AccessHistoryPage() {
       activityWsFilters,
     );
     return () => unsubscribe(subscriptionId);
-  }, [isConnected, subscribe, unsubscribe, activityWsFilters]);
+  }, [subscribe, unsubscribe, activityWsFilters]);
 
   // Handle highlighting when page loads
   useHighlight(logs, (log) => log.id, (id) => generateHighlightId('access-log', id));

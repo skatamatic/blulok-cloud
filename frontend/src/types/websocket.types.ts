@@ -40,11 +40,13 @@ export interface DiagnosticsData {
 
 export interface IWebSocketService {
   subscribe(subscriptionType: string, filters?: Record<string, unknown>): void;
-  unsubscribe(subscriptionType: string): void;
+  unsubscribe(subscriptionType: string, filters?: Record<string, unknown>): void;
+  hasSubscription(subscriptionType: string, filters?: Record<string, unknown>): boolean;
   onMessage(subscriptionType: string, handler: (data: unknown) => void): () => void;
   onConnectionChange(handler: (connected: boolean) => void): () => void;
   requestDiagnostics(): void;
   isWebSocketConnected(): boolean;
+  retryConnectionIfNeeded(): void;
   disconnect(): void;
 }
 

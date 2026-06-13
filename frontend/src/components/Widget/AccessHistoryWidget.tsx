@@ -5,7 +5,7 @@ import { ClockIcon, UserIcon, LockClosedIcon, LockOpenIcon, ExclamationTriangleI
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface AccessHistoryWidgetProps {
@@ -25,7 +25,6 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   facilityFilter,
 }) => {
   const { authState } = useAuth();
-  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const [accessHistory, setAccessHistory] = useState<AccessLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,20 +67,13 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     [facilityFilter],
   );
 
-  useEffect(() => {
-    if (!isConnected) return;
-
-    const subscriptionId = subscribe(
-      'activity',
-      () => {
-        void fetchAccessHistoryRef.current({ background: true });
-      },
-      undefined,
-      activityWsFilters,
-    );
-
-    return () => unsubscribe(subscriptionId);
-  }, [isConnected, subscribe, unsubscribe, activityWsFilters]);
+  useWebSocketSubscription(
+    'activity',
+    () => {
+      void fetchAccessHistoryRef.current({ background: true });
+    },
+    { filters: activityWsFilters, enabled: Boolean(authState.user) },
+  );
 
   const layout = getWidgetLayoutProfile(currentSize);
 

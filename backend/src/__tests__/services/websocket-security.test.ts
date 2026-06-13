@@ -378,7 +378,46 @@ describe('WebSocket Security Tests', () => {
       );
     });
 
-    it('should reject unsubscription messages without subscriptionId', async () => {
+    it('should unsubscribe by type and filters when subscriptionId is omitted', async () => {
+      const jwt = require('jsonwebtoken');
+      const userToken = jwt.sign(
+        { userId: 'user-stats', role: UserRole.FACILITY_ADMIN },
+        'test-secret',
+      );
+      const userReq = createMockReq(`/ws?token=${userToken}`);
+      jest.spyOn(jwt, 'verify').mockReturnValue({ userId: 'user-stats', role: UserRole.FACILITY_ADMIN });
+
+      await wsService['handleConnection'](mockWebSocket, userReq);
+
+      const filters = { facility_id: 'facility-1' };
+      const subscriptionMessage = {
+        type: 'subscription',
+        subscriptionType: 'general_stats',
+        subscriptionId: 'stats-sub-1',
+        data: filters,
+      };
+
+      await wsService['handleMessage'](mockWebSocket, Buffer.from(JSON.stringify(subscriptionMessage)));
+
+      mockWebSocket.send.mockClear();
+
+      const unsubscriptionMessage = {
+        type: 'unsubscription',
+        subscriptionType: 'general_stats',
+        data: filters,
+      };
+
+      await wsService['handleMessage'](mockWebSocket, Buffer.from(JSON.stringify(unsubscriptionMessage)));
+
+      expect(mockWebSocket.send).toHaveBeenCalledWith(
+        expect.stringContaining('"type":"unsubscription"'),
+      );
+      expect(mockWebSocket.send).not.toHaveBeenCalledWith(
+        expect.stringContaining('"type":"error"'),
+      );
+    });
+
+    it('should reject unsubscription when subscription cannot be resolved', async () => {
       const invalidMessage = {
         type: 'unsubscription',
         subscriptionType: 'general_stats'

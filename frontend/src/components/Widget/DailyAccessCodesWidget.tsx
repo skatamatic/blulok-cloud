@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowPathIcon,
   ClipboardDocumentIcon,
@@ -13,6 +13,7 @@ import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityC
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { useToast } from '@/contexts/ToastContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
 import {
   DailyAccessCodeEntry,
@@ -41,7 +42,6 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
   const { selectedFacilityId, selectedFacility, isAllFacilitiesSelected } = useGlobalFacility();
   const [entries, setEntries] = useState<DailyAccessCodeEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [partialWarning, setPartialWarning] = useState<string | null>(null);
 
@@ -51,13 +51,9 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
     authState.user?.role as UserRole,
   );
 
-  const loadCodes = useCallback(async (isManualRefresh = false) => {
+  const loadCodes = useCallback(async () => {
     try {
-      if (isManualRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      setLoading(true);
       setError(null);
       setPartialWarning(null);
 
@@ -116,13 +112,47 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
       setError('Failed to load access codes');
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, [addToast, isAdminLike, isAllFacilitiesSelected, selectedFacilityId, selectedFacility?.name]);
+
+  const applyCodesPayload = useCallback((codes: UserAccessCode[]) => {
+    const enriched = codes.map((entry) => ({
+      ...entry,
+      facility_id:
+        selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+          ? selectedFacilityId
+          : (entry as DailyAccessCodeEntry).facility_id,
+      facility_name: selectedFacility?.name ?? (entry as DailyAccessCodeEntry).facility_name,
+    }));
+    setEntries(enriched);
+    setError(null);
+    setLoading(false);
+  }, [selectedFacility?.name, selectedFacilityId]);
+
+  const applyCodesPayloadRef = useRef(applyCodesPayload);
+  applyCodesPayloadRef.current = applyCodesPayload;
 
   useEffect(() => {
     loadCodes().catch(() => undefined);
   }, [loadCodes, authState.user?.id]);
+
+  useWebSocketSubscription(
+    'access_codes',
+    (payload) => {
+      applyCodesPayloadRef.current((payload as { codes?: UserAccessCode[] })?.codes ?? []);
+    },
+    {
+      enabled: Boolean(authState.user) && !isAllFacilitiesSelected,
+      filters:
+        selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+          ? { facility_id: selectedFacilityId }
+          : undefined,
+      onError: (message) => {
+        setError(message || 'Failed to load access codes');
+        setLoading(false);
+      },
+    },
+  );
 
   const handleCopy = async (code: string, label: string) => {
     try {
@@ -197,7 +227,7 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
           <p className="text-sm">{error}</p>
           <button
             type="button"
-            onClick={() => loadCodes(true)}
+            onClick={() => loadCodes()}
             className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
           >
             <ArrowPathIcon className="h-3 w-3" />
@@ -219,18 +249,6 @@ export const DailyAccessCodesWidget: React.FC<DailyAccessCodesWidgetProps> = ({
       readOnly={readOnly}
     >
       <div className="flex h-full min-h-0 flex-col">
-        <div className="mb-1.5 flex shrink-0 items-center justify-end">
-          <button
-            type="button"
-            onClick={() => loadCodes(true)}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-[11px] text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-          >
-            <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-
         {entries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center text-gray-500 dark:text-gray-400">
             <KeyIcon className="mb-2 h-8 w-8" />

@@ -39,7 +39,8 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
-      sourcemap: true,
+      // Source maps roughly double peak memory during chunk rendering; skip in production builds.
+      sourcemap: mode === 'development',
     },
     define: {
       // Use process.env so Cloud Build/Docker ENV VITE_API_URL is injected at build time

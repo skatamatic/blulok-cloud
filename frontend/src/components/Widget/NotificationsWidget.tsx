@@ -4,7 +4,6 @@ import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   XMarkIcon,
-  ArrowPathIcon,
   ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
@@ -16,7 +15,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useToast } from '@/contexts/ToastContext';
 import { apiService } from '@/services/api.service';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
   filterNotificationsForViewer,
@@ -286,8 +285,6 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     [viewerRole],
   );
 
-  const { subscribe, unsubscribe, isConnected } = useWebSocket();
-
   const matchesScope = useCallback(
     (n: UserNotificationApi) => matchesFacilityScope(n.facilityId),
     [matchesFacilityScope],
@@ -449,11 +446,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     [matchesScope, mergeById, loadNotifications, viewerRole]
   );
 
-  useEffect(() => {
-    if (!isConnected) return;
-    const subId = subscribe('notifications', handleWs, undefined, wsFilters);
-    return () => unsubscribe(subId);
-  }, [subscribe, unsubscribe, isConnected, handleWs, wsFilters]);
+  useWebSocketSubscription('notifications', handleWs, { filters: wsFilters });
 
   const markAsRead = async (notificationId: string) => {
     const target = rows.find((n) => n.id === notificationId);
@@ -485,11 +478,6 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         message: 'Try again in a moment.',
       });
     }
-  };
-
-  const handleRefresh = async () => {
-    setIsLoading(true);
-    await loadNotifications({ silent: false, offset: 0 });
   };
 
   const handleLoadMore = async () => {
@@ -563,15 +551,6 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           <button
             onClick={() => setFilter('all')}
             className={`w-full px-3 py-2 text-left text-sm rounded ${
@@ -649,7 +628,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
             <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
             <button
-              onClick={handleRefresh}
+              onClick={() => void loadNotifications({ silent: false, offset: 0 })}
               className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
             >
               Try again

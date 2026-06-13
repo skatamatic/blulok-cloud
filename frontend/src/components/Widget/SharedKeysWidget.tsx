@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { KeyIcon, UserGroupIcon, ClockIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { KeySharing } from '@/types/access-history.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface SharedKeysWidgetProps {
@@ -26,28 +27,51 @@ export const SharedKeysWidget: React.FC<SharedKeysWidgetProps> = ({
   const [error, setError] = useState<string | null>(null);
   const availableSizes: WidgetSize[] = ['small', 'medium', 'large', 'medium-tall'];
 
-  useEffect(() => {
-    const fetchSharedKeys = async () => {
-      try {
+  const fetchSharedKeys = useCallback(async (options?: { background?: boolean }) => {
+    try {
+      if (!options?.background) {
         setLoading(true);
         setError(null);
-        
-        // Get key sharing data based on user role
-        const response = await apiService.getKeySharing({
-          limit: 20, // Get more than we need for filtering
-        });
-        
-        setSharedKeys(response.sharings || []);
-      } catch (err) {
-        console.error('Error fetching shared keys:', err);
+      }
+
+      const response = await apiService.getKeySharing({
+        limit: 20,
+      });
+
+      setSharedKeys(response.sharings || []);
+    } catch (err) {
+      console.error('Error fetching shared keys:', err);
+      if (!options?.background) {
         setError('Failed to load shared keys');
-      } finally {
+      }
+    } finally {
+      if (!options?.background) {
         setLoading(false);
       }
-    };
+    }
+  }, []);
 
-    fetchSharedKeys();
-  }, [authState.user]);
+  const fetchSharedKeysRef = useRef(fetchSharedKeys);
+  fetchSharedKeysRef.current = fetchSharedKeys;
+
+  useEffect(() => {
+    void fetchSharedKeys();
+  }, [fetchSharedKeys, authState.user]);
+
+  useWebSocketSubscription(
+    'key_sharing',
+    (payload) => {
+      const sharings = (payload as { sharings?: KeySharing[] })?.sharings;
+      if (Array.isArray(sharings)) {
+        setSharedKeys(sharings.slice(0, 20));
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      void fetchSharedKeysRef.current({ background: true });
+    },
+    { enabled: Boolean(authState.user) },
+  );
 
   const layout = getWidgetLayoutProfile(currentSize);
 

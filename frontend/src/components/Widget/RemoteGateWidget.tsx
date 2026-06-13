@@ -258,7 +258,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     }
   };
 
-  const handleRefresh = async () => {
+  const handleRetry = async () => {
     setIsLoading(true);
     await loadGates();
   };
@@ -303,15 +303,6 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           <div className="px-3 py-2">
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
               Hold Duration (minutes)
@@ -347,7 +338,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
           <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
           <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
           <button
-            onClick={handleRefresh}
+            onClick={handleRetry}
             className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
           >
             Try again

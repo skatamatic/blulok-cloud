@@ -46,6 +46,18 @@
 - **General stats**: `useGeneralStatsData` passes optional **`facility_id`** to **`GET /dashboard/general-stats`** when a single facility is selected. WebSocket **`general_stats`** updates apply only for “all facilities”; when facility-scoped, **`device_status` / `units`** trigger debounced REST refetch.
 - **Histogram / activity widgets**: subscribe to **`activity`** (with `facility_id` when scoped) and debounce **`getActivityStats`** / access-history REST reloads.
 
+## Live WebSocket subscriptions (dashboard `/ws`)
+
+- **Transport** (`frontend/src/services/websocket.service.ts`): JWT auth on connect; **infinite reconnect** with exponential backoff (cap 30s) while a token exists; client heartbeats every 30s. Subscriptions are **deduped by `type + JSON.stringify(filters)`**; subscribe while offline **queues intent** and sends on reconnect.
+- **React layer** (`WebSocketContext`): multiple components can share one server subscription per type+filters; **unsubscribe only when the last local handler unmounts**. On reconnect, re-asserts any active local subscriptions if transport lost them. Prefer **`useWebSocketSubscription`** or subscribe in `useEffect` **without** tearing down on `isConnected === false` (disconnect must not unsubscribe — that dropped live feeds before reconnect).
+- **Lock / units realtime**: **`useLockDeviceRealtime`** — facility- or device-scoped **`device_status`** + optional **`units`** debounced refresh.
+- **Access codes**: **`access_codes`** subscription (optional `{ facility_id }`); server pushes **`access_codes_update`** after rotation/manual set; RBAC via `AccessCodeService.getAppCodesForUser`.
+- **Shared keys**: **`key_sharing`** subscription (optional `{ facility_id }`); server pushes **`key_sharing_update`** after create/update/revoke; RBAC mirrors REST `/key-sharing`.
+- **Unsubscribe fallback**: server resolves unsubscription by `subscriptionType` + `data` filters when `subscriptionId` is missing/stale.
+- **Dashboard header**: live connection pill (`Live` / `Reconnecting…` / `Offline`) reflects transport state; use **`useWebSocketSubscription`** in widgets instead of inline `subscribe()` effects.
+- **Backend** (`backend/src/services/websocket.service.ts`): JWT on upgrade; **`UserFacilityAssociationModel.getUserFacilityIds`** on connect for non-global roles; duplicate subscribe requests for the same type+filters return the existing subscription id; subscription managers validate facility/device/unit access per filter.
+- **No per-widget Refresh buttons** — dashboard escape hatch is the page-level reload control only.
+
 ## Backend: dashboard general stats
 
 | Endpoint | Notes |

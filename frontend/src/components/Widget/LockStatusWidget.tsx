@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
-import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit } from '@/types/units.types';
 import { UserRole } from '@/types/auth.types';
@@ -288,7 +288,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
     }
   }, [units, syncLockStatus]);
 
-  const handleRefresh = async () => {
+  const handleRetry = async () => {
     await fetchUnits();
   };
 
@@ -333,7 +333,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
             <div className="text-sm">{error}</div>
           </div>
           <button
-            onClick={handleRefresh}
+            onClick={handleRetry}
             className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
           >
             Try again
@@ -354,14 +354,6 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
           {isConnected && (
             <div className="px-3 py-1 text-xs text-green-600 dark:text-green-400">
               ● Live updates active

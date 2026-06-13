@@ -17,6 +17,8 @@ import { ActivitySubscriptionManager } from './activity-subscription-manager';
 import { GatewayTelemetryLogSubscriptionManager } from './gateway-telemetry-log-subscription-manager';
 import { FirmwarePushSubscriptionManager } from './firmware-push-subscription-manager';
 import { ProvisioningRestoreSubscriptionManager } from './provisioning-restore-subscription-manager';
+import { AccessCodesSubscriptionManager } from './access-codes-subscription-manager';
+import { KeySharingSubscriptionManager } from './key-sharing-subscription-manager';
 
 /**
  * Subscription Registry
@@ -36,6 +38,8 @@ import { ProvisioningRestoreSubscriptionManager } from './provisioning-restore-s
  * - fms_sync_progress: FMS sync operation progress
  * - gateway_status: Gateway connectivity and health
  * - command_queue: Command execution queue status
+ * - access_codes: Facility-scoped daily keypad codes for app users
+ * - key_sharing: Facility-scoped shared key records for dashboard widgets
  *
  * Security Considerations:
  * - All subscriptions respect client authentication and facility scoping
@@ -67,6 +71,8 @@ export class SubscriptionRegistry {
     this.registerManager(new FirmwarePushSubscriptionManager());
     this.registerManager(new ProvisioningRestoreSubscriptionManager());
     this.registerManager(new GatewayTelemetryLogSubscriptionManager());
+    this.registerManager(new AccessCodesSubscriptionManager());
+    this.registerManager(new KeySharingSubscriptionManager());
   }
 
   private registerManager(manager: SubscriptionManager): void {
@@ -173,5 +179,13 @@ export class SubscriptionRegistry {
 
   public getProvisioningRestoreProgressManager(): ProvisioningRestoreSubscriptionManager | undefined {
     return this.getManager('provisioning_restore_progress') as ProvisioningRestoreSubscriptionManager;
+  }
+
+  public getAccessCodesManager(): AccessCodesSubscriptionManager | undefined {
+    return this.getManager('access_codes') as AccessCodesSubscriptionManager;
+  }
+
+  public getKeySharingManager(): KeySharingSubscriptionManager | undefined {
+    return this.getManager('key_sharing') as KeySharingSubscriptionManager;
   }
 }

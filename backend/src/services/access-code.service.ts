@@ -749,6 +749,7 @@ export class AccessCodeService {
       result: 'success',
       facility_id: facilityId,
     });
+    this.notifyAccessCodesChanged(facilityId);
   }
 
   public async forceRotate(
@@ -832,6 +833,7 @@ export class AccessCodeService {
         }
       }
     });
+    this.notifyAccessCodesChanged(facilityId);
   }
 
   public async setManualCode(
@@ -863,6 +865,7 @@ export class AccessCodeService {
         userId,
       );
     });
+    this.notifyAccessCodesChanged(facilityId);
   }
 
   public async getActiveCodesForFacility(facilityId: string, scheduleId?: string | null) {
@@ -1350,6 +1353,17 @@ export class AccessCodeService {
 
   public async pushCodesToGateway(facilityId: string): Promise<void> {
     await this.requestGatewayPush(facilityId);
+  }
+
+  private notifyAccessCodesChanged(facilityId: string): void {
+    void (async () => {
+      try {
+        const { WebSocketService } = await import('@/services/websocket.service');
+        await WebSocketService.getInstance().broadcastAccessCodesUpdate(facilityId);
+      } catch (err) {
+        logger.warn(`Failed to broadcast access codes update for facility=${facilityId}`, err);
+      }
+    })();
   }
 }
 

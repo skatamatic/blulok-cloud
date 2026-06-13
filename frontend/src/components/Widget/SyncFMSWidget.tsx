@@ -10,7 +10,7 @@ import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { fmsService } from '@/services/fms.service';
 import { apiService } from '@/services/api.service';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
@@ -115,7 +115,6 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   const { authState } = useAuth();
   const { addToast } = useToast();
   const { startSync, completeSync, canStartNewSync, cancelSync, hasCompletedSync } = useFMSSync();
-  const { subscribe, unsubscribe } = useWebSocket();
   const { selectedFacilityId, facilities, isLoading: facilitiesLoading } = useGlobalFacility();
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
@@ -135,6 +134,40 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 
   const [facilityNamesMap, setFacilityNamesMap] = useState<Record<string, string>>({});
   const manualSyncInFlightRef = useRef(false);
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearLoadingTimeout = () => {
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!authState.user) return;
+    loadingTimeoutRef.current = setTimeout(() => {
+      setLoading(false);
+    }, 5000);
+    return () => {
+      clearLoadingTimeout();
+    };
+  }, [authState.user]);
+
+  useWebSocketSubscription(
+    'fms_sync_status',
+    (data) => {
+      clearLoadingTimeout();
+      setFmsStatuses((data as FMSSyncStatusData).facilities);
+      setLoading(false);
+    },
+    {
+      enabled: Boolean(authState.user),
+      onError: () => {
+        clearLoadingTimeout();
+        setLoading(false);
+      },
+    },
+  );
 
   // Get user's facilities
   const isAdminUser = authState.user?.role === 'admin' || authState.user?.role === 'dev_admin';
@@ -310,38 +343,6 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
   const oldestSyncFacilityId = getOldestSyncFacility();
   const oldestSyncStatus = oldestSyncFacilityId ? fmsStatuses.find(s => s.facilityId === oldestSyncFacilityId) : null;
 
-  // Subscribe to FMS sync status updates via WebSocket
-  useEffect(() => {
-    if (!authState.user) return;
-
-    // Set a timeout to stop loading if no data is received
-    const loadingTimeout = setTimeout(() => {
-      // Stop loading state after timeout
-      setLoading(false);
-    }, 5000);
-
-    const handleFMSSyncUpdate = (data: FMSSyncStatusData) => {
-      clearTimeout(loadingTimeout);
-      setFmsStatuses(data.facilities);
-      setLoading(false);
-    };
-
-    const handleError = () => {
-      // Error handled silently - user will see loading state end
-      clearTimeout(loadingTimeout);
-      setLoading(false);
-    };
-
-    // Subscribe to FMS sync status updates
-    const subscriptionId = subscribe('fms_sync_status', handleFMSSyncUpdate, handleError);
-
-    return () => {
-      clearTimeout(loadingTimeout);
-      if (subscriptionId) {
-        unsubscribe(subscriptionId);
-      }
-    };
-  }, [authState.user, subscribe, unsubscribe]);
 
   // Use global context facility - no need to initialize
 

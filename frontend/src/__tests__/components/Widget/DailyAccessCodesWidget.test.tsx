@@ -10,6 +10,17 @@ const mockAddToast = jest.fn();
 
 const mockUseAuth = jest.fn();
 const mockUseGlobalFacility = jest.fn();
+const mockSubscribe = jest.fn(() => 'sub-access-codes');
+const mockUnsubscribe = jest.fn();
+
+jest.mock('@/contexts/WebSocketContext', () => ({
+  ...jest.requireActual('@/contexts/WebSocketContext'),
+  useWebSocket: () => ({
+    subscribe: mockSubscribe,
+    unsubscribe: mockUnsubscribe,
+    isConnected: true,
+  }),
+}));
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
@@ -161,19 +172,19 @@ describe('DailyAccessCodesWidget', () => {
     expect(mockGetAppAccessCodes).not.toHaveBeenCalled();
   });
 
-  it('refresh button reloads data', async () => {
+  it('subscribes to live access code updates for the selected facility', async () => {
     renderWithProviders(<DailyAccessCodesWidget currentSize="medium" onSizeChange={() => undefined} />);
 
     await waitFor(() => {
-      expect(mockGetAppAccessCodes).toHaveBeenCalledTimes(1);
+      expect(mockSubscribe).toHaveBeenCalledWith(
+        'access_codes',
+        expect.any(Function),
+        expect.any(Function),
+        { facility_id: 'facility-1' },
+      );
     });
 
-    const refreshButton = await screen.findByRole('button', { name: /refresh/i });
-    fireEvent.click(refreshButton);
-
-    await waitFor(() => {
-      expect(mockGetAppAccessCodes).toHaveBeenCalledTimes(2);
-    });
+    expect(screen.queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
   });
 
   it('shows error and can retry', async () => {

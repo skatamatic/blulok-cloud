@@ -1,19 +1,25 @@
 import { IWebSocketService } from '@/types/websocket.types';
 import { websocketDebugService } from './websocket-debug.service';
 import { getWsBaseUrl } from './appConfig';
+import {
+  makeWebSocketSubscriptionKey,
+  parseWebSocketSubscriptionKey,
+} from '@/utils/websocket-subscription.utils';
 
 class WebSocketService implements IWebSocketService {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
+  private maxReconnectDelayMs = 30000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private subscriptions: Map<string, Record<string, unknown> | undefined> = new Map();
   private subscriptionIds: Map<string, string> = new Map();
   private messageHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
   private connectionHandlers: Set<(connected: boolean) => void> = new Set();
+  private reconnectingHandlers: Set<(reconnecting: boolean) => void> = new Set();
   private isConnected = false;
+  private isReconnecting = false;
 
   constructor() {
     this.connect();
@@ -60,6 +66,7 @@ class WebSocketService implements IWebSocketService {
     // Ignore stale socket callbacks after a newer socket has been created.
     if (socket !== this.ws) return;
     this.isConnected = true;
+    this.setReconnecting(false);
     this.reconnectAttempts = 0;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -79,10 +86,8 @@ class WebSocketService implements IWebSocketService {
     const subscriptionsToResend: Array<{ type: string; filters?: Record<string, unknown> }> = [];
     
     this.subscriptions.forEach((filters, subscriptionKey) => {
-      // Extract the base type from the key
-      const colonIndex = subscriptionKey.indexOf(':');
-      const baseType = colonIndex >= 0 ? subscriptionKey.substring(0, colonIndex) : subscriptionKey;
-      subscriptionsToResend.push({ type: baseType, filters });
+      const { subscriptionType, filters: parsedFilters } = parseWebSocketSubscriptionKey(subscriptionKey);
+      subscriptionsToResend.push({ type: subscriptionType, filters: parsedFilters ?? filters });
     });
 
     // Clear existing subscription state so we can re-create them
@@ -105,7 +110,11 @@ class WebSocketService implements IWebSocketService {
           break;
         case 'subscription':
           if (message.subscriptionId && message.subscriptionType) {
-            this.subscriptionIds.set(message.subscriptionType, message.subscriptionId);
+            const ackFilters = message.data?.filters as Record<string, unknown> | undefined;
+            const subscriptionKey = makeWebSocketSubscriptionKey(message.subscriptionType, ackFilters);
+            if (this.subscriptions.has(subscriptionKey)) {
+              this.subscriptionIds.set(subscriptionKey, message.subscriptionId);
+            }
           }
           break;
         case 'unsubscription':
@@ -164,6 +173,12 @@ class WebSocketService implements IWebSocketService {
           break;
         case 'activity_new':
           this.handleActivityNew(message);
+          break;
+        case 'access_codes_update':
+          this.handleAccessCodesUpdate(message);
+          break;
+        case 'key_sharing_update':
+          this.handleKeySharingUpdate(message);
           break;
         case 'notifications_update':
         case 'notification_created':
@@ -295,6 +310,20 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
+  private handleAccessCodesUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('access_codes');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleKeySharingUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('key_sharing');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
   /** Real-time notification feed (subscription type `notifications` on the server). */
   private handleNotificationsMessage(message: {
     type?: string;
@@ -331,8 +360,15 @@ class WebSocketService implements IWebSocketService {
     }
 
     if (event.code !== 1000) { // Not a normal closure
+      this.setReconnecting(true);
       this.scheduleReconnect();
     }
+  }
+
+  private setReconnecting(reconnecting: boolean): void {
+    if (this.isReconnecting === reconnecting) return;
+    this.isReconnecting = reconnecting;
+    this.reconnectingHandlers.forEach(handler => handler(reconnecting));
   }
 
   private handleError(error: Event, socket: WebSocket): void {
@@ -344,17 +380,20 @@ class WebSocketService implements IWebSocketService {
     if (this.reconnectTimer) {
       return;
     }
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-      
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        this.connect();
-      }, delay);
-    } else {
-      console.error('Max reconnection attempts reached. WebSocket connection failed.');
+    if (!localStorage.getItem('authToken')) {
+      return;
     }
+
+    this.reconnectAttempts++;
+    const delay = Math.min(
+      this.maxReconnectDelayMs,
+      this.reconnectDelay * Math.pow(2, Math.min(this.reconnectAttempts - 1, 8)),
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
   }
 
   private startHeartbeat(): void {
@@ -384,60 +423,67 @@ class WebSocketService implements IWebSocketService {
   }
 
   public subscribe(subscriptionType: string, filters?: Record<string, unknown>): void {
-    // Create a unique key that includes filters for proper tracking
-    const subscriptionKey = filters 
-      ? `${subscriptionType}:${JSON.stringify(filters)}`
-      : subscriptionType;
-    
-    const displayName = filters 
+    const subscriptionKey = makeWebSocketSubscriptionKey(subscriptionType, filters);
+
+    const displayName = filters
       ? `${subscriptionType} ${JSON.stringify(filters)}`
       : subscriptionType;
-    
-    // If not currently subscribed to this type+filter combination, send the subscription message.
+
     if (!this.subscriptions.has(subscriptionKey)) {
       this.subscriptions.set(subscriptionKey, filters);
-      const tempId = `${subscriptionKey}-${Date.now()}`;
-      this.subscriptionIds.set(subscriptionKey, tempId);
-      
+      const subscriptionId = `${subscriptionKey}-${Date.now()}`;
+      this.subscriptionIds.set(subscriptionKey, subscriptionId);
+
       websocketDebugService.showDebugToast('info', 'WS Sub', `+ ${displayName}`);
-      
-      this.send({
-        type: 'subscription',
-        subscriptionType,
-        data: filters,
-        timestamp: new Date().toISOString()
-      });
+
+      if (this.isWebSocketConnected()) {
+        this.send({
+          type: 'subscription',
+          subscriptionType,
+          subscriptionId,
+          data: filters,
+          timestamp: new Date().toISOString(),
+        });
+      }
     } else {
-      // Already subscribed at service level
       websocketDebugService.showDebugToast('warning', 'WS Sub (dup)', `Already: ${displayName}`);
     }
   }
 
   public unsubscribe(subscriptionType: string, filters?: Record<string, unknown>): void {
-    // Create the same unique key used when subscribing
-    const subscriptionKey = filters 
-      ? `${subscriptionType}:${JSON.stringify(filters)}`
-      : subscriptionType;
-    
+    const subscriptionKey = makeWebSocketSubscriptionKey(subscriptionType, filters);
     const subscriptionId = this.subscriptionIds.get(subscriptionKey);
-    
+
     if (subscriptionId) {
       this.subscriptions.delete(subscriptionKey);
       this.subscriptionIds.delete(subscriptionKey);
-      
-      const displayName = filters 
+
+      const displayName = filters
         ? `${subscriptionType} ${JSON.stringify(filters)}`
         : subscriptionType;
-      // Debug toast
       websocketDebugService.showDebugToast('info', 'WS Unsub', `- ${displayName}`);
-      
+
+      if (this.isWebSocketConnected()) {
+        this.send({
+          type: 'unsubscription',
+          subscriptionId,
+          subscriptionType,
+          data: filters,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } else if (this.isWebSocketConnected()) {
       this.send({
         type: 'unsubscription',
-        subscriptionId,
         subscriptionType,
-        timestamp: new Date().toISOString()
+        data: filters,
+        timestamp: new Date().toISOString(),
       });
     }
+  }
+
+  public hasSubscription(subscriptionType: string, filters?: Record<string, unknown>): boolean {
+    return this.subscriptions.has(makeWebSocketSubscriptionKey(subscriptionType, filters));
   }
 
   public onMessage(subscriptionType: string, handler: (data: unknown) => void): () => void {
@@ -472,6 +518,17 @@ class WebSocketService implements IWebSocketService {
     };
   }
 
+  public onReconnectingChange(handler: (reconnecting: boolean) => void): () => void {
+    this.reconnectingHandlers.add(handler);
+    return () => {
+      this.reconnectingHandlers.delete(handler);
+    };
+  }
+
+  public isWebSocketReconnecting(): boolean {
+    return this.isReconnecting;
+  }
+
   public requestDiagnostics(): void {
     this.send({
       type: 'diagnostics',
@@ -495,9 +552,10 @@ class WebSocketService implements IWebSocketService {
   }
 
   public unsubscribeAll(): void {
-    const subscriptionTypes = Array.from(this.subscriptions.keys());
-    subscriptionTypes.forEach(type => {
-      this.unsubscribe(type);
+    const subscriptionKeys = Array.from(this.subscriptions.keys());
+    subscriptionKeys.forEach((subscriptionKey) => {
+      const { subscriptionType, filters } = parseWebSocketSubscriptionKey(subscriptionKey);
+      this.unsubscribe(subscriptionType, filters);
     });
   }
 

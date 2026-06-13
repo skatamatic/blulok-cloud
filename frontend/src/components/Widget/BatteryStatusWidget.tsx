@@ -5,11 +5,10 @@ import {
   BoltIcon,
   ExclamationTriangleIcon,
   BoltSlashIcon,
-  ArrowPathIcon,
   EyeIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { Unit } from '@/types/units.types';
 import { apiService } from '@/services/api.service';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
@@ -70,11 +69,9 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
   facilityFilter,
 }) => {
   const { authState } = useAuth();
-  const { subscribe, unsubscribe } = useWebSocket();
   const [batteryData, setBatteryData] = useState<BatteryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [filter, setFilter] = useState<'all' | 'critical' | 'low' | 'offline'>('all');
   const availableSizes: WidgetSize[] = ['small', 'medium', 'medium-tall', 'large'];
 
@@ -122,45 +119,28 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
     };
   }, [authState.user, loadFromApi, facilityFilter]);
 
-  useEffect(() => {
-    if (!authState.user) return;
-
-    const handleBatteryData = (data: BatteryData) => {
-      const raw = data.rankedUnits ?? data.lowBatteryUnits ?? [];
+  useWebSocketSubscription(
+    'battery_status',
+    (data) => {
+      const payload = data as BatteryData;
+      const raw = payload.rankedUnits ?? payload.lowBatteryUnits ?? [];
       if (facilityFilter) {
         const filtered = raw.filter((u) => u.facility_id === facilityFilter);
         setBatteryData(buildBatteryDataFromUnits(filtered));
       } else {
-        setBatteryData(data);
+        setBatteryData(payload);
       }
       setLoading(false);
       setError(null);
-    };
-
-    const handleWsError = (err: string) => {
-      setError(err);
-      setLoading(false);
-    };
-
-    const subscriptionId = subscribe('battery_status', handleBatteryData, handleWsError);
-
-    return () => {
-      if (subscriptionId) {
-        unsubscribe(subscriptionId);
-      }
-    };
-  }, [authState.user, subscribe, unsubscribe, facilityFilter]);
-
-  const onRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await loadFromApi({ force: true });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to refresh');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
+    },
+    {
+      enabled: Boolean(authState.user),
+      onError: (err) => {
+        setError(err);
+        setLoading(false);
+      },
+    },
+  );
 
   const layout = getWidgetLayoutProfile(currentSize);
 
@@ -275,15 +255,6 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={() => void onRefresh()}
-            disabled={isRefreshing}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           {[
             { key: 'all', label: 'All units' },
             { key: 'critical', label: 'Critical (≤5%)' },
@@ -425,19 +396,6 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
             </div>
           )}
         </div>
-
-        {currentSize === 'small' && (
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
-            <button
-              onClick={() => void onRefresh()}
-              disabled={isRefreshing}
-              className="w-full flex items-center justify-center space-x-2 py-1 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors disabled:opacity-50"
-            >
-              <ArrowPathIcon className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
-            </button>
-          </div>
-        )}
 
         {batteryData?.lastUpdated && currentSize !== 'small' && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">

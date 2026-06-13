@@ -265,7 +265,7 @@ export class WebSocketService {
         type: 'subscription',
         subscriptionId: existing.id,
         subscriptionType: message.subscriptionType,
-        data: { message: 'Subscription already exists' },
+        data: { message: 'Subscription already exists', filters: message.data },
         timestamp: new Date().toISOString(),
       });
       return;
@@ -275,7 +275,7 @@ export class WebSocketService {
       this.sendMessage(ws, {
         type: 'subscription',
         subscriptionType: message.subscriptionType,
-        data: { message: 'Subscription request already in progress' },
+        data: { message: 'Subscription request already in progress', filters: message.data },
         timestamp: new Date().toISOString(),
       });
       return;
@@ -309,7 +309,7 @@ export class WebSocketService {
           type: 'subscription',
           subscriptionId,
           subscriptionType: message.subscriptionType,
-          data: { message: 'Subscription created successfully' },
+          data: { message: 'Subscription created successfully', filters: message.data },
           timestamp: new Date().toISOString()
         });
 
@@ -321,33 +321,45 @@ export class WebSocketService {
   }
 
   private handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): void {
-    if (!message.subscriptionId) {
-      this.sendError(ws, 'Subscription ID required');
-      return;
+    let subscriptionId = message.subscriptionId;
+    let subscription = subscriptionId ? client.subscriptions.get(subscriptionId) : undefined;
+
+    // Fallback: resolve by subscription type + filters when ID is missing or stale (e.g. after reconnect).
+    if (!subscription && message.subscriptionType) {
+      const subscriptionKey = this.makeSubscriptionKey(message.subscriptionType, message.data);
+      subscription = Array.from(client.subscriptions.values()).find(
+        (sub) => this.makeSubscriptionKey(sub.type, sub.filters) === subscriptionKey,
+      );
+      if (subscription) {
+        subscriptionId = subscription.id;
+      }
     }
 
-    const subscription = client.subscriptions.get(message.subscriptionId);
-    if (!subscription) {
+    if (!subscriptionId || !subscription) {
       this.sendError(ws, 'Subscription not found');
       return;
     }
 
     // Remove from client's subscriptions
-    client.subscriptions.delete(message.subscriptionId);
-    this.subscriptions.delete(message.subscriptionId);
+    client.subscriptions.delete(subscriptionId);
+    this.subscriptions.delete(subscriptionId);
 
     // Use subscription registry for all subscription types
-    this.subscriptionRegistry.handleUnsubscription(ws, message, client);
+    this.subscriptionRegistry.handleUnsubscription(
+      ws,
+      { ...message, subscriptionId, subscriptionType: subscription.type },
+      client,
+    );
 
     this.sendMessage(ws, {
       type: 'unsubscription',
-      subscriptionId: message.subscriptionId,
+      subscriptionId,
       subscriptionType: subscription.type,
-      data: { message: 'Unsubscription successful' },
+      data: { message: 'Unsubscription successful', filters: subscription.filters },
       timestamp: new Date().toISOString()
     });
 
-    logger.info(`📡 Unsubscription: ${message.subscriptionId} for user ${client.userId}`);
+    logger.info(`📡 Unsubscription: ${subscriptionId} for user ${client.userId}`);
   }
 
   private handleHeartbeat(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): void {
@@ -511,6 +523,20 @@ export class WebSocketService {
     const manager: any = this.subscriptionRegistry.getManager('command_queue');
     if (manager && typeof manager.broadcastUpdate === 'function') {
       await manager.broadcastUpdate();
+    }
+  }
+
+  public async broadcastAccessCodesUpdate(facilityId?: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getAccessCodesManager();
+    if (manager) {
+      await manager.broadcastUpdate(facilityId);
+    }
+  }
+
+  public async broadcastKeySharingUpdate(facilityId?: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getKeySharingManager();
+    if (manager) {
+      await manager.broadcastUpdate(facilityId);
     }
   }
 
