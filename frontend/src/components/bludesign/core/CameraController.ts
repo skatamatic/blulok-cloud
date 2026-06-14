@@ -50,19 +50,24 @@ export class CameraController {
   private minGroundY = 0;
   private groundClearance = 1.5;
 
-  // WASD walk — move camera + orbit target on the XZ plane
+  // WASD camera controls — walk, yaw, orbit, and shift-modified strafe/fly
   private walkEnabled = true;
   private walkKeys = {
     forward: false,
     back: false,
     left: false,
     right: false,
-    sprint: false,
+    shift: false,
+    ctrl: false,
   };
+  private getOrbitPivot: (() => THREE.Vector3 | null) | null = null;
   private readonly walkForward = new THREE.Vector3();
+  private readonly walkForwardFlat = new THREE.Vector3();
   private readonly walkRight = new THREE.Vector3();
   private readonly walkMove = new THREE.Vector3();
   private readonly walkWorldUp = new THREE.Vector3(0, 1, 0);
+  private readonly walkTarget = new THREE.Vector3();
+  private readonly walkOffset = new THREE.Vector3();
   private boundClearWalkKeys: () => void;
 
   // Callbacks
@@ -152,13 +157,26 @@ export class CameraController {
   }
 
   /**
-   * Track WASD / Shift for camera walk. Returns true when the key is consumed.
+   * When set, Ctrl+A/D orbits around the returned pivot (e.g. selection center).
+   * Return null to orbit around the current look target.
+   */
+  setOrbitPivotResolver(resolver: (() => THREE.Vector3 | null) | null): void {
+    this.getOrbitPivot = resolver;
+  }
+
+  /**
+   * Track WASD / Shift / Ctrl for camera movement. Returns true when the key is consumed.
    */
   handleWalkKeyEvent(event: KeyboardEvent, isDown: boolean): boolean {
     if (!this.walkEnabled) return false;
-    if (event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (event.altKey) return false;
 
     const key = event.key.toLowerCase();
+    if (key === 'control' || key === 'meta') {
+      this.walkKeys.ctrl = isDown;
+      return false;
+    }
+
     let handled = false;
     switch (key) {
       case 'w':
@@ -171,14 +189,20 @@ export class CameraController {
         break;
       case 'a':
         this.walkKeys.left = isDown;
+        if (isDown) {
+          this.walkKeys.ctrl = event.ctrlKey || event.metaKey;
+        }
         handled = true;
         break;
       case 'd':
         this.walkKeys.right = isDown;
+        if (isDown) {
+          this.walkKeys.ctrl = event.ctrlKey || event.metaKey;
+        }
         handled = true;
         break;
       case 'shift':
-        this.walkKeys.sprint = isDown;
+        this.walkKeys.shift = isDown;
         handled = true;
         break;
       default:
@@ -187,6 +211,9 @@ export class CameraController {
 
     if (handled && isDown) {
       event.preventDefault();
+      if ((key === 'a' || key === 'd') && (event.ctrlKey || event.metaKey)) {
+        event.stopPropagation();
+      }
     }
     return handled;
   }
@@ -196,46 +223,144 @@ export class CameraController {
     this.walkKeys.back = false;
     this.walkKeys.left = false;
     this.walkKeys.right = false;
-    this.walkKeys.sprint = false;
+    this.walkKeys.shift = false;
+    this.walkKeys.ctrl = false;
+  }
+
+  private getWalkMoveDistance(delta: number): number {
+    const baseSpeed = 36;
+    const zoomScale = THREE.MathUtils.clamp(this.getWorldPerPixel() * 8, 0.35, 5);
+    return baseSpeed * zoomScale * delta;
+  }
+
+  private syncActiveCameraPosition(): void {
+    if (this.mode === CameraMode.FREE) {
+      this.camera.position.copy(this.activeCamera.position);
+    } else {
+      this.orthographicCamera.position.copy(this.activeCamera.position);
+    }
+  }
+
+  private translateCameraAndTarget(offset: THREE.Vector3): void {
+    this.activeCamera.position.add(offset);
+    this.controls.target.add(offset);
+    this.syncActiveCameraPosition();
+  }
+
+  private rotateHorizontalOffset(
+    offset: THREE.Vector3,
+    angle: number
+  ): void {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const ox = offset.x;
+    const oz = offset.z;
+    offset.x = ox * cos - oz * sin;
+    offset.z = ox * sin + oz * cos;
+  }
+
+  private resolveOrbitPivot(out: THREE.Vector3): THREE.Vector3 {
+    const selectionPivot = this.getOrbitPivot?.();
+    if (selectionPivot) {
+      out.copy(selectionPivot);
+      return out;
+    }
+    return out.copy(this.controls.target);
+  }
+
+  /** Turn the camera in place (yaw) — target swings around the camera on the Y axis. */
+  private applyCameraYaw(left: boolean, delta: number): void {
+    const turnSpeed = 1.75;
+    const angle = (left ? -1 : 1) * turnSpeed * delta;
+
+    this.walkTarget.copy(this.activeCamera.position);
+    this.walkOffset.copy(this.controls.target).sub(this.walkTarget);
+    this.rotateHorizontalOffset(this.walkOffset, angle);
+
+    this.controls.target.copy(this.walkTarget).add(this.walkOffset);
+    this.activeCamera.lookAt(this.controls.target);
+    this.syncActiveCameraPosition();
+  }
+
+  /** Orbit the camera around a pivot, keeping the pivot centered in view. */
+  private applyOrbitAroundPivot(pivot: THREE.Vector3, left: boolean, delta: number): void {
+    const orbitSpeed = 1.75;
+    const angle = (left ? 1 : -1) * orbitSpeed * delta;
+
+    this.walkOffset.copy(this.activeCamera.position).sub(pivot);
+    this.rotateHorizontalOffset(this.walkOffset, angle);
+
+    this.activeCamera.position.copy(pivot).add(this.walkOffset);
+    this.controls.target.copy(pivot);
+    this.activeCamera.lookAt(pivot);
+    this.syncActiveCameraPosition();
+  }
+
+  /** Horizontal forward/right from the camera view (Y flattened). */
+  private refreshPlanarBasis(): void {
+    this.activeCamera.getWorldDirection(this.walkForwardFlat);
+    this.walkForwardFlat.y = 0;
+    if (this.walkForwardFlat.lengthSq() < 1e-6) {
+      this.walkForwardFlat.set(0, 0, -1);
+    } else {
+      this.walkForwardFlat.normalize();
+    }
+    this.walkRight.crossVectors(this.walkForwardFlat, this.walkWorldUp).normalize();
   }
 
   private applyWalkMovement(delta: number): void {
     if (!this.walkEnabled || this.isTransitioning) return;
 
-    const { forward, back, left, right } = this.walkKeys;
+    const { forward, back, left, right, shift } = this.walkKeys;
     if (!forward && !back && !left && !right) return;
 
-    this.activeCamera.getWorldDirection(this.walkForward);
-    this.walkForward.y = 0;
-    if (this.walkForward.lengthSq() < 1e-6) {
-      this.walkForward.set(0, 0, -1);
-    } else {
-      this.walkForward.normalize();
+    const moveDistance = this.getWalkMoveDistance(delta);
+
+    if (shift) {
+      // Shift: W/S fly along the camera look vector; A/D strafe on the ground plane.
+      if (forward || back) {
+        this.activeCamera.getWorldDirection(this.walkForward);
+        this.walkMove.set(0, 0, 0);
+        if (forward) this.walkMove.add(this.walkForward);
+        if (back) this.walkMove.sub(this.walkForward);
+        if (this.walkMove.lengthSq() > 1e-6) {
+          this.walkMove.normalize().multiplyScalar(moveDistance);
+          this.translateCameraAndTarget(this.walkMove);
+        }
+      }
+
+      if (left || right) {
+        this.refreshPlanarBasis();
+        this.walkMove.set(0, 0, 0);
+        if (right) this.walkMove.add(this.walkRight);
+        if (left) this.walkMove.sub(this.walkRight);
+        if (this.walkMove.lengthSq() > 1e-6) {
+          this.walkMove.normalize().multiplyScalar(moveDistance);
+          this.translateCameraAndTarget(this.walkMove);
+        }
+      }
+      return;
     }
 
-    this.walkRight.crossVectors(this.walkForward, this.walkWorldUp).normalize();
+    // Default: W/S walk on the ground plane; A/D yaw, or Ctrl+A/D orbit a pivot.
+    if (forward || back) {
+      this.refreshPlanarBasis();
+      this.walkMove.set(0, 0, 0);
+      if (forward) this.walkMove.add(this.walkForwardFlat);
+      if (back) this.walkMove.sub(this.walkForwardFlat);
+      if (this.walkMove.lengthSq() > 1e-6) {
+        this.walkMove.normalize().multiplyScalar(moveDistance);
+        this.translateCameraAndTarget(this.walkMove);
+      }
+    }
 
-    this.walkMove.set(0, 0, 0);
-    if (forward) this.walkMove.add(this.walkForward);
-    if (back) this.walkMove.sub(this.walkForward);
-    if (right) this.walkMove.add(this.walkRight);
-    if (left) this.walkMove.sub(this.walkRight);
-    if (this.walkMove.lengthSq() < 1e-6) return;
-
-    this.walkMove.normalize();
-
-    const baseSpeed = 36;
-    const zoomScale = THREE.MathUtils.clamp(this.getWorldPerPixel() * 8, 0.35, 5);
-    const sprintScale = this.walkKeys.sprint ? 2.5 : 1;
-    this.walkMove.multiplyScalar(baseSpeed * zoomScale * sprintScale * delta);
-
-    this.activeCamera.position.add(this.walkMove);
-    this.controls.target.add(this.walkMove);
-
-    if (this.mode === CameraMode.FREE) {
-      this.camera.position.copy(this.activeCamera.position);
-    } else {
-      this.orthographicCamera.position.copy(this.activeCamera.position);
+    if (left !== right) {
+      const turnLeft = left;
+      if (this.walkKeys.ctrl) {
+        this.applyOrbitAroundPivot(this.resolveOrbitPivot(this.walkTarget), turnLeft, delta);
+      } else {
+        this.applyCameraYaw(turnLeft, delta);
+      }
     }
   }
 

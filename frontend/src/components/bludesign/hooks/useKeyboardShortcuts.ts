@@ -194,14 +194,6 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
           onPaste?.();
           event.preventDefault();
           break;
-        case 'a':
-          onSelectAll?.();
-          event.preventDefault();
-          break;
-        case 'd':
-          onDuplicate?.();
-          event.preventDefault();
-          break;
         case 'z':
           onUndo?.();
           event.preventDefault();
@@ -238,6 +230,14 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     // Ctrl+Shift shortcuts
     if (isCtrl && isShift) {
       switch (key) {
+        case 'a':
+          onSelectAll?.();
+          event.preventDefault();
+          break;
+        case 'd':
+          onDuplicate?.();
+          event.preventDefault();
+          break;
         case 'z':
           onRedo?.();
           event.preventDefault();

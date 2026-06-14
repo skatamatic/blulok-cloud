@@ -206,6 +206,7 @@ export class BluDesignEngine {
   // Reusable raycaster for hover detection (avoids creating new instances)
   private raycaster: THREE.Raycaster = new THREE.Raycaster();
   private pointerNdc: THREE.Vector2 = new THREE.Vector2();
+  private readonly selectionOrbitPivot = new THREE.Vector3();
 
   private readonly cachedTextures = new CachedTextureLoader();
   private readonly placedObjectSkinApplicator = createPlacedObjectSkinApplicator({
@@ -702,6 +703,8 @@ export class BluDesignEngine {
    * Register input handlers with the InputCoordinator
    */
   private registerInputHandlers(): void {
+    this.cameraController.setOrbitPivotResolver(() => this.resolveSelectionOrbitPivot());
+
     registerBluDesignInputHandlers({
       inputCoordinator: this.inputCoordinator,
       getActiveTool: () => this.state.activeTool,
@@ -1993,6 +1996,32 @@ export class BluDesignEngine {
     if (!gc) return null;
     const w = this.gridSystem.gridToWorld({ x: gc.x, z: gc.z, y: 0 });
     return { x: w.x, z: w.z };
+  }
+
+  /** World pivot for Ctrl+A/D camera orbit when objects are selected. */
+  private resolveSelectionOrbitPivot(): THREE.Vector3 | null {
+    if (
+      this.state.selection.selectedIds.length === 0 &&
+      !this.state.selection.selectedBuildingId
+    ) {
+      return null;
+    }
+
+    const world = computeSelectionCenterWorld({
+      selectedIds: this.state.selection.selectedIds,
+      sceneManager: this.sceneManager,
+    });
+    if (world) {
+      this.selectionOrbitPivot.copy(world);
+      return this.selectionOrbitPivot;
+    }
+
+    const gc = this.getSelectionCenter();
+    if (!gc) return null;
+
+    const w = this.gridSystem.gridToWorld({ x: gc.x, z: gc.z, y: 0 });
+    this.selectionOrbitPivot.set(w.x, this.gridSystem.getGridY(), w.z);
+    return this.selectionOrbitPivot;
   }
 
   /**
