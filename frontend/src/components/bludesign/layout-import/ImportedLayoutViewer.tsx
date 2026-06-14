@@ -45,7 +45,7 @@ export interface ImportedLayoutViewerProps {
   imageUrl?: string | null;
   showImage?: boolean;
   showLabels?: boolean;
-  selectedIds?: Set<string>;
+  selectedIds?: ReadonlySet<string>;
   hoveredId?: string | null;
   /** Override per-unit colors (live state in dashboard). */
   getUnitColor?: (unitId: string) => OverlayColor;

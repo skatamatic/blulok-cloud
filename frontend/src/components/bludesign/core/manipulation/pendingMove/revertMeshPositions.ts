@@ -17,7 +17,11 @@ export function windowRevertMeshXZ(w: Pick<
 }
 
 export type RegularObjectRevertParams = {
-  original: { position: GridPosition; orientation: Orientation };
+  original: {
+    position: GridPosition;
+    orientation: Orientation;
+    exactMeshPos?: { x: number; z: number };
+  };
   obj: PlacedObject;
   asset: AssetMetadata;
   gridSize: number;
@@ -31,11 +35,20 @@ export type RegularObjectRevertParams = {
  * Matches `BluDesignEngine.revertPendingMove` placement math.
  */
 export function regularObjectRevertMeshPosition(p: RegularObjectRevertParams): THREE.Vector3 {
+  const floorY = (p.obj.floor ?? 0) * FLOOR_HEIGHT * p.gridSize;
+
+  if (p.original.exactMeshPos) {
+    return new THREE.Vector3(
+      p.original.exactMeshPos.x,
+      floorY + p.internalYOffset,
+      p.original.exactMeshPos.z
+    );
+  }
+
   const isRotated90 =
     p.original.orientation === Orientation.EAST || p.original.orientation === Orientation.WEST;
   const effectiveGridX = isRotated90 ? p.asset.gridUnits.z : p.asset.gridUnits.x;
   const effectiveGridZ = isRotated90 ? p.asset.gridUnits.x : p.asset.gridUnits.z;
-  const floorY = (p.obj.floor ?? 0) * FLOOR_HEIGHT * p.gridSize;
 
   const centerWorld = p.gridToWorld({
     x: p.original.position.x + effectiveGridX / 2,

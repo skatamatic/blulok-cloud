@@ -4,24 +4,23 @@
 
 import { runFacilitySceneImport } from '../../../../components/bludesign/core/import/facilitySceneImport';
 import type { FacilitySceneImportServices } from '../../../../components/bludesign/core/import/facilitySceneImport';
+import * as THREE from 'three';
 import { CameraMode, GridSize, IsometricAngle } from '../../../../components/bludesign/core/types';
-import type { CameraState } from '../../../../components/bludesign/core/types';
 import type { FacilityData, LegacyFacilityData } from '../../../../components/bludesign/core/types';
 import type { PlacedObject } from '../../../../components/bludesign/core/types';
 import type { SerializedPlacedObject } from '../../../../components/bludesign/core/types';
 
 function baseV2(): FacilityData {
-  const camera = {
-    mode: CameraMode.ISOMETRIC,
-    isometricAngle: IsometricAngle.NORTH_EAST,
-    position: { x: 0, y: 10, z: 10 },
-    target: { x: 0, y: 0, z: 0 },
-    zoom: 1,
-  } as unknown as CameraState;
   return {
     name: 'F',
     version: '2',
-    camera,
+    camera: {
+      mode: CameraMode.ISOMETRIC,
+      isometricAngle: IsometricAngle.NORTH_EAST,
+      position: { x: 0, y: 10, z: 10 },
+      target: { x: 0, y: 0, z: 0 },
+      zoom: 1,
+    },
     placedObjects: [],
     buildings: [],
     activeFloor: 0,
@@ -100,7 +99,13 @@ describe('runFacilitySceneImport', () => {
     const legacy: LegacyFacilityData = {
       name: 'L',
       version: '1.0.0',
-      camera: baseV2().camera,
+      camera: {
+        mode: CameraMode.ISOMETRIC,
+        isometricAngle: IsometricAngle.NORTH_EAST,
+        position: new THREE.Vector3(0, 10, 10),
+        target: new THREE.Vector3(0, 0, 0),
+        zoom: 1,
+      },
       placedObjects: [placed],
       buildings: [],
       activeFloor: 0,

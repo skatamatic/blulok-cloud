@@ -29,6 +29,8 @@ const TEXTURE_TINTS = {
   concrete: { color: '#c4c8ce', mix: 0.2, brightness: 1.05, saturation: 1.02 },
 } as const;
 
+type TextureTint = (typeof TEXTURE_TINTS)[keyof typeof TEXTURE_TINTS];
+
 const HORIZON_COLOR = '#c5d8e6';
 
 /** Concrete pad extends this fraction of facility width/depth beyond each edge (natural preset). */
@@ -273,8 +275,8 @@ export class GroundPlaneManager {
 
   private applyTintUniforms(
     u: Record<string, THREE.IUniform>,
-    primary: (typeof TEXTURE_TINTS)['grass'],
-    secondary: (typeof TEXTURE_TINTS)['grass']
+    primary: TextureTint,
+    secondary: TextureTint
   ): void {
     (u.uPrimaryTint.value as THREE.Color).set(primary.color);
     u.uPrimaryTintMix.value = primary.mix;

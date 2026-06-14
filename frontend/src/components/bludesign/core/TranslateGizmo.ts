@@ -37,6 +37,10 @@ export class TranslateGizmo {
   private dragAxis: GizmoAxis = null;
   private dragStartGridPosition: { x: number; z: number } | null = null;
   private currentGridPosition: { x: number; z: number } | null = null;
+  /** Gizmo world XZ at drag start — translation uses plane-hit delta from this pivot. */
+  private dragStartWorldXZ: { x: number; z: number } | null = null;
+  /** Ray–plane hit at mousedown; avoids a jump when the click is off the gizmo center. */
+  private dragStartPlaneHitXZ: { x: number; z: number } | null = null;
   
   // Raycasting
   private raycaster: THREE.Raycaster;
@@ -405,8 +409,20 @@ export class TranslateGizmo {
           this.isDragging = true;
           this.dragAxis = clickedPart;
           
+          this.dragStartWorldXZ = {
+            x: this.gizmoGroup.position.x,
+            z: this.gizmoGroup.position.z,
+          };
+          this.dragPlane.constant = -this.gizmoGroup.position.y;
+          const startHit = new THREE.Vector3();
+          if (this.raycaster.ray.intersectPlane(this.dragPlane, startHit)) {
+            this.dragStartPlaneHitXZ = { x: startHit.x, z: startHit.z };
+          } else {
+            this.dragStartPlaneHitXZ = { ...this.dragStartWorldXZ };
+          }
+
           const gridPos = this.gridSystem.worldToGrid(
-            new THREE.Vector3(this.gizmoGroup.position.x, 0, this.gizmoGroup.position.z)
+            new THREE.Vector3(this.dragStartWorldXZ.x, 0, this.dragStartWorldXZ.z)
           );
           this.dragStartGridPosition = { x: gridPos.x, z: gridPos.z };
           this.currentGridPosition = { ...this.dragStartGridPosition };
@@ -435,6 +451,8 @@ export class TranslateGizmo {
     this.dragAxis = null;
     this.dragStartGridPosition = null;
     this.currentGridPosition = null;
+    this.dragStartWorldXZ = null;
+    this.dragStartPlaneHitXZ = null;
     
     // Restore normal visuals
     this.updateDragVisuals();
@@ -450,7 +468,16 @@ export class TranslateGizmo {
    * Gizmo follows mouse smoothly while objects snap to grid
    */
   private handleDrag(): void {
-    if (!this.isDragging || !this.dragAxis || !this.gizmoGroup || !this.currentGridPosition) return;
+    if (
+      !this.isDragging ||
+      !this.dragAxis ||
+      !this.gizmoGroup ||
+      !this.currentGridPosition ||
+      !this.dragStartWorldXZ ||
+      !this.dragStartPlaneHitXZ
+    ) {
+      return;
+    }
     
     this.raycaster.setFromCamera(this.mouse, this.camera);
     
@@ -459,35 +486,34 @@ export class TranslateGizmo {
     const intersectPoint = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.dragPlane, intersectPoint)) {
       const alignment = this.gridSystem.getGridAlignment();
+      const baseX = this.dragStartWorldXZ.x;
+      const baseZ = this.dragStartWorldXZ.z;
+      const deltaX = intersectPoint.x - this.dragStartPlaneHitXZ.x;
+      const deltaZ = intersectPoint.z - this.dragStartPlaneHitXZ.z;
       
-      let smoothX = intersectPoint.x;
-      let smoothZ = intersectPoint.z;
+      let smoothX = baseX + deltaX;
+      let smoothZ = baseZ + deltaZ;
       
       if (this.dragAxis === 'x' || this.dragAxis === 'z') {
-        const gx = this.gizmoGroup.position.x;
-        const gz = this.gizmoGroup.position.z;
-        const dx = intersectPoint.x - gx;
-        const dz = intersectPoint.z - gz;
-        
         if (alignment) {
           const yaw = alignment.yaw;
           const c = Math.cos(yaw);
           const s = Math.sin(yaw);
           // Grid U axis in world: (cos, -sin); V axis: (sin, cos)  [Three.js Y-rotation convention]
           if (this.dragAxis === 'x') {
-            const projU = dx * c - dz * s;
-            smoothX = gx + projU * c;
-            smoothZ = gz - projU * s;
+            const projU = deltaX * c - deltaZ * s;
+            smoothX = baseX + projU * c;
+            smoothZ = baseZ - projU * s;
           } else {
-            const projV = dx * s + dz * c;
-            smoothX = gx + projV * s;
-            smoothZ = gz + projV * c;
+            const projV = deltaX * s + deltaZ * c;
+            smoothX = baseX + projV * s;
+            smoothZ = baseZ + projV * c;
           }
         } else {
           if (this.dragAxis === 'x') {
-            smoothZ = this.gizmoGroup.position.z;
+            smoothZ = baseZ;
           } else {
-            smoothX = this.gizmoGroup.position.x;
+            smoothX = baseX;
           }
         }
       }

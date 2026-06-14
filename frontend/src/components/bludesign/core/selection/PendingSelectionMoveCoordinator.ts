@@ -262,7 +262,11 @@ export class PendingSelectionMoveCoordinator {
           data.fromPosition,
           data.toPosition,
           data.fromOrientation,
-          data.toOrientation
+          data.toOrientation,
+          data.fromRotation,
+          data.toRotation,
+          data.fromExactMeshPos,
+          data.toExactMeshPos
         );
       } else if (moveActions.length > 1) {
         this.deps.actionHistory.pushBatch(moveActions);

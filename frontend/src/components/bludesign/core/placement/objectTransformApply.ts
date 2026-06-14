@@ -75,7 +75,6 @@ export function moveObjectInternal(
 
   placedObject.position = newPosition;
   placedObject.orientation = newOrientation;
-  placedObject.rotation = undefined;
 
   deps.gridSystem.markOccupied(
     objectId,

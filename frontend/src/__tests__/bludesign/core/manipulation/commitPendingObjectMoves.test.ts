@@ -32,9 +32,13 @@ function po(overrides: Partial<PlacedObject> & { id: string }): PlacedObject {
 }
 
 describe('tryCommitPendingObjectMoves', () => {
-  const grid = () => ({
+  const grid = (gridSize = 1) => ({
     clearOccupied: jest.fn(),
     markOccupied: jest.fn(() => null),
+    gridDeltaToWorldDelta: (deltaU: number, deltaV: number) => ({
+      x: deltaU * gridSize,
+      z: deltaV * gridSize,
+    }),
   });
 
   it('returns ok:false without mutating when validation fails', () => {
@@ -181,7 +185,7 @@ describe('tryCommitPendingObjectMoves', () => {
     expect(b.position.z).toBe(1);
   });
 
-  it('shifts exactMeshPos by the same grid delta as position', () => {
+  it('shifts exactMeshPos by the world delta matching the grid move', () => {
     const o = po({
       id: 'a',
       position: { x: 1, z: 2, y: 0 },
@@ -197,7 +201,7 @@ describe('tryCommitPendingObjectMoves', () => {
         },
       ],
     ]);
-    const g = grid();
+    const g = grid(2);
 
     const r = tryCommitPendingObjectMoves(
       { originalPositions, accumulatedDelta: { x: 3, z: -2 } },
@@ -212,13 +216,13 @@ describe('tryCommitPendingObjectMoves', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(o.position).toEqual({ x: 4, z: 0, y: 0 });
-    expect(o.exactMeshPos).toEqual({ x: 13, z: 18 });
+    expect(o.exactMeshPos).toEqual({ x: 16, z: 16 });
     const data = r.moveActions[0].data as {
       fromExactMeshPos?: { x: number; z: number };
       toExactMeshPos?: { x: number; z: number };
     };
     expect(data.fromExactMeshPos).toEqual({ x: 10, z: 20 });
-    expect(data.toExactMeshPos).toEqual({ x: 13, z: 18 });
+    expect(data.toExactMeshPos).toEqual({ x: 16, z: 16 });
   });
 
   it('returns ok with empty moveActions when original map yields no live objects', () => {

@@ -18,6 +18,7 @@ export type PendingObjectCommitGridPorts = {
     category?: AssetCategory | string,
     floor?: number
   ) => string | null;
+  gridDeltaToWorldDelta: (deltaU: number, deltaV: number) => { x: number; z: number };
 };
 
 export type PendingObjectCommitDeps = {
@@ -104,9 +105,10 @@ export function tryCommitPendingObjectMoves(
     if (obj.exactMeshPos) {
       const gridDeltaX = newPosition.x - fromPosition.x;
       const gridDeltaZ = newPosition.z - fromPosition.z;
+      const worldDelta = deps.gridSystem.gridDeltaToWorldDelta(gridDeltaX, gridDeltaZ);
       toExactMeshPos = {
-        x: obj.exactMeshPos.x + gridDeltaX,
-        z: obj.exactMeshPos.z + gridDeltaZ,
+        x: obj.exactMeshPos.x + worldDelta.x,
+        z: obj.exactMeshPos.z + worldDelta.z,
       };
       obj.exactMeshPos = toExactMeshPos;
     }

@@ -17,7 +17,6 @@ import {
 } from '../layout-import/ImportedLayoutViewer';
 import {
   layoutImportToEditableUnits,
-  editorImportPlanUnitColor,
   type LayoutImportMetadata,
 } from '../layout-import/layoutImportMetadata';
 import type { OverlayColor } from '../layout-import/colors';

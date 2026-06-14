@@ -21,6 +21,52 @@ function asset(overrides: Partial<AssetMetadata> = {}): AssetMetadata {
 }
 
 describe('objectTransformApply', () => {
+  it('moveObjectInternal restores exactMeshPos for undo', () => {
+    const meta = asset();
+    const placed: PlacedObject = {
+      id: 'o1',
+      assetId: meta.id,
+      position: { x: 5, z: 7 },
+      orientation: Orientation.NORTH,
+      canStack: false,
+      floor: 0,
+      properties: {},
+      assetMetadata: meta,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      exactMeshPos: { x: 12.3, z: 8.7 },
+      rotation: 0.25,
+    };
+    const mesh = new THREE.Object3D();
+    mesh.userData.internalYOffset = 0.1;
+
+    moveObjectInternal(
+      'o1',
+      { x: 1, z: 2, y: 0 },
+      Orientation.NORTH,
+      0.25,
+      { x: 2.37, z: 5.62 },
+      {
+        sceneManager: {
+          getObjectData: () => placed,
+          getObject: () => mesh,
+        },
+        gridSystem: {
+          clearOccupied: jest.fn(),
+          getGridSize: () => 1,
+          gridToWorld: jest.fn(() => new THREE.Vector3(0, 0, 0)),
+          getFootprintCenterWorld: jest.fn(() => new THREE.Vector3(0, 0, 0)),
+          markOccupied: jest.fn(() => null),
+        },
+      }
+    );
+
+    expect(placed.exactMeshPos).toEqual({ x: 2.37, z: 5.62 });
+    expect(placed.rotation).toBe(0.25);
+    expect(mesh.position.x).toBeCloseTo(2.37);
+    expect(mesh.position.z).toBeCloseTo(5.62);
+  });
+
   it('moveObjectInternal updates mesh, placed object, and grid occupancy', () => {
     const meta = asset();
     const placed: PlacedObject = {

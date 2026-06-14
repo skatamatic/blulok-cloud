@@ -928,7 +928,7 @@ export interface SerializedBuilding {
 export interface FacilityData {
   name: string;
   version: string;
-  camera: CameraState;
+  camera: SerializedCameraState;
   /** Saved home view — applied whenever the facility is opened. */
   defaultCamera?: SerializedCameraState;
   placedObjects: SerializedPlacedObject[];  // Optimized format

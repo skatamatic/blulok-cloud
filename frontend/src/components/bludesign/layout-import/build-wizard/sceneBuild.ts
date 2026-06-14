@@ -136,7 +136,7 @@ export function buildFacilityData(input: SceneBuildInput): FacilityData {
     position: { x: dist * 0.6, y: dist * 0.55, z: dist * 0.6 },
     target: { x: 0, y: 0, z: 0 },
     zoom: 1,
-  } as unknown as FacilityData['camera'];
+  };
 
   return {
     name: input.sceneName,

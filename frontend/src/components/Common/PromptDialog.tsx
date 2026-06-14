@@ -30,7 +30,7 @@ export function PromptDialog({
   onConfirm,
   onCancel,
 }: PromptDialogProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLFormElement>(null);
   const [values, setValues] = useState<Record<string, string>>({});
 
   useEffect(() => {

@@ -11,6 +11,7 @@ import {
   CameraState,
   GridSize,
 } from './types';
+import { serializeCameraState } from './camera/cameraStateUtils';
 import {
   saveFacility as apiSaveFacility,
   updateFacility as apiUpdateFacility,
@@ -54,7 +55,7 @@ export class SaveManager {
     return {
       name,
       version: '2.0.0',
-      camera,
+      camera: serializeCameraState(camera),
       placedObjects,
       buildings,
       activeFloor,
