@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 
 import { config } from '@/config/environment';
+import { CORS_ALLOWED_HEADERS, CORS_ALLOWED_METHODS } from '@/config/cors';
 import { errorHandler } from '@/middleware/error.middleware';
 import { requestLogger } from '@/middleware/logger.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
@@ -73,16 +74,16 @@ export function createApp(): Application {
   app.use(cors({
     origin: config.corsOrigins,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform', 'X-Requested-With'],
+    methods: [...CORS_ALLOWED_METHODS],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
   }));
 
   // Explicit preflight handler to prevent 405 on OPTIONS
   app.options('*', cors({
     origin: config.corsOrigins,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform', 'X-Requested-With'],
+    methods: [...CORS_ALLOWED_METHODS],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
   }));
 
   // Global rate limiting (wrapped with RateLimitBypassService and disabled in test)
