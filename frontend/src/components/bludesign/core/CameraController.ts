@@ -50,6 +50,21 @@ export class CameraController {
   private minGroundY = 0;
   private groundClearance = 1.5;
 
+  // WASD walk — move camera + orbit target on the XZ plane
+  private walkEnabled = true;
+  private walkKeys = {
+    forward: false,
+    back: false,
+    left: false,
+    right: false,
+    sprint: false,
+  };
+  private readonly walkForward = new THREE.Vector3();
+  private readonly walkRight = new THREE.Vector3();
+  private readonly walkMove = new THREE.Vector3();
+  private readonly walkWorldUp = new THREE.Vector3(0, 1, 0);
+  private boundClearWalkKeys: () => void;
+
   // Callbacks
   private onStateChange: (state: CameraState) => void;
 
@@ -106,6 +121,9 @@ export class CameraController {
     if (this.mode === CameraMode.ISOMETRIC) {
       this.applyIsometricAngle(this.isometricAngle, false);
     }
+
+    this.boundClearWalkKeys = () => this.clearWalkKeys();
+    window.addEventListener('blur', this.boundClearWalkKeys);
   }
 
   /**
@@ -115,12 +133,110 @@ export class CameraController {
     if (this.isTransitioning) {
       this.updateTransition(delta);
     }
+
+    this.applyWalkMovement(delta);
     
     if (this.mode === CameraMode.FREE) {
       this.controls.update();
     }
 
     this.enforceGroundClamp();
+  }
+
+  /** Enable or disable WASD camera walk (e.g. while a modal has focus). */
+  setWalkEnabled(enabled: boolean): void {
+    this.walkEnabled = enabled;
+    if (!enabled) {
+      this.clearWalkKeys();
+    }
+  }
+
+  /**
+   * Track WASD / Shift for camera walk. Returns true when the key is consumed.
+   */
+  handleWalkKeyEvent(event: KeyboardEvent, isDown: boolean): boolean {
+    if (!this.walkEnabled) return false;
+    if (event.ctrlKey || event.metaKey || event.altKey) return false;
+
+    const key = event.key.toLowerCase();
+    let handled = false;
+    switch (key) {
+      case 'w':
+        this.walkKeys.forward = isDown;
+        handled = true;
+        break;
+      case 's':
+        this.walkKeys.back = isDown;
+        handled = true;
+        break;
+      case 'a':
+        this.walkKeys.left = isDown;
+        handled = true;
+        break;
+      case 'd':
+        this.walkKeys.right = isDown;
+        handled = true;
+        break;
+      case 'shift':
+        this.walkKeys.sprint = isDown;
+        handled = true;
+        break;
+      default:
+        break;
+    }
+
+    if (handled && isDown) {
+      event.preventDefault();
+    }
+    return handled;
+  }
+
+  private clearWalkKeys(): void {
+    this.walkKeys.forward = false;
+    this.walkKeys.back = false;
+    this.walkKeys.left = false;
+    this.walkKeys.right = false;
+    this.walkKeys.sprint = false;
+  }
+
+  private applyWalkMovement(delta: number): void {
+    if (!this.walkEnabled || this.isTransitioning) return;
+
+    const { forward, back, left, right } = this.walkKeys;
+    if (!forward && !back && !left && !right) return;
+
+    this.activeCamera.getWorldDirection(this.walkForward);
+    this.walkForward.y = 0;
+    if (this.walkForward.lengthSq() < 1e-6) {
+      this.walkForward.set(0, 0, -1);
+    } else {
+      this.walkForward.normalize();
+    }
+
+    this.walkRight.crossVectors(this.walkForward, this.walkWorldUp).normalize();
+
+    this.walkMove.set(0, 0, 0);
+    if (forward) this.walkMove.add(this.walkForward);
+    if (back) this.walkMove.sub(this.walkForward);
+    if (right) this.walkMove.add(this.walkRight);
+    if (left) this.walkMove.sub(this.walkRight);
+    if (this.walkMove.lengthSq() < 1e-6) return;
+
+    this.walkMove.normalize();
+
+    const baseSpeed = 36;
+    const zoomScale = THREE.MathUtils.clamp(this.getWorldPerPixel() * 8, 0.35, 5);
+    const sprintScale = this.walkKeys.sprint ? 2.5 : 1;
+    this.walkMove.multiplyScalar(baseSpeed * zoomScale * sprintScale * delta);
+
+    this.activeCamera.position.add(this.walkMove);
+    this.controls.target.add(this.walkMove);
+
+    if (this.mode === CameraMode.FREE) {
+      this.camera.position.copy(this.activeCamera.position);
+    } else {
+      this.orthographicCamera.position.copy(this.activeCamera.position);
+    }
   }
 
   /**
@@ -180,6 +296,24 @@ export class CameraController {
    */
   getCamera(): THREE.Camera {
     return this.activeCamera;
+  }
+
+  /**
+   * World-space distance covered by a single screen pixel at the camera focus.
+   * A camera-only zoom metric (independent of viewing angle) used to fade detail
+   * grids by zoom level. Returns world units per pixel.
+   */
+  getWorldPerPixel(): number {
+    const viewportHeight = Math.max(this.container.clientHeight, 1);
+    if (this.activeCamera instanceof THREE.OrthographicCamera) {
+      const cam = this.activeCamera;
+      const visibleHeight = (cam.top - cam.bottom) / cam.zoom;
+      return visibleHeight / viewportHeight;
+    }
+    const cam = this.activeCamera as THREE.PerspectiveCamera;
+    const distance = cam.position.distanceTo(this.controls.target);
+    const visibleHeight = 2 * Math.tan((cam.fov * Math.PI) / 360) * distance;
+    return visibleHeight / viewportHeight;
   }
 
   /**
@@ -712,6 +846,8 @@ export class CameraController {
    * Dispose resources
    */
   dispose(): void {
+    window.removeEventListener('blur', this.boundClearWalkKeys);
+    this.clearWalkKeys();
     this.controls.dispose();
   }
 }

@@ -155,6 +155,7 @@ import {
   SkyManager,
   SkyPresetId,
   DEFAULT_SCENE_PRESETS,
+  THEME_BACKGROUND_COLORS,
   type ScenePresetApplyOptions,
 } from './environment';
 
@@ -837,7 +838,8 @@ export class BluDesignEngine {
     this.updateCameraGroundClamp();
     this.cameraController.update(delta);
     if (this.gridSystem.isGridVisible()) {
-      this.gridSystem.update(this.cameraController.getCamera());
+      this.gridSystem.updateContentBounds(this.calculateSceneBounds());
+      this.gridSystem.setWorldPerPixel(this.cameraController.getWorldPerPixel());
     }
     if (this.groundPlaneManager.getActivePreset() !== 'blank' &&
         this.groundPlaneManager.getActivePreset() !== 'grid') {
@@ -1239,6 +1241,7 @@ export class BluDesignEngine {
     } else {
       this.gridSystem.applyConfig(DEFAULT_GRID_CONFIG);
     }
+    this.gridSystem.setHorizonColor(THEME_BACKGROUND_COLORS[theme]);
     this.emit('theme-changed', theme);
   }
 
@@ -1309,12 +1312,16 @@ export class BluDesignEngine {
   }
 
   refreshGroundPlaneBounds(): void {
+    const bounds = this.calculateSceneBounds();
+    if (this.gridSystem.isGridVisible()) {
+      this.gridSystem.updateContentBounds(bounds);
+    }
     if (
       this.activeGroundPreset === 'grass' ||
       this.activeGroundPreset === 'concrete' ||
       this.activeGroundPreset === 'natural'
     ) {
-      this.groundPlaneManager.updateBounds(this.calculateSceneBounds());
+      this.groundPlaneManager.updateBounds(bounds);
     }
   }
 

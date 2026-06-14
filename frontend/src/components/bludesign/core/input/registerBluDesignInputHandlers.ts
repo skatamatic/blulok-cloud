@@ -28,7 +28,10 @@ export type BluDesignInputHandlerDeps = {
       onKeyUp?: (e: KeyboardEvent) => void;
     };
   };
-  cameraController: { setRotationEnabled: (enabled: boolean) => void };
+  cameraController: {
+    setRotationEnabled: (enabled: boolean) => void;
+    handleWalkKeyEvent: (event: KeyboardEvent, isDown: boolean) => boolean;
+  };
   translateGizmo: {
     isDraggingGizmo: () => boolean;
     isHovered: () => boolean;
@@ -175,5 +178,11 @@ export function registerBluDesignInputHandlers(deps: BluDesignInputHandlerDeps):
     enabled: true,
     handle: (): boolean => false,
     wantsInput: () => false,
+    onKeyDown: (e: KeyboardEvent) => {
+      deps.cameraController.handleWalkKeyEvent(e, true);
+    },
+    onKeyUp: (e: KeyboardEvent) => {
+      deps.cameraController.handleWalkKeyEvent(e, false);
+    },
   });
 }

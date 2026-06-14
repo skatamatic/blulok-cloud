@@ -16,6 +16,7 @@ import {
   GridAlignment,
   Orientation,
 } from './types';
+import { THEME_BACKGROUND_COLORS } from './environment/ScenePresets';
 
 // Layer types for tile occupancy
 export type TileLayer = 'ground' | 'object';
@@ -48,30 +49,38 @@ const gridVertexShader = `
 `;
 
 const gridFragmentShader = `
+  precision highp float;
+
   uniform float uSize;
   uniform float uDivisions;
   uniform vec3 uPrimaryColor;
   uniform vec3 uSecondaryColor;
-  uniform float uFadeDistance;
   uniform float uOpacity;
-  uniform vec3 uCameraPosition;
   uniform float uSecondaryOpacity;
   uniform float uUseAlignment;
   uniform vec2 uAlignOrigin;
   uniform float uAlignYaw;
   uniform float uSnapCellSize;
-  uniform vec2 uPlaneCenter;
-  uniform float uPlaneHalfSize;
-  
+  uniform vec2 uContentCenter;
+  uniform float uFadeStart;
+  uniform float uOuterFade;
+  uniform vec3 uHorizonColor;
+  uniform float uHorizonBlend;
+  uniform float uWorldPerPixel;
+
   varying vec3 vWorldPosition;
-  
-  float getGrid(vec2 coord, float size, float thickness) {
-    vec2 r = coord / size;
+
+  // Adaptive anti-aliased grid line for one cell period (world units).
+  // Distance to the nearest line is normalized by this level's own screen-space
+  // derivative, so each level self-fades exactly as its spacing goes sub-pixel
+  // (no moiré at distance). thicknessPx widens the stroke.
+  float getGrid(vec2 coord, float period, float thicknessPx) {
+    vec2 r = coord / period;
     vec2 grid = abs(fract(r - 0.5) - 0.5) / fwidth(r);
     float line = min(grid.x, grid.y);
-    return 1.0 - min(line, 1.0);
+    return 1.0 - min(line / thicknessPx, 1.0);
   }
-  
+
   void main() {
     vec2 coord = vWorldPosition.xz;
     if (uUseAlignment > 0.5) {
@@ -81,37 +90,46 @@ const gridFragmentShader = `
       coord = vec2(rel.x * c - rel.y * s, rel.x * s + rel.y * c);
     }
 
-    // Camera-distance fade — long, soft falloff
-    float dist = length(vWorldPosition.xz - uCameraPosition.xz);
-    float fadeStart = uFadeDistance * 0.45;
-    float fadeEnd = uFadeDistance * 3.8;
-    float distFade = 1.0 - smoothstep(fadeStart, fadeEnd, dist);
-    distFade = pow(distFade, 0.68);
-
-    // Safety fade at plane geometry edge (plane is very large; this prevents hard cutoff)
-    vec2 planeRel = vWorldPosition.xz - uPlaneCenter;
-    float planeDist = max(abs(planeRel.x), abs(planeRel.y));
-    float planeEdgeFade = 1.0 - smoothstep(uPlaneHalfSize * 0.78, uPlaneHalfSize * 0.98, planeDist);
-
-    float fade = distFade * planeEdgeFade;
-    
     float cellSize = (uUseAlignment > 0.5 && uSnapCellSize > 0.0) ? uSnapCellSize : uSize / uDivisions;
-    
-    float grid1 = getGrid(coord, cellSize * 10.0, 2.0);
-    float grid2 = getGrid(coord, cellSize, 1.0);
-    
-    vec3 lineColor = mix(uSecondaryColor, uPrimaryColor, grid1);
-    float lineMask = max(grid1, grid2 * uSecondaryOpacity);
-    float lineAlpha = lineMask * uOpacity * fade;
 
-    // Subtle base wash so the grid dissolves smoothly instead of popping off
-    vec3 baseColor = mix(uSecondaryColor, uPrimaryColor, 0.12);
-    float baseAlpha = 0.055 * fade;
-    float alpha = max(lineAlpha, baseAlpha);
-    vec3 color = mix(baseColor, lineColor, clamp(lineMask * 1.15, 0.0, 1.0));
-    
+    // Three self-adaptive tiers: minor (1x), major every 10 (2x), super every 100 (3.5x).
+    // Each self-fades when its spacing goes sub-pixel (handles extreme zoom-out).
+    float gridSuper = getGrid(coord, cellSize * 100.0, 2.0);
+    float gridMajor = getGrid(coord, cellSize * 10.0, 1.4);
+    float gridMinor = getGrid(coord, cellSize, 1.0);
+
+    // Radial fade from scene content — matches GroundPlaneManager edge dissolve.
+    vec2 offset = vWorldPosition.xz - uContentCenter;
+    float radial = length(offset);
+    float edgeFade = 1.0 - smoothstep(uFadeStart, uOuterFade, radial);
+    edgeFade = clamp(edgeFade, 0.0, 1.0);
+    if (edgeFade < 0.003) discard;
+
+    // Zoom-based, density-consistent fade: each tier fades when its own cells shrink
+    // below a target on-screen size (measured globally at the camera focus, not per
+    // fragment). As minor dissolves, major becomes the fine grid, then super — so the
+    // apparent cell density stays roughly constant across zoom levels.
+    float minorCellPx = cellSize / max(uWorldPerPixel, 1e-6);
+    float minorVis = smoothstep(14.0, 30.0, minorCellPx);
+    float majorVis = smoothstep(14.0, 30.0, minorCellPx * 10.0);
+    float superVis = smoothstep(14.0, 30.0, minorCellPx * 100.0);
+
+    gridSuper *= superVis;
+    gridMajor *= majorVis;
+    gridMinor *= minorVis;
+
+    float primaryMask = max(gridSuper, gridMajor);
+    float lineMask = max(primaryMask, gridMinor * uSecondaryOpacity);
+
+    vec3 lineColor = mix(uSecondaryColor, uPrimaryColor, primaryMask);
+    vec3 color = lineColor;
+    if (uHorizonBlend > 0.5) {
+      color = mix(uHorizonColor, lineColor, edgeFade);
+    }
+
+    float alpha = lineMask * uOpacity * edgeFade;
     if (alpha < 0.004) discard;
-    
+
     gl_FragColor = vec4(color, alpha);
   }
 `;
@@ -183,16 +201,18 @@ export class GridSystem {
         uDivisions: { value: this.config.divisions },
         uPrimaryColor: { value: new THREE.Color(this.config.primaryColor) },
         uSecondaryColor: { value: new THREE.Color(this.config.secondaryColor) },
-        uFadeDistance: { value: this.config.fadeDistance },
         uOpacity: { value: this.config.opacity },
-        uCameraPosition: { value: new THREE.Vector3() },
         uSecondaryOpacity: { value: secondaryOpacity },
         uUseAlignment: { value: 0 },
         uAlignOrigin: { value: new THREE.Vector2(0, 0) },
         uAlignYaw: { value: 0 },
         uSnapCellSize: { value: 0 },
-        uPlaneCenter: { value: new THREE.Vector2(0, 0) },
-        uPlaneHalfSize: { value: planeSize * 0.5 },
+        uContentCenter: { value: new THREE.Vector2(0, 0) },
+        uFadeStart: { value: this.config.fadeDistance * 0.5 },
+        uOuterFade: { value: this.config.fadeDistance * 2.5 },
+        uHorizonColor: { value: new THREE.Color(THEME_BACKGROUND_COLORS.dark) },
+        uHorizonBlend: { value: 1 },
+        uWorldPerPixel: { value: 0.05 },
       },
       transparent: true,
       side: THREE.FrontSide,
@@ -225,24 +245,52 @@ export class GridSystem {
   }
 
   /**
-   * Update grid (call in render loop)
-   * Adjusts fade distance based on camera height for better visibility
+   * Update content-relative fade band (call when scene bounds change or each frame while visible).
    */
-  update(camera: THREE.Camera): void {
-    if (this.gridMaterial) {
-      this.gridMaterial.uniforms.uCameraPosition.value.copy(camera.position);
-      
-      const baseHeight = 30;
-      const heightRatio = Math.max(0.8, Math.min(7, camera.position.y / baseHeight));
-      const adjustedFadeDistance = this.config.fadeDistance * heightRatio;
-      
-      this.gridMaterial.uniforms.uFadeDistance.value = adjustedFadeDistance;
+  updateContentBounds(bounds: THREE.Box3): void {
+    if (!this.gridMaterial) return;
 
-      if (this.gridMesh) {
-        const center = this.gridMaterial.uniforms.uPlaneCenter.value as THREE.Vector2;
-        center.set(this.gridMesh.position.x, this.gridMesh.position.z);
-      }
+    const size = new THREE.Vector3();
+    bounds.getSize(size);
+    const center = new THREE.Vector3();
+    bounds.getCenter(center);
+
+    const halfX = Math.max(size.x, 1) / 2;
+    const halfZ = Math.max(size.z, 1) / 2;
+    const maxHalf = Math.max(halfX, halfZ);
+    const maxDim = Math.max(size.x, size.z, 8);
+
+    const fadeStart = maxHalf + THREE.MathUtils.clamp(maxDim * 0.35, 10, 55);
+    const outerFade = fadeStart + THREE.MathUtils.clamp(maxDim * 2.0, 120, 900);
+
+    (this.gridMaterial.uniforms.uContentCenter.value as THREE.Vector2).set(center.x, center.z);
+    this.gridMaterial.uniforms.uFadeStart.value = fadeStart;
+    this.gridMaterial.uniforms.uOuterFade.value = outerFade;
+  }
+
+  /**
+   * Set the global zoom metric (world units covered by one screen pixel at the camera
+   * focus). Drives the minor-grid fade so the fine grid is tied to zoom level, not
+   * camera angle. Call each frame while the grid is visible.
+   */
+  setWorldPerPixel(worldPerPixel: number): void {
+    if (this.gridMaterial && Number.isFinite(worldPerPixel) && worldPerPixel > 0) {
+      this.gridMaterial.uniforms.uWorldPerPixel.value = worldPerPixel;
     }
+  }
+
+  /** Match grid horizon dissolve to scene / theme background. */
+  setHorizonColor(hex: string): void {
+    if (this.gridMaterial) {
+      (this.gridMaterial.uniforms.uHorizonColor.value as THREE.Color).set(hex);
+    }
+  }
+
+  /**
+   * @deprecated Fade is content-relative; use {@link updateContentBounds}.
+   */
+  update(_camera: THREE.Camera): void {
+    // Kept for API compatibility — per-frame camera uniforms are no longer used.
   }
 
   /**
@@ -678,7 +726,6 @@ export class GridSystem {
       this.gridMaterial.uniforms.uSecondaryColor.value.set(config.secondaryColor);
       this.gridMaterial.uniforms.uOpacity.value = config.opacity;
       this.gridMaterial.uniforms.uSecondaryOpacity.value = config.secondaryOpacity ?? 0.5;
-      this.gridMaterial.uniforms.uFadeDistance.value = config.fadeDistance;
       this.syncGridShaderAlignmentUniforms();
     }
   }

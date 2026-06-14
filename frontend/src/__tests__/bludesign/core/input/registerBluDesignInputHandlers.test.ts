@@ -15,7 +15,10 @@ describe('registerBluDesignInputHandlers', () => {
         getEnabled: () => false,
         getInputHandlers: () => ({}),
       },
-      cameraController: { setRotationEnabled: jest.fn() },
+      cameraController: {
+        setRotationEnabled: jest.fn(),
+        handleWalkKeyEvent: jest.fn(),
+      },
       translateGizmo: {
         isDraggingGizmo: () => false,
         isHovered: () => false,

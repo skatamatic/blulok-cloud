@@ -288,7 +288,8 @@ Manages camera modes:
 
 #### `GridSystem.ts`
 Infinite grid with custom shader:
-- Distance-based fade effect
+- Content-relative radial fade (dissolves into theme background, aligned with `GroundPlaneManager`)
+- Three grid tiers: minor (1x), major every 10 lines (2x), super-major every 100 lines (3.5x); each tier fades via screen-space LOD before its spacing aliases; content-relative radial dissolve matches `GroundPlaneManager`
 - Configurable primary/secondary lines
 - Grid snapping for object placement
 - Grid-to-world coordinate conversion
@@ -902,7 +903,7 @@ Location: `frontend/src/components/bludesign/core/environment/`
 
 The detail plane uses a **simple** shader: one texture sample + light detail pass, modest mip bias, normal-based sun lighting, and radial horizon fade at the outer edge only (no camera haze or procedural noise — those washed out detail and caused banding). **Natural** preset: concrete inside the facility bounds plus **10% pad margin** on each side, grass outside, with a **narrow curb-width blend** (~0.3–0.55 m, edge-parallel via Chebyshev distance — not a wide diagonal wash). Outdoor presets apply a subtle hemisphere boost; exposure stays at default.
 
-| `GridSystem.ts` | Infinite procedural grid on a large plane (`planeExtentMultiplier` × size). Camera-distance fade uses a long soft curve (`pow` falloff); plane-edge vignette prevents hard geometry cutoff; subtle base wash lets lines dissolve smoothly. |
+| `GridSystem.ts` | Infinite procedural grid on a large plane. Three tiers (minor / major×10 / super×100) with per-tier screen-space LOD and content-relative radial fade. |
 
 `BluDesignEngine.applySkyPreset()` / `applyGroundPreset()` apply presets at runtime. `setTheme()` only overwrites the background when the active sky preset is `blank`.
 
