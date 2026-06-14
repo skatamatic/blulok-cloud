@@ -11,5 +11,7 @@ export type { FacilityViewerEmptyVariant } from './FacilityViewerEmptyState';
 export { ViewerLoadingOverlay } from './ViewerLoadingOverlay';
 export { ViewerFloorsPanel } from './ViewerFloorsPanel';
 export { ViewerPropertiesPanel } from './ViewerPropertiesPanel';
+export { ViewerUnitInfoSection } from './ViewerUnitInfoSection';
 export { ViewerSmartObjectsPanel } from './ViewerSmartObjectsPanel';
+export { ViewerLiveStateLegend } from './ViewerLiveStateLegend';
 

@@ -43,7 +43,7 @@ Editor infrastructure split from the main engine file (ongoing): **`core/engine/
 
 **History apply:** **`core/history/HistoryActionApplier`** maps `HistoryAction` types to undo/redo side effects via a **`HistoryActionApplierDelegate`** (engine wires `deleteObjectInternal`, `placeObjectInternal`, moves, rotation snapshots, buildings, floors, and `emitStateUpdated`). Recursive batch actions preserve per-child `state-updated` emissions.
 
-**Facility import:** **`core/import/runFacilitySceneImport`** orchestrates load order (clear, camera, buildings/floors, placed objects legacy vs serialized, skins, grid, optimization, theme, data source) with a **`FacilitySceneImportServices`** port; `BluDesignEngine.importSceneData` delegates to it.
+**Facility import:** **`core/import/runFacilitySceneImport`** orchestrates load order (clear, **`defaultCamera` ?? session camera**, buildings/floors, placed objects legacy vs serialized, skins, grid, optimization, theme, data source) with a **`FacilitySceneImportServices`** port; `BluDesignEngine.importSceneData` delegates to it.
 
 **Constructor lifecycle:** After `gridSystem.create()`, **`initializeEditorSubsystems()`** subscribes to theme changes, constructs **`FloorObjectReplication`**, **`FloorViewCoordinator`**, **`FloorStructureOperations`**, and **`DraftAutoSaveScheduler`**. **`registerInputHandlers()`** delegates to **`core/input/registerBluDesignInputHandlers`** (gizmo, placement, selection, camera on **`InputCoordinator`**). Initial tool is set via **`setTool`** before **`HistoryActionApplier`** construction so floor replication exists for redo paths.
 
@@ -145,7 +145,15 @@ Domain factory:
 - Stable cache keys (no secrets)
 - `validateStorageConfig()` delegates to base validation
 
+#### `bludesign-storage.factory.ts`
+Platform-wide storage configuration (mirrors firmware storage):
+- Persists to `system_settings` keys `storage.bludesign.provider_type` / `storage.bludesign.provider_config`
+- `getBluDesignStorageProvider()` / `getBluDesignBaseStorageProvider()` resolve DB config with GCS env fallback
+- Secret fields redacted on read; `***` placeholders preserved on save
+
 #### `storage.routes.ts` (RBAC: ADMIN or DEV_ADMIN required)
+- `GET .../config` – Get persisted BluDesign storage configuration (secrets redacted)
+- `PUT .../config` – Save BluDesign storage configuration to `system_settings`
 - `GET .../gdrive/auth-url` – Get OAuth2 authorization URL
 - `GET .../gdrive/callback` – Exchange OAuth code for tokens
 - `POST .../gdrive/refresh-tokens` – Manually refresh tokens
@@ -276,6 +284,7 @@ Manages camera modes:
 - **Isometric Mode**: Fixed-angle RTS-style view (like RollerCoaster Tycoon)
 - Smooth animated transitions between views
 - Keyboard shortcuts for rotation (Q/E)
+- **Ground clamp**: When the facility has no basement floors (`minFloor >= 0`), the camera cannot drop below the active floor plane (or ground at y=0 in full-building view) — prevents zoom/orbit from clipping through the ground
 
 #### `GridSystem.ts`
 Infinite grid with custom shader:
@@ -810,6 +819,7 @@ skinManager.createSkin({
 - Global skins: `localStorage['bludesign-global-skins-v2']`
 - Facility skins: Stored in facility save data
 - Active skins per category: Stored in `FacilityData.activeSkins`
+- Default home camera: Optional `FacilityData.defaultCamera` — set from the **Default Camera** panel (View menu); restored on facility load in editor, BluFMS viewer, and widgets; **Reset view** animates back to it
 
 ## Decorations
 
@@ -866,7 +876,8 @@ frontend/src/components/bludesign/viewer/
 ├── FacilityViewer3D.tsx     # Main viewer component
 ├── ViewerLoadingOverlay.tsx # Loading animation
 ├── ViewerFloorsPanel.tsx    # Floor selector (bottom-right)
-├── ViewerPropertiesPanel.tsx # Selected object properties
+├── ViewerPropertiesPanel.tsx # Bottom-right floating card; compact by default, expands width/height with tween
+├── ViewerUnitInfoSection.tsx # Unit summary + access log, tenant, device, remote unlock (Units Manager parity)
 └── index.ts
 ```
 
@@ -877,6 +888,38 @@ frontend/src/components/bludesign/viewer/
 - **Camera Rotation**: 90° rotate buttons at bottom center
 - **Real-time Updates**: WebSocket subscription for live smart asset states
 - **Theme Support**: Matches system light/dark theme
+- **Sky & ground presets**: Optional environment styling via `skyPreset` / `groundPreset` props (see Environment Presets below)
+
+### Environment presets (viewer)
+
+Location: `frontend/src/components/bludesign/core/environment/`
+
+| Module | Role |
+|--------|------|
+| `ScenePresets.ts` | Preset ids, UI metadata, asset URLs, defaults (`blank` / `blank`) |
+| `SkyManager.ts` | Procedural `Sky` (day/sunset), solid blank/night, HDR natural via `RGBELoader` + PMREM |
+| `GroundPlaneManager.ts` | A single textured plane, fully opaque under the facility footprint, that fades to transparent over a bounded band so the pad dissolves gracefully (no infinite slab); `grass`/`concrete` are single-texture, `natural` layers concrete→grass then horizon-blends to sky, `grid` delegates to `GridSystem` |
+
+The detail plane uses a **simple** shader: one texture sample + light detail pass, modest mip bias, normal-based sun lighting, and radial horizon fade at the outer edge only (no camera haze or procedural noise — those washed out detail and caused banding). **Natural** preset: concrete inside the facility bounds plus **10% pad margin** on each side, grass outside, with a **narrow curb-width blend** (~0.3–0.55 m, edge-parallel via Chebyshev distance — not a wide diagonal wash). Outdoor presets apply a subtle hemisphere boost; exposure stays at default.
+
+| `GridSystem.ts` | Infinite procedural grid on a large plane (`planeExtentMultiplier` × size). Camera-distance fade uses a long soft curve (`pow` falloff); plane-edge vignette prevents hard geometry cutoff; subtle base wash lets lines dissolve smoothly. |
+
+`BluDesignEngine.applySkyPreset()` / `applyGroundPreset()` apply presets at runtime. `setTheme()` only overwrites the background when the active sky preset is `blank`.
+
+Static CC0 assets live under `frontend/public/bludesign/environment/` (see `CREDITS.md`).
+
+### Dashboard widget view settings
+
+Admins (`canEditLayout`) open **View settings…** from the Facility 3D View widget menu. Choices persist in `WidgetInstance.config`:
+
+```typescript
+interface FacilityViewerWidgetConfig {
+  skyPreset?: 'blank' | 'day' | 'sunset' | 'night' | 'natural';
+  groundPreset?: 'blank' | 'grid' | 'grass' | 'concrete' | 'natural';
+}
+```
+
+Flow: `ViewSettingsModal` → `onConfigChange` → `useDashboardState.updateWidgetConfig` → debounced `POST /widget-layouts`. Saved dashboard templates round-trip preset values unchanged.
 
 ### Usage
 
@@ -884,6 +927,8 @@ frontend/src/components/bludesign/viewer/
 <FacilityViewer3D
   bluDesignFacilityId="uuid-of-bludesign-facility"
   bluLokFacilityId="uuid-of-blulok-facility"  // For WebSocket subscriptions
+  skyPreset="day"
+  groundPreset="grass"
   onReady={() => console.log('Viewer ready')}
   onError={(error) => console.error(error)}
 />
@@ -895,6 +940,7 @@ frontend/src/components/bludesign/viewer/
    - Huge-size widget showing linked facility 3D view
    - Driven by global facility selector: single-facility scope only; all-facilities mode shows an empty canvas
    - No in-widget model picker — model is always the one bound to the selected facility
+   - Admin-only **View settings** modal for sky/ground presets (persisted in widget `config`)
    - Widget type: `facility-viewer`
 
 2. **BluFMS Facility Map Page**:
@@ -910,10 +956,18 @@ Facilities are linked via the `bludesign_facilities.linked_facility_id` column:
 
 ### WebSocket State Updates
 
-The viewer subscribes to `facility_state_update` messages:
+The viewer uses the same **`device_status`** channel as dashboard widgets (via `useLockDeviceRealtime` / `useFacilityViewerLiveState`), not a separate BluDesign-only event.
+
+**Flow:**
+1. On load, REST hydrate: `getBluLokUnits` + `getBluLokDevices` for the linked BluLok facility
+2. Live updates: `device_status_update` payloads normalized by `normalizeDeviceStatusWsPayload`
+3. Telemetry mapped to `DeviceState` in `viewer/viewerLiveState.ts` (offline → error → maintenance → locked/unlocked)
+4. Scene objects matched by `PlacedObject.binding.entityId` (unit UUID or device UUID)
+5. 3D: `engine.simulateObjectState()` → `AssetFactory.updateAssetState()` (materials + indicator lights)
+6. 2D: `resolveLiveUnitColor()` tints import layout overlays (green locked, yellow unlocked, red error, gray offline)
 
 ```typescript
-interface SmartAssetState {
+interface ViewerSmartAssetState {
   entityId: string;
   entityType: 'unit' | 'gate' | 'elevator' | 'door';
   state: DeviceState;  // locked, unlocked, error, maintenance, offline
@@ -923,10 +977,9 @@ interface SmartAssetState {
 }
 ```
 
-When state updates arrive, the viewer:
-1. Finds objects bound to the entity
-2. Updates their visual state via `engine.simulateObjectState()`
-3. Reflects changes immediately in the 3D scene
+When the widget tab is hidden or `isRenderActive` is false, updates accumulate in a ref and are **replayed** when rendering resumes.
+
+**Requires `bluLokFacilityId`** — pass the linked BluLok facility ID (widget and FMS do this automatically; BluDesign View page passes it from facility link metadata).
 
 ## Layout Import (image/PDF → unit detection)
 
@@ -1313,20 +1366,35 @@ render their real door side/width/offset in both the editor and the viewer.
 Facilities saved through the import wizard carry optional `layoutImport` on
 `FacilityData`. The source PNG lives beside `data.json` in user-facility storage.
 
-- **Editor** — View panel → **Show Import Plan** opens a resizable floating panel
-  (`ImportPlanPanel`) with pan/zoom, unit labels, and a toggle for the original
-  plan image vs vector overlay only (`ImportedLayoutViewer`).
+- **Editor** — View panel → **Show Import Plan** opens the standard v9 panel
+  (`importPlan` in `panelLayoutV9`: float, resize, dock-left/right like Tools/View).
+  Body is `ImportPlanPanelContent` (pan/zoom, unit labels). The original plan PNG is
+  **hidden by default**; user toggles **Show plan image** to load `layout-source.png`.
+  Vector overlay remains available without the image (`ImportedLayoutViewer`). Selection
+  is synced with the 3D editor: selected units highlight in brand blue, unbound units
+  are dimmed, and clicking a unit selects it in the scene (Properties, Smart Objects,
+  etc.). Pan/zoom auto-focuses when a single unit is selected from the 3D view.
 - **Dashboard widget** — When `layoutImport` is present, the facility viewer widget
   exposes a **3D / 2D** toggle. **2D mode** mounts `FacilityViewer2D` instead of
-  WebGL (`FacilityViewer3D` is not mounted — no GPU cost). The 2D view uses live
-  WebSocket colors (green locked/occupied, yellow unlocked, red error), unit
-  labels, smart-object search with animated focus, click-to-select, and fit-to-facility.
-  The original import image is **not** shown in the widget (vector overlay only).
+  The 2D view loads `layout-source.png` on demand when the user toggles **Show plan image**
+  (hidden by default); the vector unit overlay is always shown. Live unit colors
+  (green locked, yellow unlocked, orange maintenance, red error, gray offline, slate
+  no-signal before hydration), unit labels, smart-object search with animated focus,
+  click-to-select, and fit-to-facility. A compact live-state legend is shown in the
+  viewer chrome.
 
-**Persistence:** `layoutImport` is written into `data.json` at wizard save time and
-re-attached on every editor update/auto-save via `attachLayoutImportToFacilityData`
-(Save As creates a new facility without copying import metadata). The PNG is stored
-at `layout-source.png` via `PUT /api/v1/bludesign/facilities/:id/layout-source`.
+**Persistence:** `layoutImport` is written into `data.json` at wizard save time.
+`normalizeLayoutImportMetadata()` repairs legacy payloads (missing `sourceImageFile`,
+invalid unit bounds, etc.) before gating 2D views. `BluDesignEngine` keeps a
+`persistedLayoutImport` snapshot loaded from facility data so manual saves and data-source
+updates cannot accidentally strip import metadata from `data.json`.
+`exportSceneData()`, autosave drafts, and manual saves all round-trip the metadata.
+**Save As** keeps `layoutImport` in the exported payload and copies `layout-source.png`
+from the source facility into the new facility storage folder (server-side via
+`copyLayoutSourceFrom` on POST). **New facility** (File → New) still clears import
+metadata in the engine and does not copy the plan image.
+The PNG is stored at `layout-source.png` via `PUT /api/v1/bludesign/facilities/:id/layout-source`.
+GET facility responses use `Cache-Control: no-store` so dashboard prefetch sees fresh metadata.
 
 **Geometry note:** 2D overlays use the import-time pixel bounds snapshot in
 `layoutImport.units`. Moving or resizing units in the 3D editor does not update

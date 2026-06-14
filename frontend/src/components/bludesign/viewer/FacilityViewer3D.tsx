@@ -8,7 +8,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBluDesignEngine } from '../hooks/useBluDesignEngine';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
 import * as bludesignApi from '@/api/bludesign';
 import { ViewerLoadingOverlay } from './ViewerLoadingOverlay';
 import { ViewerFloorsPanel } from './ViewerFloorsPanel';
@@ -16,50 +15,60 @@ import { ViewerPropertiesPanel } from './ViewerPropertiesPanel';
 import { ViewerSmartObjectsPanel } from './ViewerSmartObjectsPanel';
 import { PerformanceMonitor } from '../ui/PerformanceMonitor';
 import { shouldUseExpandedViewerChrome } from './viewer-layout.utils';
+import { useFacilityViewerLiveState } from './useFacilityViewerLiveState';
+import { type ViewerSmartAssetState } from './viewerLiveState';
+import type { BluLokUnit } from '@/api/bludesign';
 import {
   PlacedObject,
   DeviceState,
   Building,
   CameraMode,
 } from '../core/types';
+import {
+  GroundPresetId,
+  SkyPresetId,
+  DEFAULT_SCENE_PRESETS,
+  normalizeGroundPreset,
+  normalizeSkyPreset,
+} from '../core/environment';
+import { applyViewerViewPresets } from './applyViewerViewPresets';
+import type { FacilityResponse } from '@/api/bludesign';
 
 interface FacilityViewer3DProps {
   /** BluDesign facility ID to load */
   bluDesignFacilityId: string;
   /** BluLok facility ID for WebSocket subscriptions */
   bluLokFacilityId?: string;
+  /** When provided, skips an initial facility fetch (e.g. from the widget). */
+  prefetchedFacility?: FacilityResponse | null;
   /** Optional CSS class name */
   className?: string;
   /** When false, WebGL rendering pauses and a static snapshot is shown instead. */
   isRenderActive?: boolean;
+  skyPreset?: SkyPresetId;
+  groundPreset?: GroundPresetId;
   /** Callback when the viewer is ready */
   onReady?: () => void;
   /** Callback when an error occurs */
   onError?: (error: Error) => void;
 }
 
-interface SmartAssetState {
-  entityId: string;
-  entityType: 'unit' | 'gate' | 'elevator' | 'door';
-  state: DeviceState;
-  lockStatus?: string;
-  batteryLevel?: number;
-  lastActivity?: string;
-}
-
 export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   bluDesignFacilityId,
   bluLokFacilityId,
+  prefetchedFacility,
   className = '',
   isRenderActive = true,
+  skyPreset = DEFAULT_SCENE_PRESETS.skyPreset,
+  groundPreset = DEFAULT_SCENE_PRESETS.groundPreset,
   onReady,
   onError,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
-  const { subscribe, unsubscribe } = useWebSocket();
   
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const selectedEntityIdRef = useRef<string | null>(null);
   
   // Container size for panel layout and sizing constraints
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -77,10 +86,13 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   
   // Selected object state
   const [selectedObject, setSelectedObject] = useState<PlacedObject | null>(null);
-  const [selectedObjectState, setSelectedObjectState] = useState<SmartAssetState | null>(null);
+  const [selectedObjectState, setSelectedObjectState] = useState<ViewerSmartAssetState | null>(null);
+  const [unitsCatalog, setUnitsCatalog] = useState<Map<string, BluLokUnit>>(new Map());
   
-  // Asset states from WebSocket
-  const assetStatesRef = useRef<Map<string, SmartAssetState>>(new Map());
+  // Live states keyed by bound entity ID (unit or device UUID)
+  const assetStatesRef = useRef<Map<string, ViewerSmartAssetState>>(new Map());
+  const entityToObjectIdsRef = useRef<Map<string, string[]>>(new Map());
+  const liveHydratedRef = useRef(false);
   const applyEngineUpdatesRef = useRef(true);
   const [documentVisible, setDocumentVisible] = useState(
     () => typeof document === 'undefined' || !document.hidden
@@ -154,8 +166,17 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     setLoadingMessage('Initializing...');
     setSelectedObject(null);
     setSelectedObjectState(null);
+    setUnitsCatalog(new Map());
     assetStatesRef.current.clear();
+    entityToObjectIdsRef.current.clear();
+    liveHydratedRef.current = false;
   }, [bluDesignFacilityId]);
+
+  useEffect(() => {
+    assetStatesRef.current.clear();
+    liveHydratedRef.current = false;
+    setUnitsCatalog(new Map());
+  }, [bluLokFacilityId]);
 
   // Safe state for rendering
   const safeState = useMemo(() => {
@@ -168,6 +189,28 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     };
   }, [state]);
 
+  const resolvedSkyPreset = normalizeSkyPreset(skyPreset);
+  const resolvedGroundPreset = normalizeGroundPreset(groundPreset);
+  const viewPresetsRef = useRef({
+    sky: resolvedSkyPreset,
+    ground: resolvedGroundPreset,
+  });
+  viewPresetsRef.current = {
+    sky: resolvedSkyPreset,
+    ground: resolvedGroundPreset,
+  };
+  /** Skip one live preset apply after initial load (already applied with progress). */
+  const skipNextLivePresetApplyRef = useRef(false);
+
+  const applyViewPresets = useCallback(async () => {
+    if (!engine || !isDataLoaded) return;
+    if (skipNextLivePresetApplyRef.current) {
+      skipNextLivePresetApplyRef.current = false;
+      return;
+    }
+    await applyViewerViewPresets(engine, resolvedSkyPreset, resolvedGroundPreset);
+  }, [engine, isDataLoaded, resolvedSkyPreset, resolvedGroundPreset]);
+
   // Load facility data when engine is ready
   useEffect(() => {
     if (!isEngineReady || !engine || isDataLoaded) return;
@@ -177,31 +220,52 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         setLoadingProgress(50);
         setLoadingMessage('Loading facility...');
         
-        const facility = await bludesignApi.getFacility(bluDesignFacilityId);
+        const facility =
+          prefetchedFacility ?? (await bludesignApi.getFacility(bluDesignFacilityId));
         
         if (!facility || !facility.data) {
           throw new Error('Facility data not found');
         }
 
-        setLoadingProgress(70);
+        setLoadingProgress(65);
         setLoadingMessage('Building scene...');
-        
-        // Hide grid in view-only mode (before and after import to ensure it stays hidden)
-        engine.getGridSystem()?.setVisible(false);
-        
-        // Import scene data (use async to pre-load any custom assets)
+
         await engine.importSceneDataAsync(facility.data);
-        
-        // Ensure grid stays hidden after import
-        engine.getGridSystem()?.setVisible(false);
-        
-        // Start in full building view mode
-        engine.toggleFullBuildingView();
-        
-        setLoadingProgress(90);
+
+        if (engine.getState().isFloorMode) {
+          engine.toggleFullBuildingView();
+        }
+
+        setLoadingProgress(68);
+        setLoadingMessage('Preparing view...');
+
+        await applyViewerViewPresets(
+          engine,
+          viewPresetsRef.current.sky,
+          viewPresetsRef.current.ground,
+          ({ progress, message }) => {
+            setLoadingProgress(progress);
+            setLoadingMessage(message);
+          }
+        );
+
+        const entityIndex = new Map<string, string[]>();
+        for (const obj of engine.getSceneManager().getAllPlacedObjects()) {
+          const entityId = obj.binding?.entityId;
+          if (!entityId) continue;
+          const list = entityIndex.get(entityId) ?? [];
+          list.push(obj.id);
+          entityIndex.set(entityId, list);
+        }
+        entityToObjectIdsRef.current = entityIndex;
+
+        setLoadingProgress(98);
         setLoadingMessage('Finalizing...');
 
+        // Brief moment at 100% so the overlay can show the success state.
         setLoadingProgress(100);
+        await new Promise((resolve) => setTimeout(resolve, 280));
+        skipNextLivePresetApplyRef.current = true;
         setIsDataLoaded(true);
         onReady?.();
         
@@ -214,45 +278,101 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     };
 
     loadFacility();
-  }, [isEngineReady, engine, bluDesignFacilityId, isDataLoaded, onReady, onError]);
+  }, [isEngineReady, engine, bluDesignFacilityId, isDataLoaded, onReady, onError, prefetchedFacility]);
 
-  // Subscribe to WebSocket for state updates
   useEffect(() => {
-    if (!bluLokFacilityId || !isDataLoaded) return;
+    void applyViewPresets();
+  }, [applyViewPresets]);
 
-    const subscriptionId = subscribe(
-      'facility_state_update',
-      (data: any) => {
-        // Filter by facility
-        if (data.facilityId !== bluLokFacilityId) return;
+  const applyObjectVisualState = useCallback(
+    (objectId: string, stateUpdate: ViewerSmartAssetState) => {
+      if (!engine || !applyEngineUpdatesRef.current) return;
 
-        // Update asset states
-        if (data.updates && Array.isArray(data.updates)) {
-          data.updates.forEach((update: SmartAssetState) => {
-            assetStatesRef.current.set(update.entityId, update);
+      const lockStatus =
+        stateUpdate.state === DeviceState.UNLOCKED
+          ? 'unlocked'
+          : stateUpdate.state === DeviceState.LOCKED
+            ? 'locked'
+            : stateUpdate.lockStatus;
 
-            if (applyEngineUpdatesRef.current) {
-              updateAssetVisualState(update);
-            }
+      engine.simulateObjectState?.(objectId, {
+        isSimulating: true,
+        simulatedState: stateUpdate.state,
+        simulatedLockStatus:
+          lockStatus === 'locked' || lockStatus === 'unlocked' ? lockStatus : undefined,
+      });
+    },
+    [engine],
+  );
 
-            // Update selected object state if it matches
-            if (selectedObject?.binding?.entityId === update.entityId) {
-              setSelectedObjectState(update);
-            }
-          });
-        }
-      },
-      (error) => {
-        console.error('WebSocket error:', error);
+  const updateAssetVisualState = useCallback(
+    (stateUpdate: ViewerSmartAssetState) => {
+      const objectIds = entityToObjectIdsRef.current.get(stateUpdate.entityId) ?? [];
+      for (const objectId of objectIds) {
+        applyObjectVisualState(objectId, stateUpdate);
       }
-    );
+    },
+    [applyObjectVisualState],
+  );
 
-    return () => {
-      if (subscriptionId) {
-        unsubscribe(subscriptionId);
-      }
+  const applyUnknownStateToUnmappedBindings = useCallback(() => {
+    if (!engine || !applyEngineUpdatesRef.current) return;
+
+    const unknownUpdate: ViewerSmartAssetState = {
+      entityId: '',
+      entityType: 'unit',
+      state: DeviceState.UNKNOWN,
     };
-  }, [bluLokFacilityId, isDataLoaded, subscribe, unsubscribe, selectedObject]);
+
+    for (const [entityId, objectIds] of entityToObjectIdsRef.current.entries()) {
+      if (assetStatesRef.current.has(entityId)) continue;
+      for (const objectId of objectIds) {
+        applyObjectVisualState(objectId, { ...unknownUpdate, entityId });
+      }
+    }
+  }, [engine, applyObjectVisualState]);
+
+  const applyLiveStateUpdates = useCallback(
+    (updates: ViewerSmartAssetState[]) => {
+      for (const update of updates) {
+        assetStatesRef.current.set(update.entityId, update);
+
+        if (applyEngineUpdatesRef.current) {
+          updateAssetVisualState(update);
+        }
+
+        if (selectedEntityIdRef.current === update.entityId) {
+          setSelectedObjectState(update);
+        }
+      }
+    },
+    [updateAssetVisualState],
+  );
+
+  const handleHydrationComplete = useCallback(() => {
+    liveHydratedRef.current = true;
+    applyUnknownStateToUnmappedBindings();
+  }, [applyUnknownStateToUnmappedBindings]);
+
+  const handleUnitsCatalog = useCallback((unitsById: Map<string, BluLokUnit>) => {
+    setUnitsCatalog(unitsById);
+  }, []);
+
+  useFacilityViewerLiveState({
+    bluLokFacilityId,
+    enabled: !!bluLokFacilityId && isDataLoaded,
+    onUpdates: applyLiveStateUpdates,
+    onUnitsCatalog: handleUnitsCatalog,
+    onHydrationComplete: handleHydrationComplete,
+  });
+
+  // Replay cached live states when rendering resumes after pause/hidden tab
+  useEffect(() => {
+    if (!shouldRunEngine || !isDataLoaded || !engine) return;
+    assetStatesRef.current.forEach((state) => {
+      updateAssetVisualState(state);
+    });
+  }, [shouldRunEngine, isDataLoaded, engine, updateAssetVisualState]);
 
   // Track container size for panel layout
   useEffect(() => {
@@ -276,27 +396,11 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     };
   }, []);
 
-  // Update visual state in engine for an asset
-  const updateAssetVisualState = useCallback((stateUpdate: SmartAssetState) => {
-    if (!engine || !applyEngineUpdatesRef.current) return;
-
-    const sceneManager = engine.getSceneManager();
-    const allObjects = sceneManager.getAllPlacedObjects();
-
-    // Find objects bound to this entity
-    allObjects.forEach(obj => {
-      if (obj.binding?.entityId === stateUpdate.entityId) {
-        // Update the object's visual state via simulation
-        engine.simulateObjectState?.(obj.id, {
-          isSimulating: true,
-          simulatedState: stateUpdate.state,
-          simulatedLockStatus: (stateUpdate.lockStatus === 'locked' || stateUpdate.lockStatus === 'unlocked') 
-            ? stateUpdate.lockStatus 
-            : 'locked',
-        });
-      }
-    });
-  }, [engine]);
+  const selectedUnitInfo = useMemo(() => {
+    const entityId = selectedObject?.binding?.entityId;
+    if (selectedObject?.binding?.entityType !== 'unit' || !entityId) return null;
+    return unitsCatalog.get(entityId) ?? null;
+  }, [selectedObject, unitsCatalog]);
 
   // Handle selection changes
   useEffect(() => {
@@ -310,8 +414,8 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
       
       if (obj) {
         setSelectedObject(obj);
+        selectedEntityIdRef.current = obj.binding?.entityId ?? null;
         
-        // Get live state if bound
         if (obj.binding?.entityId) {
           const liveState = assetStatesRef.current.get(obj.binding.entityId);
           setSelectedObjectState(liveState || null);
@@ -320,6 +424,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         }
       }
     } else {
+      selectedEntityIdRef.current = null;
       setSelectedObject(null);
       setSelectedObjectState(null);
     }
@@ -332,15 +437,18 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
 
   const handleFloorChange = useCallback((floor: number) => {
     engine?.setFloor(floor);
+    engine?.refreshGroundPlaneBounds();
   }, [engine]);
 
   const handleToggleFullView = useCallback(() => {
     engine?.toggleFullBuildingView();
+    engine?.refreshGroundPlaneBounds();
   }, [engine]);
 
   // Clear selection
   const handleClearSelection = useCallback(() => {
     engine?.getSelectionManager()?.clearSelection();
+    selectedEntityIdRef.current = null;
     setSelectedObject(null);
     setSelectedObjectState(null);
   }, [engine]);
@@ -348,6 +456,19 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   // Rotate camera
   const handleRotateCamera = useCallback((direction: 'cw' | 'ccw') => {
     engine?.rotateCameraView(direction);
+  }, [engine]);
+
+  const handleResetView = useCallback(() => {
+    if (engine?.restoreDefaultCamera(true)) {
+      return;
+    }
+    const cameraController = engine?.getCameraController();
+    const bounds = engine?.calculateSceneBounds();
+    if (cameraController && bounds) {
+      cameraController.frameAllContent(bounds, true);
+      return;
+    }
+    cameraController?.reset();
   }, [engine]);
 
   // Track camera mode
@@ -469,12 +590,8 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
           <ViewerPropertiesPanel
             selectedObject={selectedObject}
             onClose={handleClearSelection}
-            liveState={selectedObjectState ? {
-              state: selectedObjectState.state,
-              lockStatus: selectedObjectState.lockStatus,
-              batteryLevel: selectedObjectState.batteryLevel,
-              lastActivity: selectedObjectState.lastActivity,
-            } : undefined}
+            liveState={selectedObjectState ?? undefined}
+            unitInfo={selectedUnitInfo}
           />
 
           {/* Smart Objects Search Panel */}
@@ -497,6 +614,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
             onToggleFullView={handleToggleFullView}
             onRotateCamera={handleRotateCamera}
             onToggleCameraMode={handleToggleCameraMode}
+            onResetView={handleResetView}
             anchor={useExpandedChrome ? 'bottom-center' : 'bottom-right'}
           />
         </>

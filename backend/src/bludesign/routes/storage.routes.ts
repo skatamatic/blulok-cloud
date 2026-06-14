@@ -9,7 +9,14 @@ import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { createStorageProvider, validateStorageConfig } from '../services/storage';
+import {
+  getBluDesignStorageEnvFallback,
+  loadBluDesignStorageConfig,
+  redactBluDesignStorageConfig,
+  saveBluDesignStorageConfig,
+} from '../services/bludesign-storage.factory';
 import { StorageProviderType } from '../types/bludesign.types';
+import { validateBaseStorageConfig } from '@/services/storage';
 import { google } from 'googleapis';
 import { logger } from '@/utils/logger';
 
@@ -19,6 +26,73 @@ const router = Router();
 router.use(authenticateToken);
 // All storage config routes require ADMIN or DEV_ADMIN
 router.use(requireAdmin);
+
+/**
+ * GET /api/v1/bludesign/storage/config
+ * Get the current BluDesign storage configuration (secrets redacted)
+ */
+router.get('/config', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const dbConfig = await loadBluDesignStorageConfig();
+
+    if (!dbConfig) {
+      const fallback = getBluDesignStorageEnvFallback();
+      res.json({
+        success: true,
+        config: {
+          providerType: fallback.providerType,
+          providerConfig: fallback.providerConfig,
+          source: 'env_fallback',
+        },
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      config: {
+        providerType: dbConfig.providerType,
+        providerConfig: redactBluDesignStorageConfig(dbConfig.providerConfig),
+        source: 'database',
+      },
+    });
+  } catch (error: any) {
+    logger.error('Failed to read BluDesign storage config:', error);
+    res.status(500).json({ success: false, message: 'Failed to read storage config' });
+  }
+}));
+
+/**
+ * PUT /api/v1/bludesign/storage/config
+ * Update BluDesign storage configuration
+ */
+router.put('/config', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { providerType, providerConfig } = req.body;
+  if (!providerType || !providerConfig) {
+    res.status(400).json({ success: false, message: 'providerType and providerConfig are required' });
+    return;
+  }
+
+  const validTypes = [StorageProviderType.LOCAL, StorageProviderType.GCS, StorageProviderType.GDRIVE];
+  if (!validTypes.includes(providerType)) {
+    res.status(400).json({ success: false, message: `Invalid providerType. Must be one of: ${validTypes.join(', ')}` });
+    return;
+  }
+
+  const errors = validateBaseStorageConfig({ type: providerType, config: providerConfig });
+  if (errors.length > 0) {
+    res.status(400).json({ success: false, message: 'Validation failed', errors });
+    return;
+  }
+
+  try {
+    await saveBluDesignStorageConfig(providerType, providerConfig);
+    res.json({ success: true, message: 'BluDesign storage configuration updated' });
+  } catch (error: any) {
+    logger.error('Failed to save BluDesign storage config:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to save storage config' });
+  }
+}));
 
 /**
  * GET /api/v1/bludesign/storage/gdrive/auth-url

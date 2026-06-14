@@ -7,7 +7,8 @@
 import { DatabaseService } from '@/services/database.service';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '@/utils/logger';
-import { createStorageProvider, getDefaultStorageProvider, storageConfigForProject } from './storage';
+import { createStorageProvider, storageConfigForProject } from './storage';
+import { getBluDesignStorageProvider } from './bludesign-storage.factory';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
 
 // Types
@@ -413,7 +414,7 @@ export class AssetService {
           if (!isUsedElsewhere) {
             const globalModel = await this.getGlobalModel(asset.global_model_id);
             if (globalModel) {
-              const provider = getDefaultStorageProvider();
+              const provider = await getBluDesignStorageProvider();
               try {
                 await provider.deleteGlobalAsset(asset.global_model_id);
               } catch (storageError) {

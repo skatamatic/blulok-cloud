@@ -5,8 +5,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { EditableUnit } from '../../types';
 import type { BuildWizardController } from '../useBuildWizard';
-import {
-  medianUnitFootprintFeet,
+import { compareUnitsByLabel } from '../../unitLabelSort';
+import {  medianUnitFootprintFeet,
   metersPerPixelFromRatio,
   metersPerPixelFromUnit,
   type LengthUnit,
@@ -22,18 +22,32 @@ type Mode = 'unit' | 'ratio';
 
 export const ScaleStep: React.FC<Props> = ({ units, controller, isDark }) => {
   const labeled = useMemo(() => units.filter((u) => u.kind === 'unit' || u.label), [units]);
+  const sortedLabeled = useMemo(() => {
+    const order = new Map<string, number>();
+    labeled.forEach((u, i) => order.set(u.id, i));
+    return [...labeled].sort((a, b) => compareUnitsByLabel(a, b, order));
+  }, [labeled]);
   const [mode, setMode] = useState<Mode>('unit');
   const [lengthUnit, setLengthUnit] = useState<LengthUnit>('ft');
 
-  const [unitId, setUnitId] = useState<string>(labeled[0]?.id ?? '');
+  const [unitId, setUnitId] = useState<string>(sortedLabeled[0]?.id ?? '');
   const [realWidth, setRealWidth] = useState<string>('10');
   const [realDepth, setRealDepth] = useState<string>('20');
 
   const [pixelLength, setPixelLength] = useState<string>('100');
   const [realLength, setRealLength] = useState<string>('20');
 
-  const selectedUnit = labeled.find((u) => u.id === unitId);
+  const selectedUnit = sortedLabeled.find((u) => u.id === unitId);
 
+  useEffect(() => {
+    if (sortedLabeled.length === 0) {
+      setUnitId('');
+      return;
+    }
+    if (!sortedLabeled.some((u) => u.id === unitId)) {
+      setUnitId(sortedLabeled[0].id);
+    }
+  }, [sortedLabeled, unitId]);
   useEffect(() => {
     let mpp = 0;
     if (mode === 'unit' && selectedUnit) {
@@ -106,14 +120,13 @@ export const ScaleStep: React.FC<Props> = ({ units, controller, isDark }) => {
           <div className="col-span-3">
             <label className={labelCls}>Reference unit</label>
             <select className={inputCls} value={unitId} onChange={(e) => setUnitId(e.target.value)}>
-              {labeled.map((u) => (
+              {sortedLabeled.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.label || `(unlabeled ${u.id.slice(0, 4)})`} — {Math.round(u.bounds.width)}×
+                  {u.label ? `Unit ${u.label}` : `Unit #${u.id.slice(0, 4)}`} — {Math.round(u.bounds.width)}×
                   {Math.round(u.bounds.height)} px
                 </option>
               ))}
-            </select>
-          </div>
+            </select>          </div>
           <div>
             <label className={labelCls}>Real width ({lengthUnit})</label>
             <input className={inputCls} type="number" value={realWidth} onChange={(e) => setRealWidth(e.target.value)} />

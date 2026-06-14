@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { FacilitySummary } from '@/components/bludesign/core/types';
 import { getFacilities, deleteFacility } from '@/api/bludesign';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 
 export interface LoadDialogProps {
   isOpen: boolean;
@@ -42,6 +43,7 @@ export const LoadDialog: React.FC<LoadDialogProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [loadingFacilityId, setLoadingFacilityId] = useState<string | null>(null);
   const [deletingFacilityId, setDeletingFacilityId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   // Reset loading states when dialog opens
   useEffect(() => {
@@ -109,12 +111,15 @@ export const LoadDialog: React.FC<LoadDialogProps> = ({
     }
   }, [onLoad]);
 
-  const handleDelete = useCallback(async (e: React.MouseEvent, id: string, name: string) => {
+  const handleDelete = useCallback((e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation();
-    
-    if (!confirm(`Delete "${name}"? This action cannot be undone.`)) {
-      return;
-    }
+    setPendingDelete({ id, name });
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+    const { id } = pendingDelete;
+    setPendingDelete(null);
 
     try {
       setDeletingFacilityId(id);
@@ -126,7 +131,7 @@ export const LoadDialog: React.FC<LoadDialogProps> = ({
     } finally {
       setDeletingFacilityId(null);
     }
-  }, []);
+  }, [pendingDelete]);
 
   const handleClose = useCallback(() => {
     if (!loadingFacilityId) {
@@ -137,6 +142,7 @@ export const LoadDialog: React.FC<LoadDialogProps> = ({
   if (!isOpen) return null;
 
   return (
+    <>
     <div
       className="fixed inset-0 z-[100000] flex items-center justify-center p-4"
       onClick={handleClose}
@@ -313,6 +319,22 @@ export const LoadDialog: React.FC<LoadDialogProps> = ({
         </div>
       </div>
     </div>
+
+    <ConfirmDialog
+      isOpen={pendingDelete != null}
+      title="Delete facility?"
+      message={
+        pendingDelete
+          ? `Delete "${pendingDelete.name}"? This action cannot be undone.`
+          : ''
+      }
+      confirmLabel="Delete"
+      cancelLabel="Cancel"
+      confirmTone="danger"
+      onConfirm={() => void confirmDelete()}
+      onCancel={() => setPendingDelete(null)}
+    />
+    </>
   );
 };
 

@@ -20,6 +20,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { Theme, getThemeManager } from '../../core/ThemeManager';
 import { getSkinRegistry } from '../../core/SkinRegistry';
 import { ThemeEditorDialog } from '../dialogs/ThemeEditorDialog';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { BuildingSkinType } from '../../core/types';
 
 export const ThemeManagementPanel: React.FC = () => {
@@ -34,6 +35,7 @@ export const ThemeManagementPanel: React.FC = () => {
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
   const [baseThemeId, setBaseThemeId] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pendingDeleteThemeId, setPendingDeleteThemeId] = useState<string | null>(null);
   
   // Load themes
   const refreshThemes = useCallback(() => {
@@ -82,14 +84,18 @@ export const ThemeManagementPanel: React.FC = () => {
   }, []);
   
   const handleDeleteTheme = useCallback((themeId: string) => {
-    if (confirm('Delete this custom theme? This cannot be undone.')) {
-      themeManager.deleteSkinTheme(themeId);
-      refreshThemes();
-      if (selectedTheme?.id === themeId) {
-        setSelectedTheme(null);
-      }
+    setPendingDeleteThemeId(themeId);
+  }, []);
+
+  const confirmDeleteTheme = useCallback(() => {
+    if (!pendingDeleteThemeId) return;
+    themeManager.deleteSkinTheme(pendingDeleteThemeId);
+    refreshThemes();
+    if (selectedTheme?.id === pendingDeleteThemeId) {
+      setSelectedTheme(null);
     }
-  }, [themeManager, selectedTheme, refreshThemes]);
+    setPendingDeleteThemeId(null);
+  }, [pendingDeleteThemeId, themeManager, selectedTheme, refreshThemes]);
   
   const handleSaveTheme = useCallback((theme: Theme) => {
     if (editingThemeId) {
@@ -278,6 +284,17 @@ export const ThemeManagementPanel: React.FC = () => {
           setBaseThemeId(undefined);
         }}
         onSave={handleSaveTheme}
+      />
+
+      <ConfirmDialog
+        isOpen={pendingDeleteThemeId != null}
+        title="Delete theme?"
+        message="Delete this custom theme? This cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmTone="danger"
+        onConfirm={confirmDeleteTheme}
+        onCancel={() => setPendingDeleteThemeId(null)}
       />
     </div>
   );

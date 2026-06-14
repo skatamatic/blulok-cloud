@@ -19,7 +19,11 @@ import { LockStatusWidget } from '@/components/Widget/LockStatusWidget';
 import { FacilityViewerWidget } from '@/components/Widget/FacilityViewerWidget';
 import { DailyAccessCodesWidget } from '@/components/Widget/DailyAccessCodesWidget';
 import { UnitsManagerWidget } from '@/components/Widget/UnitsManagerWidget';
-import { WidgetSize } from '@/types/widget.types';
+import { WidgetSize, DEFAULT_FACILITY_VIEWER_CONFIG, type FacilityViewerWidgetConfig } from '@/types/widget.types';
+import {
+  normalizeGroundPreset,
+  normalizeSkyPreset,
+} from '@/components/bludesign/core/environment';
 import { WidgetInstance } from '@/types/widget-management.types';
 import { getWidgetType } from '@/config/widgetRegistry';
 import { ScopedGeneralStatsData } from '@/types/dashboard.types';
@@ -35,6 +39,10 @@ export interface DashboardWidgetRendererProps {
   statsLoading: boolean;
   statsError: string | null;
   onSizeChange: (widgetId: string, size: WidgetSize) => void;
+  onWidgetConfigChange?: (
+    widgetId: string,
+    updater: (prev: Record<string, unknown>) => Record<string, unknown>
+  ) => void;
   onRemove?: (widgetId: string) => void;
   onFullscreenToggle?: (widgetId: string) => void;
   isFullscreen?: boolean;
@@ -53,6 +61,7 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
   statsLoading,
   statsError,
   onSizeChange,
+  onWidgetConfigChange,
   onRemove,
   onFullscreenToggle,
   isFullscreen = false,
@@ -207,10 +216,14 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
         />
       );
     case 'facility-viewer': {
-      const viewerConfig = (widget.config ?? {}) as {
+      const rawConfig = (widget.config ?? {}) as FacilityViewerWidgetConfig & {
         bluDesignFacilityId?: string;
         bluLokFacilityId?: string;
         facilityName?: string;
+      };
+      const viewerConfig = {
+        ...DEFAULT_FACILITY_VIEWER_CONFIG,
+        ...rawConfig,
       };
       return (
         <FacilityViewerWidget
@@ -219,6 +232,18 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
           bluLokFacilityId={viewerConfig.bluLokFacilityId}
           facilityName={viewerConfig.facilityName}
           isRenderActive={facilityViewerRenderActive}
+          skyPreset={normalizeSkyPreset(viewerConfig.skyPreset)}
+          groundPreset={normalizeGroundPreset(viewerConfig.groundPreset)}
+          editable={layoutEditable}
+          onConfigChange={
+            layoutEditable && onWidgetConfigChange
+              ? (patch) =>
+                  onWidgetConfigChange(widget.id, (prev) => ({
+                    ...prev,
+                    ...patch,
+                  }))
+              : undefined
+          }
         />
       );
     }

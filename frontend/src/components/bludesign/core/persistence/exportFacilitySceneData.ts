@@ -1,6 +1,6 @@
 import type { LayoutImportMetadata } from '../../layout-import/layoutImportMetadata';
 import { attachLayoutImportToFacilityData } from '../../layout-import/layoutImportMetadata';
-import type { EditorState } from '../types';
+import type { EditorState, SerializedCameraState } from '../types';
 import type {
   Building,
   DataSourceConfig,
@@ -13,6 +13,7 @@ import {
   serializeBuildingForFacility,
   serializePlacedObjectForFacility,
 } from '../serialization/facilitySerialization';
+import { serializeCameraState } from '../camera/cameraStateUtils';
 import { getThemeManager } from '../ThemeManager';
 
 export type ExportFacilitySceneDataInput = {
@@ -21,6 +22,7 @@ export type ExportFacilitySceneDataInput = {
   buildings: Building[];
   dataSourceConfig: DataSourceConfig | null;
   layoutImport?: LayoutImportMetadata | null;
+  defaultCamera?: SerializedCameraState | null;
 };
 
 /**
@@ -31,21 +33,7 @@ export function exportFacilitySceneData(input: ExportFacilitySceneDataInput): Fa
     serializePlacedObjectForFacility(obj)
   );
 
-  const camera = {
-    mode: input.state.camera.mode,
-    isometricAngle: input.state.camera.isometricAngle,
-    position: {
-      x: Math.round(input.state.camera.position.x * 100) / 100,
-      y: Math.round(input.state.camera.position.y * 100) / 100,
-      z: Math.round(input.state.camera.position.z * 100) / 100,
-    },
-    target: {
-      x: Math.round(input.state.camera.target.x * 100) / 100,
-      y: Math.round(input.state.camera.target.y * 100) / 100,
-      z: Math.round(input.state.camera.target.z * 100) / 100,
-    },
-    zoom: Math.round(input.state.camera.zoom * 100) / 100,
-  };
+  const camera = serializeCameraState(input.state.camera);
 
   const activeSkins = buildActiveSkinsRecordFromPlacedObjects(input.placedObjects);
   const activeThemeId = getThemeManager().getActiveThemeId();
@@ -54,7 +42,8 @@ export function exportFacilitySceneData(input: ExportFacilitySceneDataInput): Fa
   const base: FacilityData = {
     name: '',
     version: '2.0.0',
-    camera: camera as FacilityData['camera'],
+    camera,
+    ...(input.defaultCamera ? { defaultCamera: input.defaultCamera } : {}),
     placedObjects: serializedObjects,
     buildings: serializedBuildings,
     activeFloor: input.state.activeFloor,

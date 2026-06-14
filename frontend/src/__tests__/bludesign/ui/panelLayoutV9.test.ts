@@ -26,6 +26,8 @@ function minimalDefaults(): PanelLayoutStateV9 {
     datasource: base(7, 7),
     smartobjects: base(8, 8),
     buildingSkin: base(9, 9),
+    defaultCamera: { ...base(10, 10), visible: false },
+    importPlan: { ...base(11, 11), visible: false, width: 360, height: 320 },
     docks: {
       left: defaultDockSideState(),
       right: defaultDockSideState(),
@@ -45,7 +47,7 @@ describe('panelLayoutV9', () => {
     expect(merged.tools.placement).toBe('float');
     expect(merged.tools.x).toBe(10);
     expect(merged.tools.y).toBe(20);
-    expect(ALL_PANEL_IDS.length).toBe(9);
+    expect(ALL_PANEL_IDS.length).toBe(11);
   });
 
   it('dockPanel sets placement and panelIds', () => {

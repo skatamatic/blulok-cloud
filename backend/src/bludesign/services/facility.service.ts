@@ -9,6 +9,7 @@
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { NotFoundError } from '@/middleware/error.middleware';
+import { logger } from '@/utils/logger';
 import { FacilityStorageAdapter } from './facility-storage.adapter';
 import { AssetService } from './asset.service';
 import { extractFacilityAssetIds, countAssetPlacementsInFacility } from './facilityAssetUsage';
@@ -17,6 +18,8 @@ export interface FacilityData {
   name: string;
   version: string;
   camera: unknown;
+  /** Optional saved home camera — restored on facility load. */
+  defaultCamera?: unknown;
   placedObjects: unknown[];
   gridSize: number;
   showGrid: boolean;
@@ -100,6 +103,7 @@ export class FacilityService {
     name: string,
     data: FacilityData,
     thumbnail?: string,
+    copyLayoutSourceFrom?: string,
   ): Promise<Facility> {
     const id = uuidv4();
     const now = new Date();
@@ -117,6 +121,10 @@ export class FacilityService {
     await this.db('bludesign_user_facilities').insert(dbRecord);
     await this.storage.saveData(userId, id, data);
     await AssetService.incrementFacilityUsage(extractFacilityAssetIds(data));
+
+    if (copyLayoutSourceFrom) {
+      await this.copyLayoutSourceBetweenFacilities(copyLayoutSourceFrom, id, userId);
+    }
 
     return {
       id,
@@ -218,6 +226,35 @@ export class FacilityService {
       throw new NotFoundError('Facility');
     }
     return this.storage.loadLayoutSource(userId, id);
+  }
+
+  /**
+   * Copy layout-source.png from an existing facility into a newly saved one.
+   * Skips silently when the source has no plan file (metadata-only copies still succeed).
+   */
+  async copyLayoutSourceBetweenFacilities(
+    sourceFacilityId: string,
+    targetFacilityId: string,
+    userId: string,
+  ): Promise<void> {
+    const source = await this.getFacility(sourceFacilityId, userId);
+    if (!source) {
+      throw new NotFoundError('Facility');
+    }
+
+    const target = await this.getFacility(targetFacilityId, userId);
+    if (!target) {
+      throw new NotFoundError('Facility');
+    }
+
+    try {
+      await this.storage.copyLayoutSource(userId, sourceFacilityId, targetFacilityId);
+    } catch (error) {
+      logger.warn(
+        `Layout source copy skipped (${sourceFacilityId} → ${targetFacilityId}):`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   async updateLastOpened(id: string, userId: string): Promise<void> {

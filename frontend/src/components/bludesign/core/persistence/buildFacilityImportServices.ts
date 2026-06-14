@@ -42,23 +42,7 @@ export function createFacilityImportServices(host: FacilityImportHost): Facility
     },
     resetWorkingGridAlignment: () => host.resetWorkingGridAlignment(),
     restoreCamera: (camera) => {
-      const state = host.getState();
-      state.camera = {
-        ...state.camera,
-        mode: camera.mode,
-        isometricAngle: camera.isometricAngle,
-        position: new THREE.Vector3(
-          camera.position.x,
-          camera.position.y,
-          camera.position.z
-        ),
-        target: new THREE.Vector3(camera.target.x, camera.target.y, camera.target.z),
-        zoom: camera.zoom,
-      };
-      host.cameraController.setMode(camera.mode);
-      if (camera.mode === CameraMode.ISOMETRIC) {
-        host.cameraController.setIsometricAngle(camera.isometricAngle);
-      }
+      host.cameraController.applySavedState(camera, false);
     },
     restoreBuilding: (id, footprints, floors, name) => {
       host.buildingManager.restoreBuilding(id, footprints, floors, name);

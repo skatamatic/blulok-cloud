@@ -1,0 +1,17 @@
+{
+  "watch": ["src"],
+  "ext": "ts",
+  "ignore": [
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "data/**",
+    "../data/**",
+    "logs/**",
+    "storage/**",
+    "test-storage/**",
+    "test-bludesign-storage/**",
+    "dist/**",
+    "coverage/**"
+  ]
+}

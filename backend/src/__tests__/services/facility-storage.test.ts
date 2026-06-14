@@ -126,5 +126,21 @@ describe('FacilityStorageAdapter', () => {
         'path traversal',
       );
     });
+
+    it('should copy layout source between facility folders', async () => {
+      const png = Buffer.from('fake-png');
+      mockBase.downloadFile.mockResolvedValue(png);
+
+      await adapter.copyLayoutSource('user-1', 'fac-source', 'fac-target');
+
+      expect(mockBase.downloadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-source/layout-source.png',
+      );
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-target/layout-source.png',
+        png,
+        'image/png',
+      );
+    });
   });
 });

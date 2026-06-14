@@ -12,6 +12,7 @@ export default {
     '^pdfjs-dist/build/pdf\\.worker\\.min\\.mjs\\?url$': '<rootDir>/src/test/mocks/pdfjs-worker-url.js',
     '^three/examples/jsm/renderers/CSS2DRenderer\\.js$': '<rootDir>/src/test/mocks/three-examples.js',
     '^three/examples/jsm/controls/OrbitControls\\.js$': '<rootDir>/src/test/mocks/three-orbit-controls.js',
+    '^three/examples/jsm/objects/Sky\\.js$': '<rootDir>/src/test/mocks/three-sky.js',
     '^three/examples/jsm/loaders/(.*)$': '<rootDir>/src/test/mocks/three-loaders.js',
   },
   transformIgnorePatterns: [

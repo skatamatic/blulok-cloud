@@ -6,11 +6,14 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowPathIcon,
+  EyeIcon,
+  EyeSlashIcon,
+} from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
 import * as bludesignApi from '@/api/bludesign';
 import {
-  DeviceState,
   type PlacedObject,
   type Building,
 } from '../core/types';
@@ -20,25 +23,22 @@ import {
 } from '../layout-import/ImportedLayoutViewer';
 import {
   buildViewerPlacedObjects,
-  hasLayoutImport,
+  getLayoutImportFromFacility,
   layoutImportToEditableUnits,
   resolveLiveUnitColor,
   type LayoutImportMetadata,
+  type LiveUnitTelemetry,
 } from '../layout-import/layoutImportMetadata';
 import type { FacilityResponse } from '@/api/bludesign';
+import { fetchLayoutSourceObjectUrl } from '@/api/bludesign';
 import { ViewerLoadingOverlay } from './ViewerLoadingOverlay';
 import { ViewerPropertiesPanel } from './ViewerPropertiesPanel';
 import { ViewerSmartObjectsPanel } from './ViewerSmartObjectsPanel';
+import { ViewerLiveStateLegend } from './ViewerLiveStateLegend';
 import { shouldUseExpandedViewerChrome } from './viewer-layout.utils';
-
-interface SmartAssetState {
-  entityId: string;
-  entityType: 'unit' | 'gate' | 'elevator' | 'door';
-  state: DeviceState;
-  lockStatus?: string;
-  batteryLevel?: number;
-  lastActivity?: string;
-}
+import { useFacilityViewerLiveState } from './useFacilityViewerLiveState';
+import { type ViewerSmartAssetState } from './viewerLiveState';
+import type { BluLokUnit } from '@/api/bludesign';
 
 interface FacilityViewer2DProps {
   bluDesignFacilityId: string;
@@ -60,23 +60,30 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
-  const { subscribe, unsubscribe } = useWebSocket();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<ImportedLayoutViewerHandle>(null);
-  const assetStatesRef = useRef<Map<string, SmartAssetState>>(new Map());
+  const assetStatesRef = useRef<Map<string, ViewerSmartAssetState>>(new Map());
   const selectedEntityIdRef = useRef<string | null>(null);
 
   const [layoutImport, setLayoutImport] = useState<LayoutImportMetadata | null>(null);
   const [placedObjects, setPlacedObjects] = useState<PlacedObject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedState, setSelectedState] = useState<SmartAssetState | null>(null);
+  const [selectedState, setSelectedState] = useState<ViewerSmartAssetState | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [containerHeight, setContainerHeight] = useState(0);
   const [containerWidth, setContainerWidth] = useState(0);
   const [stateVersion, setStateVersion] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [planImageUrl, setPlanImageUrl] = useState<string | null>(null);
+  const [planImageLoading, setPlanImageLoading] = useState(false);
+  const [planImageError, setPlanImageError] = useState<string | null>(null);
+  const [planImageAttempt, setPlanImageAttempt] = useState(0);
+  const [showPlanImage, setShowPlanImage] = useState(false);
+  const [liveHydrated, setLiveHydrated] = useState(false);
+  const [unitsCatalog, setUnitsCatalog] = useState<Map<string, BluLokUnit>>(new Map());
+  const planImageUrlRef = useRef<string | null>(null);
 
   const units = useMemo(
     () => (layoutImport ? layoutImportToEditableUnits(layoutImport) : []),
@@ -105,10 +112,11 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
 
   const applyFacility = useCallback(
     (facility: FacilityResponse) => {
-      if (!hasLayoutImport(facility.data)) {
+      const meta = getLayoutImportFromFacility(facility.data);
+      if (!meta) {
         throw new Error('This facility has no import layout data');
       }
-      const meta = facility.data.layoutImport;
+      facility.data.layoutImport = meta;
       setLayoutImport(meta);
       setPlacedObjects(buildViewerPlacedObjects(facility.data.placedObjects, meta));
     },
@@ -122,6 +130,8 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
     setSelectedId(null);
     setSelectedState(null);
     assetStatesRef.current.clear();
+    setLiveHydrated(false);
+    setUnitsCatalog(new Map());
 
     let cancelled = false;
 
@@ -152,30 +162,99 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
     setLoadAttempt((n) => n + 1);
   }, []);
 
+  const applyLiveStateUpdates = useCallback((updates: ViewerSmartAssetState[]) => {
+    for (const update of updates) {
+      assetStatesRef.current.set(update.entityId, update);
+      if (selectedEntityIdRef.current === update.entityId) {
+        setSelectedState(update);
+      }
+    }
+    setStateVersion((v) => v + 1);
+  }, []);
+
+  const handleHydrationComplete = useCallback(() => {
+    setLiveHydrated(true);
+    setStateVersion((v) => v + 1);
+  }, []);
+
+  const selectedUnitInfo = useMemo(() => {
+    const entityId = selectedObject?.binding?.entityId;
+    if (selectedObject?.binding?.entityType !== 'unit' || !entityId) return null;
+    return unitsCatalog.get(entityId) ?? null;
+  }, [selectedObject, unitsCatalog]);
+
+  const handleUnitsCatalog = useCallback((unitsById: Map<string, BluLokUnit>) => {
+    setUnitsCatalog(unitsById);
+  }, []);
+
+  useFacilityViewerLiveState({
+    bluLokFacilityId,
+    enabled: !!bluLokFacilityId && !loading && !loadError,
+    onUpdates: applyLiveStateUpdates,
+    onUnitsCatalog: handleUnitsCatalog,
+    onHydrationComplete: handleHydrationComplete,
+  });
+
   useEffect(() => {
-    if (!bluLokFacilityId || loading || loadError) return;
+    setLiveHydrated(false);
+    setUnitsCatalog(new Map());
+  }, [bluLokFacilityId]);
 
-    const subscriptionId = subscribe(
-      'facility_state_update',
-      (data: { facilityId?: string; updates?: SmartAssetState[] }) => {
-        if (data.facilityId !== bluLokFacilityId) return;
-        if (!data.updates?.length) return;
+  useEffect(() => {
+    if (!layoutImport || loading || loadError || !showPlanImage) {
+      if (!showPlanImage && planImageUrlRef.current) {
+        URL.revokeObjectURL(planImageUrlRef.current);
+        planImageUrlRef.current = null;
+        setPlanImageUrl(null);
+      }
+      if (!showPlanImage) {
+        setPlanImageLoading(false);
+        setPlanImageError(null);
+      }
+      return;
+    }
 
-        data.updates.forEach((update) => {
-          assetStatesRef.current.set(update.entityId, update);
-          if (selectedEntityIdRef.current === update.entityId) {
-            setSelectedState(update);
-          }
-        });
-        setStateVersion((v) => v + 1);
-      },
-      (error) => console.error('WebSocket error:', error)
-    );
+    let cancelled = false;
+    setPlanImageLoading(true);
+    setPlanImageError(null);
+
+    void fetchLayoutSourceObjectUrl(bluDesignFacilityId)
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        if (planImageUrlRef.current) {
+          URL.revokeObjectURL(planImageUrlRef.current);
+        }
+        planImageUrlRef.current = url;
+        setPlanImageUrl(url);
+        setPlanImageError(null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPlanImageUrl(null);
+          setPlanImageError('Import plan image unavailable');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPlanImageLoading(false);
+      });
 
     return () => {
-      if (subscriptionId) unsubscribe(subscriptionId);
+      cancelled = true;
     };
-  }, [bluLokFacilityId, loading, loadError, subscribe, unsubscribe]);
+  }, [bluDesignFacilityId, layoutImport, loading, loadError, planImageAttempt, showPlanImage]);
+
+  useEffect(
+    () => () => {
+      if (planImageUrlRef.current) {
+        URL.revokeObjectURL(planImageUrlRef.current);
+        planImageUrlRef.current = null;
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -194,9 +273,17 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
     (unitId: string) => {
       const entityId = bindingByObjectId.get(unitId);
       const live = entityId ? assetStatesRef.current.get(entityId) : undefined;
-      return resolveLiveUnitColor(live?.state, live?.lockStatus);
+
+      let telemetry: LiveUnitTelemetry = 'live';
+      if (!entityId) {
+        telemetry = 'unbound';
+      } else if (!live) {
+        telemetry = liveHydrated ? 'no-signal' : 'pending';
+      }
+
+      return resolveLiveUnitColor(live?.state, live?.lockStatus, 0.55, telemetry);
     },
-    [bindingByObjectId, stateVersion]
+    [bindingByObjectId, stateVersion, liveHydrated]
   );
 
   const handleSelect = useCallback(
@@ -265,12 +352,72 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
 
       {layoutImport && !loading && !loadError && (
         <>
+          <div
+            className={`absolute top-3 left-3 z-20 flex items-center gap-1 rounded-lg border backdrop-blur-md shadow-sm ${
+              isDark ? 'bg-gray-900/85 border-gray-700' : 'bg-white/90 border-gray-200'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setShowPlanImage((v) => !v)}
+              aria-label={showPlanImage ? 'Hide plan image' : 'Show plan image'}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+                isDark ? 'text-gray-200 hover:bg-gray-800' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              {showPlanImage ? (
+                <EyeIcon className="w-3.5 h-3.5" />
+              ) : (
+                <EyeSlashIcon className="w-3.5 h-3.5" />
+              )}
+              {showPlanImage ? 'Hide plan image' : 'Show plan image'}
+            </button>
+            {planImageError && showPlanImage && (
+              <button
+                type="button"
+                onClick={() => setPlanImageAttempt((n) => n + 1)}
+                aria-label="Retry loading plan image"
+                className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors ${
+                  isDark ? 'text-error-400 hover:bg-gray-800' : 'text-error-600 hover:bg-gray-100'
+                }`}
+              >
+                <ArrowPathIcon className="w-3.5 h-3.5" />
+                Retry
+              </button>
+            )}
+          </div>
+
+          {planImageLoading && showPlanImage && (
+            <div
+              className={`absolute top-14 left-3 z-20 rounded-lg px-3 py-1.5 text-xs backdrop-blur-md border ${
+                isDark ? 'bg-gray-900/85 border-gray-700 text-gray-300' : 'bg-white/90 border-gray-200 text-gray-600'
+              }`}
+            >
+              Loading plan image…
+            </div>
+          )}
+
+          {planImageError && showPlanImage && !planImageLoading && (
+            <div
+              className={`absolute top-14 left-3 z-20 rounded-lg px-3 py-1.5 text-xs backdrop-blur-md border ${
+                isDark ? 'bg-amber-900/40 border-amber-700/60 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'
+              }`}
+            >
+              {planImageError}. Vector overlay still available.
+            </div>
+          )}
+
+          <ViewerLiveStateLegend
+            className={`absolute z-20 ${useExpandedChrome ? 'bottom-20 left-3' : 'bottom-16 right-3 max-w-[min(100%,20rem)]'}`}
+          />
+
           <ImportedLayoutViewer
             ref={viewerRef}
             imageWidth={layoutImport.imageWidth}
             imageHeight={layoutImport.imageHeight}
             units={units}
-            showImage={false}
+            imageUrl={planImageUrl}
+            showImage={showPlanImage && !!planImageUrl}
             showLabels
             selectedIds={selectedIds}
             getUnitColor={getUnitColor}
@@ -281,16 +428,8 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
           <ViewerPropertiesPanel
             selectedObject={selectedObject}
             onClose={handleClearSelection}
-            liveState={
-              selectedState
-                ? {
-                    state: selectedState.state,
-                    lockStatus: selectedState.lockStatus,
-                    batteryLevel: selectedState.batteryLevel,
-                    lastActivity: selectedState.lastActivity,
-                  }
-                : undefined
-            }
+            liveState={selectedState ?? undefined}
+            unitInfo={selectedUnitInfo}
           />
 
           <ViewerSmartObjectsPanel

@@ -9,6 +9,7 @@ import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
+import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import {
@@ -141,6 +142,7 @@ const defaultAccessHistoryDateFilters = (): Pick<FilterState, 'date_from' | 'dat
 
 export default function AccessHistoryPage() {
   const { authState } = useAuth();
+  const { addToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -446,8 +448,11 @@ export default function AccessHistoryPage() {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Failed to export data:', error);
-      // You could add a toast notification here
-      alert('Failed to export data. Please try again.');
+      addToast({
+        type: 'error',
+        title: 'Export failed',
+        message: 'Failed to export data. Please try again.',
+      });
     } finally {
       setLoading(false);
       setShowExportDropdown(false);

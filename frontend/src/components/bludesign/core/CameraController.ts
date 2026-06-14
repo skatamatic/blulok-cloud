@@ -11,6 +11,7 @@ import {
   CameraMode,
   CameraState,
   IsometricAngle,
+  SerializedCameraState,
 } from './types';
 
 export class CameraController {
@@ -42,7 +43,13 @@ export class CameraController {
   private isometricHeight: number = 35; // Shallower angle - closer to ground
   private baseIsometricDistance: number = 100;
   private baseIsometricHeight: number = 35;
+  private static readonly BASE_ORTHO_FRUSTUM = 35;
   
+  // Ground clamp — prevent orbiting/zooming through the floor when no basement exists
+  private groundClampEnabled = false;
+  private minGroundY = 0;
+  private groundClearance = 1.5;
+
   // Callbacks
   private onStateChange: (state: CameraState) => void;
 
@@ -111,6 +118,45 @@ export class CameraController {
     
     if (this.mode === CameraMode.FREE) {
       this.controls.update();
+    }
+
+    this.enforceGroundClamp();
+  }
+
+  /**
+   * When enabled, keeps the camera above {@link minGroundY} so users cannot clip through
+   * the ground plane. Disabled when the facility has basement floors (negative levels).
+   */
+  setGroundClamp(options: {
+    enabled: boolean;
+    minGroundY?: number;
+    clearance?: number;
+  }): void {
+    this.groundClampEnabled = options.enabled;
+    if (options.minGroundY !== undefined) {
+      this.minGroundY = options.minGroundY;
+    }
+    if (options.clearance !== undefined) {
+      this.groundClearance = options.clearance;
+    }
+    if (this.groundClampEnabled) {
+      this.enforceGroundClamp();
+    }
+  }
+
+  private enforceGroundClamp(): void {
+    if (!this.groundClampEnabled) return;
+
+    const minY = this.minGroundY + this.groundClearance;
+    const pos = this.activeCamera.position;
+    if (pos.y >= minY) return;
+
+    pos.y = minY;
+
+    if (this.mode === CameraMode.FREE) {
+      this.camera.position.y = minY;
+    } else {
+      this.orthographicCamera.position.y = minY;
     }
   }
 
@@ -329,6 +375,8 @@ export class CameraController {
     
     this.activeCamera.lookAt(this.controls.target);
     
+    this.enforceGroundClamp();
+
     if (!this.isTransitioning) {
       this.transitionStart = null;
       this.transitionEnd = null;
@@ -353,6 +401,7 @@ export class CameraController {
       const direction = new THREE.Vector3();
       this.camera.getWorldDirection(direction);
       this.camera.position.addScaledVector(direction, factor);
+      this.enforceGroundClamp();
     } else {
       // Adjust orthographic zoom
       const frustumSize = 50 / factor;
@@ -490,6 +539,94 @@ export class CameraController {
         this.camera.lookAt(center);
       }
     }
+  }
+
+  /**
+   * Snapshot the live camera (including recent orbit/pan input).
+   */
+  getCurrentCameraState(): CameraState {
+    let zoom = 1;
+    if (this.mode === CameraMode.ISOMETRIC) {
+      const frustumHalfHeight = this.orthographicCamera.top;
+      if (frustumHalfHeight > 0) {
+        zoom = CameraController.BASE_ORTHO_FRUSTUM / frustumHalfHeight;
+      }
+    }
+
+    return {
+      mode: this.mode,
+      isometricAngle: this.isometricAngle,
+      position: this.activeCamera.position.clone(),
+      target: this.controls.target.clone(),
+      zoom,
+    };
+  }
+
+  private syncIsometricOrbitFromPosition(
+    position: THREE.Vector3,
+    target: THREE.Vector3
+  ): void {
+    const offset = position.clone().sub(target);
+    this.isometricHeight = offset.y;
+    this.isometricDistance = Math.max(Math.hypot(offset.x, offset.z), 1);
+  }
+
+  private applyOrthographicZoom(zoom: number): void {
+    const safeZoom = Math.max(zoom, 0.05);
+    const frustumSize = CameraController.BASE_ORTHO_FRUSTUM / safeZoom;
+    const aspect = this.container.clientWidth / this.container.clientHeight;
+    this.orthographicCamera.left = -frustumSize * aspect;
+    this.orthographicCamera.right = frustumSize * aspect;
+    this.orthographicCamera.top = frustumSize;
+    this.orthographicCamera.bottom = -frustumSize;
+    this.orthographicCamera.updateProjectionMatrix();
+  }
+
+  /**
+   * Apply a saved camera snapshot (from facility data or default view).
+   */
+  applySavedState(saved: SerializedCameraState, animate: boolean = true): void {
+    const target = new THREE.Vector3(saved.target.x, saved.target.y, saved.target.z);
+    const position = new THREE.Vector3(saved.position.x, saved.position.y, saved.position.z);
+
+    this.isometricAngle = saved.isometricAngle as IsometricAngle;
+    this.mode = saved.mode;
+
+    if (saved.mode === CameraMode.FREE) {
+      this.activeCamera = this.camera;
+      this.controls.object = this.camera;
+      this.controls.enabled = true;
+      this.controls.enableRotate = true;
+      this.controls.enablePan = true;
+      this.controls.screenSpacePanning = true;
+    } else {
+      this.activeCamera = this.orthographicCamera;
+      this.controls.object = this.orthographicCamera;
+      this.controls.enabled = true;
+      this.controls.enableRotate = false;
+      this.controls.enablePan = true;
+      this.controls.screenSpacePanning = true;
+    }
+
+    if (animate) {
+      this.startTransition(position, target);
+    } else {
+      this.activeCamera.position.copy(position);
+      this.controls.target.copy(target);
+      this.activeCamera.lookAt(target);
+      if (saved.mode === CameraMode.FREE) {
+        this.camera.position.copy(position);
+      } else {
+        this.orthographicCamera.position.copy(position);
+      }
+    }
+
+    if (saved.mode === CameraMode.ISOMETRIC) {
+      this.syncIsometricOrbitFromPosition(position, target);
+      this.applyOrthographicZoom(saved.zoom || 1);
+    }
+
+    this.notifyStateChange();
   }
 
   /**

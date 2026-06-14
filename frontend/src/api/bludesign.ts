@@ -20,6 +20,8 @@ export interface SaveFacilityRequest {
   name: string;
   data: FacilityData;
   thumbnail?: string;
+  /** Copy layout-source.png from an existing facility when saving a duplicate. */
+  copyLayoutSourceFrom?: string;
 }
 
 export interface UpdateFacilityRequest {
@@ -58,7 +60,9 @@ export const listFacilities = getFacilities;
  * Get a specific facility by ID
  */
 export async function getFacility(id: string): Promise<FacilityResponse> {
-  return await apiService.get(`${API_BASE}/facilities/${id}`);
+  return await apiService.get(`${API_BASE}/facilities/${id}`, {
+    headers: { 'Cache-Control': 'no-cache' },
+  });
 }
 
 /**
@@ -67,9 +71,15 @@ export async function getFacility(id: string): Promise<FacilityResponse> {
 export async function saveFacility(
   name: string,
   data: FacilityData,
-  thumbnail?: string
+  thumbnail?: string,
+  copyLayoutSourceFrom?: string,
 ): Promise<FacilityResponse> {
-  return await apiService.post(`${API_BASE}/facilities`, { name, data, thumbnail });
+  return await apiService.post(`${API_BASE}/facilities`, {
+    name,
+    data,
+    thumbnail,
+    ...(copyLayoutSourceFrom ? { copyLayoutSourceFrom } : {}),
+  });
 }
 
 /**
@@ -405,6 +415,8 @@ export interface BluLokUnit {
   unit_type: string | null;
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
   description?: string;
+  last_activity?: string;
+  facility_lock_command_timeout_sec?: number | null;
   // Device info if available
   device?: {
     id: string;
@@ -412,12 +424,16 @@ export interface BluLokUnit {
     lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
     device_status: 'online' | 'offline' | 'low_battery' | 'error';
     battery_level?: number;
+    signal_strength?: number;
+    firmware_version?: string | null;
+    supports_remote_lock?: boolean;
   };
   // Tenant info if available
   tenant?: {
     id: string;
     name: string;
     email: string;
+    phone?: string | null;
   };
 }
 
@@ -477,17 +493,23 @@ export async function getBluLokUnits(facilityId: string): Promise<BluLokUnit[]> 
       unit_type: u.unit_type,
       status: u.status,
       description: u.description,
+      last_activity: u.last_activity,
+      facility_lock_command_timeout_sec: u.facility_lock_command_timeout_sec,
       device: u.blulok_device ? {
         id: u.blulok_device.id,
         device_serial: u.blulok_device.device_serial,
         lock_status: u.blulok_device.lock_status,
         device_status: u.blulok_device.device_status,
         battery_level: u.blulok_device.battery_level,
+        signal_strength: u.blulok_device.signal_strength,
+        firmware_version: u.blulok_device.firmware_version,
+        supports_remote_lock: u.blulok_device.supports_remote_lock,
       } : undefined,
       tenant: u.primary_tenant ? {
         id: u.primary_tenant.id,
         name: `${u.primary_tenant.first_name || ''} ${u.primary_tenant.last_name || ''}`.trim(),
         email: u.primary_tenant.email,
+        phone: u.primary_tenant.phone_number,
       } : undefined,
     }));
   } catch (error) {
@@ -579,7 +601,7 @@ export async function linkBluDesignToBluLok(
     // Get the current facility data
     const facility = await getFacility(bluDesignFacilityId);
     
-    // Update the dataSource config
+    // Update the dataSource config while preserving import-plan metadata.
     const updatedData: FacilityData = {
       ...facility.data,
       dataSource: {
@@ -588,7 +610,7 @@ export async function linkBluDesignToBluLok(
         facilityName: blulokFacilityName,
         autoConnect: true,
         lastSync: new Date(),
-      }
+      },
     };
     
     // Save the updated facility
@@ -887,5 +909,34 @@ export async function testStorageProvider(
 ): Promise<{ success: boolean; message: string }> {
   return await apiService.post(`${API_BASE}/storage/${provider}/test`, {
     storageConfig,
+  });
+}
+
+export interface BluDesignStorageConfigResponse {
+  providerType: 'local' | 'gcs' | 'gdrive';
+  providerConfig: Record<string, unknown>;
+  source: 'database' | 'env_fallback';
+}
+
+/**
+ * Get persisted BluDesign storage configuration
+ */
+export async function getBluDesignStorageConfig(): Promise<{
+  success: boolean;
+  config: BluDesignStorageConfigResponse;
+}> {
+  return await apiService.get(`${API_BASE}/storage/config`);
+}
+
+/**
+ * Save BluDesign storage configuration
+ */
+export async function saveBluDesignStorageConfig(
+  providerType: 'local' | 'gcs' | 'gdrive',
+  providerConfig: Record<string, unknown>
+): Promise<{ success: boolean; message: string }> {
+  return await apiService.put(`${API_BASE}/storage/config`, {
+    providerType,
+    providerConfig,
   });
 }

@@ -10,6 +10,8 @@ export const ALL_PANEL_IDS = [
   'assets',
   'smartobjects',
   'view',
+  'defaultCamera',
+  'importPlan',
   'properties',
   'floors',
   'skins',
@@ -40,6 +42,8 @@ export interface PanelLayoutStateV9 {
   tools: ExtendedPanelStateV9;
   assets: ExtendedPanelStateV9;
   view: ExtendedPanelStateV9;
+  defaultCamera: ExtendedPanelStateV9;
+  importPlan: ExtendedPanelStateV9;
   properties: ExtendedPanelStateV9;
   floors: ExtendedPanelStateV9;
   skins: ExtendedPanelStateV9;

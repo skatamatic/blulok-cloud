@@ -92,6 +92,15 @@ export interface CameraState {
   zoom: number;
 }
 
+/** JSON-safe camera snapshot (stored on facilities). */
+export interface SerializedCameraState {
+  mode: CameraMode;
+  isometricAngle: IsometricAngle | number;
+  position: { x: number; y: number; z: number };
+  target: { x: number; y: number; z: number };
+  zoom: number;
+}
+
 // ============================================================================
 // Assets & Objects
 // ============================================================================
@@ -808,6 +817,8 @@ export interface GridConfig {
   size: number;           // Total grid size
   divisions: number;      // Number of divisions
   fadeDistance: number;   // Distance at which grid fades
+  /** World extent multiplier for the grid plane geometry (larger = no hard edge). */
+  planeExtentMultiplier?: number;
   primaryColor: string;
   secondaryColor: string;
   opacity: number;
@@ -822,7 +833,8 @@ export interface GridConfig {
 export const DEFAULT_GRID_CONFIG: GridConfig = {
   size: 200,
   divisions: Math.round(200 / GRID_UNIT_METERS), // ~328 divisions for 0.6096m cells
-  fadeDistance: 90,
+  fadeDistance: 110,
+  planeExtentMultiplier: 36,
   primaryColor: '#1f8bff',
   secondaryColor: '#5a6a8a', // Brighter for visibility
   opacity: 0.55,
@@ -833,7 +845,8 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
 export const DARK_THEME_GRID_CONFIG: GridConfig = {
   size: 200,
   divisions: Math.round(200 / GRID_UNIT_METERS), // ~328 divisions for 0.6096m cells
-  fadeDistance: 90,
+  fadeDistance: 110,
+  planeExtentMultiplier: 36,
   primaryColor: '#4da6ff', // Brighter primary
   secondaryColor: '#8899bb', // Much brighter secondary for dark bg
   opacity: 0.65,           // Higher overall opacity
@@ -916,6 +929,8 @@ export interface FacilityData {
   name: string;
   version: string;
   camera: CameraState;
+  /** Saved home view — applied whenever the facility is opened. */
+  defaultCamera?: SerializedCameraState;
   placedObjects: SerializedPlacedObject[];  // Optimized format
   buildings: SerializedBuilding[];          // Optimized format
   activeFloor: number;
@@ -938,6 +953,7 @@ export interface LegacyFacilityData {
   name: string;
   version: string;
   camera: CameraState;
+  defaultCamera?: SerializedCameraState;
   placedObjects: PlacedObject[];
   buildings: Building[];
   activeFloor: number;

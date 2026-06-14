@@ -5,6 +5,7 @@
 export * from './PanelContainer';
 export { ToolboxPanel } from './ToolboxPanel';
 export { ViewControlsPanel } from './ViewControlsPanel';
+export { DefaultCameraPanel } from './DefaultCameraPanel';
 export { PropertiesPanel } from './PropertiesPanel';
 export { AssetBrowserPanel, ASSET_CARD_SIZE, ASSET_GRID_GAP } from './AssetBrowserPanel';
 export { FloorsPanel } from './FloorsPanel';

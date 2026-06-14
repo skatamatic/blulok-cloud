@@ -1,13 +1,19 @@
 import {
   attachLayoutImportToFacilityData,
   buildLayoutImportMetadata,
+  editorImportPlanUnitColor,
+  getLayoutImportFromFacility,
   hasLayoutImport,
   isValidLayoutImport,
+  LIVE_STATE_COLORS,
   LAYOUT_SOURCE_FILENAME,
+  normalizeLayoutImportMetadata,
+  resolveLiveUnitColor,
+  stripLayoutImportFromFacilityData,
   type LayoutImportMetadata,
 } from '../../../components/bludesign/layout-import/layoutImportMetadata';
 import type { FacilityData } from '../../../components/bludesign/core/types';
-import { CameraMode, GridSize, IsometricAngle } from '../../../components/bludesign/core/types';
+import { CameraMode, DeviceState, GridSize, IsometricAngle } from '../../../components/bludesign/core/types';
 import * as THREE from 'three';
 
 const sampleMeta: LayoutImportMetadata = {
@@ -55,7 +61,42 @@ describe('isValidLayoutImport', () => {
     expect(isValidLayoutImport({ ...sampleMeta, version: 2 })).toBe(false);
     expect(isValidLayoutImport({ ...sampleMeta, imageWidth: 0 })).toBe(false);
     expect(isValidLayoutImport({ ...sampleMeta, units: [] })).toBe(false);
-    expect(isValidLayoutImport({ ...sampleMeta, sourceImageFile: 'other.png' })).toBe(false);
+  });
+
+  it('repairs a legacy sourceImageFile value', () => {
+    const normalized = normalizeLayoutImportMetadata({
+      ...sampleMeta,
+      sourceImageFile: 'old-plan.png',
+    });
+    expect(normalized?.sourceImageFile).toBe(LAYOUT_SOURCE_FILENAME);
+    expect(isValidLayoutImport(normalized)).toBe(true);
+  });
+});
+
+describe('normalizeLayoutImportMetadata', () => {
+  it('returns null for unusable payloads', () => {
+    expect(normalizeLayoutImportMetadata(null)).toBeNull();
+    expect(normalizeLayoutImportMetadata({ version: 1 })).toBeNull();
+  });
+
+  it('fills missing importedAt and sourceImageFile', () => {
+    const { importedAt: _i, sourceImageFile: _s, ...partial } = sampleMeta;
+    const normalized = normalizeLayoutImportMetadata(partial);
+    expect(normalized).toMatchObject({
+      version: 1,
+      imageWidth: sampleMeta.imageWidth,
+      imageHeight: sampleMeta.imageHeight,
+      sourceImageFile: LAYOUT_SOURCE_FILENAME,
+    });
+    expect(normalized?.importedAt).toEqual(expect.any(String));
+  });
+});
+
+describe('getLayoutImportFromFacility', () => {
+  it('returns normalized metadata from facility data', () => {
+    const data = { ...baseFacility, layoutImport: { ...sampleMeta, sourceImageFile: 'legacy.png' } };
+    const meta = getLayoutImportFromFacility(data);
+    expect(meta?.sourceImageFile).toBe(LAYOUT_SOURCE_FILENAME);
   });
 });
 
@@ -127,5 +168,45 @@ describe('buildLayoutImportMetadata', () => {
     expect(meta.units).toHaveLength(2);
     expect(meta.units[0].placedObjectId).toBe('a');
     expect(meta.units[1].kind).toBe('rectangle');
+  });
+});
+
+describe('resolveLiveUnitColor', () => {
+  it('uses maintenance orange for maintenance state or lock status', () => {
+    expect(resolveLiveUnitColor(DeviceState.MAINTENANCE).stroke).toBe(LIVE_STATE_COLORS.maintenance);
+    expect(resolveLiveUnitColor(undefined, 'maintenance').stroke).toBe(LIVE_STATE_COLORS.maintenance);
+  });
+
+  it('uses unknown gray before live telemetry is available', () => {
+    expect(resolveLiveUnitColor(undefined, undefined, 0.55, 'pending').stroke).toBe(
+      LIVE_STATE_COLORS.unknown,
+    );
+    expect(resolveLiveUnitColor(undefined, undefined, 0.55, 'no-signal').stroke).toBe(
+      LIVE_STATE_COLORS.unknown,
+    );
+  });
+
+  it('uses unbound color when unit has no entity binding', () => {
+    expect(resolveLiveUnitColor(undefined, undefined, 0.55, 'unbound').stroke).toBe(
+      LIVE_STATE_COLORS.unbound,
+    );
+  });
+});
+
+describe('editorImportPlanUnitColor', () => {
+  it('dims unbound units and uses brand blue when data-bound', () => {
+    const bound = editorImportPlanUnitColor(true);
+    const unbound = editorImportPlanUnitColor(false);
+    expect(bound.stroke).toBe('#0b5394');
+    expect(unbound.stroke).toBe(LIVE_STATE_COLORS.unbound);
+  });
+});
+
+describe('stripLayoutImportFromFacilityData', () => {
+  it('removes layoutImport from facility payload', () => {
+    const withImport = { ...baseFacility, layoutImport: sampleMeta };
+    const stripped = stripLayoutImportFromFacilityData(withImport);
+    expect(stripped).not.toHaveProperty('layoutImport');
+    expect(stripped.name).toBe(baseFacility.name);
   });
 });

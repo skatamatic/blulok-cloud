@@ -83,28 +83,6 @@ export const DetectionSidebar: React.FC<DetectionSidebarProps> = ({
     isDark ? 'text-gray-500' : 'text-gray-400'
   }`;
 
-  const StatPill: React.FC<{ value: number; label: string; color?: string }> = ({
-    value,
-    label,
-    color,
-  }) => (
-    <div
-      className={`flex flex-col items-center justify-center py-2 rounded-lg ${
-        isDark ? 'bg-gray-800/60' : 'bg-gray-50'
-      }`}
-    >
-      <span
-        className="text-lg font-bold tabular-nums leading-none"
-        style={color ? { color } : undefined}
-      >
-        {value}
-      </span>
-      <span className={`text-[10px] mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-        {label}
-      </span>
-    </div>
-  );
-
   return (
     <div
       data-layout-import-sidebar
@@ -196,19 +174,6 @@ export const DetectionSidebar: React.FC<DetectionSidebarProps> = ({
               {notice.text}
             </div>
           )}
-
-          <div>
-            <div className="grid grid-cols-3 gap-2">
-              <StatPill value={stats.unitCount} label="Units" color="#147FD4" />
-              <StatPill value={stats.withLabel} label="Labeled" color="#147FD4" />
-              <StatPill value={stats.rectCount} label="Unlabeled" color="#9ca3af" />
-            </div>
-            {stats.edited > 0 && (
-              <p className={`mt-2 px-1 text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                {stats.edited} adjusted · {stats.manual} added manually
-              </p>
-            )}
-          </div>
         </div>
 
         {/* Bounded, scrollable unit list with inline expand editor */}
@@ -265,11 +230,11 @@ export const DetectionSidebar: React.FC<DetectionSidebarProps> = ({
             <Squares2X2Icon className="w-4 h-4" />
             Import {stats.withLabel} unit{stats.withLabel === 1 ? '' : 's'} to editor
           </button>
-          <p className={`text-[10px] text-center mt-1.5 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            {errors.length > 0
-              ? 'Fix problems before importing.'
-              : 'Only labeled units are imported.'}
-          </p>
+          {errors.length > 0 && (
+            <p className={`text-[10px] text-center mt-1.5 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+              Fix problems before importing.
+            </p>
+          )}
         </div>
       )}
     </div>

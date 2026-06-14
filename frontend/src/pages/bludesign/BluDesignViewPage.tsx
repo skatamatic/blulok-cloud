@@ -1,26 +1,52 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CubeIcon, EyeIcon, ArrowPathIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { Link } from 'react-router-dom';
+import {
+  CubeIcon,
+  EyeIcon,
+  ArrowPathIcon,
+  ArrowLeftIcon,
+  TrashIcon,
+  LinkIcon,
+} from '@heroicons/react/24/outline';
 import { FacilityViewer3D } from '@/components/bludesign/viewer';
 import { useTheme } from '@/contexts/ThemeContext';
 import * as bludesignApi from '@/api/bludesign';
 import { FacilitySummary } from '@/components/bludesign/core/types';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+
+interface ViewFacility extends FacilitySummary {
+  linkedBlulokId: string | null;
+  linkedBlulokName: string | null;
+}
 
 export default function BluDesignViewPage() {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
   
-  const [facilities, setFacilities] = useState<FacilitySummary[]>([]);
+  const [facilities, setFacilities] = useState<ViewFacility[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedFacility, setSelectedFacility] = useState<FacilitySummary | null>(null);
+  const [selectedFacility, setSelectedFacility] = useState<ViewFacility | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDeleteFacility, setPendingDeleteFacility] = useState<ViewFacility | null>(null);
 
-  // Load saved facilities
+  // Load saved facilities with BluLok link info
   const loadFacilities = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await bludesignApi.getFacilities();
-      setFacilities(data);
+      const [summaries, links] = await Promise.all([
+        bludesignApi.getFacilities(),
+        bludesignApi.getBluDesignFacilitiesWithLinks(),
+      ]);
+      const linkById = new Map(links.map((l) => [l.id, l]));
+      setFacilities(
+        summaries.map((f) => ({
+          ...f,
+          linkedBlulokId: linkById.get(f.id)?.linkedBlulokId ?? null,
+          linkedBlulokName: linkById.get(f.id)?.linkedBlulokName ?? null,
+        }))
+      );
     } catch (err) {
       console.error('Failed to load facilities:', err);
       setError('Failed to load facilities');
@@ -33,13 +59,41 @@ export default function BluDesignViewPage() {
     loadFacilities();
   }, [loadFacilities]);
 
-  const handleSelectFacility = useCallback((facility: FacilitySummary) => {
+  const handleSelectFacility = useCallback((facility: ViewFacility) => {
     setSelectedFacility(facility);
   }, []);
 
   const handleBackToCatalog = useCallback(() => {
     setSelectedFacility(null);
   }, []);
+
+  const handleDelete = useCallback((e: React.MouseEvent, facility: ViewFacility) => {
+    e.stopPropagation();
+
+    if (facility.linkedBlulokId) {
+      return;
+    }
+
+    setPendingDeleteFacility(facility);
+  }, []);
+
+  const confirmDeleteFacility = useCallback(async () => {
+    const facility = pendingDeleteFacility;
+    if (!facility) return;
+    setPendingDeleteFacility(null);
+
+    try {
+      setDeletingId(facility.id);
+      setError(null);
+      await bludesignApi.deleteFacility(facility.id);
+      setFacilities((prev) => prev.filter((f) => f.id !== facility.id));
+    } catch (err) {
+      console.error('Failed to delete facility:', err);
+      setError('Failed to delete facility');
+    } finally {
+      setDeletingId(null);
+    }
+  }, [pendingDeleteFacility]);
 
   // Viewing a specific facility
   if (selectedFacility) {
@@ -87,6 +141,7 @@ export default function BluDesignViewPage() {
         <div className="flex-1 relative">
           <FacilityViewer3D
             bluDesignFacilityId={selectedFacility.id}
+            bluLokFacilityId={selectedFacility.linkedBlulokId ?? undefined}
             className="w-full h-full"
             onReady={() => console.log('Viewer ready')}
             onError={(err) => console.error('Viewer error:', err)}
@@ -157,68 +212,121 @@ export default function BluDesignViewPage() {
         {/* Facility Catalog */}
         {!loading && facilities.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {facilities.map((facility) => (
-              <div
-                key={facility.id}
-                className={`
-                  group rounded-xl shadow-sm border overflow-hidden transition-all duration-300
-                  hover:shadow-lg hover:scale-[1.02]
-                  ${isDark
-                    ? 'bg-gray-800 border-gray-700 hover:border-primary-500/50'
-                    : 'bg-white border-gray-200 hover:border-primary-300'
-                  }
-                `}
-              >
-                {/* Thumbnail */}
-                <div 
+            {facilities.map((facility) => {
+              const isLinked = !!facility.linkedBlulokId;
+              const isDeleting = deletingId === facility.id;
+
+              return (
+                <div
+                  key={facility.id}
                   className={`
-                    aspect-video flex items-center justify-center relative overflow-hidden
-                    ${isDark ? 'bg-gray-700' : 'bg-gray-100'}
+                    group relative rounded-xl shadow-sm border overflow-hidden transition-all duration-300
+                    hover:shadow-lg
+                    ${isDark
+                      ? 'bg-gray-800 border-gray-700 hover:border-primary-500/50'
+                      : 'bg-white border-gray-200 hover:border-primary-300'
+                    }
                   `}
                 >
-                  {facility.thumbnail ? (
-                    <img
-                      src={facility.thumbnail}
-                      alt={facility.name}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    />
-                  ) : (
-                    <CubeIcon className={`w-16 h-16 ${isDark ? 'text-gray-600' : 'text-gray-300'}`} />
-                  )}
-                  {/* Hover overlay */}
-                  <div className={`
-                    absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300
-                    ${isDark ? 'bg-black/40' : 'bg-black/30'}
-                  `}>
-                    <div className="flex items-center gap-2 px-4 py-2 bg-white/90 rounded-lg text-gray-900 font-medium">
-                      <EyeIcon className="w-5 h-5" />
-                      Click to View
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Info */}
-                <div className="p-4">
-                  <h3 className={`text-lg font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {facility.name}
-                  </h3>
-                  <div className={`text-sm mb-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                    Last updated {new Date(facility.updatedAt).toLocaleDateString()}
-                  </div>
-                  <button
-                    onClick={() => handleSelectFacility(facility)}
+                  {/* Thumbnail */}
+                  <div
                     className={`
-                      w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg
-                      bg-primary-600 hover:bg-primary-700 text-white font-medium
-                      transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]
+                      aspect-video flex items-center justify-center relative overflow-hidden
+                      ${isDark ? 'bg-gray-700' : 'bg-gray-100'}
                     `}
                   >
-                    <EyeIcon className="w-5 h-5" />
-                    View Facility
-                  </button>
+                    {facility.thumbnail ? (
+                      <img
+                        src={facility.thumbnail}
+                        alt={facility.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <CubeIcon className={`w-16 h-16 ${isDark ? 'text-gray-600' : 'text-gray-300'}`} />
+                    )}
+
+                    {/* Delete */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleDelete(e, facility)}
+                      disabled={isDeleting || isLinked}
+                      title={
+                        isLinked
+                          ? `Cannot delete — linked to ${facility.linkedBlulokName}. Change associations in Config.`
+                          : 'Delete facility'
+                      }
+                      className={`
+                        absolute top-3 right-3 p-2 rounded-lg transition-all duration-200
+                        ${isLinked
+                          ? isDark
+                            ? 'opacity-100 bg-gray-900/90 text-gray-500 cursor-not-allowed'
+                            : 'opacity-100 bg-white/90 text-gray-400 cursor-not-allowed shadow-sm'
+                          : `opacity-0 group-hover:opacity-100 focus:opacity-100 ${
+                              isDark
+                                ? 'bg-gray-900/90 hover:bg-red-600 text-gray-400 hover:text-white'
+                                : 'bg-white/90 hover:bg-red-600 text-gray-500 hover:text-white shadow-sm'
+                            }`
+                        }
+                        disabled:opacity-60
+                      `}
+                    >
+                      {isDeleting ? (
+                        <div className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                      ) : (
+                        <TrashIcon className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Info */}
+                  <div className="p-4">
+                    <h3 className={`text-lg font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {facility.name}
+                    </h3>
+                    <div className={`text-sm mb-3 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                      Last updated {new Date(facility.updatedAt).toLocaleDateString()}
+                    </div>
+
+                    {isLinked && (
+                      <div
+                        className={`
+                          mb-3 flex items-start gap-2 rounded-lg px-3 py-2 text-xs
+                          ${isDark ? 'bg-primary-500/10 text-primary-300' : 'bg-primary-50 text-primary-800'}
+                        `}
+                      >
+                        <LinkIcon className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-medium">Linked to {facility.linkedBlulokName}</span>
+                          <Link
+                            to="/bludesign/config?tab=links"
+                            className={`
+                              block mt-1 underline underline-offset-2 transition-colors
+                              ${isDark ? 'text-primary-400 hover:text-primary-300' : 'text-primary-700 hover:text-primary-900'}
+                            `}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            Change association in Config
+                          </Link>
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleSelectFacility(facility)}
+                      className={`
+                        w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg
+                        bg-primary-600 hover:bg-primary-700 text-white font-medium
+                        transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]
+                      `}
+                    >
+                      <EyeIcon className="w-5 h-5" />
+                      View Facility
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -240,6 +348,21 @@ export default function BluDesignViewPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={pendingDeleteFacility != null}
+        title="Delete facility?"
+        message={
+          pendingDeleteFacility
+            ? `Delete "${pendingDeleteFacility.name}"? This action cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmTone="danger"
+        onConfirm={() => void confirmDeleteFacility()}
+        onCancel={() => setPendingDeleteFacility(null)}
+      />
     </div>
   );
 }

@@ -24,6 +24,7 @@ import { DashboardWidgetRenderer } from '@/components/Dashboard/DashboardWidgetR
 import { FullscreenWidgetView } from '@/components/Dashboard/FullscreenWidgetView';
 import { useGeneralStatsData } from '@/hooks/useGeneralStatsData';
 import { useDashboardState } from '@/hooks/useDashboardState';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { useSavedDashboards } from '@/hooks/useSavedDashboards';
 import { widgetSubscriptionManager } from '@/services/widget-subscription-manager';
 import { MAX_DASHBOARD_PAGES } from '@/types/widget-management.types';
@@ -62,9 +63,13 @@ export default function DashboardPage() {
     clearPreviewResizeForPage,
     getWidgetDisplaySizeForPage,
     updateWidgetSize,
+    updateWidgetConfig,
     removeWidget,
     addWidget,
     removePage,
+    pendingPageRemoval,
+    confirmRemovePage,
+    cancelRemovePage,
     setPageName,
     enterFullscreen,
     exitFullscreen,
@@ -264,6 +269,7 @@ export default function DashboardPage() {
                       statsLoading={statsLoading}
                       statsError={statsError}
                       onSizeChange={updateWidgetSize}
+                      onWidgetConfigChange={updateWidgetConfig}
                       onRemove={removeWidget}
                       onFullscreenToggle={handleFullscreenToggle}
                       isFullscreen={false}
@@ -405,6 +411,7 @@ export default function DashboardPage() {
               statsLoading={statsLoading}
               statsError={statsError}
               onSizeChange={updateWidgetSize}
+              onWidgetConfigChange={updateWidgetConfig}
               onRemove={removeWidget}
               onFullscreenToggle={handleFullscreenToggle}
               isFullscreen
@@ -473,6 +480,21 @@ export default function DashboardPage() {
         onClose={() => setShowAddUserModal(false)}
         defaultSendInviteWhenSkippingPassword
         onSuccess={() => setShowAddUserModal(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={pendingPageRemoval != null}
+        title="Remove dashboard page?"
+        message={
+          pendingPageRemoval
+            ? `Remove "${pendingPageRemoval.name}" and all ${pendingPageRemoval.widgetCount} widget(s) on it?`
+            : ''
+        }
+        confirmLabel="Remove page"
+        cancelLabel="Cancel"
+        confirmTone="danger"
+        onConfirm={() => void confirmRemovePage()}
+        onCancel={cancelRemovePage}
       />
     </div>
   );

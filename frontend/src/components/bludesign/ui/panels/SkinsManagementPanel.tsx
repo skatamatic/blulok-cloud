@@ -20,6 +20,8 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { getSkinRegistry, CategorySkin, SkinRegistryClass } from '../../core/SkinRegistry';
 import { AssetCategory } from '../../core/types';
 import { SkinEditorDialog } from '../dialogs/SkinEditorDialog';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+import { useToast } from '@/contexts/ToastContext';
 import { AssetFactory } from '../../assets/AssetFactory';
 import { AssetRegistry } from '../../assets/AssetRegistry';
 
@@ -258,6 +260,7 @@ export const SkinsManagementPanel: React.FC<SkinsManagementPanelProps> = ({
   selectedCategory: initialCategory,
 }) => {
   const { effectiveTheme } = useTheme();
+  const { addToast } = useToast();
   const isDark = effectiveTheme === 'dark';
   
   const [skins, setSkins] = useState<CategorySkin[]>([]);
@@ -266,6 +269,7 @@ export const SkinsManagementPanel: React.FC<SkinsManagementPanelProps> = ({
   const [editingSkin, setEditingSkin] = useState<CategorySkin | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [createCategory, setCreateCategory] = useState<AssetCategory>(AssetCategory.STORAGE_UNIT);
+  const [pendingDeleteSkin, setPendingDeleteSkin] = useState<CategorySkin | null>(null);
   
   const skinRegistry = getSkinRegistry();
   
@@ -310,15 +314,23 @@ export const SkinsManagementPanel: React.FC<SkinsManagementPanelProps> = ({
   
   const handleDeleteSkin = useCallback((skin: CategorySkin) => {
     if (skin.isBuiltin) {
-      alert('Cannot delete built-in skins');
+      addToast({
+        type: 'info',
+        title: 'Built-in skin',
+        message: 'Cannot delete built-in skins.',
+      });
       return;
     }
-    
-    if (confirm(`Delete skin "${skin.name}"? This cannot be undone.`)) {
-      skinRegistry.deleteSkin(skin.id);
-      loadSkins();
-    }
-  }, [skinRegistry, loadSkins]);
+
+    setPendingDeleteSkin(skin);
+  }, [addToast]);
+
+  const confirmDeleteSkin = useCallback(() => {
+    if (!pendingDeleteSkin) return;
+    skinRegistry.deleteSkin(pendingDeleteSkin.id);
+    loadSkins();
+    setPendingDeleteSkin(null);
+  }, [pendingDeleteSkin, skinRegistry, loadSkins]);
   
   const handleDuplicateSkin = useCallback((skin: CategorySkin) => {
     skinRegistry.duplicateSkin(skin.id, `${skin.name} Copy`);
@@ -534,6 +546,21 @@ export const SkinsManagementPanel: React.FC<SkinsManagementPanelProps> = ({
           />
         )}
       </AnimatePresence>
+
+      <ConfirmDialog
+        isOpen={pendingDeleteSkin != null}
+        title="Delete skin?"
+        message={
+          pendingDeleteSkin
+            ? `Delete skin "${pendingDeleteSkin.name}"? This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmTone="danger"
+        onConfirm={confirmDeleteSkin}
+        onCancel={() => setPendingDeleteSkin(null)}
+      />
     </div>
   );
 };

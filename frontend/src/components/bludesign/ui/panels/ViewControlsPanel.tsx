@@ -195,7 +195,7 @@ export const ViewControlsPanel: React.FC<ViewControlsPanelProps> = ({
         onClick={onResetCamera}
       >
         <ArrowsPointingOutIcon className="w-4 h-4" />
-        <span>Reset View</span>
+        <span>Reset to Default View</span>
       </button>
     </div>
   );

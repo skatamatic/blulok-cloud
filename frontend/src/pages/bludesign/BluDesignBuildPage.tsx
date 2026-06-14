@@ -1,23 +1,30 @@
-import { useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useMemo } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { EditorCanvas } from '@/components/bludesign';
+import {
+  IMPORT_EDITOR_HANDOFF_STATE_KEY,
+  type ImportEditorHandoff,
+} from '@/components/bludesign/layout-import/importEditorHandoff';
 
 export default function BluDesignBuildPage() {
   const [searchParams] = useSearchParams();
-  // When handed off from the layout-import "Build in 3D" wizard, open the
-  // freshly-created facility directly in the editor.
+  const location = useLocation();
   const initialFacilityId = searchParams.get('facilityId') ?? undefined;
+
+  const initialImportHandoff = useMemo(() => {
+    const state = location.state as Record<string, unknown> | null;
+    const handoff = state?.[IMPORT_EDITOR_HANDOFF_STATE_KEY];
+    if (!handoff || typeof handoff !== 'object') return undefined;
+    return handoff as ImportEditorHandoff;
+  }, [location.state]);
 
   const handleReady = useCallback(() => {
     console.log('BluDesign Editor ready');
   }, []);
 
   return (
-    // Break out of DashboardLayout padding to fill full content area
-    // DashboardLayout applies: paddingLeft/Right: 7%, py-6 (1.5rem top/bottom)
-    // Position relative to the grandparent (main element) to fill the entire content area
-    <div 
-      style={{ 
+    <div
+      style={{
         position: 'absolute',
         top: 0,
         left: 0,
@@ -30,6 +37,7 @@ export default function BluDesignBuildPage() {
         readonly={false}
         onReady={handleReady}
         initialFacilityId={initialFacilityId}
+        initialImportHandoff={initialImportHandoff}
         className="w-full h-full"
       />
     </div>

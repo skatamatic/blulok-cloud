@@ -7,6 +7,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 
 type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
 
@@ -62,6 +63,7 @@ export default function FirmwareManagementTab() {
 
   // Catalog filter
   const [filterTargetType, setFilterTargetType] = useState<FirmwareTargetType | 'all'>('all');
+  const [pendingDeactivate, setPendingDeactivate] = useState<{ id: string; ver: string } | null>(null);
 
   const loadFirmware = useCallback(async () => {
     try {
@@ -108,8 +110,14 @@ export default function FirmwareManagementTab() {
     }
   };
 
-  const handleDelete = async (id: string, ver: string) => {
-    if (!confirm(`Deactivate firmware v${ver}? It will no longer be available for push.`)) return;
+  const handleDelete = (id: string, ver: string) => {
+    setPendingDeactivate({ id, ver });
+  };
+
+  const confirmDeactivate = async () => {
+    if (!pendingDeactivate) return;
+    const { id, ver } = pendingDeactivate;
+    setPendingDeactivate(null);
     try {
       await apiService.deleteFirmware(id);
       addToast({ type: 'success', title: `Firmware v${ver} deactivated` });
@@ -426,6 +434,20 @@ export default function FirmwareManagementTab() {
           </div>
         );
       })()}
+      <ConfirmDialog
+        isOpen={pendingDeactivate != null}
+        title="Deactivate firmware?"
+        message={
+          pendingDeactivate
+            ? `Deactivate firmware v${pendingDeactivate.ver}? It will no longer be available for push.`
+            : ''
+        }
+        confirmLabel="Deactivate"
+        cancelLabel="Cancel"
+        confirmTone="danger"
+        onConfirm={() => void confirmDeactivate()}
+        onCancel={() => setPendingDeactivate(null)}
+      />
     </div>
   );
 }

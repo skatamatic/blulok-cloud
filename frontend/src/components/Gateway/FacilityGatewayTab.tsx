@@ -21,6 +21,8 @@ import { GatewayDeviceSyncHistory } from './GatewayDeviceSyncHistory';
 import { GatewayTelemetryLogsTab } from './GatewayTelemetryLogsTab';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+import { usePromptDialog } from '@/hooks/usePromptDialog';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '@/components/Modal/Modal';
@@ -119,6 +121,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
   const [selectedCandidateGatewayId, setSelectedCandidateGatewayId] = useState('');
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [reassigningGateway, setReassigningGateway] = useState(false);
+  const [showReassignConfirm, setShowReassignConfirm] = useState(false);
+  const { openPrompt, promptDialog } = usePromptDialog();
 
   // Gateway debug stream (DEV tools)
   const [gatewayDebugEvents, setGatewayDebugEvents] = useState<any[]>([]);
@@ -254,17 +258,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     loadReassignmentCandidates();
   }, [activeTab, loadReassignmentCandidates]);
 
-  const handleGatewayReassignment = async () => {
+  const executeGatewayReassignment = async () => {
     if (!selectedCandidateGatewayId) {
-      return;
-    }
-
-    const confirmAssignment = window.confirm(
-      gateway
-        ? 'Replace this facility gateway with the selected unassigned online gateway? The current gateway will be moved to the unassigned pool.'
-        : 'Assign the selected unassigned online gateway to this facility?'
-    );
-    if (!confirmAssignment) {
       return;
     }
 
@@ -279,6 +274,13 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     } finally {
       setReassigningGateway(false);
     }
+  };
+
+  const handleGatewayReassignment = () => {
+    if (!selectedCandidateGatewayId) {
+      return;
+    }
+    setShowReassignConfirm(true);
   };
 
   const renderGatewayAssignmentCard = () => {
@@ -945,11 +947,13 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             </button>
             <button
               onClick={async () => {
-                const lockId = prompt('Enter lock id');
-                if (!lockId) return;
+                const values = await openPrompt({
+                  title: 'Request Time Sync (Lock)',
+                  fields: [{ key: 'lockId', label: 'Lock ID', required: true }],
+                });
+                if (!values?.lockId?.trim()) return;
                 try {
-                  const res = await apiService.requestTimeSyncForLock(lockId);
-                  // Decode JWT to show timestamp
+                  const res = await apiService.requestTimeSyncForLock(values.lockId.trim());
                   const payload = res.timeSyncJwt ? JSON.parse(atob(res.timeSyncJwt.split('.')[1])) : null;
                   addToast({ type: 'success', title: `Time Sync (lock) ts=${payload?.ts || 'unknown'}` });
                 } catch {
@@ -983,16 +987,20 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                 <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Denylist Commands</h4>
                 <button
                   onClick={async () => {
-                    const userId = prompt('Enter user ID to add to denylist:');
-                    if (!userId) return;
-                    const deviceIds = prompt('Enter device IDs (comma-separated):');
-                    if (!deviceIds) return;
+                    const values = await openPrompt({
+                      title: 'DENYLIST_ADD',
+                      fields: [
+                        { key: 'userId', label: 'User ID', required: true },
+                        { key: 'deviceIds', label: 'Device IDs (comma-separated)', required: true },
+                      ],
+                    });
+                    if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
                     try {
                       const res = await apiService.sendGatewayCommand({
                         facilityId,
                         command: 'DENYLIST_ADD',
-                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
-                        userId,
+                        targetDeviceIds: values.deviceIds.split(',').map(id => id.trim()),
+                        userId: values.userId.trim(),
                       });
                       addToast({ type: 'success', title: `DENYLIST_ADD sent: ${res.success}` });
                     } catch (err: any) {
@@ -1005,16 +1013,20 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                 </button>
                 <button
                   onClick={async () => {
-                    const userId = prompt('Enter user ID to remove from denylist:');
-                    if (!userId) return;
-                    const deviceIds = prompt('Enter device IDs (comma-separated):');
-                    if (!deviceIds) return;
+                    const values = await openPrompt({
+                      title: 'DENYLIST_REMOVE',
+                      fields: [
+                        { key: 'userId', label: 'User ID', required: true },
+                        { key: 'deviceIds', label: 'Device IDs (comma-separated)', required: true },
+                      ],
+                    });
+                    if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
                     try {
                       const res = await apiService.sendGatewayCommand({
                         facilityId,
                         command: 'DENYLIST_REMOVE',
-                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
-                        userId,
+                        targetDeviceIds: values.deviceIds.split(',').map(id => id.trim()),
+                        userId: values.userId.trim(),
                       });
                       addToast({ type: 'success', title: `DENYLIST_REMOVE sent: ${res.success}` });
                     } catch (err: any) {
@@ -1032,13 +1044,18 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                 <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Lock/Unlock Commands</h4>
                 <button
                   onClick={async () => {
-                    const deviceIds = prompt('Enter device IDs to LOCK (comma-separated):');
-                    if (!deviceIds) return;
+                    const values = await openPrompt({
+                      title: 'LOCK devices',
+                      fields: [
+                        { key: 'deviceIds', label: 'Device IDs to LOCK (comma-separated)', required: true },
+                      ],
+                    });
+                    if (!values?.deviceIds?.trim()) return;
                     try {
                       const res = await apiService.sendGatewayCommand({
                         facilityId,
                         command: 'LOCK',
-                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                        targetDeviceIds: values.deviceIds.split(',').map(id => id.trim()),
                       });
                       addToast({ type: 'success', title: `LOCK sent to ${res.targetDeviceIds?.length || 0} device(s)` });
                     } catch (err: any) {
@@ -1051,13 +1068,18 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                 </button>
                 <button
                   onClick={async () => {
-                    const deviceIds = prompt('Enter device IDs to UNLOCK (comma-separated):');
-                    if (!deviceIds) return;
+                    const values = await openPrompt({
+                      title: 'UNLOCK devices',
+                      fields: [
+                        { key: 'deviceIds', label: 'Device IDs to UNLOCK (comma-separated)', required: true },
+                      ],
+                    });
+                    if (!values?.deviceIds?.trim()) return;
                     try {
                       const res = await apiService.sendGatewayCommand({
                         facilityId,
                         command: 'UNLOCK',
-                        targetDeviceIds: deviceIds.split(',').map(id => id.trim()),
+                        targetDeviceIds: values.deviceIds.split(',').map(id => id.trim()),
                       });
                       addToast({ type: 'success', title: `UNLOCK sent to ${res.targetDeviceIds?.length || 0} device(s)` });
                     } catch (err: any) {
@@ -1328,6 +1350,25 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         {activeTab === 'devtools' && renderDevtoolsTab()}
         {renderRotationModal()}
       </div>
+
+      <ConfirmDialog
+        isOpen={showReassignConfirm}
+        title={gateway ? 'Replace gateway?' : 'Assign gateway?'}
+        message={
+          gateway
+            ? 'Replace this facility gateway with the selected unassigned online gateway? The current gateway will be moved to the unassigned pool.'
+            : 'Assign the selected unassigned online gateway to this facility?'
+        }
+        confirmLabel={gateway ? 'Replace gateway' : 'Assign gateway'}
+        cancelLabel="Cancel"
+        confirmTone="primary"
+        onConfirm={() => {
+          setShowReassignConfirm(false);
+          void executeGatewayReassignment();
+        }}
+        onCancel={() => setShowReassignConfirm(false)}
+      />
+      {promptDialog}
     </div>
   );
 }

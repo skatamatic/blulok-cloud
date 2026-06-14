@@ -55,11 +55,13 @@ const gridFragmentShader = `
   uniform float uFadeDistance;
   uniform float uOpacity;
   uniform vec3 uCameraPosition;
-  uniform float uSecondaryOpacity; // Additional control for fine grid visibility
+  uniform float uSecondaryOpacity;
   uniform float uUseAlignment;
   uniform vec2 uAlignOrigin;
   uniform float uAlignYaw;
   uniform float uSnapCellSize;
+  uniform vec2 uPlaneCenter;
+  uniform float uPlaneHalfSize;
   
   varying vec3 vWorldPosition;
   
@@ -73,37 +75,42 @@ const gridFragmentShader = `
   void main() {
     vec2 coord = vWorldPosition.xz;
     if (uUseAlignment > 0.5) {
-      // rel is vec2 (world Δx, Δz) — use .y for dz, not .z
       vec2 rel = vWorldPosition.xz - uAlignOrigin;
       float c = cos(uAlignYaw);
       float s = sin(uAlignYaw);
       coord = vec2(rel.x * c - rel.y * s, rel.x * s + rel.y * c);
     }
 
-    // Distance from camera (horizontal only)
+    // Camera-distance fade — long, soft falloff
     float dist = length(vWorldPosition.xz - uCameraPosition.xz);
+    float fadeStart = uFadeDistance * 0.45;
+    float fadeEnd = uFadeDistance * 3.8;
+    float distFade = 1.0 - smoothstep(fadeStart, fadeEnd, dist);
+    distFade = pow(distFade, 0.68);
+
+    // Safety fade at plane geometry edge (plane is very large; this prevents hard cutoff)
+    vec2 planeRel = vWorldPosition.xz - uPlaneCenter;
+    float planeDist = max(abs(planeRel.x), abs(planeRel.y));
+    float planeEdgeFade = 1.0 - smoothstep(uPlaneHalfSize * 0.78, uPlaneHalfSize * 0.98, planeDist);
+
+    float fade = distFade * planeEdgeFade;
     
-    // Improved fade factor - slower fade at top, more visible area
-    // Start fading later (0.6 instead of 0.5) and extend the fade range
-    float fadeStart = uFadeDistance * 0.6;
-    float fadeEnd = uFadeDistance * 1.3;
-    float fade = 1.0 - smoothstep(fadeStart, fadeEnd, dist);
-    
-    // Use exact snap cell size when alignment is active to match asset placement
     float cellSize = (uUseAlignment > 0.5 && uSnapCellSize > 0.0) ? uSnapCellSize : uSize / uDivisions;
     
-    // Primary grid (large)
     float grid1 = getGrid(coord, cellSize * 10.0, 2.0);
-    
-    // Secondary grid (small)
     float grid2 = getGrid(coord, cellSize, 1.0);
     
-    // Combine grids - increased fine grid visibility
-    vec3 color = mix(uSecondaryColor, uPrimaryColor, grid1);
-    // uSecondaryOpacity controls fine grid visibility (default 0.5, can be higher for dark theme)
-    float alpha = max(grid1 * 0.8, grid2 * uSecondaryOpacity) * uOpacity * fade;
+    vec3 lineColor = mix(uSecondaryColor, uPrimaryColor, grid1);
+    float lineMask = max(grid1, grid2 * uSecondaryOpacity);
+    float lineAlpha = lineMask * uOpacity * fade;
+
+    // Subtle base wash so the grid dissolves smoothly instead of popping off
+    vec3 baseColor = mix(uSecondaryColor, uPrimaryColor, 0.12);
+    float baseAlpha = 0.055 * fade;
+    float alpha = max(lineAlpha, baseAlpha);
+    vec3 color = mix(baseColor, lineColor, clamp(lineMask * 1.15, 0.0, 1.0));
     
-    if (alpha < 0.01) discard;
+    if (alpha < 0.004) discard;
     
     gl_FragColor = vec4(color, alpha);
   }
@@ -156,17 +163,16 @@ export class GridSystem {
   create(): void {
     this.dispose();
     
-    // Create a larger plane for the grid to prevent cutoff in isometric view
+    const extent = this.config.planeExtentMultiplier ?? 36;
+    const planeSize = this.config.size * extent;
     const geometry = new THREE.PlaneGeometry(
-      this.config.size * 3, // Increased from 2 to 3
-      this.config.size * 3,
+      planeSize,
+      planeSize,
       1,
       1
     );
     geometry.rotateX(-Math.PI / 2);
     
-    // Create shader material
-    // Use higher secondary opacity for dark theme visibility
     const secondaryOpacity = this.config.secondaryOpacity ?? 0.5;
     
     this.gridMaterial = new THREE.ShaderMaterial({
@@ -185,29 +191,29 @@ export class GridSystem {
         uAlignOrigin: { value: new THREE.Vector2(0, 0) },
         uAlignYaw: { value: 0 },
         uSnapCellSize: { value: 0 },
+        uPlaneCenter: { value: new THREE.Vector2(0, 0) },
+        uPlaneHalfSize: { value: planeSize * 0.5 },
       },
       transparent: true,
-      side: THREE.FrontSide, // Only render top face of grid
-      depthWrite: false, // Grid doesn't write to depth - won't occlude objects below it
-      depthTest: true,   // Grid tests depth - gets occluded by objects on/above it
+      side: THREE.FrontSide,
+      depthWrite: false,
+      depthTest: true,
     });
     
     this.gridMesh = new THREE.Mesh(geometry, this.gridMaterial);
     this.gridMesh.frustumCulled = false;
-    this.gridMesh.renderOrder = -100; // Render first, before any floor objects (which start at renderOrder 0)
+    this.gridMesh.renderOrder = -100;
     this.gridMesh.userData.isGrid = true;
     this.gridMesh.userData.selectable = false;
     
-    // Add a subtle ground plane for shadow receiving
-    // This stays at y=0 always and doesn't move with floors
-    const groundGeometry = new THREE.PlaneGeometry(this.config.size * 3, this.config.size * 3);
+    const groundGeometry = new THREE.PlaneGeometry(planeSize, planeSize);
     groundGeometry.rotateX(-Math.PI / 2);
     const groundMaterial = new THREE.ShadowMaterial({
-      opacity: 0.3,
+      opacity: 0.22,
     });
     this.groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
-    this.groundMesh.position.y = -0.01; // Slightly below ground grid, never moves
-    this.groundMesh.renderOrder = -99; // Render before grid to avoid artifacts
+    this.groundMesh.position.y = -0.01;
+    this.groundMesh.renderOrder = -99;
     this.groundMesh.receiveShadow = true;
     this.groundMesh.userData.isGround = true;
     this.groundMesh.userData.selectable = false;
@@ -226,13 +232,16 @@ export class GridSystem {
     if (this.gridMaterial) {
       this.gridMaterial.uniforms.uCameraPosition.value.copy(camera.position);
       
-      // Adjust fade distance based on camera height (Y)
-      // Higher camera = larger fade distance
-      const baseHeight = 30; // Reference height
-      const heightRatio = Math.max(0.7, Math.min(2.5, camera.position.y / baseHeight));
+      const baseHeight = 30;
+      const heightRatio = Math.max(0.8, Math.min(7, camera.position.y / baseHeight));
       const adjustedFadeDistance = this.config.fadeDistance * heightRatio;
       
       this.gridMaterial.uniforms.uFadeDistance.value = adjustedFadeDistance;
+
+      if (this.gridMesh) {
+        const center = this.gridMaterial.uniforms.uPlaneCenter.value as THREE.Vector2;
+        center.set(this.gridMesh.position.x, this.gridMesh.position.z);
+      }
     }
   }
 

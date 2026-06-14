@@ -191,6 +191,36 @@ export class SceneManager {
   }
 
   /**
+   * Brighter outdoor rig for natural sky / textured ground presets.
+   * Aligns sun direction with the ground shader and adds sky–ground bounce.
+   */
+  applyOutdoorLighting(enabled: boolean): void {
+    if (!this.lights.ambient || !this.lights.directional || !this.lights.hemisphere) {
+      return;
+    }
+
+    if (enabled) {
+      this.lights.ambient.color.set('#ffffff');
+      this.lights.ambient.intensity = 0.5;
+      this.lights.directional.color.set('#fff8f0');
+      this.lights.directional.intensity = 0.92;
+      this.lights.directional.position.set(60, 90, 35);
+      this.lights.hemisphere.color.set('#9ec8e8');
+      this.lights.hemisphere.groundColor.set('#3a5530');
+      this.lights.hemisphere.intensity = 0.48;
+      return;
+    }
+
+    this.lights.ambient.intensity = DEFAULT_LIGHTING_CONFIG.ambient.intensity;
+    this.lights.directional.color.set(DEFAULT_LIGHTING_CONFIG.directional.color);
+    this.lights.directional.intensity = DEFAULT_LIGHTING_CONFIG.directional.intensity;
+    this.lights.directional.position.set(...DEFAULT_LIGHTING_CONFIG.directional.position);
+    this.lights.hemisphere.color.set(0x87ceeb);
+    this.lights.hemisphere.groundColor.set(0x333333);
+    this.lights.hemisphere.intensity = 0.4;
+  }
+
+  /**
    * Set ambient light intensity
    */
   setAmbientIntensity(intensity: number): void {

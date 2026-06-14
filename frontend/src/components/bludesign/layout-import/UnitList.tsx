@@ -1,7 +1,7 @@
 /**
  * BluDesign Layout Import — Detected unit list
  *
- * A filterable, bounded, scrollable list of detected units. Selecting a row
+ * A searchable, bounded, scrollable list of detected units. Selecting a row
  * expands an inline editor beneath it (label, delete). Selection/hover mirrors
  * the canvas so the two views stay in sync.
  */
@@ -10,18 +10,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTheme } from '@/contexts/ThemeContext';
 import type { EditableUnit, UnitDoor } from './types';
-import {
-  unitAccentColor,
-  confidenceTextClass,
-  formatPct,
-  isUnlabeledRectangle,
-  ERROR_COLOR,
-} from './colors';
+import { isUnlabeledRectangle } from './colors';
 import { SelectedUnitEditor } from './SelectedUnitEditor';
 import { scrollRowFullyVisible } from './unitListScroll';
 import { compareUnitsByLabel } from './unitLabelSort';
-
-type ListFilter = 'all' | 'labeled' | 'unlabeled';
 
 interface UnitListProps {
   units: EditableUnit[];
@@ -51,12 +43,6 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
   return true;
 }
 
-const FILTERS: { id: ListFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'labeled', label: 'Labeled' },
-  { id: 'unlabeled', label: 'Unlabeled' },
-];
-
 export const UnitList: React.FC<UnitListProps> = ({
   units,
   selectedId,
@@ -76,7 +62,6 @@ export const UnitList: React.FC<UnitListProps> = ({
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
-  const [filter, setFilter] = useState<ListFilter>('all');
   const [query, setQuery] = useState('');
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const listScrollRef = useRef<HTMLDivElement>(null);
@@ -102,19 +87,11 @@ export const UnitList: React.FC<UnitListProps> = ({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = units.filter((u) => {
-      const labeled = !!u.label;
-      if (filter === 'labeled' && !labeled) return false;
-      if (filter === 'unlabeled' && labeled) return false;
       if (q && !(u.label ?? '').toLowerCase().includes(q)) return false;
       return true;
     });
     return list.sort((a, b) => compareUnitsByLabel(a, b, originalOrderById));
-  }, [units, filter, query, originalOrderById]);
-
-  useEffect(() => {
-    if (!selectedId) return;
-    if (filtered.some((u) => u.id === selectedId)) return;
-  }, [filtered, selectedId]);
+  }, [units, query, originalOrderById]);
 
   const selectionHidden = selectedId && !filtered.some((u) => u.id === selectedId);
 
@@ -173,43 +150,13 @@ export const UnitList: React.FC<UnitListProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [navigateList]);
 
-  const filterCount = (id: ListFilter) => {
-    if (id === 'all') return units.length;
-    if (id === 'labeled') return units.filter((u) => u.label).length;
-    return units.filter((u) => !u.label).length;
-  };
-
   return (
     <div className="flex flex-col min-h-0 flex-1">
       {selectionHidden && (
         <p className={`flex-shrink-0 mb-2 text-[11px] ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
-          Selected unit is hidden by the current filter. Clear search or change filter to see it.
+          Selected unit is hidden by search. Clear search to see it.
         </p>
       )}
-      <div className="flex-shrink-0 flex items-center gap-1 mb-2">
-        {FILTERS.map((f) => {
-          const active = filter === f.id;
-          const count = filterCount(f.id);
-          return (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => setFilter(f.id)}
-              className={`
-                flex-1 px-1.5 py-1 rounded-lg text-[11px] font-medium transition-colors
-                ${active
-                  ? 'bg-primary-500 text-white'
-                  : isDark
-                    ? 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }
-              `}
-            >
-              {f.label} {count > 0 && <span className="opacity-70">({count})</span>}
-            </button>
-          );
-        })}
-      </div>
 
       <input
         ref={searchInputRef}
@@ -240,7 +187,6 @@ export const UnitList: React.FC<UnitListProps> = ({
             const showEditor = isSel && selectedIds.size === 1;
             const nonUnit = isUnlabeledRectangle(u);
             const hasError = errorIds.has(u.id);
-            const dotColor = hasError ? ERROR_COLOR : unitAccentColor(u);
             return (
               <div
                 key={u.id}
@@ -252,7 +198,11 @@ export const UnitList: React.FC<UnitListProps> = ({
                     ? isDark
                       ? 'ring-1 ring-primary-500/60'
                       : 'ring-1 ring-primary-500/40'
-                    : ''
+                    : hasError
+                      ? isDark
+                        ? 'ring-1 ring-red-500/40'
+                        : 'ring-1 ring-red-400/50'
+                      : ''
                 }`}
               >
                 <button
@@ -274,10 +224,6 @@ export const UnitList: React.FC<UnitListProps> = ({
                   `}
                 >
                   <span
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: dotColor }}
-                  />
-                  <span
                     className={`text-sm font-medium flex-1 truncate ${
                       nonUnit
                         ? isDark
@@ -289,23 +235,15 @@ export const UnitList: React.FC<UnitListProps> = ({
                     }`}
                   >
                     {u.label ? `Unit ${u.label}` : nonUnit ? `Rectangle #${displayIndex}` : `Unit #${displayIndex}`}
-                    {nonUnit && (
-                      <span className={`ml-1.5 text-[10px] ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
-                        no label
-                      </span>
-                    )}
-                    {u.manual && <span className="ml-1 text-[10px] text-primary-500">new</span>}
-                    {u.edited && !u.manual && <span className="ml-1 text-[10px] text-amber-500">●</span>}
+                    {u.manual && <span className="ml-1.5 text-[10px] text-primary-500">new</span>}
                   </span>
                   {u.colorHex && (
                     <span
                       className="w-3 h-3 rounded-sm border border-black/10 flex-shrink-0"
                       style={{ backgroundColor: u.colorHex }}
+                      aria-hidden
                     />
                   )}
-                  <span className={`text-[11px] tabular-nums flex-shrink-0 ${confidenceTextClass(u.detectionConfidence)}`}>
-                    {formatPct(u.detectionConfidence)}
-                  </span>
                 </button>
 
                 <AnimatePresence initial={false}>

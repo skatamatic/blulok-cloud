@@ -1,11 +1,15 @@
 /**
- * Build-in-3D Wizard — Stage 4: assemble, save & hand off to the editor.
+ * Build-in-3D Wizard — Stage 4: assemble scene and open in editor (no server save).
  */
 
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExclamationCircleIcon, CubeIcon } from '@heroicons/react/24/outline';
 import type { BuildWizardController } from '../useBuildWizard';
+
+import {
+  IMPORT_EDITOR_HANDOFF_STATE_KEY,
+} from '@/components/bludesign/layout-import/importEditorHandoff';
 
 interface Props {
   controller: BuildWizardController;
@@ -21,9 +25,11 @@ export const BuildStep: React.FC<Props> = ({ controller, isDark, onClose }) => {
   }`;
 
   const handleBuild = async () => {
-    const id = await controller.buildAndSave();
-    if (id) {
-      navigate(`/bludesign/build?facilityId=${id}`);
+    const handoff = await controller.buildAndOpen();
+    if (handoff) {
+      navigate('/bludesign/build', {
+        state: { [IMPORT_EDITOR_HANDOFF_STATE_KEY]: handoff },
+      });
       onClose();
     }
   };

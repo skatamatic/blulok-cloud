@@ -36,6 +36,7 @@ import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constan
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 
@@ -127,6 +128,7 @@ const deviceStatusIcons = {
 export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
   const { authState } = useAuth();
+  const { addToast } = useToast();
   const location = useLocation();
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/units' });
   const [unit, setUnit] = useState<UnitDetails | null>(null);
@@ -286,7 +288,7 @@ export default function UnitDetailsPage() {
       console.error('Failed to assign tenant:', error);
       // Show error notification
       const errorMessage = error.response?.data?.message || 'Failed to assign tenant. Please try again.';
-      alert(errorMessage); // Replace with toast notification in production
+      addToast({ type: 'error', title: 'Assignment failed', message: errorMessage });
     } finally {
       setAssigningTenant(false);
     }
@@ -306,7 +308,7 @@ export default function UnitDetailsPage() {
       console.error('Failed to remove tenant:', error);
       // Show error notification
       const errorMessage = error.response?.data?.message || 'Failed to remove tenant. Please try again.';
-      alert(errorMessage); // Replace with toast notification in production
+      addToast({ type: 'error', title: 'Removal failed', message: errorMessage });
     } finally {
       setRemovingTenant(null);
     }

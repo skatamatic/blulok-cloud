@@ -128,6 +128,11 @@ export function useDashboardState({
     gridSig: string;
   } | null>(null);
   const [previewResizeVersion, setPreviewResizeVersion] = useState(0);
+  const [pendingPageRemoval, setPendingPageRemoval] = useState<{
+    index: number;
+    name: string;
+    widgetCount: number;
+  } | null>(null);
 
   useEffect(() => {
     allowMultiplePagesRef.current = allowMultiplePages;
@@ -495,18 +500,11 @@ export function useDashboardState({
     return newIndex;
   }, [allowMultiplePages, pages, commitPages, addToast]);
 
-  const removePage = useCallback(
+  const executeRemovePage = useCallback(
     async (index: number) => {
       if (!allowMultiplePages || pages.length <= 1) return;
       const target = pages[index];
       if (!target) return;
-
-      if (target.widgetInstances.length > 0) {
-        const ok = window.confirm(
-          `Remove "${target.name}" and all ${target.widgetInstances.length} widget(s) on it?`
-        );
-        if (!ok) return;
-      }
 
       const next = pages
         .filter((_, i) => i !== index)
@@ -530,6 +528,37 @@ export function useDashboardState({
     },
     [allowMultiplePages, pages, activePageIndex, commitPages, addToast]
   );
+
+  const removePage = useCallback(
+    async (index: number) => {
+      if (!allowMultiplePages || pages.length <= 1) return;
+      const target = pages[index];
+      if (!target) return;
+
+      if (target.widgetInstances.length > 0) {
+        setPendingPageRemoval({
+          index,
+          name: target.name,
+          widgetCount: target.widgetInstances.length,
+        });
+        return;
+      }
+
+      await executeRemovePage(index);
+    },
+    [allowMultiplePages, pages, executeRemovePage]
+  );
+
+  const confirmRemovePage = useCallback(async () => {
+    if (!pendingPageRemoval) return;
+    const { index } = pendingPageRemoval;
+    setPendingPageRemoval(null);
+    await executeRemovePage(index);
+  }, [pendingPageRemoval, executeRemovePage]);
+
+  const cancelRemovePage = useCallback(() => {
+    setPendingPageRemoval(null);
+  }, []);
 
   const setPageName = useCallback(
     (index: number, name: string) => {
@@ -930,6 +959,24 @@ export function useDashboardState({
     [activePage, activePageId, updatePageById, addToast]
   );
 
+  const updateWidgetConfig = useCallback(
+    (
+      widgetId: string,
+      updater: (prev: Record<string, unknown>) => Record<string, unknown>
+    ) => {
+      if (!canEditLayout || !activePageId) return;
+      updatePageById(activePageId, (page) => ({
+        ...page,
+        widgetInstances: page.widgetInstances.map((w) =>
+          w.id === widgetId
+            ? { ...w, config: updater((w.config ?? {}) as Record<string, unknown>) }
+            : w
+        ),
+      }));
+    },
+    [canEditLayout, activePageId, updatePageById]
+  );
+
   return {
     pages,
     activePage,
@@ -941,6 +988,9 @@ export function useDashboardState({
     setActivePage,
     addPage,
     removePage,
+    pendingPageRemoval,
+    confirmRemovePage,
+    cancelRemovePage,
     setPageName,
     handleLayoutChange,
     handleLayoutSave,
@@ -954,6 +1004,7 @@ export function useDashboardState({
     computeLiveDockGestureForPage,
     validateLivePlacementForPage,
     updateWidgetSize,
+    updateWidgetConfig,
     removeWidget,
     addWidget,
     enterFullscreen,

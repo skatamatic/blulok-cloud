@@ -13,6 +13,7 @@ import { useToast } from '@/contexts/ToastContext';
 import {
   ToolboxPanel,
   ViewControlsPanel,
+  DefaultCameraPanel,
   PropertiesPanel,
   AssetBrowserPanel,
   FloorsPanel,
@@ -46,11 +47,10 @@ import {
   reorderDockPanelIds,
 } from './ui/panelLayoutV9';
 import { MenuBar } from './ui/MenuBar';
-import { ImportPlanPanel } from './editor/ImportPlanPanel';
+import { ImportPlanPanelContent } from './editor/ImportPlanPanel';
 import {
+  editorImportPlanUnitColor,
   hasLayoutImport,
-  attachLayoutImportToFacilityData,
-  type LayoutImportMetadata,
 } from './layout-import/layoutImportMetadata';
 import { EditorHelpModal } from './ui/dialogs/EditorHelpModal';
 import { SelectionOverlay } from './ui/SelectionOverlay';
@@ -77,7 +77,9 @@ import {
 import { AssetRegistry } from './assets/AssetRegistry';
 import { AssetService } from './services/AssetService';
 import { AssetCategory, AssetMetadata } from './core/types';
+import { formatDefaultCameraSummary } from './core/camera/cameraStateUtils';
 import * as bludesignApi from '@/api/bludesign';
+import type { ImportEditorHandoff } from './layout-import/importEditorHandoff';
 import {
   CursorArrowRaysIcon,
   EyeIcon,
@@ -89,6 +91,9 @@ import {
   SwatchIcon,
   ServerIcon,
   BuildingOffice2Icon,
+  VideoCameraIcon,
+  PhotoIcon,
+  ArrowsPointingOutIcon,
 } from '@heroicons/react/24/outline';
 
 interface EditorCanvasProps {
@@ -96,6 +101,8 @@ interface EditorCanvasProps {
   className?: string;
   onReady?: () => void;
   initialFacilityId?: string; // If provided, load this facility on mount
+  /** Unsaved import wizard handoff — opens in editor without a server save. */
+  initialImportHandoff?: ImportEditorHandoff;
 }
 
 type ExtendedPanelState = ExtendedPanelStateV9;
@@ -148,8 +155,9 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
   // Y positions for right-side panels (stacked with gaps)
   const rightPanelY1 = 16;
   const rightPanelY2 = 180;  // After Smart Objects (~164px tall)
-  const rightPanelY3 = 340;  // After View (~160px tall)
-  const rightPanelY4 = 540;  // After Properties (~200px tall)
+  const rightPanelY3 = 340;  // Default camera slot (hidden until enabled)
+  const rightPanelY4 = 520;  // After View (~160px tall)
+  const rightPanelY5 = 720;  // After Properties (~200px tall)
   
   // Y positions for left-side panels
   const leftPanelY1 = 16;
@@ -202,11 +210,35 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       relY: 0,
       placement: 'float',
     },
+
+    // Default camera panel - hidden until enabled from View menu
+    defaultCamera: {
+      x: rightPanelX,
+      y: rightPanelY3,
+      collapsed: false,
+      visible: false,
+      relX: 1,
+      relY: 0,
+      placement: 'float',
+    },
+
+    // Import plan panel - hidden until enabled from View menu (imported facilities only)
+    importPlan: {
+      x: leftMargin,
+      y: 520,
+      width: 360,
+      height: 320,
+      collapsed: false,
+      visible: false,
+      relX: 0,
+      relY: 1,
+      placement: 'float',
+    },
     
-    // Properties panel - below view
+    // Properties panel - below view / default camera slot
     properties: { 
       x: rightPanelX, 
-      y: rightPanelY3, 
+      y: rightPanelY4, 
       collapsed: false, 
       visible: true, 
       relX: 1, 
@@ -217,7 +249,7 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
     // Floors panel - below properties
     floors: { 
       x: rightPanelX, 
-      y: rightPanelY4, 
+      y: rightPanelY5, 
       collapsed: false, 
       visible: true, 
       relX: 1, 
@@ -251,7 +283,7 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
     // Building Style panel - appears when building is selected, positioned near properties
     buildingSkin: { 
       x: rightPanelX - PANEL_WIDTH_WIDE - PANEL_GAP, 
-      y: rightPanelY3, // Same row as properties
+      y: rightPanelY4, // Same row as properties
       collapsed: false, 
       visible: true, // Visibility controlled by building selection, not this flag
       relX: 1, 
@@ -271,6 +303,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   className = '',
   onReady,
   initialFacilityId,
+  initialImportHandoff,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -315,6 +348,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   // Facility save/load state
   const [currentFacilityId, setCurrentFacilityId] = useState<string | null>(null);
   const [currentFacilityName, setCurrentFacilityName] = useState<string | null>(null);
+  const [pendingLayoutSourceFile, setPendingLayoutSourceFile] = useState<File | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [showLoadDialog, setShowLoadDialog] = useState(false);
@@ -326,8 +360,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [showThemeMissingDialog, setShowThemeMissingDialog] = useState(false);
   const [missingThemeId, setMissingThemeId] = useState<string | null>(null);
   const [showNewFacilityConfirm, setShowNewFacilityConfirm] = useState(false);
-  const [layoutImport, setLayoutImport] = useState<LayoutImportMetadata | null>(null);
-  const [showImportPlanPanel, setShowImportPlanPanel] = useState(false);
+  
+  const layoutImport = engine?.getLayoutImport() ?? null;
   
   // Progress overlay state for time-consuming operations
   const [progressState, setProgressState] = useState<ProgressState | null>(null);
@@ -528,11 +562,31 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     []
   );
 
-  // Show all panels (for reset)
+  const toggleImportPlanPanel = useCallback(() => {
+    setPanelLayout((prev) => {
+      const nextVisible = !prev.importPlan.visible;
+      if (nextVisible) {
+        bringPanelToFront('importPlan');
+      }
+      return {
+        ...prev,
+        importPlan: { ...prev.importPlan, visible: nextVisible },
+      };
+    });
+  }, [bringPanelToFront]);
+
+  useEffect(() => {
+    if (!layoutImport && panelLayout.importPlan.visible) {
+      togglePanelVisibility('importPlan', false);
+    }
+  }, [layoutImport, panelLayout.importPlan.visible, togglePanelVisibility]);
+
+  // Show all panels (for reset) — import plan stays opt-in from View menu
   const showAllPanels = useCallback(() => {
     setPanelLayout((prev) => {
       const updated = { ...prev };
       for (const id of ALL_PANEL_IDS) {
+        if (id === 'importPlan') continue;
         updated[id] = { ...updated[id], visible: true };
       }
       return updated;
@@ -559,11 +613,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }
     setCurrentFacilityName(null);
     setCurrentFacilityId(null);
-    setLayoutImport(null);
-    setShowImportPlanPanel(false);
+    setPendingLayoutSourceFile(null);
+    togglePanelVisibility('importPlan', false);
     setHasUnsavedChanges(false);
     addToast({ type: 'info', title: 'New Facility', message: 'Started a new facility.' });
-  }, [engine, addToast]);
+  }, [engine, addToast, togglePanelVisibility]);
 
   const handleNew = useCallback(() => {
     if (hasUnsavedChanges) {
@@ -586,8 +640,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     const data = engine.exportSceneData();
     data.name = currentFacilityName || 'Untitled';
     data.dataSource = dataSourceConfig;
-    return attachLayoutImportToFacilityData(data, layoutImport);
-  }, [engine, currentFacilityName, dataSourceConfig, layoutImport]);
+    return data;
+  }, [engine, currentFacilityName, dataSourceConfig]);
 
   const handleSave = useCallback(async () => {
     if (!engine) return;
@@ -767,13 +821,86 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     };
   }, [state]);
 
+  const importPlanSelectedIds = useMemo(
+    () => new Set(safeState.selection?.selectedIds ?? []),
+    [safeState.selection?.selectedIds]
+  );
+
+  const getImportPlanUnitColor = useCallback(
+    (unitId: string) => {
+      const obj = engine?.getSceneManager()?.getObjectData(unitId);
+      const isDataBound = !!obj?.binding?.entityId;
+      return editorImportPlanUnitColor(isDataBound);
+    },
+    [engine, state]
+  );
+
+  const isImportPlanUnitDimmed = useCallback(
+    (unitId: string) => {
+      const obj = engine?.getSceneManager()?.getObjectData(unitId);
+      return !obj?.binding?.entityId;
+    },
+    [engine, state]
+  );
+
+  const handleImportPlanUnitSelect = useCallback(
+    (unitId: string | null) => {
+      if (!engine) return;
+      const selectionManager = engine.getSelectionManager();
+      if (!unitId) {
+        selectionManager?.clearSelection();
+        return;
+      }
+      selectionManager?.clearSelection();
+      selectionManager?.select(unitId);
+    },
+    [engine]
+  );
+
   // Handlers
   const handleToolChange = useCallback((tool: EditorTool) => setTool(tool), [setTool]);
   const handleCameraModeChange = useCallback((mode: CameraMode) => setCameraMode(mode), [setCameraMode]);
   const handleRotateIsometric = useCallback((direction: 'cw' | 'ccw') => rotateIsometric(direction), [rotateIsometric]);
   const handleToggleGrid = useCallback(() => toggleGrid(), [toggleGrid]);
   const handleToggleCallouts = useCallback(() => setShowCallouts((prev) => !prev), []);
-  const handleResetCamera = useCallback(() => resetCamera(), [resetCamera]);
+  const handleResetCamera = useCallback(() => {
+    if (engine?.restoreDefaultCamera(true)) {
+      return;
+    }
+    const cameraController = engine?.getCameraController();
+    const bounds = engine?.calculateSceneBounds();
+    if (cameraController && bounds) {
+      cameraController.frameAllContent(bounds, true);
+      return;
+    }
+    resetCamera();
+  }, [engine, resetCamera]);
+
+  const [defaultCameraRevision, setDefaultCameraRevision] = useState(0);
+
+  const handleSetDefaultCamera = useCallback(() => {
+    if (!engine) return;
+    engine.setDefaultCameraFromCurrentView();
+    setDefaultCameraRevision((n) => n + 1);
+    setHasUnsavedChanges(true);
+    addToast({
+      type: 'success',
+      title: 'Default view saved',
+      message: 'This camera will restore whenever the facility is opened.',
+    });
+  }, [engine, addToast]);
+
+  const handleClearDefaultCamera = useCallback(() => {
+    if (!engine) return;
+    engine.clearDefaultCamera();
+    setDefaultCameraRevision((n) => n + 1);
+    setHasUnsavedChanges(true);
+  }, [engine]);
+
+  const defaultCameraSummary = useMemo(() => {
+    const saved = engine?.getDefaultCamera();
+    return saved ? formatDefaultCameraSummary(saved) : undefined;
+  }, [engine, defaultCameraRevision, state?.camera]);
   
   // Handle selection filter change
   const handleSelectionFilterChange = useCallback((filter: 'all' | 'smart' | 'visual') => {
@@ -881,26 +1008,38 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     if (!engine) return;
     
     try {
-      const data = engine.exportSceneData();
+      const exported = engine.exportSceneData();
+      const data = exported;
       data.name = name;
       data.dataSource = dataSourceConfig;
-      // Save As / new facility — do not copy import metadata or source image
       const thumbnail = await engine.captureScreenshot();
+      const copyLayoutSourceFrom =
+        currentFacilityId && hasLayoutImport(data) ? currentFacilityId : undefined;
+      const layoutFileToUpload = pendingLayoutSourceFile;
       
       if (currentFacilityId) {
         // Save as new (not update existing)
-        const response = await bludesignApi.saveFacility(name, data, thumbnail);
+        const response = await bludesignApi.saveFacility(
+          name,
+          data,
+          thumbnail,
+          copyLayoutSourceFrom,
+        );
         setCurrentFacilityId(response.id);
         setCurrentFacilityName(response.name);
-        setLayoutImport(null);
-        setShowImportPlanPanel(false);
+        if (layoutFileToUpload) {
+          await bludesignApi.uploadLayoutSource(response.id, layoutFileToUpload);
+          setPendingLayoutSourceFile(null);
+        }
       } else {
         // Save new
         const response = await bludesignApi.saveFacility(name, data, thumbnail);
         setCurrentFacilityId(response.id);
         setCurrentFacilityName(response.name);
-        setLayoutImport(null);
-        setShowImportPlanPanel(false);
+        if (layoutFileToUpload) {
+          await bludesignApi.uploadLayoutSource(response.id, layoutFileToUpload);
+          setPendingLayoutSourceFile(null);
+        }
       }
       
       setHasUnsavedChanges(false);
@@ -911,7 +1050,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       console.error('Failed to save facility:', error);
       throw error;
     }
-  }, [engine, currentFacilityId, dataSourceConfig]);
+  }, [engine, currentFacilityId, dataSourceConfig, pendingLayoutSourceFile]);
 
   const handleLoadDialogLoad = useCallback(async (id: string) => {
     if (!engine) return;
@@ -923,8 +1062,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       await engine.importSceneDataAsync(facility.data);
       setCurrentFacilityId(facility.id);
       setCurrentFacilityName(facility.name);
-      setLayoutImport(hasLayoutImport(facility.data) ? facility.data.layoutImport : null);
-      setShowImportPlanPanel(false);
+      setPendingLayoutSourceFile(null);
+      togglePanelVisibility('importPlan', false);
       setHasUnsavedChanges(false);
       setShowLoadDialog(false);
       
@@ -1072,8 +1211,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     
     // Small delay to make the state transition smooth
     const timer = setTimeout(() => {
-      // Layout-import handoff: open the new facility directly — never prompt for draft.
-      if (initialFacilityId) {
+      // Layout-import handoff: open directly — never prompt for draft.
+      if (initialFacilityId || initialImportHandoff) {
         engine.clearDraft();
         setDraftChecked(true);
         return;
@@ -1092,7 +1231,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }, 300);
     
     return () => clearTimeout(timer);
-  }, [engine, isReady, draftChecked, initialFacilityId]);
+  }, [engine, isReady, draftChecked, initialFacilityId, initialImportHandoff]);
   
   // Load custom assets from backend and merge with built-in assets
   useEffect(() => {
@@ -1164,11 +1303,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     
     if (loaded) {
       setHasUnsavedChanges(true);
-      // Restore data source config from the loaded draft
       const restoredDataSource = engine.getDataSourceConfig();
       if (restoredDataSource) {
         setDataSourceConfig(restoredDataSource);
       }
+      togglePanelVisibility('importPlan', false);
     }
     
     setLoadingState({ type: 'none', progress: 100 });
@@ -1243,8 +1382,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           await engine.importSceneDataAsync(facility.data);
           setCurrentFacilityId(facility.id);
           setCurrentFacilityName(facility.name);
-          setLayoutImport(hasLayoutImport(facility.data) ? facility.data.layoutImport : null);
-          setShowImportPlanPanel(false);
+          togglePanelVisibility('importPlan', false);
           setHasUnsavedChanges(false);
           const restoredDataSource = engine.getDataSourceConfig();
           if (restoredDataSource) {
@@ -1268,6 +1406,49 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       cancelled = true;
     };
   }, [engine, initialFacilityId, draftChecked, addToast]);
+  
+  // Load unsaved import wizard handoff (no server save until user chooses Save)
+  useEffect(() => {
+    if (!engine || !initialImportHandoff || !draftChecked || initialFacilityId) return;
+
+    let cancelled = false;
+
+    const loadImportedScene = async () => {
+      try {
+        setLoadingState({
+          type: 'facility',
+          subtitle: 'Opening imported layout…',
+          progress: 88,
+        });
+        engine.clearDraft();
+        await engine.importSceneDataAsync(initialImportHandoff.data);
+        if (cancelled) return;
+        setCurrentFacilityId(null);
+        setCurrentFacilityName(initialImportHandoff.sceneName);
+        setPendingLayoutSourceFile(initialImportHandoff.layoutSourceFile ?? null);
+        setHasUnsavedChanges(true);
+        togglePanelVisibility('importPlan', false);
+        const restoredDataSource = engine.getDataSourceConfig();
+        if (restoredDataSource) {
+          setDataSourceConfig(restoredDataSource);
+        }
+      } catch (error) {
+        console.error('Failed to open imported layout:', error);
+        addToast({ type: 'error', title: 'Error', message: 'Failed to open imported layout' });
+      } finally {
+        if (!cancelled) {
+          setLoadingState({ type: 'none', progress: 100 });
+          setInitialLoadComplete(true);
+        }
+      }
+    };
+
+    void loadImportedScene();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, initialImportHandoff, initialFacilityId, draftChecked, addToast]);
   
   // Set up selection overlay callbacks - drag selection box
   useEffect(() => {
@@ -1354,8 +1535,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           
           setCurrentFacilityId(lastFacility.id);
           setCurrentFacilityName(lastFacility.name);
-          setLayoutImport(hasLayoutImport(lastFacility.data) ? lastFacility.data.layoutImport : null);
-          setShowImportPlanPanel(false);
+          togglePanelVisibility('importPlan', false);
           setHasUnsavedChanges(false);
           // Restore data source configuration from engine (set during importSceneData)
           const restoredDataSource = engine.getDataSourceConfig();
@@ -1558,9 +1738,10 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       ids.filter((id) => {
         if (!panelLayout[id].visible) return false;
         if (id === 'buildingSkin' && !safeState.selection?.selectedBuildingId) return false;
+        if (id === 'importPlan' && !layoutImport) return false;
         return true;
       }),
-    [panelLayout, safeState.selection?.selectedBuildingId]
+    [panelLayout, safeState.selection?.selectedBuildingId, layoutImport]
   );
 
   const leftDockIds = useMemo(
@@ -1633,8 +1814,32 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
             onToggleCallouts={handleToggleCallouts}
             onResetCamera={handleResetCamera}
             hasImportPlan={!!layoutImport}
-            showImportPlan={showImportPlanPanel}
-            onToggleImportPlan={() => setShowImportPlanPanel((v) => !v)}
+            showImportPlan={panelLayout.importPlan.visible}
+            onToggleImportPlan={toggleImportPlanPanel}
+          />
+        );
+      case 'importPlan':
+        if (!layoutImport || !currentFacilityId) return null;
+        return (
+          <ImportPlanPanelContent
+            facilityId={currentFacilityId}
+            layoutImport={layoutImport}
+            width={assetsInnerWidth ?? panelLayout.importPlan.width ?? 360}
+            height={panelLayout.importPlan.height ?? 320}
+            selectedIds={importPlanSelectedIds}
+            getUnitColor={getImportPlanUnitColor}
+            isUnitDimmed={isImportPlanUnitDimmed}
+            onSelectUnit={handleImportPlanUnitSelect}
+          />
+        );
+      case 'defaultCamera':
+        return (
+          <DefaultCameraPanel
+            hasDefault={engine?.hasDefaultCamera() ?? false}
+            summary={defaultCameraSummary}
+            onSetFromCurrentView={handleSetDefaultCamera}
+            onGoToDefault={() => engine?.restoreDefaultCamera(true)}
+            onClearDefault={handleClearDefaultCamera}
           />
         );
       case 'properties':
@@ -1767,6 +1972,10 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         return { title: 'Assets', icon: <CubeIcon className="w-4 h-4" /> };
       case 'view':
         return { title: 'View', icon: <EyeIcon className="w-4 h-4" /> };
+      case 'defaultCamera':
+        return { title: 'Default Camera', icon: <VideoCameraIcon className="w-4 h-4" /> };
+      case 'importPlan':
+        return { title: 'Import Plan', icon: <PhotoIcon className="w-4 h-4" /> };
       case 'properties':
         return { title: 'Properties', icon: <AdjustmentsHorizontalIcon className="w-4 h-4" /> };
       case 'buildingSkin':
@@ -1826,6 +2035,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           assets: panelLayout.assets?.visible ?? true,
           smartobjects: panelLayout.smartobjects?.visible ?? true,
           view: panelLayout.view?.visible ?? true,
+          defaultCamera: panelLayout.defaultCamera?.visible ?? false,
           properties: panelLayout.properties?.visible ?? true,
           floors: panelLayout.floors?.visible ?? true,
           skins: panelLayout.skins?.visible ?? true,
@@ -2113,6 +2323,30 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
               </FloatingPanel>
             )}
 
+            {panelLayout.defaultCamera?.visible && panelLayout.defaultCamera.placement === 'float' && (
+              <FloatingPanel
+                key={`defaultCamera-${panelLayout.defaultCamera?.x ?? 0}-${panelLayout.defaultCamera?.y ?? 0}`}
+                id="defaultCamera"
+                title="Default Camera"
+                icon={<VideoCameraIcon className="w-4 h-4" />}
+                position={panelLayout.defaultCamera ?? getDefaultLayout(0).defaultCamera}
+                anchor="top-right"
+                defaultWidth={240}
+                maxHeight={420}
+                zIndex={getPanelZIndex('defaultCamera')}
+                boundsRef={canvasAreaRef}
+                onBringToFront={() => bringPanelToFront('defaultCamera')}
+                closable={true}
+                onStateChange={(updates) => updatePanelState('defaultCamera', updates)}
+                onClose={() => togglePanelVisibility('defaultCamera', false)}
+                onDragMove={handleFloatingPanelDragMove}
+                onDragEnd={makeFloatDragEnd('defaultCamera')}
+                dockHoverTarget={dockDropTarget}
+              >
+                {renderPanelBody('defaultCamera')}
+              </FloatingPanel>
+            )}
+
             {panelLayout.properties?.visible && panelLayout.properties.placement === 'float' && (
               <FloatingPanel
                 key={`properties-${panelLayout.properties?.x ?? 0}-${panelLayout.properties?.y ?? 0}`}
@@ -2265,15 +2499,49 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
               </FloatingPanel>
             )}
 
-            {showImportPlanPanel && layoutImport && currentFacilityId && (
-              <ImportPlanPanel
-                facilityId={currentFacilityId}
-                layoutImport={layoutImport}
-                boundsRef={canvasAreaRef}
-                visible={showImportPlanPanel}
-                onClose={() => setShowImportPlanPanel(false)}
-              />
-            )}
+            {layoutImport &&
+              currentFacilityId &&
+              panelLayout.importPlan?.visible &&
+              panelLayout.importPlan.placement === 'float' && (
+                <FloatingPanel
+                  key={`importPlan-${panelLayout.importPlan?.x ?? 0}-${panelLayout.importPlan?.y ?? 0}`}
+                  id="importPlan"
+                  title="Import Plan"
+                  icon={<PhotoIcon className="w-4 h-4" />}
+                  position={panelLayout.importPlan ?? getDefaultLayout(0).importPlan}
+                  anchor="bottom-left"
+                  defaultWidth={360}
+                  minWidth={240}
+                  maxWidth={720}
+                  defaultHeight={320}
+                  minHeight={200}
+                  maxHeight={600}
+                  resizable
+                  resizableHeight
+                  zIndex={getPanelZIndex('importPlan')}
+                  boundsRef={canvasAreaRef}
+                  onBringToFront={() => bringPanelToFront('importPlan')}
+                  closable
+                  onStateChange={(updates) => updatePanelState('importPlan', updates)}
+                  onClose={() => togglePanelVisibility('importPlan', false)}
+                  onDragMove={handleFloatingPanelDragMove}
+                  onDragEnd={makeFloatDragEnd('importPlan')}
+                  dockHoverTarget={dockDropTarget}
+                >
+                  {(width, height) => (
+                    <ImportPlanPanelContent
+                      facilityId={currentFacilityId}
+                      layoutImport={layoutImport}
+                      width={width}
+                      height={height ?? 320}
+                      selectedIds={importPlanSelectedIds}
+                      getUnitColor={getImportPlanUnitColor}
+                      isUnitDimmed={isImportPlanUnitDimmed}
+                      onSelectUnit={handleImportPlanUnitSelect}
+                    />
+                  )}
+                </FloatingPanel>
+              )}
           </>
         )}
 
@@ -2341,6 +2609,29 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v4M21 10l-4 4M21 10l-4-4" />
                 </svg>
+              </button>
+
+              <div className={`w-px h-6 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+
+              <button
+                type="button"
+                onClick={handleResetCamera}
+                className={`
+                  group relative flex items-center justify-center w-10 h-10 rounded-lg
+                  transition-all duration-200 ease-out
+                  ${isDark
+                    ? 'bg-gray-800 hover:bg-primary-600 text-gray-300 hover:text-white border border-gray-700 hover:border-primary-500'
+                    : 'bg-gray-50 hover:bg-primary-500 text-gray-600 hover:text-white border border-gray-200 hover:border-primary-400'
+                  }
+                  hover:scale-105 hover:shadow-lg active:scale-95
+                `}
+                title={
+                  engine?.hasDefaultCamera()
+                    ? 'Reset view to default camera'
+                    : 'Reset view (set a default camera to customize)'
+                }
+              >
+                <ArrowsPointingOutIcon className="w-5 h-5" />
               </button>
 
               {!readonly && (

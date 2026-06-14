@@ -3,6 +3,7 @@
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { apiService } from '@/services/api.service';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { getWsBaseUrl } from '@/services/appConfig';
@@ -417,10 +418,12 @@ describe('FacilityGatewayTab', () => {
       await waitFor(() => expect(mockApiService.getSecureTimeSyncPacket).toHaveBeenCalled());
 
       // Request Time Sync (Lock)
+      const user = userEvent.setup();
       const reqBtn = screen.getByText('Request Time Sync (Lock)');
-      const promptSpy = jest.spyOn(window, 'prompt').mockReturnValue('lock-1');
       await act(async () => { fireEvent.click(reqBtn); });
-      promptSpy.mockRestore();
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      await user.type(screen.getByLabelText(/lock id/i), 'lock-1');
+      await user.click(screen.getByRole('button', { name: 'Submit' }));
       await waitFor(() => expect(mockApiService.requestTimeSyncForLock).toHaveBeenCalledWith('lock-1'));
     });
 

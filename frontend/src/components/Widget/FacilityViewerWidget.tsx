@@ -18,12 +18,24 @@ import {
   BuildingOffice2Icon,
   CubeIcon,
   MapIcon,
+  EyeIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import * as bludesignApi from '@/api/bludesign';
 import type { FacilityResponse } from '@/api/bludesign';
 import { hasLayoutImport } from '@/components/bludesign/layout-import/layoutImportMetadata';
+import {
+  normalizeGroundPreset,
+  normalizeSkyPreset,
+  type GroundPresetId,
+  type SkyPresetId,
+} from '@/components/bludesign/core/environment';
+import {
+  DEFAULT_FACILITY_VIEWER_CONFIG,
+  type FacilityViewerWidgetConfig,
+} from '@/types/widget.types';
+import { ViewSettingsModal } from './facility-viewer/ViewSettingsModal';
 
 export interface DesignFacilityOption {
   id: string;
@@ -77,6 +89,11 @@ interface FacilityViewerWidgetProps {
   isFullscreen?: boolean;
   /** When false, 3D rendering is suspended (off-screen dashboard page or page transition). */
   isRenderActive?: boolean;
+  skyPreset?: SkyPresetId;
+  groundPreset?: GroundPresetId;
+  /** Admin layout edit — show view settings controls */
+  editable?: boolean;
+  onConfigChange?: (patch: Partial<FacilityViewerWidgetConfig>) => void;
 }
 
 export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
@@ -92,6 +109,10 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   onFullscreenToggle,
   isFullscreen = false,
   isRenderActive = true,
+  skyPreset = DEFAULT_FACILITY_VIEWER_CONFIG.skyPreset!,
+  groundPreset = DEFAULT_FACILITY_VIEWER_CONFIG.groundPreset!,
+  editable = false,
+  onConfigChange,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -108,6 +129,10 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   const [cachedFacility, setCachedFacility] = useState<FacilityResponse | null>(null);
   const [prefetchError, setPrefetchError] = useState(false);
   const [displayMode, setDisplayMode] = useState<ViewerDisplayMode>('3d');
+  const [viewSettingsOpen, setViewSettingsOpen] = useState(false);
+
+  const resolvedSkyPreset = normalizeSkyPreset(skyPreset);
+  const resolvedGroundPreset = normalizeGroundPreset(groundPreset);
 
   useEffect(() => {
     if (currentSize) setSize(currentSize);
@@ -210,12 +235,29 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
     console.error('Facility viewer error:', error);
   }, []);
 
+  const handleViewConfigChange = useCallback(
+    (patch: Partial<FacilityViewerWidgetConfig>) => {
+      onConfigChange?.(patch);
+    },
+    [onConfigChange]
+  );
+
   const enhancedMenu = (
     <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 space-y-2">
       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <BuildingOffice2Icon className="w-4 h-4" />
         <span>{use2d ? '2D Facility View' : '3D Facility Viewer'}</span>
       </div>
+      {editable && !use2d && showViewer && (
+        <button
+          type="button"
+          onClick={() => setViewSettingsOpen(true)}
+          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/80 transition-colors"
+        >
+          <EyeIcon className="w-4 h-4 text-primary-500" />
+          View settings…
+        </button>
+      )}
       {prefetchError && showViewer && (
         <div className="flex items-center justify-between gap-2 text-xs text-amber-600 dark:text-amber-400">
           <span>Could not verify 2D layout.</span>
@@ -286,7 +328,10 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
               key={activeDesignFacility.id}
               bluDesignFacilityId={activeDesignFacility.id}
               bluLokFacilityId={activeDesignFacility.linkedBlulokId ?? undefined}
+              prefetchedFacility={cachedFacility}
               isRenderActive={run3d}
+              skyPreset={resolvedSkyPreset}
+              groundPreset={resolvedGroundPreset}
               onReady={handleReady}
               onError={handleError}
             />
@@ -298,6 +343,15 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
           />
         )}
       </div>
+      {editable && (
+        <ViewSettingsModal
+          isOpen={viewSettingsOpen}
+          onClose={() => setViewSettingsOpen(false)}
+          skyPreset={resolvedSkyPreset}
+          groundPreset={resolvedGroundPreset}
+          onChange={handleViewConfigChange}
+        />
+      )}
     </Widget>
   );
 };

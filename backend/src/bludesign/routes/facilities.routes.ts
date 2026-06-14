@@ -38,6 +38,8 @@ const saveFacilitySchema = Joi.object({
   name: Joi.string().min(1).max(255).required(),
   data: facilityDataSchema.required(),
   thumbnail: Joi.string().optional().allow(null, ''),
+  /** When duplicating a facility, copy layout-source.png from this facility id. */
+  copyLayoutSourceFrom: Joi.string().uuid().optional(),
 });
 
 const updateFacilitySchema = Joi.object({
@@ -217,6 +219,7 @@ router.get('/:id', authenticateToken, async (req: AuthenticatedRequest, res: Res
       return res.status(404).json({ error: 'Facility not found' });
     }
 
+    res.setHeader('Cache-Control', 'private, no-store');
     res.json(facility);
   } catch (error) {
     console.error('Error fetching facility:', error);
@@ -243,8 +246,14 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { name, data, thumbnail } = value;
-    const facility = await getFacilityService().saveFacility(userId, name, data, thumbnail);
+    const { name, data, thumbnail, copyLayoutSourceFrom } = value;
+    const facility = await getFacilityService().saveFacility(
+      userId,
+      name,
+      data,
+      thumbnail,
+      copyLayoutSourceFrom,
+    );
 
     res.status(201).json(facility);
   } catch (error) {

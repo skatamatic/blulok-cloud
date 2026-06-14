@@ -49,6 +49,8 @@ export interface ImportedLayoutViewerProps {
   hoveredId?: string | null;
   /** Override per-unit colors (live state in dashboard). */
   getUnitColor?: (unitId: string) => OverlayColor;
+  /** When true, unit fill/stroke are drawn at reduced opacity (e.g. unbound in editor). */
+  isUnitDimmed?: (unitId: string) => boolean;
   onSelect?: (unitId: string | null) => void;
   className?: string;
 }
@@ -56,6 +58,7 @@ export interface ImportedLayoutViewerProps {
 interface UnitShapeProps {
   unit: EditableUnit;
   isSelected: boolean;
+  isDimmed: boolean;
   showImage: boolean;
   showLabels: boolean;
   isDark: boolean;
@@ -67,6 +70,7 @@ interface UnitShapeProps {
 const UnitShape = memo(function UnitShape({
   unit,
   isSelected,
+  isDimmed,
   showImage,
   showLabels,
   isDark,
@@ -74,8 +78,8 @@ const UnitShape = memo(function UnitShape({
   colors,
   onPointerDown,
 }: UnitShapeProps) {
-  const baseFill = showImage ? 0.16 : 0.55;
-  const hiFill = showImage ? 0.32 : 0.72;
+  const baseFill = showImage ? 0.16 : isDimmed ? 0.12 : 0.55;
+  const hiFill = showImage ? 0.32 : isDimmed ? 0.28 : 0.72;
   const fillOpacity = isSelected ? hiFill : baseFill;
   const stroke = isSelected ? selectionStrokeColor() : colors.stroke;
   const fill = hexToRgba(stroke, fillOpacity);
@@ -123,6 +127,7 @@ export const ImportedLayoutViewer = forwardRef<ImportedLayoutViewerHandle, Impor
       selectedIds = EMPTY_SELECTED,
       hoveredId,
       getUnitColor,
+      isUnitDimmed,
       onSelect,
       className,
     } = props;
@@ -348,11 +353,13 @@ export const ImportedLayoutViewer = forwardRef<ImportedLayoutViewerHandle, Impor
             )}
             {units.map((unit) => {
               const colors = getUnitColor?.(unit.id) ?? defaultColor;
+              const dimmed = isUnitDimmed?.(unit.id) ?? false;
               return (
                 <UnitShape
                   key={unit.id}
                   unit={unit}
                   isSelected={selectedIds.has(unit.id) || unit.id === hoveredId}
+                  isDimmed={dimmed}
                   showImage={showImage}
                   showLabels={showLabels}
                   isDark={isDark}

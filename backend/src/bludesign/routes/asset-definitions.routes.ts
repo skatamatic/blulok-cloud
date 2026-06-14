@@ -16,7 +16,7 @@ import { FacilityService } from '../services/facility.service';
 import { DatabaseService } from '@/services/database.service';
 import { BluDesignProjectModel } from '../models/bludesign-project.model';
 import { AssetCategory } from '../types/bludesign.types';
-import { createStorageProvider, getDefaultStorageProvider, storageConfigForProject } from '../services/storage';
+import { createStorageProvider, getBluDesignStorageProvider, storageConfigForProject } from '../services/storage';
 
 const router = Router();
 
@@ -501,7 +501,7 @@ router.get('/global-models/:id/file', authenticateToken, asyncHandler(async (req
     return;
   }
   
-  const provider = getDefaultStorageProvider();
+  const provider = await getBluDesignStorageProvider();
   
   try {
     const data = await provider.downloadGlobalAsset(id, model.filename);
@@ -548,7 +548,7 @@ router.post('/global-models', authenticateToken, upload.single('file'), asyncHan
     return;
   }
   
-  const provider = getDefaultStorageProvider();
+  const provider = await getBluDesignStorageProvider();
   
   // Use a unique ID for the model
   const { v4: uuidv4 } = await import('uuid');
@@ -590,7 +590,7 @@ router.delete('/global-models/:id', authenticateToken, asyncHandler(async (req: 
     return;
   }
   
-  const provider = getDefaultStorageProvider();
+  const provider = await getBluDesignStorageProvider();
   
   try {
     await provider.deleteGlobalAsset(id);

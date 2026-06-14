@@ -16,6 +16,7 @@ import {
 import { useTheme } from '@/contexts/ThemeContext';
 import { BuildingSkinType, Building } from '../../core/types';
 import { getBuildingSkinManager } from '../../core/BuildingSkinManager';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 
 interface BuildingSkinPanelProps {
   /** Currently selected building (null when no building selected) */
@@ -49,6 +50,7 @@ export const BuildingSkinPanel: React.FC<BuildingSkinPanelProps> = ({
   
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   
   const availableSkins = skinManager.getAllSkins();
   const currentSkin = building?.skinType || BuildingSkinType.DEFAULT;
@@ -75,10 +77,15 @@ export const BuildingSkinPanel: React.FC<BuildingSkinPanelProps> = ({
   
   const handleDeleteBuilding = useCallback(() => {
     if (building && onDelete) {
-      if (confirm(`Delete building "${building.name}"? This will remove all walls, floors, and roof.`)) {
-        onDelete(building.id);
-      }
+      setShowDeleteConfirm(true);
     }
+  }, [building, onDelete]);
+
+  const confirmDeleteBuilding = useCallback(() => {
+    if (building && onDelete) {
+      onDelete(building.id);
+    }
+    setShowDeleteConfirm(false);
   }, [building, onDelete]);
 
   // Show empty state if no building is selected
@@ -244,6 +251,21 @@ export const BuildingSkinPanel: React.FC<BuildingSkinPanelProps> = ({
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="Delete building?"
+        message={
+          building
+            ? `Delete building "${building.name}"? This will remove all walls, floors, and roof.`
+            : ''
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmTone="danger"
+        onConfirm={confirmDeleteBuilding}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 };

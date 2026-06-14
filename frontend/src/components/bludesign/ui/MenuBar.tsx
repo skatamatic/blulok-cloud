@@ -181,6 +181,7 @@ interface PanelVisibility {
   assets: boolean;
   smartobjects: boolean;
   view: boolean;
+  defaultCamera: boolean;
   properties: boolean;
   floors: boolean;
   skins: boolean;
@@ -306,6 +307,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
             { label: `${panelVisibility.assets ? '✓ ' : '  '}Assets`, onClick: () => onTogglePanelVisibility('assets') },
             { label: `${panelVisibility.smartobjects ? '✓ ' : '  '}Smart Objects`, onClick: () => onTogglePanelVisibility('smartobjects') },
             { label: `${panelVisibility.view ? '✓ ' : '  '}View Controls`, onClick: () => onTogglePanelVisibility('view') },
+            { label: `${panelVisibility.defaultCamera ? '✓ ' : '  '}Default Camera`, onClick: () => onTogglePanelVisibility('defaultCamera') },
             { label: `${panelVisibility.properties ? '✓ ' : '  '}Properties`, onClick: () => onTogglePanelVisibility('properties') },
             { label: `${panelVisibility.floors ? '✓ ' : '  '}Floors`, onClick: () => onTogglePanelVisibility('floors') },
             { label: `${panelVisibility.skins ? '✓ ' : '  '}Theme`, onClick: () => onTogglePanelVisibility('skins') },

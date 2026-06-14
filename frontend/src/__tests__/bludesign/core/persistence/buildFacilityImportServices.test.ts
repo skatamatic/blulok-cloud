@@ -59,8 +59,7 @@ function minimalEditorState(cameraOverrides: Partial<EditorState['camera']> = {}
 
 describe('createFacilityImportServices', () => {
   it('restoreCamera updates state and controller mode', () => {
-    const setMode = jest.fn();
-    const setIso = jest.fn();
+    const applySavedState = jest.fn();
     const state = minimalEditorState();
 
     const s = createFacilityImportServices({
@@ -69,8 +68,7 @@ describe('createFacilityImportServices', () => {
       buildingManager: { clear: jest.fn(), restoreBuilding: jest.fn() } as never,
       floorManager: { registerFloor: jest.fn(), setFloor: jest.fn() } as never,
       cameraController: {
-        setMode,
-        setIsometricAngle: setIso,
+        applySavedState,
       } as never,
       placementCoordinator: { placeFromSavedData: jest.fn() } as never,
       skinManager: { loadFacilitySkins: jest.fn(), setActiveSkin: jest.fn() } as never,
@@ -82,17 +80,17 @@ describe('createFacilityImportServices', () => {
       emitThemeMissing: jest.fn(),
     });
 
-    s.restoreCamera({
+    const savedCamera = {
       mode: CameraMode.ISOMETRIC,
       isometricAngle: IsometricAngle.NORTH_EAST,
       position: new THREE.Vector3(1, 2, 3),
       target: new THREE.Vector3(0, 0, 0),
       zoom: 10,
-    });
+    };
 
-    expect(setMode).toHaveBeenCalledWith(CameraMode.ISOMETRIC);
-    expect(setIso).toHaveBeenCalledWith(IsometricAngle.NORTH_EAST);
-    expect(state.camera.zoom).toBe(10);
+    s.restoreCamera(savedCamera);
+
+    expect(applySavedState).toHaveBeenCalledWith(savedCamera, false);
   });
 
   it('frameImportedLayout switches to free mode and frames aerially', () => {

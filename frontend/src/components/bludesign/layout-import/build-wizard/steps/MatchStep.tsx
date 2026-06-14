@@ -4,6 +4,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { EditableUnit } from '../../types';
+import { compareUnitsByLabel } from '../../unitLabelSort';
 import type { BuildWizardController } from '../useBuildWizard';
 
 interface Props {
@@ -14,6 +15,11 @@ interface Props {
 
 export const MatchStep: React.FC<Props> = ({ units, controller, isDark }) => {
   const labeled = useMemo(() => units.filter((u) => u.kind === 'unit' || u.label), [units]);
+  const sortedLabeled = useMemo(() => {
+    const order = new Map<string, number>();
+    labeled.forEach((u, i) => order.set(u.id, i));
+    return [...labeled].sort((a, b) => compareUnitsByLabel(a, b, order));
+  }, [labeled]);
   const [onlyUnmatched, setOnlyUnmatched] = useState(false);
 
   useEffect(() => {
@@ -25,8 +31,10 @@ export const MatchStep: React.FC<Props> = ({ units, controller, isDark }) => {
     isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-900'
   }`;
 
-  const visible = onlyUnmatched ? labeled.filter((u) => !controller.assignments[u.id]) : labeled;
-  const unbound = labeled.length - controller.matchedCount;
+  const visible = onlyUnmatched
+    ? sortedLabeled.filter((u) => !controller.assignments[u.id])
+    : sortedLabeled;
+  const unbound = sortedLabeled.length - controller.matchedCount;
 
   return (
     <div className="space-y-5">

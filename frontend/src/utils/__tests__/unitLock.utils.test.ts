@@ -1,4 +1,9 @@
-import { canRequestRemoteUnlock, canRequestRemoteLock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import {
+  canRequestRemoteUnlock,
+  canRequestRemoteLock,
+  canUseRemoteUnlockControls,
+  isLockTransitionPending,
+} from '@/utils/unitLock.utils';
 
 describe('canRequestRemoteUnlock', () => {
   it('allows only locked', () => {
@@ -27,5 +32,14 @@ describe('isLockTransitionPending', () => {
     expect(isLockTransitionPending('unlocking')).toBe(true);
     expect(isLockTransitionPending('locked')).toBe(false);
     expect(isLockTransitionPending('unlocked')).toBe(false);
+  });
+});
+
+describe('canUseRemoteUnlockControls', () => {
+  it('allows staff roles used by dashboard unlock surfaces', () => {
+    expect(canUseRemoteUnlockControls('admin')).toBe(true);
+    expect(canUseRemoteUnlockControls('maintenance')).toBe(true);
+    expect(canUseRemoteUnlockControls('tenant')).toBe(false);
+    expect(canUseRemoteUnlockControls(undefined)).toBe(false);
   });
 });

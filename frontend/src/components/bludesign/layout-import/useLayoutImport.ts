@@ -22,6 +22,7 @@ import type {
 import { mapBackendStageToPipeline } from './types';
 import { clampDoorOffset, defaultDoor } from './geometry';
 import { postProcessImportedUnitsWithProgress } from './postProcess';
+import { createMinimumStageProgressSetter } from './importProgressTiming';
 
 export type ImportStatus = 'idle' | 'loading' | 'processing' | 'ready' | 'error';
 
@@ -185,7 +186,13 @@ export function useLayoutImport() {
   optionsRef.current = options;
 
   // Live streaming progress (null when not detecting).
-  const [progress, setProgress] = useState<DetectionProgress | null>(null);
+  const [progress, setProgressState] = useState<DetectionProgress | null>(null);
+  const progressControllerRef = useRef<ReturnType<typeof createMinimumStageProgressSetter>>();
+  if (!progressControllerRef.current) {
+    progressControllerRef.current = createMinimumStageProgressSetter(setProgressState);
+  }
+  const setProgress = progressControllerRef.current.set;
+  const clearProgress = progressControllerRef.current.clearImmediately;
   // Aborts an in-flight detection stream (on reset/new upload/unmount).
   const abortRef = useRef<AbortController | null>(null);
   /** Bumped on cancel/reset so in-flight load/detect work cannot repopulate state. */
@@ -398,7 +405,7 @@ export function useLayoutImport() {
           });
         }
       } catch (e) {
-        setProgress(null);
+        clearProgress();
         if (controller.signal.aborted || runId !== activeImportRunRef.current) {
           return;
         }
@@ -437,7 +444,7 @@ export function useLayoutImport() {
         await runDetection(loaded, false);
       } catch (e) {
         if (runId !== activeImportRunRef.current) return;
-        setProgress(null);
+        clearProgress();
         setError((e as Error)?.message || 'Could not read the uploaded file.');
         setStatus('error');
       }
@@ -489,7 +496,7 @@ export function useLayoutImport() {
     activeImportRunRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
-    setProgress(null);
+    clearProgress();
     setPendingPdf(null);
     setSource(null);
     setUnitsState([]);
@@ -857,7 +864,7 @@ export function useLayoutImport() {
         const previewUrl = URL.createObjectURL(blob);
 
         abortRef.current?.abort();
-        setProgress(null);
+        clearProgress();
         // Replacing `source` triggers the cleanup effect that revokes the old URL.
         setSource({
           uploadFile,

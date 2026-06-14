@@ -1,8 +1,10 @@
 import { isLegacyFacilityFormat } from '../serialization/facilityImportHelpers';
+import { resolveInitialCameraForImport } from '../camera/cameraStateUtils';
 import type {
   AssetSkin,
   BuildingFootprint,
   CameraState,
+  SerializedCameraState,
   DataSourceConfig,
   FacilityData,
   GridSize,
@@ -18,7 +20,7 @@ import type {
 export interface FacilitySceneImportServices {
   clearSceneForImport(): void;
   resetWorkingGridAlignment(): void;
-  restoreCamera(camera: CameraState): void;
+  restoreCamera(camera: CameraState | SerializedCameraState): void;
   restoreBuilding(
     id: string,
     footprints: BuildingFootprint[],
@@ -54,8 +56,9 @@ export function runFacilitySceneImport(
   s.clearSceneForImport();
   s.resetWorkingGridAlignment();
 
-  if (data.camera) {
-    s.restoreCamera(data.camera);
+  const initialCamera = resolveInitialCameraForImport(data);
+  if (initialCamera) {
+    s.restoreCamera(initialCamera);
   }
 
   if (data.buildings && data.buildings.length > 0) {
@@ -111,7 +114,7 @@ export function runFacilitySceneImport(
     s.setDataSourceConfig(null);
   }
 
-  if ('layoutImport' in data && data.layoutImport) {
+  if ('layoutImport' in data && data.layoutImport && !('defaultCamera' in data && data.defaultCamera)) {
     s.frameImportedLayout?.();
   }
 

@@ -2,7 +2,7 @@
  * Build-in-3D Wizard — orchestration hook
  *
  * Holds wizard state and the async actions (create/reuse assets, fetch
- * facility units + auto-match, assemble + save the 3D scene). Pure logic lives
+ * facility units + auto-match, assemble the 3D scene for editor handoff). Pure logic lives
  * in scale.ts / assetSpec.ts / nameMatch.ts / sceneBuild.ts.
  */
 
@@ -11,9 +11,6 @@ import { AssetService } from '../../services/AssetService';
 import {
   getBluLokFacilities,
   getBluLokUnits,
-  saveFacility,
-  uploadLayoutSource,
-  deleteFacility,
   type BluLokFacility,
   type BluLokUnit,
 } from '@/api/bludesign';
@@ -29,6 +26,8 @@ import {
 } from './assetSpec';
 import { autoMatch, type MatchCandidate } from './nameMatch';
 import { buildFacilityData } from './sceneBuild';
+import { hasLayoutImport } from '../layoutImportMetadata';
+import type { ImportEditorHandoff } from '../importEditorHandoff';
 
 export type WizardStep = 'scale' | 'assets' | 'match' | 'build';
 
@@ -88,8 +87,7 @@ export interface BuildWizardController {
   setSceneName: (v: string) => void;
   buildBusy: boolean;
   buildError: string | null;
-  savedFacilityId: string | null;
-  buildAndSave: () => Promise<string | null>;
+  buildAndOpen: () => Promise<ImportEditorHandoff | null>;
 }
 
 export function useBuildWizard({ units, defaultSceneName, source }: UseBuildWizardArgs): BuildWizardController {
@@ -117,7 +115,6 @@ export function useBuildWizard({ units, defaultSceneName, source }: UseBuildWiza
   const [sceneName, setSceneName] = useState(defaultSceneName ?? 'Imported facility');
   const [buildBusy, setBuildBusy] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
-  const [savedFacilityId, setSavedFacilityId] = useState<string | null>(null);
 
   const labeledUnits = useMemo(() => units.filter((u) => u.kind === 'unit' || u.label), [units]);
 
@@ -260,15 +257,14 @@ export function useBuildWizard({ units, defaultSceneName, source }: UseBuildWiza
     });
   }, []);
 
-  // --- Stage 4: build ------------------------------------------------------
-  const buildAndSave = useCallback(async (): Promise<string | null> => {
+  // --- Stage 4: build (in-memory handoff — user saves explicitly in editor) ---
+  const buildAndOpen = useCallback(async (): Promise<ImportEditorHandoff | null> => {
     if (!source?.width || !source?.height) {
       setBuildError('Import source image is missing — re-upload the plan and try again.');
       return null;
     }
     setBuildBusy(true);
     setBuildError(null);
-    let savedId: string | null = null;
     try {
       const bindingByUnitId: Record<string, string> = {};
       for (const [diagramId, realId] of Object.entries(assignments)) {
@@ -284,22 +280,18 @@ export function useBuildWizard({ units, defaultSceneName, source }: UseBuildWiza
         imageWidth: source.width,
         imageHeight: source.height,
       });
-      const saved = await saveFacility(data.name, data);
-      savedId = saved.id;
-      if (source.uploadFile) {
-        await uploadLayoutSource(saved.id, source.uploadFile);
+      if (!hasLayoutImport(data)) {
+        throw new Error(
+          'Import plan metadata is invalid. Return to Assets, regenerate assets, and try again.'
+        );
       }
-      setSavedFacilityId(saved.id);
-      return saved.id;
+      return {
+        sceneName: data.name,
+        data,
+        layoutSourceFile: source.uploadFile,
+      };
     } catch (err) {
-      if (savedId) {
-        try {
-          await deleteFacility(savedId);
-        } catch {
-          /* best-effort rollback */
-        }
-      }
-      setBuildError(err instanceof Error ? err.message : 'Failed to save facility');
+      setBuildError(err instanceof Error ? err.message : 'Failed to build facility');
       return null;
     } finally {
       setBuildBusy(false);
@@ -373,7 +365,6 @@ export function useBuildWizard({ units, defaultSceneName, source }: UseBuildWiza
     setSceneName,
     buildBusy,
     buildError,
-    savedFacilityId,
-    buildAndSave,
+    buildAndOpen,
   };
 }

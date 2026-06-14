@@ -54,6 +54,7 @@ function makeMockStorage(): jest.Mocked<FacilityStorageAdapter> {
     deleteData: jest.fn().mockResolvedValue(undefined),
     saveLayoutSource: jest.fn().mockResolvedValue(undefined),
     loadLayoutSource: jest.fn().mockResolvedValue(Buffer.from('png')),
+    copyLayoutSource: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<FacilityStorageAdapter>;
 }
 
@@ -87,6 +88,46 @@ describe('FacilityService', () => {
 
       expect(result.id).toBe('test-uuid-1234');
       expect(result.data).toEqual(sampleData);
+    });
+
+    it('should copy layout source when copyLayoutSourceFrom is provided', async () => {
+      const metaRow = {
+        id: 'fac-source',
+        user_id: 'user-1',
+        name: 'Source',
+        thumbnail: null,
+        last_opened: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      db.query.first.mockResolvedValue(metaRow);
+
+      await service.saveFacility('user-1', 'Copy', sampleData, undefined, 'fac-source');
+
+      expect(storage.copyLayoutSource).toHaveBeenCalledWith(
+        'user-1',
+        'fac-source',
+        'test-uuid-1234',
+      );
+    });
+
+    it('should still save facility when layout source copy fails', async () => {
+      const metaRow = {
+        id: 'fac-source',
+        user_id: 'user-1',
+        name: 'Source',
+        thumbnail: null,
+        last_opened: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      db.query.first.mockResolvedValue(metaRow);
+      storage.copyLayoutSource.mockRejectedValue(new Error('NOT_FOUND'));
+
+      const result = await service.saveFacility('user-1', 'Copy', sampleData, undefined, 'fac-source');
+
+      expect(result.id).toBe('test-uuid-1234');
+      expect(storage.saveData).toHaveBeenCalled();
     });
   });
 

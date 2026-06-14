@@ -6,7 +6,7 @@
  * error handling.
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import FirmwareManagementTab from '@/components/DevTools/FirmwareManagementTab';
 import { apiService } from '@/services/api.service';
 
@@ -48,8 +48,6 @@ function setupMocks(firmware: any[] = [mkFirmware()]) {
 describe('FirmwareManagementTab', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // Mock window.confirm for delete tests
-    window.confirm = jest.fn(() => true);
   });
 
   // ── Loading ──────────────────────────────────────────────────────────
@@ -347,11 +345,10 @@ describe('FirmwareManagementTab', () => {
         expect(screen.getByText('v2.0.0')).toBeInTheDocument();
       });
 
-      // Find and click the delete button (trash icon button)
-      const deleteBtn = screen.getByTitle('Deactivate');
-      fireEvent.click(deleteBtn);
+      fireEvent.click(screen.getByTitle('Deactivate'));
+      const dialog = screen.getByRole('alertdialog');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Deactivate' }));
 
-      expect(window.confirm).toHaveBeenCalled();
       await waitFor(() => {
         expect(mockApi.deleteFirmware).toHaveBeenCalledWith('fw-1');
         expect(mockAddToast).toHaveBeenCalledWith(
@@ -361,7 +358,6 @@ describe('FirmwareManagementTab', () => {
     });
 
     it('does not delete when confirmation is cancelled', async () => {
-      (window.confirm as jest.Mock).mockReturnValue(false);
       setupMocks();
       render(<FirmwareManagementTab />);
 
@@ -370,6 +366,7 @@ describe('FirmwareManagementTab', () => {
       });
 
       fireEvent.click(screen.getByTitle('Deactivate'));
+      fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
       expect(mockApi.deleteFirmware).not.toHaveBeenCalled();
     });
   });

@@ -17,6 +17,13 @@ jest.mock('@/components/bludesign/layout-import/loadSource', () => ({
 jest.mock('@/api/bludesign', () => ({
   detectLayoutStream: jest.fn(),
 }));
+jest.mock('@/components/bludesign/layout-import/importProgressTiming', () => ({
+  ...jest.requireActual('@/components/bludesign/layout-import/importProgressTiming'),
+  createMinimumStageProgressSetter: (setProgress: (value: unknown) => void) => ({
+    set: setProgress,
+    clearImmediately: () => setProgress(null),
+  }),
+}));
 
 import { useLayoutImport } from '@/components/bludesign/layout-import/useLayoutImport';
 import { loadSource, validateSourceFile } from '@/components/bludesign/layout-import/loadSource';

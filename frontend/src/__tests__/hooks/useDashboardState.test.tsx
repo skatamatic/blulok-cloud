@@ -117,6 +117,108 @@ describe('useDashboardState', () => {
     ).toBe(true);
   });
 
+  it('updateWidgetConfig merges config for a widget when layout is editable', async () => {
+    mockGetWidgetLayouts.mockResolvedValueOnce({
+      ...defaultApiResponse,
+      pages: [
+        {
+          ...defaultApiResponse.pages![0],
+          widgets: [
+            {
+              widgetId: 'viewer-1',
+              widgetType: 'facility-viewer',
+              layoutConfig: {
+                position: { x: 0, y: 0, w: 12, h: 8 },
+                size: 'huge',
+              },
+              config: { skyPreset: 'blank', groundPreset: 'blank' },
+            },
+          ],
+        },
+      ],
+    });
+
+    const { result } = renderHook(
+      () =>
+        useDashboardState({
+          isAuthenticated: true,
+          isTenant: false,
+        }),
+      { wrapper }
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const widget = result.current.activePage.widgetInstances.find(
+      (w) => w.type === 'facility-viewer'
+    );
+    expect(widget).toBeTruthy();
+
+    act(() => {
+      result.current.updateWidgetConfig(widget!.id, (prev) => ({
+        ...prev,
+        skyPreset: 'day',
+        groundPreset: 'grass',
+      }));
+    });
+
+    await waitFor(() => {
+      const updated = result.current.activePage.widgetInstances.find(
+        (w) => w.id === widget!.id
+      );
+      expect(updated?.config).toMatchObject({
+        skyPreset: 'day',
+        groundPreset: 'grass',
+      });
+    });
+  });
+
+  it('does not update widget config when layout is read-only', async () => {
+    mockGetWidgetLayouts.mockResolvedValueOnce({
+      ...defaultApiResponse,
+      canEditLayout: false,
+      pages: [
+        {
+          ...defaultApiResponse.pages![0],
+          widgets: [
+            {
+              widgetId: 'viewer-1',
+              widgetType: 'facility-viewer',
+              layoutConfig: {
+                position: { x: 0, y: 0, w: 12, h: 8 },
+                size: 'huge',
+              },
+              config: { skyPreset: 'blank' },
+            },
+          ],
+        },
+      ],
+    });
+
+    const { result } = renderHook(
+      () =>
+        useDashboardState({
+          isAuthenticated: true,
+          isTenant: false,
+        }),
+      { wrapper }
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const widget = result.current.activePage.widgetInstances[0];
+
+    act(() => {
+      result.current.updateWidgetConfig(widget.id, (prev) => ({
+        ...prev,
+        skyPreset: 'night',
+      }));
+    });
+
+    expect(result.current.activePage.widgetInstances[0]?.config).toMatchObject({
+      skyPreset: 'blank',
+    });
+  });
+
   it('removeWidget removes widget by id', async () => {
     mockGetWidgetLayouts.mockRejectedValueOnce(new Error('network'));
 

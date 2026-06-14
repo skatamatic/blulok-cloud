@@ -13,6 +13,7 @@ import {
   ChevronUpIcon,
   ChevronDownIcon,
   EyeIcon,
+  ArrowsPointingOutIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -25,6 +26,7 @@ interface ViewerFloorsPanelProps {
   onToggleFullView: () => void;
   onRotateCamera?: (direction: 'cw' | 'ccw') => void;
   onToggleCameraMode?: () => void;
+  onResetView?: () => void;
   /** Wide layouts anchor camera/floor controls at bottom-center. */
   anchor?: 'bottom-right' | 'bottom-center';
 }
@@ -56,6 +58,7 @@ export const ViewerFloorsPanel: React.FC<ViewerFloorsPanelProps> = ({
   onToggleFullView,
   onRotateCamera,
   onToggleCameraMode,
+  onResetView,
   anchor = 'bottom-right',
 }) => {
   const { effectiveTheme } = useTheme();
@@ -89,7 +92,7 @@ export const ViewerFloorsPanel: React.FC<ViewerFloorsPanelProps> = ({
   // Don't render if only one floor and no building view option
   if (availableFloors.length <= 1) {
     // Still show camera controls if available
-    if (!onRotateCamera && !onToggleCameraMode) {
+    if (!onRotateCamera && !onToggleCameraMode && !onResetView) {
       return null;
     }
   }
@@ -195,6 +198,16 @@ export const ViewerFloorsPanel: React.FC<ViewerFloorsPanelProps> = ({
             >
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v4M21 10l-4 4M21 10l-4-4" />
             </svg>
+          </button>
+        )}
+
+        {onResetView && (
+          <button
+            onClick={onResetView}
+            className={buttonBase}
+            title="Reset view to default camera"
+          >
+            <ArrowsPointingOutIcon className="w-4 h-4" />
           </button>
         )}
 

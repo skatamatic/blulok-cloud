@@ -109,6 +109,66 @@ describe('Storage Routes', () => {
     });
   });
 
+  describe('GET /api/v1/bludesign/storage/config', () => {
+    it('should return storage config for admin', async () => {
+      const res = await request(app)
+        .get('/api/v1/bludesign/storage/config')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.config).toBeDefined();
+      expect(res.body.config.providerType).toBeDefined();
+      expect(['database', 'env_fallback']).toContain(res.body.config.source);
+    });
+
+    it('should require authentication', async () => {
+      const res = await request(app).get('/api/v1/bludesign/storage/config');
+      expect(res.status).toBe(401);
+    });
+
+    it('should return 403 for non-admin users', async () => {
+      const res = await request(app)
+        .get('/api/v1/bludesign/storage/config')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`);
+
+      expect(res.status).toBe(403);
+    });
+  });
+
+  describe('PUT /api/v1/bludesign/storage/config', () => {
+    it('should save local storage config', async () => {
+      const res = await request(app)
+        .put('/api/v1/bludesign/storage/config')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({
+          providerType: 'local',
+          providerConfig: { basePath: './test-bludesign-storage' },
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('updated');
+    });
+
+    it('should return 400 if providerType is missing', async () => {
+      const res = await request(app)
+        .put('/api/v1/bludesign/storage/config')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ providerConfig: { basePath: './x' } });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should require authentication', async () => {
+      const res = await request(app)
+        .put('/api/v1/bludesign/storage/config')
+        .send({ providerType: 'local', providerConfig: { basePath: './x' } });
+
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe('POST /api/v1/bludesign/storage/:provider/test', () => {
     it('should test local storage provider', async () => {
       const res = await request(app)

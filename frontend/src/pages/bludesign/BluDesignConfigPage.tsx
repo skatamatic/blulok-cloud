@@ -6,11 +6,13 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
 import { 
   Cog6ToothIcon,
   CloudIcon,
   LinkIcon,
+  LinkSlashIcon,
   FolderIcon,
   CheckCircleIcon,
   ExclamationCircleIcon,
@@ -72,20 +74,25 @@ interface BluDesignFacilityInfo {
   id: string;
   name: string;
   linkedBlulokId: string | null;
+  linkedBlulokName: string | null;
 }
 
 const BluDesignConfigPage: React.FC = () => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Storage configuration state
   const [storageConfig, setStorageConfig] = useState<StorageConfig>({
     type: 'local',
-    localPath: './data/bludesign',
+    localPath: '../.blulok-local-data/bludesign',
   });
   const [isStorageSaving, setIsStorageSaving] = useState(false);
+  const [isStorageLoading, setIsStorageLoading] = useState(true);
+  const [storageConfigSource, setStorageConfigSource] = useState<'database' | 'env_fallback' | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [storageSaved, setStorageSaved] = useState(false);
+  const [testConnectionSuccess, setTestConnectionSuccess] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [gdriveAuthUrl, setGdriveAuthUrl] = useState<string | null>(null);
   const [gdriveTokenStatus, setGdriveTokenStatus] = useState<'valid' | 'expired' | 'missing' | null>(null);
@@ -99,6 +106,21 @@ const BluDesignConfigPage: React.FC = () => {
 
   // Active section tab
   const [activeTab, setActiveTab] = useState<'storage' | 'links' | 'cache'>('storage');
+
+  const selectTab = useCallback(
+    (tab: 'storage' | 'links' | 'cache') => {
+      setActiveTab(tab);
+      setSearchParams({ tab }, { replace: true });
+    },
+    [setSearchParams],
+  );
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'storage' || tab === 'links' || tab === 'cache') {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
   
   // Cache management state
   const [cacheStats, setCacheStats] = useState<{
@@ -200,9 +222,83 @@ const BluDesignConfigPage: React.FC = () => {
 
   // Load initial data
   useEffect(() => {
+    loadStorageConfig();
     loadFacilityData();
     calculateCacheStats();
   }, [calculateCacheStats]);
+
+  const mapApiConfigToState = (config: bludesignApi.BluDesignStorageConfigResponse): StorageConfig => {
+    const { providerType, providerConfig } = config;
+    if (providerType === 'local') {
+      return {
+        type: 'local',
+        localPath: (providerConfig.basePath as string) || '../.blulok-local-data/bludesign',
+      };
+    }
+    if (providerType === 'gcs') {
+      return {
+        type: 'gcs',
+        gcsBucket: providerConfig.bucketName as string | undefined,
+        gcsProject: providerConfig.projectId as string | undefined,
+        gcsKeyFilePath: providerConfig.keyFilePath as string | undefined,
+        gcsKeyFileContents: providerConfig.keyFileContents as string | undefined,
+        gcsPublicBucket: Boolean(providerConfig.publicBucket),
+      };
+    }
+    return {
+      type: 'gdrive',
+      gdriveClientId: providerConfig.clientId as string | undefined,
+      gdriveClientSecret: providerConfig.clientSecret as string | undefined,
+      gdriveRootFolderId: providerConfig.rootFolderId as string | undefined,
+      gdriveAccessToken: providerConfig.accessToken as string | undefined,
+      gdriveRefreshToken: providerConfig.refreshToken as string | undefined,
+    };
+  };
+
+  const buildBackendStorageConfig = (): Record<string, unknown> => {
+    const backendConfig: Record<string, unknown> = {};
+
+    if (storageConfig.type === 'local') {
+      backendConfig.basePath = storageConfig.localPath || '../.blulok-local-data/bludesign';
+    } else if (storageConfig.type === 'gcs') {
+      backendConfig.bucketName = storageConfig.gcsBucket;
+      backendConfig.projectId = storageConfig.gcsProject;
+      if (storageConfig.gcsKeyFilePath) {
+        backendConfig.keyFilePath = storageConfig.gcsKeyFilePath;
+      }
+      if (storageConfig.gcsKeyFileContents) {
+        backendConfig.keyFileContents = storageConfig.gcsKeyFileContents;
+      }
+      backendConfig.publicBucket = storageConfig.gcsPublicBucket || false;
+    } else if (storageConfig.type === 'gdrive') {
+      backendConfig.clientId = storageConfig.gdriveClientId;
+      backendConfig.clientSecret = storageConfig.gdriveClientSecret;
+      backendConfig.rootFolderId = storageConfig.gdriveRootFolderId;
+      if (storageConfig.gdriveAccessToken) {
+        backendConfig.accessToken = storageConfig.gdriveAccessToken;
+      }
+      if (storageConfig.gdriveRefreshToken) {
+        backendConfig.refreshToken = storageConfig.gdriveRefreshToken;
+      }
+    }
+
+    return backendConfig;
+  };
+
+  const loadStorageConfig = async () => {
+    setIsStorageLoading(true);
+    try {
+      const data = await bludesignApi.getBluDesignStorageConfig();
+      if (data.success && data.config) {
+        setStorageConfig(mapApiConfigToState(data.config));
+        setStorageConfigSource(data.config.source);
+      }
+    } catch (error) {
+      console.error('Failed to load storage config:', error);
+    } finally {
+      setIsStorageLoading(false);
+    }
+  };
 
   const loadFacilityData = async () => {
     setIsLoadingLinks(true);
@@ -229,40 +325,17 @@ const BluDesignConfigPage: React.FC = () => {
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
     setStorageError(null);
+    setTestConnectionSuccess(false);
 
     try {
-      // Build storage config for backend
-      const backendConfig: Record<string, unknown> = {};
-      
-      if (storageConfig.type === 'local') {
-        backendConfig.basePath = storageConfig.localPath || './storage/bludesign';
-      } else if (storageConfig.type === 'gcs') {
-        backendConfig.bucketName = storageConfig.gcsBucket;
-        backendConfig.projectId = storageConfig.gcsProject;
-        if (storageConfig.gcsKeyFilePath) {
-          backendConfig.keyFilePath = storageConfig.gcsKeyFilePath;
-        }
-        if (storageConfig.gcsKeyFileContents) {
-          backendConfig.keyFileContents = storageConfig.gcsKeyFileContents;
-        }
-        backendConfig.publicBucket = storageConfig.gcsPublicBucket || false;
-      } else if (storageConfig.type === 'gdrive') {
-        backendConfig.clientId = storageConfig.gdriveClientId;
-        backendConfig.clientSecret = storageConfig.gdriveClientSecret;
-        backendConfig.rootFolderId = storageConfig.gdriveRootFolderId;
-        if (storageConfig.gdriveAccessToken) {
-          backendConfig.accessToken = storageConfig.gdriveAccessToken;
-        }
-        if (storageConfig.gdriveRefreshToken) {
-          backendConfig.refreshToken = storageConfig.gdriveRefreshToken;
-        }
-      }
+      const result = await bludesignApi.testStorageProvider(
+        storageConfig.type,
+        buildBackendStorageConfig(),
+      );
 
-      const result = await bludesignApi.testStorageProvider(storageConfig.type, backendConfig);
-      
       if (result.success) {
-        setStorageSaved(true);
-        setTimeout(() => setStorageSaved(false), 3000);
+        setTestConnectionSuccess(true);
+        setTimeout(() => setTestConnectionSuccess(false), 3000);
       } else {
         setStorageError(result.message || 'Connection test failed');
       }
@@ -280,11 +353,21 @@ const BluDesignConfigPage: React.FC = () => {
     setStorageSaved(false);
 
     try {
-      // This would save to the backend project configuration
-      // For now, we'll just test the connection
-      await handleTestConnection();
-    } catch (error) {
-      setStorageError('Failed to save storage configuration.');
+      const result = await bludesignApi.saveBluDesignStorageConfig(
+        storageConfig.type,
+        buildBackendStorageConfig(),
+      );
+
+      if (result.success) {
+        setStorageSaved(true);
+        setStorageConfigSource('database');
+        await loadStorageConfig();
+        setTimeout(() => setStorageSaved(false), 3000);
+      } else {
+        setStorageError(result.message || 'Failed to save storage configuration');
+      }
+    } catch (error: any) {
+      setStorageError(error.response?.data?.message || error.message || 'Failed to save storage configuration.');
       console.error('Failed to save storage config:', error);
     } finally {
       setIsStorageSaving(false);
@@ -299,29 +382,34 @@ const BluDesignConfigPage: React.FC = () => {
   const handleLinkFacility = async (bluDesignFacilityId: string, blulokFacilityId: string | null) => {
     setLinkSaving(bluDesignFacilityId);
     try {
+      const blulokFacility = blulokFacilityId
+        ? blulokFacilities.find((f) => f.id === blulokFacilityId)
+        : null;
+
       if (blulokFacilityId) {
-        // Link to a BluLok facility
-        const blulokFacility = blulokFacilities.find(f => f.id === blulokFacilityId);
         await bludesignApi.linkBluDesignToBluLok(
           bluDesignFacilityId,
           blulokFacilityId,
           blulokFacility?.name || 'Unknown'
         );
       } else {
-        // Unlink
         await bludesignApi.unlinkBluDesign(bluDesignFacilityId);
       }
-      
-      // Update local state
-      setBluDesignFacilities(facilities => 
-        facilities.map(f => 
-          f.id === bluDesignFacilityId 
-            ? { 
-                ...f, 
-                linkedBlulokId: blulokFacilityId,
-              }
-            : f
-        )
+
+      setBluDesignFacilities((facilities) =>
+        facilities.map((f) => {
+          if (f.id === bluDesignFacilityId) {
+            return {
+              ...f,
+              linkedBlulokId: blulokFacilityId,
+              linkedBlulokName: blulokFacilityId ? blulokFacility?.name ?? null : null,
+            };
+          }
+          if (blulokFacilityId && f.linkedBlulokId === blulokFacilityId && f.id !== bluDesignFacilityId) {
+            return { ...f, linkedBlulokId: null, linkedBlulokName: null };
+          }
+          return f;
+        })
       );
       
       // Show success
@@ -344,6 +432,24 @@ const BluDesignConfigPage: React.FC = () => {
   `;
 
   const labelClass = `block text-sm font-medium mb-1.5 ${isDark ? 'text-gray-300' : 'text-gray-700'}`;
+
+  const linkSelectClass = (isSaving: boolean) => `
+    px-3 py-2 rounded-lg border text-sm min-w-[200px]
+    ${isSaving ? 'opacity-50' : ''}
+    ${isDark
+      ? 'bg-gray-700 border-gray-600 text-white'
+      : 'bg-white border-gray-300 text-gray-900'
+    }
+  `;
+
+  const clearLinkButtonClass = (isSaving: boolean) => `
+    flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors
+    ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}
+    ${isDark
+      ? 'border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-white'
+      : 'border-gray-300 text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+    }
+  `;
 
   return (
     <div className={`min-h-full p-6 ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
@@ -369,7 +475,7 @@ const BluDesignConfigPage: React.FC = () => {
           ${isDark ? 'bg-gray-800' : 'bg-gray-200'}
         `}>
           <button
-            onClick={() => setActiveTab('storage')}
+            onClick={() => selectTab('storage')}
             className={`
               flex items-center gap-2 flex-1 px-4 py-2 rounded-md text-sm font-medium
               transition-all duration-150
@@ -387,7 +493,7 @@ const BluDesignConfigPage: React.FC = () => {
             Storage Configuration
           </button>
           <button
-            onClick={() => setActiveTab('links')}
+            onClick={() => selectTab('links')}
             className={`
               flex items-center gap-2 flex-1 px-4 py-2 rounded-md text-sm font-medium
               transition-all duration-150
@@ -405,7 +511,7 @@ const BluDesignConfigPage: React.FC = () => {
             Facility Linking
           </button>
           <button
-            onClick={() => { setActiveTab('cache'); calculateCacheStats(); }}
+            onClick={() => { selectTab('cache'); calculateCacheStats(); }}
             className={`
               flex items-center gap-2 flex-1 px-4 py-2 rounded-md text-sm font-medium
               transition-all duration-150
@@ -444,6 +550,20 @@ const BluDesignConfigPage: React.FC = () => {
               <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Storage Provider
               </h2>
+              {storageConfigSource && (
+                <p className={`text-xs mb-4 ${storageConfigSource === 'database' ? 'text-green-500' : 'text-yellow-500'}`}>
+                  {storageConfigSource === 'database'
+                    ? 'Using saved configuration from database'
+                    : 'Using environment fallback (not yet saved)'}
+                </p>
+              )}
+
+              {isStorageLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary-500 border-t-transparent" />
+                </div>
+              ) : (
+              <>
               
               <p className={`text-sm mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                 Choose where BluDesign facility data will be stored. If no online storage is 
@@ -496,7 +616,7 @@ const BluDesignConfigPage: React.FC = () => {
                       type="text"
                       value={storageConfig.localPath || ''}
                       onChange={(e) => setStorageConfig({ ...storageConfig, localPath: e.target.value })}
-                      placeholder="./data/bludesign"
+                      placeholder="../.blulok-local-data/bludesign"
                       className={inputClass}
                     />
                     <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
@@ -786,6 +906,17 @@ const BluDesignConfigPage: React.FC = () => {
                     Storage configuration saved successfully.
                   </motion.div>
                 )}
+                {testConnectionSuccess && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mt-4 flex items-center gap-2 text-green-500 text-sm"
+                  >
+                    <CheckCircleIcon className="w-4 h-4" />
+                    Connection test passed.
+                  </motion.div>
+                )}
               </AnimatePresence>
 
               {/* Action Buttons */}
@@ -824,6 +955,8 @@ const BluDesignConfigPage: React.FC = () => {
                   {isStorageSaving ? 'Saving...' : 'Save Configuration'}
                 </button>
               </div>
+              </>
+              )}
             </motion.div>
           )}
 
@@ -920,31 +1053,142 @@ const BluDesignConfigPage: React.FC = () => {
                                   if (bdId) {
                                     handleLinkFacility(bdId, bl.id);
                                   } else if (linkedBd) {
-                                    // unlink current BD from this BluLok
                                     handleLinkFacility(linkedBd.id, null);
                                   }
                                 }}
                                 disabled={isSaving}
-                                className={`
-                                  px-3 py-2 rounded-lg border text-sm min-w-[200px]
-                                  ${isSaving ? 'opacity-50' : ''}
-                                  ${isDark 
-                                    ? 'bg-gray-700 border-gray-600 text-white' 
-                                    : 'bg-white border-gray-300 text-gray-900'
-                                  }
-                                `}
+                                className={linkSelectClass(isSaving)}
                               >
-                                <option value="">Select 3D model...</option>
+                                <option value="">No 3D model linked</option>
                                 {bluDesignFacilities.map((bd) => (
-                                  <option 
-                                    key={bd.id} 
+                                  <option
+                                    key={bd.id}
                                     value={bd.id}
                                     disabled={!!(bd.linkedBlulokId && bd.linkedBlulokId !== bl.id)}
                                   >
-                                    {bd.name}{bd.linkedBlulokId && bd.linkedBlulokId !== bl.id ? ' (linked to another)' : ''}
+                                    {bd.name}
+                                    {bd.linkedBlulokId && bd.linkedBlulokId !== bl.id ? ' (linked to another)' : ''}
                                   </option>
                                 ))}
                               </select>
+                              {linkedBd && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleLinkFacility(linkedBd.id, null)}
+                                  disabled={isSaving}
+                                  title="Clear link"
+                                  aria-label={`Clear link for ${bl.name}`}
+                                  className={clearLinkButtonClass(isSaving)}
+                                >
+                                  <LinkSlashIcon className="w-4 h-4" />
+                                  Clear
+                                </button>
+                              )}
+                              {isSaving && (
+                                <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary-500 border-t-transparent" />
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Manage links from the 3D model side */}
+                  <div className={`space-y-3 pt-4 border-t ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+                    <div className={`text-sm font-semibold ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
+                      Your 3D Models
+                    </div>
+                    {bluDesignFacilities.length === 0 ? (
+                      <div className={`text-center py-6 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                        No 3D models available. Create a facility in BluDesign first.
+                      </div>
+                    ) : (
+                      bluDesignFacilities.map((bd) => {
+                        const isSaving = linkSaving === bd.id;
+                        const justSaved = linkSaved === bd.id;
+                        return (
+                          <div
+                            key={bd.id}
+                            className={`
+                              flex items-center justify-between p-4 rounded-lg border transition-colors
+                              ${justSaved
+                                ? isDark ? 'bg-green-900/30 border-green-700' : 'bg-green-50 border-green-300'
+                                : isDark ? 'bg-gray-800/50 border-gray-700' : 'bg-gray-50 border-gray-200'}
+                            `}
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                  {bd.name}
+                                </span>
+                                <span className={`
+                                  px-2 py-0.5 rounded-full text-xs font-medium uppercase
+                                  ${isDark ? 'bg-primary-500/20 text-primary-300' : 'bg-primary-100 text-primary-700'}
+                                `}>
+                                  3D Model
+                                </span>
+                                {justSaved && (
+                                  <span className="text-green-500 text-xs flex items-center gap-1">
+                                    <CheckCircleIcon className="w-3 h-3" />
+                                    Saved
+                                  </span>
+                                )}
+                              </div>
+                              {bd.linkedBlulokId ? (
+                                <div className={`text-xs mt-1 ${isDark ? 'text-green-400/80' : 'text-green-600'}`}>
+                                  Linked to: {bd.linkedBlulokName ?? 'Unknown facility'}
+                                </div>
+                              ) : (
+                                <div className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                                  Not linked to a BluLok facility
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={bd.linkedBlulokId || ''}
+                                onChange={(e) => {
+                                  const blId = e.target.value || null;
+                                  if (blId) {
+                                    handleLinkFacility(bd.id, blId);
+                                  } else if (bd.linkedBlulokId) {
+                                    handleLinkFacility(bd.id, null);
+                                  }
+                                }}
+                                disabled={isSaving}
+                                className={linkSelectClass(isSaving)}
+                              >
+                                <option value="">No BluLok facility linked</option>
+                                {blulokFacilities.map((bl) => (
+                                  <option
+                                    key={bl.id}
+                                    value={bl.id}
+                                    disabled={!!bluDesignFacilities.some(
+                                      (other) => other.id !== bd.id && other.linkedBlulokId === bl.id
+                                    )}
+                                  >
+                                    {bl.name}
+                                    {bluDesignFacilities.some(
+                                      (other) => other.id !== bd.id && other.linkedBlulokId === bl.id
+                                    ) ? ' (linked to another model)' : ''}
+                                  </option>
+                                ))}
+                              </select>
+                              {bd.linkedBlulokId && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleLinkFacility(bd.id, null)}
+                                  disabled={isSaving}
+                                  title="Clear link"
+                                  aria-label={`Clear link for ${bd.name}`}
+                                  className={clearLinkButtonClass(isSaving)}
+                                >
+                                  <LinkSlashIcon className="w-4 h-4" />
+                                  Clear
+                                </button>
+                              )}
                               {isSaving && (
                                 <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary-500 border-t-transparent" />
                               )}
@@ -1145,7 +1389,7 @@ const BluDesignConfigPage: React.FC = () => {
               </AnimatePresence>
 
               {/* Clear All Button */}
-              <div className="flex items-center justify-between pt-4 border-t ${isDark ? 'border-gray-700' : 'border-gray-200'}">
+              <div className={`flex items-center justify-between pt-4 border-t ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
                 <div>
                   <div className={`text-sm font-medium text-red-500`}>
                     Clear All Cache

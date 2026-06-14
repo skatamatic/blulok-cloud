@@ -78,13 +78,26 @@ describe('bludesign API client', () => {
   it('getFacility proxies GET', async () => {
     api.get.mockResolvedValueOnce({ id: 'x' });
     await getFacility('x');
-    expect(api.get).toHaveBeenCalledWith('/bludesign/facilities/x');
+    expect(api.get).toHaveBeenCalledWith('/bludesign/facilities/x', {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
   });
 
   it('saveFacility POSTs payload', async () => {
     api.post.mockResolvedValueOnce({ id: 'n' });
     await saveFacility('N', {} as never);
     expect(api.post).toHaveBeenCalledWith('/bludesign/facilities', { name: 'N', data: {}, thumbnail: undefined });
+  });
+
+  it('saveFacility POSTs copyLayoutSourceFrom when duplicating', async () => {
+    api.post.mockResolvedValueOnce({ id: 'n' });
+    await saveFacility('Copy', {} as never, undefined, 'fac-source');
+    expect(api.post).toHaveBeenCalledWith('/bludesign/facilities', {
+      name: 'Copy',
+      data: {},
+      thumbnail: undefined,
+      copyLayoutSourceFrom: 'fac-source',
+    });
   });
 
   it('updateFacility PUTs', async () => {

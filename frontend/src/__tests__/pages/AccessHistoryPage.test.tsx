@@ -4,7 +4,17 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import AccessHistoryPage from '@/pages/AccessHistoryPage';
+import { ToastProvider } from '@/contexts/ToastContext';
+
+function renderPage(ui: ReactNode, routerOptions?: { initialEntries?: string[] }) {
+  return render(
+    <ToastProvider>
+      <MemoryRouter initialEntries={routerOptions?.initialEntries}>{ui}</MemoryRouter>
+    </ToastProvider>
+  );
+}
 
 const mockGetAccessHistory = jest.fn();
 const mockExportAccessHistory = jest.fn();
@@ -74,11 +84,7 @@ describe('AccessHistoryPage', () => {
   });
 
   it('renders header and fetches access history', async () => {
-    render(
-      <MemoryRouter>
-        <AccessHistoryPage />
-      </MemoryRouter>
-    );
+    renderPage(<AccessHistoryPage />);
 
     expect(screen.getByRole('heading', { name: /access history/i })).toBeInTheDocument();
     expect(
@@ -110,11 +116,7 @@ describe('AccessHistoryPage', () => {
     const clickSpy = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
 
     try {
-      render(
-        <MemoryRouter>
-          <AccessHistoryPage />
-        </MemoryRouter>
-      );
+      renderPage(<AccessHistoryPage />);
 
       await waitFor(() => {
         expect(mockGetAccessHistory).toHaveBeenCalled();
@@ -150,11 +152,9 @@ describe('AccessHistoryPage', () => {
   });
 
   it('applies unit_id from URL query on load', async () => {
-    render(
-      <MemoryRouter initialEntries={['/access-history?unit_id=unit-42&facility_id=fac-1']}>
-        <AccessHistoryPage />
-      </MemoryRouter>
-    );
+    renderPage(<AccessHistoryPage />, {
+      initialEntries: ['/access-history?unit_id=unit-42&facility_id=fac-1'],
+    });
 
     await waitFor(() => {
       expect(mockGetAccessHistory).toHaveBeenCalledWith(
@@ -187,11 +187,7 @@ describe('AccessHistoryPage', () => {
       total: 1,
     });
 
-    render(
-      <MemoryRouter>
-        <AccessHistoryPage />
-      </MemoryRouter>
-    );
+    renderPage(<AccessHistoryPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Casey Jones')).toBeInTheDocument();

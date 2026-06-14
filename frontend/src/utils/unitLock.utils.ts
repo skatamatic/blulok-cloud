@@ -20,3 +20,16 @@ export function canRequestRemoteLock(
 export function isLockTransitionPending(lockStatus: string | undefined): boolean {
   return lockStatus === 'locking' || lockStatus === 'unlocking';
 }
+
+/** Roles allowed to send remote unlock from dashboard / viewer surfaces. */
+const REMOTE_UNLOCK_ROLES = new Set([
+  'admin',
+  'dev_admin',
+  'facility_admin',
+  'maintenance',
+]);
+
+export function canUseRemoteUnlockControls(role: string | undefined | null): boolean {
+  if (!role) return false;
+  return REMOTE_UNLOCK_ROLES.has(role);
+}

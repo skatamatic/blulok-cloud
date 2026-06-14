@@ -25,6 +25,7 @@ import {
   AssetMetadata,
   FacilityData,
   LegacyFacilityData,
+  SerializedCameraState,
   EntityBinding,
   SimulationState,
   Building,
@@ -104,6 +105,10 @@ import {
   type FacilityImportHost,
 } from './persistence/index.ts';
 import {
+  getLayoutImportFromFacility,
+  type LayoutImportMetadata,
+} from '../layout-import/layoutImportMetadata';
+import {
   BuildingMovePreviewController,
   applyBuildingTranslation,
   keyboardDirectionToGridDelta,
@@ -143,6 +148,15 @@ import {
   deleteBuildingWithContentsFromScene,
 } from './editor/editorObjectDeletion';
 import { computeWorkingGridAlignmentFromPlacedMesh } from './placement/computeWorkingGridAlignment';
+import { serializeCameraState } from './camera/cameraStateUtils';
+import {
+  GroundPlaneManager,
+  GroundPresetId,
+  SkyManager,
+  SkyPresetId,
+  DEFAULT_SCENE_PRESETS,
+  type ScenePresetApplyOptions,
+} from './environment';
 
 export interface BluDesignEngineOptions {
   container: HTMLElement;
@@ -217,6 +231,19 @@ export class BluDesignEngine {
   
   // External data source config (set from EditorCanvas for facility linking)
   private dataSourceConfig: DataSourceConfig | null = null;
+  /** Persisted import-plan metadata (geometry + scale; image stored separately). */
+  private layoutImport: LayoutImportMetadata | null = null;
+  /** Survives editor saves until the scene is cleared (new facility). */
+  private persistedLayoutImport: LayoutImportMetadata | null = null;
+  private defaultCamera: SerializedCameraState | null = null;
+
+  private skyManager!: SkyManager;
+  private groundPlaneManager!: GroundPlaneManager;
+  private activeSkyPreset: SkyPresetId = DEFAULT_SCENE_PRESETS.skyPreset;
+  private activeGroundPreset: GroundPresetId = DEFAULT_SCENE_PRESETS.groundPreset;
+  private activeTheme: 'light' | 'dark' = 'dark';
+  private skyPresetGeneration = 0;
+  private groundPresetGeneration = 0;
   
   private buildingMovePreviewController!: BuildingMovePreviewController;
   private pendingMoveCoordinator!: PendingSelectionMoveCoordinator;
@@ -601,7 +628,19 @@ export class BluDesignEngine {
     // Setup scene
     this.sceneManager.setupLighting();
     this.sceneManager.setupEnvironmentMap(this.renderer);
+    this.skyManager = new SkyManager({
+      scene: this.scene,
+      getRenderer: () => this.renderer,
+    });
+    this.groundPlaneManager = new GroundPlaneManager({
+      scene: this.scene,
+      getMaxAnisotropy: () => this.renderer.capabilities.getMaxAnisotropy(),
+    });
     this.gridSystem.create();
+    if (this.readonly) {
+      this.gridSystem.setVisible(false);
+      this.state.ui.showGrid = false;
+    }
 
     this.initializeEditorSubsystems();
 
@@ -795,9 +834,14 @@ export class BluDesignEngine {
   private renderFrame(): void {
     const delta = this.clock.getDelta();
 
+    this.updateCameraGroundClamp();
     this.cameraController.update(delta);
     if (this.gridSystem.isGridVisible()) {
       this.gridSystem.update(this.cameraController.getCamera());
+    }
+    if (this.groundPlaneManager.getActivePreset() !== 'blank' &&
+        this.groundPlaneManager.getActivePreset() !== 'grid') {
+      this.groundPlaneManager.update(this.cameraController.getCamera());
     }
     this.selectionManager.update();
     const hasSelection = this.selectionManager.getSelectedIds().length > 0;
@@ -810,6 +854,29 @@ export class BluDesignEngine {
 
     this.renderer.render(this.scene, this.cameraController.getCamera());
     this.labelRenderer.render(this.scene, this.cameraController.getCamera());
+  }
+
+  /**
+   * Block camera from dipping below the ground plane when the facility has no basement.
+   */
+  private updateCameraGroundClamp(): void {
+    const minFloor = this.floorManager.getMinFloor();
+    if (minFloor < 0) {
+      this.cameraController.setGroundClamp({ enabled: false });
+      return;
+    }
+
+    const referenceFloor =
+      this.state.isFloorMode && !this.floorManager.isInFullBuildingView()
+        ? this.state.activeFloor
+        : Math.max(0, minFloor);
+    const minGroundY = this.floorManager.getFloorY(referenceFloor);
+
+    this.cameraController.setGroundClamp({
+      enabled: true,
+      minGroundY,
+      clearance: 1.5,
+    });
   }
 
   // ==========================================================================
@@ -943,6 +1010,16 @@ export class BluDesignEngine {
     return this.dataSourceConfig;
   }
 
+  /** Import-plan metadata for 2D overlay and editor plan panel. */
+  getLayoutImport(): LayoutImportMetadata | null {
+    return this.layoutImport;
+  }
+
+  setLayoutImport(metadata: LayoutImportMetadata | null): void {
+    this.layoutImport = metadata;
+    this.persistedLayoutImport = metadata;
+    this.scheduleAutoSave();
+  }
   // ==========================================================================
   // Object Property Management
   // ==========================================================================
@@ -1151,16 +1228,94 @@ export class BluDesignEngine {
    * Update theme (light/dark mode)
    */
   setTheme(theme: 'light' | 'dark'): void {
+    this.activeTheme = theme;
+    this.skyManager.setTheme(theme);
+    this.groundPlaneManager.setTheme(theme);
+    if (this.activeSkyPreset === 'blank') {
+      // SkyManager handles blank background via setTheme
+    }
     if (theme === 'dark') {
-      // Dark theme - darker background, brighter grid for visibility
-      this.scene.background = new THREE.Color('#1a1a2e');
       this.gridSystem.applyConfig(DARK_THEME_GRID_CONFIG);
     } else {
-      // Light theme - light background, standard grid
-      this.scene.background = new THREE.Color('#e8eef5');
       this.gridSystem.applyConfig(DEFAULT_GRID_CONFIG);
     }
     this.emit('theme-changed', theme);
+  }
+
+  getSkyPreset(): SkyPresetId {
+    return this.activeSkyPreset;
+  }
+
+  getGroundPreset(): GroundPresetId {
+    return this.activeGroundPreset;
+  }
+
+  async applySkyPreset(preset: SkyPresetId, options?: ScenePresetApplyOptions): Promise<void> {
+    const generation = ++this.skyPresetGeneration;
+    const previous = this.activeSkyPreset;
+    this.activeSkyPreset = preset;
+    await this.skyManager.applyPreset(preset, options);
+    if (generation !== this.skyPresetGeneration) return;
+
+    this.activeSkyPreset = this.skyManager.getActivePreset();
+    if (previous === 'natural' && this.activeSkyPreset !== 'natural') {
+      this.sceneManager.setupEnvironmentMap(this.renderer);
+    }
+    this.skyManager.setTheme(this.activeTheme);
+    this.syncOutdoorEnvironment();
+  }
+
+  async applyGroundPreset(
+    preset: GroundPresetId,
+    options?: ScenePresetApplyOptions
+  ): Promise<void> {
+    const generation = ++this.groundPresetGeneration;
+    this.activeGroundPreset = preset;
+    const bounds = this.calculateSceneBounds();
+
+    if (preset === 'grid') {
+      this.gridSystem.setVisible(true);
+      this.state.ui.showGrid = true;
+      await this.groundPlaneManager.applyPreset('grid', bounds, options);
+      if (generation !== this.groundPresetGeneration) return;
+      return;
+    }
+
+    // Natural keeps the grid hidden — semi-transparent grass over the editor grid
+    // caused moiré / horizontal line artifacts in the facility viewer widget.
+    const gridVisible = false;
+    this.gridSystem.setVisible(gridVisible);
+    this.state.ui.showGrid = gridVisible;
+
+    await this.groundPlaneManager.applyPreset(preset, bounds, options);
+    if (generation !== this.groundPresetGeneration) return;
+    this.syncOutdoorEnvironment();
+  }
+
+  /** Match sun/sky/exposure to outdoor viewer presets. */
+  private syncOutdoorEnvironment(): void {
+    const outdoor =
+      this.activeSkyPreset === 'natural' ||
+      this.activeGroundPreset === 'grass' ||
+      this.activeGroundPreset === 'natural';
+
+    if (outdoor) {
+      // Subtle hemisphere boost only — avoid washing out the scene.
+      this.sceneManager.applyOutdoorLighting(true);
+    } else {
+      this.sceneManager.applyOutdoorLighting(false);
+    }
+    this.renderer.toneMappingExposure = DEFAULT_RENDERER_CONFIG.toneMappingExposure;
+  }
+
+  refreshGroundPlaneBounds(): void {
+    if (
+      this.activeGroundPreset === 'grass' ||
+      this.activeGroundPreset === 'concrete' ||
+      this.activeGroundPreset === 'natural'
+    ) {
+      this.groundPlaneManager.updateBounds(this.calculateSceneBounds());
+    }
   }
 
   /**
@@ -1217,6 +1372,8 @@ export class BluDesignEngine {
       state: this.state,
       buildings: this.buildingManager.getAllBuildings(),
       dataSourceConfig: this.dataSourceConfig,
+      layoutImport: this.persistedLayoutImport ?? this.layoutImport,
+      defaultCamera: this.defaultCamera,
     });
   }
 
@@ -1239,7 +1396,43 @@ export class BluDesignEngine {
    * Use importSceneDataAsync for projects with custom assets
    */
   importSceneData(data: FacilityData | LegacyFacilityData): void {
+    this.defaultCamera =
+      'defaultCamera' in data && data.defaultCamera ? data.defaultCamera : null;
+    const layoutImport = getLayoutImportFromFacility(data as FacilityData);
+    this.layoutImport = layoutImport;
+    this.persistedLayoutImport = layoutImport;
     importFacilitySceneData(data, this.getFacilityImportHost());
+  }
+
+  getDefaultCamera(): SerializedCameraState | null {
+    return this.defaultCamera;
+  }
+
+  hasDefaultCamera(): boolean {
+    return this.defaultCamera !== null;
+  }
+
+  setDefaultCameraFromCurrentView(): void {
+    this.defaultCamera = serializeCameraState(this.cameraController.getCurrentCameraState());
+    this.emit('state-updated', this.state);
+    this.scheduleAutoSave();
+  }
+
+  clearDefaultCamera(): void {
+    this.defaultCamera = null;
+    this.emit('state-updated', this.state);
+    this.scheduleAutoSave();
+  }
+
+  /**
+   * Animate back to the saved default view. Returns false when no default is set.
+   */
+  restoreDefaultCamera(animate: boolean = true): boolean {
+    if (!this.defaultCamera) {
+      return false;
+    }
+    this.cameraController.applySavedState(this.defaultCamera, animate);
+    return true;
   }
 
   private getFacilityImportHost(): FacilityImportHost {
@@ -1267,6 +1460,9 @@ export class BluDesignEngine {
    * Clear all placed objects and buildings from the scene
    */
   clearScene(): void {
+    this.defaultCamera = null;
+    this.layoutImport = null;
+    this.persistedLayoutImport = null;
     clearFacilityEditorScene({
       getState: () => this.state,
       setWorkingGridAlignment: () => this.setWorkingGridAlignment(null),
@@ -2149,6 +2345,8 @@ export class BluDesignEngine {
     this.inputCoordinator.dispose();
     this.windowManager.dispose();
     this.groundTileManager.dispose();
+    this.skyManager.dispose();
+    this.groundPlaneManager.dispose();
     
     this.buildingMovePreviewController.dispose();
     

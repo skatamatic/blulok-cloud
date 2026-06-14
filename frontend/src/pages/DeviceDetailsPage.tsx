@@ -27,6 +27,7 @@ import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
+import { usePromptDialog } from '@/hooks/usePromptDialog';
 import { EditDeviceMetadataModal } from '@/components/Devices/EditDeviceMetadataModal';
 import { formatAccessDeviceListSubtitle, isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
 import {
@@ -139,6 +140,7 @@ export default function DeviceDetailsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { addToast } = useToast();
+  const { openPrompt, promptDialog } = usePromptDialog();
   const { authState } = useAuth();
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/devices' });
   const [device, setDevice] = useState<DeviceDetails | null>(null);
@@ -1021,14 +1023,20 @@ export default function DeviceDetailsPage() {
                   <button
                     type="button"
                     onClick={async () => {
-                      const userId = window.prompt('Enter user ID to add to denylist:');
-                      if (!userId) return;
-                      const rawIds = window.prompt(
-                        'Enter device IDs (comma-separated):',
-                        device.id,
-                      );
-                      if (!rawIds) return;
-                      const targetDeviceIds = rawIds
+                      const values = await openPrompt({
+                        title: 'DENYLIST_ADD',
+                        fields: [
+                          { key: 'userId', label: 'User ID', required: true },
+                          {
+                            key: 'deviceIds',
+                            label: 'Device IDs (comma-separated)',
+                            defaultValue: device.id,
+                            required: true,
+                          },
+                        ],
+                      });
+                      if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
+                      const targetDeviceIds = values.deviceIds
                         .split(',')
                         .map((id) => id.trim())
                         .filter(Boolean);
@@ -1038,7 +1046,7 @@ export default function DeviceDetailsPage() {
                           facilityId: device.facility_id,
                           command: 'DENYLIST_ADD',
                           targetDeviceIds,
-                          userId,
+                          userId: values.userId.trim(),
                         });
                         addToast({ type: 'success', title: `DENYLIST_ADD sent: ${res.success}` });
                         await loadDenylist();
@@ -1060,14 +1068,20 @@ export default function DeviceDetailsPage() {
                   <button
                     type="button"
                     onClick={async () => {
-                      const userId = window.prompt('Enter user ID to remove from denylist:');
-                      if (!userId) return;
-                      const rawIds = window.prompt(
-                        'Enter device IDs (comma-separated):',
-                        device.id,
-                      );
-                      if (!rawIds) return;
-                      const targetDeviceIds = rawIds
+                      const values = await openPrompt({
+                        title: 'DENYLIST_REMOVE',
+                        fields: [
+                          { key: 'userId', label: 'User ID', required: true },
+                          {
+                            key: 'deviceIds',
+                            label: 'Device IDs (comma-separated)',
+                            defaultValue: device.id,
+                            required: true,
+                          },
+                        ],
+                      });
+                      if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
+                      const targetDeviceIds = values.deviceIds
                         .split(',')
                         .map((id) => id.trim())
                         .filter(Boolean);
@@ -1077,7 +1091,7 @@ export default function DeviceDetailsPage() {
                           facilityId: device.facility_id,
                           command: 'DENYLIST_REMOVE',
                           targetDeviceIds,
-                          userId,
+                          userId: values.userId.trim(),
                         });
                         addToast({ type: 'success', title: `DENYLIST_REMOVE sent: ${res.success}` });
                         await loadDenylist();
@@ -1305,6 +1319,7 @@ export default function DeviceDetailsPage() {
             : null
         }
       />
+      {promptDialog}
     </DetailsPageShell>
   );
 }
