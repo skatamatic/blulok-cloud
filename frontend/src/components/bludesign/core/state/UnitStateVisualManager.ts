@@ -66,8 +66,8 @@ const DOOR_OPEN_ANGLE = Math.PI * 0.6; // ~108°
 const DOOR_DAMP = 9; // higher = snappier swing
 const DOOR_BLACK = 0x0a0a0a;
 
-const UNBOUND_OPACITY = 0.9; // 90% opacity — subtly translucent, not ghostly
-const UNBOUND_DIM = 0.82; // slight darkening of the themed colour
+const UNBOUND_OPACITY = 0.66; // 90% opacity — subtly translucent, not ghostly
+const UNBOUND_DIM = 0.15; // slight darkening of the themed colour
 
 export class UnitStateVisualManager {
   private readonly entries = new Map<string, UnitVisualEntry>();

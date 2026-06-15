@@ -13,6 +13,7 @@ import {
   THEME_BACKGROUND_COLORS,
   resolveEnvironmentOptions,
   type ScenePresetApplyOptions,
+  type TechnoEnvironmentOptions,
 } from './ScenePresets';
 import {
   hillSeedVec2,
@@ -28,6 +29,7 @@ import {
   WOODLAND_RIVER_POINT_COUNT,
   type WoodlandWaterLayout,
 } from './woodlandWater';
+import { createTechnoGridMaterial, applyTechnoGridUniforms } from './technoGridGround';
 
 const WOODLAND_RIVER_UNIFORM_COUNT = WOODLAND_MAX_RIVERS * WOODLAND_RIVER_POINT_COUNT;
 
@@ -351,6 +353,10 @@ export class GroundPlaneManager {
   private getMaxAnisotropy: () => number;
   private detailMesh: THREE.Mesh | null = null;
   private detailMaterial: THREE.ShaderMaterial | null = null;
+  private technoMesh: THREE.Mesh | null = null;
+  private technoMaterial: THREE.ShaderMaterial | null = null;
+  private technoGeometry: THREE.PlaneGeometry | null = null;
+  private technoElapsed = 0;
   private flatGeometry: THREE.PlaneGeometry | null = null;
   private hillsGeometry: THREE.PlaneGeometry | null = null;
   private textureLoader = new THREE.TextureLoader();
@@ -364,6 +370,7 @@ export class GroundPlaneManager {
   private lastOuterFade = 1;
   private lastCenter = new THREE.Vector3();
   private lastEnvironmentSeed = 'blulok-default';
+  private lastBounds = new THREE.Box3();
 
   constructor(options: GroundPlaneManagerOptions) {
     this.scene = options.scene;
@@ -408,8 +415,14 @@ export class GroundPlaneManager {
     return this.activePreset === 'woodland' ? this.getSceneryLayoutMetrics() : null;
   }
 
-  update(_camera: THREE.Camera): void {
-    // Reserved for future per-frame uniforms; no camera haze (it washed the scene).
+  update(_camera: THREE.Camera, deltaSeconds = 0, worldPerPixel?: number): void {
+    if (this.activePreset === 'techno' && this.technoMaterial) {
+      this.technoElapsed += deltaSeconds;
+      this.technoMaterial.uniforms.uTime.value = this.technoElapsed;
+      if (worldPerPixel !== undefined && Number.isFinite(worldPerPixel) && worldPerPixel > 0) {
+        this.technoMaterial.uniforms.uWorldPerPixel.value = worldPerPixel;
+      }
+    }
   }
 
   async applyPreset(
@@ -424,6 +437,18 @@ export class GroundPlaneManager {
       this.hide();
       return;
     }
+
+    if (preset === 'techno') {
+      options?.onAssetProgress?.(1);
+      if (this.detailMesh) this.detailMesh.visible = false;
+      this.ensureTechnoMesh();
+      this.positionTechnoMesh(bounds, options);
+      const showGrid = resolveEnvironmentOptions(options?.environmentOptions).techno.showGrid;
+      if (this.technoMesh) this.technoMesh.visible = showGrid;
+      return;
+    }
+
+    this.hideTechno();
 
     options?.onAssetProgress?.(0);
 
@@ -505,12 +530,39 @@ export class GroundPlaneManager {
 
   updateBounds(bounds: THREE.Box3, options?: ScenePresetApplyOptions): void {
     if (this.activePreset === 'blank' || this.activePreset === 'grid') return;
+    if (this.activePreset === 'techno') {
+      if (!this.technoMesh) return;
+      this.positionTechnoMesh(bounds, options);
+      return;
+    }
     if (!this.detailMesh) return;
     this.positionMesh(bounds, options);
   }
 
   hide(): void {
     if (this.detailMesh) this.detailMesh.visible = false;
+    this.hideTechno();
+  }
+
+  /** Refresh techno grid visibility and shader uniforms. */
+  applyTechnoOptions(techno: TechnoEnvironmentOptions, options?: ScenePresetApplyOptions): void {
+    if (this.activePreset !== 'techno' || !this.technoMesh) return;
+    this.technoMesh.visible = techno.showGrid ?? true;
+    if (!this.lastBounds.isEmpty()) {
+      this.positionTechnoMesh(this.lastBounds, {
+        ...options,
+        environmentOptions: {
+          ...options?.environmentOptions,
+          techno,
+        },
+      });
+    } else if (this.technoMaterial) {
+      applyTechnoGridUniforms(this.technoMaterial, techno);
+    }
+  }
+
+  private hideTechno(): void {
+    if (this.technoMesh) this.technoMesh.visible = false;
   }
 
   private applyTintUniforms(
@@ -834,6 +886,63 @@ export class GroundPlaneManager {
     }
   }
 
+  private ensureTechnoMesh(): void {
+    if (this.technoMesh) return;
+
+    this.technoGeometry = new THREE.PlaneGeometry(1, 1, 1, 1);
+    this.technoGeometry.rotateX(-Math.PI / 2);
+    this.technoMaterial = createTechnoGridMaterial();
+    this.technoMesh = new THREE.Mesh(this.technoGeometry, this.technoMaterial);
+    this.technoMesh.position.y = -0.004;
+    this.technoMesh.renderOrder = -88;
+    this.technoMesh.frustumCulled = false;
+    this.technoMesh.userData.isViewerGroundPlane = true;
+    this.scene.add(this.technoMesh);
+  }
+
+  private positionTechnoMesh(bounds: THREE.Box3, options?: ScenePresetApplyOptions): void {
+    if (!this.technoMesh || !this.technoMaterial) return;
+
+    this.lastBounds.copy(bounds);
+    const size = new THREE.Vector3();
+    bounds.getSize(size);
+    const center = new THREE.Vector3();
+    bounds.getCenter(center);
+
+    const halfX = Math.max(size.x, 1) / 2;
+    const halfZ = Math.max(size.z, 1) / 2;
+    const maxHalf = Math.max(halfX, halfZ);
+    const maxDim = Math.max(size.x, size.z, 8);
+
+    this.lastCenter.copy(center);
+    this.lastFacilityHalf.set(halfX, halfZ);
+    this.lastPadHalf.set(halfX, halfZ);
+
+    let fadeStart = maxHalf + THREE.MathUtils.clamp(maxDim * 0.35, 10, 55);
+    let outerFade = fadeStart + THREE.MathUtils.clamp(maxDim * 2.2, 150, 1100);
+
+    const technoOpts = resolveEnvironmentOptions(options?.environmentOptions).techno;
+    fadeStart *= technoOpts.fadeStartScale ?? 1;
+    outerFade *= technoOpts.outerFadeScale ?? 1;
+
+    const planeRadius = outerFade * 1.35;
+    const planeSize = planeRadius * 2;
+
+    this.technoMesh.position.set(center.x, -0.004, center.z);
+    this.technoMesh.scale.set(planeSize, 1, planeSize);
+
+    const u = this.technoMaterial.uniforms;
+    u.uPlaneSize.value = planeSize;
+    (u.uFacilityHalf.value as THREE.Vector2).set(halfX, halfZ);
+    (u.uContentCenter.value as THREE.Vector2).set(0, 0);
+    u.uFadeStart.value = fadeStart;
+    u.uOuterFade.value = outerFade;
+    this.lastFadeStart = fadeStart;
+    this.lastOuterFade = outerFade;
+
+    applyTechnoGridUniforms(this.technoMaterial, technoOpts);
+  }
+
   private loadTexture(url: string): Promise<THREE.Texture | null> {
     const cached = this.loadedTextures.get(url);
     if (cached) return Promise.resolve(cached);
@@ -866,13 +975,23 @@ export class GroundPlaneManager {
       this.scene.remove(this.detailMesh);
       this.detailMesh = null;
     }
+    if (this.technoMesh) {
+      this.scene.remove(this.technoMesh);
+      this.technoMesh = null;
+    }
     this.flatGeometry?.dispose();
     this.hillsGeometry?.dispose();
+    this.technoGeometry?.dispose();
     this.flatGeometry = null;
     this.hillsGeometry = null;
+    this.technoGeometry = null;
     if (this.detailMaterial) {
       this.detailMaterial.dispose();
       this.detailMaterial = null;
+    }
+    if (this.technoMaterial) {
+      this.technoMaterial.dispose();
+      this.technoMaterial = null;
     }
     this.loadedTextures.forEach((t) => t.dispose());
     this.loadedTextures.clear();

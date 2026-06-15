@@ -265,7 +265,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
 };
 
 /** Persisted view settings for the Facility 3D View dashboard widget */
-export type FacilityViewerSkyPreset = 'blank' | 'day' | 'sunset' | 'night' | 'natural';
+export type FacilityViewerSkyPreset = 'blank' | 'day' | 'sunset' | 'night' | 'natural' | 'space';
 export type FacilityViewerGroundPreset =
   | 'blank'
   | 'grid'
@@ -273,7 +273,8 @@ export type FacilityViewerGroundPreset =
   | 'concrete'
   | 'natural'
   | 'woodland'
-  | 'urban';
+  | 'urban'
+  | 'techno';
 
 /** Re-export for widget config — keep in sync with ScenePresets EnvironmentOptions. */
 export type {

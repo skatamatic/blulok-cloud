@@ -862,7 +862,11 @@ export class BluDesignEngine {
     }
     if (this.groundPlaneManager.getActivePreset() !== 'blank' &&
         this.groundPlaneManager.getActivePreset() !== 'grid') {
-      this.groundPlaneManager.update(this.cameraController.getCamera());
+      this.groundPlaneManager.update(
+        this.cameraController.getCamera(),
+        delta,
+        this.cameraController.getWorldPerPixel()
+      );
     }
     if (this.sceneryManager.isActive()) {
       this.sceneryManager.update(delta);
@@ -1345,6 +1349,7 @@ export class BluDesignEngine {
         ...this.activeEnvironmentOptions,
         ...options.environmentOptions,
         sky: { ...this.activeEnvironmentOptions.sky, ...options.environmentOptions.sky },
+        techno: { ...this.activeEnvironmentOptions.techno, ...options.environmentOptions.techno },
       };
     }
     const presetOptions: ScenePresetApplyOptions = {
@@ -1355,10 +1360,32 @@ export class BluDesignEngine {
     if (generation !== this.skyPresetGeneration) return;
 
     this.activeSkyPreset = this.skyManager.getActivePreset();
-    if (previous === 'natural' && this.activeSkyPreset !== 'natural') {
+    const wasHdrSky = previous === 'natural' || previous === 'space';
+    const isHdrSky =
+      this.activeSkyPreset === 'natural' || this.activeSkyPreset === 'space';
+    if (wasHdrSky && !isHdrSky) {
       this.sceneManager.setupEnvironmentMap(this.renderer);
     }
     this.skyManager.setTheme(this.activeTheme);
+    this.syncOutdoorEnvironment();
+  }
+
+  /** Techno ground: optional space HDR backdrop + grid visibility toggles. */
+  private async syncTechnoGroundEnvironment(options?: ScenePresetApplyOptions): Promise<void> {
+    const presetOptions: ScenePresetApplyOptions = {
+      ...options,
+      environmentOptions: this.activeEnvironmentOptions,
+      environmentSeed: options?.environmentSeed ?? this.environmentSeed,
+    };
+
+    if (this.activeGroundPreset !== 'techno') {
+      await this.skyManager.setSpaceBackdropOverlay(false, presetOptions);
+      return;
+    }
+
+    const { techno } = resolveEnvironmentOptions(this.activeEnvironmentOptions);
+    this.groundPlaneManager.applyTechnoOptions(techno, presetOptions);
+    await this.skyManager.setSpaceBackdropOverlay(techno.showSpaceBackdrop, presetOptions);
     this.syncOutdoorEnvironment();
   }
 
@@ -1375,6 +1402,7 @@ export class BluDesignEngine {
         ground: { ...this.activeEnvironmentOptions.ground, ...options.environmentOptions.ground },
         woodland: { ...this.activeEnvironmentOptions.woodland, ...options.environmentOptions.woodland },
         urban: { ...this.activeEnvironmentOptions.urban, ...options.environmentOptions.urban },
+        techno: { ...this.activeEnvironmentOptions.techno, ...options.environmentOptions.techno },
       };
     }
     const bounds = this.calculateSceneBounds();
@@ -1390,6 +1418,17 @@ export class BluDesignEngine {
       this.state.ui.showGrid = true;
       await this.groundPlaneManager.applyPreset('grid', bounds, presetOptions);
       if (generation !== this.groundPresetGeneration) return;
+      await this.syncTechnoGroundEnvironment(presetOptions);
+      return;
+    }
+
+    if (preset === 'techno') {
+      this.sceneryManager.hide();
+      this.gridSystem.setVisible(false);
+      this.state.ui.showGrid = false;
+      await this.groundPlaneManager.applyPreset('techno', bounds, presetOptions);
+      if (generation !== this.groundPresetGeneration) return;
+      await this.syncTechnoGroundEnvironment(presetOptions);
       return;
     }
 
@@ -1428,6 +1467,8 @@ export class BluDesignEngine {
       this.sceneryManager.hide();
     }
 
+    await this.syncTechnoGroundEnvironment(presetOptions);
+    if (generation !== this.groundPresetGeneration) return;
     this.syncOutdoorEnvironment();
   }
 
@@ -1446,8 +1487,10 @@ export class BluDesignEngine {
 
   /** Match sun/sky/exposure to outdoor viewer presets. */
   private syncOutdoorEnvironment(): void {
+    const splitSpaceLighting = this.skyManager.usesSplitSpaceLighting();
     const outdoor =
       this.activeSkyPreset === 'natural' ||
+      splitSpaceLighting ||
       this.activeGroundPreset === 'grass' ||
       this.activeGroundPreset === 'natural' ||
       this.activeGroundPreset === 'woodland' ||
@@ -1460,11 +1503,21 @@ export class BluDesignEngine {
       this.sceneManager.applyOutdoorLighting(false);
     }
 
-    if (this.activeSkyPreset === 'natural') {
-      const skyOptions = resolveEnvironmentOptions(this.activeEnvironmentOptions).sky;
+    const skyOptions = resolveEnvironmentOptions(this.activeEnvironmentOptions).sky;
+
+    if (splitSpaceLighting) {
+      this.scene.backgroundIntensity =
+        skyOptions.backgroundIntensity ?? 0.95;
+      this.scene.environmentIntensity = skyOptions.exposure ?? 1;
+      this.renderer.toneMappingExposure = DEFAULT_RENDERER_CONFIG.toneMappingExposure;
+    } else if (this.activeSkyPreset === 'natural') {
+      this.scene.backgroundIntensity = 1;
+      this.scene.environmentIntensity = 1;
       this.renderer.toneMappingExposure =
         (skyOptions.exposure ?? 1) * (skyOptions.backgroundIntensity ?? 1);
     } else {
+      this.scene.backgroundIntensity = 1;
+      this.scene.environmentIntensity = 1;
       this.renderer.toneMappingExposure = DEFAULT_RENDERER_CONFIG.toneMappingExposure;
     }
   }
@@ -1479,7 +1532,8 @@ export class BluDesignEngine {
       this.activeGroundPreset === 'concrete' ||
       this.activeGroundPreset === 'natural' ||
       this.activeGroundPreset === 'woodland' ||
-      this.activeGroundPreset === 'urban'
+      this.activeGroundPreset === 'urban' ||
+      this.activeGroundPreset === 'techno'
     ) {
       this.groundPlaneManager.updateBounds(bounds, {
         environmentOptions: this.activeEnvironmentOptions,

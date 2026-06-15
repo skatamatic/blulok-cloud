@@ -36,6 +36,14 @@ interface ColorControlProps {
   onChange: (value: string) => void;
 }
 
+interface ToggleControlProps {
+  label: string;
+  hint?: string;
+  value: boolean;
+  isDark: boolean;
+  onChange: (value: boolean) => void;
+}
+
 const SliderControl: React.FC<SliderControlProps> = ({
   label,
   value,
@@ -82,6 +90,39 @@ const ColorControl: React.FC<ColorControlProps> = ({ label, value, isDark, onCha
       className="h-8 w-12 cursor-pointer rounded border border-gray-300 dark:border-gray-600 bg-transparent"
     />
   </label>
+);
+
+const ToggleControl: React.FC<ToggleControlProps> = ({ label, hint, value, isDark, onChange }) => (
+  <div className="flex items-center justify-between gap-3">
+    <div className="min-w-0">
+      <span className={`text-xs font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+        {label}
+      </span>
+      {hint && (
+        <p className={`mt-0.5 text-[11px] leading-snug ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+          {hint}
+        </p>
+      )}
+    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      aria-label={label}
+      onClick={() => onChange(!value)}
+      className={`
+        relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
+        ${value ? 'bg-[#147FD4]' : isDark ? 'bg-gray-600' : 'bg-gray-300'}
+      `}
+    >
+      <span
+        className={`
+          inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+          ${value ? 'translate-x-6' : 'translate-x-1'}
+        `}
+      />
+    </button>
+  </div>
 );
 
 function patchSection<S extends keyof FacilityViewerEnvironmentOptions>(
@@ -139,6 +180,7 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
   const ground = environmentOptions?.ground ?? {};
   const woodland = environmentOptions?.woodland ?? {};
   const urban = environmentOptions?.urban ?? {};
+  const techno = environmentOptions?.techno ?? {};
 
   const patchSky = (patch: typeof sky) =>
     onChange({ environmentOptions: patchSection(environmentOptions, 'sky', patch) });
@@ -148,20 +190,30 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
     onChange({ environmentOptions: patchSection(environmentOptions, 'woodland', patch) });
   const patchUrban = (patch: typeof urban) =>
     onChange({ environmentOptions: patchSection(environmentOptions, 'urban', patch) });
+  const patchTechno = (patch: typeof techno) =>
+    onChange({ environmentOptions: patchSection(environmentOptions, 'techno', patch) });
 
   const showSkyFineTune =
     skyPreset === 'blank' ||
     skyPreset === 'night' ||
     skyPreset === 'day' ||
     skyPreset === 'sunset' ||
-    skyPreset === 'natural';
+    skyPreset === 'natural' ||
+    skyPreset === 'space';
 
-  const texturedGround =
+  const showGroundFineTune =
     groundPreset === 'grass' ||
     groundPreset === 'concrete' ||
     groundPreset === 'natural' ||
     groundPreset === 'woodland' ||
     groundPreset === 'urban';
+
+  const hasFineTune =
+    showSkyFineTune ||
+    showGroundFineTune ||
+    groundPreset === 'woodland' ||
+    groundPreset === 'urban' ||
+    groundPreset === 'techno';
 
   const dayDefaults = skyPreset === 'sunset'
     ? { elevation: 4, azimuth: 200, turbidity: 8 }
@@ -233,7 +285,7 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
                 />
               </>
             )}
-            {skyPreset === 'natural' && (
+            {(skyPreset === 'natural' || skyPreset === 'space') && (
               <>
                 <SliderControl
                   label="Exposure"
@@ -259,7 +311,7 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
         </section>
       )}
 
-      {texturedGround && (
+      {showGroundFineTune && (
         <section>
           <SectionHeader
             title="Ground"
@@ -574,7 +626,169 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
         </section>
       )}
 
-      {!showSkyFineTune && !texturedGround && (
+      {groundPreset === 'techno' && (
+        <section>
+          <SectionHeader
+            title="Techno grid"
+            isDark={isDark}
+            onReset={() => onChange({ environmentOptions: resetSection(environmentOptions, 'techno') })}
+          />
+          <div className="space-y-3">
+            <ToggleControl
+              label="Show grid"
+              hint="Turn off for a facility floating in open space."
+              value={techno.showGrid ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.showGrid!}
+              isDark={isDark}
+              onChange={(showGrid) => patchTechno({ showGrid })}
+            />
+            <ToggleControl
+              label="Space backdrop"
+              hint="Starfield HDR behind the grid; facility lighting uses the daylight HDR."
+              value={techno.showSpaceBackdrop ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.showSpaceBackdrop!}
+              isDark={isDark}
+              onChange={(showSpaceBackdrop) => patchTechno({ showSpaceBackdrop })}
+            />
+            <SliderControl
+              label="Cell size"
+              value={techno.cellSize ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.cellSize!}
+              min={R.techno.cellSize.min}
+              max={R.techno.cellSize.max}
+              step={0.1}
+              isDark={isDark}
+              onChange={(cellSize) => patchTechno({ cellSize })}
+            />
+            <SliderControl
+              label="Major line every (cells)"
+              value={techno.majorInterval ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.majorInterval!}
+              min={R.techno.majorInterval.min}
+              max={R.techno.majorInterval.max}
+              step={1}
+              isDark={isDark}
+              onChange={(majorInterval) => patchTechno({ majorInterval })}
+            />
+            <SliderControl
+              label="Super line every (cells)"
+              value={techno.superInterval ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.superInterval!}
+              min={R.techno.superInterval.min}
+              max={R.techno.superInterval.max}
+              step={1}
+              isDark={isDark}
+              onChange={(superInterval) => patchTechno({ superInterval })}
+            />
+            <SliderControl
+              label="Fade start scale"
+              value={techno.fadeStartScale ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.fadeStartScale!}
+              min={R.techno.fadeStartScale.min}
+              max={R.techno.fadeStartScale.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(fadeStartScale) => patchTechno({ fadeStartScale })}
+            />
+            <SliderControl
+              label="Outer fade scale"
+              value={techno.outerFadeScale ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.outerFadeScale!}
+              min={R.techno.outerFadeScale.min}
+              max={R.techno.outerFadeScale.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(outerFadeScale) => patchTechno({ outerFadeScale })}
+            />
+            <ColorControl
+              label="Line color"
+              value={techno.lineColor ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.lineColor!}
+              isDark={isDark}
+              onChange={(lineColor) => patchTechno({ lineColor })}
+            />
+            <ColorControl
+              label="Accent color"
+              value={techno.accentColor ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.accentColor!}
+              isDark={isDark}
+              onChange={(accentColor) => patchTechno({ accentColor })}
+            />
+            <ColorControl
+              label="Horizon tint"
+              value={techno.horizonColor ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.horizonColor!}
+              isDark={isDark}
+              onChange={(horizonColor) => patchTechno({ horizonColor })}
+            />
+            {!techno.showSpaceBackdrop && (
+              <ColorControl
+                label="Void color"
+                value={techno.voidColor ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.voidColor!}
+                isDark={isDark}
+                onChange={(voidColor) => patchTechno({ voidColor })}
+              />
+            )}
+            <SliderControl
+              label="Glow intensity"
+              value={techno.glowIntensity ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.glowIntensity!}
+              min={R.techno.glowIntensity.min}
+              max={R.techno.glowIntensity.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(glowIntensity) => patchTechno({ glowIntensity })}
+            />
+            <SliderControl
+              label="Pulse speed"
+              value={techno.pulseSpeed ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.pulseSpeed!}
+              min={R.techno.pulseSpeed.min}
+              max={R.techno.pulseSpeed.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(pulseSpeed) => patchTechno({ pulseSpeed })}
+            />
+            <SliderControl
+              label="Line thickness"
+              value={techno.lineThickness ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.lineThickness!}
+              min={R.techno.lineThickness.min}
+              max={R.techno.lineThickness.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(lineThickness) => patchTechno({ lineThickness })}
+            />
+            <SliderControl
+              label="Major line thickness"
+              value={techno.majorLineThickness ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.majorLineThickness!}
+              min={R.techno.majorLineThickness.min}
+              max={R.techno.majorLineThickness.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(majorLineThickness) => patchTechno({ majorLineThickness })}
+            />
+            <SliderControl
+              label="Super line thickness"
+              value={techno.superLineThickness ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.superLineThickness!}
+              min={R.techno.superLineThickness.min}
+              max={R.techno.superLineThickness.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(superLineThickness) => patchTechno({ superLineThickness })}
+            />
+            <SliderControl
+              label="Platform glow"
+              value={techno.platformGlow ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.platformGlow!}
+              min={R.techno.platformGlow.min}
+              max={R.techno.platformGlow.max}
+              step={0.01}
+              isDark={isDark}
+              onChange={(platformGlow) => patchTechno({ platformGlow })}
+            />
+            {!techno.showSpaceBackdrop && (
+              <SliderControl
+                label="Void fill opacity"
+                value={techno.baseAlpha ?? DEFAULT_ENVIRONMENT_OPTIONS.techno.baseAlpha!}
+                min={R.techno.baseAlpha.min}
+                max={R.techno.baseAlpha.max}
+                step={0.01}
+                isDark={isDark}
+                onChange={(baseAlpha) => patchTechno({ baseAlpha })}
+              />
+            )}
+          </div>
+        </section>
+      )}
+
+      {!hasFineTune && (
         <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
           Select a sky or textured ground preset to unlock advanced controls.
         </p>

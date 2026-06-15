@@ -6,7 +6,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-# Copy source and build
+# Facility Viewer HDR/ground textures — Vite copies public/ → dist/ at build time.
+COPY public/bludesign/environment ./public/bludesign/environment
+
+# Copy remaining source and build
 COPY . .
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
@@ -14,7 +17,10 @@ ENV VITE_API_URL=$VITE_API_URL
 ENV NODE_OPTIONS=--max-old-space-size=4096
 # Debug: print API URL at build time for verification in Cloud Build logs
 RUN echo "VITE_API_URL=$VITE_API_URL"
+RUN chmod +x docker/verify-viewer-assets.sh
+RUN docker/verify-viewer-assets.sh public
 RUN npm run build
+RUN docker/verify-viewer-assets.sh dist
 
 # Production stage with nginx
 FROM nginx:alpine AS production

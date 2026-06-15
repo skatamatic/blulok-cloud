@@ -15,10 +15,7 @@ import {
   FacilityViewerEmptyState,
   ViewerOnCanvasControls,
 } from '../bludesign/viewer';
-import {
-  BuildingOffice2Icon,
-  EyeIcon,
-} from '@heroicons/react/24/outline';
+import { EyeIcon } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import * as bludesignApi from '@/api/bludesign';
@@ -296,11 +293,7 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   }, []);
 
   const enhancedMenu = (
-    <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 space-y-2">
-      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-        <BuildingOffice2Icon className="w-4 h-4" />
-        <span>{use2d ? '2D Facility View' : '3D Facility Viewer'}</span>
-      </div>
+    <div className="space-y-2">
       {editable && !use2d && showViewer && (
         <button
           type="button"

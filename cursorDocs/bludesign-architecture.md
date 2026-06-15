@@ -907,8 +907,8 @@ Location: `frontend/src/components/bludesign/core/environment/`
 | Module | Role |
 |--------|------|
 | `ScenePresets.ts` | Preset ids, UI metadata, asset URLs, defaults (`blank` / `blank`), **`EnvironmentOptions`** types, `normalizeEnvironmentOptions()` / `resolveEnvironmentOptions()` |
-| `SkyManager.ts` | Procedural `Sky` (day/sunset) with configurable sun/turbidity; solid blank/night with optional tint; HDR natural via `RGBELoader` + PMREM with exposure/background intensity |
-| `GroundPlaneManager.ts` | Textured ground plane with radial horizon fade and optional tint/fade overrides; `grass`/`concrete` single-texture; `natural`/`woodland` concrete pad + grass surround; `woodland` adds configurable rolling-hill vertex displacement (deterministic seed) and carves a riverbed/pond bed into the hills shader (mirrors `woodlandWater.ts`); `urban` uses a muted concrete/city-lot base; `grid` delegates to `GridSystem` |
+| `SkyManager.ts` | Procedural `Sky` (day/sunset) with configurable sun/turbidity; solid blank/night with optional tint; HDR **`natural`** (background + IBL); HDR **`space`** (starfield background only — daylight **`natural`** HDR drives IBL so the facility stays lit); optional **`setSpaceBackdropOverlay()`** for techno ground (same split: space visible, natural lights) |
+| `GroundPlaneManager.ts` | Textured ground plane with radial horizon fade and optional tint/fade overrides; `grass`/`concrete` single-texture; `natural`/`woodland` concrete pad + grass surround; `woodland` adds configurable rolling-hill vertex displacement (deterministic seed) and carves a riverbed/pond bed into the hills shader (mirrors `woodlandWater.ts`); `urban` uses a muted concrete/city-lot base; **`techno`** uses a procedural Tron-style glowing grid (`technoGridGround.ts`, animated pulse) with fine-tune toggles **`showGrid`** / **`showSpaceBackdrop`** (grid off + backdrop on = facility floating in space); `grid` delegates to `GridSystem` |
 | `SceneryManager.ts` | Procedural scenery for `woodland` and `urban` with configurable density/fade; instanced Canadian-style trees/shrubs/shadows plus an animated river + pond water surface for woodland; instanced multi-part city buildings, streets, lane markings, parking lots, and streetlights for urban. `update(delta)` animates woodland water ripples (driven from the engine render loop). |
 | `woodlandTerrain.ts` / `woodlandWater.ts` / `woodlandWaterSurface.ts` / `woodlandTreePlacements.ts` / `urbanPlacements.ts` | Shared hill height + water-carve, deterministic river/pond layout, animated water-surface builder, patchy meadow density, grove placement, deterministic city-block placement, and seeded PRNG math (facility id seed → stable layout). Placement inputs accept optional density/scale overrides from `EnvironmentOptions`. |
 
@@ -918,7 +918,7 @@ The detail plane uses a **simple** fragment shader (textures + horizon fade). **
 
 `BluDesignEngine.applySkyPreset()` / `applyGroundPreset()` apply presets at runtime. `setTheme()` only overwrites the background when the active sky preset is `blank`.
 
-Static CC0 assets live under `frontend/public/bludesign/environment/` (see `CREDITS.md`).
+Static CC0 assets live under `frontend/public/bludesign/environment/` (see `CREDITS.md`). Vite copies `public/` into `dist/` at build time; `frontend/Dockerfile.prod` runs `docker/verify-viewer-assets.sh` before and after the build so missing HDR/EXR/ground textures fail the image build. The **space** backdrop uses `space_2k.exr` (ambientCG starfield + nebula); **natural** remains the Poly Haven daylight HDR for IBL when space is active.
 
 ### Dashboard widget view settings
 
@@ -926,14 +926,14 @@ Admins (`canEditLayout`) open **View settings…** from the Facility 3D View wid
 
 ```typescript
 interface FacilityViewerWidgetConfig {
-  skyPreset?: 'blank' | 'day' | 'sunset' | 'night' | 'natural';
-  groundPreset?: 'blank' | 'grid' | 'grass' | 'concrete' | 'natural' | 'woodland' | 'urban';
+  skyPreset?: 'blank' | 'day' | 'sunset' | 'night' | 'natural' | 'space';
+  groundPreset?: 'blank' | 'grid' | 'grass' | 'concrete' | 'natural' | 'woodland' | 'urban' | 'techno';
   /** Sparse overrides only — unset fields keep preset defaults */
   environmentOptions?: EnvironmentOptions;
 }
 ```
 
-Contextual fine-tune controls appear per active preset (e.g. sun elevation for `day`/`sunset`, tree density for `woodland`, city density for `urban`). Values are kept when switching presets so switching back restores tweaks.
+Contextual fine-tune controls appear per active preset (e.g. sun elevation for `day`/`sunset`, tree density for `woodland`, city density for `urban`, grid/backdrop toggles for `techno`). Values are kept when switching presets so switching back restores tweaks.
 
 Flow: `ViewSettingsPanel` (draft state in `FacilityViewerWidget`) → live preview on `FacilityViewer3D` → **OK** → `onConfigChange` → `useDashboardState.updateWidgetConfig` → debounced `POST /widget-layouts`. `DashboardWidgetRenderer` passes committed `environmentOptions` through `FacilityViewerWidget` → `FacilityViewer3D` → `applyViewerViewPresets` → `BluDesignEngine.applySkyPreset` / `applyGroundPreset`.
 

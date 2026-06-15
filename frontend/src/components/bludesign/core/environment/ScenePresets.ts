@@ -2,7 +2,7 @@
  * Sky and ground preset definitions for BluDesign viewer environments.
  */
 
-export type SkyPresetId = 'blank' | 'day' | 'sunset' | 'night' | 'natural';
+export type SkyPresetId = 'blank' | 'day' | 'sunset' | 'night' | 'natural' | 'space';
 
 export type GroundPresetId =
   | 'blank'
@@ -11,7 +11,8 @@ export type GroundPresetId =
   | 'concrete'
   | 'natural'
   | 'woodland'
-  | 'urban';
+  | 'urban'
+  | 'techno';
 
 export interface SkyPresetDefinition {
   id: SkyPresetId;
@@ -32,6 +33,7 @@ export const ENV_ASSET_BASE = '/bludesign/environment';
 
 export const SKY_PRESET_ASSETS = {
   naturalHdr: `${ENV_ASSET_BASE}/sky/natural_2k.hdr`,
+  spaceHdr: `${ENV_ASSET_BASE}/sky/space_2k.exr`,
 } as const;
 
 export const GROUND_PRESET_ASSETS = {
@@ -71,6 +73,12 @@ export const SKY_PRESETS: SkyPresetDefinition[] = [
     label: 'Natural',
     description: 'Cloudy HDR with PBR reflections',
     swatchClass: 'from-sky-200 via-white to-blue-300',
+  },
+  {
+    id: 'space',
+    label: 'Space',
+    description: 'Deep starfield HDR with Milky Way',
+    swatchClass: 'from-indigo-950 via-violet-950 to-black',
   },
 ];
 
@@ -117,6 +125,12 @@ export const GROUND_PRESETS: GroundPresetDefinition[] = [
     description: 'Muted city blocks, streets, parking, and distant buildings',
     swatchClass: 'from-slate-500 via-gray-400 to-sky-300',
   },
+  {
+    id: 'techno',
+    label: 'Techno Grid',
+    description: 'Tron-inspired glowing grid with animated pulses',
+    swatchClass: 'from-cyan-400 via-[#147FD4] to-black',
+  },
 ];
 
 export const DEFAULT_SCENE_PRESETS = {
@@ -148,10 +162,19 @@ export function normalizeGroundPreset(value: unknown): GroundPresetId {
 /** Whether applying these presets may fetch environment assets over the network. */
 export function viewPresetsRequireAssetDownload(
   sky: SkyPresetId,
-  ground: GroundPresetId
+  ground: GroundPresetId,
+  environmentOptions?: EnvironmentOptions
 ): boolean {
+  const technoSpaceBackdrop =
+    ground === 'techno' &&
+    (environmentOptions?.techno?.showSpaceBackdrop ??
+      DEFAULT_ENVIRONMENT_OPTIONS.techno.showSpaceBackdrop) &&
+    sky !== 'space';
+
   return (
     sky === 'natural' ||
+    sky === 'space' ||
+    technoSpaceBackdrop ||
     ground === 'grass' ||
     ground === 'concrete' ||
     ground === 'natural' ||
@@ -216,12 +239,42 @@ export interface UrbanEnvironmentOptions {
   sceneryFadeEndScale?: number;
 }
 
+export interface TechnoEnvironmentOptions {
+  /** Render the glowing Tron-style grid plane. */
+  showGrid?: boolean;
+  /** Load the space starfield HDR behind/under the grid (facility floating in space). */
+  showSpaceBackdrop?: boolean;
+  /** World-space size of one minor grid cell (meters). */
+  cellSize?: number;
+  /** Minor cells per major grid line. */
+  majorInterval?: number;
+  /** Minor cells per super grid line. */
+  superInterval?: number;
+  /** Multiplier on auto fade-start distance. */
+  fadeStartScale?: number;
+  /** Multiplier on auto outer-fade distance. */
+  outerFadeScale?: number;
+  lineColor?: string;
+  accentColor?: string;
+  horizonColor?: string;
+  voidColor?: string;
+  glowIntensity?: number;
+  pulseSpeed?: number;
+  lineThickness?: number;
+  majorLineThickness?: number;
+  superLineThickness?: number;
+  platformGlow?: number;
+  /** Dark fill alpha between lines when space backdrop is off. */
+  baseAlpha?: number;
+}
+
 /** Persisted partial overrides — only non-default values need to be stored. */
 export interface EnvironmentOptions {
   sky?: SkyEnvironmentOptions;
   ground?: GroundEnvironmentOptions;
   woodland?: WoodlandEnvironmentOptions;
   urban?: UrbanEnvironmentOptions;
+  techno?: TechnoEnvironmentOptions;
 }
 
 export const DEFAULT_ENVIRONMENT_OPTIONS: Required<{
@@ -229,6 +282,7 @@ export const DEFAULT_ENVIRONMENT_OPTIONS: Required<{
   ground: GroundEnvironmentOptions;
   woodland: WoodlandEnvironmentOptions;
   urban: UrbanEnvironmentOptions;
+  techno: TechnoEnvironmentOptions;
 }> = {
   sky: {
     atmosphereIntensity: 2,
@@ -265,6 +319,26 @@ export const DEFAULT_ENVIRONMENT_OPTIONS: Required<{
     streetTreeDensity: 1,
     sceneryFadeStartScale: 1,
     sceneryFadeEndScale: 1,
+  },
+  techno: {
+    showGrid: true,
+    showSpaceBackdrop: false,
+    cellSize: 2.4,
+    majorInterval: 5,
+    superInterval: 25,
+    fadeStartScale: 1,
+    outerFadeScale: 1,
+    lineColor: '#147fd4',
+    accentColor: '#00e8ff',
+    horizonColor: '#0a1628',
+    voidColor: '#050812',
+    glowIntensity: 1.15,
+    pulseSpeed: 1.6,
+    lineThickness: 1,
+    majorLineThickness: 1,
+    superLineThickness: 1,
+    platformGlow: 0.12,
+    baseAlpha: 0.06,
   },
 };
 
@@ -315,6 +389,20 @@ export const ENVIRONMENT_OPTION_RANGES = {
     sceneryFadeStartScale: { min: 0.05, max: 4 },
     sceneryFadeEndScale: { min: 0.05, max: 5 },
   },
+  techno: {
+    cellSize: { min: 0.4, max: 12 },
+    majorInterval: { min: 2, max: 20 },
+    superInterval: { min: 5, max: 80 },
+    fadeStartScale: { min: 0.1, max: 6 },
+    outerFadeScale: { min: 0.1, max: 8 },
+    glowIntensity: { min: 0.05, max: 4 },
+    pulseSpeed: { min: 0, max: 6 },
+    lineThickness: { min: 0.2, max: 4 },
+    majorLineThickness: { min: 0.2, max: 4 },
+    superLineThickness: { min: 0.2, max: 4 },
+    platformGlow: { min: 0, max: 1 },
+    baseAlpha: { min: 0, max: 0.5 },
+  },
 } as const;
 
 function clampToRange(
@@ -328,6 +416,11 @@ function clampToRange(
 export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || Number.isNaN(value)) return fallback;
   return Math.min(max, Math.max(min, value));
+}
+
+export function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  return fallback;
 }
 
 export function normalizeHexColor(value: unknown): string | undefined {
@@ -435,6 +528,39 @@ export function normalizeEnvironmentOptions(value: unknown): EnvironmentOptions 
       sceneryFadeEndScale: (v) =>
         clampToRange(v, R.urban.sceneryFadeEndScale, DEFAULT_ENVIRONMENT_OPTIONS.urban.sceneryFadeEndScale!),
     }),
+    techno: mergePartialSection<TechnoEnvironmentOptions>(raw.techno, {
+      showGrid: (v) => normalizeBoolean(v, DEFAULT_ENVIRONMENT_OPTIONS.techno.showGrid!),
+      showSpaceBackdrop: (v) =>
+        normalizeBoolean(v, DEFAULT_ENVIRONMENT_OPTIONS.techno.showSpaceBackdrop!),
+      cellSize: (v) =>
+        clampToRange(v, R.techno.cellSize, DEFAULT_ENVIRONMENT_OPTIONS.techno.cellSize!),
+      majorInterval: (v) =>
+        clampToRange(v, R.techno.majorInterval, DEFAULT_ENVIRONMENT_OPTIONS.techno.majorInterval!),
+      superInterval: (v) =>
+        clampToRange(v, R.techno.superInterval, DEFAULT_ENVIRONMENT_OPTIONS.techno.superInterval!),
+      fadeStartScale: (v) =>
+        clampToRange(v, R.techno.fadeStartScale, DEFAULT_ENVIRONMENT_OPTIONS.techno.fadeStartScale!),
+      outerFadeScale: (v) =>
+        clampToRange(v, R.techno.outerFadeScale, DEFAULT_ENVIRONMENT_OPTIONS.techno.outerFadeScale!),
+      lineColor: normalizeHexColor,
+      accentColor: normalizeHexColor,
+      horizonColor: normalizeHexColor,
+      voidColor: normalizeHexColor,
+      glowIntensity: (v) =>
+        clampToRange(v, R.techno.glowIntensity, DEFAULT_ENVIRONMENT_OPTIONS.techno.glowIntensity!),
+      pulseSpeed: (v) =>
+        clampToRange(v, R.techno.pulseSpeed, DEFAULT_ENVIRONMENT_OPTIONS.techno.pulseSpeed!),
+      lineThickness: (v) =>
+        clampToRange(v, R.techno.lineThickness, DEFAULT_ENVIRONMENT_OPTIONS.techno.lineThickness!),
+      majorLineThickness: (v) =>
+        clampToRange(v, R.techno.majorLineThickness, DEFAULT_ENVIRONMENT_OPTIONS.techno.majorLineThickness!),
+      superLineThickness: (v) =>
+        clampToRange(v, R.techno.superLineThickness, DEFAULT_ENVIRONMENT_OPTIONS.techno.superLineThickness!),
+      platformGlow: (v) =>
+        clampToRange(v, R.techno.platformGlow, DEFAULT_ENVIRONMENT_OPTIONS.techno.platformGlow!),
+      baseAlpha: (v) =>
+        clampToRange(v, R.techno.baseAlpha, DEFAULT_ENVIRONMENT_OPTIONS.techno.baseAlpha!),
+    }),
   };
 }
 
@@ -444,6 +570,7 @@ export function resolveEnvironmentOptions(partial?: EnvironmentOptions): {
   ground: GroundEnvironmentOptions;
   woodland: WoodlandEnvironmentOptions;
   urban: UrbanEnvironmentOptions;
+  techno: TechnoEnvironmentOptions;
 } {
   const normalized = normalizeEnvironmentOptions(partial ?? {});
   return {
@@ -451,6 +578,7 @@ export function resolveEnvironmentOptions(partial?: EnvironmentOptions): {
     ground: { ...DEFAULT_ENVIRONMENT_OPTIONS.ground, ...normalized.ground },
     woodland: { ...DEFAULT_ENVIRONMENT_OPTIONS.woodland, ...normalized.woodland },
     urban: { ...DEFAULT_ENVIRONMENT_OPTIONS.urban, ...normalized.urban },
+    techno: { ...DEFAULT_ENVIRONMENT_OPTIONS.techno, ...normalized.techno },
   };
 }
 
