@@ -324,8 +324,13 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
 
   const markAsRead = useCallback(
     async (notificationId: string) => {
-      const target = rows.find((n) => n.id === notificationId);
-      if (target?.isRead) return;
+      let alreadyRead = false;
+      setRows((prev) => {
+        const target = prev.find((n) => n.id === notificationId);
+        alreadyRead = target?.isRead === true;
+        return prev;
+      });
+      if (alreadyRead) return;
       try {
         await apiService.markNotificationRead(notificationId);
         setRows((prev) =>
@@ -340,7 +345,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         });
       }
     },
-    [rows, addToast],
+    [addToast],
   );
 
   const handleNotificationToggle = useCallback(
@@ -453,6 +458,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   );
 
   useEffect(() => {
+    setExpandedIds(new Set());
     setRows([]);
     setTotalAvailable(0);
     setLoadedOffset(0);
@@ -513,7 +519,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           break;
         }
         case 'notifications_count_update':
-          void loadNotifications({ silent: true, offset: 0 });
+          // Unread count is derived from local rows; a full reload here races with
+          // expand/mark-read and re-sorts the list, collapsing expanded cards.
           break;
         case 'notification_deleted': {
           const nid = data?.notificationId as string | undefined;
@@ -525,7 +532,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           break;
       }
     },
-    [matchesScope, mergeById, loadNotifications, viewerRole]
+    [matchesScope, mergeById, viewerRole]
   );
 
   useWebSocketSubscription('notifications', (data) => handleWs(data as WsNotificationEvent), {
@@ -557,11 +564,13 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
 
   const filteredNotifications = useMemo(() => {
     return rows.filter((notification) => {
-      if (filter === 'unread') return !notification.isRead;
+      if (filter === 'unread') {
+        return !notification.isRead || expandedIds.has(notification.id);
+      }
       if (filter === 'actionRequired') return notification.actionRequired;
       return true;
     });
-  }, [rows, filter]);
+  }, [rows, filter, expandedIds]);
 
   const sortedNotifications = useMemo(() => {
     const toneWeight: Record<WidgetNotificationTone, number> = {
@@ -572,14 +581,16 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     };
 
     return [...filteredNotifications].sort((a, b) => {
-      if (a.isRead !== b.isRead) {
+      const aPinned = expandedIds.has(a.id);
+      const bPinned = expandedIds.has(b.id);
+      if (a.isRead !== b.isRead && !aPinned && !bPinned) {
         return a.isRead ? 1 : -1;
       }
       const toneDiff = toneWeight[a.tone] - toneWeight[b.tone];
       if (toneDiff !== 0) return toneDiff;
       return b.timestamp.getTime() - a.timestamp.getTime();
     });
-  }, [filteredNotifications]);
+  }, [filteredNotifications, expandedIds]);
 
   const displayedNotifications = sortedNotifications.slice(0, layout.listCap);
   const unreadCount = useMemo(() => rows.filter((n) => !n.isRead).length, [rows]);

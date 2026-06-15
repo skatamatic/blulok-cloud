@@ -247,6 +247,64 @@ describe('NotificationsWidget', () => {
     });
   });
 
+  it('stays expanded after mark read and websocket count update', async () => {
+    mockGetNotifications.mockResolvedValue({
+      success: true,
+      notifications: [
+        baseNotification({
+          id: 'long-1',
+          title: 'Gateway offline',
+          message:
+            'Main gateway has been offline for more than five minutes. Check power and network connectivity at the facility entrance.',
+        }),
+      ],
+      total: 1,
+      unreadCount: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    let wsHandler: ((data: unknown) => void) | undefined;
+    mockSubscribe.mockImplementation((_type, handler) => {
+      wsHandler = handler;
+      return 'sub-1';
+    });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(screen.getByText('Gateway offline')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Gateway offline/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Check power and network connectivity/)).toHaveClass('whitespace-pre-wrap');
+    });
+
+    await waitFor(() => expect(mockMarkNotificationRead).toHaveBeenCalledWith('long-1'));
+
+    wsHandler?.({
+      eventType: 'notifications_count_update',
+      payload: { unreadCount: 0, lastUpdated: new Date().toISOString() },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Check power and network connectivity/)).toHaveClass('whitespace-pre-wrap');
+    });
+    expect(mockGetNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps expanded notification visible in unread filter after mark read', async () => {
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
+    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Unread \(\d+\)/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Security/i }));
+
+    await waitFor(() => expect(mockMarkNotificationRead).toHaveBeenCalledWith('a'));
+    await waitFor(() => {
+      expect(screen.getByText('Security')).toBeInTheDocument();
+      expect(screen.getByText(/World/)).toHaveClass('whitespace-pre-wrap');
+    });
+  });
+
   it('shows toast when mark read fails on expand', async () => {
     mockMarkNotificationRead.mockRejectedValueOnce(new Error('network'));
     renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />);
