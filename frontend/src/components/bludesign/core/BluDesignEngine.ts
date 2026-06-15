@@ -31,7 +31,13 @@ import {
   Building,
   DataSourceConfig,
   GridAlignment,
+  AssetCategory,
+  DeviceState,
 } from './types';
+import {
+  UnitStateVisualManager,
+  THEMED_UNIT_SKIN_ID,
+} from './state/UnitStateVisualManager';
 import { SceneManager } from './SceneManager';
 import { CameraController } from './CameraController';
 import { SelectionManager } from './SelectionManager';
@@ -74,6 +80,7 @@ import {
   CachedTextureLoader,
 } from './engine';
 import type { DraftAutoSaveScheduler } from './engine/DraftAutoSaveScheduler';
+import { disposeProceduralSurfaceTextures } from './skins/proceduralSurfaceTextures';
 import { initializeBluDesignEditorSubsystems } from './engine/initializeBluDesignEditorSubsystems';
 import {
   FloorObjectReplication,
@@ -152,10 +159,13 @@ import { serializeCameraState } from './camera/cameraStateUtils';
 import {
   GroundPlaneManager,
   GroundPresetId,
+  SceneryManager,
   SkyManager,
   SkyPresetId,
   DEFAULT_SCENE_PRESETS,
   THEME_BACKGROUND_COLORS,
+  resolveEnvironmentOptions,
+  type EnvironmentOptions,
   type ScenePresetApplyOptions,
 } from './environment';
 
@@ -189,6 +199,8 @@ export class BluDesignEngine {
   private floorViewCoordinator!: FloorViewCoordinator;
   private floorStructureOperations!: FloorStructureOperations;
   private skinManager: SkinManager;
+  private readonly unitStateVisualManager = new UnitStateVisualManager();
+  private bindingEffectsEnabled = true;
   private actionHistory: ActionHistory;
   private clipboardManager: ClipboardManager;
   private translateGizmo: TranslateGizmo;
@@ -241,8 +253,11 @@ export class BluDesignEngine {
 
   private skyManager!: SkyManager;
   private groundPlaneManager!: GroundPlaneManager;
+  private sceneryManager!: SceneryManager;
   private activeSkyPreset: SkyPresetId = DEFAULT_SCENE_PRESETS.skyPreset;
   private activeGroundPreset: GroundPresetId = DEFAULT_SCENE_PRESETS.groundPreset;
+  private environmentSeed = 'blulok-default';
+  private activeEnvironmentOptions: EnvironmentOptions = {};
   private activeTheme: 'light' | 'dark' = 'dark';
   private skyPresetGeneration = 0;
   private groundPresetGeneration = 0;
@@ -364,7 +379,7 @@ export class BluDesignEngine {
       }
     );
     
-    // Set up rotation control callback for Ctrl+drag in placement mode
+    // Set up rotation control callback for Alt+drag in placement mode
     this.placementManager.setOnRotationControlChange((enableRotation) => {
       // Only toggle rotation when in PLACE tool
       if (this.state.activeTool === EditorTool.PLACE) {
@@ -638,6 +653,7 @@ export class BluDesignEngine {
       scene: this.scene,
       getMaxAnisotropy: () => this.renderer.capabilities.getMaxAnisotropy(),
     });
+    this.sceneryManager = new SceneryManager({ scene: this.scene });
     this.gridSystem.create();
     if (this.readonly) {
       this.gridSystem.setVisible(false);
@@ -848,6 +864,10 @@ export class BluDesignEngine {
         this.groundPlaneManager.getActivePreset() !== 'grid') {
       this.groundPlaneManager.update(this.cameraController.getCamera());
     }
+    if (this.sceneryManager.isActive()) {
+      this.sceneryManager.update(delta);
+    }
+    this.unitStateVisualManager.update(delta);
     this.selectionManager.update();
     const hasSelection = this.selectionManager.getSelectedIds().length > 0;
     if (hasSelection || !this.readonly) {
@@ -1036,6 +1056,7 @@ export class BluDesignEngine {
     updatePlacedObjectBinding(id, binding, {
       getObject: (oid) => this.sceneManager.getObject(oid),
       getObjectData: (oid) => this.sceneManager.getObjectData(oid),
+      applyVisualState: (group, placedObj) => this.applyUnitVisualState(group, placedObj),
       emitStateUpdated: () => this.emit('state-updated', this.state),
     });
   }
@@ -1064,8 +1085,67 @@ export class BluDesignEngine {
     updatePlacedObjectSimulationState(id, simState, {
       getObject: (oid) => this.sceneManager.getObject(oid),
       getObjectData: (oid) => this.sceneManager.getObjectData(oid),
+      applyVisualState: (group, placedObj) => this.applyUnitVisualState(group, placedObj),
       emitStateUpdated: () => this.emit('state-updated', this.state),
     });
+  }
+
+  /**
+   * Resolve runtime state visuals for a single placed object. Storage units
+   * wearing the built-in "White & Blue Steel" theme get the rich bound-state
+   * visuals (dim/transparent, door-open, flashing); everything else falls back
+   * to the legacy flat-colour swap inside {@link UnitStateVisualManager}.
+   */
+  private applyUnitVisualState(group: THREE.Group, placedObj: PlacedObject): void {
+    const themed = this.isThemedStorageUnit(placedObj);
+    // When binding effects are disabled, everything renders in its default
+    // locked look (no dim/transparent, door-open or flashing).
+    if (!this.bindingEffectsEnabled) {
+      this.unitStateVisualManager.applyState(group, {
+        themed,
+        bound: true,
+        state: DeviceState.LOCKED,
+      });
+      return;
+    }
+    this.unitStateVisualManager.applyState(group, {
+      themed,
+      bound: !!placedObj.binding?.entityId,
+      state: placedObj.binding?.currentState ?? DeviceState.UNKNOWN,
+    });
+  }
+
+  /**
+   * Toggle live binding visuals. When disabled, every bound/unbound unit renders
+   * in its default locked appearance; live telemetry still updates the
+   * underlying `binding.currentState` so re-enabling reflects the latest state.
+   */
+  setBindingEffectsEnabled(enabled: boolean): void {
+    if (this.bindingEffectsEnabled === enabled) return;
+    this.bindingEffectsEnabled = enabled;
+    this.refreshUnitStateVisuals();
+  }
+
+  private isThemedStorageUnit(placedObj: PlacedObject): boolean {
+    if (placedObj.assetMetadata?.category !== AssetCategory.STORAGE_UNIT) return false;
+    const effectiveSkinId =
+      placedObj.skinId ??
+      getThemeManager().getActiveSkinForCategory(AssetCategory.STORAGE_UNIT) ??
+      undefined;
+    return effectiveSkinId === THEMED_UNIT_SKIN_ID;
+  }
+
+  /**
+   * Re-evaluate state visuals for every storage unit. Cheap (handful of units)
+   * and used after a theme switch / scene load so unbound + themed units pick up
+   * their look without waiting for a live telemetry tick.
+   */
+  refreshUnitStateVisuals(): void {
+    for (const placedObj of this.sceneManager.getAllPlacedObjects()) {
+      if (!placedObj.assetMetadata?.isSmart) continue;
+      const mesh = this.sceneManager.getObject(placedObj.id);
+      if (mesh) this.applyUnitVisualState(mesh as THREE.Group, placedObj);
+    }
   }
 
   // ==========================================================================
@@ -1190,7 +1270,7 @@ export class BluDesignEngine {
   startAssetPlacement(assetMetadata: AssetMetadata): void {
     this.currentPlacementAsset = assetMetadata;
     // Disable camera rotation by default during placement
-    // User must hold Ctrl to rotate
+    // User must hold Alt to rotate
     this.cameraController.setRotationEnabled(false);
     this.emit('placement-started', assetMetadata.id);
   }
@@ -1260,7 +1340,18 @@ export class BluDesignEngine {
     const generation = ++this.skyPresetGeneration;
     const previous = this.activeSkyPreset;
     this.activeSkyPreset = preset;
-    await this.skyManager.applyPreset(preset, options);
+    if (options?.environmentOptions) {
+      this.activeEnvironmentOptions = {
+        ...this.activeEnvironmentOptions,
+        ...options.environmentOptions,
+        sky: { ...this.activeEnvironmentOptions.sky, ...options.environmentOptions.sky },
+      };
+    }
+    const presetOptions: ScenePresetApplyOptions = {
+      ...options,
+      environmentOptions: this.activeEnvironmentOptions,
+    };
+    await this.skyManager.applyPreset(preset, presetOptions);
     if (generation !== this.skyPresetGeneration) return;
 
     this.activeSkyPreset = this.skyManager.getActivePreset();
@@ -1277,25 +1368,80 @@ export class BluDesignEngine {
   ): Promise<void> {
     const generation = ++this.groundPresetGeneration;
     this.activeGroundPreset = preset;
+    if (options?.environmentOptions) {
+      this.activeEnvironmentOptions = {
+        ...this.activeEnvironmentOptions,
+        ...options.environmentOptions,
+        ground: { ...this.activeEnvironmentOptions.ground, ...options.environmentOptions.ground },
+        woodland: { ...this.activeEnvironmentOptions.woodland, ...options.environmentOptions.woodland },
+        urban: { ...this.activeEnvironmentOptions.urban, ...options.environmentOptions.urban },
+      };
+    }
     const bounds = this.calculateSceneBounds();
+    const presetOptions: ScenePresetApplyOptions = {
+      ...options,
+      environmentSeed: options?.environmentSeed ?? this.environmentSeed,
+      environmentOptions: this.activeEnvironmentOptions,
+    };
 
     if (preset === 'grid') {
+      this.sceneryManager.hide();
       this.gridSystem.setVisible(true);
       this.state.ui.showGrid = true;
-      await this.groundPlaneManager.applyPreset('grid', bounds, options);
+      await this.groundPlaneManager.applyPreset('grid', bounds, presetOptions);
       if (generation !== this.groundPresetGeneration) return;
       return;
     }
 
-    // Natural keeps the grid hidden — semi-transparent grass over the editor grid
+    // Natural / woodland keep the grid hidden — semi-transparent grass over the editor grid
     // caused moiré / horizontal line artifacts in the facility viewer widget.
     const gridVisible = false;
     this.gridSystem.setVisible(gridVisible);
     this.state.ui.showGrid = gridVisible;
 
-    await this.groundPlaneManager.applyPreset(preset, bounds, options);
+    await this.groundPlaneManager.applyPreset(preset, bounds, presetOptions);
     if (generation !== this.groundPresetGeneration) return;
+
+    if (preset === 'woodland' || preset === 'urban') {
+      const layout = this.groundPlaneManager.getSceneryLayoutMetrics();
+      if (layout) {
+        const resolved = resolveEnvironmentOptions(this.activeEnvironmentOptions);
+        const sceneryInput = {
+          centerX: layout.centerX,
+          centerZ: layout.centerZ,
+          padHalfX: layout.padHalfX,
+          padHalfZ: layout.padHalfZ,
+          fadeStart: layout.fadeStart,
+          outerFade: layout.outerFade,
+          facilityHalfX: layout.facilityHalfX,
+          facilityHalfZ: layout.facilityHalfZ,
+          environmentSeed: presetOptions.environmentSeed ?? this.environmentSeed,
+          ...(preset === 'woodland' ? resolved.woodland : resolved.urban),
+        };
+        if (preset === 'woodland') {
+          this.sceneryManager.applyWoodland(sceneryInput);
+        } else {
+          this.sceneryManager.applyUrban(sceneryInput);
+        }
+      }
+    } else {
+      this.sceneryManager.hide();
+    }
+
     this.syncOutdoorEnvironment();
+  }
+
+  /**
+   * Stable seed for woodland terrain and procedural trees (typically the facility id).
+   */
+  setEnvironmentSeed(seed: string): void {
+    if (seed && seed.trim().length > 0) {
+      this.environmentSeed = seed.trim();
+    }
+  }
+
+  getEnvironmentSeed(): string {
+    return this.environmentSeed;
   }
 
   /** Match sun/sky/exposure to outdoor viewer presets. */
@@ -1303,7 +1449,9 @@ export class BluDesignEngine {
     const outdoor =
       this.activeSkyPreset === 'natural' ||
       this.activeGroundPreset === 'grass' ||
-      this.activeGroundPreset === 'natural';
+      this.activeGroundPreset === 'natural' ||
+      this.activeGroundPreset === 'woodland' ||
+      this.activeGroundPreset === 'urban';
 
     if (outdoor) {
       // Subtle hemisphere boost only — avoid washing out the scene.
@@ -1311,7 +1459,14 @@ export class BluDesignEngine {
     } else {
       this.sceneManager.applyOutdoorLighting(false);
     }
-    this.renderer.toneMappingExposure = DEFAULT_RENDERER_CONFIG.toneMappingExposure;
+
+    if (this.activeSkyPreset === 'natural') {
+      const skyOptions = resolveEnvironmentOptions(this.activeEnvironmentOptions).sky;
+      this.renderer.toneMappingExposure =
+        (skyOptions.exposure ?? 1) * (skyOptions.backgroundIntensity ?? 1);
+    } else {
+      this.renderer.toneMappingExposure = DEFAULT_RENDERER_CONFIG.toneMappingExposure;
+    }
   }
 
   refreshGroundPlaneBounds(): void {
@@ -1322,9 +1477,36 @@ export class BluDesignEngine {
     if (
       this.activeGroundPreset === 'grass' ||
       this.activeGroundPreset === 'concrete' ||
-      this.activeGroundPreset === 'natural'
+      this.activeGroundPreset === 'natural' ||
+      this.activeGroundPreset === 'woodland' ||
+      this.activeGroundPreset === 'urban'
     ) {
-      this.groundPlaneManager.updateBounds(bounds);
+      this.groundPlaneManager.updateBounds(bounds, {
+        environmentOptions: this.activeEnvironmentOptions,
+      });
+      if (this.activeGroundPreset === 'woodland' || this.activeGroundPreset === 'urban') {
+        const layout = this.groundPlaneManager.getSceneryLayoutMetrics();
+        if (layout) {
+          const resolved = resolveEnvironmentOptions(this.activeEnvironmentOptions);
+          const sceneryInput = {
+            centerX: layout.centerX,
+            centerZ: layout.centerZ,
+            padHalfX: layout.padHalfX,
+            padHalfZ: layout.padHalfZ,
+            fadeStart: layout.fadeStart,
+            outerFade: layout.outerFade,
+            facilityHalfX: layout.facilityHalfX,
+            facilityHalfZ: layout.facilityHalfZ,
+            environmentSeed: this.environmentSeed,
+            ...(this.activeGroundPreset === 'woodland' ? resolved.woodland : resolved.urban),
+          };
+          if (this.activeGroundPreset === 'woodland') {
+            this.sceneryManager.applyWoodland(sceneryInput);
+          } else {
+            this.sceneryManager.applyUrban(sceneryInput);
+          }
+        }
+      }
     }
   }
 
@@ -1347,6 +1529,10 @@ export class BluDesignEngine {
       applySkinToObject: (obj, skin) =>
         this.placedObjectSkinApplicator.applySkinToObject(obj, skin),
     });
+
+    // Themed units derive their bound-state look from the active skin, so a
+    // theme switch needs a visual refresh (incl. unbound dim/transparent units).
+    this.refreshUnitStateVisuals();
 
     this.emit('scene-theme-applied', theme);
   }
@@ -1412,6 +1598,8 @@ export class BluDesignEngine {
     this.layoutImport = layoutImport;
     this.persistedLayoutImport = layoutImport;
     importFacilitySceneData(data, this.getFacilityImportHost());
+    // Apply themed bound-state visuals to freshly loaded units.
+    this.refreshUnitStateVisuals();
   }
 
   getDefaultCamera(): SerializedCameraState | null {
@@ -1998,7 +2186,7 @@ export class BluDesignEngine {
     return { x: w.x, z: w.z };
   }
 
-  /** World pivot for Ctrl+A/D camera orbit when objects are selected. */
+  /** World pivot for Alt+A/D camera orbit when objects are selected. */
   private resolveSelectionOrbitPivot(): THREE.Vector3 | null {
     if (
       this.state.selection.selectedIds.length === 0 &&
@@ -2383,8 +2571,13 @@ export class BluDesignEngine {
     this.groundTileManager.dispose();
     this.skyManager.dispose();
     this.groundPlaneManager.dispose();
+    this.sceneryManager.dispose();
+    this.unitStateVisualManager.dispose();
     
     this.buildingMovePreviewController.dispose();
+
+    this.cachedTextures.dispose();
+    disposeProceduralSurfaceTextures();
     
     // Dispose Three.js objects
     this.renderer.dispose();

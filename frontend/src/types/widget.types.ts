@@ -266,11 +266,28 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
 
 /** Persisted view settings for the Facility 3D View dashboard widget */
 export type FacilityViewerSkyPreset = 'blank' | 'day' | 'sunset' | 'night' | 'natural';
-export type FacilityViewerGroundPreset = 'blank' | 'grid' | 'grass' | 'concrete' | 'natural';
+export type FacilityViewerGroundPreset =
+  | 'blank'
+  | 'grid'
+  | 'grass'
+  | 'concrete'
+  | 'natural'
+  | 'woodland'
+  | 'urban';
+
+/** Re-export for widget config — keep in sync with ScenePresets EnvironmentOptions. */
+export type {
+  EnvironmentOptions as FacilityViewerEnvironmentOptions,
+  SkyEnvironmentOptions,
+  GroundEnvironmentOptions,
+  WoodlandEnvironmentOptions,
+  UrbanEnvironmentOptions,
+} from '@/components/bludesign/core/environment/ScenePresets';
 
 export interface FacilityViewerWidgetConfig {
   skyPreset?: FacilityViewerSkyPreset;
   groundPreset?: FacilityViewerGroundPreset;
+  environmentOptions?: import('@/components/bludesign/core/environment/ScenePresets').EnvironmentOptions;
 }
 
 export const DEFAULT_FACILITY_VIEWER_CONFIG: FacilityViewerWidgetConfig = {

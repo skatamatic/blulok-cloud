@@ -57,8 +57,10 @@ export class CameraController {
     back: false,
     left: false,
     right: false,
+    up: false,
+    down: false,
     shift: false,
-    ctrl: false,
+    orbitModifier: false,
   };
   private getOrbitPivot: (() => THREE.Vector3 | null) | null = null;
   private readonly walkForward = new THREE.Vector3();
@@ -68,6 +70,7 @@ export class CameraController {
   private readonly walkWorldUp = new THREE.Vector3(0, 1, 0);
   private readonly walkTarget = new THREE.Vector3();
   private readonly walkOffset = new THREE.Vector3();
+  private readonly walkPitchAxis = new THREE.Vector3();
   private boundClearWalkKeys: () => void;
 
   // Callbacks
@@ -157,7 +160,7 @@ export class CameraController {
   }
 
   /**
-   * When set, Ctrl+A/D orbits around the returned pivot (e.g. selection center).
+   * When set, Alt+A/D orbits around the returned pivot (e.g. selection center).
    * Return null to orbit around the current look target.
    */
   setOrbitPivotResolver(resolver: (() => THREE.Vector3 | null) | null): void {
@@ -165,17 +168,19 @@ export class CameraController {
   }
 
   /**
-   * Track WASD / Shift / Ctrl for camera movement. Returns true when the key is consumed.
+   * Track WASD / ZX / Shift / Alt for camera movement. Returns true when the key is consumed.
    */
   handleWalkKeyEvent(event: KeyboardEvent, isDown: boolean): boolean {
     if (!this.walkEnabled) return false;
-    if (event.altKey) return false;
 
     const key = event.key.toLowerCase();
-    if (key === 'control' || key === 'meta') {
-      this.walkKeys.ctrl = isDown;
+    if (key === 'alt') {
+      this.walkKeys.orbitModifier = isDown;
       return false;
     }
+
+    const modifiersBlockWalk =
+      event.altKey || event.ctrlKey || event.metaKey;
 
     let handled = false;
     switch (key) {
@@ -190,14 +195,14 @@ export class CameraController {
       case 'a':
         this.walkKeys.left = isDown;
         if (isDown) {
-          this.walkKeys.ctrl = event.ctrlKey || event.metaKey;
+          this.walkKeys.orbitModifier = event.altKey;
         }
         handled = true;
         break;
       case 'd':
         this.walkKeys.right = isDown;
         if (isDown) {
-          this.walkKeys.ctrl = event.ctrlKey || event.metaKey;
+          this.walkKeys.orbitModifier = event.altKey;
         }
         handled = true;
         break;
@@ -205,13 +210,35 @@ export class CameraController {
         this.walkKeys.shift = isDown;
         handled = true;
         break;
+      case 'z':
+        if (isDown) {
+          if (!modifiersBlockWalk) {
+            this.walkKeys.down = true;
+            handled = true;
+          }
+        } else {
+          this.walkKeys.down = false;
+          handled = true;
+        }
+        break;
+      case 'x':
+        if (isDown) {
+          if (!modifiersBlockWalk) {
+            this.walkKeys.up = true;
+            handled = true;
+          }
+        } else {
+          this.walkKeys.up = false;
+          handled = true;
+        }
+        break;
       default:
         break;
     }
 
     if (handled && isDown) {
       event.preventDefault();
-      if ((key === 'a' || key === 'd') && (event.ctrlKey || event.metaKey)) {
+      if ((key === 'a' || key === 'd' || key === 'w' || key === 's') && event.altKey) {
         event.stopPropagation();
       }
     }
@@ -223,8 +250,10 @@ export class CameraController {
     this.walkKeys.back = false;
     this.walkKeys.left = false;
     this.walkKeys.right = false;
+    this.walkKeys.up = false;
+    this.walkKeys.down = false;
     this.walkKeys.shift = false;
-    this.walkKeys.ctrl = false;
+    this.walkKeys.orbitModifier = false;
   }
 
   private getWalkMoveDistance(delta: number): number {
@@ -296,6 +325,30 @@ export class CameraController {
     this.syncActiveCameraPosition();
   }
 
+  /** Pitch the view up or down in place (Alt+W / Alt+S). */
+  private applyCameraPitch(lookUp: boolean, delta: number): void {
+    const pitchSpeed = 1.75;
+    const angle = (lookUp ? 1 : -1) * pitchSpeed * delta;
+
+    this.walkTarget.copy(this.activeCamera.position);
+    this.walkOffset.copy(this.controls.target).sub(this.walkTarget);
+    const radius = this.walkOffset.length();
+    if (radius < 1e-6) return;
+
+    this.activeCamera.getWorldDirection(this.walkForward);
+    this.walkPitchAxis.crossVectors(this.walkForward, this.walkWorldUp);
+    if (this.walkPitchAxis.lengthSq() < 1e-6) return;
+    this.walkPitchAxis.normalize();
+
+    this.walkOffset.applyAxisAngle(this.walkPitchAxis, angle);
+    this.walkOffset.y = THREE.MathUtils.clamp(this.walkOffset.y, -radius * 0.95, radius * 0.95);
+    this.walkOffset.normalize().multiplyScalar(radius);
+
+    this.controls.target.copy(this.walkTarget).add(this.walkOffset);
+    this.activeCamera.lookAt(this.controls.target);
+    this.syncActiveCameraPosition();
+  }
+
   /** Horizontal forward/right from the camera view (Y flattened). */
   private refreshPlanarBasis(): void {
     this.activeCamera.getWorldDirection(this.walkForwardFlat);
@@ -311,14 +364,23 @@ export class CameraController {
   private applyWalkMovement(delta: number): void {
     if (!this.walkEnabled || this.isTransitioning) return;
 
-    const { forward, back, left, right, shift } = this.walkKeys;
+    this.applyVerticalWalkMovement(delta);
+
+    const { forward, back, left, right, shift, orbitModifier } = this.walkKeys;
+
+    if (orbitModifier && (forward || back) && this.mode === CameraMode.FREE) {
+      if (forward !== back) {
+        this.applyCameraPitch(forward, delta);
+      }
+    }
+
     if (!forward && !back && !left && !right) return;
 
     const moveDistance = this.getWalkMoveDistance(delta);
 
     if (shift) {
       // Shift: W/S fly along the camera look vector; A/D strafe on the ground plane.
-      if (forward || back) {
+      if (!orbitModifier && (forward || back)) {
         this.activeCamera.getWorldDirection(this.walkForward);
         this.walkMove.set(0, 0, 0);
         if (forward) this.walkMove.add(this.walkForward);
@@ -342,8 +404,8 @@ export class CameraController {
       return;
     }
 
-    // Default: W/S walk on the ground plane; A/D yaw, or Ctrl+A/D orbit a pivot.
-    if (forward || back) {
+    // Default: W/S walk on the ground plane; Alt+W/S pitch; A/D yaw, or Alt+A/D orbit a pivot.
+    if (!orbitModifier && (forward || back)) {
       this.refreshPlanarBasis();
       this.walkMove.set(0, 0, 0);
       if (forward) this.walkMove.add(this.walkForwardFlat);
@@ -356,11 +418,30 @@ export class CameraController {
 
     if (left !== right) {
       const turnLeft = left;
-      if (this.walkKeys.ctrl) {
+      if (this.walkKeys.orbitModifier) {
         this.applyOrbitAroundPivot(this.resolveOrbitPivot(this.walkTarget), turnLeft, delta);
       } else {
         this.applyCameraYaw(turnLeft, delta);
       }
+    }
+  }
+
+  /** Hold Z/X to fly vertically at the same speed scale as WASD walking. */
+  private applyVerticalWalkMovement(delta: number): void {
+    const { up, down } = this.walkKeys;
+    if (!up && !down) return;
+    if (up && down) return;
+
+    const moveDistance = this.getWalkMoveDistance(delta);
+    const deltaY = (up ? 1 : -1) * moveDistance;
+
+    if (this.mode === CameraMode.ISOMETRIC) {
+      this.isometricHeight = Math.max(5, this.isometricHeight + deltaY);
+      this.baseIsometricHeight = this.isometricHeight;
+      this.applyIsometricAngle(this.isometricAngle, false);
+    } else {
+      this.walkMove.set(0, deltaY, 0);
+      this.translateCameraAndTarget(this.walkMove);
     }
   }
 
@@ -912,8 +993,8 @@ export class CameraController {
   }
 
   /**
-   * Set whether rotation is allowed (for placement/selection mode with Ctrl)
-   * When in placement/selection mode, rotation is only allowed when Ctrl is held
+   * Set whether rotation is allowed (for placement/selection mode with Alt)
+   * When in placement/selection mode, rotation is only allowed when Alt is held
    */
   setRotationEnabled(enabled: boolean): void {
     // Only affect free mode - isometric never has rotation
@@ -924,11 +1005,11 @@ export class CameraController {
       // When rotation is disabled (placement/selection mode default):
       //   LEFT = NONE (free for selection/placement handlers)
       //   RIGHT = pan, MIDDLE = zoom
-      //   Ctrl+drag enables rotation via setRotationEnabled(true)
-      // When rotation is enabled (Ctrl held):
+      //   Alt+drag enables rotation via setRotationEnabled(true)
+      // When rotation is enabled (Alt held):
       //   LEFT = rotate, RIGHT = pan, MIDDLE = zoom
       if (enabled) {
-        // Rotation enabled: LEFT rotates (Ctrl is held)
+        // Rotation enabled: LEFT rotates (Alt is held)
         this.controls.mouseButtons = {
           LEFT: THREE.MOUSE.ROTATE,
           MIDDLE: THREE.MOUSE.DOLLY,

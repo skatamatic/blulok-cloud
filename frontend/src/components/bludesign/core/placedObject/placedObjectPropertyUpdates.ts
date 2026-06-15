@@ -17,6 +17,7 @@ export function updatePlacedObjectBinding(
   ctx: {
     getObject: (objectId: string) => THREE.Object3D | undefined;
     getObjectData: (objectId: string) => PlacedObject | undefined;
+    applyVisualState?: (group: THREE.Group, placedObj: PlacedObject) => void;
     emitStateUpdated: () => void;
   }
 ): void {
@@ -46,6 +47,8 @@ export function updatePlacedObjectBinding(
   } else {
     placedObj.binding = undefined;
   }
+  // Bound/unbound transitions change the themed-unit look (dim/transparent).
+  ctx.applyVisualState?.(obj as THREE.Group, placedObj);
   ctx.emitStateUpdated();
 }
 
@@ -107,6 +110,7 @@ export function updatePlacedObjectSimulationState(
   ctx: {
     getObject: (objectId: string) => THREE.Object3D | undefined;
     getObjectData: (objectId: string) => PlacedObject | undefined;
+    applyVisualState: (group: THREE.Group, placedObj: PlacedObject) => void;
     emitStateUpdated: () => void;
   }
 ): void {
@@ -127,15 +131,12 @@ export function updatePlacedObjectSimulationState(
         currentState: simState.simulatedState,
       };
     }
-    updatePlacedObjectAssetVisualState(obj as THREE.Group, simState.simulatedState);
+    ctx.applyVisualState(obj as THREE.Group, placedObj);
   } else {
     if (placedObj.properties._originalState && placedObj.binding) {
       placedObj.binding.currentState = placedObj.properties._originalState as DeviceState;
       delete placedObj.properties._originalState;
-      updatePlacedObjectAssetVisualState(
-        obj as THREE.Group,
-        placedObj.binding.currentState
-      );
+      ctx.applyVisualState(obj as THREE.Group, placedObj);
     }
   }
   ctx.emitStateUpdated();

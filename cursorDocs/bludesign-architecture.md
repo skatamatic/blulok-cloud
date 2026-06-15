@@ -11,7 +11,7 @@ The system consists of:
 
 ### Working grid alignment (build editor, session-only)
 
-Users can align the **placement snap grid** and **floor grid** to a selected object’s facing so angled rows are extended with normal click/drag placement (no repeated Alt+drag). **Align grid to selection** (viewport toggle or **Ctrl+Alt+A**) sets a rotated working frame using the selection’s **grid anchor** (cell min corner), not the mesh pivot; **Reset** restores world axes (**Ctrl+Alt+R** or toggle off). The floor grid shader draws lines in that working frame so visuals match snapping; the grid plane mesh is not yaw-rotated (yaw lives only in shader uniforms and `gridToWorld` / `worldToGrid` math) so the drawn grid cannot drift from placement snapping. **Rotation convention**: `GridSystem`'s UV↔World transforms use Three.js's Y-rotation convention (`localUVToWorldDelta`: `x = u*cos + v*sin`, `z = -u*sin + v*cos`; shader inverse matches) so grid U/V axes are exactly the asset's local X/Z axes at the stored `alignmentYaw`. **`computeWorkingGridAlignmentFromPlacedMesh`** uses the **footprint center** in world space (mesh world position minus `internalXOffset` / `internalZOffset`), not the raw mesh pivot, when solving for the alignment origin so grid phase matches assets whose model pivot is offset from the footprint center. Its **yaw** is the **full** world Y rotation from `getEffectiveRotation(placedObject)` (same as placement), not “fine” rotation after subtracting cardinal orientation — otherwise pure N/E/S/W objects got yaw `0` while the mesh was at 90°, and the floor grid stayed world-axis. Footprint **centers** for ghosts and meshes use `gridToWorld(anchor + footprint/2)` so placement stays flush when yaw ≠ 0. This state is **not** saved in facility manifests. **Changing the active floor** clears working grid alignment so each floor starts from world axes until aligned again. **Building footprint** placement uses world-axis grid rectangles internally; with a rotated working grid active, finishing a building drag is blocked until the user resets alignment. **Alt+drag** remains the opt-in flow for angled multi-placement without changing the global working grid. **Alt+Q/E** fine-rotates the placement ghost when the working grid is world-aligned and a placement is active (not while a rotated working grid is enabled).
+Users can align the **placement snap grid** and **floor grid** to a selected object’s facing so angled rows are extended with normal click/drag placement (no repeated Alt+drag). **Align grid to selection** (viewport toggle or **Alt+Shift+G**) sets a rotated working frame using the selection’s **grid anchor** (cell min corner), not the mesh pivot; **Reset** restores world axes (**Alt+Shift+R** or toggle off). The floor grid shader draws lines in that working frame so visuals match snapping; the grid plane mesh is not yaw-rotated (yaw lives only in shader uniforms and `gridToWorld` / `worldToGrid` math) so the drawn grid cannot drift from placement snapping. **Rotation convention**: `GridSystem`'s UV↔World transforms use Three.js's Y-rotation convention (`localUVToWorldDelta`: `x = u*cos + v*sin`, `z = -u*sin + v*cos`; shader inverse matches) so grid U/V axes are exactly the asset's local X/Z axes at the stored `alignmentYaw`. **`computeWorkingGridAlignmentFromPlacedMesh`** uses the **footprint center** in world space (mesh world position minus `internalXOffset` / `internalZOffset`), not the raw mesh pivot, when solving for the alignment origin so grid phase matches assets whose model pivot is offset from the footprint center. Its **yaw** is the **full** world Y rotation from `getEffectiveRotation(placedObject)` (same as placement), not “fine” rotation after subtracting cardinal orientation — otherwise pure N/E/S/W objects got yaw `0` while the mesh was at 90°, and the floor grid stayed world-axis. Footprint **centers** for ghosts and meshes use `gridToWorld(anchor + footprint/2)` so placement stays flush when yaw ≠ 0. This state is **not** saved in facility manifests. **Changing the active floor** clears working grid alignment so each floor starts from world axes until aligned again. **Building footprint** placement uses world-axis grid rectangles internally; with a rotated working grid active, finishing a building drag is blocked until the user resets alignment. **Alt+drag** remains the opt-in flow for angled multi-placement without changing the global working grid. **Alt+Q/E** fine-rotates the placement ghost when the working grid is world-aligned and a placement is active (not while a rotated working grid is enabled).
 
 ### Facility save format (frontend)
 
@@ -21,7 +21,7 @@ Editor infrastructure split from the main engine file (ongoing): **`core/engine/
 
 **Engine callback extractions (reduce `BluDesignEngine` surface):** **`core/editor/engineSelectionSync`** (`applyEngineSelectionChangeFromManager`) merges **`SelectionManager`** payloads with **`selectedBuildingId`** rules. **`core/building/buildingManagerLifecycleCallbacks`** implements **`BuildingManager`** create/merge/delete/modify hooks + theme refresh. **`core/gizmos/gizmoEngineCallbacks`** builds **`TranslateGizmo`** / **`RotateGizmo`** drag + hover handlers (tool-aware selection re-enable). **`core/editor/optimizationProgressBridge`** maps **`OptimizationManager`** progress to UI events. **`core/editor/editorObjectDeletion`** holds **`removePlacedObjectWithoutHistory`**, ground-cell cleanup, and **`deleteBuildingWithContentsFromScene`**. **`core/placement/computeWorkingGridAlignment`** derives session **`GridAlignment`** from a placed mesh for **align grid to selection**.
 
-**Placed-object smart properties:** **`core/placedObject/placedObjectPropertyUpdates`** implements **`updatePlacedObjectBinding`** (entity-type mapping onto **`PlacedObject.binding`**), **`updatePlacedObjectSkin`** (original-materials restore, registry skins, theme re-apply when cleared), **`updatePlacedObjectSimulationState`** (preview state + **`AssetFactory.updateAssetState`**), and **`updatePlacedObjectAssetVisualState`**. **`BluDesignEngine`** wires scene manager, theme/skin callbacks, autosave, and emits.
+**Placed-object smart properties:** **`core/placedObject/placedObjectPropertyUpdates`** implements **`updatePlacedObjectBinding`** (entity-type mapping onto **`PlacedObject.binding`**), **`updatePlacedObjectSkin`** (original-materials restore, registry skins, theme re-apply when cleared), **`updatePlacedObjectSimulationState`** (preview/live state, delegating mesh visuals to an injected **`applyVisualState`** callback), and **`updatePlacedObjectAssetVisualState`** (legacy flat-colour swap). **`BluDesignEngine`** wires scene manager, theme/skin callbacks, autosave, the **`UnitStateVisualManager`** (themed bound-state visuals — see Live Data Binding), and emits.
 
 **Floor content:** **`core/floors/FloorObjectReplication`** (with a small port interface) performs copying objects between floors and propagating vertical shafts when floors are added — `BluDesignEngine` wires scene/history/emit callbacks into it. **`FloorViewCoordinator`** owns active-floor navigation and full-building vs per-floor view (selection, placement height, ghosting hooks, grid-alignment reset on floor change). **`FloorStructureOperations`** owns add/delete/insert floor flows (building + floor manager shifts, object cleanup, replication seeding, history, theme refresh, navigation, autosave) behind an injectable API. **`core/floors/floorHistoryOperations`** (`FloorHistoryOperations`) centralizes undo/redo side effects for floor add/delete/insert history actions; `HistoryActionApplier` delegates to it.
 
@@ -298,7 +298,7 @@ Infinite grid with custom shader:
 Selection via raycasting:
 - Single and multi-select (Shift+click)
 - Hover state tracking
-- Keyboard shortcuts (Escape, Ctrl+A)
+- Keyboard shortcuts (Escape, Alt+Shift+A)
 - Selection change events
 
 ### UI Module (`/components/bludesign/ui/panels/`)
@@ -433,7 +433,8 @@ static createCustomStorageUnit(
 - Creates box body with state-dependent material
 - Positions door on specified side
 - Supports all four door sides with proper rotation
-- userData.partNames = ['body', 'door'] for skinning
+- Adds a slightly-overhanging `roof` cap (via `AssetFactory.addStorageUnitRoof()`) so themes can clad roofs independently of body/door
+- userData.partNames = ['body', 'door', 'roof'] for skinning
 
 #### Backend Support
 
@@ -474,7 +475,7 @@ React hook for engine lifecycle:
 Keyboard shortcut management:
 - Tool shortcuts (V, P, M, R, X, U)
 - Camera shortcuts (Q, E, F, G)
-- Standard shortcuts (Ctrl+D, Ctrl+Z, Escape)
+- Standard shortcuts (Alt+D, Alt+Z, Escape)
 
 #### `useAssetLoader.ts`
 Asset loading hook with progress:
@@ -708,10 +709,18 @@ interface ThemePalette {
 
 ### Built-in Themes
 - **Default**: Clean professional storage facility look
+- **Storage Units**: White painted-steel units with blue corrugated sheet-metal roofs and roll-up doors (uses `skin-unit-white-blue`)
 - **Industrial**: Modern warehouse aesthetic with metal accents
 - **Warm Earth**: Terracotta and earth tones
 - **Modern White**: Clean white with blue accents
 - **Dark Premium**: Sophisticated dark theme with gold accents
+
+### Procedural PBR Surfaces
+`PartMaterial` supports real material detail (not just flat color) via optional fields consumed by the texture-aware skin applicator (`core/skins/skinMaterialApplicator.ts`):
+- `surface?: ProceduralSurfaceId` — `standing-seam-metal` (roofs), `roll-up-door` (doors), `painted-steel` (bodies), `corrugated-metal` (siding/fences).
+- `normalScale?`, `envMapIntensity?`, plus URL map slots (`textureUrl`, `normalMapUrl`, `roughnessMapUrl`, `metalnessMapUrl`).
+
+`core/skins/proceduralSurfaceTextures.ts` generates the tileable normal/roughness/faint-albedo maps on the client (cached per id; gracefully no-ops without a DOM/canvas, e.g. tests). Explicit URL maps always take precedence over generated maps. Storage-unit roofs read these via the new `roof` skin part exposed by `AssetFactory`.
 
 ### Theme Hierarchy
 1. **Scene Theme**: Global default for all assets
@@ -897,11 +906,13 @@ Location: `frontend/src/components/bludesign/core/environment/`
 
 | Module | Role |
 |--------|------|
-| `ScenePresets.ts` | Preset ids, UI metadata, asset URLs, defaults (`blank` / `blank`) |
-| `SkyManager.ts` | Procedural `Sky` (day/sunset), solid blank/night, HDR natural via `RGBELoader` + PMREM |
-| `GroundPlaneManager.ts` | A single textured plane, fully opaque under the facility footprint, that fades to transparent over a bounded band so the pad dissolves gracefully (no infinite slab); `grass`/`concrete` are single-texture, `natural` layers concrete→grass then horizon-blends to sky, `grid` delegates to `GridSystem` |
+| `ScenePresets.ts` | Preset ids, UI metadata, asset URLs, defaults (`blank` / `blank`), **`EnvironmentOptions`** types, `normalizeEnvironmentOptions()` / `resolveEnvironmentOptions()` |
+| `SkyManager.ts` | Procedural `Sky` (day/sunset) with configurable sun/turbidity; solid blank/night with optional tint; HDR natural via `RGBELoader` + PMREM with exposure/background intensity |
+| `GroundPlaneManager.ts` | Textured ground plane with radial horizon fade and optional tint/fade overrides; `grass`/`concrete` single-texture; `natural`/`woodland` concrete pad + grass surround; `woodland` adds configurable rolling-hill vertex displacement (deterministic seed) and carves a riverbed/pond bed into the hills shader (mirrors `woodlandWater.ts`); `urban` uses a muted concrete/city-lot base; `grid` delegates to `GridSystem` |
+| `SceneryManager.ts` | Procedural scenery for `woodland` and `urban` with configurable density/fade; instanced Canadian-style trees/shrubs/shadows plus an animated river + pond water surface for woodland; instanced multi-part city buildings, streets, lane markings, parking lots, and streetlights for urban. `update(delta)` animates woodland water ripples (driven from the engine render loop). |
+| `woodlandTerrain.ts` / `woodlandWater.ts` / `woodlandWaterSurface.ts` / `woodlandTreePlacements.ts` / `urbanPlacements.ts` | Shared hill height + water-carve, deterministic river/pond layout, animated water-surface builder, patchy meadow density, grove placement, deterministic city-block placement, and seeded PRNG math (facility id seed → stable layout). Placement inputs accept optional density/scale overrides from `EnvironmentOptions`. |
 
-The detail plane uses a **simple** shader: one texture sample + light detail pass, modest mip bias, normal-based sun lighting, and radial horizon fade at the outer edge only (no camera haze or procedural noise — those washed out detail and caused banding). **Natural** preset: concrete inside the facility bounds plus **10% pad margin** on each side, grass outside, with a **narrow curb-width blend** (~0.3–0.55 m, edge-parallel via Chebyshev distance — not a wide diagonal wash). Outdoor presets apply a subtle hemisphere boost; exposure stays at default.
+The detail plane uses a **simple** fragment shader (textures + horizon fade). **Natural** preset: concrete inside the facility bounds plus **10% pad margin** on each side, grass outside, narrow curb blend. **Woodland** extends natural with FBM rolling hills (flat on the pad, rising in the grass band), brighter meadow/forest color variation, and `SceneryManager` groves seeded by `BluDesignEngine.setEnvironmentSeed()` (typically the facility id). Tree placement is Cartesian + clustered, not radial, so it avoids “fairy ring” layouts. **Woodland water** (`woodlandWater.ts`) deterministically places **up to `WOODLAND_MAX_RIVERS` (3) rivers and `WOODLAND_MAX_PONDS` (4) ponds** in the hill band, kept clear of the flat facility clearing (ponds also stay clear of rivers). Counts and proportions are user-tunable via the woodland env options (`riverCount`, `pondCount`, `riverWidth`, `pondSize`, `waterDepth`, `riverMeander`), mapped onto the internal `WoodlandWaterOptions` by `waterOptionsFrom()`. Each river path uses a 12-point control polyline driven by a **three-octave meander** (scaled by `riverMeander`, so it wanders organically instead of tracing one clean sine; 0 = straight) and carries **per-control-point half-widths** (`river.halfWidths`) so the channel naturally pinches and widens. Rivers alternate sides by index so multiple channels spread across the field, and the carved depth scales with `waterDepth`. The same layout is the single source of truth for three consumers: the JS terrain height (`sampleWoodlandTerrainHeight`) and the GLSL hills shader both carve a sunken riverbed/pond bowl using interpolated per-segment width, with banks blending back to the natural hills, and `SceneryManager` builds an animated, translucent water surface (`woodlandWaterSurface.ts`) whose river ribbon follows the same variable width. The surface shader uses **domain-warped value-noise ripple normals** (finite-difference, gently drifting along flow) rather than summed sines — avoiding the regular checkerboard interference — plus fresnel sky reflection, a softened sun glint, and a radial fade matching the ground horizon. Trees and shrubs are suppressed over the water and its near banks (shrubs may sit slightly closer to the shoreline than trees). Water only appears when the woodland field is large enough to host it. **Urban** keeps the terrain flat, uses a muted concrete/asphalt tone, and adds deterministic dense city-block context via instanced buildings, raised street segments, raised lane markers, parking pads, streetlights, more frequent parks, and street trees with distance opacity buckets so the surrounding skyline reads as a city without taking over the facility. Urban ground overlays (streets, parking pads, parks, lane markers) render raised above the shader plane, with transparent materials that do **not** write depth and use polygon offset to avoid z-fighting while orbiting. Urban city generation uses facility-relative rectangular X/Z extents (not a compact radial cluster), fills contiguous blocks instead of randomly sampled holes, and now generates roughly double the previous block span in both X/Z while fading urban scenery to invisible by 80% of the generated extent distance. A raised four-sided ring road wraps the facility pad; regular city street segments and city-block content footprints are clipped to the ring road's outer edge so the city starts immediately after the perimeter road without overlapping it. Streets are emitted as non-overlapping spans plus single intersection squares, including the ring-road corners, so road surfaces meet cleanly without stacked slabs at crossings. Park reservations are chosen before street generation, allowing some parks to occupy 1x2 or 2x2 block footprints while clipping internal street/lane segments so larger parks are uninterrupted. Buildings are sized from their lot dimensions with setbacks so they do not spill into street segments; occasional deterministic landmark buildings provide scale without making every block overcrowded. Building visuals are composed from instanced body, roof, floor-to-ceiling curtain-wall glass strips, occasional separated punched-window panes, rooftop-mechanical, and antenna parts; near buckets get fuller facade detail, mid buckets keep simplified detail, and far buckets render simple masses for LOD. Outdoor presets apply a subtle hemisphere boost; exposure stays at default.
 
 | `GridSystem.ts` | Infinite procedural grid on a large plane. Three tiers (minor / major×10 / super×100) with per-tier screen-space LOD and content-relative radial fade. |
 
@@ -911,16 +922,20 @@ Static CC0 assets live under `frontend/public/bludesign/environment/` (see `CRED
 
 ### Dashboard widget view settings
 
-Admins (`canEditLayout`) open **View settings…** from the Facility 3D View widget menu. Choices persist in `WidgetInstance.config`:
+Admins (`canEditLayout`) open **View settings…** from the Facility 3D View widget menu. A panel slides in from the left; changes preview live on the 3D viewer while the scene remains interactive (orbit, select, etc.). **OK** saves to widget config; **Cancel** or **Escape** reverts the preview and closes the panel. Choices persist in `WidgetInstance.config`:
 
 ```typescript
 interface FacilityViewerWidgetConfig {
   skyPreset?: 'blank' | 'day' | 'sunset' | 'night' | 'natural';
-  groundPreset?: 'blank' | 'grid' | 'grass' | 'concrete' | 'natural';
+  groundPreset?: 'blank' | 'grid' | 'grass' | 'concrete' | 'natural' | 'woodland' | 'urban';
+  /** Sparse overrides only — unset fields keep preset defaults */
+  environmentOptions?: EnvironmentOptions;
 }
 ```
 
-Flow: `ViewSettingsModal` → `onConfigChange` → `useDashboardState.updateWidgetConfig` → debounced `POST /widget-layouts`. Saved dashboard templates round-trip preset values unchanged.
+Contextual fine-tune controls appear per active preset (e.g. sun elevation for `day`/`sunset`, tree density for `woodland`, city density for `urban`). Values are kept when switching presets so switching back restores tweaks.
+
+Flow: `ViewSettingsPanel` (draft state in `FacilityViewerWidget`) → live preview on `FacilityViewer3D` → **OK** → `onConfigChange` → `useDashboardState.updateWidgetConfig` → debounced `POST /widget-layouts`. `DashboardWidgetRenderer` passes committed `environmentOptions` through `FacilityViewerWidget` → `FacilityViewer3D` → `applyViewerViewPresets` → `BluDesignEngine.applySkyPreset` / `applyGroundPreset`.
 
 ### Usage
 
@@ -930,6 +945,7 @@ Flow: `ViewSettingsModal` → `onConfigChange` → `useDashboardState.updateWidg
   bluLokFacilityId="uuid-of-blulok-facility"  // For WebSocket subscriptions
   skyPreset="day"
   groundPreset="grass"
+  environmentOptions={{ sky: { sunElevation: 48 }, ground: { primaryBrightness: 1.1 } }}
   onReady={() => console.log('Viewer ready')}
   onError={(error) => console.error(error)}
 />
@@ -964,8 +980,21 @@ The viewer uses the same **`device_status`** channel as dashboard widgets (via `
 2. Live updates: `device_status_update` payloads normalized by `normalizeDeviceStatusWsPayload`
 3. Telemetry mapped to `DeviceState` in `viewer/viewerLiveState.ts` (offline → error → maintenance → locked/unlocked)
 4. Scene objects matched by `PlacedObject.binding.entityId` (unit UUID or device UUID)
-5. 3D: `engine.simulateObjectState()` → `AssetFactory.updateAssetState()` (materials + indicator lights)
+5. 3D: `engine.simulateObjectState()` → `applyUnitVisualState()` → `UnitStateVisualManager.applyState()`. Storage units wearing the built-in **White & Blue Steel** theme (`skin-unit-white-blue`) get rich bound-state visuals (see below); everything else falls back to the legacy flat-colour `AssetFactory.updateAssetState()` swap.
 6. 2D: `resolveLiveUnitColor()` tints import layout overlays (green locked, yellow unlocked, red error, gray offline)
+
+**Themed unit state visuals (`core/state/UnitStateVisualManager`):** A reusable, per-frame animation manager (ticked from `BluDesignEngine.renderFrame()` via `update(delta)`) that renders bound-state appearance for themed storage units. Driven by `PlacedObject.binding` (`entityId` ⇒ bound, `currentState` ⇒ `DeviceState`):
+- **not bound** → slightly dimmer + 90% opacity (subtly translucent)
+- **locked** → the plain themed look
+- **unlocked** → the door swings open on a derived hinge pivot and reads black (the dark opening)
+- **error** → the whole unit flashes an alarming red emissive tint
+- **unknown** → the whole unit flashes an alarming yellow emissive tint
+
+Pristine themed material values are snapshotted lazily into a `WeakMap` so transitions always restore exactly (re-skinning yields fresh clones that re-snapshot). The door hinge pivot is created once and cached on `group.userData.unitDoorPivot`, with hinge edge/swing direction derived from the door geometry (works for the standard front door and custom doors on any side). Flashing animates only `emissiveIntensity` (no shader recompile); detached groups are auto-evicted from the tick. `BluDesignEngine.refreshUnitStateVisuals()` re-evaluates all **smart** placed objects after a theme switch / scene import so unbound + themed units pick up their look without waiting for a telemetry tick. State + binding changes route through an `applyVisualState` callback on `updatePlacedObjectSimulationState` / `updatePlacedObjectBinding`.
+
+**Disabling binding effects:** `BluDesignEngine.setBindingEffectsEnabled(false)` forces every unit (bound or unbound, themed or not) into its default locked look; live telemetry still updates `binding.currentState` underneath, so re-enabling instantly reflects the latest state. The 2D viewer mirrors this by short-circuiting `getUnitColor` to the locked colour.
+
+**On-canvas viewer controls (`viewer/ViewerOnCanvasControls`):** A widget-level overlay card (rendered by `FacilityViewerWidget`, visible to any viewer incl. tenants) with (a) a 2D/3D mode switch shown only when a 2D layout exists (`hasLayoutImport`), and (b) a live-binding toggle (always shown) that flips local `bindingEffectsEnabled` state, passed to both `FacilityViewer3D` (→ `engine.setBindingEffectsEnabled`) and `FacilityViewer2D` (→ `getUnitColor`). State is per-session (local `useState`), not persisted to `FacilityViewerWidgetConfig`.
 
 ```typescript
 interface ViewerSmartAssetState {
@@ -1215,7 +1244,7 @@ presentational pieces under `frontend/src/components/bludesign/layout-import/`:
   `focusUnit` zoom, direct manipulation (move / rotate / corner-resize via
   `geometry.ts`), and draw-to-add. Each unit draws its **door marker** (amber
   opening + inward swing arc), toggleable via the sidebar. Keyboard: V/A/H tools,
-  arrows to nudge the selection, Del to remove all selected, Ctrl+Z/Y undo-redo.
+  arrows to nudge the selection, Del to remove all selected, Alt+Z/Y undo-redo.
   Normal boxes use a dark-blue border + light-blue fill; **problem boxes are red**;
   unlabeled rectangles render dashed + neutral-grey.
 - **`ProblemsOverlay.tsx`** — floating, expandable panel over the canvas listing
@@ -1304,7 +1333,8 @@ logic lives in **pure, unit-tested helpers** so the UI stays thin (SOLID):
    mapping from the 2D local frame is: side `top→back`, `bottom→front`,
    `left→left`, `right→right`; `doorWidth = widthFraction·edgeLen·mpp`,
    `doorPositionX = offsetFraction·edgeLen·mpp` (this is the Z axis for left/right
-   faces), `doorHeight = clamp(2 ft, height−1 ft, 7 ft)`, where
+   faces), `doorHeight = height − 10% header − ~0.15 ft sill`, with
+   `doorPositionY` set to that sill offset, where
    `edgeLen = doorEdgeLength(bounds, side)`. **Reuse bucketing** snaps every
    linear dimension (width/depth/height/doorWidth/offset) to a tolerance grid
    (default 0.5 ft, adjustable) and keys a bucket by those snapped values + door

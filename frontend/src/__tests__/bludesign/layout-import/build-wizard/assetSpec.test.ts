@@ -5,6 +5,8 @@
 import {
   bucketToAssetInput,
   bucketUnits,
+  defaultDoorDimensions,
+  DEFAULT_UNIT_HEIGHT_M,
   doorSideToLockerSide,
   findMatchingAssetForBucket,
   layoutSignaturesMatch,
@@ -51,6 +53,15 @@ describe('unitRealSpec', () => {
     expect(spec.width).toBeCloseTo(feetToMeters(10), 5);
     expect(spec.depth).toBeCloseTo(feetToMeters(20), 5);
     expect(spec.height).toBeCloseTo(feetToMeters(8), 5);
+  });
+
+  it('places the door with a header band and sill offset like outdoor roll-up units', () => {
+    const spec = unitRealSpec(unit('a', 100, 200), MPP);
+    const { doorHeight, doorPositionY } = defaultDoorDimensions(DEFAULT_UNIT_HEIGHT_M);
+    expect(spec.lockerSpec.doorHeight).toBeCloseTo(doorHeight, 5);
+    expect(spec.lockerSpec.doorPositionY).toBeCloseTo(doorPositionY, 5);
+    // ~88% of total height on an 8 ft unit (10% header + small base gap).
+    expect(spec.lockerSpec.doorHeight / spec.height).toBeCloseTo(0.88, 1);
   });
 
   it('maps a bottom door to a front locker door using the width edge', () => {

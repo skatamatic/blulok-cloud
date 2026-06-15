@@ -5,7 +5,7 @@
  * Read-only display with real-time state information.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   XMarkIcon,
@@ -18,6 +18,7 @@ import {
   SignalSlashIcon,
   ArrowsPointingOutIcon,
   ArrowsPointingInIcon,
+  ViewfinderCircleIcon,
 } from '@heroicons/react/24/outline';
 import { Link } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -46,6 +47,8 @@ const PANEL_WIDTH_TRANSITION = 'width 380ms cubic-bezier(0.32, 0.72, 0, 1)';
 interface ViewerPropertiesPanelProps {
   selectedObject: PlacedObject | null;
   onClose: () => void;
+  /** When provided, shows a header button that animates the camera/view to the object. */
+  onFocus?: () => void;
   liveState?: ViewerSmartAssetState;
   unitInfo?: BluLokUnit | null;
 }
@@ -137,9 +140,55 @@ const formatStateLabel = (state: DeviceState): string => {
   return state.charAt(0).toUpperCase() + state.slice(1).toLowerCase();
 };
 
+const UnboundUnitWarning: React.FC<{
+  isDark: boolean;
+  unitLabel?: string;
+}> = ({ isDark, unitLabel }) => (
+  <div className="overflow-y-auto max-h-[calc(100vh-8rem)] p-4">
+    <div
+      className={`rounded-lg border p-4 ${
+        isDark ? 'border-amber-500/40 bg-amber-950/30' : 'border-amber-300 bg-amber-50'
+      }`}
+      role="alert"
+    >
+      <div className="flex gap-3">
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+            isDark ? 'bg-amber-500/15' : 'bg-amber-100'
+          }`}
+        >
+          <ExclamationTriangleIcon
+            className={`h-5 w-5 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}
+          />
+        </div>
+        <div className="min-w-0 space-y-2">
+          <p className={`text-sm font-semibold ${isDark ? 'text-amber-100' : 'text-amber-900'}`}>
+            Unit not bound to BluLok Cloud
+          </p>
+          <p className={`text-sm leading-relaxed ${isDark ? 'text-amber-100/85' : 'text-amber-800/90'}`}>
+            {unitLabel ? (
+              <>
+                <span className="font-medium">{unitLabel}</span> is not linked to a BluLok Cloud
+                unit. Open the BluDesign editor and bind this unit to restore live lock status and
+                details here.
+              </>
+            ) : (
+              <>
+                This storage unit is not linked to a BluLok Cloud unit. Open the BluDesign editor
+                and bind it to restore live lock status and details here.
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
   selectedObject,
   onClose,
+  onFocus,
   liveState,
   unitInfo,
 }) => {
@@ -153,15 +202,29 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
 
   const isSmart = assetMetadata?.isSmart ?? false;
   const binding = selectedObject?.binding as ObjectBinding | undefined;
-  const isUnitSelection = binding?.entityType === 'unit';
-  const showUnitInfo = isUnitSelection && !!unitInfo;
+  const isStorageUnit = assetMetadata?.category === 'storage_unit';
+  const isBoundUnit = isStorageUnit && !!binding?.entityId;
+  const isUnboundUnit =
+    !binding?.entityId &&
+    (isStorageUnit || binding?.entityType === 'unit');
+  const showUnitInfo = isBoundUnit && !!unitInfo;
+
+  useEffect(() => {
+    setUnitDetailsExpanded(false);
+  }, [selectedObject?.id]);
+
+  const unboundUnitLabel = selectedObject?.name?.trim() || undefined;
 
   const currentState = liveState?.state || binding?.currentState || DeviceState.UNKNOWN;
   const stateColors = getStateColor(currentState, isDark);
 
   const headerTitle = showUnitInfo
     ? null
-    : selectedObject?.name || assetMetadata?.name || 'Object';
+    : isUnboundUnit
+      ? unboundUnitLabel
+        ? `Unit ${unboundUnitLabel}`
+        : 'Storage unit'
+      : selectedObject?.name || assetMetadata?.name || 'Object';
 
   const panelWidth =
     showUnitInfo && unitDetailsExpanded ? PANEL_WIDTH_EXPANDED : PANEL_WIDTH_COMPACT;
@@ -206,10 +269,24 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
               <div
                 className={`
                 w-8 h-8 rounded-lg flex items-center justify-center
-                ${isDark ? 'bg-primary-600/20' : 'bg-primary-100'}
+                ${
+                  isUnboundUnit
+                    ? isDark
+                      ? 'bg-amber-500/15'
+                      : 'bg-amber-100'
+                    : isDark
+                      ? 'bg-primary-600/20'
+                      : 'bg-primary-100'
+                }
               `}
               >
-                <CubeIcon className="w-4 h-4 text-primary-500" />
+                {isUnboundUnit ? (
+                  <ExclamationTriangleIcon
+                    className={`w-4 h-4 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}
+                  />
+                ) : (
+                  <CubeIcon className="w-4 h-4 text-primary-500" />
+                )}
               </div>
               <div className="min-w-0">
                 {showUnitInfo ? (
@@ -236,7 +313,9 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
                       {headerTitle}
                     </h3>
                     <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                      {assetMetadata?.category || 'Asset'}
+                      {isUnboundUnit
+                        ? 'Not bound to BluLok Cloud'
+                        : assetMetadata?.category || 'Asset'}
                     </p>
                   </>
                 )}
@@ -275,8 +354,27 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
                   )}
                 </button>
               )}
+              {onFocus && (
+                <button
+                  type="button"
+                  onClick={onFocus}
+                  aria-label="Focus on object"
+                  title="Focus on object"
+                  className={`
+                    p-1.5 rounded-lg transition-colors
+                    ${isDark
+                      ? 'hover:bg-[#147FD4]/15 text-gray-400 hover:text-[#5eb3f0]'
+                      : 'hover:bg-[#147FD4]/10 text-gray-500 hover:text-[#147FD4]'
+                    }
+                  `}
+                >
+                  <ViewfinderCircleIcon className="w-5 h-5" />
+                </button>
+              )}
               <button
                 onClick={onClose}
+                aria-label="Close panel"
+                title="Close"
                 className={`
                   p-1.5 rounded-lg transition-colors
                   ${isDark
@@ -305,6 +403,8 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
                 liveState={liveState}
                 expanded={unitDetailsExpanded}
               />
+            ) : isUnboundUnit ? (
+              <UnboundUnitWarning isDark={isDark} unitLabel={unboundUnitLabel} />
             ) : (
               <div className="overflow-y-auto max-h-[calc(100vh-8rem)] p-4">
               <AnimatePresence mode="wait" initial={false}>
@@ -392,6 +492,7 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
                   </div>
                 )}
 
+                {!isUnboundUnit && (
                 <div>
                   <h4
                     className={`text-xs font-semibold uppercase tracking-wider mb-2 ${
@@ -423,8 +524,9 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
                     </div>
                   </div>
                 </div>
+                )}
 
-                {isSmart && !binding?.entityId && (
+                {isSmart && !binding?.entityId && !isUnboundUnit && (
                   <div
                     className={`
                 rounded-lg p-3 border text-center
@@ -444,7 +546,7 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
               </div>
             )}
 
-            {isUnitSelection && !unitInfo && (
+            {isBoundUnit && !unitInfo && (
               <div
                 className={`
                 m-4 rounded-lg p-3 border text-center

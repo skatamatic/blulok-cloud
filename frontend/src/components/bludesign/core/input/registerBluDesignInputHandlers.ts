@@ -78,7 +78,7 @@ export function registerBluDesignInputHandlers(deps: BluDesignInputHandlerDeps):
     priority: InputPriority.PLACEMENT,
     enabled: deps.getActiveTool() === EditorTool.PLACE,
     handle: (event: Event, eventType: InputEventType): boolean => {
-      if (event instanceof MouseEvent && event.ctrlKey) {
+      if (event instanceof MouseEvent && event.altKey) {
         return false;
       }
       if (
@@ -94,7 +94,7 @@ export function registerBluDesignInputHandlers(deps: BluDesignInputHandlerDeps):
     },
     wantsInput: () => deps.getActiveTool() === EditorTool.PLACE,
     onMouseDown: (e: MouseEvent) => {
-      if (e.ctrlKey) return;
+      if (e.altKey) return;
       placementHandlers.onMouseDown?.(e);
     },
     onMouseUp: placementHandlers.onMouseUp,
@@ -103,13 +103,13 @@ export function registerBluDesignInputHandlers(deps: BluDesignInputHandlerDeps):
     },
     onContextMenu: placementHandlers.onContextMenu,
     onKeyDown: (e: KeyboardEvent) => {
-      if (e.key === 'Control' || e.key === 'Meta') {
+      if (e.key === 'Alt') {
         deps.cameraController.setRotationEnabled(true);
       }
       placementHandlers.onKeyDown?.(e);
     },
     onKeyUp: (e: KeyboardEvent) => {
-      if (e.key === 'Control' || e.key === 'Meta') {
+      if (e.key === 'Alt') {
         deps.cameraController.setRotationEnabled(false);
       }
       placementHandlers.onKeyUp?.(e);
@@ -124,7 +124,7 @@ export function registerBluDesignInputHandlers(deps: BluDesignInputHandlerDeps):
       deps.getActiveTool() === EditorTool.SELECT_BUILDING ||
       deps.getActiveTool() === EditorTool.VIEW,
     handle: (event: Event, eventType: InputEventType): boolean => {
-      if (event instanceof MouseEvent && event.ctrlKey) {
+      if (event instanceof MouseEvent && event.altKey) {
         return false;
       }
       if (deps.getActiveTool() === EditorTool.VIEW) {
@@ -149,7 +149,7 @@ export function registerBluDesignInputHandlers(deps: BluDesignInputHandlerDeps):
       deps.getActiveTool() === EditorTool.SELECT_BUILDING ||
       deps.getActiveTool() === EditorTool.VIEW,
     onMouseDown: (e: MouseEvent) => {
-      if (e.ctrlKey) return;
+      if (e.altKey) return;
       selectionHandlers.onMouseDown?.(e);
     },
     onMouseUp: selectionHandlers.onMouseUp,
@@ -159,13 +159,13 @@ export function registerBluDesignInputHandlers(deps: BluDesignInputHandlerDeps):
     onClick: selectionHandlers.onClick,
     onDoubleClick: selectionHandlers.onDoubleClick,
     onKeyDown: (e: KeyboardEvent) => {
-      if (e.key === 'Control' || e.key === 'Meta') {
+      if (e.key === 'Alt') {
         deps.cameraController.setRotationEnabled(true);
       }
       selectionHandlers.onKeyDown?.(e);
     },
     onKeyUp: (e: KeyboardEvent) => {
-      if (e.key === 'Control' || e.key === 'Meta') {
+      if (e.key === 'Alt') {
         deps.cameraController.setRotationEnabled(false);
       }
       selectionHandlers.onKeyUp?.(e);

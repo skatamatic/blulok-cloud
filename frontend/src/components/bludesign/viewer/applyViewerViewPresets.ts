@@ -1,5 +1,5 @@
 import type { BluDesignEngine } from '../core/BluDesignEngine';
-import type { GroundPresetId, SkyPresetId } from '../core/environment';
+import type { EnvironmentOptions, GroundPresetId, SkyPresetId } from '../core/environment';
 
 export interface ViewerViewPresetProgress {
   progress: number;
@@ -21,13 +21,19 @@ export async function applyViewerViewPresets(
   engine: BluDesignEngine,
   sky: SkyPresetId,
   ground: GroundPresetId,
-  onProgress?: (update: ViewerViewPresetProgress) => void
+  onProgress?: (update: ViewerViewPresetProgress) => void,
+  environmentOptions?: EnvironmentOptions
 ): Promise<void> {
   const report = (progress: number, message: string) => onProgress?.({ progress, message });
+  const presetApplyOptions = environmentOptions ? { environmentOptions } : undefined;
 
   const skyNeedsDownload = sky === 'natural';
   const groundNeedsDownload =
-    ground === 'grass' || ground === 'concrete' || ground === 'natural';
+    ground === 'grass' ||
+    ground === 'concrete' ||
+    ground === 'natural' ||
+    ground === 'woodland' ||
+    ground === 'urban';
 
   report(
     SKY_STAGE.start,
@@ -35,6 +41,7 @@ export async function applyViewerViewPresets(
   );
 
   await engine.applySkyPreset(sky, {
+    ...presetApplyOptions,
     onAssetProgress: (ratio) =>
       report(
         stageProgress(SKY_STAGE.start, SKY_STAGE.span, ratio),
@@ -48,6 +55,7 @@ export async function applyViewerViewPresets(
   );
 
   await engine.applyGroundPreset(ground, {
+    ...presetApplyOptions,
     onAssetProgress: (ratio) =>
       report(
         stageProgress(GROUND_STAGE.start, GROUND_STAGE.span, ratio),

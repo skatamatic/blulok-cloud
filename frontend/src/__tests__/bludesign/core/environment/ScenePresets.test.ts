@@ -2,6 +2,7 @@ import {
   DEFAULT_SCENE_PRESETS,
   GROUND_PRESETS,
   SKY_PRESETS,
+  normalizeEnvironmentOptions,
   normalizeGroundPreset,
   normalizeSkyPreset,
   viewPresetsRequireAssetDownload,
@@ -23,6 +24,8 @@ describe('ScenePresets', () => {
       'grass',
       'concrete',
       'natural',
+      'woodland',
+      'urban',
     ]);
   });
 
@@ -31,6 +34,25 @@ describe('ScenePresets', () => {
     expect(DEFAULT_FACILITY_VIEWER_CONFIG).toEqual({
       skyPreset: 'blank',
       groundPreset: 'blank',
+    });
+  });
+
+  it('normalizes sparse environment option overrides', () => {
+    expect(normalizeEnvironmentOptions(undefined)).toEqual({});
+    expect(
+      normalizeEnvironmentOptions({ sky: { sunElevation: 120, sunAzimuth: 400 } })
+    ).toEqual({
+      sky: { sunElevation: 90, sunAzimuth: 360 },
+    });
+    expect(
+      normalizeEnvironmentOptions({ woodland: { treeDensity: 5, hillAmplitude: 2 } })
+    ).toEqual({
+      woodland: { treeDensity: 5, hillAmplitude: 2 },
+    });
+    expect(
+      normalizeEnvironmentOptions({ urban: { cityDensity: 99, streetWidth: 1 } })
+    ).toEqual({
+      urban: { cityDensity: 6, streetWidth: 2 },
     });
   });
 
@@ -50,5 +72,7 @@ describe('ScenePresets', () => {
     expect(viewPresetsRequireAssetDownload('day', 'grass')).toBe(true);
     expect(viewPresetsRequireAssetDownload('night', 'concrete')).toBe(true);
     expect(viewPresetsRequireAssetDownload('blank', 'natural')).toBe(true);
+    expect(viewPresetsRequireAssetDownload('blank', 'woodland')).toBe(true);
+    expect(viewPresetsRequireAssetDownload('blank', 'urban')).toBe(true);
   });
 });

@@ -7,6 +7,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBluDesignEngine } from '../hooks/useBluDesignEngine';
+import { useViewerKeyboardShortcuts } from '../hooks/useViewerKeyboardShortcuts';
 import { useTheme } from '@/contexts/ThemeContext';
 import * as bludesignApi from '@/api/bludesign';
 import { ViewerLoadingOverlay } from './ViewerLoadingOverlay';
@@ -30,6 +31,7 @@ import {
   DEFAULT_SCENE_PRESETS,
   normalizeGroundPreset,
   normalizeSkyPreset,
+  type EnvironmentOptions,
 } from '../core/environment';
 import { applyViewerViewPresets } from './applyViewerViewPresets';
 import type { FacilityResponse } from '@/api/bludesign';
@@ -47,6 +49,9 @@ interface FacilityViewer3DProps {
   isRenderActive?: boolean;
   skyPreset?: SkyPresetId;
   groundPreset?: GroundPresetId;
+  environmentOptions?: EnvironmentOptions;
+  /** When false, units render in their default locked look (live binding visuals off). */
+  bindingEffectsEnabled?: boolean;
   /** Callback when the viewer is ready */
   onReady?: () => void;
   /** Callback when an error occurs */
@@ -61,6 +66,8 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   isRenderActive = true,
   skyPreset = DEFAULT_SCENE_PRESETS.skyPreset,
   groundPreset = DEFAULT_SCENE_PRESETS.groundPreset,
+  environmentOptions,
+  bindingEffectsEnabled = true,
   onReady,
   onError,
 }) => {
@@ -191,6 +198,8 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
 
   const resolvedSkyPreset = normalizeSkyPreset(skyPreset);
   const resolvedGroundPreset = normalizeGroundPreset(groundPreset);
+  const environmentOptionsRef = useRef(environmentOptions);
+  environmentOptionsRef.current = environmentOptions;
   const viewPresetsRef = useRef({
     sky: resolvedSkyPreset,
     ground: resolvedGroundPreset,
@@ -208,8 +217,14 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
       skipNextLivePresetApplyRef.current = false;
       return;
     }
-    await applyViewerViewPresets(engine, resolvedSkyPreset, resolvedGroundPreset);
-  }, [engine, isDataLoaded, resolvedSkyPreset, resolvedGroundPreset]);
+    await applyViewerViewPresets(
+      engine,
+      resolvedSkyPreset,
+      resolvedGroundPreset,
+      undefined,
+      environmentOptionsRef.current
+    );
+  }, [engine, isDataLoaded, resolvedSkyPreset, resolvedGroundPreset, environmentOptions]);
 
   // Load facility data when engine is ready
   useEffect(() => {
@@ -230,6 +245,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         setLoadingProgress(65);
         setLoadingMessage('Building scene...');
 
+        engine.setEnvironmentSeed(bluDesignFacilityId);
         await engine.importSceneDataAsync(facility.data);
 
         if (engine.getState().isFloorMode) {
@@ -246,7 +262,8 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
           ({ progress, message }) => {
             setLoadingProgress(progress);
             setLoadingMessage(message);
-          }
+          },
+          environmentOptionsRef.current
         );
 
         const entityIndex = new Map<string, string[]>();
@@ -366,6 +383,12 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     onHydrationComplete: handleHydrationComplete,
   });
 
+  // Force the default locked look when live binding effects are turned off.
+  useEffect(() => {
+    if (!engine || !isEngineReady) return;
+    engine.setBindingEffectsEnabled?.(bindingEffectsEnabled);
+  }, [engine, isEngineReady, isDataLoaded, bindingEffectsEnabled]);
+
   // Replay cached live states when rendering resumes after pause/hidden tab
   useEffect(() => {
     if (!shouldRunEngine || !isDataLoaded || !engine) return;
@@ -458,6 +481,11 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     engine?.rotateCameraView(direction);
   }, [engine]);
 
+  useViewerKeyboardShortcuts({
+    enabled: isEngineReady && isDataLoaded && shouldRunEngine,
+    onRotateCamera90: handleRotateCamera,
+  });
+
   const handleResetView = useCallback(() => {
     if (engine?.restoreDefaultCamera(true)) {
       return;
@@ -502,6 +530,23 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     engine.focusOnObject(objectId, floor);
   }, [engine]);
 
+  // Focus the currently selected object (header button).
+  const handleFocusSelected = useCallback(() => {
+    if (!engine || !selectedObject) return;
+    engine.focusOnObject(selectedObject.id, selectedObject.floor ?? 0);
+  }, [engine, selectedObject]);
+
+  // Double-click in the scene animates to focus whatever is selected (a click
+  // of the double-click already selects the object under the cursor).
+  const handleCanvasDoubleClick = useCallback(() => {
+    if (!engine) return;
+    const selectedIds = engine.getSelectionManager()?.getSelectedIds() ?? [];
+    if (selectedIds.length !== 1) return;
+    const obj = engine.getSceneManager()?.getObjectData(selectedIds[0]);
+    if (!obj) return;
+    engine.focusOnObject(obj.id, obj.floor ?? 0);
+  }, [engine]);
+
   // Get all placed objects and buildings for smart objects panel
   const allPlacedObjects = useMemo(() => {
     if (!engine || !isDataLoaded) return [];
@@ -542,6 +587,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         className={`absolute inset-0${showStaticPreview ? ' invisible' : ''}`}
         style={{ touchAction: 'none' }}
         aria-hidden={showStaticPreview}
+        onDoubleClick={handleCanvasDoubleClick}
       />
 
       {showStaticPreview && (
@@ -590,6 +636,7 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
           <ViewerPropertiesPanel
             selectedObject={selectedObject}
             onClose={handleClearSelection}
+            onFocus={handleFocusSelected}
             liveState={selectedObjectState ?? undefined}
             unitInfo={selectedUnitInfo}
           />

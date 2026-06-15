@@ -7,7 +7,7 @@ import { EditorTool } from '../core/types';
 export interface ContextualHotkey {
   key: string;
   description: string;
-  modifier?: 'ctrl' | 'shift' | 'alt' | 'ctrl+shift' | 'ctrl+alt';
+  modifier?: 'alt' | 'shift' | 'alt+shift';
 }
 
 export interface EditorHelpSection {
@@ -23,9 +23,9 @@ export const EDITOR_HELP_SECTIONS: EditorHelpSection[] = [
       { key: 'Drag', description: 'Box select' },
       { key: 'B', description: 'Building tool' },
       { key: 'Del', description: 'Delete selection' },
-      { key: 'C', description: 'Copy', modifier: 'ctrl' },
-      { key: 'X', description: 'Cut', modifier: 'ctrl' },
-      { key: 'V', description: 'Paste', modifier: 'ctrl' },
+      { key: 'C', description: 'Copy', modifier: 'alt' },
+      { key: 'X', description: 'Cut', modifier: 'alt' },
+      { key: 'V', description: 'Paste', modifier: 'alt' },
     ],
   },
   {
@@ -54,15 +54,19 @@ export const EDITOR_HELP_SECTIONS: EditorHelpSection[] = [
   {
     title: 'Camera',
     hotkeys: [
-      { key: 'Drag', description: 'Rotate camera', modifier: 'ctrl' },
-      { key: '←/→', description: 'Orbit 90°', modifier: 'ctrl' },
+      { key: 'W', description: 'Look up', modifier: 'alt' },
+      { key: 'S', description: 'Look down', modifier: 'alt' },
+      { key: 'Z', description: 'Hold to move closer to ground' },
+      { key: 'X', description: 'Hold to raise camera' },
+      { key: 'Drag', description: 'Rotate camera', modifier: 'alt' },
+      { key: '←/→', description: 'Orbit 90°', modifier: 'alt' },
     ],
   },
   {
     title: 'Grid',
     hotkeys: [
-      { key: 'A', description: 'Align grid to selection', modifier: 'ctrl+alt' },
-      { key: 'R', description: 'Reset grid axes', modifier: 'ctrl+alt' },
+      { key: 'G', description: 'Align grid to selection', modifier: 'alt+shift' },
+      { key: 'R', description: 'Reset grid axes', modifier: 'alt+shift' },
     ],
   },
 ];
@@ -104,13 +108,13 @@ export function getContextualHotkeys(
     if (hasSelection) {
       items.push(
         { key: 'Del', description: 'Delete' },
-        { key: 'C', description: 'Copy', modifier: 'ctrl' },
-        { key: 'X', description: 'Cut', modifier: 'ctrl' }
+        { key: 'C', description: 'Copy', modifier: 'alt' },
+        { key: 'X', description: 'Cut', modifier: 'alt' }
       );
     }
 
     if (hasClipboard) {
-      items.push({ key: 'V', description: 'Paste', modifier: 'ctrl' });
+      items.push({ key: 'V', description: 'Paste', modifier: 'alt' });
     }
   }
 
@@ -132,14 +136,18 @@ export function getContextualHotkeys(
     activeTool === EditorTool.SELECT_BUILDING
   ) {
     items.push(
-      { key: 'Drag', description: 'Rotate camera', modifier: 'ctrl' },
-      { key: '←/→', description: 'Orbit 90°', modifier: 'ctrl' }
+      { key: 'W', description: 'Look up', modifier: 'alt' },
+      { key: 'S', description: 'Look down', modifier: 'alt' },
+      { key: 'Z', description: 'Hold to move closer to ground' },
+      { key: 'X', description: 'Hold to raise camera' },
+      { key: 'Drag', description: 'Rotate camera', modifier: 'alt' },
+      { key: '←/→', description: 'Orbit 90°', modifier: 'alt' }
     );
   }
 
   items.push(
-    { key: 'A', description: 'Align grid to selection', modifier: 'ctrl+alt' },
-    { key: 'R', description: 'Reset grid axes', modifier: 'ctrl+alt' }
+    { key: 'G', description: 'Align grid to selection', modifier: 'alt+shift' },
+    { key: 'R', description: 'Reset grid axes', modifier: 'alt+shift' }
   );
 
   return items;

@@ -139,7 +139,7 @@ export const ViewerFloorsPanel: React.FC<ViewerFloorsPanelProps> = ({
           <button
             onClick={() => onRotateCamera('ccw')}
             className={buttonBase}
-            title="Rotate Left (Ctrl+←)"
+            title="Rotate Left (Alt+←)"
           >
             <svg 
               className="w-4 h-4" 
@@ -187,7 +187,7 @@ export const ViewerFloorsPanel: React.FC<ViewerFloorsPanelProps> = ({
           <button
             onClick={() => onRotateCamera('cw')}
             className={buttonBase}
-            title="Rotate Right (Ctrl+→)"
+            title="Rotate Right (Alt+→)"
           >
             <svg 
               className="w-4 h-4" 

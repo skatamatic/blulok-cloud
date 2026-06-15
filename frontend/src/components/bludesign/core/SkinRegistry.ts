@@ -114,6 +114,42 @@ const BUILTIN_SKINS: CategorySkin[] = [
     partMaterials: {
       body: { color: '#f7f7f7', metalness: 0.3, roughness: 0.7 },
       door: { color: '#5a6068', metalness: 0.5, roughness: 0.4 },
+      roof: { color: '#c7ccd2', metalness: 0.45, roughness: 0.55 },
+    },
+    isBuiltin: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
+  {
+    id: 'skin-unit-white-blue',
+    name: 'White & Blue Steel',
+    description: 'White painted-steel units with blue corrugated sheet-metal roofs and roll-up doors',
+    category: AssetCategory.STORAGE_UNIT,
+    partMaterials: {
+      body: {
+        color: '#f3f5f7',
+        metalness: 0.25,
+        roughness: 0.58,
+        surface: 'painted-steel',
+        normalScale: 0.6,
+        envMapIntensity: 0.75,
+      },
+      roof: {
+        color: '#1769b8',
+        metalness: 0.72,
+        roughness: 0.4,
+        surface: 'standing-seam-metal',
+        normalScale: 1.1,
+        envMapIntensity: 1.05,
+      },
+      door: {
+        color: '#147fd4',
+        metalness: 0.66,
+        roughness: 0.44,
+        surface: 'roll-up-door',
+        normalScale: 1.0,
+        envMapIntensity: 1.0,
+      },
     },
     isBuiltin: true,
     createdAt: new Date(),
@@ -127,6 +163,7 @@ const BUILTIN_SKINS: CategorySkin[] = [
     partMaterials: {
       body: { color: '#3b82f6', metalness: 0.4, roughness: 0.5 },
       door: { color: '#1e3a5f', metalness: 0.6, roughness: 0.3 },
+      roof: { color: '#1e3a5f', metalness: 0.6, roughness: 0.4, surface: 'standing-seam-metal' },
     },
     isBuiltin: true,
     createdAt: new Date(),
@@ -140,6 +177,7 @@ const BUILTIN_SKINS: CategorySkin[] = [
     partMaterials: {
       body: { color: '#f97316', metalness: 0.3, roughness: 0.6 },
       door: { color: '#c2410c', metalness: 0.5, roughness: 0.4 },
+      roof: { color: '#9a3412', metalness: 0.5, roughness: 0.45, surface: 'standing-seam-metal' },
     },
     isBuiltin: true,
     createdAt: new Date(),
@@ -153,6 +191,7 @@ const BUILTIN_SKINS: CategorySkin[] = [
     partMaterials: {
       body: { color: '#22c55e', metalness: 0.3, roughness: 0.6 },
       door: { color: '#166534', metalness: 0.5, roughness: 0.4 },
+      roof: { color: '#14532d', metalness: 0.5, roughness: 0.45, surface: 'standing-seam-metal' },
     },
     isBuiltin: true,
     createdAt: new Date(),
@@ -166,6 +205,7 @@ const BUILTIN_SKINS: CategorySkin[] = [
     partMaterials: {
       body: { color: '#ef4444', metalness: 0.3, roughness: 0.6 },
       door: { color: '#991b1b', metalness: 0.5, roughness: 0.4 },
+      roof: { color: '#7f1d1d', metalness: 0.5, roughness: 0.45, surface: 'standing-seam-metal' },
     },
     isBuiltin: true,
     createdAt: new Date(),
@@ -179,6 +219,7 @@ const BUILTIN_SKINS: CategorySkin[] = [
     partMaterials: {
       body: { color: '#374151', metalness: 0.4, roughness: 0.5 },
       door: { color: '#111827', metalness: 0.6, roughness: 0.3 },
+      roof: { color: '#1f2937', metalness: 0.55, roughness: 0.4, surface: 'standing-seam-metal' },
     },
     isBuiltin: true,
     createdAt: new Date(),

@@ -607,6 +607,19 @@ export interface BuildingMaterials {
   roof: PartMaterial;
 }
 
+/**
+ * Identifiers for procedurally generated, tileable PBR surfaces.
+ * - `standing-seam-metal`: horizontal raised seams (storage-unit roofs / cladding)
+ * - `roll-up-door`: horizontal slat ribs (storage-unit roll-up doors)
+ * - `painted-steel`: subtle micro-texture for flat painted panels (unit bodies)
+ * - `corrugated-metal`: classic sinusoidal corrugation (siding / fences)
+ */
+export type ProceduralSurfaceId =
+  | 'standing-seam-metal'
+  | 'roll-up-door'
+  | 'painted-steel'
+  | 'corrugated-metal';
+
 /** Material configuration for a single part of an asset */
 export interface PartMaterial {
   color: string;
@@ -622,6 +635,18 @@ export interface PartMaterial {
   normalMapUrl?: string;
   /** Roughness map URL for surface detail */
   roughnessMapUrl?: string;
+  /** Metalness map URL for spatially-varying metallic response */
+  metalnessMapUrl?: string;
+  /**
+   * Procedurally generated PBR surface (normal + roughness, tileable) applied on
+   * top of the base color. Used to give themes real material detail (e.g. ribbed
+   * sheet-metal roofs/doors, lightly textured painted steel) instead of flat color.
+   */
+  surface?: ProceduralSurfaceId;
+  /** Strength of the procedural/normal-map relief (default 1). */
+  normalScale?: number;
+  /** Reflectivity of the scene environment map (default 1). */
+  envMapIntensity?: number;
   /** Optional shader hint for special themes (e.g., wireframe, glass panes) */
   shader?: 'wireframe' | 'paned-glass' | 'glass-floor' | 'glass-roof';
   /** 

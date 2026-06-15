@@ -765,8 +765,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     onSave: handleSave,
     onSaveAs: handleSaveAs,
     onLoad: handleLoad,
-    onCtrlChange: useCallback((isHeld: boolean) => {
-      // In placement or selection mode, rotation is only allowed when Ctrl is held
+    onAltChange: useCallback((isHeld: boolean) => {
+      // In placement or selection mode, rotation is only allowed when Alt is held
       if (engine) {
         const inPlacement = state?.activeTool === EditorTool.PLACE && state?.activeAssetId;
         const inSelection = state?.activeTool === EditorTool.SELECT;
@@ -1155,7 +1155,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         addToast({
           type: 'info',
           title: 'Building footprint',
-          message: 'Reset the grid to world axes (Ctrl+Alt+R) before drawing a building outline.',
+          message: 'Reset the grid to world axes (Alt+Shift+R) before drawing a building outline.',
         });
       }
     };
@@ -2570,7 +2570,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                   }
                   hover:scale-105 hover:shadow-lg active:scale-95
                 `}
-                title="Rotate View Left (Ctrl+←)"
+                title="Rotate View Left (Alt+←)"
               >
                 <svg 
                   className="w-5 h-5 transition-transform group-hover:-rotate-45" 
@@ -2598,7 +2598,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                   }
                   hover:scale-105 hover:shadow-lg active:scale-95
                 `}
-                title="Rotate View Right (Ctrl+→)"
+                title="Rotate View Right (Alt+→)"
               >
                 <svg 
                   className="w-5 h-5 transition-transform group-hover:rotate-45" 
@@ -2641,8 +2641,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                     type="button"
                     title={
                       safeState.ui.gridAlignment
-                        ? 'Turn off aligned grid — restore world axes (Ctrl+Alt+R)'
-                        : 'Align snap grid to selected object — select one object first (Ctrl+Alt+A)'
+                        ? 'Turn off aligned grid — restore world axes (Alt+Shift+R)'
+                        : 'Align snap grid to selected object — select one object first (Alt+Shift+G)'
                     }
                     aria-label={
                       safeState.ui.gridAlignment

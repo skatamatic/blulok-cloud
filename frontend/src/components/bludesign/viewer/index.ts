@@ -14,4 +14,5 @@ export { ViewerPropertiesPanel } from './ViewerPropertiesPanel';
 export { ViewerUnitInfoSection } from './ViewerUnitInfoSection';
 export { ViewerSmartObjectsPanel } from './ViewerSmartObjectsPanel';
 export { ViewerLiveStateLegend } from './ViewerLiveStateLegend';
+export { ViewerOnCanvasControls } from './ViewerOnCanvasControls';
 

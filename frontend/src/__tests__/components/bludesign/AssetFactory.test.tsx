@@ -22,8 +22,8 @@ describe('AssetFactory - createCustomStorageUnit', () => {
       const locker = AssetFactory.createCustomStorageUnit(dimensions, lockerSpec);
 
       expect(locker).toBeInstanceOf(THREE.Group);
-      expect(locker.children.length).toBe(2); // body + door
-      expect(locker.userData.partNames).toEqual(['body', 'door']);
+      expect(locker.children.length).toBe(3); // body + door + roof
+      expect(locker.userData.partNames).toEqual(['body', 'door', 'roof']);
       expect(locker.userData.lockerSpec).toEqual(lockerSpec);
     });
 
@@ -45,7 +45,7 @@ describe('AssetFactory - createCustomStorageUnit', () => {
       const locker = AssetFactory.createCustomStorageUnit(dimensions, lockerSpec);
 
       expect(locker).toBeInstanceOf(THREE.Group);
-      expect(locker.children.length).toBe(2);
+      expect(locker.children.length).toBe(3);
       
       // Find the door
       const door = locker.children.find(
@@ -269,7 +269,7 @@ describe('AssetFactory - createCustomStorageUnit', () => {
       states.forEach((state) => {
         const locker = AssetFactory.createCustomStorageUnit(dimensions, lockerSpec, state);
         expect(locker).toBeInstanceOf(THREE.Group);
-        expect(locker.children.length).toBe(2);
+        expect(locker.children.length).toBe(3);
       });
     });
   });
@@ -355,7 +355,7 @@ describe('AssetFactory - createCustomStorageUnit', () => {
       const locker = AssetFactory.createCustomStorageUnit(dimensions, lockerSpec);
       
       expect(locker).toBeInstanceOf(THREE.Group);
-      expect(locker.children.length).toBe(2);
+      expect(locker.children.length).toBe(3);
     });
 
     it('should handle very large lockers', () => {
@@ -376,7 +376,7 @@ describe('AssetFactory - createCustomStorageUnit', () => {
       const locker = AssetFactory.createCustomStorageUnit(dimensions, lockerSpec);
       
       expect(locker).toBeInstanceOf(THREE.Group);
-      expect(locker.children.length).toBe(2);
+      expect(locker.children.length).toBe(3);
     });
 
     it('should handle door at maximum vertical position', () => {

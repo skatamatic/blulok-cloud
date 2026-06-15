@@ -10,6 +10,7 @@ import {
   SKY_PRESET_ASSETS,
   SkyPresetId,
   THEME_BACKGROUND_COLORS,
+  resolveEnvironmentOptions,
   type ScenePresetApplyOptions,
 } from './ScenePresets';
 
@@ -53,25 +54,42 @@ export class SkyManager {
       this.clearHdrEnvironment();
     }
 
+    const skyOptions = resolveEnvironmentOptions(options?.environmentOptions).sky;
+
     switch (preset) {
       case 'blank':
         options?.onAssetProgress?.(1);
-        this.applySolidBackground(THEME_BACKGROUND_COLORS[this.activeTheme]);
+        this.applySolidBackground(
+          skyOptions.backgroundTint ?? THEME_BACKGROUND_COLORS[this.activeTheme]
+        );
         break;
       case 'night':
         options?.onAssetProgress?.(1);
-        this.applySolidBackground(NIGHT_SKY_COLOR);
+        this.applySolidBackground(skyOptions.backgroundTint ?? NIGHT_SKY_COLOR);
         break;
       case 'day':
         options?.onAssetProgress?.(1);
-        this.applyProceduralSky({ elevation: 55, azimuth: 180 });
+        this.applyProceduralSky(
+          {
+            elevation: skyOptions.sunElevation ?? 55,
+            azimuth: skyOptions.sunAzimuth ?? 180,
+          },
+          skyOptions
+        );
         break;
       case 'sunset':
         options?.onAssetProgress?.(1);
-        this.applyProceduralSky({ elevation: 4, azimuth: 200 });
+        this.applyProceduralSky(
+          {
+            elevation: skyOptions.sunElevation ?? 4,
+            azimuth: skyOptions.sunAzimuth ?? 200,
+          },
+          skyOptions,
+          { defaultTurbidity: 8 }
+        );
         break;
       case 'natural':
-        await this.applyHdrSky(options);
+        await this.applyHdrSky(options, skyOptions);
         break;
       default:
         options?.onAssetProgress?.(1);
@@ -83,7 +101,11 @@ export class SkyManager {
     this.scene.background = new THREE.Color(hex);
   }
 
-  private applyProceduralSky(sun: { elevation: number; azimuth: number }): void {
+  private applyProceduralSky(
+    sun: { elevation: number; azimuth: number },
+    skyOptions: ReturnType<typeof resolveEnvironmentOptions>['sky'],
+    config?: { defaultTurbidity?: number }
+  ): void {
     const sky = new Sky();
     sky.scale.setScalar(450000);
     this.scene.add(sky);
@@ -95,8 +117,10 @@ export class SkyManager {
     sunPosition.setFromSphericalCoords(1, phi, theta);
 
     const uniforms = sky.material.uniforms;
-    uniforms['turbidity'].value = sun.elevation < 10 ? 8 : 4;
-    uniforms['rayleigh'].value = 2;
+    const defaultTurbidity = config?.defaultTurbidity ?? 4;
+    uniforms['turbidity'].value =
+      skyOptions.turbidity ?? (sun.elevation < 10 ? 8 : defaultTurbidity);
+    uniforms['rayleigh'].value = skyOptions.atmosphereIntensity ?? 2;
     uniforms['mieCoefficient'].value = 0.005;
     uniforms['mieDirectionalG'].value = 0.8;
     uniforms['sunPosition'].value.copy(sunPosition);
@@ -104,7 +128,10 @@ export class SkyManager {
     this.scene.background = null;
   }
 
-  private async applyHdrSky(options?: ScenePresetApplyOptions): Promise<void> {
+  private async applyHdrSky(
+    options?: ScenePresetApplyOptions,
+    skyOptions?: ReturnType<typeof resolveEnvironmentOptions>['sky']
+  ): Promise<void> {
     if (!this.hdrPmrem) {
       options?.onAssetProgress?.(0);
       this.hdrLoadPromise = null;
@@ -118,6 +145,10 @@ export class SkyManager {
     if (this.hdrPmrem) {
       this.scene.background = this.hdrPmrem;
       this.scene.environment = this.hdrPmrem;
+      const renderer = this.getRenderer();
+      const exposure = skyOptions?.exposure ?? 1;
+      const backgroundIntensity = skyOptions?.backgroundIntensity ?? 1;
+      renderer.toneMappingExposure = exposure * backgroundIntensity;
     }
   }
 

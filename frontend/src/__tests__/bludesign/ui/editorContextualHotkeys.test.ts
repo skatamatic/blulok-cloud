@@ -34,6 +34,6 @@ describe('editorContextualHotkeys', () => {
     expect(withSelection.some((h) => h.key === 'C')).toBe(true);
 
     const withClipboard = getContextualHotkeys(EditorTool.SELECT, false, false, true);
-    expect(withClipboard.some((h) => h.key === 'V' && h.modifier === 'ctrl')).toBe(true);
+    expect(withClipboard.some((h) => h.key === 'V' && h.modifier === 'alt')).toBe(true);
   });
 });

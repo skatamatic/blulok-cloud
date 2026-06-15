@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { AssetFactory } from '../../../../components/bludesign/assets/AssetFactory';
 import {
   updatePlacedObjectBinding,
   updatePlacedObjectSimulationState,
@@ -68,17 +67,7 @@ describe('placedObjectPropertyUpdates', () => {
   });
 
   describe('updatePlacedObjectSimulationState', () => {
-    const updateSpy = jest.spyOn(AssetFactory, 'updateAssetState');
-
-    beforeEach(() => {
-      updateSpy.mockImplementation(() => {});
-    });
-
-    afterAll(() => {
-      updateSpy.mockRestore();
-    });
-
-    it('applies simulated state and calls AssetFactory when simulating', () => {
+    it('applies simulated state and routes visuals through applyVisualState', () => {
       const po = placed({
         binding: {
           entityType: 'unit',
@@ -91,15 +80,17 @@ describe('placedObjectPropertyUpdates', () => {
         simulatedState: DeviceState.UNLOCKED,
       };
       const group = new THREE.Group();
+      const applyVisualState = jest.fn();
 
       updatePlacedObjectSimulationState('o1', sim, {
         getObject: () => group,
         getObjectData: () => po,
+        applyVisualState,
         emitStateUpdated: jest.fn(),
       });
 
       expect(po.binding?.currentState).toBe(DeviceState.UNLOCKED);
-      expect(updateSpy).toHaveBeenCalledWith(group, DeviceState.UNLOCKED);
+      expect(applyVisualState).toHaveBeenCalledWith(group, po);
     });
 
     it('restores original state when simulation ends', () => {
@@ -112,16 +103,18 @@ describe('placedObjectPropertyUpdates', () => {
         properties: { _originalState: DeviceState.LOCKED },
       });
       const sim: SimulationState = { isSimulating: false };
+      const applyVisualState = jest.fn();
 
       updatePlacedObjectSimulationState('o1', sim, {
         getObject: () => new THREE.Group(),
         getObjectData: () => po,
+        applyVisualState,
         emitStateUpdated: jest.fn(),
       });
 
       expect(po.binding?.currentState).toBe(DeviceState.LOCKED);
       expect(po.properties._originalState).toBeUndefined();
-      expect(updateSpy).toHaveBeenCalled();
+      expect(applyVisualState).toHaveBeenCalled();
     });
   });
 });

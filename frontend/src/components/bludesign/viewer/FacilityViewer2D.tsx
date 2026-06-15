@@ -14,6 +14,7 @@ import {
 import { useTheme } from '@/contexts/ThemeContext';
 import * as bludesignApi from '@/api/bludesign';
 import {
+  DeviceState,
   type PlacedObject,
   type Building,
 } from '../core/types';
@@ -46,6 +47,8 @@ interface FacilityViewer2DProps {
   /** When provided, skips an initial facility fetch (e.g. from the widget). */
   prefetchedFacility?: FacilityResponse | null;
   className?: string;
+  /** When false, units render in their default locked colour (live binding visuals off). */
+  bindingEffectsEnabled?: boolean;
   onReady?: () => void;
   onError?: (error: Error) => void;
 }
@@ -55,6 +58,7 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
   bluLokFacilityId,
   prefetchedFacility,
   className,
+  bindingEffectsEnabled = true,
   onReady,
   onError,
 }) => {
@@ -271,6 +275,11 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
 
   const getUnitColor = useCallback(
     (unitId: string) => {
+      // Binding effects off → everything reads as the default locked state.
+      if (!bindingEffectsEnabled) {
+        return resolveLiveUnitColor(DeviceState.LOCKED, 'locked', 0.55, 'live');
+      }
+
       const entityId = bindingByObjectId.get(unitId);
       const live = entityId ? assetStatesRef.current.get(entityId) : undefined;
 
@@ -283,7 +292,7 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
 
       return resolveLiveUnitColor(live?.state, live?.lockStatus, 0.55, telemetry);
     },
-    [bindingByObjectId, stateVersion, liveHydrated]
+    [bindingByObjectId, stateVersion, liveHydrated, bindingEffectsEnabled]
   );
 
   const handleSelect = useCallback(
@@ -304,6 +313,11 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
     viewerRef.current?.focusUnit(objectId);
     handleSelect(objectId);
   }, [handleSelect]);
+
+  const handleFocusSelected = useCallback(() => {
+    if (!selectedId) return;
+    viewerRef.current?.focusUnit(selectedId);
+  }, [selectedId]);
 
   const handleFocusBuilding = useCallback((_buildingId: string) => {
     viewerRef.current?.fit();
@@ -428,6 +442,7 @@ export const FacilityViewer2D: React.FC<FacilityViewer2DProps> = ({
           <ViewerPropertiesPanel
             selectedObject={selectedObject}
             onClose={handleClearSelection}
+            onFocus={handleFocusSelected}
             liveState={selectedState ?? undefined}
             unitInfo={selectedUnitInfo}
           />

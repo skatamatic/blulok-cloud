@@ -13,11 +13,10 @@ import {
   FacilityViewer3D,
   FacilityViewer2D,
   FacilityViewerEmptyState,
+  ViewerOnCanvasControls,
 } from '../bludesign/viewer';
 import {
   BuildingOffice2Icon,
-  CubeIcon,
-  MapIcon,
   EyeIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -33,9 +32,15 @@ import {
 } from '@/components/bludesign/core/environment';
 import {
   DEFAULT_FACILITY_VIEWER_CONFIG,
+  type FacilityViewerEnvironmentOptions,
   type FacilityViewerWidgetConfig,
 } from '@/types/widget.types';
-import { ViewSettingsModal } from './facility-viewer/ViewSettingsModal';
+import { ViewSettingsPanel } from './facility-viewer/ViewSettingsPanel';
+import {
+  applyViewSettingsDraftPatch,
+  createViewSettingsDraft,
+  type ViewSettingsDraft,
+} from './facility-viewer/viewSettingsDraft';
 
 export interface DesignFacilityOption {
   id: string;
@@ -91,6 +96,7 @@ interface FacilityViewerWidgetProps {
   isRenderActive?: boolean;
   skyPreset?: SkyPresetId;
   groundPreset?: GroundPresetId;
+  environmentOptions?: FacilityViewerEnvironmentOptions;
   /** Admin layout edit — show view settings controls */
   editable?: boolean;
   onConfigChange?: (patch: Partial<FacilityViewerWidgetConfig>) => void;
@@ -111,6 +117,7 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   isRenderActive = true,
   skyPreset = DEFAULT_FACILITY_VIEWER_CONFIG.skyPreset!,
   groundPreset = DEFAULT_FACILITY_VIEWER_CONFIG.groundPreset!,
+  environmentOptions,
   editable = false,
   onConfigChange,
 }) => {
@@ -129,10 +136,63 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   const [cachedFacility, setCachedFacility] = useState<FacilityResponse | null>(null);
   const [prefetchError, setPrefetchError] = useState(false);
   const [displayMode, setDisplayMode] = useState<ViewerDisplayMode>('3d');
+  const [bindingEffectsEnabled, setBindingEffectsEnabled] = useState(true);
   const [viewSettingsOpen, setViewSettingsOpen] = useState(false);
+  const [viewSettingsDraft, setViewSettingsDraft] = useState<ViewSettingsDraft | null>(null);
 
   const resolvedSkyPreset = normalizeSkyPreset(skyPreset);
   const resolvedGroundPreset = normalizeGroundPreset(groundPreset);
+
+  const previewSkyPreset =
+    viewSettingsOpen && viewSettingsDraft ? viewSettingsDraft.skyPreset : resolvedSkyPreset;
+  const previewGroundPreset =
+    viewSettingsOpen && viewSettingsDraft ? viewSettingsDraft.groundPreset : resolvedGroundPreset;
+  const previewEnvironmentOptions =
+    viewSettingsOpen && viewSettingsDraft
+      ? viewSettingsDraft.environmentOptions
+      : environmentOptions;
+
+  const openViewSettings = useCallback(() => {
+    setViewSettingsDraft(
+      createViewSettingsDraft({
+        skyPreset: resolvedSkyPreset,
+        groundPreset: resolvedGroundPreset,
+        environmentOptions,
+      })
+    );
+    setViewSettingsOpen(true);
+  }, [resolvedSkyPreset, resolvedGroundPreset, environmentOptions]);
+
+  const closeViewSettings = useCallback(() => {
+    setViewSettingsOpen(false);
+    setViewSettingsDraft(null);
+  }, []);
+
+  const handleViewSettingsDraftChange = useCallback(
+    (patch: Partial<FacilityViewerWidgetConfig>) => {
+      setViewSettingsDraft((current) =>
+        current ? applyViewSettingsDraftPatch(current, patch) : current
+      );
+    },
+    []
+  );
+
+  const handleViewSettingsApply = useCallback(() => {
+    if (!viewSettingsDraft) {
+      closeViewSettings();
+      return;
+    }
+    onConfigChange?.({
+      skyPreset: viewSettingsDraft.skyPreset,
+      groundPreset: viewSettingsDraft.groundPreset,
+      environmentOptions: viewSettingsDraft.environmentOptions,
+    });
+    closeViewSettings();
+  }, [viewSettingsDraft, onConfigChange, closeViewSettings]);
+
+  const handleViewSettingsCancel = useCallback(() => {
+    closeViewSettings();
+  }, [closeViewSettings]);
 
   useEffect(() => {
     if (currentSize) setSize(currentSize);
@@ -235,13 +295,6 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
     console.error('Facility viewer error:', error);
   }, []);
 
-  const handleViewConfigChange = useCallback(
-    (patch: Partial<FacilityViewerWidgetConfig>) => {
-      onConfigChange?.(patch);
-    },
-    [onConfigChange]
-  );
-
   const enhancedMenu = (
     <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 space-y-2">
       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -251,7 +304,7 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
       {editable && !use2d && showViewer && (
         <button
           type="button"
-          onClick={() => setViewSettingsOpen(true)}
+          onClick={openViewSettings}
           className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/80 transition-colors"
         >
           <EyeIcon className="w-4 h-4 text-primary-500" />
@@ -268,24 +321,6 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
           >
             Retry
           </button>
-        </div>
-      )}
-      {has2dLayout && showViewer && (
-        <div className="flex gap-1">
-          <ModeToggle
-            active={displayMode === '3d'}
-            onClick={() => setDisplayMode('3d')}
-            icon={<CubeIcon className="w-3.5 h-3.5" />}
-            label="3D"
-            isDark={isDark}
-          />
-          <ModeToggle
-            active={displayMode === '2d'}
-            onClick={() => setDisplayMode('2d')}
-            icon={<MapIcon className="w-3.5 h-3.5" />}
-            label="2D"
-            isDark={isDark}
-          />
         </div>
       )}
     </div>
@@ -330,8 +365,10 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
               bluLokFacilityId={activeDesignFacility.linkedBlulokId ?? undefined}
               prefetchedFacility={cachedFacility}
               isRenderActive={run3d}
-              skyPreset={resolvedSkyPreset}
-              groundPreset={resolvedGroundPreset}
+              skyPreset={previewSkyPreset}
+              groundPreset={previewGroundPreset}
+              environmentOptions={previewEnvironmentOptions}
+              bindingEffectsEnabled={bindingEffectsEnabled}
               onReady={handleReady}
               onError={handleError}
             />
@@ -342,42 +379,35 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
             facilityName={selectedFacility?.name}
           />
         )}
+        {!isLoading && showViewer && activeDesignFacility && (
+          <ViewerOnCanvasControls
+            isDark={isDark}
+            show2dToggle={has2dLayout}
+            displayMode={displayMode}
+            onToggleDisplayMode={() =>
+              setDisplayMode((prev) => (prev === '3d' ? '2d' : '3d'))
+            }
+            showBindingToggle={!use2d}
+            bindingEffectsEnabled={bindingEffectsEnabled}
+            onToggleBindingEffects={() => setBindingEffectsEnabled((prev) => !prev)}
+            className="absolute bottom-4 left-4 z-20"
+          />
+        )}
+        {editable && !use2d && showViewer && (
+          <ViewSettingsPanel
+            isOpen={viewSettingsOpen}
+            skyPreset={viewSettingsDraft?.skyPreset ?? previewSkyPreset}
+            groundPreset={viewSettingsDraft?.groundPreset ?? previewGroundPreset}
+            environmentOptions={viewSettingsDraft?.environmentOptions ?? previewEnvironmentOptions}
+            onDraftChange={handleViewSettingsDraftChange}
+            onApply={handleViewSettingsApply}
+            onCancel={handleViewSettingsCancel}
+          />
+        )}
       </div>
-      {editable && (
-        <ViewSettingsModal
-          isOpen={viewSettingsOpen}
-          onClose={() => setViewSettingsOpen(false)}
-          skyPreset={resolvedSkyPreset}
-          groundPreset={resolvedGroundPreset}
-          onChange={handleViewConfigChange}
-        />
-      )}
     </Widget>
   );
 };
-
-const ModeToggle: React.FC<{
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-  isDark: boolean;
-}> = ({ active, onClick, icon, label, isDark }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
-      active
-        ? 'bg-[#147FD4] text-white'
-        : isDark
-          ? 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-    }`}
-  >
-    {icon}
-    {label}
-  </button>
-);
 
 const LoadingPlaceholder: React.FC<{ isDark: boolean }> = ({ isDark }) => (
   <div

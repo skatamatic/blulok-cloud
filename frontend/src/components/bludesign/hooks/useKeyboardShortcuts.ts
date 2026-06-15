@@ -14,7 +14,7 @@ interface KeyboardShortcutsOptions {
   onRotateOrientation?: (direction: 'cw' | 'ccw') => void;
   onRotateSelection?: (direction: 'cw' | 'ccw') => void; // Rotate selected objects
   onMoveSelection?: (direction: 'up' | 'down' | 'left' | 'right') => void; // Arrow key movement
-  onRotateCamera90?: (direction: 'cw' | 'ccw') => void; // Ctrl+Left/Ctrl+Right camera orbit
+  onRotateCamera90?: (direction: 'cw' | 'ccw') => void; // Alt+Left/Alt+Right camera orbit
   onToggleCameraMode?: () => void;
   onDelete?: () => void;
   onDuplicate?: () => void;
@@ -33,7 +33,7 @@ interface KeyboardShortcutsOptions {
   onLoad?: () => void;
   activeTool?: EditorTool; // To know if we're in placement mode
   hasSelection?: boolean; // To know if we have objects selected
-  onCtrlChange?: (isHeld: boolean) => void; // For controlling camera rotation during placement
+  onAltChange?: (isHeld: boolean) => void; // For controlling camera rotation during placement
   onAlignGridToSelection?: () => void;
   onResetGridAlignment?: () => void;
 }
@@ -65,7 +65,7 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     onLoad,
     activeTool,
     hasSelection,
-    onCtrlChange,
+    onAltChange,
     onAlignGridToSelection,
     onResetGridAlignment,
   } = options;
@@ -82,12 +82,11 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     }
 
     const key = event.key.toLowerCase();
-    const isCtrl = event.ctrlKey || event.metaKey;
-    const isShift = event.shiftKey;
     const isAlt = event.altKey;
+    const isShift = event.shiftKey;
 
     // Tool shortcuts
-    if (!isCtrl && !isShift) {
+    if (!isAlt && !isShift) {
       switch (key) {
         case 'v':
           onToolChange?.(EditorTool.SELECT);
@@ -179,8 +178,8 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
       }
     }
 
-    // Ctrl shortcuts
-    if (isCtrl && !isShift) {
+    // Alt shortcuts (avoid Ctrl — browser shortcuts like Ctrl+W close tabs)
+    if (isAlt && !isShift) {
       switch (key) {
         case 'c':
           onCopy?.();
@@ -227,8 +226,8 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
       }
     }
 
-    // Ctrl+Shift shortcuts
-    if (isCtrl && isShift) {
+    // Alt+Shift shortcuts
+    if (isAlt && isShift) {
       switch (key) {
         case 'a':
           onSelectAll?.();
@@ -246,12 +245,7 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
           onSaveAs?.();
           event.preventDefault();
           break;
-      }
-    }
-
-    if (isCtrl && isAlt && !isShift) {
-      switch (key) {
-        case 'a':
+        case 'g':
           onAlignGridToSelection?.();
           event.preventDefault();
           break;
@@ -291,30 +285,27 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     onResetGridAlignment,
   ]);
 
-  // Handle Ctrl key changes for placement mode camera rotation
+  // Handle Alt key changes for placement mode camera rotation
   const handleKeyUp = useCallback((event: KeyboardEvent) => {
-    // Notify when Ctrl is released
-    if (event.key === 'Control' || event.key === 'Meta') {
-      onCtrlChange?.(false);
+    if (event.key === 'Alt') {
+      onAltChange?.(false);
     }
-  }, [onCtrlChange]);
+  }, [onAltChange]);
 
-  const handleCtrlKeyDown = useCallback((event: KeyboardEvent) => {
-    // Notify when Ctrl is pressed
-    if (event.key === 'Control' || event.key === 'Meta') {
-      onCtrlChange?.(true);
+  const handleAltKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Alt') {
+      onAltChange?.(true);
     }
-  }, [onCtrlChange]);
+  }, [onAltChange]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keydown', handleCtrlKeyDown);
+    window.addEventListener('keydown', handleAltKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keydown', handleCtrlKeyDown);
+      window.removeEventListener('keydown', handleAltKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleKeyDown, handleCtrlKeyDown, handleKeyUp]);
+  }, [handleKeyDown, handleAltKeyDown, handleKeyUp]);
 }
-

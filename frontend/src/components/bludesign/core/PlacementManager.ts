@@ -2496,7 +2496,7 @@ if (this.isDragging && this.dragStartPosition && this.currentGridPosition) {
   }
 
   /**
-   * Handle key down - enable camera rotation on Ctrl press, cancel paste on Escape
+   * Handle key down - enable camera rotation on Alt press, cancel paste on Escape
    */
   private onKeyDown(e: KeyboardEvent): void {
     if (!this.isPlacing) return;
@@ -2507,8 +2507,8 @@ if (this.isDragging && this.dragStartPosition && this.currentGridPosition) {
       return;
     }
     
-    if (e.key === 'Control' || e.key === 'Meta') {
-      // Ctrl (or Cmd on Mac) pressed - enable camera rotation
+    if (e.key === 'Alt') {
+      // Alt pressed - enable camera rotation
       if (this.onRotationControlChange) {
         this.onRotationControlChange(true);
       }
@@ -2516,13 +2516,13 @@ if (this.isDragging && this.dragStartPosition && this.currentGridPosition) {
   }
 
   /**
-   * Handle key up - disable camera rotation on Ctrl release
+   * Handle key up - disable camera rotation on Alt release
    */
   private onKeyUp(e: KeyboardEvent): void {
     if (!this.isPlacing) return;
     
-    if (e.key === 'Control' || e.key === 'Meta') {
-      // Ctrl (or Cmd on Mac) released - disable camera rotation
+    if (e.key === 'Alt') {
+      // Alt released - disable camera rotation
       if (this.onRotationControlChange) {
         this.onRotationControlChange(false);
       }

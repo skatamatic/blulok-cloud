@@ -67,13 +67,13 @@ const BluDesignImportPage: React.FC = () => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      if (e.altKey && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) c.redo();
         else c.undo();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+      if (e.altKey && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         c.redo();
         return;

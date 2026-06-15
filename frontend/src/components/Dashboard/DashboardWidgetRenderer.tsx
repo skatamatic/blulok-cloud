@@ -234,6 +234,7 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
           isRenderActive={facilityViewerRenderActive}
           skyPreset={normalizeSkyPreset(viewerConfig.skyPreset)}
           groundPreset={normalizeGroundPreset(viewerConfig.groundPreset)}
+          environmentOptions={viewerConfig.environmentOptions}
           editable={layoutEditable}
           onConfigChange={
             layoutEditable && onWidgetConfigChange

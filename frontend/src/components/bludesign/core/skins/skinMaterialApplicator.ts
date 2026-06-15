@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import type { CategorySkin } from '../SkinRegistry';
 import { isValidTextureForSkinning } from './textureValidation';
+import { getProceduralSurfaceMaps } from './proceduralSurfaceTextures';
 
 export interface SkinTextureLoaderPort {
   loadTexture(url: string): THREE.Texture;
@@ -96,6 +97,38 @@ export function applyCategorySkinToObjectGroup(
           mat.roughnessMap = isValid(roughnessMap) ? roughnessMap : null;
         } else {
           mat.roughnessMap = null;
+        }
+
+        if (skinMaterial.metalnessMapUrl) {
+          const metalnessMap = textures.loadTexture(skinMaterial.metalnessMapUrl);
+          mat.metalnessMap = isValid(metalnessMap) ? metalnessMap : null;
+        } else {
+          mat.metalnessMap = null;
+        }
+
+        // Procedural PBR surface detail (ribbed sheet-metal, painted steel, etc.).
+        // Explicit URL maps always win; otherwise the generated maps fill the slots.
+        if (skinMaterial.surface) {
+          const surfaceMaps = getProceduralSurfaceMaps(skinMaterial.surface);
+          if (surfaceMaps) {
+            if (!skinMaterial.textureUrl && surfaceMaps.map) {
+              mat.map = surfaceMaps.map;
+            }
+            if (!skinMaterial.normalMapUrl) {
+              mat.normalMap = surfaceMaps.normalMap;
+            }
+            if (!skinMaterial.roughnessMapUrl) {
+              mat.roughnessMap = surfaceMaps.roughnessMap;
+            }
+          }
+        }
+
+        const normalScale = skinMaterial.normalScale ?? 1;
+        if (mat.normalMap) {
+          mat.normalScale.set(normalScale, normalScale);
+        }
+        if (skinMaterial.envMapIntensity !== undefined) {
+          mat.envMapIntensity = skinMaterial.envMapIntensity;
         }
 
         if (skinMaterial.shader === 'wireframe') {

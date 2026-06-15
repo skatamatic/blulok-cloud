@@ -32,9 +32,9 @@ const KeyBadge: React.FC<{
   );
 
   const modifierLabel = (mod: string) => {
-    if (mod === 'ctrl') return 'Ctrl';
     if (mod === 'alt') return 'Alt';
-    return 'Shift';
+    if (mod === 'shift') return 'Shift';
+    return mod.charAt(0).toUpperCase() + mod.slice(1);
   };
 
   return (

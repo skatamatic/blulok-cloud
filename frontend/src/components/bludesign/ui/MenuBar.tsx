@@ -269,11 +269,11 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         label="File"
         isDark={isDark}
         items={[
-          { label: 'New', onClick: onNew, shortcut: 'Ctrl+N' },
-          { label: 'Open...', onClick: onLoad, shortcut: 'Ctrl+O' },
+          { label: 'New', onClick: onNew, shortcut: 'Alt+N' },
+          { label: 'Open...', onClick: onLoad, shortcut: 'Alt+O' },
           { divider: true },
-          { label: 'Save', onClick: onSave, shortcut: 'Ctrl+S' },
-          { label: 'Save As...', onClick: onSaveAs, shortcut: 'Ctrl+Shift+S' },
+          { label: 'Save', onClick: onSave, shortcut: 'Alt+S' },
+          { label: 'Save As...', onClick: onSaveAs, shortcut: 'Alt+Shift+S' },
           { divider: true },
           { label: 'Export...', onClick: () => console.log('Export'), disabled: true },
         ]}
@@ -282,15 +282,15 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         label="Edit"
         isDark={isDark}
         items={[
-          { label: 'Undo', onClick: onUndo, shortcut: 'Ctrl+Z', disabled: !canUndo },
-          { label: 'Redo', onClick: onRedo, shortcut: 'Ctrl+Y', disabled: !canRedo },
+          { label: 'Undo', onClick: onUndo, shortcut: 'Alt+Z', disabled: !canUndo },
+          { label: 'Redo', onClick: onRedo, shortcut: 'Alt+Y', disabled: !canRedo },
           { divider: true },
-          { label: 'Cut', onClick: onCut, shortcut: 'Ctrl+X', disabled: !hasSelection },
-          { label: 'Copy', onClick: onCopy, shortcut: 'Ctrl+C', disabled: !hasSelection },
-          { label: 'Paste', onClick: onPaste, shortcut: 'Ctrl+V', disabled: !hasClipboard },
+          { label: 'Cut', onClick: onCut, shortcut: 'Alt+X', disabled: !hasSelection },
+          { label: 'Copy', onClick: onCopy, shortcut: 'Alt+C', disabled: !hasSelection },
+          { label: 'Paste', onClick: onPaste, shortcut: 'Alt+V', disabled: !hasClipboard },
           { label: 'Delete', onClick: onDelete, shortcut: 'Del', disabled: !hasSelection },
           { divider: true },
-          { label: 'Select All', onClick: onSelectAll, shortcut: 'Ctrl+A' },
+          { label: 'Select All', onClick: onSelectAll, shortcut: 'Alt+Shift+A' },
           { divider: true },
           { label: 'Preferences...', onClick: onOpenPreferences },
         ]}

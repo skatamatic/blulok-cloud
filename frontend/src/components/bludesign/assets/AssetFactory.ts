@@ -82,6 +82,11 @@ const MATERIALS = {
       metalness: 0.4, 
       roughness: 0.6 
     }),
+    roof: new THREE.MeshStandardMaterial({
+      color: 0xd9dde2,
+      metalness: 0.45,
+      roughness: 0.55,
+    }),
   },
   gate: {
     frame: new THREE.MeshStandardMaterial({ 
@@ -323,12 +328,40 @@ export class AssetFactory {
     }
     
     group.add(door);
-    
+
+    this.addStorageUnitRoof(group, width, height, depth);
+
     // Track all part names on the group
-    group.userData.partNames = ['body', 'door'];
+    group.userData.partNames = ['body', 'door', 'roof'];
     group.userData.lockerSpec = lockerSpec;
     
     return group;
+  }
+
+  /**
+   * Add a slightly-overhanging roof cap to a storage unit group.
+   * Exposed as the `roof` skin part so themes can clad it (e.g. blue sheet metal)
+   * independently of the unit body and door.
+   */
+  private static addStorageUnitRoof(
+    group: THREE.Object3D,
+    width: number,
+    height: number,
+    depth: number
+  ): void {
+    const overhang = 0.04;
+    const roofHeight = Math.min(0.45, Math.max(0.12, height * 0.07));
+    const roofGeometry = new THREE.BoxGeometry(
+      width + overhang * 2,
+      roofHeight,
+      depth + overhang * 2
+    );
+    const roof = new THREE.Mesh(roofGeometry, MATERIALS.storageUnit.roof.clone());
+    roof.position.y = height + roofHeight / 2;
+    roof.castShadow = true;
+    roof.receiveShadow = false;
+    roof.userData.partName = 'roof';
+    group.add(roof);
   }
 
   /**
@@ -362,9 +395,11 @@ export class AssetFactory {
     door.castShadow = false;
     door.userData.partName = 'door';  // Track part name for skinning
     group.add(door);
-    
+
+    this.addStorageUnitRoof(group, width, height, depth);
+
     // Track all part names on the group
-    group.userData.partNames = ['body', 'door'];
+    group.userData.partNames = ['body', 'door', 'roof'];
     
     return group;
   }

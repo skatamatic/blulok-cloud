@@ -25,6 +25,23 @@ import type { DoorSide, EditableUnit } from '../types';
 /** Default storage-unit height when the plan only gives a 2D footprint. */
 export const DEFAULT_UNIT_HEIGHT_M = feetToMeters(8);
 
+/** White header band above the roll-up door (unit-number plaque zone). */
+export const DEFAULT_DOOR_HEADER_RATIO = 0.1;
+
+/** Small sill clearance — door sits slightly above the gravel line. */
+export const DEFAULT_DOOR_BASE_OFFSET_M = feetToMeters(0.15);
+
+/** Door height + vertical placement tuned to match typical outdoor roll-up units. */
+export function defaultDoorDimensions(heightM: number = DEFAULT_UNIT_HEIGHT_M): {
+  doorHeight: number;
+  doorPositionY: number;
+} {
+  const baseY = Math.min(DEFAULT_DOOR_BASE_OFFSET_M, heightM * 0.04);
+  const headerBand = heightM * DEFAULT_DOOR_HEADER_RATIO;
+  const doorHeight = Math.max(feetToMeters(2), heightM - headerBand - baseY);
+  return { doorHeight, doorPositionY: baseY };
+}
+
 /** Default reuse tolerance: units within ~0.5 ft on each axis share an asset. */
 export const DEFAULT_TOLERANCE_M = feetToMeters(0.5);
 
@@ -62,7 +79,7 @@ export function unitRealSpec(
 ): UnitRealSpec {
   const width = unit.bounds.width * metersPerPixel;
   const depth = unit.bounds.height * metersPerPixel;
-  const doorHeight = Math.max(feetToMeters(2), Math.min(feetToMeters(7), heightM - feetToMeters(1)));
+  const { doorHeight, doorPositionY } = defaultDoorDimensions(heightM);
 
   let lockerSpec: LockerSpec;
   if (unit.door) {
@@ -72,7 +89,7 @@ export function unitRealSpec(
       doorWidth: Math.max(feetToMeters(1), unit.door.widthFraction * edgeLenPx * metersPerPixel),
       doorHeight,
       doorPositionX: unit.door.offsetFraction * edgeLenPx * metersPerPixel,
-      doorPositionY: 0,
+      doorPositionY,
     };
   } else {
     // No door assigned: default to a centered front door, 80% of the width.
@@ -81,7 +98,7 @@ export function unitRealSpec(
       doorWidth: Math.max(feetToMeters(1), 0.8 * width),
       doorHeight,
       doorPositionX: 0,
-      doorPositionY: 0,
+      doorPositionY,
     };
   }
 
