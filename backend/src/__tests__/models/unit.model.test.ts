@@ -24,6 +24,20 @@ describe('deriveEffectiveUnitStatus', () => {
   });
 });
 
+describe('last unlock timestamp subquery', () => {
+  it('uses successful unlock activity_logs with access_logs fallback', () => {
+    const { LAST_UNLOCK_AT_SUBQUERY_SQL } = jest.requireActual('@/models/unit.model') as {
+      LAST_UNLOCK_AT_SUBQUERY_SQL: string;
+    };
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain('activity_logs');
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain("al.activity_type = 'unlock'");
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain("al.result = 'success'");
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain('access_logs');
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain("al2.action = 'unlock'");
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).not.toContain('last_seen');
+  });
+});
+
 describe('assertStoredStatusAllowedWithAssignments', () => {
   it('allows available, maintenance, and reserved when there are no assignments', () => {
     expect(() => assertStoredStatusAllowedWithAssignments('available', 0)).not.toThrow();

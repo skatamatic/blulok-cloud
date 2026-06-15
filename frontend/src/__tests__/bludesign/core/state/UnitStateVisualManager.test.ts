@@ -39,7 +39,7 @@ describe('UnitStateVisualManager', () => {
     mgr.applyState(group, { themed: true, bound: false, state: DeviceState.UNKNOWN });
 
     expect(bodyMat(body).transparent).toBe(true);
-    expect(bodyMat(body).opacity).toBeCloseTo(0.9, 5);
+    expect(bodyMat(body).opacity).toBeCloseTo(0.66, 5);
     // Colour is dimmed below the themed base.
     expect(bodyMat(body).color.r).toBeLessThan(0.95);
   });

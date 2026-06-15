@@ -583,7 +583,7 @@ const ListColumnHeader: React.FC<{
       )}
       <span className={`${headerCell} text-center`}>Status</span>
       <SortableHeaderCell
-        label="Last access"
+        label="Last unlocked"
         columnKey="last_activity"
         sortBy={sortBy}
         sortOrder={sortOrder}

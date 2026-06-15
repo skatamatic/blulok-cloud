@@ -8,7 +8,7 @@
  * behaviour is untouched.
  *
  * Themed unit appearance, driven by binding + {@link DeviceState}:
- *  - not bound      → slightly dimmer + 80% transparent
+ *  - not bound      → slightly dimmer + ~66% opacity (subtle translucency)
  *  - locked (bound) → the plain themed look
  *  - unlocked       → door swings open and reads black (the dark opening)
  *  - error          → the whole unit flashes an alarming red tint
@@ -66,7 +66,7 @@ const DOOR_OPEN_ANGLE = Math.PI * 0.6; // ~108°
 const DOOR_DAMP = 9; // higher = snappier swing
 const DOOR_BLACK = 0x0a0a0a;
 
-const UNBOUND_OPACITY = 0.66; // 90% opacity — subtly translucent, not ghostly
+const UNBOUND_OPACITY = 0.66;
 const UNBOUND_DIM = 0.15; // slight darkening of the themed colour
 
 export class UnitStateVisualManager {

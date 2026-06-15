@@ -11,8 +11,8 @@ export interface ViewerViewPresetProgress {
   message: string;
 }
 
-const SKY_STAGE = { start: 68, span: 14 } as const;
-const GROUND_STAGE = { start: 82, span: 12 } as const;
+const GROUND_STAGE = { start: 68, span: 14 } as const;
+const SKY_STAGE = { start: 82, span: 12 } as const;
 
 function stageProgress(start: number, span: number, ratio: number): number {
   return start + span * Math.min(1, Math.max(0, ratio));

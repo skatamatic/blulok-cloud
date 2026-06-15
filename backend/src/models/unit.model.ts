@@ -44,6 +44,30 @@ function parseBluLokDeviceSettings(raw: unknown): Record<string, unknown> | unde
   return undefined;
 }
 
+/** Latest successful unlock for a unit (activity_logs, then legacy access_logs). */
+export const LAST_UNLOCK_AT_SUBQUERY_SQL = `(
+  SELECT COALESCE(
+    (
+      SELECT MAX(al.occurred_at)
+      FROM activity_logs al
+      WHERE al.unit_id = u.id
+        AND al.activity_type = 'unlock'
+        AND al.result = 'success'
+    ),
+    (
+      SELECT MAX(al2.occurred_at)
+      FROM access_logs al2
+      WHERE al2.unit_id = u.id
+        AND al2.action = 'unlock'
+        AND al2.success = 1
+    )
+  )
+)`;
+
+export function lastUnlockAtSelect(knex: Knex, alias = 'last_activity'): Knex.Raw {
+  return knex.raw(`${LAST_UNLOCK_AT_SUBQUERY_SQL} as ??`, [alias]);
+}
+
 /**
  * Unit Entity Interface
  *
@@ -290,8 +314,8 @@ export class UnitModel {
           'pa.first_name',
           'pa.last_name',
           'pa.tenant_email',
-          'bd.last_seen as unlocked_since',
-          'bd.last_seen as last_activity',
+          lastUnlockAtSelect(knex, 'unlocked_since'),
+          lastUnlockAtSelect(knex, 'last_activity'),
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
@@ -499,7 +523,7 @@ export class UnitModel {
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
-          'bd.last_seen as last_activity',
+          lastUnlockAtSelect(knex),
           'bd.firmware_version',
           'bd.signal_strength',
           'bd.temperature',
@@ -708,7 +732,7 @@ export class UnitModel {
         device_status: row.device_status,
         battery_level: row.battery_level,
         last_activity: row.last_activity,
-        unlocked_since: row.last_activity || new Date().toISOString(), // Use last_activity as unlocked_since, fallback to now
+        unlocked_since: row.last_activity ?? null,
         tenant_name: row.primary_tenant_id
           ? `${row.tenant_first_name || ''} ${row.tenant_last_name || ''}`.trim()
           : Number(row.assignment_count ?? 0) > 0
@@ -1086,7 +1110,7 @@ export class UnitModel {
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
-          'bd.last_seen as last_activity',
+          lastUnlockAtSelect(knex),
           'bd.firmware_version',
           'bd.signal_strength',
           'bd.temperature',

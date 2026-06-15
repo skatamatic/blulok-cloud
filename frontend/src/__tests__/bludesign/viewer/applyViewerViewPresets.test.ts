@@ -2,27 +2,33 @@ import type { BluDesignEngine } from '@/components/bludesign/core/BluDesignEngin
 import { applyViewerViewPresets } from '@/components/bludesign/viewer/applyViewerViewPresets';
 
 describe('applyViewerViewPresets', () => {
-  it('reports staged progress while applying sky and ground presets', async () => {
+  it('reports staged progress while applying ground then sky presets', async () => {
     const progress: Array<{ progress: number; message: string }> = [];
-    const engine = {
-      applySkyPreset: jest.fn((_sky, options) => {
-        options?.onAssetProgress?.(0.5);
-        return Promise.resolve();
-      }),
-      applyGroundPreset: jest.fn((_ground, options) => {
+    const applySkyPreset = jest.fn(
+      (_sky: string, options?: { onAssetProgress?: (ratio: number) => void }) => {
         options?.onAssetProgress?.(1);
         return Promise.resolve();
-      }),
+      }
+    );
+    const applyGroundPreset = jest.fn(
+      (_ground: string, options?: { onAssetProgress?: (ratio: number) => void }) => {
+        options?.onAssetProgress?.(1);
+        return Promise.resolve();
+      }
+    );
+    const engine = {
+      applySkyPreset,
+      applyGroundPreset,
       refreshGroundPlaneBounds: jest.fn(),
     } as unknown as BluDesignEngine;
 
     await applyViewerViewPresets(engine, 'natural', 'grass', (update) => progress.push(update));
 
-    expect(engine.applySkyPreset).toHaveBeenCalledWith('natural', expect.any(Object));
-    expect(engine.applyGroundPreset).toHaveBeenCalledWith('grass', expect.any(Object));
+    expect(applyGroundPreset).toHaveBeenCalledWith('grass', expect.any(Object));
+    expect(applySkyPreset).toHaveBeenCalledWith('natural', expect.any(Object));
     expect(engine.refreshGroundPlaneBounds).toHaveBeenCalled();
     expect(progress.some((p) => p.message === 'Loading sky environment...')).toBe(true);
-    expect(progress.some((p) => p.message === 'Loading ground textures...')).toBe(true);
+    expect(progress.some((p) => p.message === 'Loading ground environment...')).toBe(true);
     expect(progress[progress.length - 1]?.progress).toBeGreaterThanOrEqual(94);
   });
 
