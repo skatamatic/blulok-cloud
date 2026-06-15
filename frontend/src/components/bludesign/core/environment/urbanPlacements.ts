@@ -252,7 +252,6 @@ function addStreetLightsAlongGrid(
     xExtent,
     zExtent,
     parkReservations,
-    outerRadius,
   } = grid;
   const streetSpan = Math.max(1, bs - sw);
   const spacing = 46 + rng() * 14;
@@ -480,7 +479,12 @@ function addStreetGrid(
   input: UrbanSceneryPlacementInput,
   rng: () => number,
   outerRadius: number
-): { blocks: CityBlock[]; parkReservations: ParkReservation[]; reservedParkBlocks: Set<string> } {
+): {
+  blocks: CityBlock[];
+  parkReservations: ParkReservation[];
+  reservedParkBlocks: Set<string>;
+  grid: UrbanStreetGridContext;
+} {
   const sw = streetWidth(input);
   const bs = blockStep(input);
   const { x: xExtent, z: zExtent } = urbanSceneryExtents(input);

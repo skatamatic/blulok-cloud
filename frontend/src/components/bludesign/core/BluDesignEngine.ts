@@ -1385,7 +1385,7 @@ export class BluDesignEngine {
 
     const { techno } = resolveEnvironmentOptions(this.activeEnvironmentOptions);
     this.groundPlaneManager.applyTechnoOptions(techno, presetOptions);
-    await this.skyManager.setSpaceBackdropOverlay(techno.showSpaceBackdrop, presetOptions);
+    await this.skyManager.setSpaceBackdropOverlay(techno.showSpaceBackdrop ?? false, presetOptions);
     this.syncOutdoorEnvironment();
   }
 

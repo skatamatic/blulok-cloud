@@ -211,8 +211,6 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
   const hasFineTune =
     showSkyFineTune ||
     showGroundFineTune ||
-    groundPreset === 'woodland' ||
-    groundPreset === 'urban' ||
     groundPreset === 'techno';
 
   const dayDefaults = skyPreset === 'sunset'

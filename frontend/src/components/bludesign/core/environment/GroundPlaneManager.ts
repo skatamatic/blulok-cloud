@@ -444,7 +444,7 @@ export class GroundPlaneManager {
       this.ensureTechnoMesh();
       this.positionTechnoMesh(bounds, options);
       const showGrid = resolveEnvironmentOptions(options?.environmentOptions).techno.showGrid;
-      if (this.technoMesh) this.technoMesh.visible = showGrid;
+      if (this.technoMesh) this.technoMesh.visible = showGrid ?? true;
       return;
     }
 

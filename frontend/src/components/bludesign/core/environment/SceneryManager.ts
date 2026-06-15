@@ -499,13 +499,6 @@ export class SceneryManager {
     return configs;
   }
 
-  private facadeFaceSpan(
-    detail: { width: number; depth: number },
-    face: 'front' | 'back' | 'left' | 'right'
-  ): number {
-    return face === 'front' || face === 'back' ? detail.width : detail.depth;
-  }
-
   /** Stack horizontal window bands from sill to roof; cap row count and stretch bands on tall towers. */
   private computeFacadeVerticalLayout(
     height: number,
