@@ -27,6 +27,7 @@ import { PlacedObject, DeviceState } from '../core/types';
 import { AssetRegistry } from '../assets/AssetRegistry';
 import { ViewerUnitInfoSection } from './ViewerUnitInfoSection';
 import type { ViewerSmartAssetState } from './viewerLiveState';
+import { formatTime } from '@/utils/datetime.utils';
 
 /** Binding info from placed object */
 interface ObjectBinding {
@@ -426,7 +427,7 @@ export const ViewerPropertiesPanel: React.FC<ViewerPropertiesPanelProps> = ({
                         </p>
                         {liveState?.lastActivity && (
                           <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                            Last activity: {new Date(liveState.lastActivity).toLocaleTimeString()}
+                            Last activity: {formatTime(liveState.lastActivity)}
                           </p>
                         )}
                       </div>

@@ -984,9 +984,30 @@ export class FirmwareService {
    * Handle a gateway facility disconnection. Pauses in-flight chunk transfers so
    * they can resume on reconnect instead of failing immediately.
    */
-  static async handleFacilityDisconnect(facilityId: string): Promise<void> {
+  static async handleFacilityDisconnect(
+    facilityId: string,
+    options?: { disconnectedSessionRole?: 'active' | 'swap_candidate' },
+  ): Promise<void> {
+    let excludePushIds: Set<string> | undefined;
+    let onlyPushIds: Set<string> | undefined;
+    try {
+      const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+      const linked = await GatewayRecoveryService.getRecoveryLinkedPushIds(facilityId);
+      if (linked?.firmwarePushId) {
+        if (options?.disconnectedSessionRole === 'active' && GatewayRecoveryService.isRecoveryPushTargetOnline(facilityId)) {
+          excludePushIds = new Set([linked.firmwarePushId]);
+        } else if (options?.disconnectedSessionRole === 'swap_candidate') {
+          onlyPushIds = new Set([linked.firmwarePushId]);
+        }
+      }
+    } catch {
+      /* ignore in tests */
+    }
+
     for (const [pushId, pushState] of activePushes.entries()) {
-      if (pushState.facilityId === facilityId && !pushState.cancel) {
+      if (pushState.facilityId !== facilityId || pushState.cancel) continue;
+      if (excludePushIds?.has(pushId)) continue;
+      if (onlyPushIds && !onlyPushIds.has(pushId)) continue;
         pushState.cancel = true;
         // Unblock any in-flight ACK waits immediately so executePush can unwind.
         for (const resolver of pushState.chunkAckResolvers.values()) {
@@ -997,7 +1018,6 @@ export class FirmwareService {
         pushState.chunkAckResolvers.clear();
         this.scheduleTransferDisconnectGrace(pushId, transferDisconnectGraceMs());
         logger.info(`Firmware push paused due to gateway disconnect pushId=${pushId} facility=${facilityId}`);
-      }
     }
 
     // Verifying pushes are no longer in activePushes — arm a shorter grace timeout while the

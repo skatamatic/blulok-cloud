@@ -11,6 +11,7 @@ const knexConfig: { [key: string]: Knex.Config } = {
       user: config.database.user,
       password: config.database.password,
       database: config.database.name,
+      timezone: 'Z',
     },
     pool: {
       min: 2,
@@ -35,6 +36,7 @@ const knexConfig: { [key: string]: Knex.Config } = {
       user: config.database.user,
       password: config.database.password,
       database: `${config.database.name}_test`,
+      timezone: 'Z',
     },
     pool: {
       min: 1,
@@ -60,6 +62,7 @@ const knexConfig: { [key: string]: Knex.Config } = {
       password: config.database.password,
       database: config.database.name,
       ssl: { rejectUnauthorized: false },
+      timezone: 'Z',
     },
     pool: {
       min: 2,

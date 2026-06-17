@@ -7,6 +7,19 @@ import { AccessLog } from '@/types/access-history.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
+import {
+  accessLogFromActivityWsData,
+  matchesAccessHistoryLiveFilters,
+  parseActivityWsEnvelope,
+  prependUniqueAccessLog,
+} from '@/utils/access-history-live.utils';
+import {
+  formatAccessAction,
+  getAccessFailureDetail,
+  getAccessLocationDisplay,
+  getAccessUserDisplay,
+} from '@/utils/access-history-display.utils';
+import { formatRelativeWithExact } from '@/utils/datetime.utils';
 
 interface AccessHistoryWidgetProps {
   currentSize: WidgetSize;
@@ -67,31 +80,42 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     [facilityFilter],
   );
 
-  useWebSocketSubscription(
-    'activity',
-    () => {
-      void fetchAccessHistoryRef.current({ background: true });
-    },
-    { filters: activityWsFilters, enabled: Boolean(authState.user) },
+  const liveAccessFilters = useMemo(
+    () => (facilityFilter ? { facility_id: facilityFilter } : {}),
+    [facilityFilter],
   );
+
+  const handleActivityWs = useCallback(
+    (data: unknown) => {
+      const { eventType, payload } = parseActivityWsEnvelope(data);
+      if (eventType === 'activity_update') {
+        return;
+      }
+
+      const incoming = accessLogFromActivityWsData(payload);
+      if (!incoming) {
+        void fetchAccessHistoryRef.current({ background: true });
+        return;
+      }
+
+      if (!matchesAccessHistoryLiveFilters(incoming, liveAccessFilters)) {
+        return;
+      }
+
+      setAccessHistory((prev) => prependUniqueAccessLog(prev, incoming, 20));
+    },
+    [liveAccessFilters],
+  );
+
+  useWebSocketSubscription('activity', handleActivityWs, {
+    filters: activityWsFilters,
+    enabled: Boolean(authState.user),
+  });
 
   const layout = getWidgetLayoutProfile(currentSize);
 
-  const formatTime = (dateString: string): string => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-    if (diffHours > 0) {
-      return `${diffHours}h ago`;
-    } else if (diffMinutes > 0) {
-      return `${diffMinutes}m ago`;
-    } else {
-      return 'Just now';
-    }
-  };
+  const formatEntryTime = (dateString: string): { display: string; title: string } =>
+    formatRelativeWithExact(dateString, { absoluteAfterHours: 24, absoluteStyle: 'datetime' });
 
   const getActionIcon = (log: AccessLog) => {
     const { action, success } = log;
@@ -110,31 +134,12 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   };
 
   const getActionText = (log: AccessLog): string => {
-    const { action, success } = log;
-    
-    if (!success) {
-      return `Access denied`;
+    const label = formatAccessAction(log.action);
+    if (!log.success) {
+      const failure = getAccessFailureDetail(log);
+      return failure ? `${label} — ${failure}` : label;
     }
-    
-    switch (action) {
-      case 'unlock':
-      case 'access_granted':
-        return 'Unlocked';
-      case 'lock':
-        return 'Locked';
-      case 'door_open':
-        return 'Door opened';
-      case 'door_close':
-        return 'Door closed';
-      case 'gate_open':
-        return 'Gate opened';
-      case 'gate_close':
-        return 'Gate closed';
-      case 'elevator_call':
-        return 'Elevator called';
-      default:
-        return 'Access granted';
-    }
+    return label;
   };
 
   const getActionColor = (log: AccessLog): string => {
@@ -151,18 +156,14 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     }
   };
 
-  const getUserDisplayName = (log: AccessLog): string => {
-    if (log.user_name) {
-      return log.user_name;
-    }
-    return 'Unknown User';
-  };
+  const getUserDisplayName = (log: AccessLog): string => getAccessUserDisplay(log).primary;
 
   const getUnitDisplayName = (log: AccessLog): string => {
     if (log.unit_number) {
-      return log.unit_number;
+      return `Unit ${log.unit_number}`;
     }
-    return 'Unknown Unit';
+    const location = getAccessLocationDisplay(log, { hideFacility: Boolean(facilityFilter) });
+    return location.primary;
   };
 
   const maxItems = layout.listCap;
@@ -228,20 +229,26 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
         ) : currentSize === 'small' ? (
           // Compact view for small size
           <div className="space-y-1">
-            {displayHistory.map((entry) => (
+            {displayHistory.map((entry) => {
+              const entryTime = formatEntryTime(entry.occurred_at);
+              return (
               <div key={entry.id} className="flex items-center justify-between text-xs">
                 <div className="flex items-center space-x-1">
                   {getActionIcon(entry)}
                   <span className="truncate">{getUnitDisplayName(entry)}</span>
                 </div>
-                <span className="text-gray-500">{formatTime(entry.occurred_at)}</span>
+                <span className="text-gray-500" title={entryTime.title}>
+                  {entryTime.display}
+                </span>
               </div>
-            ))}
+            );})}
           </div>
         ) : (
           // Full view for larger sizes
           <div className={`space-y-2 ${WIDGET_LIST_SCROLL_CLASS}`}>
-            {displayHistory.map((entry) => (
+            {displayHistory.map((entry) => {
+              const entryTime = formatEntryTime(entry.occurred_at);
+              return (
               <div key={entry.id} className="flex items-center space-x-3 p-2 rounded-md bg-gray-50 dark:bg-gray-700">
                 <div className="flex-shrink-0">
                   {getActionIcon(entry)}
@@ -259,11 +266,13 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
                     <UserIcon className="h-3 w-3" />
                     <span>{getUserDisplayName(entry)}</span>
                     <ClockIcon className="h-3 w-3 ml-2" />
-                    <span>{formatTime(entry.occurred_at)}</span>
+                    <span title={entryTime.title}>
+                      {entryTime.display}
+                    </span>
                   </div>
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         )}
         

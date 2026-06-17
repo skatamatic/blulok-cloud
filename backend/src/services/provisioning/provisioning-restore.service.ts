@@ -83,12 +83,14 @@ export class ProvisioningRestoreService {
     gatewayId: string,
     facilityId: string,
     userId: string,
+    options?: { backupOwnerGatewayId?: string; requireRecoveryPushTarget?: boolean },
   ): Promise<GatewayProvisioningRestore> {
     const backup = await this.backupModel.findById(backupId);
     if (!backup) {
       throw new Error('Backup not found');
     }
-    if (backup.gateway_id !== gatewayId) {
+    const expectedBackupGatewayId = options?.backupOwnerGatewayId ?? gatewayId;
+    if (backup.gateway_id !== expectedBackupGatewayId) {
       throw new Error('Backup does not belong to this gateway');
     }
     if (backup.facility_id !== facilityId) {
@@ -100,9 +102,22 @@ export class ProvisioningRestoreService {
       throw new Error('Gateway not found');
     }
 
-    const connStatus = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+    const connStatus = options?.requireRecoveryPushTarget
+      ? { connected: (() => {
+        try {
+          const transport = GatewayEventsService.getInstance().getTransport() as {
+            isRecoveryPushTargetOnline?: (id: string) => boolean;
+          };
+          return transport.isRecoveryPushTargetOnline?.(facilityId) ?? false;
+        } catch {
+          return false;
+        }
+      })() }
+      : GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
     if (!connStatus.connected) {
-      throw new Error('Gateway is offline — cannot initiate restore');
+      throw new Error(options?.requireRecoveryPushTarget
+        ? 'Swap candidate gateway is offline — cannot initiate restore'
+        : 'Gateway is offline — cannot initiate restore');
     }
 
     const nonce = uuidv4();
@@ -371,8 +386,30 @@ export class ProvisioningRestoreService {
     return reject(`unknown status '${gwStatus}'`, restore.id);
   }
 
-  static async handleFacilityDisconnect(facilityId: string): Promise<void> {
-    GatewayChunkPushEngine.pausePushOnDisconnect(facilityId);
+  static async handleFacilityDisconnect(
+    facilityId: string,
+    options?: { disconnectedSessionRole?: 'active' | 'swap_candidate' },
+  ): Promise<void> {
+    let excludePushIds: Set<string> | undefined;
+    let onlyPushIds: Set<string> | undefined;
+    try {
+      const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+      const linked = await GatewayRecoveryService.getRecoveryLinkedPushIds(facilityId);
+      if (linked) {
+        const ids = [linked.restoreId, linked.inventoryRecoveryId].filter(Boolean) as string[];
+        if (ids.length > 0) {
+          if (options?.disconnectedSessionRole === 'active' && GatewayRecoveryService.isRecoveryPushTargetOnline(facilityId)) {
+            excludePushIds = new Set(ids);
+          } else if (options?.disconnectedSessionRole === 'swap_candidate') {
+            onlyPushIds = new Set(ids);
+          }
+        }
+      }
+    } catch {
+      /* ignore in tests */
+    }
+
+    GatewayChunkPushEngine.pausePushOnDisconnect(facilityId, { excludePushIds, onlyPushIds });
 
     const activeRestores = await this.restoreModel.findActiveByFacility(facilityId);
     for (const restore of activeRestores) {

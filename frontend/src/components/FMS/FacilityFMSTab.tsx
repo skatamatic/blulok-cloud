@@ -32,6 +32,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { getFmsSyncAppliedColumnText } from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 interface FacilityFMSTabProps {
   facilityId: string;
@@ -451,7 +452,7 @@ export function FacilityFMSTab({
                         className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
                       >
                         <td className="px-6 py-4 text-sm text-gray-900 dark:text-white whitespace-nowrap">
-                          {new Date(log.started_at).toLocaleString()}
+                          {formatDateTime(log.started_at)}
                         </td>
                         <td className="px-6 py-4">
                           <span
@@ -514,7 +515,7 @@ export function FacilityFMSTab({
                         <span>Last sync</span>
                       </div>
                       <p className="text-sm font-medium text-gray-900 dark:text-white">
-                        {new Date(config.last_sync_at).toLocaleString()}
+                        {formatDateTime(config.last_sync_at)}
                       </p>
                       {config.last_sync_status && (
                         <span

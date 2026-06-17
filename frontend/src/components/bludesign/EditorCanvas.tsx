@@ -28,6 +28,7 @@ import { BuildingSkinType } from './core/types';
 import { getThemeManager } from './core/ThemeManager';
 import { LoadingOverlay } from './ui/LoadingOverlay';
 import { ProgressOverlay, ProgressState } from './ui/ProgressOverlay';
+import { formatDateTime } from '@/utils/datetime.utils';
 import { FloatingPanel } from './ui/FloatingPanel';
 import { DockRegion, type DockTabItem } from './ui/DockRegion';
 import {
@@ -2777,7 +2778,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                     Unsaved Work Found
                   </h3>
                   <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                    {draftTimestamp ? new Date(draftTimestamp).toLocaleString() : 'Previous session'}
+                    {draftTimestamp ? formatDateTime(new Date(draftTimestamp)) : 'Previous session'}
                   </p>
                 </div>
               </div>

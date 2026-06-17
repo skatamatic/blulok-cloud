@@ -1,6 +1,7 @@
 import {
   ACCESS_CODE_PUSH_OUTBOX_SCAN_MS,
 } from '@/constants/access-code-push-outbox.constants';
+import { DEVICE_DELETION_OUTBOX_SCAN_MS } from '@/constants/device-deletion-outbox.constants';
 import { AccessCodePushDeliveryError, AccessCodeService } from '@/services/access-code.service';
 import { DatabaseService } from '@/services/database.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
@@ -34,6 +35,7 @@ export class AccessCodeSchedulerService {
   private onlineFacilityIds = new Set<string>();
   private connectionChangeUnsubscribe?: () => void;
   private outboxScanCounter = 0;
+  private deviceDeletionOutboxScanCounter = 0;
 
   // Resolve DB lazily to avoid construction-time dependency on DB initialization order
   private get db() {
@@ -64,6 +66,11 @@ export class AccessCodeSchedulerService {
       if (event.connected) {
         void this.accessCodes.flushPendingPushForFacility(event.facilityId).catch((err) => {
           logger.warn(`Access code outbox flush on connect failed for facility=${event.facilityId}`, err);
+        });
+        void import('@/services/device-deletion-outbox.service').then(({ DeviceDeletionOutboxService }) =>
+          DeviceDeletionOutboxService.getInstance().flushPendingForFacility(event.facilityId),
+        ).catch((err) => {
+          logger.warn(`Device deletion outbox flush on connect failed for facility=${event.facilityId}`, err);
         });
         this.runSafe('Connection-triggered access code rotation failed (non-fatal):');
       }
@@ -264,6 +271,13 @@ export class AccessCodeSchedulerService {
     if (this.outboxScanCounter >= ACCESS_CODE_PUSH_OUTBOX_SCAN_MS) {
       this.outboxScanCounter = 0;
       await this.accessCodes.processDueOutboxPushes();
+    }
+
+    this.deviceDeletionOutboxScanCounter += this.CHECK_INTERVAL_MS;
+    if (this.deviceDeletionOutboxScanCounter >= DEVICE_DELETION_OUTBOX_SCAN_MS) {
+      this.deviceDeletionOutboxScanCounter = 0;
+      const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+      await DeviceDeletionOutboxService.getInstance().processDueOutboxPushes();
     }
 
     if (discoveredOnlineFacility) {

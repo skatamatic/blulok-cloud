@@ -3,7 +3,15 @@ import { UserRole } from '@/types/auth.types';
 import { AccessEventScopeService, AccessEventScope } from '@/services/access/access-event-scope.service';
 import { AuthService } from '@/services/auth.service';
 import { AccessLogFilters, AccessLogModel } from '@/models/access-log.model';
-import { DASHBOARD_ACTIVITY_TYPES, MAX_ACCESS_HISTORY_EXPORT } from '@/constants/access-history.constants';
+import {
+  ACCESS_HISTORY_ACTIVITY_TYPES,
+  buildAccessFailureSummary,
+  DASHBOARD_ACTIVITY_TYPES,
+  isGatewaySyncActivityDescription,
+  MAX_ACCESS_HISTORY_EXPORT,
+} from '@/constants/access-history.constants';
+import { parseQueryDateFrom, parseQueryDateTo, toIsoStringOrEpoch } from '@/utils/datetime.utils';
+import { mapLegacyAccessAction, mapLegacyAccessMethod } from '@/utils/access-history-remote.utils';
 
 export type QueryFilters = {
   facility_id?: string;
@@ -32,6 +40,7 @@ export type AccessHistoryRecord = {
   action: string;
   method: string;
   success: boolean;
+  status: 'success' | 'failed' | 'pending';
   denial_reason?: string;
   reason?: string;
   metadata?: Record<string, unknown>;
@@ -54,6 +63,14 @@ export class AccessHistoryReadService {
   private readonly legacyAccessLogModel = new AccessLogModel();
 
   static readonly DASHBOARD_ACTIVITY_TYPES = DASHBOARD_ACTIVITY_TYPES;
+  static readonly ACCESS_HISTORY_ACTIVITY_TYPES = ACCESS_HISTORY_ACTIVITY_TYPES;
+
+  /** Load a single access history row with presentation fields (for live WS updates). */
+  public async findAccessRecordById(id: string): Promise<AccessHistoryRecord | null> {
+    const rows = await this.activityLogModel.findWithContext({ id, limit: 1 });
+    if (rows.length === 0) return null;
+    return this.mapToAccessHistoryRecord(rows[0]);
+  }
 
   public async query(
     userId: string,
@@ -73,9 +90,7 @@ export class AccessHistoryReadService {
       return { logs: [], total: 0, limit: filters.limit || 50, offset: filters.offset || 0 };
     }
 
-    const dashboardActivityTypes = AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES;
-
-    const activityFilters = this.buildActivityFilters(filters, scope, dashboardActivityTypes);
+    const activityFilters = this.buildActivityFilters(filters, scope, ACCESS_HISTORY_ACTIVITY_TYPES);
 
     const rows = await this.activityLogModel.findWithContext(activityFilters);
 
@@ -93,8 +108,8 @@ export class AccessHistoryReadService {
         method: filters.method,
         success: filters.success,
         denial_reason: filters.denial_reason,
-        date_from: filters.date_from ? new Date(filters.date_from) : undefined,
-        date_to: filters.date_to ? new Date(filters.date_to) : undefined,
+        date_from: filters.date_from ? parseQueryDateFrom(filters.date_from) : undefined,
+        date_to: filters.date_to ? parseQueryDateTo(filters.date_to) : undefined,
         limit: Math.min(filters.limit || 50, 100),
         offset: Math.max(filters.offset || 0, 0),
         sort_by: filters.sort_by === 'created_at' ? 'occurred_at' : 'occurred_at',
@@ -113,7 +128,7 @@ export class AccessHistoryReadService {
         if (filters.unit_id && log.unit_id !== filters.unit_id) return false;
         if (filters.user_id && log.user_id !== filters.user_id) return false;
         if (filters.device_id && log.device_id !== filters.device_id) return false;
-        if (filters.action && log.action !== filters.action) return false;
+        if (filters.action && log.action !== this.normalizeActionFilter(filters.action)) return false;
         if (filters.method && log.method !== filters.method) return false;
         if (filters.denial_reason && log.denial_reason !== filters.denial_reason) return false;
         if (filters.success !== undefined && log.success !== filters.success) return false;
@@ -146,7 +161,7 @@ export class AccessHistoryReadService {
         };
       }
       return {
-        logs: scopedLegacyLogs,
+        logs: scopedLegacyLogs.map((log) => this.mapLegacyAccessLog(log)),
         total: scopedLegacyLogs.length,
         limit: filters.limit || 50,
         offset: filters.offset || 0,
@@ -156,7 +171,7 @@ export class AccessHistoryReadService {
     const countFilters = this.buildActivityFilters(
       { ...filters, limit: undefined, offset: undefined },
       scope,
-      dashboardActivityTypes,
+      ACCESS_HISTORY_ACTIVITY_TYPES,
     );
     const total = await this.activityLogModel.count(countFilters);
 
@@ -201,7 +216,7 @@ export class AccessHistoryReadService {
     facilityIds: string[] | undefined,
   ): Promise<AccessHistoryRecord | null> {
     const log = await this.activityLogModel.findById(id);
-    if (log && AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES.includes(log.activity_type)) {
+    if (log && AccessHistoryReadService.ACCESS_HISTORY_ACTIVITY_TYPES.includes(log.activity_type)) {
       const scope = await this.scopeService.buildScope(userId, role, facilityIds);
       const postScoped = this.applyPostQueryScope([log], scope);
       if (postScoped.length === 0) {
@@ -216,7 +231,8 @@ export class AccessHistoryReadService {
     }
 
     const legacy = await this.legacyAccessLogModel.findById(id);
-    return (legacy as unknown as AccessHistoryRecord) || null;
+    if (!legacy) return null;
+    return this.mapLegacyAccessLog(legacy as unknown as AccessHistoryRecord);
   }
 
   private buildActivityFilters(
@@ -230,8 +246,8 @@ export class AccessHistoryReadService {
       unit_id: filters.unit_id,
       device_id: filters.device_id,
       actor_id: filters.user_id ?? scope.ownUserId,
-      from_date: filters.date_from ? new Date(filters.date_from) : undefined,
-      to_date: filters.date_to ? new Date(filters.date_to) : undefined,
+      from_date: filters.date_from ? parseQueryDateFrom(filters.date_from) : undefined,
+      to_date: filters.date_to ? parseQueryDateTo(filters.date_to) : undefined,
       limit: Math.min(filters.limit || 50, 100),
       max_limit: undefined,
       offset: Math.max(filters.offset || 0, 0),
@@ -277,11 +293,33 @@ export class AccessHistoryReadService {
     const method = this.extractMethod(row, metadata);
     const denialReason = this.extractDenialReason(metadata);
 
-    if (filters.action && action !== filters.action) return false;
-    if (filters.method && method !== filters.method) return false;
+    if (filters.action && action !== this.normalizeActionFilter(filters.action)) return false;
+    if (filters.method) {
+      const normalizedFilter = filters.method === 'automatic' ? 'local_device' : filters.method;
+      if (method !== normalizedFilter) return false;
+    }
     if (filters.denial_reason && denialReason !== filters.denial_reason) return false;
-    if (filters.success !== undefined && row.result === 'success' !== filters.success) return false;
+    if (filters.success !== undefined) {
+      const { success } = this.deriveResultStatus(row.result);
+      if (success !== filters.success) return false;
+    }
     return true;
+  }
+
+  private deriveResultStatus(result: string | null | undefined): {
+    success: boolean;
+    status: 'success' | 'failed' | 'pending';
+  } {
+    if (result === 'success') {
+      return { success: true, status: 'success' };
+    }
+    if (result === 'failure') {
+      return { success: false, status: 'failed' };
+    }
+    if (result === 'pending') {
+      return { success: false, status: 'pending' };
+    }
+    return { success: false, status: 'failed' };
   }
 
   private mapToAccessHistoryRecord(row: ActivityLog | ActivityLogWithContext): AccessHistoryRecord {
@@ -299,12 +337,16 @@ export class AccessHistoryReadService {
       || (actor && typeof actor.name === 'string' ? actor.name : undefined);
     const userIdFromActor = actor && typeof actor.user_id === 'string' ? actor.user_id : undefined;
     const deviceType = this.inferDeviceType(metadata);
-    const createdAt = this.toIsoString(row.created_at);
-    const updatedAt = this.toIsoString(row.updated_at);
-    const occurredAt = this.toIsoString(row.occurred_at);
+    const createdAt = toIsoStringOrEpoch(row.created_at);
+    const updatedAt = toIsoStringOrEpoch(row.updated_at);
+    const occurredAt = toIsoStringOrEpoch(row.occurred_at);
 
     const ctx = row as ActivityLogWithContext;
     const deviceName = this.resolveDeviceName(ctx, deviceType);
+    const resolvedUserId = userIdFromActor || row.actor_id || undefined;
+    const resultStatus = this.deriveResultStatus(row.result);
+    const failureSummary = buildAccessFailureSummary(denialReason, reasonMessage);
+
     const presentationMetadata = this.buildPresentationMetadata(
       row,
       ctx,
@@ -312,7 +354,8 @@ export class AccessHistoryReadService {
       deviceType,
       deviceName,
       userName,
-      userIdFromActor || row.actor_id || undefined,
+      resolvedUserId,
+      failureSummary,
     );
 
     return {
@@ -321,10 +364,11 @@ export class AccessHistoryReadService {
       device_type: deviceType,
       facility_id: row.facility_id || undefined,
       unit_id: row.unit_id || undefined,
-      user_id: userIdFromActor || row.actor_id || undefined,
+      user_id: resolvedUserId,
       action,
       method,
-      success: row.result === 'success',
+      success: resultStatus.success,
+      status: resultStatus.status,
       denial_reason: denialReason,
       reason: reasonMessage,
       metadata: presentationMetadata,
@@ -349,6 +393,19 @@ export class AccessHistoryReadService {
     return deviceType === 'access_control' ? 'Access control device' : undefined;
   }
 
+  private normalizeActionFilter(action: string): string {
+    if (action === 'access_denied') return 'unlock_attempt';
+    return action;
+  }
+
+  private mapLegacyAccessLog(log: AccessHistoryRecord): AccessHistoryRecord {
+    return {
+      ...log,
+      action: mapLegacyAccessAction(log.action, log.success),
+      method: mapLegacyAccessMethod(log.method),
+    };
+  }
+
   private buildPresentationMetadata(
     row: ActivityLog,
     ctx: ActivityLogWithContext,
@@ -357,8 +414,53 @@ export class AccessHistoryReadService {
     deviceName: string | undefined,
     userName: string | undefined,
     userId: string | undefined,
+    failureSummary: string | undefined,
   ): Record<string, unknown> {
-    const presentation: Record<string, unknown> = { ...baseMetadata };
+    const presentation: Record<string, unknown> = {};
+
+    const method = baseMetadata.method;
+    if (typeof method === 'string') {
+      presentation.method = method === 'automatic' ? 'local_device' : method;
+    }
+    const denialReason = baseMetadata.denial_reason;
+    if (typeof denialReason === 'string') {
+      presentation.denial_reason = denialReason;
+    }
+    if (baseMetadata.initiated_remotely === true) {
+      presentation.initiated_remotely = true;
+    }
+    const gatewayId = baseMetadata.gateway_id;
+    if (typeof gatewayId === 'string') {
+      presentation.gateway_id = gatewayId;
+    }
+    const keypad = baseMetadata.keypad;
+    if (keypad && typeof keypad === 'object' && keypad !== null) {
+      presentation.keypad = keypad;
+    }
+    const initiatedBy = baseMetadata.initiated_by;
+    if (initiatedBy && typeof initiatedBy === 'object' && initiatedBy !== null) {
+      const ib = initiatedBy as Record<string, unknown>;
+      const initiatedId = typeof ib.id === 'string' ? ib.id : undefined;
+      const initiatedName = typeof ib.name === 'string' ? ib.name : undefined;
+      if (initiatedId && initiatedName) {
+        presentation.initiated_by = {
+          id: initiatedId,
+          name: initiatedName,
+          role: typeof ib.role === 'string' ? ib.role : undefined,
+          navigation_url: `/users?highlight=${initiatedId}`,
+        };
+      }
+    } else if (row.actor_type === 'user' && userId && userName && baseMetadata.initiated_remotely) {
+      presentation.initiated_by = {
+        id: userId,
+        name: userName,
+        navigation_url: `/users?highlight=${userId}`,
+      };
+    }
+
+    if (failureSummary) {
+      presentation.failure_summary = failureSummary;
+    }
 
     if (row.actor_type === 'user' && userId && userName) {
       presentation.user = {
@@ -402,11 +504,15 @@ export class AccessHistoryReadService {
       };
     }
 
-    const description = typeof row.description === 'string' && row.description.trim().length > 0
+    const rawDescription = typeof row.description === 'string' && row.description.trim().length > 0
       ? row.description
       : row.title;
-    if (typeof description === 'string' && description.trim().length > 0) {
-      presentation.description = description;
+    if (
+      typeof rawDescription === 'string'
+      && rawDescription.trim().length > 0
+      && !isGatewaySyncActivityDescription(rawDescription)
+    ) {
+      presentation.description = rawDescription;
     }
 
     return presentation;
@@ -417,25 +523,45 @@ export class AccessHistoryReadService {
   }
 
   private extractAction(row: ActivityLog, metadata: Record<string, unknown>): string {
-    if (row.activity_type === 'lock' || row.activity_type === 'locking') return 'lock';
-    if (row.activity_type === 'unlock' || row.activity_type === 'unlocking') return 'unlock';
+    if (row.activity_type === 'lock') return 'lock';
+    if (row.activity_type === 'unlock') return 'unlock';
+
     const action = metadata.action;
-    return typeof action === 'string' ? action : 'access_granted';
+    if (typeof action === 'string') {
+      if (action === 'access_denied') return 'unlock_attempt';
+      if (action === 'keypad_attempt' && row.result === 'failure') return 'unlock_attempt';
+      if (action === 'lock_attempt' || action === 'unlock_attempt') return action;
+      return action;
+    }
+
+    if (row.result === 'failure') {
+      return 'unlock_attempt';
+    }
+
+    return 'access_granted';
   }
 
   private extractMethod(row: ActivityLog, metadata: Record<string, unknown>): string {
-    if (
-      row.activity_type === 'lock' ||
-      row.activity_type === 'unlock' ||
-      row.activity_type === 'locking' ||
-      row.activity_type === 'unlocking'
-    ) {
-      if (row.actor_type === 'gateway') return 'automatic';
-      if (row.actor_type === 'user') return 'app';
-      return 'automatic';
+    if (row.activity_type === 'lock' || row.activity_type === 'unlock') {
+      const storedMethod = metadata.method;
+      if (storedMethod === 'remote_gateway' || storedMethod === 'admin_remote') {
+        return String(storedMethod);
+      }
+      if (metadata.initiated_remotely === true) {
+        return storedMethod === 'admin_remote' ? 'admin_remote' : 'remote_gateway';
+      }
+      if (row.actor_type === 'user') {
+        return storedMethod === 'admin_remote' ? 'admin_remote' : 'remote_gateway';
+      }
+      return 'local_device';
     }
+
     const method = metadata.method;
-    return typeof method === 'string' ? method : 'app';
+    if (typeof method === 'string') {
+      if (method === 'automatic') return 'local_device';
+      return method;
+    }
+    return 'app';
   }
 
   private extractDenialReason(metadata: Record<string, unknown>): string | undefined {
@@ -448,16 +574,4 @@ export class AccessHistoryReadService {
     return type === 'access_control' ? 'access_control' : 'blulok';
   }
 
-  private toIsoString(value: Date | string | null | undefined): string {
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-    if (typeof value === 'string' || typeof value === 'number') {
-      const parsed = new Date(value);
-      if (!Number.isNaN(parsed.getTime())) {
-        return parsed.toISOString();
-      }
-    }
-    return new Date(0).toISOString();
-  }
 }

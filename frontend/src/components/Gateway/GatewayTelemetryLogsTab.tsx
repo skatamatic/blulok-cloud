@@ -30,6 +30,7 @@ import {
   type TelemetryLogFilterState,
 } from '@/utils/gateway-telemetry-log-filters.utils';
 import { filterRoutineGatewayWsReconnectLogs } from '@/utils/gateway-telemetry-reconnect-filter.utils';
+import { formatDateTimeParts } from '@/utils/datetime.utils';
 
 const EMPTY_FILTERS: TelemetryLogFilterState = {
   from: '',
@@ -47,10 +48,7 @@ const SYSTEM_HEADER_LABELS: Record<string, string> = {
 };
 
 function formatLogTimestamp(when: Date): { date: string; time: string } {
-  return {
-    date: when.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' }),
-    time: when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
-  };
+  return formatDateTimeParts(when) ?? { date: '—', time: '—' };
 }
 
 function TelemetryLogRow({ log }: { log: GatewayTelemetryLogRecord }) {

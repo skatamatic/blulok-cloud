@@ -671,7 +671,7 @@ describe('Access History Routes', () => {
         .expect(200);
 
       expect(response.headers['content-type']).toContain('text/csv');
-      expect(response.text).toContain('ID,User ID,Facility ID');
+      expect(response.text).toContain('User,Facility,Unit,Device');
     });
 
     it('should export CSV data for ADMIN', async () => {

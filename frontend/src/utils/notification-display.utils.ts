@@ -1,4 +1,7 @@
 import type { UserNotificationApi } from '@/types/notifications.types';
+import { formatNotificationTimestamp } from '@/utils/datetime.utils';
+
+export { formatNotificationTimestamp };
 
 /** Types that always imply follow-up (aligned with product rules; tune in one place). */
 const ACTION_REQUIRED_TYPES = new Set([
@@ -188,22 +191,40 @@ export interface NotificationUrgencyBadge {
   className: string;
 }
 
-function readCardVisual(tone: WidgetNotificationTone): NotificationCardVisual {
-  const accentByTone: Record<WidgetNotificationTone, string> = {
-    error: 'bg-red-300/70 dark:bg-red-800/50',
-    warning: 'bg-amber-300/70 dark:bg-amber-800/50',
-    success: 'bg-emerald-300/60 dark:bg-emerald-800/40',
-    info: 'bg-gray-300/70 dark:bg-gray-600/50',
-  };
+const toneBorderBySeverity: Record<WidgetNotificationTone, string> = {
+  error: 'border-red-300/90 dark:border-red-700/70',
+  warning: 'border-amber-300/90 dark:border-amber-700/60',
+  success: 'border-emerald-200 dark:border-emerald-800/50',
+  info: 'border-[#147FD4]/25 dark:border-[#147FD4]/35',
+};
 
+const toneAccentBarBySeverity: Record<WidgetNotificationTone, string> = {
+  error: 'bg-red-500 dark:bg-red-400',
+  warning: 'bg-amber-500 dark:bg-amber-400',
+  success: 'bg-emerald-500 dark:bg-emerald-400',
+  info: 'bg-[#147FD4]',
+};
+
+const toneExpandedRingBySeverity: Record<WidgetNotificationTone, string> = {
+  error: 'ring-2 ring-red-300/50 dark:ring-red-700/40 border-red-300/80 dark:border-red-700/60',
+  warning:
+    'ring-2 ring-amber-300/45 dark:ring-amber-700/35 border-amber-300/80 dark:border-amber-700/55',
+  success: 'ring-1 ring-emerald-300/40 dark:ring-emerald-700/35',
+  info: 'ring-1 ring-[#147FD4]/25 border-[#147FD4]/30',
+};
+
+const readCardNeutralSurface =
+  'bg-white dark:bg-gray-800/90';
+
+function readCardVisual(tone: WidgetNotificationTone): NotificationCardVisual {
   return {
-    card: 'border-gray-200 dark:border-gray-700/80 bg-white dark:bg-gray-800/90',
-    accentBar: accentByTone[tone],
+    card: `${toneBorderBySeverity[tone]} ${readCardNeutralSurface}`,
+    accentBar: toneAccentBarBySeverity[tone],
     iconShell: 'bg-gray-100 text-gray-500 dark:bg-gray-700/80 dark:text-gray-400',
     title: 'text-gray-700 dark:text-gray-200',
     message: 'text-gray-500 dark:text-gray-400',
     timestamp: 'text-gray-400 dark:text-gray-500',
-    expandedRing: 'ring-1 ring-gray-200/80 dark:ring-gray-600/60',
+    expandedRing: toneExpandedRingBySeverity[tone],
     showPulse: false,
   };
 }
@@ -212,47 +233,47 @@ function unreadCardVisual(tone: WidgetNotificationTone): NotificationCardVisual 
   switch (tone) {
     case 'error':
       return {
-        card: 'border-red-300/90 dark:border-red-700/70 bg-gradient-to-r from-red-50 via-red-50/80 to-white dark:from-red-950/40 dark:via-red-950/20 dark:to-gray-900/40 shadow-sm shadow-red-100/80 dark:shadow-red-950/30',
-        accentBar: 'bg-red-500 dark:bg-red-400',
+        card: `${toneBorderBySeverity.error} bg-gradient-to-r from-red-50 via-red-50/80 to-white dark:from-red-950/40 dark:via-red-950/20 dark:to-gray-900/40 shadow-sm shadow-red-100/80 dark:shadow-red-950/30`,
+        accentBar: toneAccentBarBySeverity.error,
         iconShell: 'bg-red-100 text-red-600 ring-2 ring-red-200/80 dark:bg-red-900/50 dark:text-red-300 dark:ring-red-800/60',
         title: 'text-red-950 dark:text-red-50',
         message: 'text-red-900/80 dark:text-red-100/80',
         timestamp: 'text-red-700/70 dark:text-red-300/70',
-        expandedRing: 'ring-2 ring-red-300/50 dark:ring-red-700/40 border-red-300/80 dark:border-red-700/60',
+        expandedRing: toneExpandedRingBySeverity.error,
         showPulse: true,
       };
     case 'warning':
       return {
-        card: 'border-amber-300/90 dark:border-amber-700/60 bg-gradient-to-r from-amber-50 via-amber-50/70 to-white dark:from-amber-950/30 dark:via-amber-950/15 dark:to-gray-900/40 shadow-sm shadow-amber-100/70 dark:shadow-amber-950/20',
-        accentBar: 'bg-amber-500 dark:bg-amber-400',
+        card: `${toneBorderBySeverity.warning} bg-gradient-to-r from-amber-50 via-amber-50/70 to-white dark:from-amber-950/30 dark:via-amber-950/15 dark:to-gray-900/40 shadow-sm shadow-amber-100/70 dark:shadow-amber-950/20`,
+        accentBar: toneAccentBarBySeverity.warning,
         iconShell: 'bg-amber-100 text-amber-700 ring-2 ring-amber-200/80 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800/50',
         title: 'text-amber-950 dark:text-amber-50',
         message: 'text-amber-900/80 dark:text-amber-100/75',
         timestamp: 'text-amber-800/70 dark:text-amber-300/70',
-        expandedRing: 'ring-2 ring-amber-300/45 dark:ring-amber-700/35 border-amber-300/80 dark:border-amber-700/55',
+        expandedRing: toneExpandedRingBySeverity.warning,
         showPulse: false,
       };
     case 'success':
       return {
-        card: 'border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/70 dark:bg-emerald-950/20',
-        accentBar: 'bg-emerald-500 dark:bg-emerald-400',
+        card: `${toneBorderBySeverity.success} bg-emerald-50/70 dark:bg-emerald-950/20`,
+        accentBar: toneAccentBarBySeverity.success,
         iconShell: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/35 dark:text-emerald-300',
         title: 'text-emerald-950 dark:text-emerald-50',
         message: 'text-emerald-900/75 dark:text-emerald-100/70',
         timestamp: 'text-emerald-700/70 dark:text-emerald-300/65',
-        expandedRing: 'ring-1 ring-emerald-300/40 dark:ring-emerald-700/35',
+        expandedRing: toneExpandedRingBySeverity.success,
         showPulse: false,
       };
     case 'info':
     default:
       return {
-        card: 'border-[#147FD4]/25 dark:border-[#147FD4]/35 bg-gradient-to-r from-[#147FD4]/8 via-[#147FD4]/5 to-white dark:from-[#147FD4]/15 dark:via-[#147FD4]/8 dark:to-gray-900/30',
-        accentBar: 'bg-[#147FD4]',
+        card: `${toneBorderBySeverity.info} bg-gradient-to-r from-[#147FD4]/8 via-[#147FD4]/5 to-white dark:from-[#147FD4]/15 dark:via-[#147FD4]/8 dark:to-gray-900/30`,
+        accentBar: toneAccentBarBySeverity.info,
         iconShell: 'bg-[#147FD4]/10 text-[#147FD4] dark:bg-[#147FD4]/20 dark:text-[#5eb3f0]',
         title: 'text-gray-900 dark:text-white',
         message: 'text-gray-600 dark:text-gray-300',
         timestamp: 'text-gray-500 dark:text-gray-400',
-        expandedRing: 'ring-1 ring-[#147FD4]/25 border-[#147FD4]/30',
+        expandedRing: toneExpandedRingBySeverity.info,
         showPulse: false,
       };
   }
@@ -272,10 +293,6 @@ export function getNotificationUrgencyBadge(
     'tone' | 'priority' | 'isRead' | 'actionRequired'
   >,
 ): NotificationUrgencyBadge | null {
-  if (notification.isRead) {
-    return null;
-  }
-
   if (notification.tone === 'error') {
     const critical =
       notification.priority === 'urgent' || notification.actionRequired;
@@ -304,6 +321,7 @@ export function getNotificationUrgencyBadge(
 
   return null;
 }
+
 
 export function mapApiNotificationToDashboardView(
   n: UserNotificationApi

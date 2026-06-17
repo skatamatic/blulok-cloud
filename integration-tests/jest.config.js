@@ -18,6 +18,10 @@ module.exports = {
   ],
   testTimeout: 30000, // 30 seconds for integration tests
   moduleNameMapper: {
+    '^@/types/gateway\\.types$': '<rootDir>/../frontend/src/types/gateway.types.ts',
+    '^@/types/facility\\.types$': '<rootDir>/../frontend/src/types/facility.types.ts',
+    '^@/types/dashboard\\.types$': '<rootDir>/../frontend/src/types/dashboard.types.ts',
+    '^@/types/notifications\\.types$': '<rootDir>/../frontend/src/types/notifications.types.ts',
     '^@/(.*)$': '<rootDir>/../backend/src/$1',
     '^@frontend/(.*)$': '<rootDir>/../frontend/src/$1',
   },

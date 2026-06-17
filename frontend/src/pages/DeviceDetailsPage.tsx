@@ -45,6 +45,7 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 interface DeviceDetails {
   id: string;
@@ -468,7 +469,7 @@ export default function DeviceDetailsPage() {
     const isExpired = date < now;
     return (
       <span className={isExpired ? 'text-red-600 dark:text-red-400' : ''}>
-        {date.toLocaleString()}
+        {formatDateTime(dateString)}
         {isExpired && ' (Expired)'}
       </span>
     );
@@ -492,8 +493,6 @@ export default function DeviceDetailsPage() {
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isDevAdmin = authState.user?.role === UserRole.DEV_ADMIN;
-  const isGlobalAdmin =
-    authState.user?.role === UserRole.ADMIN || authState.user?.role === UserRole.DEV_ADMIN;
 
   if (loading) {
     return <DetailsPageLoading />;
@@ -683,17 +682,19 @@ export default function DeviceDetailsPage() {
                 )}
               </div>
             )}
-            {deviceCategory === 'blulok' && isGlobalAdmin && (
+            {canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') && (
               <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
                 <p className="text-sm font-medium text-red-900 dark:text-red-200">Remove from facility (cloud inventory)</p>
                 <p className="text-sm text-red-800/90 dark:text-red-100/90">
-                  Deletes this lock&apos;s cloud record for the current gateway: unit link (if any), device group
-                  memberships, and denylist entries. Route passes already issued expire on schedule. If the hardware
-                  still reports on the gateway, it can reappear after the next device sync.
-                  {device.unit_id ? (
+                  Deletes this device&apos;s cloud record for the current gateway, including group memberships
+                  {deviceCategory === 'blulok' ? ', unit link (if any), and denylist entries' : ''}. Route passes
+                  already issued expire on schedule. The gateway is notified to stop reporting this device; if offline,
+                  the tombstone command is delivered on reconnect.
+                  {deviceCategory === 'blulok' && device.unit_id ? (
                     <>
                       {' '}
-                      This lock is still assigned to a unit — consider{' '}
+                      This lock is still assigned to unit{' '}
+                      <span className="font-medium">{device.unit_number ?? ''}</span> — consider{' '}
                       <span className="font-medium">Unassign from unit</span> first if it should remain in this facility.
                     </>
                   ) : null}{' '}
@@ -717,7 +718,9 @@ export default function DeviceDetailsPage() {
                   onClick={() => setShowRemoveInventoryConfirm(true)}
                   className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
                 >
-                  Remove lock from cloud inventory…
+                  {deviceCategory === 'blulok'
+                    ? 'Remove lock from cloud inventory…'
+                    : 'Remove access device from cloud inventory…'}
                 </button>
               </div>
             )}
@@ -728,7 +731,7 @@ export default function DeviceDetailsPage() {
                   <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 px-3 py-2">
                     <div className="font-mono tracking-widest text-base text-gray-900 dark:text-white">{effectiveAccessCode.code}</div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                      Source: {effectiveAccessCode.source_scope_name} • Valid until {new Date(effectiveAccessCode.valid_until).toLocaleString()}
+                      Source: {effectiveAccessCode.source_scope_name} • Valid until {formatDateTime(effectiveAccessCode.valid_until)}
                     </div>
                   </div>
                 ) : (
@@ -971,7 +974,7 @@ export default function DeviceDetailsPage() {
                   <div>
                     <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Activity</dt>
                     <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-                      {new Date(device.last_activity).toLocaleString()}
+                      {formatDateTime(device.last_activity)}
                     </dd>
                   </div>
                 )}
@@ -1187,7 +1190,7 @@ export default function DeviceDetailsPage() {
                             )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                            {new Date(entry.created_at).toLocaleString()}
+                            {formatDateTime(entry.created_at)}
                           </td>
                         </tr>
                       );
@@ -1250,13 +1253,22 @@ export default function DeviceDetailsPage() {
             const facilityId = device.facility_id;
             setRemovingFromInventory(true);
             try {
-              await apiService.removeBluLokDeviceFromCloudInventory(device.id);
-              addToast({ type: 'success', title: 'Lock removed from cloud inventory' });
+              if (deviceCategory === 'access_control') {
+                await apiService.removeAccessControlDeviceFromCloudInventory(device.id);
+                addToast({ type: 'success', title: 'Access device removed from cloud inventory' });
+              } else {
+                await apiService.removeBluLokDeviceFromCloudInventory(device.id);
+                addToast({ type: 'success', title: 'Lock removed from cloud inventory' });
+              }
               setShowRemoveInventoryConfirm(false);
               navigate(`/facilities/${facilityId}?tab=devices`);
             } catch (err: unknown) {
               const apiErr = err as { response?: { data?: { message?: string }; status?: number } };
-              const message = apiErr?.response?.data?.message || 'Failed to remove lock from inventory';
+              const message =
+                apiErr?.response?.data?.message
+                || (deviceCategory === 'access_control'
+                  ? 'Failed to remove access device from inventory'
+                  : 'Failed to remove lock from inventory');
               addToast({ type: 'error', title: message });
               if (apiErr?.response?.status === 404) {
                 setShowRemoveInventoryConfirm(false);
@@ -1269,11 +1281,17 @@ export default function DeviceDetailsPage() {
             }
           })();
         }}
-        title="Remove lock from cloud inventory?"
+        title={
+          deviceCategory === 'access_control'
+            ? 'Remove access device from cloud inventory?'
+            : 'Remove lock from cloud inventory?'
+        }
         message={
-          device.unit_id
-            ? `This permanently deletes the lock row (including its assignment to unit ${device.unit_number ?? ''}), group memberships, and denylist entries. Route passes already issued expire on schedule. Continue only if you are recommissioning or correcting a wrong facility attachment.`
-            : 'This permanently deletes the lock row, group memberships, and denylist entries in the database. Route passes already issued expire on schedule. Continue only if you are recommissioning or correcting a wrong facility attachment.'
+          deviceCategory === 'access_control'
+            ? 'This permanently deletes the access control row and group memberships. The gateway will be notified to stop reporting this device; if offline, the tombstone is delivered on reconnect.'
+            : device.unit_id
+              ? `This permanently deletes the lock row (including its assignment to unit ${device.unit_number ?? ''}), group memberships, and denylist entries. The gateway will be notified to stop reporting this device; if offline, the tombstone is delivered on reconnect. Route passes already issued expire on schedule.`
+              : 'This permanently deletes the lock row, group memberships, and denylist entries. The gateway will be notified to stop reporting this device; if offline, the tombstone is delivered on reconnect. Route passes already issued expire on schedule.'
         }
         confirmText="Remove from inventory"
         variant="danger"

@@ -4,6 +4,7 @@ import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { RoutePassIssuanceModel } from '@/models/route-pass-issuance.model';
 import { logger } from '@/utils/logger';
+import { parseQueryDateFrom, parseQueryDateTo } from '@/utils/datetime.utils';
 
 const router = Router();
 
@@ -30,8 +31,12 @@ router.get('/users/:userId', authenticateToken, requireDevAdmin, asyncHandler(as
     // Parse query parameters
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
     const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
-    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
-    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+    const startDate = req.query.startDate
+      ? parseQueryDateFrom(req.query.startDate as string)
+      : undefined;
+    const endDate = req.query.endDate
+      ? parseQueryDateTo(req.query.endDate as string)
+      : undefined;
 
     // Validate pagination
     if (limit < 1 || limit > 100) {

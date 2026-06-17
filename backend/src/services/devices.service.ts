@@ -6,14 +6,22 @@ import { DeviceEventService } from './device-event.service';
 import { DatabaseService } from './database.service';
 import { logger } from '@/utils/logger';
 import type { Knex } from 'knex';
-
 export type BluLokInventoryDeleteSource = 'admin_api' | 'gateway_sync';
+export type AccessControlInventoryDeleteSource = 'admin_api' | 'gateway_sync';
 
 export interface BluLokInventoryDeleteResult {
   gatewayId: string;
   facilityId: string | null;
   hadUnit: boolean;
   unitId: string | null;
+  deviceSerial?: string;
+}
+
+export interface AccessControlInventoryDeleteResult {
+  gatewayId: string;
+  facilityId: string | null;
+  accessId: string;
+  relayChannel: number;
 }
 
 /**
@@ -253,8 +261,23 @@ export class DevicesService {
         hadUnit,
         unitId,
         shouldPushAccessCodes,
+        deviceSerial: String(device.device_serial),
       };
     });
+
+    if (options.source !== 'gateway_sync' && result.facilityId && result.deviceSerial) {
+      try {
+        const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+        await DeviceDeletionOutboxService.getInstance().enqueueDeletion({
+          facilityId: result.facilityId,
+          gatewayId: result.gatewayId,
+          deviceKind: 'blulok',
+          lockId: result.deviceSerial,
+        });
+      } catch (err) {
+        logger.warn('Failed to enqueue DEVICE_DELETED tombstone for BluLok device:', err);
+      }
+    }
 
     if (result.hadUnit && result.unitId && result.facilityId) {
       this.eventService.emitDeviceUnassigned({
@@ -293,6 +316,112 @@ export class DevicesService {
       facilityId: result.facilityId,
       hadUnit: result.hadUnit,
       unitId: result.unitId,
+      deviceSerial: result.deviceSerial,
+    };
+  }
+
+  /**
+   * Permanently remove an access control device row from cloud inventory (admin HTTP DELETE).
+   */
+  async removeAccessControlDeviceFromCloudInventory(
+    deviceId: string,
+    options: { performedBy: string },
+  ): Promise<AccessControlInventoryDeleteResult> {
+    return this.deleteAccessControlFromInventory(deviceId, {
+      performedBy: options.performedBy,
+      source: 'admin_api',
+    });
+  }
+
+  /**
+   * Delete an access control cloud inventory row and related memberships.
+   * Used by admin HTTP DELETE and gateway inventory/sync removal paths.
+   */
+  async deleteAccessControlFromInventory(
+    deviceId: string,
+    options: {
+      performedBy?: string;
+      source: AccessControlInventoryDeleteSource;
+    },
+  ): Promise<AccessControlInventoryDeleteResult> {
+    const knex = DatabaseService.getInstance().connection;
+
+    const result = await knex.transaction(async (trx) => {
+      const device = await trx('access_control_devices').where('id', deviceId).first();
+      if (!device) {
+        throw new Error('Device not found');
+      }
+
+      const gateway = await trx('gateways').where('id', device.gateway_id).first();
+      const facilityId: string | null = gateway?.facility_id ?? null;
+      const accessId = String(device.device_serial);
+      const relayChannel = Number(device.relay_channel ?? 1);
+
+      const shouldPushAccessCodes = await trx('device_group_members as m')
+        .join('device_groups as g', 'g.id', 'm.group_id')
+        .where('g.group_type', 'access_code')
+        .andWhere('m.device_id', deviceId)
+        .andWhere('m.device_type', 'access_control')
+        .first()
+        .then(Boolean);
+
+      await trx('device_group_members')
+        .where({ device_id: deviceId, device_type: 'access_control' })
+        .del();
+
+      const deleted = await trx('access_control_devices').where('id', deviceId).del();
+      if (!deleted) {
+        throw new Error('Device not found');
+      }
+
+      return {
+        gatewayId: String(device.gateway_id),
+        facilityId,
+        accessId,
+        relayChannel,
+        shouldPushAccessCodes,
+      };
+    });
+
+    this.eventService.emitDeviceRemoved({
+      deviceId,
+      deviceType: 'access_control',
+      gatewayId: result.gatewayId,
+    });
+
+    if (result.shouldPushAccessCodes && result.facilityId) {
+      try {
+        const { AccessCodeService } = await import('@/services/access-code.service');
+        await AccessCodeService.getInstance().pushCodesToGateway(result.facilityId);
+      } catch (err) {
+        logger.warn('Failed to push access codes after access control inventory removal:', err);
+      }
+    }
+
+    if (options.source !== 'gateway_sync' && result.facilityId) {
+      try {
+        const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+        await DeviceDeletionOutboxService.getInstance().enqueueDeletion({
+          facilityId: result.facilityId,
+          gatewayId: result.gatewayId,
+          deviceKind: 'access_control',
+          accessId: result.accessId,
+          relayChannel: result.relayChannel,
+        });
+      } catch (err) {
+        logger.warn('Failed to enqueue DEVICE_DELETED tombstone for access control device:', err);
+      }
+    }
+
+    logger.info(
+      `Access control device ${deviceId} removed from cloud inventory (source=${options.source}, by=${options.performedBy ?? 'system'}, facility=${result.facilityId ?? 'none'})`,
+    );
+
+    return {
+      gatewayId: result.gatewayId,
+      facilityId: result.facilityId,
+      accessId: result.accessId,
+      relayChannel: result.relayChannel,
     };
   }
 
@@ -314,6 +443,37 @@ export class DevicesService {
 
     const row = await query.first();
     return Boolean(row);
+  }
+
+  /** Cancel a pending deletion tombstone when a BluLok device is (re-)added to inventory. */
+  async cancelDeletionTombstoneForBlulok(facilityId: string, lockId: string): Promise<void> {
+    try {
+      const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+      await DeviceDeletionOutboxService.getInstance().cancelForBlulok(facilityId, lockId);
+    } catch (err) {
+      logger.warn(`Failed to cancel DEVICE_DELETED tombstone for BluLok ${lockId}:`, err);
+    }
+  }
+
+  /** Cancel a pending deletion tombstone when an access control device is (re-)added. */
+  async cancelDeletionTombstoneForAccessControl(
+    facilityId: string,
+    accessId: string,
+    relayChannel: number,
+  ): Promise<void> {
+    try {
+      const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+      await DeviceDeletionOutboxService.getInstance().cancelForAccessControl(
+        facilityId,
+        accessId,
+        relayChannel,
+      );
+    } catch (err) {
+      logger.warn(
+        `Failed to cancel DEVICE_DELETED tombstone for access control ${accessId}:${relayChannel}:`,
+        err,
+      );
+    }
   }
 
   /**
@@ -350,6 +510,43 @@ export class DevicesService {
       return false;
     } catch (error: unknown) {
       logger.error('Error checking user access to device:', error);
+      return false;
+    }
+  }
+
+  async hasUserAccessToAccessControlDevice(
+    deviceId: string,
+    userId: string,
+    userRole: UserRole,
+  ): Promise<boolean> {
+    try {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+        return true;
+      }
+
+      if (userRole === UserRole.FACILITY_ADMIN) {
+        const knex = DatabaseService.getInstance().connection;
+        const foundDevice = await knex('access_control_devices').where('id', deviceId).first();
+        if (!foundDevice) {
+          return false;
+        }
+
+        const gateway = await knex('gateways').where('id', foundDevice.gateway_id).first();
+        if (!gateway?.facility_id) {
+          return false;
+        }
+
+        const userFacilities = await knex('user_facility_associations')
+          .where('user_id', userId)
+          .where('facility_id', gateway.facility_id)
+          .first();
+
+        return !!userFacilities;
+      }
+
+      return false;
+    } catch (error: unknown) {
+      logger.error('Error checking user access to access control device:', error);
       return false;
     }
   }

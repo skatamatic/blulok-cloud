@@ -13,7 +13,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { DASHBOARD_ACTIVITY_TYPES } from '@/constants/access-history.constants';
+import { HISTOGRAM_ACTIVITY_TYPES } from '@/constants/access-history.constants';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 
@@ -380,7 +380,7 @@ export class ActivityLogModel {
       .leftJoin('facilities', function (this: import('knex').Knex.JoinClause) {
         this.on('facilities.id', '=', knex.raw('COALESCE(activity_logs.facility_id, units.facility_id)'));
       })
-      .whereIn('activity_logs.activity_type', DASHBOARD_ACTIVITY_TYPES)
+      .whereIn('activity_logs.activity_type', HISTOGRAM_ACTIVITY_TYPES)
       .whereBetween('activity_logs.occurred_at', [options.startDate, options.endDate])
       .whereRaw('COALESCE(activity_logs.facility_id, units.facility_id) IS NOT NULL')
       .groupByRaw(

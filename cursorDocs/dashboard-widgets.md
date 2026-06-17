@@ -44,7 +44,7 @@
 - **Notifications widget**: loads up to 100 rows per page from REST with **`includeExpired: true`** (historical + expired alerts); default tab is **All**; WebSocket merges live updates. Not the same data as Activity Monitor.
 - **Hooks**: `useUnitsData(facilityId)` forwards **`facility_id`** to `GET /units` and `GET /units/unlocked`, and refreshes on **`device_status` / `units`** via `useLockDeviceRealtime`.
 - **General stats**: `useGeneralStatsData` passes optional **`facility_id`** to **`GET /dashboard/general-stats`** when a single facility is selected. WebSocket **`general_stats`** updates apply only for “all facilities”; when facility-scoped, **`device_status` / `units`** trigger debounced REST refetch.
-- **Histogram / activity widgets**: subscribe to **`activity`** (with `facility_id` when scoped) and debounce **`getActivityStats`** / access-history REST reloads.
+- **Histogram / activity widgets**: subscribe to **`activity`** (with `facility_id` when scoped) and debounce **`getActivityStats`** / access-history REST reloads. Histogram aggregates **access attempts and unlocks only** (lock events are excluded).
 
 ## Live WebSocket subscriptions (dashboard `/ws`)
 

@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../services/database.service';
+import { isDuplicateKeyError } from '@/utils/gateway-auto-register.utils';
 
 /**
  * Gateway Entity Interface
@@ -128,6 +129,114 @@ export class GatewayModel {
     const id = uuidv4();
     await knex('gateways').insert({ ...data, id });
     return (await this.findById(id)) as Gateway;
+  }
+
+  /**
+   * Insert a gateway row honoring a caller-supplied primary key (the device's
+   * self-generated GUID). Used by WebSocket auto-registration. `facility_id`
+   * may be null for an unbound swap candidate.
+   */
+  async createWithId(
+    id: string,
+    data: Partial<Omit<CreateGatewayData, 'facility_id'>> & { facility_id: string | null },
+  ): Promise<Gateway> {
+    const knex = this.db.connection;
+    const { metadata, configuration, ...rest } = data;
+    await knex('gateways').insert({
+      gateway_type: 'physical',
+      key_management_version: 'v2',
+      status: 'offline',
+      ...rest,
+      ...(metadata ? { metadata: JSON.stringify(metadata) } : {}),
+      ...(configuration ? { configuration: JSON.stringify(configuration) } : {}),
+      ...(data.status === 'online' ? { last_seen: new Date() } : {}),
+      id,
+    });
+    return (await this.findById(id)) as Gateway;
+  }
+
+  /**
+   * Idempotent insert of an unbound swap-candidate gateway row.
+   * Returns `created: true` only when a new row was inserted.
+   */
+  async createUnboundSwapCandidateIfAbsent(params: {
+    id: string;
+    name: string;
+    metadata?: Record<string, any>;
+  }): Promise<{ created: boolean; gateway: Gateway | null }> {
+    const existing = await this.findById(params.id);
+    if (existing) {
+      return { created: false, gateway: existing };
+    }
+
+    try {
+      const gateway = await this.createWithId(params.id, {
+        facility_id: null,
+        name: params.name,
+        status: 'online',
+        metadata: params.metadata,
+      });
+      return { created: true, gateway };
+    } catch (error) {
+      if (isDuplicateKeyError(error)) {
+        return { created: false, gateway: await this.findById(params.id) };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Atomically bind a gateway as the facility's bound gateway for first-time install,
+   * but only if the facility has no bound gateway yet. Inserts a new row when the GUID
+   * is unknown, or binds an existing unbound row. If another gateway won the race (a
+   * bound gateway already exists), returns `{ bound: false }` so the caller can fall
+   * back to parking the connection as a swap candidate.
+   */
+  async createOrBindAsFirstGateway(params: {
+    id: string;
+    facilityId: string;
+    name: string;
+    metadata?: Record<string, any>;
+  }): Promise<{ bound: boolean; created: boolean; gateway: Gateway | null }> {
+    const knex = this.db.connection;
+    return await knex.transaction(async (trx) => {
+      const existingBound = await trx('gateways')
+        .where('facility_id', params.facilityId)
+        .first();
+      if (existingBound) {
+        return { bound: false, created: false, gateway: null };
+      }
+
+      const existingRow = await trx('gateways').where('id', params.id).first();
+      if (existingRow && existingRow.facility_id && existingRow.facility_id !== params.facilityId) {
+        // Belongs to another facility — caller validates this earlier, guard anyway.
+        return { bound: false, created: false, gateway: null };
+      }
+
+      let created = false;
+      if (existingRow) {
+        await trx('gateways').where('id', params.id).update({
+          facility_id: params.facilityId,
+          status: 'online',
+          last_seen: new Date(),
+          updated_at: new Date(),
+        });
+      } else {
+        created = true;
+        await trx('gateways').insert({
+          id: params.id,
+          facility_id: params.facilityId,
+          name: params.name,
+          gateway_type: 'physical',
+          key_management_version: 'v2',
+          status: 'online',
+          last_seen: new Date(),
+          ...(params.metadata ? { metadata: JSON.stringify(params.metadata) } : {}),
+        });
+      }
+      const gateway = await trx('gateways').where('id', params.id).first();
+      return { bound: true, created, gateway: gateway || null };
+    });
   }
 
   async update(id: string, data: UpdateGatewayData): Promise<Gateway | null> {

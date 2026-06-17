@@ -16,6 +16,7 @@ import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
+import { formatRelativeTime, RELATIVE_LAST_SEEN_OPTS } from '@/utils/datetime.utils';
 
 interface LockStatusWidgetProps {
   currentSize: WidgetSize;
@@ -180,21 +181,6 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   });
 
   const layout = getWidgetLayoutProfile(currentSize);
-
-  const formatLastSeen = (dateString: string | undefined): string => {
-    if (!dateString) return 'Never';
-    
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-
-    if (diffMinutes < 1) return 'Just now';
-    if (diffMinutes < 60) return `${diffMinutes}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${Math.floor(diffHours / 24)}d ago`;
-  };
 
   const getBatteryColor = (level: number | undefined): string => {
     if (!level) return 'text-gray-500';
@@ -470,7 +456,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
                           {unit.is_online ? 'Online' : 'Offline'}
                         </span>
                         <span>•</span>
-                        <span>{formatLastSeen(unit.last_seen)}</span>
+                        <span>{formatRelativeTime(unit.last_seen, RELATIVE_LAST_SEEN_OPTS)}</span>
                       </div>
                     </div>
                   </div>

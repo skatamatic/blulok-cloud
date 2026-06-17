@@ -605,8 +605,8 @@ export class ThemeManager {
             gravel: { color: '#a8957a', metalness: 0.05, roughness: 0.95 },
           },
           isBuiltin: false,
-          createdAt: apiTheme.createdAt,
-          updatedAt: apiTheme.updatedAt,
+          createdAt: new Date(apiTheme.createdAt),
+          updatedAt: new Date(apiTheme.updatedAt),
         };
         
         this.themes.set(theme.id, theme);

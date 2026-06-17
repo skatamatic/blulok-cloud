@@ -496,6 +496,15 @@ router.post('/access-control', requireAdminOrFacilityAdmin, asyncHandler(async (
   try {
     const device = await deviceModel.createAccessControlDevice(sanitizedValue);
     try {
+      await DevicesService.getInstance().cancelDeletionTombstoneForAccessControl(
+        String(gateway.facility_id),
+        deviceSerial,
+        relayChannel,
+      );
+    } catch (cancelErr) {
+      logger.warn('Failed to cancel DEVICE_DELETED tombstone after access-control create', { cancelErr });
+    }
+    try {
       await AccessCodeService.getInstance().pushCodesToGateway(String(gateway.facility_id));
     } catch (pushError) {
       logger.warn('Failed to push access codes after access-control device creation', { pushError });
@@ -575,6 +584,15 @@ router.post('/blulok', requireAdminOrFacilityAdmin, asyncHandler(async (req: Aut
       device_settings: Object.keys(deviceSettings).length > 0 ? deviceSettings : undefined,
       metadata,
     });
+
+    try {
+      await DevicesService.getInstance().cancelDeletionTombstoneForBlulok(
+        String(gateway.facility_id),
+        normalizedSerial,
+      );
+    } catch (cancelErr) {
+      logger.warn('Failed to cancel DEVICE_DELETED tombstone after BluLok create', { cancelErr });
+    }
 
     res.status(201).json({ success: true, device });
   } catch (createError) {
@@ -712,6 +730,50 @@ router.put(
       throw err;
     }
   })
+);
+
+// DELETE /api/devices/access-control/:deviceId - Remove access control device from cloud inventory
+router.delete(
+  '/access-control/:deviceId',
+  requireAdminOrFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { deviceId } = req.params;
+
+    if (!deviceId) {
+      res.status(400).json({ success: false, message: 'deviceId is required' });
+      return;
+    }
+
+    try {
+      const devicesService = DevicesService.getInstance();
+      const hasAccess = await devicesService.hasUserAccessToAccessControlDevice(
+        deviceId,
+        user.userId,
+        user.role,
+      );
+      if (!hasAccess) {
+        res.status(403).json({ success: false, message: 'Access denied to this device' });
+        return;
+      }
+
+      const summary = await devicesService.removeAccessControlDeviceFromCloudInventory(deviceId, {
+        performedBy: user.userId,
+      });
+
+      res.status(200).json({
+        success: true,
+        message:
+          'Access control device removed from cloud inventory. The gateway has been notified to stop reporting this device; if offline, the tombstone command will be delivered on reconnect.',
+        removed: summary,
+      });
+    } catch (error: any) {
+      logger.error('Error removing access control device from inventory:', error);
+      const message = error?.message || 'Failed to remove device from inventory';
+      const status = /not found/i.test(message) ? 404 : 500;
+      res.status(status).json({ success: false, message });
+    }
+  }),
 );
 
 // PUT /api/devices/blulok/:id/metadata - Update BluLok metadata with propagation
@@ -866,7 +928,15 @@ router.put('/blulok/:id/lock', async (req: AuthenticatedRequest, res: Response):
     // enters a transitional state ('locking'/'unlocking') and we wait on gateway state updates.
     const { LockCommandService } = await import('@/services/lock-command.service');
     const lockCommandService = LockCommandService.getInstance();
-    const result = await lockCommandService.issueLockCommand(String(id), value.lock_status);
+    const result = await lockCommandService.issueLockCommand(
+      String(id),
+      value.lock_status,
+      {
+        userId: user.userId,
+        userName: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'User',
+        role: user.role,
+      },
+    );
 
     if (!result.success) {
       res.status(502).json({ success: false, message: result.message });
@@ -937,6 +1007,11 @@ router.put(
       const result = await lockCommandService.issueAccessControlLockCommand(
         String(id),
         value.lock_status as 'locked' | 'unlocked',
+        {
+          userId: user.userId,
+          userName: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'User',
+          role: user.role,
+        },
       );
 
       if (!result.success) {
@@ -1135,8 +1210,8 @@ router.post('/blulok/:deviceId/assign', requireAdminOrFacilityAdmin, asyncHandle
   }
 }));
 
-// DELETE /api/devices/blulok/:deviceId - Remove BluLok device from cloud inventory (admin / dev admin)
-router.delete('/blulok/:deviceId', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// DELETE /api/devices/blulok/:deviceId - Remove BluLok device from cloud inventory (admin / facility admin)
+router.delete('/blulok/:deviceId', requireAdminOrFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const { deviceId } = req.params;
 
@@ -1150,6 +1225,13 @@ router.delete('/blulok/:deviceId', requireAdmin, asyncHandler(async (req: Authen
 
   try {
     const devicesService = DevicesService.getInstance();
+
+    const hasAccess = await devicesService.hasUserAccessToDevice(deviceId, user.userId, user.role);
+    if (!hasAccess) {
+      res.status(403).json({ success: false, message: 'Access denied to this device' });
+      return;
+    }
+
     const summary = await devicesService.removeBluLokDeviceFromCloudInventory(deviceId, {
       performedBy: user.userId,
     });
@@ -1157,7 +1239,7 @@ router.delete('/blulok/:deviceId', requireAdmin, asyncHandler(async (req: Authen
     res.status(200).json({
       success: true,
       message:
-        'Lock removed from cloud inventory. If the hardware still reports on the gateway, it may reappear after sync. To attach the gateway to another facility, use Gateway reassignment on the facility page.',
+        'Lock removed from cloud inventory. The gateway has been notified to stop reporting this device; if offline, the tombstone command will be delivered on reconnect.',
       removed: summary,
     });
   } catch (error: any) {

@@ -7,6 +7,7 @@ import {
   Squares2X2Icon,
   TrashIcon,
 } from '@heroicons/react/24/outline';
+import { formatDate } from '@/utils/datetime.utils';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { SavedDashboardListItem } from '@/hooks/useSavedDashboards';
 
@@ -50,13 +51,7 @@ export function DashboardTemplateLibrary({
     if (ok) setEditingId(null);
   };
 
-  const formatUpdatedAt = (value: string) => {
-    try {
-      return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
-    } catch {
-      return value;
-    }
-  };
+  const formatUpdatedAt = (value: string) => formatDate(value, value);
 
   return (
     <section className="flex flex-col h-full">

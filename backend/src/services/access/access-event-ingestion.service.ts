@@ -7,6 +7,7 @@ import {
   AccessEventPayload,
   AccessEventDenialReason,
 } from '@/services/access/access-event.types';
+import { DENIAL_REASON_MESSAGES } from '@/constants/access-history.constants';
 
 type IngestContext = {
   facilityId: string;
@@ -15,18 +16,13 @@ type IngestContext = {
 
 const REDACTED = '***REDACTED***';
 
-const denialReasonToResultMessage: Record<AccessEventDenialReason, string> = {
-  out_of_schedule: 'Access denied: out of schedule window',
-  route_pass_expired: 'Access denied: route pass expired',
-  route_pass_invalid_signature: 'Access denied: invalid route pass signature',
-  route_pass_wrong_lock: 'Access denied: route pass not valid for lock',
-  internal_error: 'Access denied: internal processing error',
-  denylist_blocked: 'Access denied: actor/device on denylist',
-  insufficient_permissions: 'Access denied: insufficient permissions',
-  invalid_credential: 'Access denied: invalid credential',
-  unknown_error: 'Access denied: unknown error',
-  other: 'Access denied',
-};
+function denialReasonToResultMessage(reason: AccessEventDenialReason): string {
+  const label = DENIAL_REASON_MESSAGES[reason];
+  if (label) {
+    return `Access denied: ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+  }
+  return 'Access denied';
+}
 
 export class AccessEventIngestionService {
   private readonly activityService = ActivityService.getInstance();
@@ -70,7 +66,7 @@ export class AccessEventIngestionService {
     const result = event.success ? 'success' : 'failure';
     const resultMessage = event.success
       ? undefined
-      : event.reason_message || (event.denial_reason ? denialReasonToResultMessage[event.denial_reason] : 'Access denied');
+      : event.reason_message || (event.denial_reason ? denialReasonToResultMessage(event.denial_reason) : 'Access denied');
 
     return this.activityService.logActivity({
       entityType: 'device',
@@ -120,7 +116,7 @@ export class AccessEventIngestionService {
       return `Access granted via ${event.method}`;
     }
     if (event.denial_reason) {
-      return denialReasonToResultMessage[event.denial_reason];
+      return denialReasonToResultMessage(event.denial_reason);
     }
     return 'Access denied';
   }

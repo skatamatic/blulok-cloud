@@ -19,6 +19,7 @@ import {
 import { FacilitySummary } from '@/components/bludesign/core/types';
 import { getFacilities, deleteFacility } from '@/api/bludesign';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+import { formatRelativeWithExact } from '@/utils/datetime.utils';
 
 export interface LoadDialogProps {
   isOpen: boolean;
@@ -358,37 +359,13 @@ const FacilityCard: React.FC<FacilityCardProps> = ({
   onDelete,
   isDark,
 }) => {
-  const formatDate = (date: Date) => {
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const minutes = Math.floor(diff / (1000 * 60));
-    
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-    }).format(date);
-  };
-
-  const formatFullDate = (date: Date) => {
-    return new Intl.DateTimeFormat('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(date);
-  };
-
   const lastActivity = facility.lastOpened || facility.updatedAt;
+  const lastActivityTime = lastActivity
+    ? formatRelativeWithExact(lastActivity, { absoluteAfterDays: 7, absoluteStyle: 'date' })
+    : null;
+  const createdTime = facility.createdAt
+    ? formatRelativeWithExact(facility.createdAt, { absoluteAfterDays: 7, absoluteStyle: 'date' })
+    : null;
 
   return (
     <div
@@ -463,18 +440,18 @@ const FacilityCard: React.FC<FacilityCardProps> = ({
         {/* Metadata */}
         <div className="space-y-1.5">
           {/* Last activity */}
-          <div className="flex items-center gap-2" title={formatFullDate(lastActivity)}>
+          <div className="flex items-center gap-2" title={lastActivityTime?.title ?? undefined}>
             <ClockIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
             <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-              {facility.lastOpened ? 'Opened' : 'Updated'} {formatDate(lastActivity)}
+              {facility.lastOpened ? 'Opened' : 'Updated'} {lastActivityTime?.display ?? '—'}
             </span>
           </div>
           
           {/* Created date */}
-          <div className="flex items-center gap-2" title={formatFullDate(facility.createdAt)}>
+          <div className="flex items-center gap-2" title={createdTime?.title ?? undefined}>
             <CalendarIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
             <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              Created {formatDate(facility.createdAt)}
+              Created {createdTime?.display ?? '—'}
             </span>
           </div>
         </div>

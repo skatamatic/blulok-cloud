@@ -5,6 +5,7 @@ import { ScheduleWithTimeWindows } from '@/types/schedule.types';
 import { useToast } from '@/contexts/ToastContext';
 import { SearchableSelect } from '@/components/Common/SearchableSelect';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 interface AccessCodeManagementTabProps {
   facilityId: string;
@@ -631,13 +632,13 @@ export function AccessCodeManagementTab({ facilityId, devices }: AccessCodeManag
                 <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2">
                   <p className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Last rotation</p>
                   <p className="text-sm text-gray-900 dark:text-white">
-                    {lastRotationAt ? new Date(lastRotationAt).toLocaleString() : 'No group rotation recorded'}
+                    {lastRotationAt ? formatDateTime(new Date(lastRotationAt)) : 'No group rotation recorded'}
                   </p>
                 </div>
                 <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2">
                   <p className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Next rotation</p>
                   <p className="text-sm text-gray-900 dark:text-white">
-                    {nextRotationAt ? new Date(nextRotationAt).toLocaleString() : 'Rotation disabled'}
+                    {nextRotationAt ? formatDateTime(new Date(nextRotationAt)) : 'Rotation disabled'}
                   </p>
                 </div>
                 <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2">
@@ -677,7 +678,7 @@ export function AccessCodeManagementTab({ facilityId, devices }: AccessCodeManag
                           <p className="text-sm font-medium text-gray-900 dark:text-white">{row.name}</p>
                           <p className="text-xs text-gray-500 dark:text-gray-400">
                             Users: {row.userCount === null ? 'N/A' : row.userCount}
-                            {row.current?.valid_until ? ` • Valid until ${new Date(row.current.valid_until).toLocaleString()}` : ''}
+                            {row.current?.valid_until ? ` • Valid until ${formatDateTime(row.current.valid_until)}` : ''}
                           </p>
                         </div>
                         <span className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1 font-mono tracking-widest text-sm text-gray-900 dark:text-white">
@@ -782,7 +783,7 @@ export function AccessCodeManagementTab({ facilityId, devices }: AccessCodeManag
                           {entry.effective ? (
                             <>
                               <p className="text-xs text-gray-500 dark:text-gray-400">
-                                Source: {entry.effective.source_scope_name} • Valid until {new Date(entry.effective.valid_until).toLocaleString()}
+                                Source: {entry.effective.source_scope_name} • Valid until {formatDateTime(entry.effective.valid_until)}
                               </p>
                             </>
                           ) : (

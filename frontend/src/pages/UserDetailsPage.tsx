@@ -25,6 +25,7 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
+import { formatDateTime, buildLocalDateRangeQuery } from '@/utils/datetime.utils';
 
 interface UserDetails {
   id: string;
@@ -200,12 +201,16 @@ export default function UserDetailsPage() {
     if (!userId) return;
     try {
       setRoutePassLoading(true);
-      const filters: any = {
+      const filters: Record<string, string | number> = {
         limit: routePassPagination.limit,
         offset: routePassPagination.offset,
       };
-      if (routePassFilters.startDate) filters.startDate = routePassFilters.startDate;
-      if (routePassFilters.endDate) filters.endDate = routePassFilters.endDate;
+      const dateRange = buildLocalDateRangeQuery(
+        routePassFilters.startDate || undefined,
+        routePassFilters.endDate || undefined,
+      );
+      if (dateRange.date_from) filters.startDate = dateRange.date_from;
+      if (dateRange.date_to) filters.endDate = dateRange.date_to;
       
       const response = await apiService.getUserRoutePassHistory(userId, filters);
       if (response.success) {
@@ -601,16 +606,16 @@ export default function UserDetailsPage() {
                     <div>
                       <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Login</label>
                       <p className="text-sm text-gray-900 dark:text-white">
-                        {userDetails.lastLogin ? new Date(userDetails.lastLogin).toLocaleString() : 'Never logged in'}
+                        {userDetails.lastLogin ? formatDateTime(userDetails.lastLogin) : 'Never logged in'}
                       </p>
                     </div>
                     <div>
                       <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Account Created</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{new Date(userDetails.createdAt).toLocaleString()}</p>
+                      <p className="text-sm text-gray-900 dark:text-white">{formatDateTime(userDetails.createdAt)}</p>
                     </div>
                     <div>
                       <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Updated</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{new Date(userDetails.updatedAt).toLocaleString()}</p>
+                      <p className="text-sm text-gray-900 dark:text-white">{formatDateTime(userDetails.updatedAt)}</p>
                     </div>
                   </div>
                 </div>
@@ -1061,13 +1066,13 @@ export default function UserDetailsPage() {
                         <div>
                           <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Used</label>
                           <p className="text-sm text-gray-900 dark:text-white">
-                            {device.last_used_at ? new Date(device.last_used_at).toLocaleString() : 'Never'}
+                            {device.last_used_at ? formatDateTime(device.last_used_at) : 'Never'}
                           </p>
                         </div>
                         <div>
                           <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Registered</label>
                           <p className="text-sm text-gray-900 dark:text-white">
-                            {new Date(device.created_at).toLocaleString()}
+                            {formatDateTime(device.created_at)}
                           </p>
                         </div>
                         {device.associatedLocks.length > 0 && (
@@ -1119,7 +1124,7 @@ export default function UserDetailsPage() {
                       <div className="mt-2 flex items-center space-x-2">
                         <CheckCircleIcon className="h-4 w-4 text-green-600 dark:text-green-400" />
                         <span className="text-sm text-green-600 dark:text-green-400 font-medium">
-                          Account setup complete - Last login: {new Date(userDetails.lastLogin).toLocaleString()}
+                          Account setup complete - Last login: {formatDateTime(userDetails.lastLogin)}
                         </span>
                       </div>
                     ) : (
@@ -1257,10 +1262,10 @@ export default function UserDetailsPage() {
                         {routePassHistory.map((pass) => (
                           <tr key={pass.id}>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                              {new Date(pass.issuedAt).toLocaleString()}
+                              {formatDateTime(pass.issuedAt)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                              {new Date(pass.expiresAt).toLocaleString()}
+                              {formatDateTime(pass.expiresAt)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                               {pass.deviceId || '-'}

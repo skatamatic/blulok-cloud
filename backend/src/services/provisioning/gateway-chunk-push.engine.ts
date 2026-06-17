@@ -57,7 +57,19 @@ export interface ChunkPushManifestConfig {
 
 function defaultIsOnline(facilityId: string): boolean {
   try {
-    return GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId).connected;
+    const events = GatewayEventsService.getInstance();
+    const getTransport = (events as { getTransport?: () => unknown }).getTransport;
+    if (typeof getTransport === 'function') {
+      const transport = getTransport.call(events) as {
+        isRecoveryPushTargetOnline?: (id: string) => boolean;
+        getRecoveryPushGatewayId?: (id: string) => string | undefined;
+      };
+      const pushTarget = transport?.getRecoveryPushGatewayId?.(facilityId);
+      if (pushTarget) {
+        return transport.isRecoveryPushTargetOnline?.(facilityId) ?? false;
+      }
+    }
+    return events.getFacilityConnectionStatus(facilityId).connected;
   } catch {
     return false;
   }
@@ -95,20 +107,24 @@ export class GatewayChunkPushEngine {
     }
   }
 
-  static pausePushOnDisconnect(facilityId: string): void {
+  static pausePushOnDisconnect(
+    facilityId: string,
+    options?: { excludePushIds?: ReadonlySet<string>; onlyPushIds?: ReadonlySet<string> },
+  ): void {
     for (const [pushId, state] of activePushes.entries()) {
-      if (state.facilityId === facilityId && !state.cancel) {
-        state.disconnectPaused = true;
-        for (const resolver of state.chunkAckResolvers.values()) {
-          try {
-            resolver.reject(new Error('Gateway disconnected during chunk push'));
-          } catch {
-            /* ignore */
-          }
+      if (state.facilityId !== facilityId || state.cancel) continue;
+      if (options?.excludePushIds?.has(pushId)) continue;
+      if (options?.onlyPushIds && !options.onlyPushIds.has(pushId)) continue;
+      state.disconnectPaused = true;
+      for (const resolver of state.chunkAckResolvers.values()) {
+        try {
+          resolver.reject(new Error('Gateway disconnected during chunk push'));
+        } catch {
+          /* ignore */
         }
-        state.chunkAckResolvers.clear();
-        logger.info(`Chunk push paused due to gateway disconnect pushId=${pushId} facility=${facilityId}`);
       }
+      state.chunkAckResolvers.clear();
+      logger.info(`Chunk push paused due to gateway disconnect pushId=${pushId} facility=${facilityId}`);
     }
   }
 

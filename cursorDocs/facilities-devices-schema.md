@@ -539,6 +539,17 @@ Gateway command entries include schedule context in nested `valid_codes`:
 
 Receivers should treat missing schedule metadata as always-valid legacy behavior.
 
+### Devices (BluLok lock ↔ unit)
+- `GET /api/v1/devices` - List devices (BluLok + access control); filter by `device_type`, `facility_id`, `search`
+- `GET /api/v1/devices/blulok/:id` - Get BluLok lock details (includes `unit_id` when assigned)
+- `GET /api/v1/devices/unassigned` - List BluLok locks with no unit link (`facility_admin`+; scope with `facility_id`)
+- `POST /api/v1/devices/blulok/:deviceId/assign` - Link lock to unit (`{ "unit_id": "uuid" }`; `facility_admin`+)
+- `DELETE /api/v1/devices/blulok/:deviceId/unassign` - Remove lock from unit; lock stays in facility inventory (`facility_admin`+)
+- `DELETE /api/v1/devices/blulok/:deviceId` - Remove lock from cloud inventory (`facility_admin`+ scoped; sends **`DEVICE_DELETED`** tombstone to gateway)
+- `DELETE /api/v1/devices/access-control/:deviceId` - Remove access control row from cloud inventory (`facility_admin`+ scoped; **`DEVICE_DELETED`** tombstone)
+
+**App integration guide:** [Assign / unassign locks in manager mode](./app-lock-unit-assignment-apis.md)
+
 ### Units
 - `GET /api/v1/units` - List units with assignments
 - `GET /api/v1/units/:id` - Get unit details

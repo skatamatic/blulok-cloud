@@ -686,9 +686,14 @@ class ApiService {
     return response.data;
   }
 
-  /** Admin / dev admin: delete BluLok cloud inventory row (unit link, group memberships, denylist); lock may re-sync from gateway. */
+  /** Admin / dev admin / facility admin: delete cloud inventory row; gateway receives DEVICE_DELETED tombstone. */
   async removeBluLokDeviceFromCloudInventory(deviceId: string) {
     const response = await this.api.delete(`/devices/blulok/${deviceId}`);
+    return response.data;
+  }
+
+  async removeAccessControlDeviceFromCloudInventory(deviceId: string) {
+    const response = await this.api.delete(`/devices/access-control/${deviceId}`);
     return response.data;
   }
 
@@ -1285,6 +1290,56 @@ class ApiService {
 
   async cancelGatewayProvisioningRestore(gatewayId: string, restoreId: string) {
     const response = await this.api.post(`/gateways/${gatewayId}/provisioning/restore/${restoreId}/cancel`, {});
+    return response.data;
+  }
+
+  async getGatewayRecoveryStatus(gatewayId: string) {
+    const response = await this.api.get(`/gateways/${gatewayId}/recovery/status`);
+    return response.data;
+  }
+
+  async getGatewayRecoveryCandidates(facilityId: string) {
+    const response = await this.api.get(`/gateways/facility/${facilityId}/recovery/candidates`);
+    return response.data;
+  }
+
+  async getGatewayRecoveryInventoryPreview(gatewayId: string) {
+    const response = await this.api.get(`/gateways/${gatewayId}/recovery/inventory-preview`);
+    return response.data;
+  }
+
+  async initiateGatewayRecovery(
+    gatewayId: string,
+    body?: { firmwareId?: string; provisioningBackupId?: string },
+  ) {
+    const response = await this.api.post(`/gateways/${gatewayId}/recovery/initiate`, body || {});
+    return response.data;
+  }
+
+  async bypassGatewayRecovery(gatewayId: string, confirm: boolean) {
+    const response = await this.api.post(`/gateways/${gatewayId}/recovery/bypass`, { confirm });
+    return response.data;
+  }
+
+  async cancelGatewayRecovery(gatewayId: string, recoveryId: string) {
+    const response = await this.api.post(`/gateways/${gatewayId}/recovery/${recoveryId}/cancel`, {});
+    return response.data;
+  }
+
+  async getGatewayRecoveryOptions(gatewayId: string) {
+    const response = await this.api.get(`/gateways/${gatewayId}/recovery/options`);
+    return response.data;
+  }
+
+  async retryGatewayRecovery(gatewayId: string) {
+    const response = await this.api.post(`/gateways/${gatewayId}/recovery/retry`, {});
+    return response.data;
+  }
+
+  async getGatewayRecoveryEvents(gatewayId: string, recoveryId: string, limit = 100) {
+    const response = await this.api.get(`/gateways/${gatewayId}/recovery/${recoveryId}/events`, {
+      params: { limit },
+    });
     return response.data;
   }
 

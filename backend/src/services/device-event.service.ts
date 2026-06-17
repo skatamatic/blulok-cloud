@@ -7,6 +7,10 @@ import {
   lockActivityVerb,
   mapLockStatusToActivityType,
 } from '@/utils/lock-status-activity.utils';
+import {
+  resolveRemoteAccessMethod,
+  terminalActivityMatchesRequestedStatus,
+} from '@/utils/access-history-remote.utils';
 
 /**
  * Device Event Types
@@ -343,11 +347,17 @@ export class DeviceEventService extends EventEmitter {
   // ============================================
 
   /**
-   * Log lock/unlock activity (including in-flight locking/unlocking) when device status changes.
+   * Log terminal lock/unlock activity when gateway state sync reports a settled status.
    */
   private async logLockActivity(event: LockStatusChangedEvent): Promise<void> {
     const { ActivityService } = await import('@/services/activity.service');
     const { DeviceModel } = await import('@/models/device.model');
+    const { LockCommandService } = await import('@/services/lock-command.service');
+
+    const lockCommandService = LockCommandService.getInstance();
+    if (lockCommandService.consumeSuppressRevertActivityLog(event.deviceId)) {
+      return;
+    }
 
     const deviceModel = new DeviceModel();
     const gateway = await deviceModel.findGatewayById(event.gatewayId);
@@ -362,19 +372,43 @@ export class DeviceEventService extends EventEmitter {
     const unitId = event.unitId || blulokDevice?.unit_id || undefined;
 
     const activityType = mapLockStatusToActivityType(event.newStatus);
-    if (!activityType) {
+    if (!activityType || activityType === 'locking' || activityType === 'unlocking') {
       return;
     }
+
+    const attribution = lockCommandService.peekCommandAttribution(event.deviceId);
+    const remoteMethod = attribution
+      ? resolveRemoteAccessMethod(attribution.initiator.role)
+      : undefined;
+
+    const shouldConsumeAttribution = Boolean(
+      attribution
+      && remoteMethod
+      && terminalActivityMatchesRequestedStatus(activityType, attribution.requestedStatus),
+    );
+
+    if (shouldConsumeAttribution) {
+      lockCommandService.acknowledgeCommandAttribution(event.deviceId);
+    }
+
+    const appliedAttribution = shouldConsumeAttribution ? attribution : null;
+    const actorType = appliedAttribution ? 'user' : 'gateway';
+    const actorId = appliedAttribution?.initiator.userId;
+    const actorName = appliedAttribution?.initiator.userName ?? 'Gateway';
+    const description = appliedAttribution
+      ? `Device was ${lockActivityVerb(activityType)} remotely via gateway by ${appliedAttribution.initiator.userName}`
+      : `Device was ${lockActivityVerb(activityType)} locally at the device`;
 
     await ActivityService.getInstance().logActivity({
       entityType: 'device',
       entityId: event.deviceId,
       activityType,
       title: lockActivityTitle(activityType),
-      description: `Device was ${lockActivityVerb(activityType)} by Gateway`,
-      actorType: 'gateway',
-      actorName: 'Gateway',
-      result: activityType === 'locking' || activityType === 'unlocking' ? 'pending' : 'success',
+      description,
+      actorType,
+      actorId,
+      actorName,
+      result: 'success',
       facilityId: gateway.facility_id,
       unitId,
       deviceId: event.deviceId,
@@ -383,6 +417,20 @@ export class DeviceEventService extends EventEmitter {
         newStatus: event.newStatus,
         gatewayId: event.gatewayId,
         device_type: deviceType,
+        ...(remoteMethod && appliedAttribution
+          ? {
+            method: remoteMethod,
+            initiated_remotely: true,
+            gateway_id: event.gatewayId,
+            initiated_by: {
+              id: appliedAttribution.initiator.userId,
+              name: appliedAttribution.initiator.userName,
+              role: appliedAttribution.initiator.role,
+            },
+          }
+          : {
+            method: 'local_device',
+          }),
       },
     });
   }

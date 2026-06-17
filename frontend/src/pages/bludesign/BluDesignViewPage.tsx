@@ -13,6 +13,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import * as bludesignApi from '@/api/bludesign';
 import { FacilitySummary } from '@/components/bludesign/core/types';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+import { formatDate } from '@/utils/datetime.utils';
 
 interface ViewFacility extends FacilitySummary {
   linkedBlulokId: string | null;
@@ -284,7 +285,7 @@ export default function BluDesignViewPage() {
                       {facility.name}
                     </h3>
                     <div className={`text-sm mb-3 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                      Last updated {new Date(facility.updatedAt).toLocaleDateString()}
+                      Last updated {formatDate(facility.updatedAt)}
                     </div>
 
                     {isLinked && (

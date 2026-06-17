@@ -137,13 +137,13 @@ export function formatHistogramAxisLabel(
         const hour12 = hour % 12 || 12;
         return `${hour12}${suffix}`;
       }
-      return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+      return date.toLocaleTimeString(undefined, { hour: 'numeric', hour12: true });
     case 'week':
     case 'month':
       if (compact) {
         return `${date.getMonth() + 1}/${date.getDate()}`;
       }
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     case 'year':
       return `${date.getMonth() + 1}/${date.getDate()}`;
     default:

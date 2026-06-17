@@ -19,6 +19,7 @@ import {
 import { DataSourceConfig } from '../../core/types';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getBluLokFacilities, BluLokFacility } from '@/api/bludesign';
+import { formatTime } from '@/utils/datetime.utils';
 
 interface DataSourcePanelProps {
   config: DataSourceConfig;
@@ -320,7 +321,7 @@ export const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
       {/* Last Sync Info */}
       {config.lastSync && config.type === 'blulok' && (
         <div className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-          Last synced: {config.lastSync.toLocaleTimeString()}
+          Last synced: {formatTime(config.lastSync)}
         </div>
       )}
     </div>

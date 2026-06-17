@@ -46,7 +46,13 @@ jest.mock('@/services/gateway-telemetry-log.service', () => ({
   },
 }));
 
-// Mock DeviceSyncService to assert how inventory/state normalizes payloads
+const isBlockingActiveForFacilityMock = jest.fn().mockResolvedValue(false);
+jest.mock('@/services/gateway/gateway-recovery.service', () => ({
+  GatewayRecoveryService: {
+    isBlockingActiveForFacility: (...args: unknown[]) => isBlockingActiveForFacilityMock(...args),
+  },
+}));
+
 jest.mock('@/services/device-sync.service', () => {
   const syncGatewayDevicesMock = jest.fn().mockResolvedValue(undefined);
   const updateDeviceStatusesMock = jest.fn().mockResolvedValue(undefined);
@@ -271,6 +277,23 @@ describe('Internal Gateway Routes', () => {
           gateway_id: 'gateway-1',
         }),
       );
+    });
+
+    it('returns 409 when gateway recovery is blocking inventory sync', async () => {
+      isBlockingActiveForFacilityMock.mockResolvedValueOnce(true);
+      syncDeviceInventoryMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [{ kind: 'lock', lock_id: 'lock-1' }],
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('recovery_in_progress');
+      expect(syncDeviceInventoryMock).not.toHaveBeenCalled();
     });
 
     it('enforces facility scope for inventory sync', async () => {

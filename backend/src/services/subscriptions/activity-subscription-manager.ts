@@ -10,7 +10,7 @@ import { DeviceModel } from '@/models/device.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 import { AccessHistoryReadService } from '@/services/access/access-history-read.service';
 
-const LIVE_ACTIVITY_TYPES = AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES;
+const LIVE_ACTIVITY_TYPES = AccessHistoryReadService.ACCESS_HISTORY_ACTIVITY_TYPES;
 
 /**
  * Activity Subscription Manager
@@ -48,6 +48,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
   private initialized: boolean = false;
   private cleanupFunctions: Array<() => void> = [];
   private scopeService: AccessEventScopeService;
+  private accessHistoryReadService: AccessHistoryReadService;
   // Store filters per subscription
   private subscriptionFilters: Map<string, { facilityId?: string; unitId?: string; deviceId?: string; action?: string; method?: string; denialReason?: string }> = new Map();
   private tenantUnitScopes: Map<string, string[]> = new Map();
@@ -59,6 +60,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     this.unitModel = new UnitModel();
     this.deviceModel = new DeviceModel();
     this.scopeService = new AccessEventScopeService();
+    this.accessHistoryReadService = new AccessHistoryReadService();
     this.setupEventListeners();
   }
 
@@ -349,6 +351,8 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
       const watchers = this.watchers.get(subscriptionId);
       if (!watchers) continue;
 
+      const accessLog = await this.accessHistoryReadService.findAccessRecordById(event.activityId);
+
       for (const ws of watchers) {
         if (ws.readyState === WebSocket.OPEN) {
           try {
@@ -374,6 +378,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
                   deviceId: event.deviceId,
                   occurredAt: event.occurredAt.toISOString(),
                 },
+                accessLog,
                 timestamp: event.timestamp.toISOString(),
               },
               timestamp: new Date().toISOString(),

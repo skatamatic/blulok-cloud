@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ServerIcon,
   ArrowPathIcon,
@@ -17,6 +17,9 @@ import {
 } from '@heroicons/react/24/outline';
 import GatewayFirmwareTab from './GatewayFirmwareTab';
 import GatewayProvisioningTab from './GatewayProvisioningTab';
+import { useFacilityGatewayRecovery } from '@/hooks/useFacilityGatewayRecovery';
+import GatewaySwapRecoveryTab from './GatewaySwapRecoveryTab';
+import RecoveryBlockingBanner from './RecoveryBlockingBanner';
 import { GatewayDeviceSyncHistory } from './GatewayDeviceSyncHistory';
 import { GatewayTelemetryLogsTab } from './GatewayTelemetryLogsTab';
 import { apiService } from '@/services/api.service';
@@ -30,6 +33,7 @@ import { getApiBaseUrl, getWsBaseUrl } from '@/services/appConfig';
 import { UserRole } from '@/types/auth.types';
 import { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStatus';
 import { gatewayOperationalStatusColors } from '@/utils/facility-gateway-live-status.utils';
+import { formatDateTime, formatTime, formatUtcDateTime } from '@/utils/datetime.utils';
 
 interface Gateway {
   id: string;
@@ -100,7 +104,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       errors: string[];
     };
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'provisioning' | 'devtools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'provisioning' | 'swap-recovery' | 'devtools'>('overview');
 
   // Debug panel state
   const [fallbackJwtInput, setFallbackJwtInput] = useState('');
@@ -123,6 +127,14 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
   const [reassigningGateway, setReassigningGateway] = useState(false);
   const [showReassignConfirm, setShowReassignConfirm] = useState(false);
   const { openPrompt, promptDialog } = usePromptDialog();
+  const swapRecoveryAlertRef = useRef(false);
+  const {
+    hasSwapAlert,
+    isBlocking: recoveryBlocking,
+    hasActiveRecovery,
+    recovery: facilityRecovery,
+    refetch: refetchRecoverySummary,
+  } = useFacilityGatewayRecovery(facilityId, canManageGateway && activeTab !== 'swap-recovery');
 
   // Gateway debug stream (DEV tools)
   const [gatewayDebugEvents, setGatewayDebugEvents] = useState<any[]>([]);
@@ -258,6 +270,49 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     loadReassignmentCandidates();
   }, [activeTab, loadReassignmentCandidates]);
 
+  useEffect(() => {
+    swapRecoveryAlertRef.current = false;
+  }, [facilityId]);
+
+  useEffect(() => {
+    if (!canManageGateway || !hasSwapAlert || swapRecoveryAlertRef.current) return;
+    swapRecoveryAlertRef.current = true;
+    setActiveTab('swap-recovery');
+  }, [canManageGateway, hasSwapAlert, facilityId]);
+
+  const renderSwapRecoveryOverviewAlert = () => {
+    if (!canManageGateway || !hasSwapAlert) return null;
+    return (
+      <div
+        className="rounded-lg border border-[#147FD4]/30 bg-[#147FD4]/5 dark:bg-[#147FD4]/10 px-4 py-3"
+        role="alert"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <ExclamationTriangleIcon className="h-5 w-5 text-[#147FD4] shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-gray-900 dark:text-white">
+                {hasActiveRecovery ? 'Gateway swap recovery in progress' : 'New swap gateway detected'}
+              </p>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                {recoveryBlocking
+                  ? 'Inventory sync and remote lock commands are blocked until recovery completes or is bypassed.'
+                  : 'A replacement gateway connected — review swap recovery before trusting new inventory.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('swap-recovery')}
+            className="inline-flex shrink-0 items-center justify-center rounded-lg bg-[#147FD4] px-4 py-2 text-sm font-medium text-white hover:bg-[#1269b0] transition-colors"
+          >
+            Open Swap / Recovery
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const executeGatewayReassignment = async () => {
     if (!selectedCandidateGatewayId) {
       return;
@@ -332,6 +387,14 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
   };
 
   const handleManualSync = async () => {
+    if (recoveryBlocking) {
+      addToast({
+        type: 'error',
+        title: 'Sync blocked',
+        message: 'Gateway recovery is in progress. Complete or bypass recovery before running manual sync.',
+      });
+      return;
+    }
     if (!gateway) return;
 
     setSyncing(true);
@@ -467,6 +530,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     ...(canManageGateway
       ? [{ id: 'provisioning' as const, label: 'Provisioning Data', icon: ArchiveBoxIcon }]
       : []),
+    ...(canManageGateway
+      ? [{ id: 'swap-recovery' as const, label: 'Swap / Recovery', icon: ArrowPathIcon }]
+      : []),
     { id: 'devtools' as const, label: 'DevTools/Diag', icon: WrenchScrewdriverIcon },
   ];
 
@@ -475,6 +541,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     if (!gateway) {
       return (
         <div className="space-y-6">
+          {renderSwapRecoveryOverviewAlert()}
           {renderGatewayAssignmentCard()}
           {wsConnected && (
             <div
@@ -488,7 +555,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               </p>
               {lastActivityAt && (
                 <p className="mt-2 text-xs text-amber-800/80 dark:text-amber-300/80">
-                  Last activity: {new Date(lastActivityAt).toLocaleString()}
+                  Last activity: {formatDateTime(new Date(lastActivityAt))}
                 </p>
               )}
             </div>
@@ -509,6 +576,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
 
     return (
       <div className="space-y-6">
+        {renderSwapRecoveryOverviewAlert()}
         {renderGatewayAssignmentCard()}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Overview</h3>
@@ -569,12 +637,12 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               </span>
               {effectiveStatus === 'online' && lastActivityAt && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Last activity: {new Date(lastActivityAt).toLocaleString()}
+                  Last activity: {formatDateTime(new Date(lastActivityAt))}
                 </span>
               )}
               {effectiveStatus === 'offline' && gateway.last_seen && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Last seen (inventory): {new Date(gateway.last_seen).toLocaleString()}
+                  Last seen (inventory): {formatDateTime(gateway.last_seen)}
                 </span>
               )}
             </div>
@@ -659,10 +727,18 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         {/* Sync Now Button */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Manual Synchronization</h3>
+          {recoveryBlocking && (
+            <div
+              className="mb-4 rounded-lg border border-amber-300/60 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
+              role="status"
+            >
+              Gateway recovery is in progress — manual sync is blocked until recovery completes or is bypassed.
+            </div>
+          )}
           {renderGatewayModeInfo()}
           <button
             onClick={handleManualSync}
-            disabled={syncing}
+            disabled={syncing || recoveryBlocking}
             className="w-full px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
           >
             {syncing ? (
@@ -683,7 +759,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           {lastSyncTime && (
             <div className="mt-4 flex items-center text-sm text-gray-600 dark:text-gray-400">
               <ClockIcon className="h-4 w-4 mr-2" />
-              Last sync: {lastSyncTime.toLocaleString()}
+              Last sync: {formatDateTime(lastSyncTime)}
             </div>
           )}
         </div>
@@ -709,7 +785,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                       </p>
                     )}
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {log.timestamp.toLocaleTimeString()}
+                      {formatTime(log.timestamp)}
                     </p>
                   </div>
                 </div>
@@ -891,7 +967,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                   </p>
                 )}
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Command signed at {new Date(rotationModal.result.payload.ts * 1000).toLocaleString()} (UTC).
+                  Command signed at {formatUtcDateTime(rotationModal.result.payload.ts * 1000)}.
                 </p>
               </div>
             )}
@@ -1111,20 +1187,20 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                   <span className="text-xs text-gray-500 dark:text-gray-400">Last gateway activity</span>
                   <span className="font-mono">
                     {lastGatewayActivityAt
-                      ? new Date(lastGatewayActivityAt).toLocaleTimeString()
+                      ? formatTime(new Date(lastGatewayActivityAt))
                       : '—'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500 dark:text-gray-400">Last PING</span>
                   <span className="font-mono">
-                    {lastPingTs ? new Date(lastPingTs).toLocaleTimeString() : '—'}
+                    {lastPingTs ? formatTime(new Date(lastPingTs)) : '—'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500 dark:text-gray-400">Last PONG</span>
                   <span className="font-mono">
-                    {lastPongTs ? new Date(lastPongTs).toLocaleTimeString() : '—'}
+                    {lastPongTs ? formatTime(new Date(lastPongTs)) : '—'}
                   </span>
                 </div>
                 {lastPingTs && lastPongTs && (
@@ -1176,7 +1252,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                   .map((event, index) => (
                     <div key={index} className="flex items-start gap-2">
                       <span className="text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                        {event.ts ? new Date(event.ts).toLocaleTimeString() : ''}
+                        {event.ts ? formatTime(event.ts) : ''}
                       </span>
                       <span
                         className={`px-1 rounded ${
@@ -1287,6 +1363,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           <nav className="space-y-1">
             {navTabs.map((tab) => {
               const Icon = tab.icon;
+              const showRecoveryBadge = tab.id === 'swap-recovery' && hasSwapAlert;
               return (
                 <button
                   key={tab.id}
@@ -1297,8 +1374,11 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
                       : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                   }`}
                 >
-                  <Icon className="h-5 w-5 mr-3" />
-                  {tab.label}
+                  <Icon className="h-5 w-5 mr-3 shrink-0" />
+                  <span className="flex-1 text-left">{tab.label}</span>
+                  {showRecoveryBadge && (
+                    <span className="ml-2 inline-flex h-2 w-2 rounded-full bg-[#147FD4] animate-pulse" aria-label="Swap recovery attention required" />
+                  )}
                 </button>
               );
             })}
@@ -1311,7 +1391,12 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         {activeTab === 'overview' && renderOverviewTab()}
         {activeTab === 'sync' && renderSyncTab()}
         {activeTab === 'inventory-sync' && isPlatformAdmin && gateway && (
-          <GatewayDeviceSyncHistory gatewayId={gateway.id} />
+          <div className="space-y-4">
+            {recoveryBlocking && (
+              <RecoveryBlockingBanner message="Inventory sync history is read-only during gateway swap recovery. New syncs are blocked until recovery completes or is bypassed." />
+            )}
+            <GatewayDeviceSyncHistory gatewayId={gateway.id} />
+          </div>
         )}
         {activeTab === 'inventory-sync' && isPlatformAdmin && !gateway && (
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center">
@@ -1337,15 +1422,32 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             gatewayId={gateway.id}
             currentFirmwareVersion={gateway.firmware_version}
             gatewayModel={gateway.model}
+            recoveryBlocking={recoveryBlocking}
           />
         )}
         {activeTab === 'provisioning' && canManageGateway && gateway && (
-          <GatewayProvisioningTab gatewayId={gateway.id} wsConnected={wsConnected} />
+          <GatewayProvisioningTab gatewayId={gateway.id} wsConnected={wsConnected} recoveryBlocking={recoveryBlocking} />
         )}
         {activeTab === 'provisioning' && canManageGateway && !gateway && (
           <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-300">
             Assign a gateway to this facility before managing provisioning backups.
           </div>
+        )}
+        {activeTab === 'swap-recovery' && canManageGateway && (
+          <GatewaySwapRecoveryTab
+            facilityId={facilityId}
+            boundGatewayId={gateway?.id ?? facilityRecovery?.previous_gateway_id ?? undefined}
+            wsConnected={wsConnected}
+            onRecoveryChange={async (snapshot) => {
+              await refetchRecoverySummary();
+              if (
+                snapshot?.terminal
+                && (snapshot.status === 'complete' || snapshot.status === 'bypassed')
+              ) {
+                await reload();
+              }
+            }}
+          />
         )}
         {activeTab === 'devtools' && renderDevtoolsTab()}
         {renderRotationModal()}

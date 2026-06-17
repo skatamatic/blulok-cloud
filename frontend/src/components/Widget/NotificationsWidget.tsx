@@ -27,6 +27,7 @@ import {
   filterNotificationsForViewer,
   getNotificationCardVisual,
   getNotificationDetailLines,
+  formatNotificationTimestamp,
   getNotificationUrgencyBadge,
   mapApiNotificationToDashboardView,
   notificationMessageNeedsExpansion,
@@ -98,7 +99,7 @@ const NotificationCard: React.FC<{
   index: number;
   facilityLabel?: string | null;
   onToggle: () => void;
-  formatTimestamp: (timestamp: Date) => string;
+  formatTimestamp: (timestamp: Date, compact?: boolean) => string;
 }> = ({
   notification,
   expanded,
@@ -229,9 +230,7 @@ const NotificationCard: React.FC<{
 
           <div className={`flex items-center justify-between gap-2 ${compact ? 'mt-1.5' : 'mt-2.5'}`}>
             <span className={`text-[11px] tabular-nums ${visual.timestamp}`}>
-              {compact
-                ? formatTimestamp(notification.timestamp).split(' ')[0]
-                : formatTimestamp(notification.timestamp)}
+              {formatTimestamp(notification.timestamp, compact)}
             </span>
 
             <div className="flex items-center gap-2 shrink-0 min-w-0">
@@ -573,24 +572,10 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   }, [rows, filter, expandedIds]);
 
   const sortedNotifications = useMemo(() => {
-    const toneWeight: Record<WidgetNotificationTone, number> = {
-      error: 0,
-      warning: 1,
-      info: 2,
-      success: 3,
-    };
-
-    return [...filteredNotifications].sort((a, b) => {
-      const aPinned = expandedIds.has(a.id);
-      const bPinned = expandedIds.has(b.id);
-      if (a.isRead !== b.isRead && !aPinned && !bPinned) {
-        return a.isRead ? 1 : -1;
-      }
-      const toneDiff = toneWeight[a.tone] - toneWeight[b.tone];
-      if (toneDiff !== 0) return toneDiff;
-      return b.timestamp.getTime() - a.timestamp.getTime();
-    });
-  }, [filteredNotifications, expandedIds]);
+    return [...filteredNotifications].sort(
+      (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
+    );
+  }, [filteredNotifications]);
 
   const displayedNotifications = sortedNotifications.slice(0, layout.listCap);
   const unreadCount = useMemo(() => rows.filter((n) => !n.isRead).length, [rows]);
@@ -599,15 +584,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     [rows],
   );
 
-  const formatTimestamp = (timestamp: Date) => {
-    const diffMs = Date.now() - timestamp.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return timestamp.toLocaleDateString();
-  };
+  const formatTimestamp = formatNotificationTimestamp;
 
   const showFacilityInCards = !facilityFilter;
 

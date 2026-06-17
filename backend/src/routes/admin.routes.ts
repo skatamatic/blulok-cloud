@@ -271,6 +271,58 @@ router.post('/dev-tools/gateway-ping', authenticateToken, requireDevAdmin, async
   res.json({ success: true, facilityId });
 }));
 
+const deviceDeletionOutboxQuerySchema = Joi.object({
+  facilityId: Joi.string().uuid().required(),
+  lockId: Joi.string().trim().min(1),
+  accessId: Joi.string().trim().min(1),
+  relayChannel: Joi.number().integer().min(1).max(255),
+}).xor('lockId', 'accessId').with('accessId', 'relayChannel');
+
+/**
+ * GET /api/v1/admin/dev-tools/device-deletion-outbox
+ * DEV_ADMIN only — inspect latest tombstone outbox row (E2E/local diagnostics).
+ */
+router.get('/dev-tools/device-deletion-outbox', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Device deletion outbox dev lookup is disabled in production' });
+    return;
+  }
+
+  const { error, value } = deviceDeletionOutboxQuerySchema.validate(req.query || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+  const outbox = DeviceDeletionOutboxService.getInstance();
+  const facilityId = String(value.facilityId);
+
+  const row = value.lockId
+    ? await outbox.findLatestOutboxForBlulok(facilityId, String(value.lockId))
+    : await outbox.findLatestOutboxForAccessControl(
+        facilityId,
+        String(value.accessId),
+        Number(value.relayChannel),
+      );
+
+  res.json({
+    success: true,
+    row: row
+      ? {
+          id: row.id,
+          status: row.status,
+          device_kind: row.device_kind,
+          lock_id: row.lock_id,
+          access_id: row.access_id,
+          relay_channel: row.relay_channel,
+          attempt_count: row.attempt_count,
+          last_error: row.last_error,
+        }
+      : null,
+  });
+}));
+
 /**
  * DELETE /api/v1/admin/users/:id/hard
  * DEV_ADMIN only - Hard delete user and related rows (test/cleanup utility)

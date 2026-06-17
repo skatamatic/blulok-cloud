@@ -190,7 +190,7 @@ describe('ActivityMonitorWidget', () => {
       );
       
       await waitFor(() => {
-        expect(screen.getByText(/Access denied to C-303 for Unknown User/)).toBeInTheDocument();
+        expect(screen.getByText(/Unlock attempt denied at C-303 for Unknown User/)).toBeInTheDocument();
       });
     });
 
@@ -291,7 +291,7 @@ describe('ActivityMonitorWidget', () => {
       
       // Should only show the failed access attempt
       await waitFor(() => {
-        expect(screen.getByText(/Access denied to C-303/)).toBeInTheDocument();
+        expect(screen.getByText(/Unlock attempt denied at C-303/)).toBeInTheDocument();
       });
       
       // Successful unlock should not be visible

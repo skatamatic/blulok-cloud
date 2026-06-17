@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiService } from '@/services/api.service';
 import { UserAccessCode } from '@/types/facility.types';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 interface MyAccessCodesProps {
   facilityId?: string;
@@ -64,7 +65,7 @@ export function MyAccessCodes({ facilityId }: MyAccessCodesProps) {
             </div>
             <span className="font-mono text-lg tracking-widest text-primary-700 dark:text-primary-300">{entry.code}</span>
           </div>
-          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Valid until: {new Date(entry.valid_until).toLocaleString()}</p>
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Valid until: {formatDateTime(entry.valid_until)}</p>
         </div>
       ))}
       {codes.length === 0 && (

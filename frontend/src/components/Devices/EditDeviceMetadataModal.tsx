@@ -14,6 +14,7 @@ import {
   readLocationDescription,
   readLockNumber,
 } from '@/utils/deviceMetadataForm.utils';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 export type DeviceMetadataCategory = 'blulok' | 'access_control';
 
@@ -627,7 +628,7 @@ export function EditDeviceMetadataModal({
                 {device.last_seen && (
                   <>
                     <dt className="text-gray-500 dark:text-gray-400">Last seen</dt>
-                    <dd className="text-gray-900 dark:text-white">{device.last_seen}</dd>
+                    <dd className="text-gray-900 dark:text-white">{formatDateTime(device.last_seen)}</dd>
                   </>
                 )}
               </dl>

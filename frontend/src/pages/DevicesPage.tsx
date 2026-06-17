@@ -32,6 +32,7 @@ import { withReturnPath } from '@/hooks/useBackNavigation';
 import { ViewModeToggle } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
+import { formatDate, formatDateTime } from '@/utils/datetime.utils';
 import {
   formatBluLokDeviceSubtitle,
   formatBluLokLockNumberLabel,
@@ -422,7 +423,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                   <td className="px-6 py-3 text-sm">{cmd.command_type}</td>
                   <td className="px-6 py-3 text-sm">{cmd.status}</td>
                   <td className="px-6 py-3 text-sm">{cmd.attempt_count}</td>
-                  <td className="px-6 py-3 text-sm">{cmd.next_attempt_at ? new Date(cmd.next_attempt_at).toLocaleString() : '-'}</td>
+                  <td className="px-6 py-3 text-sm">{cmd.next_attempt_at ? formatDateTime(cmd.next_attempt_at) : '-'}</td>
                   <td className="px-6 py-3 text-sm text-right space-x-2">
                     <button onClick={() => apiService.retryCommand(cmd.id)} className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400">Retry</button>
                     <button onClick={() => apiService.cancelCommand(cmd.id)} className="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700 dark:bg-gray-900/20 dark:text-gray-300">Cancel</button>
@@ -583,7 +584,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                         : accessDevice.facility_name || accessDevice.location_description || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      {device.last_activity ? new Date(device.last_activity).toLocaleDateString() : 'Never'}
+                      {device.last_activity ? formatDate(device.last_activity) : 'Never'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <div className="flex items-center justify-end space-x-2">

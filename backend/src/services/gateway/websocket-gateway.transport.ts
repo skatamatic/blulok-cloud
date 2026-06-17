@@ -9,6 +9,9 @@ import { ApiProxyService } from './api-proxy.service';
 import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { GATEWAY_WS_MAX_MESSAGE_BYTES_DEFAULT } from '@/constants/firmware-chunk.constants';
+import { isRecoveryOutboundMessage } from '@/utils/gateway-recovery-outbound.utils';
+import { validateRecoveryInboundSession } from '@/utils/gateway-recovery-inbound.utils';
+import { isValidGatewayUuid, type AutoRegisterReject } from '@/utils/gateway-auto-register.utils';
 
 type JWTPayload = {
   userId: string;
@@ -19,10 +22,14 @@ type JWTPayload = {
 
 type RemoteWebSocket = WebSocket & { __remote?: string };
 
+import type { GatewaySessionRole } from './message-types';
+
 type AuthedClient = {
   ws: RemoteWebSocket;
   user: JWTPayload;
   facilityId: string;
+  gatewayId?: string;
+  sessionRole: GatewaySessionRole;
   /** Timestamp of last observed activity (any valid message or PONG) */
   lastActivityAt: number;
 };
@@ -39,6 +46,10 @@ type AuthedClient = {
 export class WebsocketGatewayTransport implements GatewayTransport {
   private wss?: WebSocketServer;
   private facilityToClient = new Map<string, AuthedClient>();
+  /** Parked swap-candidate sessions keyed by `${facilityId}:${gatewayId}` */
+  private swapCandidates = new Map<string, AuthedClient>();
+  /** When set, recovery-related unicast routes to the swap candidate WS */
+  private recoveryPushGatewayByFacility = new Map<string, string>();
   private readonly path = '/ws/gateway';
 
   // ── Keepalive / heartbeat constants ──
@@ -53,6 +64,16 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   private static readonly HEARTBEAT_SWEEP_MS = 5_000;
   // TCP keepalive probe interval.
   private static readonly TCP_KEEPALIVE_MS = 30_000;
+
+  // ── Auto-registration guardrails ──
+  // Max distinct unbound swap candidates that may be auto-registered/parked per facility.
+  private static readonly MAX_SWAP_CANDIDATES_PER_FACILITY = 3;
+  // Sliding window for auto-registration rate limiting.
+  private static readonly AUTO_REGISTER_WINDOW_MS = 10 * 60_000;
+  // Max gateway records auto-created per facility within the window.
+  private static readonly AUTO_REGISTER_MAX_PER_WINDOW = 5;
+  /** Timestamps of recent auto-create events keyed by facilityId (sliding window). */
+  private autoRegisterEvents = new Map<string, number[]>();
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private connectionChangeListener?: (event: {
@@ -107,47 +128,326 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   }
 
   public unicastToFacility(facilityId: string, payload: any): void {
+    const recoveryGatewayId = this.recoveryPushGatewayByFacility.get(facilityId);
+    if (recoveryGatewayId && isRecoveryOutboundMessage(payload)) {
+      const swapClient = this.swapCandidates.get(`${facilityId}:${recoveryGatewayId}`);
+      if (swapClient) {
+        this.sendToClient(swapClient, facilityId, payload);
+        return;
+      }
+      logger.warn(
+        `Recovery push target offline for facility ${facilityId} gateway ${recoveryGatewayId} — dropping ${payload?.type ?? payload?.cmd_type ?? 'message'}`,
+      );
+      return;
+    }
     const client = this.facilityToClient.get(facilityId);
     if (!client) {
       logger.warn(`No connected gateway for facility ${facilityId} - command dropped`);
       return;
     }
-    if (client.ws.readyState === WebSocket.OPEN) {
-      // Handle JWT string payloads by wrapping in COMMAND envelope
-      let message: string;
-      let msgType = 'unknown';
-      
-      if (typeof payload === 'string' && payload.includes('.')) {
-        // JWT string - wrap in envelope for gateway parsing
-        message = JSON.stringify({ type: 'COMMAND', jwt: payload });
-        // Try to extract cmd_type from JWT for logging
-        try {
-          const parts = payload.split('.');
-          if (parts.length === 3) {
-            const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-            msgType = decoded?.cmd_type || 'JWT_COMMAND';
-          }
-        } catch { msgType = 'JWT_COMMAND'; }
-      } else {
-        // Legacy object/array payloads - send directly
-        message = JSON.stringify(payload);
-        msgType = (payload && typeof payload === 'object' && (payload.type || payload.cmd_type)) || typeof payload;
-      }
-      
-      client.ws.send(message);
-      try {
-        GatewayDebugService.getInstance().publish({
-          kind: 'message_outbound',
-          facilityId,
-          type: String(msgType),
-          direction: 'outgoing',
-          ts: Date.now(),
-          lastActivityAt: client.lastActivityAt,
-        });
-      } catch {}
-    } else {
-      logger.warn(`Gateway socket not open for facility ${facilityId}`);
+    this.sendToClient(client, facilityId, payload);
+  }
+
+  public getRecoveryPushGatewayId(facilityId: string): string | undefined {
+    return this.recoveryPushGatewayByFacility.get(facilityId);
+  }
+
+  public isRecoveryPushTargetOnline(facilityId: string): boolean {
+    const gatewayId = this.recoveryPushGatewayByFacility.get(facilityId);
+    if (!gatewayId) return false;
+    const client = this.swapCandidates.get(`${facilityId}:${gatewayId}`);
+    return !!client && client.ws.readyState === WebSocket.OPEN;
+  }
+
+  public getActiveConnectionStatusForFacility(facilityId: string): { connected: boolean; lastPongAt?: number } {
+    const active = this.facilityToClient.get(facilityId);
+    if (active && active.ws.readyState === WebSocket.OPEN) {
+      return { connected: true, lastPongAt: active.lastActivityAt };
     }
+    return { connected: false };
+  }
+
+  public validateRecoveryInboundSession(
+    facilityId: string,
+    gatewayId: string | undefined,
+    sessionRole: GatewaySessionRole,
+  ): { accepted: true } | { accepted: false; reason: string } {
+    return validateRecoveryInboundSession({
+      facilityId,
+      gatewayId,
+      sessionRole,
+      recoveryPushGatewayId: this.recoveryPushGatewayByFacility.get(facilityId),
+    });
+  }
+
+  public setRecoveryPushTarget(facilityId: string, gatewayId: string | null): void {
+    if (gatewayId) {
+      this.recoveryPushGatewayByFacility.set(facilityId, gatewayId);
+    } else {
+      this.recoveryPushGatewayByFacility.delete(facilityId);
+    }
+  }
+
+  public getSwapCandidatesForFacility(facilityId: string): Array<{ gatewayId: string; connected: boolean; lastActivityAt?: number }> {
+    const results: Array<{ gatewayId: string; connected: boolean; lastActivityAt?: number }> = [];
+    for (const [key, client] of this.swapCandidates.entries()) {
+      if (!key.startsWith(`${facilityId}:`)) continue;
+      const gatewayId = client.gatewayId || key.split(':').slice(1).join(':');
+      results.push({
+        gatewayId,
+        connected: client.ws.readyState === WebSocket.OPEN,
+        lastActivityAt: client.lastActivityAt,
+      });
+    }
+    return results;
+  }
+
+  /** Number of distinct swap candidate gateways currently parked for a facility. */
+  private countSwapCandidatesForFacility(facilityId: string, excludeGatewayId?: string): number {
+    const seen = new Set<string>();
+    const prefix = `${facilityId}:`;
+    for (const [key, client] of this.swapCandidates.entries()) {
+      if (!key.startsWith(prefix)) continue;
+      const gatewayId = client.gatewayId || key.slice(prefix.length);
+      if (excludeGatewayId && gatewayId === excludeGatewayId) continue;
+      seen.add(gatewayId);
+    }
+    return seen.size;
+  }
+
+  /**
+   * Records an auto-registration event and returns false if the facility has exceeded
+   * the sliding-window rate limit. Prunes expired timestamps.
+   */
+  private allowAutoRegister(facilityId: string): boolean {
+    const now = Date.now();
+    const windowStart = now - WebsocketGatewayTransport.AUTO_REGISTER_WINDOW_MS;
+    const events = (this.autoRegisterEvents.get(facilityId) || []).filter((ts) => ts >= windowStart);
+    if (events.length >= WebsocketGatewayTransport.AUTO_REGISTER_MAX_PER_WINDOW) {
+      this.autoRegisterEvents.set(facilityId, events);
+      return false;
+    }
+    events.push(now);
+    this.autoRegisterEvents.set(facilityId, events);
+    return true;
+  }
+
+  private async logAutoRegistration(params: {
+    facilityId: string;
+    gatewayId: string;
+    bound: boolean;
+    userId: string;
+  }): Promise<void> {
+    try {
+      const { ActivityService } = await import('@/services/activity.service');
+      await ActivityService.getInstance().logActivity({
+        entityType: 'gateway',
+        entityId: params.gatewayId,
+        activityType: 'configuration_change',
+        title: params.bound ? 'Gateway auto-registered and bound' : 'Gateway auto-registered as swap candidate',
+        description: params.bound
+          ? 'A new gateway connected and was auto-registered as the facility gateway (first install).'
+          : 'A new gateway connected and was auto-registered as an unbound swap candidate.',
+        actorType: 'user',
+        actorId: params.userId,
+        result: 'success',
+        facilityId: params.facilityId,
+        metadata: { autoRegistered: true, bound: params.bound, gatewayId: params.gatewayId },
+      });
+    } catch (err) {
+      logger.warn(`Failed to log gateway auto-registration facility=${params.facilityId} gateway=${params.gatewayId}`, err);
+    }
+  }
+
+  private checkAutoRegisterLimits(
+    facilityId: string,
+    gatewayId: string,
+    options: { enforceCandidateCap?: boolean; enforceRateLimit?: boolean },
+  ): AutoRegisterReject | null {
+    if (!isValidGatewayUuid(gatewayId)) {
+      return { code: 'AUTH_BAD_REQUEST', message: 'gatewayId must be a valid UUID' };
+    }
+    if (options.enforceCandidateCap !== false) {
+      const parked = this.countSwapCandidatesForFacility(facilityId, gatewayId);
+      if (parked >= WebsocketGatewayTransport.MAX_SWAP_CANDIDATES_PER_FACILITY) {
+        return { code: 'AUTH_FORBIDDEN', message: 'Swap candidate limit reached for facility' };
+      }
+    }
+    if (options.enforceRateLimit !== false && !this.allowAutoRegister(facilityId)) {
+      return { code: 'AUTH_RATE_LIMITED', message: 'Too many gateway registrations; try again later' };
+    }
+    return null;
+  }
+
+  /**
+   * Ensure an unbound gateway row exists for swap-candidate parking (idempotent).
+   * Creates the row when absent; safe under concurrent AUTH with the same GUID.
+   */
+  private async ensureUnboundSwapCandidateRecord(
+    gatewayModel: InstanceType<Awaited<typeof import('@/models/gateway.model')>['GatewayModel']>,
+    gatewayId: string,
+    facilityId: string,
+    userId: string,
+    options: { enforceCandidateCap?: boolean; enforceRateLimit?: boolean },
+  ): Promise<{ ok: true; created: boolean } | { ok: false; reject: AutoRegisterReject }> {
+    const existing = await gatewayModel.findById(gatewayId);
+    if (existing?.facility_id && existing.facility_id !== facilityId) {
+      return { ok: false, reject: { code: 'AUTH_FORBIDDEN', message: 'Gateway belongs to another facility' } };
+    }
+    if (existing) {
+      return { ok: true, created: false };
+    }
+
+    const limitReject = this.checkAutoRegisterLimits(facilityId, gatewayId, options);
+    if (limitReject) {
+      return { ok: false, reject: limitReject };
+    }
+
+    const { created } = await gatewayModel.createUnboundSwapCandidateIfAbsent({
+      id: gatewayId,
+      name: `Swap candidate ${gatewayId.slice(0, 8)}`,
+      metadata: { autoRegistered: true },
+    });
+
+    if (created) {
+      await this.logAutoRegistration({ facilityId, gatewayId, bound: false, userId });
+      logger.info(`Gateway WS auto-registered swap candidate facility=${facilityId} gateway=${gatewayId}`);
+    }
+
+    return { ok: true, created };
+  }
+
+  public promoteSwapCandidateToActive(facilityId: string, gatewayId: string): void {
+    const key = `${facilityId}:${gatewayId}`;
+    const candidate = this.swapCandidates.get(key);
+    if (!candidate) return;
+
+    this.closeActiveSessionForFacility(facilityId, 'recovery_promote', candidate.ws);
+
+    candidate.sessionRole = 'active';
+    this.facilityToClient.set(facilityId, candidate);
+    this.swapCandidates.delete(key);
+    this.recoveryPushGatewayByFacility.delete(facilityId);
+    this.notifyConnectionChange(
+      facilityId,
+      true,
+      'recovery_promote',
+      candidate.lastActivityAt,
+      candidate.user.userId,
+      getRemoteAddress(candidate.ws),
+    );
+  }
+
+  /**
+   * After recovery complete/bypass: rebind WS sessions to the new gateway.
+   * Always evicts the previous bound session; promotes the swap candidate when connected.
+   */
+  public finalizeRecoverySession(
+    facilityId: string,
+    newGatewayId: string,
+    previousGatewayId: string | null,
+  ): void {
+    this.closeActiveSessionForFacility(facilityId, 'recovery_finalize', undefined, previousGatewayId);
+
+    const key = `${facilityId}:${newGatewayId}`;
+    const candidate = this.swapCandidates.get(key);
+    if (candidate && candidate.ws.readyState === WebSocket.OPEN) {
+      candidate.sessionRole = 'active';
+      this.facilityToClient.set(facilityId, candidate);
+      this.swapCandidates.delete(key);
+      this.notifyConnectionChange(
+        facilityId,
+        true,
+        'recovery_finalize',
+        candidate.lastActivityAt,
+        candidate.user.userId,
+        getRemoteAddress(candidate.ws),
+      );
+    }
+
+    this.recoveryPushGatewayByFacility.delete(facilityId);
+  }
+
+  private closeActiveSessionForFacility(
+    facilityId: string,
+    reason: string,
+    exceptWs?: RemoteWebSocket,
+    previousGatewayId?: string | null,
+  ): void {
+    const active = this.facilityToClient.get(facilityId);
+    if (!active || active.ws === exceptWs || active.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const shouldClose =
+      !previousGatewayId
+      || active.gatewayId === previousGatewayId
+      || active.gatewayId === undefined
+      || active.sessionRole === 'legacy';
+
+    if (!shouldClose) {
+      return;
+    }
+
+    try { active.ws.close(4000, reason); } catch {}
+    this.facilityToClient.delete(facilityId);
+    this.notifyConnectionChange(
+      facilityId,
+      false,
+      reason,
+      active.lastActivityAt,
+      active.user.userId,
+      getRemoteAddress(active.ws),
+    );
+  }
+
+  public getConnectionStatusForFacility(facilityId: string): { connected: boolean; lastPongAt?: number } {
+    const active = this.facilityToClient.get(facilityId);
+    if (active && active.ws.readyState === WebSocket.OPEN) {
+      return { connected: true, lastPongAt: active.lastActivityAt };
+    }
+    for (const [key, client] of this.swapCandidates.entries()) {
+      if (!key.startsWith(`${facilityId}:`)) continue;
+      if (client.ws.readyState === WebSocket.OPEN) {
+        return { connected: true, lastPongAt: client.lastActivityAt };
+      }
+    }
+    return { connected: false };
+  }
+
+  private sendToClient(client: AuthedClient, facilityId: string, payload: any): void {
+    if (client.ws.readyState !== WebSocket.OPEN) {
+      logger.warn(`Gateway socket not open for facility ${facilityId}`);
+      return;
+    }
+    let message: string;
+    let msgType = 'unknown';
+
+    if (typeof payload === 'string' && payload.includes('.')) {
+      message = JSON.stringify({ type: 'COMMAND', jwt: payload });
+      try {
+        const parts = payload.split('.');
+        if (parts.length === 3) {
+          const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+          msgType = decoded?.cmd_type || 'JWT_COMMAND';
+        }
+      } catch { msgType = 'JWT_COMMAND'; }
+    } else {
+      message = JSON.stringify(payload);
+      msgType = (payload && typeof payload === 'object' && (payload.type || payload.cmd_type)) || typeof payload;
+    }
+
+    client.ws.send(message);
+    try {
+      GatewayDebugService.getInstance().publish({
+        kind: 'message_outbound',
+        facilityId,
+        type: String(msgType),
+        direction: 'outgoing',
+        ts: Date.now(),
+        lastActivityAt: client.lastActivityAt,
+      });
+    } catch {}
   }
 
   public setConnectionChangeListener(listener: (event: {
@@ -252,32 +552,44 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     const closeAndCleanup = (reason = 'socket_closed') => {
       clearFramePingTimer();
       if (authed) {
-        const current = this.facilityToClient.get(authed.facilityId);
-        if (current?.ws === ws) {
-          this.facilityToClient.delete(authed.facilityId);
-          this.notifyConnectionChange(
-            authed.facilityId,
-            false,
-            reason,
-            authed.lastActivityAt,
-            authed.user.userId,
-            getRemoteAddress(ws),
-          );
-          logger.info(`Gateway disconnected for facility ${authed.facilityId} (user=${authed.user.userId})`);
-          GatewayDebugService.getInstance().publish({
-            kind: 'connection_closed',
-            facilityId: authed.facilityId,
-            userId: authed.user.userId,
-            ts: Date.now(),
-            lastActivityAt: authed.lastActivityAt,
-          });
-          // Cancel any active firmware pushes for this facility to avoid long ACK timeout waits
-          import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
-            void FirmwareService.handleFacilityDisconnect(authed!.facilityId);
-          }).catch(() => {});
-          import('@/services/provisioning/provisioning-restore.service').then(({ ProvisioningRestoreService }) => {
-            void ProvisioningRestoreService.handleFacilityDisconnect(authed!.facilityId);
-          }).catch(() => {});
+        const remote = getRemoteAddress(ws);
+        if (authed.sessionRole === 'swap_candidate' && authed.gatewayId) {
+          const key = `${authed.facilityId}:${authed.gatewayId}`;
+          const current = this.swapCandidates.get(key);
+          if (current?.ws === ws) {
+            this.swapCandidates.delete(key);
+            logger.info(`Swap candidate disconnected facility=${authed.facilityId} gateway=${authed.gatewayId}`);
+            import('@/services/gateway/gateway-recovery.service').then(({ GatewayRecoveryService }) => {
+              void GatewayRecoveryService.handleRecoveryPushTargetDisconnect(authed!.facilityId, authed!.gatewayId!);
+            }).catch(() => {});
+          }
+        } else {
+          const current = this.facilityToClient.get(authed.facilityId);
+          if (current?.ws === ws) {
+            this.facilityToClient.delete(authed.facilityId);
+            this.notifyConnectionChange(
+              authed.facilityId,
+              false,
+              reason,
+              authed.lastActivityAt,
+              authed.user.userId,
+              remote,
+            );
+            logger.info(`Gateway disconnected for facility ${authed.facilityId} (user=${authed.user.userId})`);
+            GatewayDebugService.getInstance().publish({
+              kind: 'connection_closed',
+              facilityId: authed.facilityId,
+              userId: authed.user.userId,
+              ts: Date.now(),
+              lastActivityAt: authed.lastActivityAt,
+            });
+            import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
+              void FirmwareService.handleFacilityDisconnect(authed!.facilityId, { disconnectedSessionRole: 'active' });
+            }).catch(() => {});
+            import('@/services/provisioning/provisioning-restore.service').then(({ ProvisioningRestoreService }) => {
+              void ProvisioningRestoreService.handleFacilityDisconnect(authed!.facilityId, { disconnectedSessionRole: 'active' });
+            }).catch(() => {});
+          }
         }
       }
       try { ws.close(); } catch {}
@@ -380,34 +692,178 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             return closeAndCleanup();
           }
         }
-        // Enforce one connection per facility: replace existing
-        const existing = this.facilityToClient.get(facilityId);
-        if (existing && existing.ws !== ws) {
-          try { existing.ws.close(4000, 'replaced'); } catch {}
+        const gatewayId = typeof msg?.gatewayId === 'string' && msg.gatewayId.length > 0
+          ? String(msg.gatewayId)
+          : undefined;
+
+        let boundGateway: { id: string } | null = null;
+        let gatewayModel: InstanceType<Awaited<typeof import('@/models/gateway.model')>['GatewayModel']> | null = null;
+        if (gatewayId) {
+          const { GatewayModel } = await import('@/models/gateway.model');
+          gatewayModel = new GatewayModel();
+          boundGateway = await gatewayModel.findByFacilityId(facilityId);
         }
-        const now = Date.now();
-        authed = { ws, user: decoded, facilityId, lastActivityAt: now };
-        this.facilityToClient.set(facilityId, authed);
-        this.notifyConnectionChange(facilityId, true, 'auth_ok', now, decoded.userId, remote);
+
+        let sessionRole: GatewaySessionRole = 'legacy';
+        let resolvedGatewayId = gatewayId;
+        let autoRegistered = false;
+
+        const setActiveSession = (gid: string | undefined, role: GatewaySessionRole) => {
+          const existing = this.facilityToClient.get(facilityId);
+          if (existing && existing.ws !== ws && (existing.gatewayId === gid || existing.sessionRole === 'active' || !gid)) {
+            try { existing.ws.close(4000, 'replaced'); } catch {}
+          }
+          const now = Date.now();
+          authed = { ws, user: decoded, facilityId, gatewayId: gid, sessionRole: role, lastActivityAt: now };
+          this.facilityToClient.set(facilityId, authed);
+        };
+
+        const parkSwapCandidate = async (gid: string, boundId: string) => {
+          sessionRole = 'swap_candidate';
+          resolvedGatewayId = gid;
+          const swapKey = `${facilityId}:${gid}`;
+          const existingCandidate = this.swapCandidates.get(swapKey);
+          if (existingCandidate && existingCandidate.ws !== ws) {
+            try { existingCandidate.ws.close(4000, 'replaced'); } catch {}
+          }
+          const now = Date.now();
+          authed = { ws, user: decoded, facilityId, gatewayId: gid, sessionRole, lastActivityAt: now };
+          this.swapCandidates.set(swapKey, authed);
+          try {
+            const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+            await GatewayRecoveryService.detect(facilityId, gid, boundId);
+          } catch (err) {
+            logger.warn(`Failed to detect gateway swap facility=${facilityId}`, err);
+          }
+          logger.info(`Gateway WS swap candidate parked: facility=${facilityId} newGateway=${gid} boundGateway=${boundId}`);
+        };
+
+        if (gatewayId && gatewayModel) {
+          try {
+            if (boundGateway && gatewayId === boundGateway.id) {
+              // Known bound gateway reconnecting → active session.
+              sessionRole = 'active';
+              setActiveSession(gatewayId, 'active');
+            } else if (boundGateway) {
+              // A different gateway connected while a bound gateway exists → swap candidate.
+              const ensured = await this.ensureUnboundSwapCandidateRecord(
+                gatewayModel,
+                gatewayId,
+                facilityId,
+                decoded.userId,
+                {},
+              );
+              if (!ensured.ok) {
+                logger.warn(
+                  `Gateway WS AUTH rejected (swap candidate) facility=${facilityId} gateway=${gatewayId} code=${ensured.reject.code}`,
+                );
+                safeSend(ws, { type: 'ERROR', code: ensured.reject.code, message: ensured.reject.message });
+                return closeAndCleanup();
+              }
+              if (ensured.created) {
+                autoRegistered = true;
+              }
+              await parkSwapCandidate(gatewayId, boundGateway.id);
+            } else {
+              // No bound gateway for this facility → first-install auto-bind.
+              const existingGateway = await gatewayModel.findById(gatewayId);
+              if (existingGateway?.facility_id && existingGateway.facility_id !== facilityId) {
+                logger.warn(
+                  `Gateway WS AUTH rejected (gateway bound to another facility) gateway=${gatewayId} facility=${facilityId} boundTo=${existingGateway.facility_id}`,
+                );
+                safeSend(ws, { type: 'ERROR', code: 'AUTH_FORBIDDEN', message: 'Gateway belongs to another facility' });
+                return closeAndCleanup();
+              }
+              if (!existingGateway) {
+                const limitReject = this.checkAutoRegisterLimits(facilityId, gatewayId, {
+                  enforceCandidateCap: false,
+                });
+                if (limitReject) {
+                  logger.warn(
+                    `Gateway WS AUTH rejected (first-install auto-register) facility=${facilityId} gateway=${gatewayId} code=${limitReject.code}`,
+                  );
+                  safeSend(ws, { type: 'ERROR', code: limitReject.code, message: limitReject.message });
+                  return closeAndCleanup();
+                }
+              }
+              const result = await gatewayModel.createOrBindAsFirstGateway({
+                id: gatewayId,
+                facilityId,
+                name: `Gateway ${gatewayId.slice(0, 8)}`,
+                metadata: { autoRegistered: true },
+              });
+              if (result.bound) {
+                sessionRole = 'active';
+                setActiveSession(gatewayId, 'active');
+                if (result.created) {
+                  autoRegistered = true;
+                  await this.logAutoRegistration({ facilityId, gatewayId, bound: true, userId: decoded.userId });
+                  logger.info(`Gateway WS auto-registered + bound first gateway facility=${facilityId} gateway=${gatewayId}`);
+                }
+              } else {
+                // Lost the first-install race — ensure DB row exists, then park as swap candidate.
+                const winner = await gatewayModel.findByFacilityId(facilityId);
+                if (!winner) {
+                  logger.error(
+                    `Gateway WS AUTH first-install race without bound winner facility=${facilityId} gateway=${gatewayId}`,
+                  );
+                  safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Facility gateway binding conflict' });
+                  return closeAndCleanup();
+                }
+                const ensured = await this.ensureUnboundSwapCandidateRecord(
+                  gatewayModel,
+                  gatewayId,
+                  facilityId,
+                  decoded.userId,
+                  { enforceRateLimit: false },
+                );
+                if (!ensured.ok) {
+                  logger.warn(
+                    `Gateway WS AUTH rejected (first-install race fallback) facility=${facilityId} gateway=${gatewayId} code=${ensured.reject.code}`,
+                  );
+                  safeSend(ws, { type: 'ERROR', code: ensured.reject.code, message: ensured.reject.message });
+                  return closeAndCleanup();
+                }
+                if (ensured.created) {
+                  autoRegistered = true;
+                }
+                await parkSwapCandidate(gatewayId, winner.id);
+              }
+            }
+          } catch (err) {
+            logger.error(`Gateway WS AUTH auto-register failed facility=${facilityId} gateway=${gatewayId}`, err);
+            safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Gateway registration failed' });
+            return closeAndCleanup();
+          }
+        } else {
+          // Legacy connection (no gatewayId supplied).
+          setActiveSession(resolvedGatewayId, 'legacy');
+        }
+
+        if (sessionRole === 'active' || sessionRole === 'legacy') {
+          this.notifyConnectionChange(facilityId, true, 'auth_ok', authed!.lastActivityAt, decoded.userId, remote);
+        }
         let ops_public_key_pem: string | undefined;
         try { ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem(); } catch {}
         safeSend(ws, {
           type: 'AUTH_OK',
           facilityId,
+          gatewayId: resolvedGatewayId,
+          sessionRole,
+          autoRegistered,
           ops_public_key: Ed25519Service.getOpsPublicKeyB64(),
           ops_public_key_jwk: Ed25519Service.getOpsPublicKeyJwk(),
           ops_public_key_pem,
         });
-        logger.info(`Gateway WS authenticated: facility=${facilityId} user=${decoded.userId} role=${decoded.role} remote=${remote}`);
+        logger.info(`Gateway WS authenticated: facility=${facilityId} gateway=${resolvedGatewayId || 'legacy'} role=${sessionRole} user=${decoded.userId} remote=${remote}`);
         GatewayDebugService.getInstance().publish({
           kind: 'connection_opened',
           facilityId,
           userId: decoded.userId,
-          ts: now,
-          lastActivityAt: now,
+          ts: authed!.lastActivityAt,
+          lastActivityAt: authed!.lastActivityAt,
           remote,
         });
-        // On reconnect, resume any interrupted OTA transfers for this facility.
         import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
           FirmwareService.resumePendingForFacility(facilityId).catch((err) => {
             logger.warn(`Failed to resume firmware pushes for facility=${facilityId}`, err);
@@ -418,11 +874,23 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             logger.warn(`Failed to resume provisioning restores for facility=${facilityId}`, err);
           });
         }).catch(() => {});
-        import('@/services/access-code.service').then(({ AccessCodeService }) => {
-          AccessCodeService.getInstance().flushPendingPushForFacility(facilityId).catch((err) => {
-            logger.warn(`Failed to flush access code outbox for facility=${facilityId}`, err);
+        import('@/services/gateway/gateway-recovery.service').then(({ GatewayRecoveryService }) => {
+          GatewayRecoveryService.resumePendingForFacility(facilityId).catch((err) => {
+            logger.warn(`Failed to resume gateway recovery for facility=${facilityId}`, err);
           });
         }).catch(() => {});
+        if (sessionRole === 'active' || sessionRole === 'legacy') {
+          import('@/services/access-code.service').then(({ AccessCodeService }) => {
+            AccessCodeService.getInstance().flushPendingPushForFacility(facilityId).catch((err) => {
+              logger.warn(`Failed to flush access code outbox for facility=${facilityId}`, err);
+            });
+          }).catch(() => {});
+          import('@/services/device-deletion-outbox.service').then(({ DeviceDeletionOutboxService }) => {
+            DeviceDeletionOutboxService.getInstance().flushPendingForFacility(facilityId).catch((err) => {
+              logger.warn(`Failed to flush device deletion outbox for facility=${facilityId}`, err);
+            });
+          }).catch(() => {});
+        }
         return;
       }
 
@@ -459,6 +927,19 @@ export class WebsocketGatewayTransport implements GatewayTransport {
 
       // Firmware messages from gateway
       if (type === 'FIRMWARE_CHUNK_ACK' || type === 'FIRMWARE_UPDATE_STATUS' || type === 'FIRMWARE_PROGRESS') {
+        const recoveryInbound = this.validateRecoveryInboundSession(authed.facilityId, authed.gatewayId, authed.sessionRole);
+        if (!recoveryInbound.accepted) {
+          logger.warn(`Gateway WS firmware message rejected facility=${authed.facilityId} reason=${recoveryInbound.reason}`);
+          if (type === 'FIRMWARE_UPDATE_STATUS') {
+            safeSend(ws, {
+              type: 'FIRMWARE_UPDATE_STATUS_ACK',
+              push_id: typeof msg?.push_id === 'string' ? msg.push_id : msg?.pushId,
+              accepted: false,
+              reason: recoveryInbound.reason,
+            });
+          }
+          return;
+        }
         try {
           const { FirmwareService } = await import('@/services/firmware/firmware.service');
           if (type === 'FIRMWARE_CHUNK_ACK') {
@@ -485,6 +966,19 @@ export class WebsocketGatewayTransport implements GatewayTransport {
 
       // Provisioning restore messages from gateway
       if (type === 'PROVISIONING_CHUNK_ACK' || type === 'PROVISIONING_RESTORE_STATUS') {
+        const recoveryInbound = this.validateRecoveryInboundSession(authed.facilityId, authed.gatewayId, authed.sessionRole);
+        if (!recoveryInbound.accepted) {
+          logger.warn(`Gateway WS provisioning message rejected facility=${authed.facilityId} reason=${recoveryInbound.reason}`);
+          if (type === 'PROVISIONING_RESTORE_STATUS') {
+            safeSend(ws, {
+              type: 'PROVISIONING_RESTORE_STATUS_ACK',
+              restore_id: typeof msg?.restore_id === 'string' ? msg.restore_id : msg?.restoreId,
+              accepted: false,
+              reason: recoveryInbound.reason,
+            });
+          }
+          return;
+        }
         try {
           const { ProvisioningRestoreService } = await import('@/services/provisioning/provisioning-restore.service');
           if (type === 'PROVISIONING_CHUNK_ACK') {
@@ -507,12 +1001,59 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         return;
       }
 
+      // Inventory snapshot messages from gateway (swap recovery)
+      if (type === 'INVENTORY_SNAPSHOT_CHUNK_ACK' || type === 'INVENTORY_SNAPSHOT_STATUS') {
+        const recoveryInbound = this.validateRecoveryInboundSession(authed.facilityId, authed.gatewayId, authed.sessionRole);
+        if (!recoveryInbound.accepted) {
+          logger.warn(`Gateway WS inventory snapshot message rejected facility=${authed.facilityId} reason=${recoveryInbound.reason}`);
+          if (type === 'INVENTORY_SNAPSHOT_STATUS') {
+            safeSend(ws, {
+              type: 'INVENTORY_SNAPSHOT_STATUS_ACK',
+              recovery_id: typeof msg?.recovery_id === 'string' ? msg.recovery_id : msg?.recoveryId,
+              accepted: false,
+              reason: recoveryInbound.reason,
+            });
+          }
+          return;
+        }
+        try {
+          const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+          if (type === 'INVENTORY_SNAPSHOT_CHUNK_ACK') {
+            await GatewayRecoveryService.handleChunkAck(authed.facilityId, msg);
+          } else {
+            const result = await GatewayRecoveryService.handleSnapshotStatus(authed.facilityId, msg);
+            const ackRecoveryId = result.recovery_id
+              ?? (typeof msg?.recovery_id === 'string' ? msg.recovery_id : (typeof msg?.recoveryId === 'string' ? msg.recoveryId : undefined));
+            safeSend(ws, {
+              type: 'INVENTORY_SNAPSHOT_STATUS_ACK',
+              recovery_id: ackRecoveryId,
+              accepted: result.accepted,
+              recovery_status: result.recovery_status,
+              reason: result.reason,
+            });
+          }
+        } catch (err) {
+          logger.warn(`Gateway WS inventory snapshot message handling error type=${type} facility=${authed.facilityId}`, err);
+        }
+        return;
+      }
+
       if (type === 'ACCESS_CODE_UPDATE_ACK') {
         try {
           const { AccessCodeService } = await import('@/services/access-code.service');
           AccessCodeService.getInstance().handleGatewayAccessCodeUpdateAck(authed.facilityId, msg);
         } catch (err) {
           logger.warn(`Gateway WS ACCESS_CODE_UPDATE_ACK handling error facility=${authed.facilityId}`, err);
+        }
+        return;
+      }
+
+      if (type === 'DEVICE_DELETED_ACK') {
+        try {
+          const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+          DeviceDeletionOutboxService.getInstance().handleDeviceDeletedAck(authed.facilityId, msg);
+        } catch (err) {
+          logger.warn(`Gateway WS DEVICE_DELETED_ACK handling error facility=${authed.facilityId}`, err);
         }
         return;
       }
@@ -545,9 +1086,27 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(() => {
       const now = Date.now();
-      for (const [facilityId, client] of this.facilityToClient.entries()) {
-        if (client.ws.readyState !== WebSocket.OPEN) {
-          this.facilityToClient.delete(facilityId);
+      this.sweepHeartbeatClients(this.facilityToClient, (facilityId) => {
+        this.facilityToClient.delete(facilityId);
+      }, now);
+      this.sweepHeartbeatClients(this.swapCandidates, (key) => {
+        this.swapCandidates.delete(key);
+      }, now, true);
+    }, WebsocketGatewayTransport.HEARTBEAT_SWEEP_MS);
+    this.heartbeatTimer.unref();
+  }
+
+  private sweepHeartbeatClients(
+    clients: Map<string, AuthedClient>,
+    onRemove: (key: string) => void,
+    now: number,
+    isSwapCandidate = false,
+  ): void {
+    for (const [key, client] of clients.entries()) {
+      const facilityId = isSwapCandidate ? key.split(':')[0] : key;
+      if (client.ws.readyState !== WebSocket.OPEN) {
+        onRemove(key);
+        if (!isSwapCandidate) {
           this.notifyConnectionChange(
             facilityId,
             false,
@@ -556,13 +1115,15 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             client.user.userId,
             getRemoteAddress(client.ws),
           );
-          continue;
         }
-        const inactiveMs = now - client.lastActivityAt;
-        if (inactiveMs > WebsocketGatewayTransport.INACTIVITY_TIMEOUT_MS) {
-          logger.warn(`Gateway heartbeat inactivity timeout, closing facility ${facilityId}`);
-          try { client.ws.close(4001, 'heartbeat timeout'); } catch {}
-          this.facilityToClient.delete(facilityId);
+        continue;
+      }
+      const inactiveMs = now - client.lastActivityAt;
+      if (inactiveMs > WebsocketGatewayTransport.INACTIVITY_TIMEOUT_MS) {
+        logger.warn(`Gateway heartbeat inactivity timeout, closing facility ${facilityId}${isSwapCandidate ? ' (swap candidate)' : ''}`);
+        try { client.ws.close(4001, 'heartbeat timeout'); } catch {}
+        onRemove(key);
+        if (!isSwapCandidate) {
           this.notifyConnectionChange(
             facilityId,
             false,
@@ -577,10 +1138,12 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             ts: now,
             lastActivityAt: client.lastActivityAt,
           });
-          continue;
         }
-        if (inactiveMs >= WebsocketGatewayTransport.JSON_PING_AFTER_IDLE_MS) {
-          safeSend(client.ws, { type: 'PING' });
+        continue;
+      }
+      if (inactiveMs >= WebsocketGatewayTransport.JSON_PING_AFTER_IDLE_MS) {
+        safeSend(client.ws, { type: 'PING' });
+        if (!isSwapCandidate) {
           GatewayDebugService.getInstance().publish({
             kind: 'ping_sent',
             facilityId,
@@ -589,8 +1152,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           });
         }
       }
-    }, WebsocketGatewayTransport.HEARTBEAT_SWEEP_MS);
-    this.heartbeatTimer.unref();
+    }
   }
 
   /**

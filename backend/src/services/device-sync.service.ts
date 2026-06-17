@@ -482,6 +482,10 @@ export class DeviceSyncService {
     };
 
     try {
+      const knex = (await import('@/services/database.service')).DatabaseService.getInstance().connection;
+      const gateway = await knex('gateways').where('id', gatewayId).first();
+      const facilityId: string | null = gateway?.facility_id ?? null;
+
       // Get all BluLok devices for this gateway from our database
       const existingDevices = await this.deviceModel.findBluLokDevices({
         gateway_id: gatewayId,
@@ -663,6 +667,14 @@ export class DeviceSyncService {
         console.log(`[DEVICE-SYNC] Removed ${result.removed} devices from inventory sync`);
       }
 
+      if (facilityId) {
+        const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+        const deletionOutbox = DeviceDeletionOutboxService.getInstance();
+        for (const lockId of incomingDeviceMap.keys()) {
+          await deletionOutbox.cancelForBlulok(facilityId, lockId);
+        }
+      }
+
       console.log(
         `[DEVICE-SYNC] Inventory sync complete: added=${result.added}, removed=${result.removed}, updated=${result.updated ?? 0}, unchanged=${result.unchanged}`
       );
@@ -797,7 +809,9 @@ export class DeviceSyncService {
           continue;
         }
         try {
-          await this.deviceModel.deleteAccessControlDevice(device.id);
+          await DevicesService.getInstance().deleteAccessControlFromInventory(device.id, {
+            source: 'gateway_sync',
+          });
           result.removed++;
           result.entries!.push({
             action: 'removed',
@@ -981,6 +995,16 @@ export class DeviceSyncService {
           await AccessCodeService.getInstance().pushCodesToGateway(facilityId);
         } catch (pushError: any) {
           result.errors.push(`Failed to push access codes after inventory sync: ${pushError.message}`);
+        }
+      }
+
+      if (facilityId) {
+        const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+        const deletionOutbox = DeviceDeletionOutboxService.getInstance();
+        for (const [key, item] of incomingMap) {
+          const accessId = extractAccessId(item as unknown as Record<string, unknown>);
+          const relayChannel = resolveAccessRelayChannel(item.relay_channel);
+          await deletionOutbox.cancelForAccessControl(facilityId, accessId, relayChannel);
         }
       }
 

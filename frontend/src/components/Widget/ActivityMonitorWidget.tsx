@@ -22,6 +22,13 @@ import {
   WIDGET_BODY_CLASS,
   WIDGET_LIST_SCROLL_CLASS,
 } from '@/utils/widget-layout.utils';
+import {
+  formatAccessAction,
+  formatAccessMethod,
+  getAccessFailureDetail,
+  getAccessUserDisplay,
+} from '@/utils/access-history-display.utils';
+import { formatRelativeTime } from '@/utils/datetime.utils';
 
 interface ActivityLogEntry {
   id: string;
@@ -58,7 +65,13 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
     type = 'lock';
   } else if (log.action === 'unlock') {
     type = 'unlock';
-  } else if (log.action === 'access_denied' || log.action === 'system_error' || log.action === 'invalid_credential') {
+  } else if (
+    log.action === 'access_denied'
+    || log.action === 'unlock_attempt'
+    || log.action === 'lock_attempt'
+    || log.action === 'system_error'
+    || log.action === 'invalid_credential'
+  ) {
     type = 'alert';
   } else if (log.action === 'schedule_violation' || log.action === 'timeout') {
     type = 'system';
@@ -76,23 +89,41 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
 
   // Build a descriptive message
   let message = '';
-  const userName = log.user_name || log.primary_tenant_name || 'Unknown user';
+  const userName = getAccessUserDisplay(log).primary;
   const unitNumber = log.unit_number || log.device_name || 'Unknown unit';
+  const failureDetail = getAccessFailureDetail(log);
 
   switch (log.action) {
     case 'unlock':
-      message = `Unit ${unitNumber} unlocked by ${userName}`;
+      message = userName !== '—'
+        ? `Unit ${unitNumber} unlocked by ${userName}`
+        : `Unit ${unitNumber} unlocked (${formatAccessMethod(log.method)})`;
       break;
     case 'lock':
-      message = `Unit ${unitNumber} locked by ${userName}`;
+      message = userName !== '—'
+        ? `Unit ${unitNumber} locked by ${userName}`
+        : `Unit ${unitNumber} locked (${formatAccessMethod(log.method)})`;
       break;
     case 'access_granted':
       message = `Access granted to ${unitNumber} for ${userName}`;
       break;
+    case 'unlock_attempt':
     case 'access_denied':
-      message = `Access denied to ${unitNumber} for ${userName}`;
-      if (log.denial_reason) {
-        message += ` (${log.denial_reason.replace(/_/g, ' ')})`;
+      message = `Unlock attempt denied at ${unitNumber}`;
+      if (userName !== '—') {
+        message += ` for ${userName}`;
+      }
+      if (failureDetail) {
+        message += ` — ${failureDetail}`;
+      }
+      break;
+    case 'lock_attempt':
+      message = `Lock attempt failed at ${unitNumber}`;
+      if (userName !== '—') {
+        message += ` by ${userName}`;
+      }
+      if (failureDetail) {
+        message += ` — ${failureDetail}`;
       }
       break;
     case 'door_open':
@@ -122,7 +153,10 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
       message = `Manual override on ${unitNumber} by ${userName}`;
       break;
     default:
-      message = `${log.action.replace(/_/g, ' ')} on ${unitNumber}`;
+      message = `${formatAccessAction(log.action)} on ${unitNumber}`;
+      if (failureDetail) {
+        message += ` — ${failureDetail}`;
+      }
   }
 
   return {
@@ -130,7 +164,7 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
     timestamp: new Date(log.occurred_at),
     type,
     message,
-    user: log.user_name || log.primary_tenant_name,
+    user: userName !== '—' ? userName : log.primary_tenant_name,
     unit: log.unit_number,
     facility: log.facility_name,
     severity
@@ -245,17 +279,6 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   });
 
   const displayedActivities = filteredActivities.slice(0, layout.listCap);
-
-  const formatTimestamp = (timestamp: Date) => {
-    const now = new Date();
-    const diffMs = now.getTime() - timestamp.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return timestamp.toLocaleDateString();
-  };
 
   return (
     <Widget
@@ -380,7 +403,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
                   </p>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
-                      {formatTimestamp(activity.timestamp)}
+                      {formatRelativeTime(activity.timestamp, { absoluteAfterHours: 24, absoluteStyle: 'date' })}
                     </span>
                     {activity.facility && !layout.isDock && (
                       <span className="text-[11px] text-gray-400 dark:text-gray-500 truncate">

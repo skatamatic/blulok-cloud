@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal/Modal';
 import { useToast } from '@/contexts/ToastContext';
 import { apiService } from '@/services/api.service';
+import { datetimeLocalToIso } from '@/utils/datetime.utils';
 
 interface ShareKeyModalProps {
   isOpen: boolean;
@@ -38,13 +39,18 @@ export function ShareKeyModal({ isOpen, unitId, onClose, onSuccess }: ShareKeyMo
       addToast({ type: 'error', title: 'Enter a valid phone number (E.164 preferred)' });
       return;
     }
+    const expiresIso = expiresAt ? datetimeLocalToIso(expiresAt) : undefined;
+    if (expiresAt && !expiresIso) {
+      addToast({ type: 'error', title: 'Enter a valid expiration date and time' });
+      return;
+    }
     try {
       setSubmitting(true);
       await apiService.inviteSharedKey({
         unit_id: unitId,
         phone: phone.trim(),
         access_level: accessLevel,
-        ...(expiresAt ? { expires_at: expiresAt } : {}),
+        ...(expiresIso ? { expires_at: expiresIso } : {}),
       });
       addToast({ type: 'success', title: 'Invite sent successfully' });
       onSuccess();

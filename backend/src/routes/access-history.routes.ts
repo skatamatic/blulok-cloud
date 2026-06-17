@@ -340,7 +340,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
   try {
     const user = req.user!;
     const raw = await getActivityLogModel().findById(req.params.id);
-    if (raw && AccessHistoryReadService.DASHBOARD_ACTIVITY_TYPES.includes(raw.activity_type)) {
+    if (raw && AccessHistoryReadService.ACCESS_HISTORY_ACTIVITY_TYPES.includes(raw.activity_type)) {
       const scope = await getScopeService().buildScope(user.userId, user.role, user.facilityIds);
       if (scope.allowedFacilityIds && raw.facility_id && !scope.allowedFacilityIds.includes(raw.facility_id)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });
@@ -397,32 +397,32 @@ function generateCSV(logs: AccessHistoryRecord[]): string {
     return 'No data available';
   }
   const headers = [
-    'ID',
-    'User ID',
-    'Facility ID',
-    'Unit ID',
-    'Device ID',
+    'User',
+    'Facility',
+    'Unit',
+    'Device',
     'Device Type',
     'Action',
     'Method',
-    'Success',
-    'Denial Reason',
+    'Status',
+    'Failure Reason',
     'Occurred At',
   ];
   const rows = logs.map((log) => [
-    log.id || '',
-    log.user_id || '',
-    log.facility_id || '',
-    log.unit_id || '',
-    log.device_id || '',
+    log.user_name || '',
+    log.facility_name || '',
+    log.unit_number ? `Unit ${log.unit_number}` : '',
+    log.device_name || (log.device_serial ? `Lock ${log.device_serial}` : ''),
     log.device_type || '',
     log.action || '',
     log.method || '',
-    log.success ? 'true' : 'false',
-    log.denial_reason || '',
+    log.success ? 'Success' : 'Failed',
+    log.metadata && typeof log.metadata === 'object' && log.metadata !== null && 'failure_summary' in log.metadata
+      ? String((log.metadata as Record<string, unknown>).failure_summary ?? '')
+      : log.denial_reason || log.reason || '',
     log.occurred_at || '',
   ]);
-  return [headers.join(','), ...rows.map((row) => row.map((field) => `"${field}"`).join(','))].join('\n');
+  return [headers.join(','), ...rows.map((row) => row.map((field) => `"${String(field).replace(/"/g, '""')}"`).join(','))].join('\n');
 }
 
 export default router;

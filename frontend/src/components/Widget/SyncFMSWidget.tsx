@@ -23,6 +23,7 @@ import { usePressWithoutDrag } from '@/hooks/usePressWithoutDrag';
 import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
 import { DASHBOARD_SELECT_FACILITY_TITLE } from '@/constants/dashboard-facility-scope.constants';
 import { StatTinyContent } from '@/components/Widget/widget-content.utils';
+import { formatDateTime, formatRelativeTime } from '@/utils/datetime.utils';
 
 const FMS_SYNC_TINT_ACTIVE =
   'text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/20';
@@ -524,30 +525,6 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
     }
   };
 
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const formatTimeAgo = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${diffDays}d ago`;
-  };
-
   if (showBlockingSpinner && size !== 'tiny') {
     return (
       <Widget
@@ -590,7 +567,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               : !effectiveFacilityId || !fmsConfigured
                 ? '—'
                 : (currentFacilityStatus?.lastSyncTime ?? oldestSyncStatus?.lastSyncTime)
-                  ? formatTimeAgo(
+                  ? formatRelativeTime(
                       (currentFacilityStatus?.lastSyncTime ??
                         oldestSyncStatus?.lastSyncTime) as string
                     )
@@ -681,14 +658,14 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
                     </div>
                     <div className="truncate text-xs text-gray-500 dark:text-gray-400">
                       {currentFacilityStatus.lastSyncTime
-                        ? formatTimeAgo(currentFacilityStatus.lastSyncTime)
+                        ? formatRelativeTime(currentFacilityStatus.lastSyncTime)
                         : 'No history'}
                     </div>
                   </>
                 ) : (
                   <div className="truncate text-xs text-gray-500 dark:text-gray-400">
                     {oldestSyncStatus?.lastSyncTime
-                      ? formatTimeAgo(oldestSyncStatus.lastSyncTime)
+                      ? formatRelativeTime(oldestSyncStatus.lastSyncTime)
                       : 'Waiting for status…'}
                   </div>
                 )}
@@ -745,7 +722,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
                 <div className="text-xs space-y-1">
                   {currentFacilityStatus.lastSyncTime ? (
                     <>
-                      <div className="font-medium">{formatTimeAgo(currentFacilityStatus.lastSyncTime)}</div>
+                      <div className="font-medium">{formatRelativeTime(currentFacilityStatus.lastSyncTime)}</div>
                       {currentFacilityStatus.changesDetected !== undefined && (
                         <div>
                           {currentFacilityStatus.changesDetected} detected

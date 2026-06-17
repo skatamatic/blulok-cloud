@@ -6,6 +6,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { SavedDashboardListItem } from '@/hooks/useSavedDashboards';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 export interface DashboardSavedTabProps {
   dashboards: SavedDashboardListItem[];
@@ -76,16 +77,7 @@ export const DashboardSavedTab: React.FC<DashboardSavedTabProps> = ({
     }
   };
 
-  const formatUpdatedAt = (value: string) => {
-    try {
-      return new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      }).format(new Date(value));
-    } catch {
-      return value;
-    }
-  };
+  const formatUpdatedAt = (value: string) => formatDateTime(value, value);
 
   const confirmLoadItem = dashboards.find((d) => d.id === confirmLoadId);
   const confirmDeleteItem = dashboards.find((d) => d.id === confirmDeleteId);

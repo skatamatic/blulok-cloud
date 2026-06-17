@@ -298,6 +298,16 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
   const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
   if (!facilityId) return;
 
+  const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+  if (await GatewayRecoveryService.isBlockingActiveForFacility(facilityId)) {
+    res.status(409).json({
+      success: false,
+      code: 'recovery_in_progress',
+      message: 'Gateway recovery in progress — inventory sync blocked until recovery completes or is bypassed',
+    });
+    return;
+  }
+
   const gatewayModel = new GatewayModel();
   const gateway = await gatewayModel.findByFacilityId(facilityId);
   if (!gateway) {

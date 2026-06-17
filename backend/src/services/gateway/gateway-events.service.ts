@@ -8,6 +8,11 @@ import { WebSocketService } from '@/services/websocket.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { formatGatewayDisconnectReason } from '@/utils/gateway-telemetry-system-log.utils';
 import { GATEWAY_OFFLINE_GRACE_MS } from '@/constants/gateway-liveness.constants';
+import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
+import {
+  isOperationalOutboundBlockedDuringRecovery,
+  summarizeOutboundPayload,
+} from '@/utils/gateway-recovery-outbound.utils';
 
 type PendingOfflineEntry = {
   timer: NodeJS.Timeout;
@@ -140,28 +145,19 @@ export class GatewayEventsService {
   }
 
   public unicastToFacility(facilityId: string, payload: any): void {
+    if (
+      GatewayRecoveryService.isBlockingActiveForFacilitySync(facilityId)
+      && isOperationalOutboundBlockedDuringRecovery(payload)
+    ) {
+      const summary = summarizeOutboundPayload(payload);
+      logger.warn(
+        `GatewayEventsService.unicastToFacility blocked during recovery facility=${facilityId} summary=${JSON.stringify(summary)}`,
+      );
+      return;
+    }
+
     try {
-      // Log a concise summary to help debugging command delivery
-      const summary = (() => {
-        // Handle JWT strings by parsing the payload
-        if (typeof payload === 'string' && payload.includes('.')) {
-          try {
-            const parts = payload.split('.');
-            if (parts.length === 3) {
-              const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-              const type = decoded?.cmd_type || 'JWT';
-              const targets = decoded?.target?.length ?? undefined;
-              return { type, targets, format: 'JWT' };
-            }
-          } catch { /* ignore parse errors */ }
-          return { type: 'JWT_STRING', format: 'JWT' };
-        }
-        // Handle legacy object/array payloads (for backward compatibility)
-        const p = Array.isArray(payload) ? payload[0] : payload;
-        const type = p?.cmd_type || p?.type || typeof p;
-        const targets = p?.target?.length ?? p?.targets?.device_ids?.length ?? undefined;
-        return { type, targets };
-      })();
+      const summary = summarizeOutboundPayload(payload);
       logger.info(`GatewayEventsService.unicastToFacility facility=${facilityId} summary=${JSON.stringify(summary)}`);
     } catch {}
     this.transport.unicastToFacility(facilityId, payload);
@@ -170,6 +166,9 @@ export class GatewayEventsService {
   // Lightweight connection status for a facility (for UI/status endpoints)
   public getFacilityConnectionStatus(facilityId: string): { connected: boolean; lastPongAt?: number } {
     const t: any = this.transport as any;
+    if (t && typeof t.getConnectionStatusForFacility === 'function') {
+      return t.getConnectionStatusForFacility(facilityId);
+    }
     if (t && t['facilityToClient'] && typeof t['facilityToClient'].get === 'function') {
       const client = t['facilityToClient'].get(facilityId);
       if (client) {
@@ -178,6 +177,10 @@ export class GatewayEventsService {
       }
     }
     return { connected: false };
+  }
+
+  public getTransport(): GatewayTransport {
+    return this.transport;
   }
 
   public getConnectedFacilityIds(): string[] {

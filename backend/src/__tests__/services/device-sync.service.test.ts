@@ -9,6 +9,13 @@ const mockDeleteBluLokFromInventory = jest.fn().mockResolvedValue({
   unitId: null,
 });
 
+const mockDeleteAccessControlFromInventory = jest.fn().mockResolvedValue({
+  gatewayId: 'gateway-123',
+  facilityId: 'facility-1',
+  accessId: 'KP-001',
+  relayChannel: 1,
+});
+
 // Mock dependencies
 jest.mock('../../../src/models/device.model');
 jest.mock('../../../src/services/device-event.service');
@@ -16,6 +23,7 @@ jest.mock('../../../src/services/devices.service', () => ({
   DevicesService: {
     getInstance: jest.fn(() => ({
       deleteBluLokFromInventory: mockDeleteBluLokFromInventory,
+      deleteAccessControlFromInventory: mockDeleteAccessControlFromInventory,
     })),
   },
 }));
@@ -26,6 +34,33 @@ jest.mock('../../../src/services/access-code.service', () => ({
   AccessCodeService: {
     getInstance: jest.fn(() => ({
       pushCodesToGateway: mockPushCodesToGateway,
+    })),
+  },
+}));
+
+const mockCancelForBlulok = jest.fn().mockResolvedValue(1);
+const mockCancelForAccessControl = jest.fn().mockResolvedValue(1);
+
+jest.mock('../../../src/services/device-deletion-outbox.service', () => ({
+  DeviceDeletionOutboxService: {
+    getInstance: jest.fn(() => ({
+      cancelForBlulok: mockCancelForBlulok,
+      cancelForAccessControl: mockCancelForAccessControl,
+    })),
+  },
+}));
+
+jest.mock('../../../src/services/database.service', () => ({
+  DatabaseService: {
+    getInstance: jest.fn(() => ({
+      connection: jest.fn((table: string) => ({
+        where: jest.fn().mockReturnThis(),
+        first: jest.fn().mockResolvedValue(
+          table === 'gateways'
+            ? { id: 'gateway-123', facility_id: 'facility-1' }
+            : null,
+        ),
+      })),
     })),
   },
 }));
@@ -62,6 +97,8 @@ describe('DeviceSyncService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCancelForBlulok.mockClear();
+    mockCancelForAccessControl.mockClear();
     mockDeleteBluLokFromInventory.mockResolvedValue({
       gatewayId: 'gateway-123',
       facilityId: 'facility-1',
@@ -758,6 +795,20 @@ describe('DeviceSyncService', () => {
       expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-2', { source: 'gateway_sync' });
       expect(mockDeleteBluLokFromInventory).toHaveBeenCalledWith('device-3', { source: 'gateway_sync' });
     });
+
+    it('should cancel pending deletion tombstones for locks present in inventory', async () => {
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
+      ]);
+
+      await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1' },
+        { lock_id: 'LOCK-2' },
+      ]);
+
+      expect(mockCancelForBlulok).toHaveBeenCalledWith('facility-1', 'LOCK-1');
+      expect(mockCancelForBlulok).toHaveBeenCalledWith('facility-1', 'LOCK-2');
+    });
   });
 
   describe('syncAccessDeviceInventory', () => {
@@ -814,7 +865,7 @@ describe('DeviceSyncService', () => {
 
       expect(result.removed).toBe(0);
       expect(result.skipped_manual).toBe(1);
-      expect(mockDeviceModel.deleteAccessControlDevice).not.toHaveBeenCalled();
+      expect(mockDeleteAccessControlFromInventory).not.toHaveBeenCalled();
     });
 
     it('should preserve manual access devices and remove sync-managed ones', async () => {
@@ -839,7 +890,7 @@ describe('DeviceSyncService', () => {
 
       expect(result.removed).toBe(1);
       expect(result.skipped_manual).toBe(1);
-      expect(mockDeviceModel.deleteAccessControlDevice).toHaveBeenCalledWith('ac-1');
+      expect(mockDeleteAccessControlFromInventory).toHaveBeenCalledWith('ac-1', { source: 'gateway_sync' });
     });
 
     it('should remove sync-managed device before adding new serial on the same relay', async () => {
@@ -860,7 +911,7 @@ describe('DeviceSyncService', () => {
         { kind: 'access_control', access_id: 'NEW-SERIAL', relay_channel: 2 },
       ]);
 
-      expect(mockDeviceModel.deleteAccessControlDevice).toHaveBeenCalledWith('ac-old');
+      expect(mockDeleteAccessControlFromInventory).toHaveBeenCalledWith('ac-old', { source: 'gateway_sync' });
       expect(result.removed).toBe(1);
       expect(result.added).toBe(1);
       expect(mockDeviceModel.bulkCreateAccessControlDevices).toHaveBeenCalledWith([
@@ -1051,6 +1102,18 @@ describe('DeviceSyncService', () => {
         device_type: 'door',
       });
       expect(mockDeviceModel.updateAccessControlDeviceBySerialAndRelay).not.toHaveBeenCalled();
+    });
+
+    it('should cancel pending deletion tombstones for access devices present in inventory', async () => {
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+
+      await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        { kind: 'access_control', access_id: 'KP-001', relay_channel: 1 },
+        { kind: 'access_control', access_id: 'KP-002', relay_channel: 2 },
+      ]);
+
+      expect(mockCancelForAccessControl).toHaveBeenCalledWith('facility-1', 'KP-001', 1);
+      expect(mockCancelForAccessControl).toHaveBeenCalledWith('facility-1', 'KP-002', 2);
     });
   });
 

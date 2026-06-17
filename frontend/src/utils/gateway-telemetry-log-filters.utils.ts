@@ -1,4 +1,7 @@
 import type { GatewayTelemetryLogRecord } from '@/types/gateway.types';
+import { datetimeLocalToIso } from '@/utils/datetime.utils';
+
+export { datetimeLocalToIso };
 
 export const TELEMETRY_LOGS_PAGE_SIZE = 500;
 export const TELEMETRY_LOGS_UI_MAX_ROWS = 1000;
@@ -18,14 +21,6 @@ export interface TelemetryLogFilterState {
   search: string;
   source: TelemetryLogSourceFilter;
   payloadFilters: PayloadFilterChip[];
-}
-
-/** Convert datetime-local input value to ISO UTC for the API. */
-export function datetimeLocalToIso(value: string | undefined): string | undefined {
-  if (!value?.trim()) return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return undefined;
-  return parsed.toISOString();
 }
 
 export function getValueAtPath(obj: Record<string, unknown> | null, path: string): unknown {

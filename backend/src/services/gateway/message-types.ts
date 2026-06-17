@@ -7,11 +7,24 @@ export type AuthMessage = {
   type: 'AUTH';
   token: string;
   facilityId: string;
+  /**
+   * Gateway GUID — the device's stable, self-generated UUID (persisted across reboots).
+   * Required for swap/recovery identity binding. An unknown GUID is auto-registered:
+   * parked as an unbound swap candidate when the facility already has a bound gateway,
+   * or auto-bound as the active gateway when the facility has none (first install).
+   */
+  gatewayId?: string;
 };
+
+export type GatewaySessionRole = 'active' | 'swap_candidate' | 'legacy';
 
 export type AuthOkMessage = {
   type: 'AUTH_OK';
   facilityId: string;
+  gatewayId?: string;
+  sessionRole?: GatewaySessionRole;
+  /** True when this AUTH created a new gateway record (first time the device was seen). */
+  autoRegistered?: boolean;
   ops_public_key?: string;
   ops_public_key_jwk?: { kty: string; crv: string; x: string };
   ops_public_key_pem?: string;
@@ -79,6 +92,15 @@ export type AccessCodeUpdateAckMessage = {
   nonce: string;
   accepted?: boolean;
   message?: string;
+};
+
+export type DeviceDeletedAckMessage = {
+  type: 'DEVICE_DELETED_ACK';
+  nonce: string;
+  success?: boolean;
+  accepted?: boolean;
+  message?: string;
+  error?: string;
 };
 
 export type AccessCodeScheduleWindow = SerializedScheduleTimeWindow;
@@ -214,7 +236,53 @@ export type ProvisioningRestoreStatusAckMessage = {
   reason?: string;
 };
 
-export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage | FirmwareChunkAckMessage | FirmwareUpdateStatusMessage | FirmwareProgressMessage | AccessCodeUpdateAckMessage | ProvisioningChunkAckMessage | ProvisioningRestoreStatusMessage;
+export type InventorySnapshotManifestMessage = {
+  type: 'INVENTORY_SNAPSHOT_MANIFEST';
+  jwt: string;
+};
+
+export type InventorySnapshotChunkMessage = {
+  type: 'INVENTORY_SNAPSHOT_CHUNK';
+  jwt: string;
+};
+
+export type InventorySnapshotChunkAckMessage = {
+  type: 'INVENTORY_SNAPSHOT_CHUNK_ACK';
+  nonce: string;
+  chunkIndex: number;
+  status: 'ok' | 'error';
+  message?: string;
+};
+
+export type InventorySnapshotStatusMessage = {
+  type: 'INVENTORY_SNAPSHOT_STATUS';
+  recovery_id?: string;
+  snapshot_id?: string;
+  status: string;
+  error?: string;
+  message?: string;
+};
+
+export type InventorySnapshotStatusAckMessage = {
+  type: 'INVENTORY_SNAPSHOT_STATUS_ACK';
+  recovery_id?: string;
+  accepted: boolean;
+  recovery_status?: 'detected' | 'awaiting_config' | 'firmware' | 'provisioning' | 'inventory_push' | 'complete' | 'failed' | 'cancelled' | 'bypassed';
+  reason?: string;
+};
+
+export type InventorySnapshotResumeMessage = {
+  type: 'INVENTORY_SNAPSHOT_RESUME';
+  recoveries: Array<{
+    recovery_id: string;
+    snapshot_id: string | null;
+    status: 'verifying';
+    chunks_sent?: number;
+    chunks_total?: number | null;
+  }>;
+};
+
+export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage | FirmwareChunkAckMessage | FirmwareUpdateStatusMessage | FirmwareProgressMessage | AccessCodeUpdateAckMessage | ProvisioningChunkAckMessage | ProvisioningRestoreStatusMessage | InventorySnapshotChunkAckMessage | InventorySnapshotStatusMessage;
 export type GatewayOutboundMessage =
   | AuthOkMessage
   | ErrorMessage
@@ -228,7 +296,10 @@ export type GatewayOutboundMessage =
   | ProvisioningUploadRequestMessage
   | ProvisioningManifestMessage
   | ProvisioningChunkMessage
-  | ProvisioningRestoreResumeMessage;
+  | ProvisioningRestoreResumeMessage
+  | InventorySnapshotManifestMessage
+  | InventorySnapshotChunkMessage
+  | InventorySnapshotResumeMessage;
 
 // Minimal runtime guards (no zod dependency)
 export function isAuthMessage(m: any): m is AuthMessage {

@@ -136,6 +136,10 @@ const mockGlobalFacilityContext = {
   refreshFacilities: jest.fn(),
 };
 
+/** Within formatRelativeTime's default 7-day window so widgets show "Xh ago". */
+const hoursAgoSyncTime = (hours: number) =>
+  new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
 // Setup all mocks
 beforeEach(() => {
   jest.clearAllMocks();
@@ -243,7 +247,7 @@ describe('SyncFMSWidget', () => {
               {
                 facilityId: 'facility-1',
                 facilityName: 'Facility One',
-                lastSyncTime: '2024-01-01T10:00:00Z',
+                lastSyncTime: hoursAgoSyncTime(3),
                 status: 'completed',
                 changesDetected: 5,
                 changesApplied: 5,
@@ -251,7 +255,7 @@ describe('SyncFMSWidget', () => {
               {
                 facilityId: 'facility-2',
                 facilityName: 'Facility Two',
-                lastSyncTime: '2024-01-02T10:00:00Z',
+                lastSyncTime: hoursAgoSyncTime(2),
                 status: 'completed',
                 changesDetected: 3,
                 changesApplied: 3,
@@ -381,7 +385,7 @@ describe('SyncFMSWidget', () => {
               {
                 facilityId: 'facility-1',
                 facilityName: 'Facility One',
-                lastSyncTime: '2024-01-01T10:00:00Z',
+                lastSyncTime: hoursAgoSyncTime(2),
                 status: 'completed',
                 changesDetected: 5,
                 changesApplied: 5,

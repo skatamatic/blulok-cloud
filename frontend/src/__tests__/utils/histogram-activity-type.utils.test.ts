@@ -9,16 +9,17 @@ describe('histogram-activity-type.utils', () => {
     expect(
       getHistogramTypeBreakdown({
         unlock: 5,
-        lock: 2,
-        access_attempt: 0,
+        access_attempt: 3,
       }),
     ).toEqual([
+      { type: 'access_attempt', label: HISTOGRAM_ACTIVITY_TYPE_LABELS.access_attempt, count: 3 },
       { type: 'unlock', label: HISTOGRAM_ACTIVITY_TYPE_LABELS.unlock, count: 5 },
-      { type: 'lock', label: HISTOGRAM_ACTIVITY_TYPE_LABELS.lock, count: 2 },
     ]);
   });
 
-  it('skips transitional unlocking events from histogram aggregation', () => {
+  it('skips lock and transitional events from histogram aggregation', () => {
+    expect(HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has('lock')).toBe(true);
+    expect(HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has('locking')).toBe(true);
     expect(HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has('unlocking')).toBe(true);
     expect(HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has('unlock')).toBe(false);
   });

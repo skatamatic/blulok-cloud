@@ -159,6 +159,9 @@ class WebSocketService implements IWebSocketService {
         case 'provisioning_restore_progress_update':
           this.handleProvisioningRestoreProgressUpdate(message);
           break;
+        case 'gateway_recovery_progress_update':
+          this.handleGatewayRecoveryProgressUpdate(message);
+          break;
         case 'gateway_telemetry_log_update':
           this.handleGatewayTelemetryLogUpdate(message);
           break;
@@ -275,6 +278,13 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
+  private handleGatewayRecoveryProgressUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('gateway_recovery_progress');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
   private handleGatewayTelemetryLogUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('gateway_telemetry_logs');
     if (handlers) {
@@ -296,17 +306,19 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  private handleActivityUpdate(message: { data?: unknown }): void {
+  private handleActivityUpdate(message: { type?: string; data?: unknown }): void {
     const handlers = this.messageHandlers.get('activity');
     if (handlers) {
-      handlers.forEach(handler => handler(message.data));
+      const payload = { eventType: message.type, payload: message.data };
+      handlers.forEach(handler => handler(payload));
     }
   }
 
-  private handleActivityNew(message: { data?: unknown }): void {
+  private handleActivityNew(message: { type?: string; data?: unknown }): void {
     const handlers = this.messageHandlers.get('activity');
     if (handlers) {
-      handlers.forEach(handler => handler(message.data));
+      const payload = { eventType: message.type, payload: message.data };
+      handlers.forEach(handler => handler(payload));
     }
   }
 

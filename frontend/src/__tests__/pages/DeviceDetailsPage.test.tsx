@@ -199,7 +199,7 @@ describe('DeviceDetailsPage', () => {
     expect(matches.length).toBeGreaterThan(0);
   });
 
-  it('hides cloud inventory removal for facility_admin', async () => {
+  it('shows cloud inventory removal for facility_admin', async () => {
     (useAuth as jest.Mock).mockReturnValue({
       authState: {
         user: { id: 'fa-1', email: 'fa@example.com', role: 'facility_admin' },
@@ -220,8 +220,9 @@ describe('DeviceDetailsPage', () => {
       expect(screen.getByText('Unit assignment')).toBeInTheDocument();
     });
 
-    expect(screen.queryByRole('button', { name: /Remove lock from cloud inventory/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Remove from facility \(cloud inventory\)/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Remove lock from cloud inventory/i })).toBeInTheDocument();
+    expect(screen.getByText(/Remove from facility \(cloud inventory\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/gateway is notified/i)).toBeInTheDocument();
   });
 
   describe('Edit device metadata', () => {
@@ -364,6 +365,77 @@ describe('DeviceDetailsPage', () => {
       expect(mockApiService.removeBluLokDeviceFromCloudInventory).toHaveBeenCalledWith('device-1');
       expect(mockNavigate).toHaveBeenCalledWith('/facilities/facility-1?tab=devices');
     });
+  });
+
+  it('removes access control device from cloud inventory after confirmation', async () => {
+    mockApiService.getBluLokDevice.mockRejectedValue({ response: { status: 404 } });
+    mockApiService.getAccessControlDevice.mockResolvedValue({
+      success: true,
+      device: {
+        id: 'ac-1',
+        name: 'Side Door',
+        device_serial: 'KP-001',
+        relay_channel: 2,
+        gateway_id: 'gw-1',
+        facility_id: 'facility-1',
+        facility_name: 'Main Facility',
+        device_status: 'online',
+        access_methods: ['app'],
+        metadata: {},
+      },
+    } as never);
+    mockApiService.removeAccessControlDeviceFromCloudInventory.mockResolvedValue({
+      success: true,
+      message: 'Access device removed from cloud inventory',
+    } as never);
+
+    render(
+      <MemoryRouter initialEntries={['/devices/ac-1']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Remove access device from cloud inventory/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove access device from cloud inventory/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Remove access device from cloud inventory\?/i)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Remove from inventory/i }));
+
+    await waitFor(() => {
+      expect(mockApiService.removeAccessControlDeviceFromCloudInventory).toHaveBeenCalledWith('ac-1');
+      expect(mockNavigate).toHaveBeenCalledWith('/facilities/facility-1?tab=devices');
+    });
+  });
+
+  it('hides cloud inventory removal for tenant role', async () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      authState: {
+        user: { id: 'tenant-1', email: 'tenant@example.com', role: 'tenant' },
+        isAuthenticated: true,
+        isLoading: false,
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/devices/device-1']}>
+        <ToastProvider>
+          <DeviceDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /Remove lock from cloud inventory/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Remove from facility \(cloud inventory\)/i)).not.toBeInTheDocument();
   });
 
   it('switches to denylist tab and loads entries', async () => {

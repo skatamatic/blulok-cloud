@@ -1,5 +1,6 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
+import { formatDate } from '@/utils/datetime.utils';
 
 const getRoleBadgeColor = (role: string): string => {
   switch (role) {
@@ -76,7 +77,7 @@ export function SystemInformationSection() {
           <div>
             <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Login</dt>
             <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-              {new Date().toLocaleDateString()}
+              {formatDate(new Date())}
             </dd>
           </div>
         </dl>

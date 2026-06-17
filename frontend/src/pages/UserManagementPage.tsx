@@ -10,6 +10,7 @@ import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { SortableHeader } from '@/components/UserManagement/SortableHeader';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { withReturnPath } from '@/hooks/useBackNavigation';
+import { formatDate } from '@/utils/datetime.utils';
 
 interface User {
   id: string;
@@ -363,7 +364,7 @@ export default function UserManagementPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       {user.lastLogin 
-                        ? new Date(user.lastLogin).toLocaleDateString()
+                        ? formatDate(user.lastLogin)
                         : 'Never'
                       }
                     </td>

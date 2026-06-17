@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useRef, useMemo } from 'react';
+import { Fragment, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
@@ -11,15 +11,28 @@ import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
-import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
+import {
+  accessLogFromActivityWsData,
+  matchesAccessHistoryLiveFilters,
+  parseActivityWsEnvelope,
+  prependUniqueAccessLog,
+} from '@/utils/access-history-live.utils';
 import {
   buildAccessLogDetailItems,
   formatAccessAction,
   formatAccessMethod,
+  getAccessFailureDetail,
   getAccessLocationDisplay,
   getAccessLogMetadata,
+  getAccessStatusDisplay,
   getAccessUserDisplay,
 } from '@/utils/access-history-display.utils';
+import {
+  buildLocalDateRangeQuery,
+  formatDateTime,
+  toLocalDateInputValue,
+} from '@/utils/datetime.utils';
 import {
   ArrowDownTrayIcon,
   ClockIcon,
@@ -76,6 +89,8 @@ const actionIcons = {
   timeout: ClockIcon,
   invalid_credential: XCircleIcon,
   schedule_violation: ClockIcon,
+  unlock_attempt: XCircleIcon,
+  lock_attempt: XCircleIcon,
 };
 
 const methodIcons = {
@@ -87,6 +102,12 @@ const methodIcons = {
   mobile_key: DevicePhoneMobileIcon,
   manual: KeyIcon,
   automatic: ComputerDesktopIcon,
+  local_device: ComputerDesktopIcon,
+  remote_gateway: DevicePhoneMobileIcon,
+  admin_remote: KeyIcon,
+  route_pass: KeyIcon,
+  system: ComputerDesktopIcon,
+  unknown: KeyIcon,
   admin_override: KeyIcon,
   emergency: ExclamationTriangleIcon,
   scheduled: CalendarIcon,
@@ -112,6 +133,8 @@ const actionColors = {
   timeout: 'text-yellow-600 dark:text-yellow-400',
   invalid_credential: 'text-red-600 dark:text-red-400',
   schedule_violation: 'text-yellow-600 dark:text-yellow-400',
+  unlock_attempt: 'text-red-600 dark:text-red-400',
+  lock_attempt: 'text-red-600 dark:text-red-400',
 };
 
 const methodColors = {
@@ -123,6 +146,12 @@ const methodColors = {
   mobile_key: 'text-blue-600 dark:text-blue-400',
   manual: 'text-orange-600 dark:text-orange-400',
   automatic: 'text-green-600 dark:text-green-400',
+  local_device: 'text-green-600 dark:text-green-400',
+  remote_gateway: 'text-blue-600 dark:text-blue-400',
+  admin_remote: 'text-orange-600 dark:text-orange-400',
+  route_pass: 'text-indigo-600 dark:text-indigo-400',
+  system: 'text-gray-600 dark:text-gray-400',
+  unknown: 'text-gray-600 dark:text-gray-400',
   admin_override: 'text-red-600 dark:text-red-400',
   emergency: 'text-red-600 dark:text-red-400',
   scheduled: 'text-indigo-600 dark:text-indigo-400',
@@ -132,13 +161,17 @@ const methodColors = {
   remote: 'text-blue-600 dark:text-blue-400',
 };
 
-type SortableColumn = 'occurred_at' | 'action' | 'user_name' | 'facility_name' | 'success';
+type SortableColumn = 'occurred_at' | 'action' | 'user_name' | 'facility_name' | 'success' | 'method';
 
-const defaultAccessHistoryDateFilters = (): Pick<FilterState, 'date_from' | 'date_to' | 'limit'> => ({
-  date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-  date_to: new Date().toISOString().split('T')[0],
-  limit: 50,
-});
+const defaultAccessHistoryDateFilters = (): Pick<FilterState, 'date_from' | 'date_to' | 'limit'> => {
+  const today = toLocalDateInputValue();
+  const weekAgo = toLocalDateInputValue(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+  return {
+    date_from: weekAgo,
+    date_to: today,
+    limit: 50,
+  };
+};
 
 export default function AccessHistoryPage() {
   const { authState } = useAuth();
@@ -147,7 +180,6 @@ export default function AccessHistoryPage() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { selectedFacilityId } = useGlobalFacility();
-  const { subscribe, unsubscribe } = useWebSocket();
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -160,7 +192,6 @@ export default function AccessHistoryPage() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showExportDropdown, setShowExportDropdown] = useState(false);
   const [isCustomDateRange, setIsCustomDateRange] = useState(false);
-  const [refreshNonce, setRefreshNonce] = useState(0);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
 
   const [filters, setFilters] = useState<FilterState>(() => {
@@ -193,6 +224,31 @@ export default function AccessHistoryPage() {
     return undefined;
   }, [filters.unit_id, filters.facility_id, isFacilityScoped, selectedFacilityId]);
 
+  const liveAccessFilters = useMemo(() => {
+    const facilityId =
+      filters.unit_id && filters.facility_id
+        ? filters.facility_id
+        : !filters.unit_id && isFacilityScoped
+          ? selectedFacilityId
+          : filters.facility_id;
+
+    return {
+      facility_id: facilityId,
+      unit_id: filters.unit_id,
+      user_id: isTenant ? authState.user?.id : filters.user_id,
+      action: filters.action,
+      method: filters.method,
+      success: filters.success,
+      denial_reason: filters.denial_reason,
+      search: filters.search,
+      date_from: filters.date_from,
+      date_to: filters.date_to,
+    };
+  }, [filters, isFacilityScoped, selectedFacilityId, isTenant, authState.user?.id]);
+
+  const canPrependLiveRows =
+    currentPage === 1 && sortBy === 'occurred_at' && sortOrder === 'desc';
+
   useEffect(() => {
     const unitId = searchParams.get('unit_id') ?? undefined;
     const facilityId = searchParams.get('facility_id') ?? undefined;
@@ -210,54 +266,23 @@ export default function AccessHistoryPage() {
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    loadAccessHistory();
-  }, [filters, currentPage, sortBy, sortOrder, selectedFacilityId, refreshNonce]);
-
-  useEffect(() => {
-    const subscriptionId = subscribe(
-      'activity',
-      () => {
-        setRefreshNonce((prev) => prev + 1);
-      },
-      undefined,
-      activityWsFilters,
-    );
-    return () => unsubscribe(subscriptionId);
-  }, [subscribe, unsubscribe, activityWsFilters]);
-
-  // Handle highlighting when page loads
-  useHighlight(logs, (log) => log.id, (id) => generateHighlightId('access-log', id));
-
-  // Close export dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target as Node)) {
-        setShowExportDropdown(false);
-      }
-    };
-
-    if (showExportDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showExportDropdown]);
-
-
-  const loadAccessHistory = async () => {
+  const loadAccessHistory = useCallback(async (options?: { background?: boolean }) => {
     try {
-      setLoading(true);
-      
+      if (!options?.background) {
+        setLoading(true);
+      }
+
       let response;
-      const queryFilters: FilterState & {
+      const { date_from, date_to, ...restFilters } = filters;
+      const queryFilters: Omit<FilterState, 'date_from' | 'date_to'> & {
+        date_from?: string;
+        date_to?: string;
         offset: number;
         sort_by: SortableColumn;
         sort_order: 'asc' | 'desc';
       } = {
-        ...filters,
+        ...restFilters,
+        ...buildLocalDateRangeQuery(date_from, date_to),
         offset: (currentPage - 1) * (filters.limit || 50),
         sort_by: sortBy,
         sort_order: sortOrder,
@@ -305,9 +330,85 @@ export default function AccessHistoryPage() {
     } catch (error) {
       console.error('Failed to load access history:', error);
     } finally {
-      setLoading(false);
+      if (!options?.background) {
+        setLoading(false);
+      }
     }
-  };
+  }, [
+    authState.user?.facilityIds,
+    authState.user?.id,
+    currentPage,
+    filters,
+    isFacilityAdmin,
+    isTenant,
+    selectedFacilityId,
+    sortBy,
+    sortOrder,
+  ]);
+
+  const loadAccessHistoryRef = useRef(loadAccessHistory);
+  loadAccessHistoryRef.current = loadAccessHistory;
+
+  useEffect(() => {
+    void loadAccessHistory();
+  }, [loadAccessHistory]);
+
+  const handleActivityWs = useCallback(
+    (data: unknown) => {
+      const { eventType, payload } = parseActivityWsEnvelope(data);
+      if (eventType === 'activity_update') {
+        return;
+      }
+
+      const incoming = accessLogFromActivityWsData(payload);
+      if (!incoming) {
+        void loadAccessHistoryRef.current({ background: true });
+        return;
+      }
+
+      if (!matchesAccessHistoryLiveFilters(incoming, liveAccessFilters)) {
+        return;
+      }
+
+      if (canPrependLiveRows) {
+        setLogs((prev) => {
+          const next = prependUniqueAccessLog(prev, incoming, filters.limit || 50);
+          if (next === prev) return prev;
+          setTotal((totalPrev) => totalPrev + 1);
+          return next;
+        });
+        return;
+      }
+
+      void loadAccessHistoryRef.current({ background: true });
+    },
+    [canPrependLiveRows, filters.limit, liveAccessFilters],
+  );
+
+  useWebSocketSubscription('activity', handleActivityWs, {
+    filters: activityWsFilters,
+    enabled: Boolean(authState.user),
+  });
+
+  // Handle highlighting when page loads
+  useHighlight(logs, (log) => log.id, (id) => generateHighlightId('access-log', id));
+
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target as Node)) {
+        setShowExportDropdown(false);
+      }
+    };
+
+    if (showExportDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showExportDropdown]);
 
   const handleFilterChange = (key: keyof FilterState, value: any) => {
     setFilters(prev => ({
@@ -344,9 +445,9 @@ export default function AccessHistoryPage() {
     if (!filters.date_from || !filters.date_to) return '';
     
     const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const today = toLocalDateInputValue(now);
+    const weekAgo = toLocalDateInputValue(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+    const monthAgo = toLocalDateInputValue(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
     
     if (filters.date_from === today && filters.date_to === today) return 'today';
     if (filters.date_from === weekAgo && filters.date_to === today) return 'week';
@@ -413,7 +514,7 @@ export default function AccessHistoryPage() {
       
       // Prepare export filters based on export type
       const exportFilters = exportType === 'all' ? {
-        limit: 10000, // Large limit for export
+        limit: 10000,
       } : {
         ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
         unit_id: filters.unit_id,
@@ -423,9 +524,8 @@ export default function AccessHistoryPage() {
         success: filters.success,
         denial_reason: filters.denial_reason,
         credential_type: filters.credential_type,
-        date_from: filters.date_from,
-        date_to: filters.date_to,
-        limit: 10000, // Large limit for export
+        ...buildLocalDateRangeQuery(filters.date_from, filters.date_to),
+        limit: 10000,
       };
 
       // Call the export API
@@ -437,7 +537,7 @@ export default function AccessHistoryPage() {
       link.href = url;
       
       // Generate filename with current date and export type
-      const dateStr = new Date().toISOString().split('T')[0];
+      const dateStr = toLocalDateInputValue();
       const facilityStr = selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? '-facility' : '';
       const filename = `access-history-${exportType}${facilityStr}-${dateStr}.csv`;
       
@@ -459,9 +559,7 @@ export default function AccessHistoryPage() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
-  };
+  const formatOccurredAt = (dateString: string) => formatDateTime(dateString);
 
   const formatDuration = (seconds?: number) => {
     if (!seconds) return 'N/A';
@@ -595,21 +693,23 @@ export default function AccessHistoryPage() {
                 setIsCustomDateRange(false);
                 const now = new Date();
                 let dateFrom = '';
-                const dateTo = now.toISOString().split('T')[0];
-                
+                const dateTo = toLocalDateInputValue(now);
+
                 switch (value) {
                   case 'today': {
-                    dateFrom = now.toISOString().split('T')[0];
+                    dateFrom = toLocalDateInputValue(now);
                     break;
                   }
                   case 'week': {
-                    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                    dateFrom = weekAgo.toISOString().split('T')[0];
+                    dateFrom = toLocalDateInputValue(
+                      new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+                    );
                     break;
                   }
                   case 'month': {
-                    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-                    dateFrom = monthAgo.toISOString().split('T')[0];
+                    dateFrom = toLocalDateInputValue(
+                      new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+                    );
                     break;
                   }
                 }
@@ -630,7 +730,8 @@ export default function AccessHistoryPage() {
                 { key: 'unlock', label: 'Unlock' },
                 { key: 'lock', label: 'Lock' },
                 { key: 'access_granted', label: 'Access Granted' },
-                { key: 'access_denied', label: 'Access Denied' },
+                { key: 'unlock_attempt', label: 'Unlock Attempt Denied' },
+                { key: 'lock_attempt', label: 'Lock Attempt Failed' },
                 { key: 'manual_override', label: 'Manual Override' },
                 { key: 'schedule_violation', label: 'Schedule Violation' }
               ],
@@ -648,7 +749,11 @@ export default function AccessHistoryPage() {
                 { key: 'card', label: 'Card' },
                 { key: 'physical_key', label: 'Physical Key' },
                 { key: 'manual', label: 'Manual Override' },
-                { key: 'automatic', label: 'Automatic' }
+                { key: 'remote_gateway', label: 'Remote via Gateway' },
+                { key: 'admin_remote', label: 'Remote (Admin)' },
+                { key: 'local_device', label: 'Local Device' },
+                { key: 'route_pass', label: 'Route Pass' },
+                { key: 'automatic', label: 'Local Device (legacy)' }
               ],
               selected: filters.method || '',
               onSelect: (value: string) => handleFilterChange('method', value || undefined)
@@ -762,6 +867,13 @@ export default function AccessHistoryPage() {
                     {isFacilityScoped ? 'Unit / Device' : 'Unit / Access Point'}
                   </th>
                   <SortableTableTh
+                    label="Method"
+                    columnKey="method"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={(key) => handleSort(key as SortableColumn)}
+                  />
+                  <SortableTableTh
                     label="Status"
                     columnKey="success"
                     sortBy={sortBy}
@@ -789,6 +901,8 @@ export default function AccessHistoryPage() {
                   const userDisplay = getAccessUserDisplay(log);
                   const locationDisplay = getAccessLocationDisplay(log, { hideFacility: isFacilityScoped });
                   const detailItems = buildAccessLogDetailItems(log, isFacilityScoped);
+                  const failureDetail = getAccessFailureDetail(log);
+                  const statusDisplay = getAccessStatusDisplay(log);
                   
                   return (
                     <Fragment key={log.id}>
@@ -806,9 +920,9 @@ export default function AccessHistoryPage() {
                               <div className={`text-sm font-medium ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-900 dark:text-white'}`}>
                                 {formatAccessAction(log.action)}
                               </div>
-                              {log.denial_reason && (
+                              {!log.success && failureDetail && (
                                 <div className="text-xs text-red-600 dark:text-red-400">
-                                  {formatAccessAction(log.denial_reason)}
+                                  {failureDetail}
                                 </div>
                               )}
                             </div>
@@ -823,6 +937,17 @@ export default function AccessHistoryPage() {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleNavigation(metadata.user!.navigation_url, metadata.user!.id, 'user');
+                                  }}
+                                  className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
+                                >
+                                  {userDisplay.primary}
+                                  <LinkIcon className="h-3 w-3 ml-1" />
+                                </button>
+                              ) : metadata.initiated_by?.navigation_url ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNavigation(metadata.initiated_by!.navigation_url!, metadata.initiated_by!.id, 'user');
                                   }}
                                   className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                 >
@@ -899,22 +1024,34 @@ export default function AccessHistoryPage() {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <MethodIcon className={`h-4 w-4 shrink-0 ${methodColors[log.method as keyof typeof methodColors] || 'text-gray-400'}`} />
+                            <span className="text-sm text-gray-900 dark:text-white">
+                              {formatAccessMethod(log.method)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
-                            log.success
+                            statusDisplay.tone === 'success'
                               ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                              : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                              : statusDisplay.tone === 'pending'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400'
+                                : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
                           }`}>
-                            {log.success ? (
+                            {statusDisplay.tone === 'success' ? (
                               <CheckCircleIcon className="h-3.5 w-3.5 mr-1" />
+                            ) : statusDisplay.tone === 'pending' ? (
+                              <ClockIcon className="h-3.5 w-3.5 mr-1" />
                             ) : (
                               <XCircleIcon className="h-3.5 w-3.5 mr-1" />
                             )}
-                            {log.success ? 'Success' : 'Failed'}
+                            {statusDisplay.label}
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-gray-900 dark:text-white">
-                            {formatDate(log.occurred_at)}
+                            {formatOccurredAt(log.occurred_at)}
                           </div>
                           {log.duration_seconds ? (
                             <div className="text-xs text-gray-500 dark:text-gray-400">
@@ -933,7 +1070,7 @@ export default function AccessHistoryPage() {
                       
                       {isExpanded && (
                         <tr className="bg-gray-50/80 dark:bg-gray-900/40">
-                          <td colSpan={6} className="px-6 py-5">
+                          <td colSpan={7} className="px-6 py-5">
                             <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
                               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                                 {detailItems.map((item) => (
@@ -942,29 +1079,39 @@ export default function AccessHistoryPage() {
                                       {item.label}
                                     </dt>
                                     <dd className="mt-1 text-sm text-gray-900 dark:text-white break-words">
-                                      {item.value}
+                                      {item.href ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleNavigation(item.href!, item.value, item.label.toLowerCase());
+                                          }}
+                                          className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
+                                        >
+                                          {item.value}
+                                          <LinkIcon className="h-3 w-3 ml-1" />
+                                        </button>
+                                      ) : (
+                                        item.value
+                                      )}
                                     </dd>
                                   </div>
                                 ))}
                               </div>
-                              <div className="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex items-center gap-2">
-                                <MethodIcon className={`h-4 w-4 ${methodColors[log.method as keyof typeof methodColors] || 'text-gray-400'}`} />
-                                <span className="text-sm text-gray-600 dark:text-gray-300">
-                                  Access via {formatAccessMethod(log.method)}
-                                </span>
-                                {metadata.device && (
+                              {metadata.device && (
+                                <div className="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleNavigation(metadata.device!.navigation_url, metadata.device!.id, 'device');
                                     }}
-                                    className="ml-auto text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
+                                    className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
                                   >
                                     View device
                                     <LinkIcon className="h-3 w-3 ml-1" />
                                   </button>
-                                )}
-                              </div>
+                                </div>
+                              )}
                             </div>
                           </td>
                         </tr>

@@ -12,6 +12,7 @@ import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { Unit } from '@/types/units.types';
 import { apiService } from '@/services/api.service';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
+import { formatRelativeTime, RELATIVE_LAST_SEEN_OPTS } from '@/utils/datetime.utils';
 
 interface BatteryStatusWidgetProps {
   currentSize: WidgetSize;
@@ -143,21 +144,6 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
   );
 
   const layout = getWidgetLayoutProfile(currentSize);
-
-  const formatLastSeen = (dateString: string | undefined): string => {
-    if (!dateString) return 'Never';
-
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-
-    if (diffMinutes < 1) return 'Just now';
-    if (diffMinutes < 60) return `${diffMinutes}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${Math.floor(diffHours / 24)}d ago`;
-  };
 
   const getBatteryColor = (level: number | undefined): string => {
     if (!level) return 'text-gray-500';
@@ -367,7 +353,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
                           {unit.facility?.name || (unit as { facility_name?: string }).facility_name || 'Unknown Facility'}
                         </span>
                         <span className="text-xs text-gray-400 dark:text-gray-500">
-                          • {formatLastSeen(unit.last_seen)}
+                          • {formatRelativeTime(unit.last_seen, RELATIVE_LAST_SEEN_OPTS)}
                         </span>
                       </div>
                     )}
@@ -399,7 +385,7 @@ export const BatteryStatusWidget: React.FC<BatteryStatusWidgetProps> = ({
 
         {batteryData?.lastUpdated && currentSize !== 'small' && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-            Updated {formatLastSeen(batteryData.lastUpdated)}
+            Updated {formatRelativeTime(batteryData.lastUpdated, RELATIVE_LAST_SEEN_OPTS)}
           </div>
         )}
       </div>

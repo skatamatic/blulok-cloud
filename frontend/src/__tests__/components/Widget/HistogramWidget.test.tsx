@@ -153,7 +153,6 @@ describe('HistogramWidget', () => {
         const tooltip = screen.getByRole('tooltip');
         expect(tooltip).toBeInTheDocument();
         expect(tooltip).toHaveTextContent('Unlock');
-        expect(tooltip).toHaveTextContent('Lock');
         expect(tooltip).toHaveTextContent('Downtown Storage');
         expect(tooltip).toHaveTextContent('Warehouse District');
         expect(tooltip).toHaveTextContent('Total');

@@ -59,6 +59,18 @@ export class GatewayProvisioningBackupModel {
       .offset(offset);
   }
 
+  async findByFacilityId(
+    facilityId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<GatewayProvisioningBackup[]> {
+    return this.db.connection('gateway_provisioning_backups')
+      .where('facility_id', facilityId)
+      .orderBy('uploaded_at', 'desc')
+      .limit(limit)
+      .offset(offset);
+  }
+
   async countByGatewayId(gatewayId: string): Promise<number> {
     const result = await this.db.connection('gateway_provisioning_backups')
       .where('gateway_id', gatewayId)

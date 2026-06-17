@@ -107,6 +107,8 @@ When `lock_id` is in the payload but not in the DB, the cloud creates the row th
 
 **Removal:** Omitted sync-managed locks are **deleted**. Manually created locks (`metadata.createdFromGatewaySync` absent) are **preserved** (`skipped_manual` in sync log).
 
+**Cloud-initiated removal (tombstone):** When the cloud deletes inventory via **`DELETE /devices/blulok/:id`** or **`DELETE /devices/access-control/:id`**, it sends **`DEVICE_DELETED`** to the gateway. The gateway should record a local tombstone keyed by `lock_id` or `access_id::relay_channel` and **omit** those devices from subsequent inventory uploads. If the device reappears in inventory before the tombstone is delivered, the cloud cancels the pending outbox row.
+
 **Property refresh:** When an existing lock remains in inventory, non-identity fields (`name`, `lock_number`, `location_description`) are merged into `device_settings`. Changes emit `deviceTelemetryUpdated` → dashboard **`device_status_update`** WebSocket payloads include `name` and `device_settings`.
 
 ### Sync-managed metadata (locks and access)

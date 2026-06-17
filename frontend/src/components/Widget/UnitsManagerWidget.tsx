@@ -33,6 +33,13 @@ import { compareNaturalStrings } from '@/utils/naturalStringCompare';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import {
+  formatAccessAction,
+  formatAccessMethod,
+  getAccessUserDisplay,
+} from '@/utils/access-history-display.utils';
+import type { AccessLog } from '@/types/access-history.types';
+import { formatRelativeWithExact, RELATIVE_UNITS_ACTIVITY_OPTS } from '@/utils/datetime.utils';
 
 type LockState = 'locked' | 'unlocked' | 'unknown' | 'unlocking' | 'locking';
 
@@ -103,30 +110,6 @@ const fadeIn = {
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -6 },
   transition: { duration: 0.18 },
-};
-
-const formatRelativeTime = (input?: string | null): string => {
-  if (!input) return '—';
-  const date = new Date(input);
-  if (isNaN(date.getTime())) return '—';
-  const diffMs = Date.now() - date.getTime();
-  if (diffMs < 0) return 'just now';
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const days = Math.floor(hr / 24);
-  if (days < 30) return `${days}d ago`;
-  return date.toLocaleDateString();
-};
-
-const formatExactTime = (input?: string | null): string => {
-  if (!input) return '—';
-  const date = new Date(input);
-  if (isNaN(date.getTime())) return '—';
-  return date.toLocaleString();
 };
 
 const tenantDisplayName = (unit: UnitRow): string => {
@@ -275,8 +258,10 @@ const AccessLogRow: React.FC<{
   index: number;
 }> = ({ log, index }) => {
   const ts = log.occurred_at ?? log.created_at ?? '';
-  const action = (log.action ?? 'event').toLowerCase();
-  const succeeded = (log.result ?? '').toLowerCase() === 'success';
+  const accessLog = log as AccessLog;
+  const succeeded = accessLog.success ?? (log.result ?? '').toLowerCase() === 'success';
+  const userLabel = getAccessUserDisplay(accessLog).primary;
+  const relativeTs = formatRelativeWithExact(ts, RELATIVE_UNITS_ACTIVITY_OPTS);
 
   return (
     <motion.li
@@ -291,11 +276,11 @@ const AccessLogRow: React.FC<{
             succeeded ? 'bg-emerald-500' : 'bg-rose-500'
           }`}
         />
-        <span className="capitalize text-gray-800 dark:text-gray-200">{action}</span>
-        <span className="truncate">{log.user_name ?? log.method ?? ''}</span>
+        <span className="text-gray-800 dark:text-gray-200">{formatAccessAction(accessLog.action ?? 'event')}</span>
+        <span className="truncate">{userLabel !== '—' ? userLabel : formatAccessMethod(accessLog.method ?? '')}</span>
       </span>
-      <span className="shrink-0 tabular-nums" title={formatExactTime(ts)}>
-        {formatRelativeTime(ts)}
+      <span className="shrink-0 tabular-nums" title={relativeTs.title}>
+        {relativeTs.display}
       </span>
     </motion.li>
   );
@@ -1391,6 +1376,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                   );
                   const rowAria = `Unit ${unit.unit_number}${tenantLabel ? `, ${tenantLabel}` : ''}`;
                   const unitSubline = [unit.unit_type].filter(Boolean);
+                  const lastActivityTime = formatRelativeWithExact(unit.last_activity, RELATIVE_UNITS_ACTIVITY_OPTS);
 
                   return (
                     <motion.li
@@ -1472,13 +1458,13 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                         <motion.div
                           layout
                           className={`flex justify-center ${TYPE.meta}`}
-                          title={formatExactTime(unit.last_activity)}
+                          title={lastActivityTime.title}
                         >
                           <span className="inline-flex max-w-full items-center gap-0.5 whitespace-nowrap">
                             <ClockIcon
                               className={`shrink-0 ${layout.isDock ? 'h-2.5 w-2.5' : 'h-3 w-3'}`}
                             />
-                            {formatRelativeTime(unit.last_activity)}
+                            {lastActivityTime.display}
                           </span>
                         </motion.div>
 

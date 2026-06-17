@@ -39,6 +39,7 @@ import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
+import { formatDate, formatDateTime } from '@/utils/datetime.utils';
 
 interface UnitDetails {
   id: string;
@@ -535,7 +536,7 @@ export default function UnitDetailsPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Last Updated</label>
                   <p className="mt-1 text-sm text-gray-900 dark:text-white">
-                    Added manually on {new Date(unit.created_at).toLocaleDateString()}
+                    Added manually on {formatDate(unit.created_at)}
                   </p>
                 </div>
 
@@ -994,7 +995,7 @@ export default function UnitDetailsPage() {
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-gray-500 dark:text-gray-400">Last Seen</span>
                           <span className="font-medium text-gray-900 dark:text-white">
-                            {new Date(unit.blulok_device.last_seen).toLocaleString()}
+                            {formatDateTime(unit.blulok_device.last_seen)}
                           </span>
                         </div>
                       )}
@@ -1002,7 +1003,7 @@ export default function UnitDetailsPage() {
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-gray-500 dark:text-gray-400">Last Activity</span>
                           <span className="font-medium text-gray-900 dark:text-white">
-                            {new Date(unit.blulok_device.last_activity).toLocaleString()}
+                            {formatDateTime(unit.blulok_device.last_activity)}
                           </span>
                         </div>
                       )}

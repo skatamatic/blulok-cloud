@@ -132,7 +132,7 @@ describe('Route Passes Routes', () => {
       expect(response.body.pagination.hasMore).toBe(true);
     });
 
-    it('applies date filters', async () => {
+    it('applies date filters with UTC day bounds for date-only params', async () => {
       mockGetUserHistory.mockResolvedValue([]);
       mockGetUserHistoryCount.mockResolvedValue(0);
 
@@ -143,8 +143,27 @@ describe('Route Passes Routes', () => {
       expect(mockGetUserHistory).toHaveBeenCalledWith('user-1', {
         limit: 50,
         offset: 0,
-        startDate: expect.any(Date),
-        endDate: expect.any(Date),
+        startDate: new Date('2024-01-01T00:00:00.000Z'),
+        endDate: new Date('2024-12-31T23:59:59.999Z'),
+      });
+    });
+
+    it('parses full ISO date filters as-is', async () => {
+      mockGetUserHistory.mockResolvedValue([]);
+      mockGetUserHistoryCount.mockResolvedValue(0);
+
+      const from = '2024-06-01T04:00:00.000Z';
+      const to = '2024-06-02T03:59:59.999Z';
+
+      await request(app)
+        .get(`/api/v1/route-passes/users/user-1?startDate=${encodeURIComponent(from)}&endDate=${encodeURIComponent(to)}`)
+        .expect(200);
+
+      expect(mockGetUserHistory).toHaveBeenCalledWith('user-1', {
+        limit: 50,
+        offset: 0,
+        startDate: new Date(from),
+        endDate: new Date(to),
       });
     });
 

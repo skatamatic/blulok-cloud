@@ -51,7 +51,8 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
-import { withReturnPath, useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
+import { formatDateTime } from '@/utils/datetime.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
@@ -950,7 +951,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                       <p className="text-xs text-gray-500 dark:text-gray-400">{facilityGatewayLiveStatus.gateway.ip_address}</p>
                       {facilityGatewayLiveStatus.lastActivityAt && facilityGatewayLiveStatus.effectiveStatus === 'online' && (
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                          Last activity: {new Date(facilityGatewayLiveStatus.lastActivityAt).toLocaleString()}
+                          Last activity: {formatDateTime(new Date(facilityGatewayLiveStatus.lastActivityAt))}
                         </p>
                       )}
                     </div>
@@ -1258,7 +1259,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                                 : accessDevice.facility_name || accessDevice.location_description || '—'}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                              {device.last_activity ? new Date(device.last_activity).toLocaleString() : 'Never'}
+                              {device.last_activity ? formatDateTime(device.last_activity) : 'Never'}
                             </td>
                           </tr>
                         );

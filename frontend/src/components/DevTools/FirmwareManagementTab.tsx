@@ -8,6 +8,7 @@ import {
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+import { formatDate } from '@/utils/datetime.utils';
 
 type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
 
@@ -361,7 +362,7 @@ export default function FirmwareManagementTab() {
                       </span>
                     </td>
                     <td className="py-3 pr-4 text-xs text-gray-500 dark:text-gray-400">
-                      {new Date(fw.created_at).toLocaleDateString()}
+                      {formatDate(fw.created_at)}
                     </td>
                     <td className="py-3 pr-4">
                       {fw.compatible_models?.length ? (

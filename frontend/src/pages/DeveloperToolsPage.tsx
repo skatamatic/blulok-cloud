@@ -88,6 +88,7 @@ const isDiagnosticsData = (value: unknown): value is DiagnosticsData => {
 };
 
 import { getApiBaseUrl } from '@/services/appConfig';
+import { formatTime } from '@/utils/datetime.utils';
 const API_BASE_URL = getApiBaseUrl();
 
 const FMSToolsTab: React.FC = () => {
@@ -1431,7 +1432,7 @@ export default function DeveloperToolsPage() {
                         <div key={log.id} className={`py-1 px-2 rounded ${getLogLevelBg(log.level)}`}>
                           <div className="flex items-start space-x-3">
                             <span className={`text-xs font-bold ${getLogLevelColor(log.level)} flex-shrink-0 w-12`}>{log.level.toUpperCase()}</span>
-                            <span className="text-gray-400 text-xs flex-shrink-0 w-32">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                            <span className="text-gray-400 text-xs flex-shrink-0 w-32">{formatTime(log.timestamp)}</span>
                             <span className={`text-xs font-medium ${getSourceColor(log.source)} flex-shrink-0 w-20`}>{log.source.replace('logs/', '')}</span>
                             <div className="text-gray-300 flex-1 min-w-0 break-words whitespace-pre-wrap">
                               {isExpanded || !shouldShowExpandButton ? (

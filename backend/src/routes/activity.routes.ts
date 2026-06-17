@@ -31,6 +31,7 @@ import { ActivityService } from '@/services/activity.service';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { validate } from '@/middleware/validator.middleware';
 import { logger } from '@/utils/logger';
+import { parseQueryDateFrom, parseQueryDateTo } from '@/utils/datetime.utils';
 
 const router = Router();
 
@@ -136,8 +137,8 @@ router.get(
         facilityId: facilityId as string,
         unitId: unitId as string,
         deviceId: deviceId as string,
-        fromDate: fromDate ? new Date(fromDate as string) : undefined,
-        toDate: toDate ? new Date(toDate as string) : undefined,
+        fromDate: fromDate ? parseQueryDateFrom(fromDate as string) : undefined,
+        toDate: toDate ? parseQueryDateTo(toDate as string) : undefined,
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
       }
@@ -177,8 +178,8 @@ router.get(
       user.facilityIds,
       facilityId,
       {
-        fromDate: fromDate ? new Date(fromDate as string) : undefined,
-        toDate: toDate ? new Date(toDate as string) : undefined,
+        fromDate: fromDate ? parseQueryDateFrom(fromDate as string) : undefined,
+        toDate: toDate ? parseQueryDateTo(toDate as string) : undefined,
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
       }

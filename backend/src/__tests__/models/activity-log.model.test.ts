@@ -198,7 +198,7 @@ describe('ActivityLogModel', () => {
   });
 
   describe('getActivityStats', () => {
-    it('aggregates lock, unlock, and access_attempt activity types', async () => {
+    it('aggregates access_attempt and unlock activity types only', async () => {
       const whereIn = jest.fn().mockReturnThis();
       const mockQueryBuilder = {
         select: jest.fn().mockReturnThis(),
@@ -222,7 +222,7 @@ describe('ActivityLogModel', () => {
 
       expect(whereIn).toHaveBeenCalledWith(
         'activity_logs.activity_type',
-        ['access_attempt', 'lock', 'unlock', 'locking', 'unlocking'],
+        ['access_attempt', 'unlock'],
       );
       expect(mockQueryBuilder.groupByRaw).toHaveBeenCalledWith(
         expect.stringContaining('activity_logs.activity_type'),

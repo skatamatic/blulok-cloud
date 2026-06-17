@@ -21,6 +21,7 @@ import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { startHardwareAckWatch, LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS } from '@/utils/lockHardwareFeedback.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
+import { formatRelativeTime, formatTime } from '@/utils/datetime.utils';
 
 interface GateDevice {
   id: string;
@@ -281,16 +282,6 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     }
   };
 
-  const formatLastActivity = (timestamp: Date) => {
-    const diffMs = Date.now() - timestamp.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return timestamp.toLocaleDateString();
-  };
-
   return (
     <Widget
       id={id}
@@ -464,12 +455,12 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
             </div>
             
             <div className="text-xs text-gray-500 dark:text-gray-400">
-              Last activity: {formatLastActivity(selectedGateData.lastActivity)}
+              Last activity: {formatRelativeTime(selectedGateData.lastActivity, { absoluteAfterHours: 24, absoluteStyle: 'date' })}
             </div>
 
             {selectedGateData.holdUntil && (
               <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Local reminder until {selectedGateData.holdUntil.toLocaleTimeString()}
+                Local reminder until {formatTime(selectedGateData.holdUntil)}
               </div>
             )}
           </div>

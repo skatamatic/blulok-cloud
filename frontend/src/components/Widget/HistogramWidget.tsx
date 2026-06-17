@@ -83,28 +83,28 @@ function formatDateLabel(dateStr: string, timePeriod: TimePeriod, detailed = fal
   switch (timePeriod) {
     case 'day':
       return detailed
-        ? date.toLocaleString('en-US', {
+        ? date.toLocaleString(undefined, {
             weekday: 'short',
             month: 'short',
             day: 'numeric',
             hour: 'numeric',
             hour12: true,
           })
-        : date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+        : date.toLocaleTimeString(undefined, { hour: 'numeric', hour12: true });
     case 'week':
     case 'month':
       return detailed
-        ? date.toLocaleDateString('en-US', {
+        ? date.toLocaleDateString(undefined, {
             weekday: 'short',
             month: 'long',
             day: 'numeric',
             year: 'numeric',
           })
-        : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     case 'year':
       return detailed
-        ? date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-        : date.toLocaleDateString('en-US', { month: 'short' });
+        ? date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+        : date.toLocaleDateString(undefined, { month: 'short' });
     default:
       return dateStr;
   }

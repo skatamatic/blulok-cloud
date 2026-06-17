@@ -50,8 +50,11 @@ import { GatewayEventsService } from '@/services/gateway/gateway-events.service'
 import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { sanitizePayloadPath } from '@/utils/gateway-telemetry-log.parser';
+import { parseQueryDateFrom, parseQueryDateTo } from '@/utils/datetime.utils';
 import { ProvisioningBackupService } from '@/services/provisioning/provisioning-backup.service';
 import { ProvisioningRestoreService } from '@/services/provisioning/provisioning-restore.service';
+import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
+import { InventorySnapshotService } from '@/services/gateway/inventory-snapshot.service';
 
 const router = Router();
 const gatewayModel = new GatewayModel();
@@ -123,6 +126,41 @@ async function assertGatewayFacilityAccess(
     return null;
   }
   return { gateway, facilityId: gateway.facility_id };
+}
+
+async function assertFacilityAccess(
+  req: AuthenticatedRequest,
+  res: Response,
+  facilityId: string,
+): Promise<boolean> {
+  if (req.user?.role === UserRole.FACILITY_ADMIN) {
+    const allowed = req.user.facilityIds || [];
+    if (!allowed.includes(facilityId)) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return false;
+    }
+  }
+  return true;
+}
+
+async function assertRecoveryGatewayAccess(
+  req: AuthenticatedRequest,
+  res: Response,
+  gatewayId: string,
+): Promise<{ gateway: NonNullable<Awaited<ReturnType<GatewayModel['findById']>>>; facilityId: string } | null> {
+  const gateway = await gatewayModel.findById(gatewayId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found' });
+    return null;
+  }
+  const recovery = await GatewayRecoveryService.getStatusForGateway(gatewayId);
+  const facilityId = recovery?.facility_id || gateway.facility_id;
+  if (!facilityId) {
+    res.status(409).json({ success: false, message: 'Gateway is not associated with a facility recovery' });
+    return null;
+  }
+  if (!(await assertFacilityAccess(req, res, facilityId))) return null;
+  return { gateway, facilityId };
 }
 
 // GET /api/gateways/:gatewayId/provisioning — list provisioning backups
@@ -223,6 +261,175 @@ router.post('/:gatewayId/provisioning/restore/:restoreId/cancel', requireRoles([
   }
 }));
 
+// ── Gateway Swap / Recovery ──
+
+// GET /api/gateways/:gatewayId/recovery/status
+router.get('/:gatewayId/recovery/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const status = await GatewayRecoveryService.getStatusForGateway(gatewayId);
+  res.json({ success: true, data: status });
+}));
+
+// GET /api/gateways/facility/:facilityId/recovery/candidates
+router.get('/facility/:facilityId/recovery/candidates', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const facilityId = String(req.params.facilityId);
+  if (!(await assertFacilityAccess(req, res, facilityId))) return;
+
+  const candidates = GatewayRecoveryService.getSwapCandidates(facilityId);
+  const recovery = await GatewayRecoveryService.getStatusForFacility(facilityId);
+  res.json({ success: true, data: { candidates, recovery } });
+}));
+
+// GET /api/gateways/:gatewayId/recovery/inventory-preview
+router.get('/:gatewayId/recovery/inventory-preview', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const devices = await InventorySnapshotService.previewForFacility(access.facilityId);
+  res.json({ success: true, data: { devices } });
+}));
+
+const recoveryInitiateSchema = Joi.object({
+  firmwareId: Joi.string().uuid().optional(),
+  provisioningBackupId: Joi.string().uuid().optional(),
+});
+
+// POST /api/gateways/:gatewayId/recovery/initiate
+router.post('/:gatewayId/recovery/initiate', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const { error, value } = recoveryInitiateSchema.validate(req.body || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  try {
+    const recovery = await GatewayRecoveryService.initiate(
+      gatewayId,
+      access.facilityId,
+      req.user!.userId,
+      value,
+    );
+    res.json({ success: true, data: recovery });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to initiate recovery' });
+  }
+}));
+
+// POST /api/gateways/:gatewayId/recovery/advance
+router.post('/:gatewayId/recovery/advance', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  try {
+    const recovery = await GatewayRecoveryService.advance(gatewayId, access.facilityId);
+    res.json({ success: true, data: recovery });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to advance recovery' });
+  }
+}));
+
+const recoveryBypassSchema = Joi.object({
+  confirm: Joi.boolean().required(),
+});
+
+// POST /api/gateways/:gatewayId/recovery/bypass
+router.post('/:gatewayId/recovery/bypass', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const { error, value } = recoveryBypassSchema.validate(req.body || {});
+  if (error) {
+    res.status(400).json({ success: false, message: error.message });
+    return;
+  }
+
+  try {
+    const recovery = await GatewayRecoveryService.bypass(
+      gatewayId,
+      access.facilityId,
+      req.user!.userId,
+      value.confirm === true,
+    );
+    res.json({ success: true, data: recovery });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to bypass recovery' });
+  }
+}));
+
+// GET /api/gateways/:gatewayId/recovery/options
+router.get('/:gatewayId/recovery/options', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const options = await GatewayRecoveryService.getRecoveryOptions(gatewayId, access.facilityId);
+  res.json({ success: true, data: options });
+}));
+
+// POST /api/gateways/:gatewayId/recovery/retry
+router.post('/:gatewayId/recovery/retry', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  try {
+    const recovery = await GatewayRecoveryService.retry(gatewayId, access.facilityId);
+    res.json({ success: true, data: recovery });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to retry recovery' });
+  }
+}));
+
+// GET /api/gateways/:gatewayId/recovery/:recoveryId/events
+router.get('/:gatewayId/recovery/:recoveryId/events', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const recoveryId = String(req.params.recoveryId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const recovery = await GatewayRecoveryService.getRecoveryById(recoveryId);
+  if (!recovery || recovery.id !== recoveryId || recovery.gateway_id !== gatewayId || recovery.facility_id !== access.facilityId) {
+    res.status(404).json({ success: false, message: 'Recovery not found' });
+    return;
+  }
+
+  const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 100;
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+  const events = await GatewayRecoveryService.getRecoveryEvents(recoveryId, limit);
+  res.json({ success: true, data: { events } });
+}));
+
+// POST /api/gateways/:gatewayId/recovery/:recoveryId/cancel
+router.post('/:gatewayId/recovery/:recoveryId/cancel', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const gatewayId = String(req.params.gatewayId);
+  const recoveryId = String(req.params.recoveryId);
+  const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
+  if (!access) return;
+
+  const recovery = await GatewayRecoveryService.getRecoveryById(recoveryId);
+  if (!recovery || recovery.id !== recoveryId || recovery.gateway_id !== gatewayId || recovery.facility_id !== access.facilityId) {
+    res.status(404).json({ success: false, message: 'Recovery not found' });
+    return;
+  }
+
+  try {
+    await GatewayRecoveryService.cancel(recoveryId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err?.message || 'Failed to cancel recovery' });
+  }
+}));
+
 // POST /api/gateways - Create new gateway
 router.post('/', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
  
@@ -313,8 +520,10 @@ router.get('/:id/telemetry-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADM
     return;
   }
 
-  const from = typeof req.query.from === 'string' && req.query.from ? new Date(req.query.from) : undefined;
-  const to = typeof req.query.to === 'string' && req.query.to ? new Date(req.query.to) : undefined;
+  const fromRaw = typeof req.query.from === 'string' && req.query.from ? req.query.from : undefined;
+  const toRaw = typeof req.query.to === 'string' && req.query.to ? req.query.to : undefined;
+  const from = fromRaw ? parseQueryDateFrom(fromRaw) : undefined;
+  const to = toRaw ? parseQueryDateTo(toRaw) : undefined;
   if (from && Number.isNaN(from.getTime())) {
     res.status(400).json({ success: false, message: 'Invalid from date' });
     return;

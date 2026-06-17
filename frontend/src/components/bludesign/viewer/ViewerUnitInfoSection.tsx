@@ -28,6 +28,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { canUseRemoteUnlockControls } from '@/utils/unitLock.utils';
 import type { ViewerSmartAssetState } from './viewerLiveState';
+import {
+  formatAccessAction,
+  formatAccessMethod,
+  getAccessUserDisplay,
+} from '@/utils/access-history-display.utils';
+import type { AccessLog } from '@/types/access-history.types';
+import { formatRelativeWithExact, RELATIVE_UNITS_ACTIVITY_OPTS } from '@/utils/datetime.utils';
 
 type LockState = 'locked' | 'unlocked' | 'unknown' | 'unlocking' | 'locking';
 
@@ -81,30 +88,6 @@ const unitStatusMeta: Record<string, { label: string; className: string }> = {
   },
 };
 
-const formatRelativeTime = (input?: string | null): string => {
-  if (!input) return '—';
-  const date = new Date(input);
-  if (isNaN(date.getTime())) return '—';
-  const diffMs = Date.now() - date.getTime();
-  if (diffMs < 0) return 'just now';
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const days = Math.floor(hr / 24);
-  if (days < 30) return `${days}d ago`;
-  return date.toLocaleDateString();
-};
-
-const formatExactTime = (input?: string | null): string => {
-  if (!input) return '—';
-  const date = new Date(input);
-  if (isNaN(date.getTime())) return '—';
-  return date.toLocaleString();
-};
-
 const buildAccessHistoryUrl = (unit: BluLokUnit): string => {
   const params = new URLSearchParams({ unit_id: unit.id });
   if (unit.facility_id) params.set('facility_id', unit.facility_id);
@@ -154,7 +137,9 @@ const ExpandedMetaToolbar: React.FC<{
   deviceStatus: string | null | undefined;
   lastActivity: string | null | undefined;
   onUnitDetails: () => void;
-}> = ({ unit, lockState, deviceStatus, lastActivity, onUnitDetails }) => (
+}> = ({ unit, lockState, deviceStatus, lastActivity, onUnitDetails }) => {
+  const lastActivityTime = formatRelativeWithExact(lastActivity, RELATIVE_UNITS_ACTIVITY_OPTS);
+  return (
   <div className="flex items-center gap-2 border-b border-gray-100/90 bg-gray-50/50 px-4 py-2 dark:border-gray-700/60 dark:bg-gray-800/40">
     <div className="flex shrink-0 flex-wrap items-center gap-1.5">
       <UnitStatusChip status={unit.status} />
@@ -164,17 +149,18 @@ const ExpandedMetaToolbar: React.FC<{
     <MetaToolbarDivider />
     <div
       className={`flex min-w-0 flex-1 items-center gap-1.5 ${TYPE.meta}`}
-      title={formatExactTime(lastActivity)}
+      title={lastActivityTime.title}
     >
       <ClockIcon className="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-gray-500" />
-      <span className="truncate">Last access · {formatRelativeTime(lastActivity)}</span>
+      <span className="truncate">Last access · {lastActivityTime.display}</span>
     </div>
     <MetaToolbarDivider />
     <div className="shrink-0">
       <SectionNavLink label="Unit details" compact onClick={onUnitDetails} />
     </div>
   </div>
-);
+  );
+};
 
 const UnitStatusChip: React.FC<{ status?: string | null }> = ({ status }) => {
   const key = (status ?? '').toLowerCase();
@@ -331,8 +317,10 @@ const LockBadge: React.FC<{ state: LockState }> = ({ state }) => {
 
 const AccessLogRow: React.FC<{ log: AccessLogEntry; index: number }> = ({ log, index }) => {
   const ts = log.occurred_at ?? log.created_at ?? '';
-  const action = (log.action ?? 'event').toLowerCase();
-  const succeeded = (log.result ?? '').toLowerCase() === 'success';
+  const accessLog = log as AccessLog;
+  const succeeded = accessLog.success ?? (log.result ?? '').toLowerCase() === 'success';
+  const userLabel = getAccessUserDisplay(accessLog).primary;
+  const relativeTs = formatRelativeWithExact(ts, RELATIVE_UNITS_ACTIVITY_OPTS);
 
   return (
     <motion.li
@@ -347,11 +335,11 @@ const AccessLogRow: React.FC<{ log: AccessLogEntry; index: number }> = ({ log, i
             succeeded ? 'bg-emerald-500' : 'bg-rose-500'
           }`}
         />
-        <span className="capitalize text-gray-800 dark:text-gray-200">{action}</span>
-        <span className="truncate">{log.user_name ?? log.method ?? ''}</span>
+        <span className="text-gray-800 dark:text-gray-200">{formatAccessAction(accessLog.action ?? 'event')}</span>
+        <span className="truncate">{userLabel !== '—' ? userLabel : formatAccessMethod(accessLog.method ?? '')}</span>
       </span>
-      <span className="shrink-0 tabular-nums" title={formatExactTime(ts)}>
-        {formatRelativeTime(ts)}
+      <span className="shrink-0 tabular-nums" title={relativeTs.title}>
+        {relativeTs.display}
       </span>
     </motion.li>
   );
@@ -400,6 +388,7 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
   const signal = unit.device?.signal_strength ?? null;
   const deviceStatus = unit.device?.device_status ?? null;
   const lastActivity = liveState?.lastActivity ?? unit.last_activity ?? null;
+  const lastActivityTime = formatRelativeWithExact(lastActivity, RELATIVE_UNITS_ACTIVITY_OPTS);
   const firmware = unit.device?.firmware_version ?? null;
 
   const lockStatus = useMemo(() => {
@@ -508,10 +497,10 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
 
           <div
             className={`flex items-center gap-1.5 ${TYPE.meta}`}
-            title={formatExactTime(lastActivity)}
+            title={lastActivityTime.title}
           >
             <ClockIcon className="h-3.5 w-3.5 shrink-0" />
-            <span>Last access · {formatRelativeTime(lastActivity)}</span>
+            <span>Last access · {lastActivityTime.display}</span>
           </div>
         </div>
       </motion.div>

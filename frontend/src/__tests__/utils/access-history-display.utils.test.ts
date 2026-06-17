@@ -4,6 +4,9 @@
 import { AccessLog } from '@/types/access-history.types';
 import {
   buildAccessLogDetailItems,
+  formatAccessAction,
+  formatAccessMethod,
+  getAccessFailureDetail,
   getAccessLocationDisplay,
   getAccessUserDisplay,
   isNonUserAccessActor,
@@ -17,7 +20,7 @@ const baseLog: AccessLog = {
   unit_id: 'unit-1',
   user_id: undefined,
   action: 'lock',
-  method: 'automatic',
+  method: 'local_device',
   success: true,
   occurred_at: '2026-06-01T10:00:00.000Z',
   created_at: '2026-06-01T10:00:00.000Z',
@@ -32,46 +35,62 @@ const baseLog: AccessLog = {
     actor: { type: 'gateway', name: 'Gateway' },
     facility: { id: 'fac-1', name: 'Petrolia Storage Facility', navigation_url: '/facilities/fac-1' },
     device: { id: 'dev-1', name: 'Lock GW-123', navigation_url: '/devices/blulok/dev-1' },
-    description: 'Device was locked by Gateway',
   },
 };
 
 describe('access-history-display.utils', () => {
-  it('does not show N/A secondary line for gateway actors', () => {
+  it('shows em dash for local device events without a user', () => {
     const user = getAccessUserDisplay(baseLog);
-    expect(user.primary).toBe('Gateway');
-    expect(user.secondary).toBe('Facility gateway sync');
+    expect(user.primary).toBe('—');
+    expect(user.secondary).toBeNull();
     expect(isNonUserAccessActor(baseLog)).toBe(true);
+  });
+
+  it('shows remote initiator for gateway commands', () => {
+    const remoteLog: AccessLog = {
+      ...baseLog,
+      method: 'remote_gateway',
+      user_id: 'user-1',
+      user_name: 'Jane Admin',
+      metadata: {
+        initiated_by: {
+          id: 'user-1',
+          name: 'Jane Admin',
+          navigation_url: '/users?highlight=user-1',
+        },
+        user: {
+          id: 'user-1',
+          name: 'Jane Admin',
+          navigation_url: '/users?highlight=user-1',
+        },
+      },
+    };
+    const user = getAccessUserDisplay(remoteLog);
+    expect(user.primary).toBe('Jane Admin');
+  });
+
+  it('labels unlock attempts and denial reasons', () => {
+    const denied: AccessLog = {
+      ...baseLog,
+      action: 'unlock_attempt',
+      success: false,
+      denial_reason: 'out_of_schedule',
+      metadata: { failure_summary: 'Out of schedule window' },
+    };
+    expect(formatAccessAction('unlock_attempt')).toBe('Unlock attempt denied');
+    expect(formatAccessMethod('remote_gateway')).toBe('Remote via gateway');
+    expect(getAccessFailureDetail(denied)).toBe('Out of schedule window');
   });
 
   it('hides facility in location primary when facility scoped', () => {
     const scoped = getAccessLocationDisplay(baseLog, { hideFacility: true });
     expect(scoped.primary).toBe('Unit A-101');
     expect(scoped.showFacilityLink).toBe(false);
-
-    const allFacilities = getAccessLocationDisplay(baseLog, { hideFacility: false });
-    expect(allFacilities.primary).toBe('Petrolia Storage Facility');
-    expect(allFacilities.secondary).toBe('Unit A-101');
   });
 
-  it('falls back to device label when unit is missing', () => {
-    const log: AccessLog = {
-      ...baseLog,
-      unit_id: undefined,
-      unit_number: undefined,
-      metadata: {
-        actor: { type: 'gateway', name: 'Gateway' },
-        device: { id: 'dev-1', name: 'Lock GW-123', navigation_url: '/devices/blulok/dev-1' },
-      },
-    };
-    const scoped = getAccessLocationDisplay(log, { hideFacility: true });
-    expect(scoped.primary).toBe('Lock GW-123');
-  });
-
-  it('builds expanded detail items including description', () => {
+  it('builds expanded detail items with device link metadata', () => {
     const items = buildAccessLogDetailItems(baseLog, true);
-    expect(items.some((item) => item.label === 'Description')).toBe(true);
-    expect(items.some((item) => item.label === 'Device')).toBe(true);
-    expect(items.some((item) => item.label === 'Facility')).toBe(false);
+    expect(items.some((item) => item.label === 'Device' && item.href)).toBe(true);
+    expect(items.some((item) => item.label === 'Actor detail')).toBe(false);
   });
 });

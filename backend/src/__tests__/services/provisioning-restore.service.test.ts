@@ -110,6 +110,29 @@ describe('ProvisioningRestoreService', () => {
     expect(GatewayChunkPushEngine.executePush).toHaveBeenCalled();
   });
 
+  it('initiateRestore accepts backup owned by previous gateway during swap recovery', async () => {
+    const restore = await ProvisioningRestoreService.initiateRestore(
+      'backup-1',
+      'gw-new',
+      'fac-1',
+      'admin-1',
+      { backupOwnerGatewayId: 'gw-1' },
+    );
+    expect(restore.id).toBe('restore-1');
+  });
+
+  it('initiateRestore rejects backup when owner gateway does not match', async () => {
+    await expect(
+      ProvisioningRestoreService.initiateRestore(
+        'backup-1',
+        'gw-new',
+        'fac-1',
+        'admin-1',
+        { backupOwnerGatewayId: 'gw-other' },
+      ),
+    ).rejects.toThrow(/does not belong/i);
+  });
+
   it('executeRestore does not fail when chunk push pauses on disconnect', async () => {
     (GatewayChunkPushEngine.executePush as jest.Mock).mockResolvedValueOnce({ status: 'disconnect' });
     await ProvisioningRestoreService.executeRestore('restore-1');
@@ -166,7 +189,10 @@ describe('ProvisioningRestoreService', () => {
     }]);
 
     await ProvisioningRestoreService.handleFacilityDisconnect('fac-1');
-    expect(GatewayChunkPushEngine.pausePushOnDisconnect).toHaveBeenCalledWith('fac-1');
+    expect(GatewayChunkPushEngine.pausePushOnDisconnect).toHaveBeenCalledWith('fac-1', {
+      excludePushIds: undefined,
+      onlyPushIds: undefined,
+    });
   });
 
   it('getRestoreStatus returns null active when no active restore', async () => {

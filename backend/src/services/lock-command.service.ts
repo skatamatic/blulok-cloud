@@ -2,6 +2,7 @@ import { DeviceModel } from '@/models/device.model';
 import { GatewayService } from '@/services/gateway/gateway.service';
 import { logger } from '@/utils/logger';
 import { lockCommandTimeoutMs } from '@/utils/facility-lock-timeout.utils';
+import { resolveRemoteAccessMethod } from '@/utils/access-history-remote.utils';
 
 type LockStatus =
   | 'locked'
@@ -12,28 +13,35 @@ type LockStatus =
   | 'maintenance'
   | 'unknown';
 
+export interface LockCommandInitiator {
+  userId: string;
+  userName: string;
+  role: string;
+}
+
+export interface LockCommandAttribution {
+  initiator: LockCommandInitiator;
+  gatewayId: string;
+  facilityId: string;
+  unitId?: string;
+  requestedStatus: 'locked' | 'unlocked';
+}
+
 interface PendingLockCommand {
   deviceId: string;
   previousStatus: LockStatus;
-  requestedStatus: Exclude<LockStatus, 'locking' | 'unlocking' | 'unknown'>;
-  timeoutHandle: NodeJS.Timeout;
+  requestedStatus: 'locked' | 'unlocked';
+  timeoutHandle?: NodeJS.Timeout;
+  initiator?: LockCommandInitiator;
+  gatewayId: string;
+  facilityId: string;
+  unitId?: string;
 }
 
 /**
  * LockCommandService
  *
  * Orchestrates lock/unlock commands from the cloud UI to facility gateways.
- *
- * Responsibilities:
- * - Transition devices into in-flight states ('locking' / 'unlocking') while commands are pending.
- * - Delegate command execution to GatewayService.
- * - Rely on gateway state updates (`/devices/state`) as the source of truth for final lock status.
- * - Revert to the previous state if no state update arrives within a timeout window.
- *
- * Design notes:
- * - This service maintains a small in-memory map of pending commands keyed by deviceId.
- * - On timeout, the current DB state is checked; if the device is still in the transitional
- *   state, it is reverted to the previous status and an error is logged.
  */
 export class LockCommandService {
   private static instance: LockCommandService;
@@ -41,6 +49,8 @@ export class LockCommandService {
   private readonly deviceModel: DeviceModel;
   private readonly gatewayService: GatewayService;
   private readonly pendingCommands = new Map<string, PendingLockCommand>();
+  /** Skips one lock-activity log row after timeout-driven status revert. */
+  private readonly suppressRevertActivityLog = new Set<string>();
 
   private constructor() {
     this.deviceModel = new DeviceModel();
@@ -54,26 +64,16 @@ export class LockCommandService {
     return LockCommandService.instance;
   }
 
-  /**
-   * Issue a lock/unlock command for a BluLok device.
-   *
-   * This method:
-   * - Validates the requested target status (locked/unlocked)
-   * - Loads the device and its gateway
-   * - Updates lock_status to 'locking' / 'unlocking'
-   * - Sends the lock command via GatewayService
-   * - Schedules a timeout to revert to previous status if no gateway state update arrives
-   */
   public async issueLockCommand(
     deviceId: string,
     requestedStatus: 'locked' | 'unlocked',
+    initiator?: LockCommandInitiator,
   ): Promise<{
     success: boolean;
     message: string;
     lock_status?: LockStatus;
     previous_status?: LockStatus;
   }> {
-    // Look up device and gateway
     const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
     const deviceRow = await knex('blulok_devices')
       .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
@@ -94,10 +94,18 @@ export class LockCommandService {
 
     const supportsRemoteLock = Boolean((deviceRow as { supports_remote_lock?: boolean }).supports_remote_lock);
     if (requestedStatus === 'locked' && !supportsRemoteLock) {
-      return {
-        success: false,
-        message: 'Remote lock is not enabled for this device; re-lock manually on site.',
-      };
+      const message = 'Remote lock is not enabled for this device; re-lock manually on site.';
+      this.recordCommandFailure({
+        facilityId: String(deviceRow.facility_id),
+        deviceId,
+        unitId: (deviceRow as { unit_id?: string | null }).unit_id ?? undefined,
+        gatewayId: String(deviceRow.gateway_id),
+        requestedStatus,
+        errorMessage: message,
+        initiator,
+        deviceType: 'blulok',
+      });
+      return { success: false, message };
     }
 
     const previousStatus = (deviceRow.lock_status || 'unknown') as LockStatus;
@@ -105,9 +113,25 @@ export class LockCommandService {
     const facilityId = String((deviceRow as { facility_id: string }).facility_id);
     const unitId = (deviceRow as { unit_id?: string | null }).unit_id ?? undefined;
 
+    const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+    if (await GatewayRecoveryService.isBlockingActiveForFacility(facilityId)) {
+      const message =
+        'Gateway recovery in progress — lock commands blocked until recovery completes or is bypassed';
+      this.recordCommandFailure({
+        facilityId,
+        deviceId,
+        unitId,
+        gatewayId,
+        requestedStatus,
+        errorMessage: message,
+        initiator,
+        deviceType: 'blulok',
+      });
+      return { success: false, message };
+    }
+
     const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
     const oneShot = timeoutMs === 0;
-
     const transitionalStatus: LockStatus =
       requestedStatus === 'locked' ? 'locking' : 'unlocking';
 
@@ -115,7 +139,6 @@ export class LockCommandService {
       await this.deviceModel.updateLockStatus(deviceId, transitionalStatus);
     }
 
-    // Clear any existing pending command for this device
     this.clearPending(deviceId);
 
     try {
@@ -141,13 +164,15 @@ export class LockCommandService {
           requestedStatus,
           error: result.error,
         });
-        void this.notifyLockCommandFailure({
+        this.recordCommandFailure({
           facilityId,
           deviceId,
           unitId,
           gatewayId,
           requestedStatus,
           errorMessage: message,
+          initiator,
+          deviceType: 'blulok',
         });
         return { success: false, message };
       }
@@ -163,13 +188,15 @@ export class LockCommandService {
         requestedStatus,
         error: failureMessage,
       });
-      void this.notifyLockCommandFailure({
+      this.recordCommandFailure({
         facilityId,
         deviceId,
         unitId,
         gatewayId,
         requestedStatus,
         errorMessage: failureMessage,
+        initiator,
+        deviceType: 'blulok',
       });
       return {
         success: false,
@@ -178,6 +205,15 @@ export class LockCommandService {
     }
 
     if (oneShot) {
+      this.storePendingAttribution({
+        deviceId,
+        previousStatus,
+        requestedStatus,
+        initiator,
+        gatewayId,
+        facilityId,
+        unitId,
+      });
       return {
         success: true,
         message: 'Lock command sent',
@@ -186,17 +222,20 @@ export class LockCommandService {
       };
     }
 
-    // Schedule timeout to revert if no gateway state update resolves the transition
     const timeoutHandle = setTimeout(
       () => void this.handleTimeout(deviceId, transitionalStatus, previousStatus),
       timeoutMs,
     );
 
-    this.pendingCommands.set(deviceId, {
+    this.storePendingAttribution({
       deviceId,
       previousStatus,
       requestedStatus,
       timeoutHandle,
+      initiator,
+      gatewayId,
+      facilityId,
+      unitId,
     });
 
     return {
@@ -207,13 +246,10 @@ export class LockCommandService {
     };
   }
 
-  /**
-   * Issue OPEN/CLOSE for an access-control device (gates, doors, elevators).
-   * Does not use BluLok transitional lock_status rows; device sync updates `is_locked`.
-   */
   public async issueAccessControlLockCommand(
     deviceId: string,
     requestedStatus: 'locked' | 'unlocked',
+    initiator?: LockCommandInitiator,
   ): Promise<{ success: boolean; message: string }> {
     const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
     const deviceRow = await knex('access_control_devices')
@@ -234,14 +270,38 @@ export class LockCommandService {
 
     const supportsRemoteLock = Boolean((deviceRow as { supports_remote_lock?: boolean }).supports_remote_lock);
     if (requestedStatus === 'locked' && !supportsRemoteLock) {
-      return {
-        success: false,
-        message: 'Remote lock is not enabled for this device; re-lock manually on site.',
-      };
+      const message = 'Remote lock is not enabled for this device; re-lock manually on site.';
+      this.recordCommandFailure({
+        facilityId: String(deviceRow.facility_id),
+        deviceId,
+        gatewayId: String(deviceRow.gateway_id),
+        requestedStatus,
+        errorMessage: message,
+        initiator,
+        deviceType: 'access_control',
+      });
+      return { success: false, message };
     }
 
     const gatewayId = String(deviceRow.gateway_id);
     const facilityId = String((deviceRow as { facility_id: string }).facility_id);
+
+    const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+    if (await GatewayRecoveryService.isBlockingActiveForFacility(facilityId)) {
+      const message =
+        'Gateway recovery in progress — lock commands blocked until recovery completes or is bypassed';
+      this.recordCommandFailure({
+        facilityId,
+        deviceId,
+        gatewayId,
+        requestedStatus,
+        errorMessage: message,
+        initiator,
+        deviceType: 'access_control',
+      });
+      return { success: false, message };
+    }
+
     const command: 'OPEN' | 'CLOSE' = requestedStatus === 'locked' ? 'CLOSE' : 'OPEN';
 
     try {
@@ -253,17 +313,16 @@ export class LockCommandService {
           gatewayId,
           error: result.error,
         });
-        void this.notifyLockCommandFailure({
+        this.recordCommandFailure({
           facilityId,
           deviceId,
           gatewayId,
           requestedStatus,
           errorMessage: message,
+          initiator,
+          deviceType: 'access_control',
         });
-        return {
-          success: false,
-          message,
-        };
+        return { success: false, message };
       }
     } catch (error: any) {
       const failureMessage = error?.message || 'Failed to send lock command to gateway';
@@ -272,17 +331,31 @@ export class LockCommandService {
         gatewayId,
         error: failureMessage,
       });
-      void this.notifyLockCommandFailure({
+      this.recordCommandFailure({
         facilityId,
         deviceId,
         gatewayId,
         requestedStatus,
         errorMessage: failureMessage,
+        initiator,
+        deviceType: 'access_control',
       });
       return { success: false, message: 'Failed to send lock command to gateway' };
     }
 
-    // Persist intended state after gateway ack so UI/API match immediately; gateway sync may refine later.
+    if (initiator) {
+      const method = resolveRemoteAccessMethod(initiator.role);
+      const activityType = requestedStatus === 'unlocked' ? 'unlock' : 'lock';
+      void this.logRemoteCommandSuccess({
+        facilityId,
+        deviceId,
+        gatewayId,
+        initiator,
+        method,
+        activityType,
+      });
+    }
+
     try {
       await this.deviceModel.updateAccessControlDevice(deviceId, {
         is_locked: requestedStatus === 'locked',
@@ -295,6 +368,152 @@ export class LockCommandService {
     }
 
     return { success: true, message: 'Lock command accepted' };
+  }
+
+  public peekCommandAttribution(deviceId: string): LockCommandAttribution | null {
+    const pending = this.pendingCommands.get(deviceId);
+    if (!pending?.initiator) {
+      return null;
+    }
+    return {
+      initiator: pending.initiator,
+      gatewayId: pending.gatewayId,
+      facilityId: pending.facilityId,
+      unitId: pending.unitId,
+      requestedStatus: pending.requestedStatus,
+    };
+  }
+
+  public acknowledgeCommandAttribution(deviceId: string): void {
+    this.clearPending(deviceId);
+  }
+
+  /** Returns true once for timeout revert rows that should not duplicate failure logs. */
+  public consumeSuppressRevertActivityLog(deviceId: string): boolean {
+    if (!this.suppressRevertActivityLog.has(deviceId)) {
+      return false;
+    }
+    this.suppressRevertActivityLog.delete(deviceId);
+    return true;
+  }
+
+  private storePendingAttribution(params: PendingLockCommand): void {
+    this.pendingCommands.set(params.deviceId, params);
+  }
+
+  private recordCommandFailure(params: {
+    facilityId: string;
+    deviceId: string;
+    unitId?: string;
+    gatewayId?: string;
+    requestedStatus: 'locked' | 'unlocked';
+    errorMessage: string;
+    initiator?: LockCommandInitiator;
+    deviceType: 'blulok' | 'access_control';
+  }): void {
+    void this.notifyLockCommandFailure(params);
+  }
+
+  private async logRemoteCommandSuccess(params: {
+    facilityId: string;
+    deviceId: string;
+    gatewayId: string;
+    initiator: LockCommandInitiator;
+    method: 'admin_remote' | 'remote_gateway';
+    activityType: 'lock' | 'unlock';
+  }): Promise<void> {
+    try {
+      const { ActivityService } = await import('@/services/activity.service');
+      const verb = params.activityType === 'unlock' ? 'unlocked' : 'locked';
+      await ActivityService.getInstance().logActivity({
+        entityType: 'device',
+        entityId: params.deviceId,
+        activityType: params.activityType,
+        title: params.activityType === 'unlock' ? 'Device Unlocked' : 'Device Locked',
+        description: `Device ${verb} remotely via gateway by ${params.initiator.userName}`,
+        actorType: 'user',
+        actorId: params.initiator.userId,
+        actorName: params.initiator.userName,
+        result: 'success',
+        facilityId: params.facilityId,
+        deviceId: params.deviceId,
+        metadata: {
+          method: params.method,
+          initiated_remotely: true,
+          gateway_id: params.gatewayId,
+          initiated_by: {
+            id: params.initiator.userId,
+            name: params.initiator.userName,
+            role: params.initiator.role,
+          },
+          device_type: 'access_control',
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('LockCommandService: failed to log access-control remote command success', {
+        deviceId: params.deviceId,
+        error: message,
+      });
+    }
+  }
+
+  private async logRemoteCommandFailure(params: {
+    facilityId: string;
+    deviceId: string;
+    unitId?: string;
+    gatewayId?: string;
+    requestedStatus: 'locked' | 'unlocked';
+    errorMessage: string;
+    initiator?: LockCommandInitiator;
+    deviceType: 'blulok' | 'access_control';
+  }): Promise<void> {
+    if (!params.initiator) {
+      return;
+    }
+
+    try {
+      const { ActivityService } = await import('@/services/activity.service');
+      const method = resolveRemoteAccessMethod(params.initiator.role);
+      const action = params.requestedStatus === 'unlocked' ? 'unlock_attempt' : 'lock_attempt';
+      const title = params.requestedStatus === 'unlocked'
+        ? 'Remote Unlock Failed'
+        : 'Remote Lock Failed';
+
+      await ActivityService.getInstance().logActivity({
+        entityType: 'device',
+        entityId: params.deviceId,
+        activityType: 'access_attempt',
+        title,
+        description: params.errorMessage,
+        actorType: 'user',
+        actorId: params.initiator.userId,
+        actorName: params.initiator.userName,
+        result: 'failure',
+        resultMessage: params.errorMessage,
+        facilityId: params.facilityId,
+        unitId: params.unitId,
+        deviceId: params.deviceId,
+        metadata: {
+          action,
+          method,
+          initiated_remotely: true,
+          gateway_id: params.gatewayId ?? null,
+          initiated_by: {
+            id: params.initiator.userId,
+            name: params.initiator.userName,
+            role: params.initiator.role,
+          },
+          device_type: params.deviceType,
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('LockCommandService: failed to log remote command failure to access history', {
+        deviceId: params.deviceId,
+        error: message,
+      });
+    }
   }
 
   private async resolveFacilityLockTimeoutMs(facilityId: string): Promise<number> {
@@ -322,7 +541,10 @@ export class LockCommandService {
     errorMessage: string;
     gatewayId?: string;
     unitId?: string;
+    initiator?: LockCommandInitiator;
+    deviceType: 'blulok' | 'access_control';
   }): void {
+    void this.logRemoteCommandFailure(params);
     void (async () => {
       try {
         const { InAppNotificationDispatcher } = await import(
@@ -351,24 +573,25 @@ export class LockCommandService {
   private clearPending(deviceId: string): void {
     const pending = this.pendingCommands.get(deviceId);
     if (pending) {
-      clearTimeout(pending.timeoutHandle);
+      if (pending.timeoutHandle) {
+        clearTimeout(pending.timeoutHandle);
+      }
       this.pendingCommands.delete(deviceId);
     }
   }
 
-  /**
-   * Timeout handler: if the device is still in the transitional state when the
-   * timeout fires, revert it to the previous status and log an error.
-   *
-   * Device sync remains the source of truth – if a sync has already updated
-   * the device to a final status, this method is a no-op.
-   */
   private async handleTimeout(
     deviceId: string,
     transitionalStatus: LockStatus,
     previousStatus: LockStatus,
   ): Promise<void> {
+    const pending = this.pendingCommands.get(deviceId);
     this.pendingCommands.delete(deviceId);
+    if (pending?.timeoutHandle) {
+      clearTimeout(pending.timeoutHandle);
+    }
+
+    const timeoutMessage = 'Gateway did not confirm lock command before timeout';
 
     try {
       const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
@@ -380,11 +603,23 @@ export class LockCommandService {
       const currentStatus = (current?.lock_status || 'unknown') as LockStatus;
 
       if (currentStatus !== transitionalStatus) {
-        // Device sync has already resolved the status; nothing to do.
         return;
       }
 
-      // Revert to previous state and log for observability
+      if (pending?.initiator && pending.requestedStatus) {
+        this.recordCommandFailure({
+          facilityId: pending.facilityId,
+          deviceId,
+          unitId: pending.unitId,
+          gatewayId: pending.gatewayId,
+          requestedStatus: pending.requestedStatus,
+          errorMessage: timeoutMessage,
+          initiator: pending.initiator,
+          deviceType: 'blulok',
+        });
+      }
+
+      this.suppressRevertActivityLog.add(deviceId);
       await this.deviceModel.updateLockStatus(deviceId, previousStatus);
 
       logger.error('LockCommandService: lock command timeout, reverting state', {
@@ -400,7 +635,3 @@ export class LockCommandService {
     }
   }
 }
-
-
-
-

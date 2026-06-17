@@ -53,6 +53,10 @@ jest.mock('@/contexts/GlobalFacilityContext', () => ({
   useGlobalFacility: () => mockUseGlobalFacility(),
 }));
 
+jest.mock('@/hooks/useWebSocketSubscription', () => ({
+  useWebSocketSubscription: jest.fn(),
+}));
+
 jest.mock('@/contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     subscribe: jest.fn(() => 'sub-1'),
@@ -94,6 +98,13 @@ describe('AccessHistoryPage', () => {
     await waitFor(() => {
       expect(mockGetAccessHistory).toHaveBeenCalled();
     });
+
+    const initialQuery = mockGetAccessHistory.mock.calls[0][0] as {
+      date_from?: string;
+      date_to?: string;
+    };
+    expect(initialQuery.date_from).toMatch(/Z$/);
+    expect(initialQuery.date_to).toMatch(/Z$/);
 
     await waitFor(() => {
       expect(screen.getByText(/no access logs found/i)).toBeInTheDocument();

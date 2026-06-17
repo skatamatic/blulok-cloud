@@ -64,7 +64,15 @@ async function bootstrap(): Promise<void> {
 
     // Create and start the application
     const app = createApp();
-    
+
+    // Re-arm in-flight gateway operations before accepting connections (populates recovery blocking cache)
+    const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+    await GatewayRecoveryService.recoverInFlightStateOnStartup();
+    const { FirmwareService } = await import('@/services/firmware/firmware.service');
+    await FirmwareService.recoverInFlightStateOnStartup();
+    const { ProvisioningRestoreService } = await import('@/services/provisioning/provisioning-restore.service');
+    await ProvisioningRestoreService.recoverInFlightStateOnStartup();
+
     const server = app.listen(config.port, () => {
       logger.info(`BluLok API server running on port ${config.port}`);
       logger.info(`Environment: ${config.nodeEnv}`);
@@ -77,10 +85,6 @@ async function bootstrap(): Promise<void> {
     // Initialize Gateway WS for site gateways
     const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
     GatewayEventsService.getInstance().initialize(server);
-    const { FirmwareService } = await import('@/services/firmware/firmware.service');
-    await FirmwareService.recoverInFlightStateOnStartup();
-    const { ProvisioningRestoreService } = await import('@/services/provisioning/provisioning-restore.service');
-    await ProvisioningRestoreService.recoverInFlightStateOnStartup();
 
     const loggerInterceptor = LoggerInterceptorService.getInstance();
 

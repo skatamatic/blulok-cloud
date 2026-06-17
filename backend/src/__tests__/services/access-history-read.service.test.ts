@@ -56,10 +56,151 @@ describe('AccessHistoryReadService', () => {
     const result = await service.query('user-1', UserRole.ADMIN, undefined, { action: 'lock' });
     expect(result.logs).toHaveLength(1);
     expect(result.logs[0].action).toBe('lock');
-    expect(result.logs[0].method).toBe('automatic');
+    expect(result.logs[0].method).toBe('local_device');
     expect(result.logs[0].device_name).toBe('Front Gate Lock');
     expect(result.logs[0].metadata?.actor).toEqual({ type: 'gateway', name: 'Gateway' });
     expect(result.logs[0].metadata?.device).toMatchObject({ name: 'Front Gate Lock' });
+  });
+
+  it('uses end-of-day UTC for date-only date_to filters', async () => {
+    mockFindWithContext.mockResolvedValue([]);
+    mockCount.mockResolvedValue(0);
+    const mockFindAll = jest.fn().mockResolvedValue({ logs: [], total: 0 });
+    (AccessLogModel as unknown as jest.Mock).mockImplementation(() => ({
+      findById: jest.fn().mockResolvedValue(null),
+      findAll: mockFindAll,
+    }));
+
+    const service = new AccessHistoryReadService();
+    await service.query('user-1', UserRole.ADMIN, undefined, {
+      date_from: '2026-06-16',
+      date_to: '2026-06-16',
+    });
+
+    expect(mockFindWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from_date: new Date('2026-06-16T00:00:00.000Z'),
+        to_date: new Date('2026-06-16T23:59:59.999Z'),
+      }),
+    );
+  });
+
+  it('parses full ISO date_from/date_to without UTC day expansion', async () => {
+    mockFindWithContext.mockResolvedValue([]);
+    mockCount.mockResolvedValue(0);
+    const mockFindAll = jest.fn().mockResolvedValue({ logs: [], total: 0 });
+    (AccessLogModel as unknown as jest.Mock).mockImplementation(() => ({
+      findById: jest.fn().mockResolvedValue(null),
+      findAll: mockFindAll,
+    }));
+
+    const from = '2026-06-16T04:00:00.000Z';
+    const to = '2026-06-17T03:59:59.999Z';
+    const service = new AccessHistoryReadService();
+    await service.query('user-1', UserRole.ADMIN, undefined, {
+      date_from: from,
+      date_to: to,
+    });
+
+    expect(mockFindWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from_date: new Date(from),
+        to_date: new Date(to),
+      }),
+    );
+  });
+
+  it('maps access_denied to unlock_attempt with failure summary', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-denied',
+        activity_type: 'access_attempt',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'user',
+        actor_name: 'Tenant User',
+        actor_id: 'user-1',
+        result: 'failure',
+        result_message: 'Access denied: out of schedule window',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'access_denied',
+          method: 'app',
+          denial_reason: 'out_of_schedule',
+          device_type: 'blulok',
+        },
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, {});
+    expect(result.logs[0].action).toBe('unlock_attempt');
+    expect(result.logs[0].metadata?.failure_summary).toContain('Out of schedule');
+  });
+
+  it('preserves redacted keypad metadata in presentation layer', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-keypad',
+        activity_type: 'access_attempt',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'user',
+        result: 'failure',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'keypad_attempt',
+          method: 'keypad',
+          denial_reason: 'out_of_schedule',
+          device_type: 'blulok',
+          keypad: {
+            entered_code: '***REDACTED***',
+            schedule_name: 'Night Schedule',
+          },
+        },
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, {});
+    expect(result.logs[0].action).toBe('unlock_attempt');
+    expect(result.logs[0].method).toBe('keypad');
+    expect(result.logs[0].metadata?.keypad).toMatchObject({
+      entered_code: '***REDACTED***',
+      schedule_name: 'Night Schedule',
+    });
+  });
+
+  it('treats access_denied filter as unlock_attempt alias', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-denied',
+        activity_type: 'access_attempt',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'user',
+        actor_name: 'Tenant User',
+        actor_id: 'user-1',
+        result: 'failure',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'access_denied',
+          method: 'app',
+          device_type: 'blulok',
+        },
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, { action: 'access_denied' });
+    expect(result.logs).toHaveLength(1);
+    expect(result.logs[0].action).toBe('unlock_attempt');
   });
 
   it('returns enriched lock/unlock records from findById', async () => {

@@ -22,6 +22,10 @@ jest.mock('@/contexts/AuthContext', () => {
   };
 });
 
+jest.mock('@/hooks/useWebSocketSubscription', () => ({
+  useWebSocketSubscription: jest.fn(),
+}));
+
 jest.mock('@/contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     subscribe: jest.fn(() => 'sub-1'),
@@ -98,9 +102,9 @@ describe('AccessHistoryWidget', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('101')).toBeInTheDocument();
+      expect(screen.getByText('Unit 101')).toBeInTheDocument();
     });
     expect(screen.getByText('Pat Smith')).toBeInTheDocument();
-    expect(screen.getByText(/unlocked/i)).toBeInTheDocument();
+    expect(screen.getByText('Unlock')).toBeInTheDocument();
   });
 });

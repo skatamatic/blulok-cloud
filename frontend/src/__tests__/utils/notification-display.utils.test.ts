@@ -1,3 +1,4 @@
+import { formatNotificationTimestamp } from '@/utils/datetime.utils';
 import {
   deriveActionRequired,
   filterNotificationsForViewer,
@@ -39,36 +40,39 @@ describe('notification-display.utils', () => {
     );
     expect(v.actionRequired).toBe(true);
     expect(v.displayType).toBe('error');
-    expect(v.notificationType).toBe('security_alert');
+    expect(v.tone).toBe('error');
   });
 
   it('filterNotificationsForViewer hides backend_error from non-dev admins', () => {
     const rows = [
-      api({ id: 'a', type: 'general' }),
-      api({ id: 'b', type: 'backend_error' }),
+      mapApiNotificationToDashboardView(api({ type: 'backend_error' })),
+      mapApiNotificationToDashboardView(api({ type: 'general' })),
     ];
-    expect(filterNotificationsForViewer(rows, 'admin')).toHaveLength(1);
-    expect(filterNotificationsForViewer(rows, 'dev_admin')).toHaveLength(2);
+    const filtered = filterNotificationsForViewer(rows, 'facility_admin');
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].notificationType).toBe('general');
   });
 
   it('getNotificationCardVisual uses urgent styling for unread critical notifications', () => {
     const view = mapApiNotificationToDashboardView(
-      api({ type: 'gateway_offline', priority: 'urgent', isRead: false }),
+      api({ type: 'security_alert', priority: 'urgent', isRead: false }),
     );
     const visual = getNotificationCardVisual(view);
     expect(visual.showPulse).toBe(true);
-    expect(visual.card).toContain('red');
+    expect(visual.card).toContain('border-red');
     expect(getNotificationUrgencyBadge(view)?.label).toBe('Critical');
   });
 
-  it('getNotificationCardVisual mutes read notifications', () => {
+  it('getNotificationCardVisual keeps severity cues on read notifications', () => {
     const view = mapApiNotificationToDashboardView(
-      api({ type: 'gateway_offline', priority: 'urgent', isRead: true }),
+      api({ type: 'security_alert', priority: 'urgent', isRead: true }),
     );
     const visual = getNotificationCardVisual(view);
     expect(visual.showPulse).toBe(false);
     expect(visual.card).toContain('bg-white');
-    expect(getNotificationUrgencyBadge(view)).toBeNull();
+    expect(visual.card).toContain('border-red');
+    expect(visual.accentBar).toContain('red');
+    expect(getNotificationUrgencyBadge(view)?.label).toBe('Critical');
   });
 
   it('getNotificationCardVisual uses success styling for gateway restored', () => {
@@ -78,5 +82,29 @@ describe('notification-display.utils', () => {
     const visual = getNotificationCardVisual(view);
     expect(visual.card).toContain('emerald');
     expect(getNotificationUrgencyBadge(view)).toBeNull();
+  });
+
+  describe('formatNotificationTimestamp', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-16T15:00:00'));
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('shows relative time for recent notifications', () => {
+      const fiveMinutesAgo = new Date('2026-06-16T14:55:00');
+      expect(formatNotificationTimestamp(fiveMinutesAgo)).toBe('5m ago');
+      expect(formatNotificationTimestamp(fiveMinutesAgo, true)).toBe('5m');
+    });
+
+    it('shows date and time for notifications older than 24 hours', () => {
+      const twoDaysAgo = new Date('2026-06-14T09:30:00');
+      const formatted = formatNotificationTimestamp(twoDaysAgo);
+      expect(formatted).toMatch(/Jun 14, 2026/);
+      expect(formatted).toMatch(/9:30/);
+    });
   });
 });

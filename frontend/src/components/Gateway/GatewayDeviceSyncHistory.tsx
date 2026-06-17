@@ -10,6 +10,7 @@ import {
 import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import type { DeviceSyncLogEntry, GatewayDeviceSyncLogRecord } from '@/types/gateway.types';
+import { formatDateTimeParts } from '@/utils/datetime.utils';
 
 const ACTION_META: Record<
   DeviceSyncLogEntry['action'],
@@ -73,10 +74,7 @@ function SummaryChips({ summary }: { summary: GatewayDeviceSyncLogRecord['summar
 }
 
 function formatLogTimestamp(when: Date): { date: string; time: string } {
-  return {
-    date: when.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' }),
-    time: when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
-  };
+  return formatDateTimeParts(when) ?? { date: '—', time: '—' };
 }
 
 function syncKindBadge(syncKind: GatewayDeviceSyncLogRecord['sync_kind']) {

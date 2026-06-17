@@ -1,5 +1,7 @@
 # Access Control, Notifications, and Activity Logs APIs
 
+> **Date/time conventions:** All instants are stored in UTC and transmitted as ISO-8601 UTC strings. See [`datetime-conventions.md`](./datetime-conventions.md) for formatting, filter, and display rules.
+
 This document describes three new API systems added to the BluLok platform: Access Control Device Querying, User Notifications, and Activity Logs.
 
 ## Architecture Overview
@@ -323,8 +325,10 @@ Get activity logs for a specific device.
 
 ### Real-time Updates
 Subscribe to `activity` via WebSocket to receive:
-- `activity_update` - Initial activity data on subscription
-- `activity_new` - New activity logged
+- `activity_update` - Initial activity data on subscription (`data.activities`, `data.count`, `data.lastUpdated`)
+- `activity_new` - New activity logged; includes both `data.activity` and enriched `data.accessLog` (same shape as `GET /access-history` rows) for live grid prepend in the Access History page/widget
+
+**Regression:** `backend/npm run ws:e2e` — **Access Event Canonical Pipeline** section asserts `activity_update` snapshots, `activity_new` + `accessLog` envelopes after ingestion, role-scoped fanout, and tenant isolation.
 
 **Subscription Parameters:**
 ```json
@@ -404,6 +408,46 @@ CREATE TABLE activity_logs (
   INDEX idx_activity_logs_device_time (device_id, occurred_at)
 );
 ```
+
+---
+
+## Access History Event Semantics
+
+Access history reads from `activity_logs` and exposes a unified API at `GET /api/v1/access-history`.
+
+### Event streams
+
+| Stream | `activity_type` | Typical API `action` | Meaning |
+|--------|-------------------|----------------------|---------|
+| Gateway access attempts | `access_attempt` | `access_granted`, `unlock_attempt`, `lock_attempt` | Credential/policy evaluation at the lock (includes denials with `denial_reason`) |
+| Lock state sync | `lock`, `unlock` | `lock`, `unlock` | Physical state change reported by gateway |
+
+In-flight transitional states (`locking`, `unlocking`) are **not** included in access history list/export queries.
+
+### Method taxonomy (read layer)
+
+| Method | Meaning |
+|--------|---------|
+| `app`, `mobile_key`, `keypad`, `route_pass` | Preserved from gateway access-event ingestion |
+| `remote_gateway` | Cloud-issued lock/unlock command via gateway (tenant/app user) |
+| `admin_remote` | Cloud-issued lock/unlock command by admin/facility admin |
+| `local_device` | Physical state change with no known cloud initiator |
+
+Legacy rows mapped as `automatic` are surfaced as `local_device`.
+
+### Remote command attribution
+
+Cloud lock/unlock commands (`PUT /devices/blulok/:id/lock`, access-control equivalent) pass the initiating user into `LockCommandService`. When gateway state sync confirms the final lock/unlock, the activity row is stamped with:
+
+- `actor_type: user`, initiator name/id
+- `metadata.method: remote_gateway` or `admin_remote`
+- `metadata.initiated_remotely: true`
+
+Failed remote commands (gateway reject, send error, timeout) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason`.
+
+### Denied unlock attempts
+
+Gateway `access_denied` events are mapped to API action `unlock_attempt` with structured `denial_reason` and `metadata.failure_summary` for UI display.
 
 ---
 

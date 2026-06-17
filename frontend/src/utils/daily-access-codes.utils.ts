@@ -1,4 +1,5 @@
 import { UserAccessCode } from '@/types/facility.types';
+import { formatDateTime, parseInstant } from '@/utils/datetime.utils';
 
 export const ACCESS_DEVICE_TYPE_ORDER: UserAccessCode['device_type'][] = [
   'door',
@@ -159,15 +160,9 @@ export function limitDailyAccessCodeGroups(
 }
 
 export function formatAccessCodeExpiry(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-
-  return date.toLocaleString(undefined, {
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const date = parseInstant(iso);
+  if (!date) return '—';
+  return formatDateTime(date);
 }
 
 export function sharedValidUntil(schedules: DailyAccessCodeScheduleRow[]): string | null {

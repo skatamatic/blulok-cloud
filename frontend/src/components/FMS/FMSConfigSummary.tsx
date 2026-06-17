@@ -6,6 +6,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { getProviderMetadata } from '@/config/fms-providers';
 import { FMSConfiguration, FMSProviderType } from '@/types/fms.types';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 function enabledBadgeClass(enabled: boolean): string {
   return enabled
@@ -139,7 +140,7 @@ export function FMSConfigSummary({
               <span className="inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 min-w-0">
                 <ClockIcon className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">
-                  Last sync {new Date(config.last_sync_at).toLocaleString()}
+                  Last sync {formatDateTime(config.last_sync_at)}
                 </span>
                 {config.last_sync_status && (
                   <span
@@ -222,7 +223,7 @@ export function FMSConfigSummary({
           {config.last_sync_at && (
             <p className="flex flex-wrap items-center gap-2 text-gray-600 dark:text-gray-400">
               <span className="font-medium text-gray-700 dark:text-gray-300">Last sync:</span>
-              <span>{new Date(config.last_sync_at).toLocaleString()}</span>
+              <span>{formatDateTime(config.last_sync_at)}</span>
               {config.last_sync_status && (
                 <span
                   className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${syncStatusBadgeClass(config.last_sync_status)}`}

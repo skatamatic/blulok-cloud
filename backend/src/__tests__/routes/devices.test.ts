@@ -2042,14 +2042,21 @@ describe('Devices Routes', () => {
     });
 
     describe('DELETE /api/v1/devices/blulok/:deviceId - Remove BluLok from cloud inventory', () => {
+      let mockDevicesService: {
+        removeBluLokDeviceFromCloudInventory: jest.Mock;
+        hasUserAccessToDevice: jest.Mock;
+      };
+
       beforeEach(() => {
-        const mockDevicesService = {
+        mockDevicesService = {
           removeBluLokDeviceFromCloudInventory: jest.fn().mockResolvedValue({
             gatewayId: 'gateway-1',
             facilityId: 'facility-1',
             hadUnit: false,
             unitId: null,
+            deviceSerial: 'LOCK-1',
           }),
+          hasUserAccessToDevice: jest.fn().mockResolvedValue(true),
         };
         (DevicesService.getInstance as jest.Mock).mockReturnValue(mockDevicesService);
       });
@@ -2059,7 +2066,25 @@ describe('Devices Routes', () => {
         expectUnauthorized(response);
       });
 
-      it('should forbid FACILITY_ADMIN', async () => {
+      it('should allow FACILITY_ADMIN with facility access', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.success).toBe(true);
+        expect(mockDevicesService.hasUserAccessToDevice).toHaveBeenCalledWith(
+          'device-1',
+          testData.users.facilityAdmin.id,
+          testData.users.facilityAdmin.role,
+        );
+        expect(mockDevicesService.removeBluLokDeviceFromCloudInventory).toHaveBeenCalled();
+      });
+
+      it('should forbid FACILITY_ADMIN without device access', async () => {
+        mockDevicesService.hasUserAccessToDevice.mockResolvedValueOnce(false);
+
         const response = await request(app)
           .delete('/api/v1/devices/blulok/device-1')
           .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
@@ -2077,8 +2102,7 @@ describe('Devices Routes', () => {
         expectSuccess(response);
         expect(response.body.success).toBe(true);
         expect(response.body.removed).toMatchObject({ gatewayId: 'gateway-1' });
-        const mockSvc = DevicesService.getInstance() as any;
-        expect(mockSvc.removeBluLokDeviceFromCloudInventory).toHaveBeenCalledWith(
+        expect(mockDevicesService.removeBluLokDeviceFromCloudInventory).toHaveBeenCalledWith(
           'device-1',
           expect.objectContaining({ performedBy: expect.any(String) }),
         );
@@ -2095,8 +2119,7 @@ describe('Devices Routes', () => {
       });
 
       it('should return 404 when device not found', async () => {
-        const mockSvc = DevicesService.getInstance() as any;
-        mockSvc.removeBluLokDeviceFromCloudInventory.mockRejectedValueOnce(new Error('Device not found'));
+        mockDevicesService.removeBluLokDeviceFromCloudInventory.mockRejectedValueOnce(new Error('Device not found'));
 
         const response = await request(app)
           .delete('/api/v1/devices/blulok/missing')
@@ -2119,6 +2142,65 @@ describe('Devices Routes', () => {
         const response = await request(app)
           .delete('/api/v1/devices/blulok/device-1')
           .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+    });
+
+    describe('DELETE /api/v1/devices/access-control/:deviceId - Remove access control from cloud inventory', () => {
+      let mockDevicesService: {
+        removeAccessControlDeviceFromCloudInventory: jest.Mock;
+        hasUserAccessToAccessControlDevice: jest.Mock;
+      };
+
+      beforeEach(() => {
+        mockDevicesService = {
+          removeAccessControlDeviceFromCloudInventory: jest.fn().mockResolvedValue({
+            gatewayId: 'gateway-1',
+            facilityId: 'facility-1',
+            accessId: 'KP-001',
+            relayChannel: 1,
+          }),
+          hasUserAccessToAccessControlDevice: jest.fn().mockResolvedValue(true),
+        };
+        (DevicesService.getInstance as jest.Mock).mockReturnValue(mockDevicesService);
+      });
+
+      it('should require authentication', async () => {
+        const response = await request(app).delete('/api/v1/devices/access-control/device-1');
+        expectUnauthorized(response);
+      });
+
+      it('should allow FACILITY_ADMIN with facility access', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/access-control/device-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockDevicesService.hasUserAccessToAccessControlDevice).toHaveBeenCalled();
+        expect(mockDevicesService.removeAccessControlDeviceFromCloudInventory).toHaveBeenCalledWith(
+          'device-1',
+          expect.objectContaining({ performedBy: expect.any(String) }),
+        );
+      });
+
+      it('should forbid FACILITY_ADMIN without device access', async () => {
+        mockDevicesService.hasUserAccessToAccessControlDevice.mockResolvedValueOnce(false);
+
+        const response = await request(app)
+          .delete('/api/v1/devices/access-control/device-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('should return 403 for TENANT', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/access-control/device-1')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
           .expect(403);
 
         expectForbidden(response);

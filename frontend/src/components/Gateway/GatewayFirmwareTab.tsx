@@ -32,11 +32,14 @@ import {
   STEP_LABELS,
   DEVICE_STATUS_CONFIG,
 } from '@/types/firmware.types';
+import RecoveryBlockingBanner from '@/components/Gateway/RecoveryBlockingBanner';
+import { formatDate, formatDateTime, formatTime } from '@/utils/datetime.utils';
 
 interface GatewayFirmwareTabProps {
   gatewayId: string;
   currentFirmwareVersion?: string;
   gatewayModel?: string;
+  recoveryBlocking?: boolean;
 }
 
 const HISTORY_PAGE_SIZE = 10;
@@ -58,7 +61,12 @@ const normalizeLiveDevices = (devices?: FirmwareDeviceStatus[]): FirmwareDeviceS
   return Array.from(byDeviceId.values());
 };
 
-export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, gatewayModel }: GatewayFirmwareTabProps) {
+export default function GatewayFirmwareTab({
+  gatewayId,
+  currentFirmwareVersion,
+  gatewayModel,
+  recoveryBlocking = false,
+}: GatewayFirmwareTabProps) {
   const { addToast } = useToast();
   const ws = useWebSocket();
 
@@ -323,6 +331,9 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
 
   return (
     <div className="space-y-6">
+      {recoveryBlocking && (
+        <RecoveryBlockingBanner message="Manual firmware pushes are blocked during gateway swap recovery. Use the Swap / Recovery tab to complete or bypass recovery first." />
+      )}
       {/* Target Type Tabs */}
       <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden w-fit">
         {(['gateway', 'lock', 'friend_node', 'access_control'] as FirmwareTargetType[]).map((tt) => (
@@ -585,7 +596,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
                     {liveEvents.map((evt) => (
                       <div key={evt.id} className="flex items-start gap-2 py-1.5 text-xs">
                         <span className="text-gray-400 dark:text-gray-500 whitespace-nowrap flex-shrink-0 tabular-nums">
-                          {new Date(evt.reported_at || evt.created_at).toLocaleTimeString()}
+                          {formatTime(evt.reported_at || evt.created_at)}
                         </span>
                         <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full mt-1.5 ${
                           evt.event_type === 'error' ? 'bg-red-500' :
@@ -646,7 +657,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
                       <span>{formatBytes(fw.size_bytes)}</span>
-                      <span>{new Date(fw.created_at).toLocaleDateString()}</span>
+                      <span>{formatDate(fw.created_at)}</span>
                       {fw.description && <span className="truncate max-w-[200px]">{fw.description}</span>}
                     </div>
                     {fw.compatible_models?.length ? (
@@ -663,7 +674,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handlePush(fw.id)}
-                          disabled={pushing || !!isActiveTransfer}
+                          disabled={pushing || !!isActiveTransfer || recoveryBlocking}
                           className="px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors"
                         >
                           Confirm
@@ -678,7 +689,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
                     ) : (
                       <button
                         onClick={() => setConfirmPushId(fw.id)}
-                        disabled={isCurrent || !!isActiveTransfer || pushing}
+                        disabled={isCurrent || !!isActiveTransfer || pushing || recoveryBlocking}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         <ArrowUpTrayIcon className="h-3.5 w-3.5" />
@@ -735,7 +746,7 @@ export default function GatewayFirmwareTab({ gatewayId, currentFirmwareVersion, 
                         </span>
                       ) : null}
                       <span className="text-xs text-gray-400 dark:text-gray-500">
-                        {new Date(p.created_at).toLocaleString()}
+                        {formatDateTime(p.created_at)}
                       </span>
                     </div>
                   </div>

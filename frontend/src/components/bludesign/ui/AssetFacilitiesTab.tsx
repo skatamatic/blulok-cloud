@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
 import { AssetService, type AssetFacilityUsage } from '../services/AssetService';
+import { formatDate } from '@/utils/datetime.utils';
 
 interface AssetFacilitiesTabProps {
   assetId: string;
@@ -105,7 +106,7 @@ export const AssetFacilitiesTab: React.FC<AssetFacilitiesTabProps> = ({
                     ? '1 placement'
                     : `${facility.usageCount} placements`}
                   {' · '}
-                  Updated {new Date(facility.updatedAt).toLocaleDateString()}
+                  Updated {formatDate(facility.updatedAt)}
                 </p>
               </div>
               <Link

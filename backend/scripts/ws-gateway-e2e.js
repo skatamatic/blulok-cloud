@@ -269,6 +269,7 @@ const STALE_USER_EMAIL_PREFIXES = [
   'e2e-share',
 ];
 let accessCodeAckMode = 'accept'; // accept | reject | ignore
+let deviceDeletionAckMode = 'accept'; // accept | hold | reject
 
 function authHeaders(token) {
   return { Authorization: `Bearer ${token}` };
@@ -593,7 +594,7 @@ async function proxyWs(ws, id, method, path, { query, body } = {}) {
   return await waitForProxyResponse(ws, id);
 }
 
-async function connectGatewayWsAndAuth(wsUrl, token, facilityId) {
+async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId) {
   const ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   ws.on('message', (data) => {
@@ -619,9 +620,26 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId) {
           }));
         }
       }
+      if (cmd?.cmd_type === 'DEVICE_DELETED' && cmd?.nonce) {
+        if (deviceDeletionAckMode === 'accept') {
+          ws.send(JSON.stringify({
+            type: 'DEVICE_DELETED_ACK',
+            nonce: cmd.nonce,
+            success: true,
+          }));
+        } else if (deviceDeletionAckMode === 'reject') {
+          ws.send(JSON.stringify({
+            type: 'DEVICE_DELETED_ACK',
+            nonce: cmd.nonce,
+            success: false,
+            error: 'e2e-forced-reject',
+          }));
+        }
+      }
     } catch {}
   });
   const authMsg = { type: 'AUTH', token, facilityId };
+  if (gatewayId) authMsg.gatewayId = gatewayId;
   if (VERBOSE) console.log('[WS ->]', JSON.stringify(authMsg));
   ws.send(JSON.stringify(authMsg));
   let authOkData = null;
@@ -1134,6 +1152,86 @@ async function removeBluLokFromCloudInventory(token, deviceId) {
     throw new Error(`Remove BluLok from cloud inventory failed: ${res.data?.message || res.status}`);
   }
   return res.data;
+}
+
+async function getDeviceDeletionOutboxStatus(token, { facilityId, lockId, accessId, relayChannel }) {
+  const params = { facilityId };
+  if (lockId) {
+    params.lockId = lockId;
+  } else {
+    params.accessId = accessId;
+    params.relayChannel = relayChannel;
+  }
+  const res = await axios.get(`${API_BASE}/admin/dev-tools/device-deletion-outbox`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params,
+  });
+  if (!res.data?.success) {
+    throw new Error(`Device deletion outbox lookup failed: ${JSON.stringify(res.data)}`);
+  }
+  return res.data.row ?? null;
+}
+
+async function removeAccessControlFromCloudInventory(token, deviceId) {
+  const res = await axios.delete(`${API_BASE}/devices/access-control/${deviceId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.data?.success) {
+    throw new Error(`Remove access control from cloud inventory failed: ${res.data?.message || res.status}`);
+  }
+  return res.data;
+}
+
+async function resolveAccessControlDeviceIdBySerial(token, facilityId, accessId, relayChannel = 1) {
+  const res = await axios.get(`${API_BASE}/devices`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { facility_id: facilityId, device_type: 'access_control', limit: 100 },
+  });
+  const list = res.data?.devices || [];
+  const match = list.find(
+    (d) =>
+      String(d.device_serial || '').toLowerCase() === String(accessId).toLowerCase()
+      && Number(d.relay_channel ?? 1) === Number(relayChannel),
+  );
+  return match?.id || null;
+}
+
+function countDeviceDeletedCommands(filterFn) {
+  return gatewayWsEvents.filter((msg) => {
+    const cmd = normalizeCmd(msg);
+    return cmd?.cmd_type === 'DEVICE_DELETED' && (!filterFn || filterFn(cmd));
+  }).length;
+}
+
+async function syncGatewayInventoryLocks(ws, facilityId, lockDevices, opts = {}) {
+  const devices = [...lockDevices];
+  if (opts.preserveAccessControl !== false) {
+    // Later WS property-sync tests expect E2E-KP-MULTI relay 8 from the AC inventory section.
+    devices.push(
+      gwAccessDevice({
+        access_id: 'E2E-KP-MULTI',
+        relay_channel: 8,
+        device_type: 'gate',
+        name: 'E2E Gate (preserved for downstream tests)',
+      }),
+    );
+  }
+  const reqId = `req-inv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  ws.send(JSON.stringify({
+    type: 'PROXY_REQUEST',
+    id: reqId,
+    method: 'POST',
+    path: '/internal/gateway/devices/inventory',
+    body: {
+      facility_id: facilityId,
+      devices,
+    },
+  }));
+  const resp = await waitForProxyResponse(ws, reqId);
+  if (resp.status !== 200 || !resp.body?.success) {
+    throw new Error(`Inventory sync failed: ${resp.status} ${JSON.stringify(resp.body)}`);
+  }
+  return resp;
 }
 
 async function getBluLokDeviceHttp(token, deviceId) {
@@ -3368,13 +3466,45 @@ async function run() {
     if (!disposableDeviceId) throw new Error('Disposable device missing from unassigned list after unassign');
     ok('HTTP unassign cleared unit link; device remains in facility inventory');
 
-    step('DELETE /devices/blulok/:id — dev admin removes lock from cloud inventory');
-    await removeBluLokFromCloudInventory(token, disposableDeviceId);
-    ok('DELETE cloud inventory succeeded');
+    step('DELETE /devices/blulok/:id — dev admin removes lock; gateway receives DEVICE_DELETED');
+    deviceDeletionAckMode = 'accept';
+    const onlineDeleteSerial = `GW-E2E-DELETE-ONLINE-${Date.now()}`;
+    await syncGatewayInventoryLocks(ws, facilityId, [
+      gwLockDevice({ lock_id: remainingSerial }),
+      gwLockDevice({
+        lock_id: onlineDeleteSerial,
+        firmware_version: '3A0-001',
+        online: true,
+        locked: false,
+      }),
+    ]);
+    let onlineDeleteDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, onlineDeleteSerial);
+    if (!onlineDeleteDeviceId) throw new Error(`Online-delete device ${onlineDeleteSerial} not found after sync`);
+    const expectOnlineDeleteCmd = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'DEVICE_DELETED'
+        && cmd.lock_id === onlineDeleteSerial
+        && cmd.device_kind === 'lock',
+    );
+    await removeBluLokFromCloudInventory(token, onlineDeleteDeviceId);
+    const onlineDeleteCmd = await expectOnlineDeleteCmd;
+    if (!onlineDeleteCmd.nonce) throw new Error('DEVICE_DELETED missing nonce');
+    ok(`DEVICE_DELETED delivered for ${onlineDeleteSerial}`);
+    const onlineOutbox = await getDeviceDeletionOutboxStatus(token, {
+      facilityId,
+      lockId: onlineDeleteSerial,
+    });
+    if (onlineOutbox?.status !== 'delivered') {
+      throw new Error(
+        `Expected delivered outbox for ${onlineDeleteSerial}, got ${JSON.stringify(onlineOutbox)}`,
+      );
+    }
+    ok('Outbox row marked delivered after DEVICE_DELETED ACK');
 
     step('GET /devices/blulok/:id — removed lock is not retrievable');
     try {
-      await getBluLokDeviceHttp(token, disposableDeviceId);
+      await getBluLokDeviceHttp(token, onlineDeleteDeviceId);
       throw new Error('Expected GET BluLok device to fail after cloud inventory removal');
     } catch (err) {
       const status = err?.response?.status;
@@ -3385,47 +3515,206 @@ async function run() {
     ok('Removed lock returns 404 on GET');
 
     if (created.facilityAdminToken) {
-      const rbacSerial = `GW-E2E-FA-FORBID-${Date.now()}`;
-      step('Facility admin forbidden from DELETE /devices/blulok/:id');
-      const reqRbacSync = 'req-rbac-disposable-sync';
-      ws.send(JSON.stringify({
-        type: 'PROXY_REQUEST',
-        id: reqRbacSync,
-        method: 'POST',
-        path: `/internal/gateway/devices/inventory`,
-        body: {
-          facility_id: facilityId,
-          devices: [
-            gwLockDevice({ lock_id: remainingSerial }),
-            gwLockDevice({
-              lock_id: rbacSerial,
-              firmware_version: '3A0-001',
-              online: true,
-              locked: false,
-            }),
-          ],
+      const faDeleteSerial = `GW-E2E-FA-DELETE-${Date.now()}`;
+      step('Facility admin may DELETE /devices/blulok/:id for in-facility lock');
+      await syncGatewayInventoryLocks(ws, facilityId, [
+        gwLockDevice({ lock_id: remainingSerial }),
+        gwLockDevice({ lock_id: faDeleteSerial, firmware_version: '3A0-001', online: true, locked: false }),
+      ]);
+      const faDeleteDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, faDeleteSerial);
+      if (!faDeleteDeviceId) throw new Error('Facility-admin delete device not found');
+      const expectFaDeleteCmd = waitForCommand(
+        ws,
+        (cmd) => cmd.cmd_type === 'DEVICE_DELETED' && cmd.lock_id === faDeleteSerial,
+      );
+      await removeBluLokFromCloudInventory(created.facilityAdminToken, faDeleteDeviceId);
+      await expectFaDeleteCmd;
+      ok('Facility admin in-facility DELETE delivered DEVICE_DELETED');
+
+      step('Facility admin cannot DELETE lock in another facility (403)');
+      const crossFacId = await createTestFacility(token, `E2E-CrossFac-Delete-${Date.now()}`);
+      created.extraFacilityIds.push(crossFacId);
+      const crossGwId = await createGateway(token, crossFacId, 'E2E Cross Fac Gateway');
+      const crossDeleteSerial = `GW-E2E-CROSS-FA-${Date.now()}`;
+      const crossCreateRes = await axios.post(
+        `${API_BASE}/devices/blulok`,
+        {
+          gateway_id: crossGwId,
+          device_serial: crossDeleteSerial,
+          name: 'Cross-facility RBAC lock',
         },
-      }));
-      const respRbacSync = await waitForProxyResponse(ws, reqRbacSync);
-      if (respRbacSync.status !== 200 || !respRbacSync.body?.success) {
-        throw new Error(`RBAC disposable sync failed: ${respRbacSync.status}`);
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!crossCreateRes.data?.device?.id) {
+        throw new Error(`Failed to create cross-facility lock: ${JSON.stringify(crossCreateRes.data)}`);
       }
-      const rbacDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, rbacSerial);
-      if (!rbacDeviceId) throw new Error('RBAC disposable device not found');
       try {
-        await removeBluLokFromCloudInventory(created.facilityAdminToken, rbacDeviceId);
-        throw new Error('Facility admin should not remove cloud inventory');
+        await axios.delete(`${API_BASE}/devices/blulok/${crossCreateRes.data.device.id}`, {
+          headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        });
+        throw new Error('Expected 403 for cross-facility facility_admin DELETE');
       } catch (err) {
-        if (err?.response?.status !== 403) {
-          throw new Error(`Expected 403 for facility admin DELETE, got ${err?.response?.status}`);
-        }
+        if (err?.response?.status !== 403) throw err;
       }
-      ok('Facility admin correctly denied cloud inventory removal');
-      await removeBluLokFromCloudInventory(token, rbacDeviceId);
-      ok('Dev admin cleaned up RBAC disposable device');
+      ok('Facility admin blocked from DELETE on out-of-scope facility lock');
+      deviceDeletionAckMode = 'accept';
+      await removeBluLokFromCloudInventory(token, crossCreateRes.data.device.id);
     } else {
-      warn('Skipped facility admin cloud-inventory RBAC check (no facilityAdminToken)');
+      warn('Skipped facility admin cloud-inventory RBAC checks (no facilityAdminToken)');
     }
+
+    step('Offline DELETE queues tombstone; DEVICE_DELETED delivered on gateway reconnect');
+    deviceDeletionAckMode = 'accept';
+    const offlineDeleteSerial = `GW-E2E-DELETE-OFFLINE-${Date.now()}`;
+    await syncGatewayInventoryLocks(ws, facilityId, [
+      gwLockDevice({ lock_id: remainingSerial }),
+      gwLockDevice({ lock_id: offlineDeleteSerial, firmware_version: '3A0-001', online: true, locked: false }),
+    ]);
+    const offlineDeleteDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, offlineDeleteSerial);
+    if (!offlineDeleteDeviceId) throw new Error('Offline-delete device not found');
+    try {
+      ws.close(1000, 'e2e-offline-device-delete');
+    } catch {
+      /* ignore */
+    }
+    await delay(750);
+    await removeBluLokFromCloudInventory(token, offlineDeleteDeviceId);
+    ok('DELETE while gateway offline removed cloud row');
+    gatewayWsEvents.length = 0;
+    const expectOfflineDeleteCmd = waitForGatewayEvent((msg) => {
+      const cmd = normalizeCmd(msg);
+      return !!cmd && cmd.cmd_type === 'DEVICE_DELETED' && cmd.lock_id === offlineDeleteSerial;
+    }, 20000);
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    const offlineDeleteCmd = normalizeCmd(await expectOfflineDeleteCmd);
+    if (!offlineDeleteCmd?.nonce) throw new Error('Deferred DEVICE_DELETED missing nonce');
+    ok('Deferred DEVICE_DELETED delivered on AUTH_OK outbox flush');
+
+    step('Re-add via inventory sync cancels pending tombstone (no duplicate DEVICE_DELETED)');
+    deviceDeletionAckMode = 'hold';
+    const readdSerial = `GW-E2E-DELETE-READD-${Date.now()}`;
+    await syncGatewayInventoryLocks(ws, facilityId, [
+      gwLockDevice({ lock_id: remainingSerial }),
+      gwLockDevice({ lock_id: readdSerial, firmware_version: '3A0-001', online: true, locked: false }),
+    ]);
+    const readdDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, readdSerial);
+    if (!readdDeviceId) throw new Error('Re-add cancel device not found');
+    const deletedBeforeReadd = countDeviceDeletedCommands((cmd) => cmd.lock_id === readdSerial);
+    const expectReaddDeleteCmd = waitForCommand(
+      ws,
+      (cmd) => cmd.cmd_type === 'DEVICE_DELETED' && cmd.lock_id === readdSerial,
+    );
+    await removeBluLokFromCloudInventory(token, readdDeviceId);
+    await expectReaddDeleteCmd;
+    await syncGatewayInventoryLocks(ws, facilityId, [
+      gwLockDevice({ lock_id: remainingSerial }),
+      gwLockDevice({ lock_id: readdSerial, firmware_version: '3A0-001', online: true, locked: false }),
+    ]);
+    const readdedDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, readdSerial);
+    if (!readdedDeviceId) throw new Error('Device missing after re-add inventory sync');
+    await delay(1500);
+    const deletedAfterReadd = countDeviceDeletedCommands((cmd) => cmd.lock_id === readdSerial);
+    if (deletedAfterReadd !== deletedBeforeReadd + 1) {
+      throw new Error(
+        `Expected exactly one DEVICE_DELETED for ${readdSerial}, got ${deletedAfterReadd - deletedBeforeReadd} total`,
+      );
+    }
+    deviceDeletionAckMode = 'accept';
+    ok('Inventory re-add cancelled tombstone without duplicate DEVICE_DELETED');
+    const readdOutbox = await getDeviceDeletionOutboxStatus(token, {
+      facilityId,
+      lockId: readdSerial,
+    });
+    if (readdOutbox?.status !== 'cancelled') {
+      throw new Error(
+        `Expected cancelled outbox for ${readdSerial}, got ${JSON.stringify(readdOutbox)}`,
+      );
+    }
+    ok('Outbox row cancelled after inventory re-add');
+
+    step('Post-tombstone inventory sync keeps cloud row deleted when gateway omits lock');
+    const tombstoneSerial = `GW-E2E-DELETE-TOMBSTONE-${Date.now()}`;
+    await syncGatewayInventoryLocks(ws, facilityId, [
+      gwLockDevice({ lock_id: remainingSerial }),
+      gwLockDevice({ lock_id: tombstoneSerial, firmware_version: '3A0-001', online: true, locked: false }),
+    ]);
+    const tombstoneDeviceId = await resolveUnassignedDeviceIdBySerial(token, facilityId, tombstoneSerial);
+    if (!tombstoneDeviceId) throw new Error('Tombstone test device not found');
+    const expectTombstoneCmd = waitForCommand(
+      ws,
+      (cmd) => cmd.cmd_type === 'DEVICE_DELETED' && cmd.lock_id === tombstoneSerial,
+    );
+    await removeBluLokFromCloudInventory(token, tombstoneDeviceId);
+    await expectTombstoneCmd;
+    await syncGatewayInventoryLocks(ws, facilityId, [gwLockDevice({ lock_id: remainingSerial })]);
+    try {
+      await getBluLokDeviceHttp(token, tombstoneDeviceId);
+      throw new Error('Expected tombstoned lock to stay deleted after gateway omitted it from inventory');
+    } catch (err) {
+      if (err?.response?.status !== 404) throw err;
+    }
+    ok('Post-tombstone sync did not recreate deleted cloud row');
+
+    step('Facility admin DELETE access control device delivers DEVICE_DELETED with access_id + relay_channel');
+    deviceDeletionAckMode = 'accept';
+    const acDeleteAccessId = `GW-E2E-AC-DELETE-${Date.now()}`;
+    const acDeleteRelay = 3;
+    const reqAcDeleteSync = `req-ac-delete-sync-${Date.now()}`;
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAcDeleteSync,
+      method: 'POST',
+      path: '/internal/gateway/devices/inventory',
+      body: {
+        facility_id: facilityId,
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwAccessDevice({
+            access_id: 'E2E-KP-MULTI',
+            relay_channel: 8,
+            device_type: 'gate',
+            name: 'E2E Gate (preserved for downstream tests)',
+          }),
+          gwAccessDevice({
+            access_id: acDeleteAccessId,
+            relay_channel: acDeleteRelay,
+            device_type: 'door',
+            name: 'E2E AC Delete',
+          }),
+        ],
+      },
+    }));
+    const respAcDeleteSync = await waitForProxyResponse(ws, reqAcDeleteSync);
+    if (respAcDeleteSync.status !== 200 || !respAcDeleteSync.body?.success) {
+      throw new Error(`Access control delete sync failed: ${respAcDeleteSync.status}`);
+    }
+    const acDeleteDeviceId = await resolveAccessControlDeviceIdBySerial(
+      token,
+      facilityId,
+      acDeleteAccessId,
+      acDeleteRelay,
+    );
+    if (!acDeleteDeviceId) throw new Error('Access control delete device not found');
+    const faAcToken = created.facilityAdminToken || token;
+    const expectAcDeleteCmd = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'DEVICE_DELETED'
+        && cmd.access_id === acDeleteAccessId
+        && Number(cmd.relay_channel) === acDeleteRelay
+        && cmd.device_kind === 'access_control',
+    );
+    await removeAccessControlFromCloudInventory(faAcToken, acDeleteDeviceId);
+    await expectAcDeleteCmd;
+    ok('Access control DELETE delivered DEVICE_DELETED with access_id and relay_channel');
+
+    step('Cleaning up disposable commissioning lock still in inventory');
+    const leftoverDisposableId = await resolveUnassignedDeviceIdBySerial(token, facilityId, disposableSerial);
+    if (leftoverDisposableId) {
+      deviceDeletionAckMode = 'accept';
+      await removeBluLokFromCloudInventory(token, leftoverDisposableId);
+    }
+    ok('Commissioning disposable lock cleaned up');
 
     // Commissioning tests assign disposable locks to the shared unit; restore the primary lock.
     step('Restoring primary device on unit after commissioning tests');
@@ -4338,6 +4627,45 @@ async function run() {
 
     heading('Access Event Canonical Pipeline');
     step('Subscribing role-scoped activity feeds');
+
+    function assertActivityUpdateSnapshot(feed) {
+      const update = feed.events.find((evt) => evt.type === 'activity_update');
+      if (!update) {
+        throw new Error(`${feed.label} feed missing activity_update after subscribe`);
+      }
+      if (!Array.isArray(update.data?.activities)) {
+        throw new Error(`${feed.label} activity_update.data.activities must be an array`);
+      }
+      if (typeof update.data?.count !== 'number') {
+        throw new Error(`${feed.label} activity_update.data.count must be a number`);
+      }
+      if (!update.data?.lastUpdated) {
+        throw new Error(`${feed.label} activity_update missing lastUpdated`);
+      }
+    }
+
+    function assertActivityNewAccessLog(evt, label) {
+      if (evt?.type !== 'activity_new') {
+        throw new Error(`${label}: expected activity_new, got ${evt?.type}`);
+      }
+      const accessLog = evt?.data?.accessLog;
+      if (!accessLog || typeof accessLog !== 'object') {
+        throw new Error(`${label}: activity_new missing enriched accessLog payload`);
+      }
+      for (const field of ['id', 'action', 'method', 'success', 'occurred_at', 'device_id', 'device_type']) {
+        if (accessLog[field] === undefined || accessLog[field] === null) {
+          throw new Error(`${label}: accessLog missing required field ${field}`);
+        }
+      }
+      if (!evt.data?.activity?.id) {
+        throw new Error(`${label}: activity_new missing activity.id`);
+      }
+      if (evt.data.activity.id !== accessLog.id) {
+        throw new Error(`${label}: activity.id must match accessLog.id`);
+      }
+      return accessLog;
+    }
+
     async function openActivityFeed(label, authToken, filter = {}) {
       const socket = new WebSocket(`${UI_WS_URL}?token=${authToken}`);
       const events = [];
@@ -4358,13 +4686,29 @@ async function run() {
         subscriptionType: 'activity',
         data: filter,
       }));
+
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        if (events.some((evt) => evt.type === 'activity_update')) break;
+        await delay(100);
+      }
+      if (!events.some((evt) => evt.type === 'activity_update')) {
+        throw new Error(`${label} activity subscription missing activity_update snapshot`);
+      }
+
       return { label, socket, events };
     }
 
     const tenantFeed = await openActivityFeed('tenant', primaryToken);
     const facAdminFeed = await openActivityFeed('facility_admin', facilityAdmin.token, { facility_id: facilityId });
     const adminFeed = await openActivityFeed('admin', platformAdmin.token, { facility_id: facilityId });
-    await delay(1000);
+
+    step('Validating activity subscription snapshots (activity_update)');
+    for (const feed of [tenantFeed, facAdminFeed, adminFeed]) {
+      assertActivityUpdateSnapshot(feed);
+    }
+    ok('All role-scoped activity subscriptions received activity_update snapshots');
+
     const shadowUnit = await createUnit(token, facilityId, `E2E-ACCESS-SHADOW-${Date.now()}`);
     if (!shadowUnit?.id) throw new Error('Failed creating secondary unit for tenant scope isolation checks');
     created.units.push(shadowUnit.id);
@@ -4623,6 +4967,16 @@ async function run() {
 
     await delay(1200);
 
+    step('Validating activity_new accessLog payloads from bulk ingestion');
+    const adminIngestNew = adminFeed.events.filter((evt) => evt.type === 'activity_new');
+    if (adminIngestNew.length === 0) {
+      throw new Error('Expected activity_new events on admin feed after bulk ingestion');
+    }
+    for (const evt of adminIngestNew.slice(0, 3)) {
+      assertActivityNewAccessLog(evt, 'admin bulk ingest');
+    }
+    ok(`Admin feed received ${adminIngestNew.length} activity_new events with accessLog envelopes`);
+
     step('Validating role-scoped access-history API');
     const [tenantHistory, facAdminHistory, adminHistory] = await Promise.all([
       axios.get(`${API_BASE}/access-history`, { headers: authHeaders(primaryToken), params: { facility_id: facilityId, limit: 50 } }),
@@ -4635,7 +4989,9 @@ async function run() {
 
     const denied = adminHistory.data.logs.find((x) => x.denial_reason === 'route_pass_invalid_signature');
     if (!denied) throw new Error('Missing route_pass_invalid_signature denial in access history');
-    const keypadDenied = adminHistory.data.logs.find((x) => x.action === 'keypad_attempt' && x.denial_reason === 'out_of_schedule');
+    const keypadDenied = adminHistory.data.logs.find(
+      (x) => x.action === 'unlock_attempt' && x.denial_reason === 'out_of_schedule' && x.method === 'keypad',
+    );
     if (!keypadDenied) throw new Error('Missing keypad out_of_schedule denial in access history');
     const keypadEnteredCode = keypadDenied?.metadata?.keypad?.entered_code;
     if (keypadEnteredCode === '1234') {
@@ -4752,6 +5108,32 @@ async function run() {
       waitForFeedEvent(facAdminFeed, matchesRealtimeShadow, 'facility_admin shadow-unit event'),
       waitForFeedEvent(adminFeed, matchesRealtimeShadow, 'admin shadow-unit event'),
     ]);
+
+    step('Validating access-history live subscription accessLog payloads (activity_new)');
+    const primaryEvt = adminFeed.events.find(matchesRealtimePrimary);
+    const primaryAccessLog = assertActivityNewAccessLog(primaryEvt, 'admin realtime primary');
+    if (primaryAccessLog.action !== 'admin_remote_open') {
+      throw new Error(`Expected accessLog.action=admin_remote_open, got ${primaryAccessLog.action}`);
+    }
+    if (primaryAccessLog.success !== true) {
+      throw new Error('Expected accessLog.success=true for admin realtime primary event');
+    }
+    if (primaryAccessLog.unit_id !== unitId) {
+      throw new Error('Expected accessLog.unit_id to match primary unit');
+    }
+
+    const shadowEvt = adminFeed.events.find(matchesRealtimeShadow);
+    const shadowAccessLog = assertActivityNewAccessLog(shadowEvt, 'admin realtime shadow');
+    if (shadowAccessLog.action !== 'unlock_attempt') {
+      throw new Error(`Expected accessLog.action=unlock_attempt, got ${shadowAccessLog.action}`);
+    }
+    if (shadowAccessLog.denial_reason !== 'denylist_blocked') {
+      throw new Error(`Expected accessLog.denial_reason=denylist_blocked, got ${shadowAccessLog.denial_reason}`);
+    }
+    if (shadowAccessLog.success !== false) {
+      throw new Error('Expected accessLog.success=false for shadow deny event');
+    }
+    ok('activity_new payloads include access-history-shaped accessLog records for live grid updates');
 
     const tenantShadowLeak = tenantFeed.events.some((evt) => matchesRealtimeShadow(evt));
     if (tenantShadowLeak) {
@@ -9319,6 +9701,194 @@ async function run() {
       accessCodeGroupId = null;
     }
     ok('Temporary access-code groups deleted');
+
+    // =====================================================================
+    // Gateway Swap Recovery E2E
+    // =====================================================================
+    heading('Gateway Swap Recovery');
+
+    if (process.env.SKIP_SWAP_RECOVERY_E2E === '1') {
+      info('Skipping Gateway Swap Recovery E2E (SKIP_SWAP_RECOVERY_E2E=1)');
+    } else if (!created.gatewayId || !created.facilityId) {
+      info('Skipping Gateway Swap Recovery E2E (no gateway/facility)');
+    } else {
+      step('Auto-register swap candidate via WS AUTH (no pre-created gateway row)');
+      const { randomUUID } = require('crypto');
+      const swapGatewayId = randomUUID();
+      const oldWsStillOpen = ws.readyState === WebSocket.OPEN;
+      if (!oldWsStillOpen) throw new Error('Expected primary gateway WS to remain open before swap AUTH');
+      let swapWs = await connectGatewayWsAndAuth(WS_URL, token, created.facilityId, swapGatewayId);
+      if (ws.readyState !== WebSocket.OPEN) throw new Error('Primary gateway WS was replaced — swap race not fixed');
+      if (!swapWs._authOkData?.autoRegistered) {
+        throw new Error(`Expected AUTH_OK.autoRegistered=true for new swap candidate, got ${JSON.stringify(swapWs._authOkData)}`);
+      }
+      ok('Old gateway session remained live; swap candidate auto-registered over WS');
+
+      step('REST: auto-registered swap gateway row exists (unbound)');
+      const autoGwResp = await axios.get(`${API_BASE}/gateways/${swapGatewayId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (autoGwResp.status !== 200 || autoGwResp.data?.gateway?.id !== swapGatewayId) {
+        throw new Error(`Auto-registered gateway not found: ${autoGwResp.status}`);
+      }
+      if (autoGwResp.data.gateway.facility_id) {
+        throw new Error(`Expected auto-registered swap gateway to be unbound, got facility_id=${autoGwResp.data.gateway.facility_id}`);
+      }
+      ok('Auto-registered swap gateway row present in cloud inventory');
+      created.swapGatewayId = swapGatewayId;
+
+      step('REST: recovery candidates lists swap gateway');
+      const candResp = await axios.get(`${API_BASE}/gateways/facility/${created.facilityId}/recovery/candidates`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const candidates = candResp.data?.data?.candidates || [];
+      if (!candidates.some((c) => c.gatewayId === swapGatewayId)) {
+        throw new Error(`Swap candidate not listed: ${JSON.stringify(candidates)}`);
+      }
+      ok('Swap candidate listed via recovery/candidates');
+
+      step('Wait for recovery row to be active');
+      await new Promise((r) => setTimeout(r, 500));
+      const statusCheck = await axios.get(`${API_BASE}/gateways/${swapGatewayId}/recovery/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!statusCheck.data?.data || statusCheck.data.data.status === 'complete') {
+        throw new Error(`Expected active recovery after swap AUTH, got ${JSON.stringify(statusCheck.data?.data)}`);
+      }
+
+      step('REST: recovery options returns firmware and backup choices');
+      const optionsResp = await axios.get(`${API_BASE}/gateways/${swapGatewayId}/recovery/options`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (optionsResp.status !== 200) {
+        throw new Error(`Expected recovery options 200, got ${optionsResp.status}`);
+      }
+      const options = optionsResp.data?.data;
+      if (!Array.isArray(options?.firmwareOptions) || !Array.isArray(options?.provisioningBackupOptions)) {
+        throw new Error(`Expected recovery options arrays, got ${JSON.stringify(options)}`);
+      }
+      ok('Recovery options endpoint returns firmware and provisioning backup choices');
+
+      step('Lock command blocked on REST while recovery active');
+      if (created.deviceId) {
+        const blockedLock = await axios.put(
+          `${API_BASE}/devices/blulok/${created.deviceId}/lock`,
+          { status: 'locked' },
+          { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true },
+        );
+        if (blockedLock.data?.success !== false) {
+          throw new Error(`Expected lock command blocked during recovery, got ${JSON.stringify(blockedLock.data)}`);
+        }
+        ok('Lock command blocked during active recovery');
+      } else {
+        info('Skipping lock-during-recovery check (no deviceId)');
+      }
+
+      step('Inventory sync blocked on primary gateway WS while recovery active');
+      const blockedPrimaryInv = await inventorySync(
+        ws,
+        created.facilityId,
+        [gwLockDevice({ lock_id: `SWAP-PRIMARY-BLOCK-${Date.now()}` })],
+        `swap-primary-inv-block-${Date.now()}`,
+      );
+      if (blockedPrimaryInv.status !== 409) {
+        throw new Error(`Expected primary inventory sync 409 during recovery, got ${blockedPrimaryInv.status}`);
+      }
+      ok('Primary gateway inventory sync returns 409 recovery_in_progress');
+
+      step('Second swap candidate auto-registers and updates recovery gateway_id');
+      const swapGatewayId2 = randomUUID();
+      const swapWs2 = await connectGatewayWsAndAuth(WS_URL, token, created.facilityId, swapGatewayId2);
+      if (!swapWs2._authOkData?.autoRegistered) {
+        throw new Error(`Expected second swap candidate autoRegistered=true, got ${JSON.stringify(swapWs2._authOkData)}`);
+      }
+      await new Promise((r) => setTimeout(r, 500));
+      const recoveryAfterSecond = await axios.get(
+        `${API_BASE}/gateways/facility/${created.facilityId}/recovery/candidates`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (recoveryAfterSecond.data?.data?.recovery?.gateway_id !== swapGatewayId2) {
+        throw new Error(
+          `Expected recovery gateway_id=${swapGatewayId2}, got ${JSON.stringify(recoveryAfterSecond.data?.data?.recovery)}`,
+        );
+      }
+      ok('Second swap candidate became active recovery gateway_id');
+      try { swapWs.close(1000, 'e2e_swap_replaced'); } catch {}
+      swapWs = swapWs2;
+      created.swapGatewayId = swapGatewayId2;
+
+      step('Inventory sync blocked on swap candidate while recovery active');
+      const blockedInv = await inventorySync(
+        swapWs,
+        created.facilityId,
+        [gwLockDevice({ lock_id: `SWAP-BLOCK-${Date.now()}` })],
+        `swap-inv-block-${Date.now()}`,
+      );
+      if (blockedInv.status !== 409) {
+        throw new Error(`Expected inventory sync 409 during recovery, got ${blockedInv.status}: ${JSON.stringify(blockedInv.body)}`);
+      }
+      ok('Inventory sync returns 409 recovery_in_progress');
+
+      step('Bypass without confirm rejected');
+      const bypassReject = await axios.post(
+        `${API_BASE}/gateways/${created.swapGatewayId}/recovery/bypass`,
+        { confirm: false },
+        { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true },
+      );
+      if (bypassReject.status === 200) throw new Error('Expected bypass without confirm to fail');
+
+      step('Bypass with confirm unblocks inventory');
+      const bypassOk = await axios.post(
+        `${API_BASE}/gateways/${created.swapGatewayId}/recovery/bypass`,
+        { confirm: true },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (bypassOk.status !== 200) {
+        throw new Error(`Expected bypass HTTP 200, got ${bypassOk.status}`);
+      }
+      if (bypassOk.data?.data?.status !== 'bypassed') {
+        throw new Error(`Expected bypassed status, got ${bypassOk.data?.data?.status}`);
+      }
+      const allowedInv = await inventorySync(
+        swapWs,
+        created.facilityId,
+        [],
+        `swap-inv-allow-${Date.now()}`,
+      );
+      if (allowedInv.status === 409) throw new Error('Inventory still blocked after bypass');
+      if (allowedInv.status >= 400) {
+        throw new Error(`Expected inventory sync success after bypass, got ${allowedInv.status}`);
+      }
+      ok('Inventory sync allowed after bypass');
+
+      step('Verify gateway DB binding after bypass');
+      const oldGwResp = await axios.get(`${API_BASE}/gateways/${created.gatewayId}`, {
+        headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true,
+      });
+      const newGwResp = await axios.get(`${API_BASE}/gateways/${created.swapGatewayId}`, {
+        headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true,
+      });
+      if (oldGwResp.data?.gateway?.facility_id != null) {
+        throw new Error(`Expected old gateway unbound after bypass, got facility_id=${oldGwResp.data?.gateway?.facility_id}`);
+      }
+      if (newGwResp.data?.gateway?.facility_id !== created.facilityId) {
+        throw new Error(`Expected swap gateway bound to facility, got ${JSON.stringify(newGwResp.data?.gateway)}`);
+      }
+      ok('Gateway facility binding updated after bypass (old unbound, swap bound)');
+
+      step('Double bypass rejected');
+      const doubleBypass = await axios.post(
+        `${API_BASE}/gateways/${created.swapGatewayId}/recovery/bypass`,
+        { confirm: true },
+        { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true },
+      );
+      if (doubleBypass.status === 200) {
+        throw new Error('Expected second bypass to fail when recovery is terminal');
+      }
+      ok('Second bypass rejected after recovery already bypassed');
+
+      try { swapWs.close(1000, 'e2e_swap_done'); } catch {}
+    }
 
     // mark success; we'll print Result after cleanup
     success = true;

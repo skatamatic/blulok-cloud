@@ -32,6 +32,7 @@ import {
 import { fmsService } from '@/services/fms.service';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useToast } from '@/contexts/ToastContext';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 interface FMSChangeReviewModalProps {
   isOpen: boolean;
@@ -189,15 +190,7 @@ function formatFieldValue(value: unknown): string {
       .join(', ');
   }
   if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/)) {
-    try {
-      return new Date(value).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
-    } catch {
-      return value;
-    }
+    return formatDateTime(value);
   }
   return String(value);
 }

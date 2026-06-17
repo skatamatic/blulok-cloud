@@ -53,20 +53,20 @@ import {
 } from '@/types/provisioning.types';
 
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '@/components/Modal/Modal';
-
-
+import RecoveryBlockingBanner from '@/components/Gateway/RecoveryBlockingBanner';
+import { formatDateTime } from '@/utils/datetime.utils';
 
 interface GatewayProvisioningTabProps {
-
   gatewayId: string;
-
   wsConnected: boolean;
-
+  recoveryBlocking?: boolean;
 }
 
-
-
-export default function GatewayProvisioningTab({ gatewayId, wsConnected }: GatewayProvisioningTabProps) {
+export default function GatewayProvisioningTab({
+  gatewayId,
+  wsConnected,
+  recoveryBlocking = false,
+}: GatewayProvisioningTabProps) {
 
   const { addToast } = useToast();
 
@@ -500,6 +500,10 @@ export default function GatewayProvisioningTab({ gatewayId, wsConnected }: Gatew
 
     <div className="space-y-6">
 
+      {recoveryBlocking && (
+        <RecoveryBlockingBanner message="Manual provisioning restores are blocked during gateway swap recovery. Use the Swap / Recovery tab to complete or bypass recovery first." />
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
 
         <div>
@@ -544,7 +548,7 @@ export default function GatewayProvisioningTab({ gatewayId, wsConnected }: Gatew
 
             onClick={handleRequestUpload}
 
-            disabled={!wsConnected || requestingUpload}
+            disabled={!wsConnected || requestingUpload || recoveryBlocking}
 
             title={!wsConnected ? 'Gateway must be online' : undefined}
 
@@ -704,7 +708,7 @@ export default function GatewayProvisioningTab({ gatewayId, wsConnected }: Gatew
 
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
 
-                      {new Date(backup.uploaded_at).toLocaleString()}
+                      {formatDateTime(backup.uploaded_at)}
 
                     </td>
 
@@ -728,7 +732,7 @@ export default function GatewayProvisioningTab({ gatewayId, wsConnected }: Gatew
 
                           onClick={() => setConfirmRestoreId(backup.id)}
 
-                          disabled={!wsConnected || restoringId === backup.id || Boolean(activeRestore && !PROVISIONING_TERMINAL_STATUSES.includes(activeRestore.status))}
+                          disabled={!wsConnected || restoringId === backup.id || recoveryBlocking || Boolean(activeRestore && !PROVISIONING_TERMINAL_STATUSES.includes(activeRestore.status))}
 
                           title={!wsConnected ? 'Gateway must be online' : undefined}
 
@@ -802,7 +806,7 @@ export default function GatewayProvisioningTab({ gatewayId, wsConnected }: Gatew
 
                   <span className="text-gray-400">·</span>
 
-                  <span>{new Date(restore.created_at).toLocaleString()}</span>
+                  <span>{formatDateTime(restore.created_at)}</span>
 
                 </span>
 
