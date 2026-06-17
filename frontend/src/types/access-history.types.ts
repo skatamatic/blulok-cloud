@@ -20,7 +20,7 @@ export interface AccessLog {
   status?: 'success' | 'failed' | 'pending';
   denial_reason?: 'invalid_credential' | 'out_of_schedule' | 'system_error' | 'device_offline' |
                   'insufficient_permissions' | 'expired_access' | 'maintenance_mode' | 'denylist_blocked' |
-                  'route_pass_expired' | 'route_pass_invalid_signature' | 'route_pass_wrong_lock' | 'unknown_error' | 'other';
+                  'route_pass_expired' | 'route_pass_invalid_signature' | 'route_pass_wrong_lock' | 'unknown_error' | 'timeout' | 'other';
   reason?: string;
   location_context?: string;
   session_id?: string;

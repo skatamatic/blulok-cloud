@@ -387,10 +387,18 @@ export class AccessHistoryReadService {
   }
 
   private resolveDeviceName(ctx: ActivityLogWithContext, deviceType: 'blulok' | 'access_control'): string | undefined {
-    if (ctx.access_control_device_name) return ctx.access_control_device_name;
+    if (deviceType === 'access_control') {
+      const name = ctx.access_control_device_name?.trim();
+      if (name) return name;
+      const location = ctx.device_location?.trim();
+      if (location) return location;
+      if (ctx.device_serial) return ctx.device_serial;
+      return 'Access point';
+    }
+
     if (ctx.blulok_device_name) return ctx.blulok_device_name;
     if (ctx.device_serial) return `Lock ${ctx.device_serial}`;
-    return deviceType === 'access_control' ? 'Access control device' : undefined;
+    return undefined;
   }
 
   private normalizeActionFilter(action: string): string {
@@ -483,7 +491,7 @@ export class AccessHistoryReadService {
       };
     }
 
-    if (row.unit_id && ctx.unit_number) {
+    if (row.unit_id && ctx.unit_number && !/^[0-9a-f-]{36}$/i.test(ctx.unit_number)) {
       presentation.unit = {
         id: row.unit_id,
         number: ctx.unit_number,

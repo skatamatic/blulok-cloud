@@ -900,7 +900,9 @@ export default function AccessHistoryPage() {
                   const metadata = getAccessLogMetadata(log);
                   const userDisplay = getAccessUserDisplay(log);
                   const locationDisplay = getAccessLocationDisplay(log, { hideFacility: isFacilityScoped });
-                  const detailItems = buildAccessLogDetailItems(log, isFacilityScoped);
+                  const detailItems = buildAccessLogDetailItems(log, isFacilityScoped, {
+                    omitRowSummaryFields: true,
+                  });
                   const failureDetail = getAccessFailureDetail(log);
                   const statusDisplay = getAccessStatusDisplay(log);
                   

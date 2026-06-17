@@ -28,6 +28,7 @@ const ACTION_LABELS: Record<string, string> = {
   keypad_attempt: 'Keypad attempt',
   unlock: 'Unlock',
   lock: 'Lock',
+  timeout: 'Timed out',
 };
 
 const METHOD_LABELS: Record<string, string> = {
@@ -59,7 +60,48 @@ const DENIAL_REASON_LABELS: Record<string, string> = {
   device_offline: 'Device offline',
   expired_access: 'Expired access',
   maintenance_mode: 'Maintenance mode',
+  timeout: 'Timed out waiting for gateway confirmation',
 };
+
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function looksLikeUuid(value: string | undefined | null): boolean {
+  if (!value) return false;
+  return UUID_LIKE.test(value.trim());
+}
+
+export function formatAccessHistoryUnitLabel(
+  log: AccessLog,
+  meta: AccessLogPresentationMetadata,
+): string | null {
+  const raw =
+    (meta.unit?.number && !looksLikeUuid(meta.unit.number) ? meta.unit.number : null)
+    || (log.unit_number && !looksLikeUuid(log.unit_number) ? log.unit_number : null);
+  return raw ? `Unit ${raw}` : null;
+}
+
+/** Human-readable access point / device label (never a cloud row UUID). */
+export function formatAccessHistoryDeviceLabel(
+  log: AccessLog,
+  meta: AccessLogPresentationMetadata,
+): string | null {
+  const candidates = [
+    meta.device?.name,
+    log.device_name,
+    log.device_type === 'access_control' ? log.device_location : null,
+    meta.device?.location,
+    log.device_serial ? (log.device_type === 'access_control' ? log.device_serial : `Lock ${log.device_serial}`) : null,
+    log.device_type === 'access_control' ? 'Access point' : null,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim() && !looksLikeUuid(candidate)) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
 
 export function getAccessLogMetadata(log: AccessLog): AccessLogPresentationMetadata {
   return (log.metadata || {}) as AccessLogPresentationMetadata;
@@ -168,19 +210,13 @@ export function getAccessLocationDisplay(
 ): { primary: string; secondary: string | null; showFacilityLink: boolean } {
   const meta = getAccessLogMetadata(log);
 
-  const unitLabel = meta.unit?.number
-    ? `Unit ${meta.unit.number}`
-    : log.unit_number
-      ? `Unit ${log.unit_number}`
-      : null;
-
-  const deviceLabel =
-    meta.device?.name ||
-    log.device_name ||
-    (log.device_serial ? `Lock ${log.device_serial}` : null) ||
-    (log.device_type === 'access_control' ? 'Access control device' : null);
-
-  const locationHint = meta.device?.location || log.device_location || null;
+  const unitLabel = formatAccessHistoryUnitLabel(log, meta);
+  const deviceLabel = formatAccessHistoryDeviceLabel(log, meta);
+  const locationHint =
+    (log.device_type === 'access_control' ? log.device_location || meta.device?.location : null)
+    || meta.device?.location
+    || log.device_location
+    || null;
 
   if (options.hideFacility) {
     return {
@@ -208,16 +244,29 @@ export type AccessLogDetailItem = {
   navigationTarget?: AccessLogNavigationTarget;
 };
 
-export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean): AccessLogDetailItem[] {
+export function buildAccessLogDetailItems(
+  log: AccessLog,
+  hideFacility: boolean,
+  options?: { omitRowSummaryFields?: boolean },
+): AccessLogDetailItem[] {
   const meta = getAccessLogMetadata(log);
   const user = getAccessUserDisplay(log);
   const failureDetail = getAccessFailureDetail(log);
-  const items: AccessLogDetailItem[] = [
-    { label: 'Action', value: formatAccessAction(log.action) },
-    { label: 'Method', value: formatAccessMethod(log.method) },
-    { label: 'Status', value: getAccessStatusDisplay(log).label },
-    { label: 'User', value: user.primary },
-  ];
+  const location = getAccessLocationDisplay(log, { hideFacility });
+  const unitLabel = formatAccessHistoryUnitLabel(log, meta);
+  const deviceLabel = formatAccessHistoryDeviceLabel(log, meta);
+  const omitRow = options?.omitRowSummaryFields ?? false;
+
+  const items: AccessLogDetailItem[] = [];
+
+  if (!omitRow) {
+    items.push(
+      { label: 'Action', value: formatAccessAction(log.action) },
+      { label: 'Method', value: formatAccessMethod(log.method) },
+      { label: 'Status', value: getAccessStatusDisplay(log).label },
+      { label: 'User', value: user.primary },
+    );
+  }
 
   if (!hideFacility && (meta.facility?.name || log.facility_name)) {
     items.push({
@@ -229,20 +278,20 @@ export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean)
     });
   }
 
-  if (meta.unit?.number || log.unit_number) {
+  if (unitLabel && (!omitRow || location.primary !== unitLabel)) {
     items.push({
       label: 'Unit',
-      value: meta.unit?.number ? `Unit ${meta.unit.number}` : log.unit_number || '—',
+      value: unitLabel,
       href: meta.unit?.navigation_url,
       navigationId: meta.unit?.id,
       navigationTarget: 'unit',
     });
   }
 
-  if (meta.device?.name || log.device_name || log.device_serial) {
+  if (deviceLabel && (!omitRow || location.primary !== deviceLabel)) {
     items.push({
-      label: 'Device',
-      value: meta.device?.name || log.device_name || (log.device_serial ? `Lock ${log.device_serial}` : '—'),
+      label: log.device_type === 'access_control' ? 'Access point' : 'Device',
+      value: deviceLabel,
       href: meta.device?.navigation_url,
       navigationId: meta.device?.id,
       navigationTarget: 'device',
@@ -250,10 +299,13 @@ export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean)
   }
 
   if (meta.device?.location || log.device_location) {
-    items.push({ label: 'Location', value: meta.device?.location || log.device_location || '—' });
+    const locationValue = meta.device?.location || log.device_location || '—';
+    if (!omitRow || location.secondary !== locationValue) {
+      items.push({ label: 'Location', value: locationValue });
+    }
   }
 
-  if (failureDetail) {
+  if (failureDetail && (!omitRow || log.success)) {
     items.push({ label: 'Failure reason', value: failureDetail });
   }
 
@@ -269,7 +321,9 @@ export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean)
     items.push({ label: 'Credential', value: formatAccessAction(log.credential_type) });
   }
 
-  items.push({ label: 'Occurred', value: formatDateTime(log.occurred_at) });
+  if (!omitRow) {
+    items.push({ label: 'Occurred', value: formatDateTime(log.occurred_at) });
+  }
 
   return items;
 }

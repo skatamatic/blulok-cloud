@@ -719,6 +719,12 @@ export class DeviceModel {
           facilityId,
         });
         statusChanged = true;
+
+        void import('@/services/lock-command.service').then(({ LockCommandService }) => {
+          LockCommandService.getInstance().handleAccessControlLockSettled(deviceId, data.is_locked as boolean);
+        }).catch((err) => {
+          logger.warn('Failed to notify LockCommandService of access-control lock settlement', err);
+        });
       }
 
       if (!statusChanged && data.last_activity !== undefined) {

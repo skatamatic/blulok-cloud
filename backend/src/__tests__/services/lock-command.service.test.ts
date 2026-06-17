@@ -424,7 +424,8 @@ describe('LockCommandService', () => {
       const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked');
       expect(res.success).toBe(true);
       expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'OPEN');
-      expect(mockUpdateAccessControlDevice).toHaveBeenCalledWith('ac-1', { is_locked: false });
+      expect(mockUpdateAccessControlDevice).not.toHaveBeenCalled();
+      expect(svc.peekCommandAttribution('ac-1')).toBeNull();
     });
 
     it('sends CLOSE when requesting locked', async () => {
@@ -433,7 +434,7 @@ describe('LockCommandService', () => {
       const res = await svc.issueAccessControlLockCommand('ac-1', 'locked');
       expect(res.success).toBe(true);
       expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'CLOSE');
-      expect(mockUpdateAccessControlDevice).toHaveBeenCalledWith('ac-1', { is_locked: true });
+      expect(mockUpdateAccessControlDevice).not.toHaveBeenCalled();
     });
 
     it('rejects remote lock for access control when supports_remote_lock is false', async () => {
@@ -471,5 +472,53 @@ describe('LockCommandService', () => {
         { gatewayId: 'gw-1', unitId: undefined },
       );
     });
+
+    it('logs unlock failure on access-control command timeout', async () => {
+      jest.useFakeTimers();
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'facilities') {
+          return {
+            where: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 10 }),
+          };
+        }
+        if (table === 'access_control_devices') {
+          return buildJoinFirst({
+            id: 'ac-1',
+            gateway_id: 'gw-1',
+            facility_id: 'fac-1',
+            is_locked: true,
+            supports_remote_lock: true,
+          });
+        }
+        return buildJoinFirst(null);
+      });
+      sendLockCommand.mockResolvedValueOnce({ success: true });
+
+      const svc = LockCommandService.getInstance();
+      await svc.issueAccessControlLockCommand('ac-1', 'unlocked', {
+        userId: 'user-1',
+        userName: 'Admin',
+        role: 'facility_admin',
+      });
+
+      await jest.advanceTimersByTimeAsync(10_000);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockLogActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activityType: 'access_attempt',
+          result: 'failure',
+          actorId: 'user-1',
+          metadata: expect.objectContaining({
+            action: 'unlock_attempt',
+            device_type: 'access_control',
+          }),
+        }),
+      );
+      jest.useRealTimers();
+    }, 15000);
   });
 });

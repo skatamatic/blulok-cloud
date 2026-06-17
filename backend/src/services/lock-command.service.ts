@@ -36,6 +36,7 @@ interface PendingLockCommand {
   gatewayId: string;
   facilityId: string;
   unitId?: string;
+  deviceType: 'blulok' | 'access_control';
 }
 
 /**
@@ -213,6 +214,7 @@ export class LockCommandService {
         gatewayId,
         facilityId,
         unitId,
+        deviceType: 'blulok',
       });
       return {
         success: true,
@@ -223,7 +225,7 @@ export class LockCommandService {
     }
 
     const timeoutHandle = setTimeout(
-      () => void this.handleTimeout(deviceId, transitionalStatus, previousStatus),
+      () => void this.handleTimeout(deviceId),
       timeoutMs,
     );
 
@@ -236,6 +238,7 @@ export class LockCommandService {
       gatewayId,
       facilityId,
       unitId,
+      deviceType: 'blulok',
     });
 
     return {
@@ -285,6 +288,8 @@ export class LockCommandService {
 
     const gatewayId = String(deviceRow.gateway_id);
     const facilityId = String((deviceRow as { facility_id: string }).facility_id);
+    const previousLocked = Boolean((deviceRow as { is_locked?: boolean }).is_locked);
+    const previousStatus: LockStatus = previousLocked ? 'locked' : 'unlocked';
 
     const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
     if (await GatewayRecoveryService.isBlockingActiveForFacility(facilityId)) {
@@ -343,31 +348,97 @@ export class LockCommandService {
       return { success: false, message: 'Failed to send lock command to gateway' };
     }
 
-    if (initiator) {
-      const method = resolveRemoteAccessMethod(initiator.role);
-      const activityType = requestedStatus === 'unlocked' ? 'unlock' : 'lock';
+    this.clearPending(deviceId);
+
+    const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
+    const timeoutHandle =
+      timeoutMs > 0
+        ? setTimeout(
+            () => void this.handleTimeout(deviceId),
+            timeoutMs,
+          )
+        : undefined;
+
+    this.storePendingAttribution({
+      deviceId,
+      previousStatus,
+      requestedStatus,
+      timeoutHandle,
+      initiator,
+      gatewayId,
+      facilityId,
+      deviceType: 'access_control',
+    });
+
+    return { success: true, message: 'Lock command accepted and in progress' };
+  }
+
+  /**
+   * Called when gateway/sync reports a settled access-control lock state while a remote command is pending.
+   */
+  public handleAccessControlLockSettled(deviceId: string, isLocked: boolean): void {
+    const pending = this.pendingCommands.get(deviceId);
+    if (!pending || pending.deviceType !== 'access_control' || !pending.initiator) {
+      return;
+    }
+
+    const requestedLocked = pending.requestedStatus === 'locked';
+    if (isLocked === requestedLocked) {
+      this.clearPending(deviceId);
+      const method = resolveRemoteAccessMethod(pending.initiator.role);
       void this.logRemoteCommandSuccess({
-        facilityId,
+        facilityId: pending.facilityId,
         deviceId,
-        gatewayId,
-        initiator,
+        gatewayId: pending.gatewayId,
+        initiator: pending.initiator,
         method,
-        activityType,
+        activityType: requestedLocked ? 'lock' : 'unlock',
       });
+      return;
     }
 
-    try {
-      await this.deviceModel.updateAccessControlDevice(deviceId, {
-        is_locked: requestedStatus === 'locked',
-      });
-    } catch (persistErr: any) {
-      logger.error('LockCommandService: failed to persist access-control lock state after gateway success', {
-        deviceId,
-        error: persistErr?.message || String(persistErr),
-      });
+    this.recordRemoteCommandSettlementMismatch({
+      deviceId,
+      facilityId: pending.facilityId,
+      unitId: pending.unitId,
+      gatewayId: pending.gatewayId,
+      deviceType: 'access_control',
+      requestedStatus: pending.requestedStatus,
+      message:
+        pending.requestedStatus === 'unlocked'
+          ? 'Remote unlock failed: access point did not open'
+          : 'Remote lock failed: access point did not close',
+    });
+  }
+
+  /**
+   * Remote command did not reach the requested terminal state (sync reported opposite state).
+   */
+  public recordRemoteCommandSettlementMismatch(params: {
+    deviceId: string;
+    facilityId: string;
+    unitId?: string;
+    gatewayId: string;
+    deviceType: 'blulok' | 'access_control';
+    requestedStatus: 'locked' | 'unlocked';
+    message: string;
+  }): void {
+    const pending = this.pendingCommands.get(params.deviceId);
+    if (!pending?.initiator) {
+      return;
     }
 
-    return { success: true, message: 'Lock command accepted' };
+    this.clearPending(params.deviceId);
+    this.recordCommandFailure({
+      facilityId: params.facilityId,
+      deviceId: params.deviceId,
+      unitId: params.unitId ?? pending.unitId,
+      gatewayId: params.gatewayId,
+      requestedStatus: params.requestedStatus,
+      errorMessage: params.message,
+      initiator: pending.initiator,
+      deviceType: params.deviceType,
+    });
   }
 
   public peekCommandAttribution(deviceId: string): LockCommandAttribution | null {
@@ -505,6 +576,9 @@ export class LockCommandService {
             role: params.initiator.role,
           },
           device_type: params.deviceType,
+          ...(params.errorMessage.toLowerCase().includes('timeout')
+            ? { denial_reason: 'timeout' }
+            : {}),
         },
       });
     } catch (error: unknown) {
@@ -580,11 +654,7 @@ export class LockCommandService {
     }
   }
 
-  private async handleTimeout(
-    deviceId: string,
-    transitionalStatus: LockStatus,
-    previousStatus: LockStatus,
-  ): Promise<void> {
+  private async handleTimeout(deviceId: string): Promise<void> {
     const pending = this.pendingCommands.get(deviceId);
     this.pendingCommands.delete(deviceId);
     if (pending?.timeoutHandle) {
@@ -592,6 +662,29 @@ export class LockCommandService {
     }
 
     const timeoutMessage = 'Gateway did not confirm lock command before timeout';
+
+    if (!pending) {
+      return;
+    }
+
+    if (pending.deviceType === 'access_control') {
+      if (pending.initiator) {
+        this.recordCommandFailure({
+          facilityId: pending.facilityId,
+          deviceId,
+          gatewayId: pending.gatewayId,
+          requestedStatus: pending.requestedStatus,
+          errorMessage: timeoutMessage,
+          initiator: pending.initiator,
+          deviceType: 'access_control',
+        });
+      }
+      return;
+    }
+
+    const transitionalStatus: LockStatus =
+      pending.requestedStatus === 'locked' ? 'locking' : 'unlocking';
+    const previousStatus = pending.previousStatus;
 
     try {
       const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
@@ -603,10 +696,22 @@ export class LockCommandService {
       const currentStatus = (current?.lock_status || 'unknown') as LockStatus;
 
       if (currentStatus !== transitionalStatus) {
+        if (pending.initiator) {
+          this.recordCommandFailure({
+            facilityId: pending.facilityId,
+            deviceId,
+            unitId: pending.unitId,
+            gatewayId: pending.gatewayId,
+            requestedStatus: pending.requestedStatus,
+            errorMessage: timeoutMessage,
+            initiator: pending.initiator,
+            deviceType: 'blulok',
+          });
+        }
         return;
       }
 
-      if (pending?.initiator && pending.requestedStatus) {
+      if (pending.initiator) {
         this.recordCommandFailure({
           facilityId: pending.facilityId,
           deviceId,

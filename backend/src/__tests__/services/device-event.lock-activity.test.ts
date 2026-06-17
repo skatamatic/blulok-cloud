@@ -7,6 +7,7 @@ const mockFindAccessControlDeviceWithGateway = jest.fn();
 const mockPeekCommandAttribution = jest.fn();
 const mockAcknowledgeCommandAttribution = jest.fn();
 const mockConsumeSuppressRevertActivityLog = jest.fn().mockReturnValue(false);
+const mockRecordRemoteCommandSettlementMismatch = jest.fn();
 
 jest.mock('@/services/activity.service', () => ({
   ActivityService: {
@@ -28,6 +29,7 @@ jest.mock('@/services/lock-command.service', () => ({
       peekCommandAttribution: mockPeekCommandAttribution,
       acknowledgeCommandAttribution: mockAcknowledgeCommandAttribution,
       consumeSuppressRevertActivityLog: mockConsumeSuppressRevertActivityLog,
+      recordRemoteCommandSettlementMismatch: mockRecordRemoteCommandSettlementMismatch,
     })),
   },
 }));
@@ -101,7 +103,7 @@ describe('DeviceEventService logLockActivity', () => {
     );
   });
 
-  it('does not consume attribution when lock confirms but unlock was requested', async () => {
+  it('records remote unlock failure when lock confirms but unlock was requested', async () => {
     mockPeekCommandAttribution.mockReturnValue({
       initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
       gatewayId: 'gw-1',
@@ -112,12 +114,14 @@ describe('DeviceEventService logLockActivity', () => {
     await emitLockChanged('locked');
 
     expect(mockAcknowledgeCommandAttribution).not.toHaveBeenCalled();
-    expect(mockLogActivity).toHaveBeenCalledWith(
+    expect(mockRecordRemoteCommandSettlementMismatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        actorType: 'gateway',
-        metadata: expect.objectContaining({ method: 'local_device' }),
+        deviceId: 'dev-1',
+        requestedStatus: 'unlocked',
+        deviceType: 'blulok',
       }),
     );
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it('logs local device activity when no pending attribution exists', async () => {

@@ -35,6 +35,7 @@ const KNOWN_DENIAL_REASONS = new Set<NonNullable<AccessLog['denial_reason']>>([
   'route_pass_wrong_lock',
   'unknown_error',
   'other',
+  'timeout',
 ]);
 
 function parseDenialReason(raw: string | undefined): AccessLog['denial_reason'] | undefined {

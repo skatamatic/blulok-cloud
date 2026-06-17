@@ -15,8 +15,11 @@ import {
 } from '@/utils/access-history-live.utils';
 import {
   formatAccessAction,
+  formatAccessHistoryDeviceLabel,
+  formatAccessHistoryUnitLabel,
   getAccessFailureDetail,
   getAccessLocationDisplay,
+  getAccessLogMetadata,
   getAccessUserDisplay,
 } from '@/utils/access-history-display.utils';
 import { formatRelativeWithExact } from '@/utils/datetime.utils';
@@ -159,9 +162,11 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   const getUserDisplayName = (log: AccessLog): string => getAccessUserDisplay(log).primary;
 
   const getUnitDisplayName = (log: AccessLog): string => {
-    if (log.unit_number) {
-      return `Unit ${log.unit_number}`;
-    }
+    const meta = getAccessLogMetadata(log);
+    const unit = formatAccessHistoryUnitLabel(log, meta);
+    if (unit) return unit;
+    const device = formatAccessHistoryDeviceLabel(log, meta);
+    if (device) return device;
     const location = getAccessLocationDisplay(log, { hideFacility: Boolean(facilityFilter) });
     return location.primary;
   };

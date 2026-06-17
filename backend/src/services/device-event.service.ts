@@ -387,6 +387,26 @@ export class DeviceEventService extends EventEmitter {
       && terminalActivityMatchesRequestedStatus(activityType, attribution.requestedStatus),
     );
 
+    if (
+      attribution
+      && remoteMethod
+      && !terminalActivityMatchesRequestedStatus(activityType, attribution.requestedStatus)
+    ) {
+      lockCommandService.recordRemoteCommandSettlementMismatch({
+        deviceId: event.deviceId,
+        facilityId: gateway.facility_id,
+        unitId,
+        gatewayId: event.gatewayId,
+        deviceType,
+        requestedStatus: attribution.requestedStatus,
+        message:
+          attribution.requestedStatus === 'unlocked'
+            ? 'Remote unlock failed: device remained locked'
+            : 'Remote lock failed: device remained unlocked',
+      });
+      return;
+    }
+
     if (shouldConsumeAttribution) {
       lockCommandService.acknowledgeCommandAttribution(event.deviceId);
     }

@@ -60,6 +60,7 @@ export const DENIAL_REASON_MESSAGES: Record<string, string> = {
   device_offline: 'Device offline',
   expired_access: 'Expired access',
   maintenance_mode: 'Maintenance mode',
+  timeout: 'Timed out waiting for gateway confirmation',
 };
 
 export function denialReasonToLabel(reason: string | undefined): string | undefined {

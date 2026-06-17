@@ -24,8 +24,11 @@ import {
 } from '@/utils/widget-layout.utils';
 import {
   formatAccessAction,
+  formatAccessHistoryDeviceLabel,
+  formatAccessHistoryUnitLabel,
   formatAccessMethod,
   getAccessFailureDetail,
+  getAccessLogMetadata,
   getAccessUserDisplay,
 } from '@/utils/access-history-display.utils';
 import { formatRelativeTime } from '@/utils/datetime.utils';
@@ -90,7 +93,11 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
   // Build a descriptive message
   let message = '';
   const userName = getAccessUserDisplay(log).primary;
-  const unitNumber = log.unit_number || log.device_name || 'Unknown unit';
+  const meta = getAccessLogMetadata(log);
+  const unitNumber =
+    formatAccessHistoryUnitLabel(log, meta)?.replace(/^Unit /, '')
+    || formatAccessHistoryDeviceLabel(log, meta)
+    || 'Unknown location';
   const failureDetail = getAccessFailureDetail(log);
 
   switch (log.action) {

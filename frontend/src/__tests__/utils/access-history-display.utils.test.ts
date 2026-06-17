@@ -5,9 +5,12 @@ import { AccessLog } from '@/types/access-history.types';
 import {
   buildAccessLogDetailItems,
   formatAccessAction,
+  formatAccessHistoryDeviceLabel,
+  formatAccessHistoryUnitLabel,
   formatAccessMethod,
   getAccessFailureDetail,
   getAccessLocationDisplay,
+  getAccessLogMetadata,
   getAccessUserDisplay,
   isNonUserAccessActor,
 } from '@/utils/access-history-display.utils';
@@ -92,5 +95,31 @@ describe('access-history-display.utils', () => {
     const items = buildAccessLogDetailItems(baseLog, true);
     expect(items.some((item) => item.label === 'Device' && item.href)).toBe(true);
     expect(items.some((item) => item.label === 'Actor detail')).toBe(false);
+  });
+
+  it('omits row-visible fields in compact detail mode', () => {
+    const items = buildAccessLogDetailItems(baseLog, true, { omitRowSummaryFields: true });
+    expect(items.some((item) => item.label === 'Action')).toBe(false);
+    expect(items.some((item) => item.label === 'User')).toBe(false);
+    expect(items.some((item) => item.label === 'Occurred')).toBe(false);
+  });
+
+  it('hides uuid-shaped unit numbers and device ids from labels', () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440011';
+    const acLog: AccessLog = {
+      ...baseLog,
+      device_type: 'access_control',
+      unit_number: uuid,
+      device_name: uuid,
+      device_serial: undefined,
+      device_id: uuid,
+      metadata: {
+        device: { id: uuid, name: uuid, navigation_url: `/devices/access-control/${uuid}` },
+      },
+    };
+    expect(formatAccessHistoryUnitLabel(acLog, getAccessLogMetadata(acLog))).toBeNull();
+    expect(formatAccessHistoryDeviceLabel(acLog, {
+      device: { id: uuid, name: uuid, navigation_url: `/devices/access-control/${uuid}` },
+    })).toBe('Access point');
   });
 });
