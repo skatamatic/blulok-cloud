@@ -6,7 +6,7 @@ import { GatewayModel } from '@/models/gateway.model';
 describe('GatewayModel', () => {
   let model: GatewayModel;
   let mockBuilder: Record<string, jest.Mock>;
-  let mockKnex: jest.Mock;
+  let mockKnex: jest.Mock & { transaction: jest.Mock };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -22,7 +22,8 @@ describe('GatewayModel', () => {
         status: 'online',
       }),
     };
-    mockKnex = jest.fn(() => mockBuilder);
+    mockKnex = jest.fn(() => mockBuilder) as jest.Mock & { transaction: jest.Mock };
+    mockKnex.transaction = jest.fn(async (cb: (trx: jest.Mock) => Promise<unknown>) => cb(mockKnex));
     (model as any).db = { connection: mockKnex };
   });
 

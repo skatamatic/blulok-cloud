@@ -6,7 +6,7 @@ describe('GatewayRecoveryModel', () => {
   let model: GatewayRecoveryModel;
   let mockTrxBuilder: Record<string, jest.Mock>;
   let mockOuterBuilder: Record<string, jest.Mock>;
-  let mockKnex: jest.Mock;
+  let mockKnex: jest.Mock & { transaction: jest.Mock };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -35,7 +35,7 @@ describe('GatewayRecoveryModel', () => {
         return mockTrxBuilder;
       }
       return mockOuterBuilder;
-    }) as jest.Mock;
+    }) as jest.Mock & { transaction: jest.Mock };
 
     mockKnex.transaction = jest.fn(async (cb: (trx: typeof mockKnex) => Promise<unknown>) => cb(mockKnex));
 
