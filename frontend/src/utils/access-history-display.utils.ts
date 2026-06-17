@@ -198,10 +198,14 @@ export function getAccessLocationDisplay(
   };
 }
 
+export type AccessLogNavigationTarget = 'user' | 'facility' | 'unit' | 'device';
+
 export type AccessLogDetailItem = {
   label: string;
   value: string;
   href?: string;
+  navigationId?: string;
+  navigationTarget?: AccessLogNavigationTarget;
 };
 
 export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean): AccessLogDetailItem[] {
@@ -220,6 +224,8 @@ export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean)
       label: 'Facility',
       value: meta.facility?.name || log.facility_name || '—',
       href: meta.facility?.navigation_url,
+      navigationId: meta.facility?.id,
+      navigationTarget: 'facility',
     });
   }
 
@@ -228,6 +234,8 @@ export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean)
       label: 'Unit',
       value: meta.unit?.number ? `Unit ${meta.unit.number}` : log.unit_number || '—',
       href: meta.unit?.navigation_url,
+      navigationId: meta.unit?.id,
+      navigationTarget: 'unit',
     });
   }
 
@@ -236,6 +244,8 @@ export function buildAccessLogDetailItems(log: AccessLog, hideFacility: boolean)
       label: 'Device',
       value: meta.device?.name || log.device_name || (log.device_serial ? `Lock ${log.device_serial}` : '—'),
       href: meta.device?.navigation_url,
+      navigationId: meta.device?.id,
+      navigationTarget: 'device',
     });
   }
 

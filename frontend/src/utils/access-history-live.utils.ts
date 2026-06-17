@@ -21,6 +21,31 @@ export type AccessHistoryLiveFilters = {
 
 const TERMINAL_ACTIVITY_TYPES = new Set(['access_attempt', 'lock', 'unlock']);
 
+const KNOWN_DENIAL_REASONS = new Set<NonNullable<AccessLog['denial_reason']>>([
+  'invalid_credential',
+  'out_of_schedule',
+  'system_error',
+  'device_offline',
+  'insufficient_permissions',
+  'expired_access',
+  'maintenance_mode',
+  'denylist_blocked',
+  'route_pass_expired',
+  'route_pass_invalid_signature',
+  'route_pass_wrong_lock',
+  'unknown_error',
+  'other',
+]);
+
+function parseDenialReason(raw: string | undefined): AccessLog['denial_reason'] | undefined {
+  if (!raw) return undefined;
+  if (KNOWN_DENIAL_REASONS.has(raw as NonNullable<AccessLog['denial_reason']>)) {
+    return raw as AccessLog['denial_reason'];
+  }
+  if (raw === 'internal_error') return 'system_error';
+  return 'other';
+}
+
 function mapLegacyMethod(method: string | undefined, activityType?: string): string {
   if (method === 'automatic') return 'local_device';
   if (!method) {
@@ -133,9 +158,10 @@ function normalizeAccessLogRow(raw: Record<string, unknown>): AccessLog | null {
     method: method as AccessLog['method'],
     success,
     status,
-    denial_reason:
+    denial_reason: parseDenialReason(
       (typeof raw.denial_reason === 'string' && raw.denial_reason) ||
-      (typeof metadata.denial_reason === 'string' ? metadata.denial_reason : undefined),
+        (typeof metadata.denial_reason === 'string' ? metadata.denial_reason : undefined),
+    ),
     reason,
     metadata: metadata as AccessLog['metadata'],
     occurred_at: occurredAt,

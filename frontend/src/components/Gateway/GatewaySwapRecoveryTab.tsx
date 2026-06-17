@@ -64,7 +64,6 @@ function terminalStatusTone(status: GatewayRecoveryStatus): 'success' | 'warning
 export default function GatewaySwapRecoveryTab({
   facilityId,
   boundGatewayId,
-  wsConnected,
   onRecoveryChange,
 }: GatewaySwapRecoveryTabProps) {
   const { addToast } = useToast();
