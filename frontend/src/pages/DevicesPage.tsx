@@ -636,6 +636,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                 const isBlulok = device.device_category === 'blulok';
                 const accessDevice = device as AccessControlDevice & { device_category: string };
                 const blulokDevice = device as BluLokDevice & { device_category: string };
+                const lastActivity = isBlulok ? blulokDevice.last_activity : accessDevice.last_activity;
                 const DeviceIcon = isBlulok ? LockClosedIcon : deviceTypeIcons[accessDevice.device_type as keyof typeof deviceTypeIcons] || ServerIcon;
                 const StatusIcon = statusIcons[isBlulok ? blulokDevice.device_status as keyof typeof statusIcons : accessDevice.status as keyof typeof statusIcons] || CheckCircleIcon;
                 
@@ -688,7 +689,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                         : accessDevice.facility_name || accessDevice.location_description || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      {device.last_activity ? formatDate(device.last_activity) : 'Never'}
+                      {lastActivity ? formatDate(lastActivity) : 'Never'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <div className="flex items-center justify-end space-x-2">

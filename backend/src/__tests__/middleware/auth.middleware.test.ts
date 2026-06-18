@@ -135,7 +135,7 @@ describe('authenticateToken facility hydration', () => {
         role: UserRole.FACILITY_ADMIN,
         facilityIds: ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
       },
-    } as AuthenticatedRequest;
+    } as unknown as AuthenticatedRequest;
 
     expect(applyFacilityScope(req)).toEqual([
       '550e8400-e29b-41d4-a716-446655440001',
@@ -148,9 +148,9 @@ describe('authenticateToken facility hydration', () => {
       user: {
         userId: 'admin-1',
         role: UserRole.ADMIN,
-        facilityIds: [],
+        facilityIds: [] as string[],
       },
-    } as AuthenticatedRequest;
+    } as unknown as AuthenticatedRequest;
 
     expect(applyFacilityScope(req)).toBeUndefined();
   });

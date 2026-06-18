@@ -1313,6 +1313,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                         const isBlulok = device.device_category === 'blulok';
                         const accessDevice = device as AccessControlDevice & { device_category: string };
                         const blulokDevice = device as BluLokDevice & { device_category: string };
+                        const lastActivity = isBlulok ? blulokDevice.last_activity : accessDevice.last_activity;
                         const DeviceIcon = isBlulok
                           ? LockClosedIcon
                           : deviceTypeIcons[accessDevice.device_type as keyof typeof deviceTypeIcons] || ServerIcon;
@@ -1369,7 +1370,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                                 : accessDevice.facility_name || accessDevice.location_description || '—'}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                              {device.last_activity ? formatDateTime(device.last_activity) : 'Never'}
+                              {lastActivity ? formatDateTime(lastActivity) : 'Never'}
                             </td>
                           </tr>
                         );
