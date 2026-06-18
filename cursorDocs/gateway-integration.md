@@ -197,11 +197,13 @@ Both tabs show the same **`online` / `offline` / `error` / `maintenance`** badge
 
 ## Gateway device sync (locks + access control)
 
+**Start here (gateway firmware):** [Gateway device sync — developer guide](./gateway-device-sync-developer-guide.md) — inventory reconcile, non-destructive state API, manual devices, tombstones, workflows.
+
 Unified internal routes (via `PROXY_REQUEST` or direct REST):
 
 | Endpoint | Purpose |
 |----------|---------|
-**Definitive gateway payload field reference:** [`gateway-device-inventory-payload.md`](gateway-device-inventory-payload.md)
+**Field-level payload reference:** [`gateway-device-inventory-payload.md`](gateway-device-inventory-payload.md)
 
 | `POST /api/v1/internal/gateway/devices/inventory` | Reconcile locks (`kind: lock`, `lock_id`) and access keypads (`kind: access_control`, `access_id`, optional `relay_channel` default 1) |
 | `POST /api/v1/internal/gateway/devices/state` | Partial telemetry: locks use full telemetry; access uses `online` / `locked` only |

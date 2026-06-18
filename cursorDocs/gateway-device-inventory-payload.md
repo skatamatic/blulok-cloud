@@ -81,6 +81,8 @@ Admin REST APIs use `device_serial` for operational devices; the gateway PROXY c
 
 Stored in **`gateway_inventory_devices`**. Record-keeping only — no lock/unlock, access codes, or unit assignment.
 
+**Narrative guide:** [Gateway device sync — developer guide §3.6](./gateway-device-sync-developer-guide.md#36-bridge-and-friend-node-network-infra) (required fields, reconcile pitfalls, examples).
+
 | Field | Required | Type | Notes |
 |-------|----------|------|-------|
 | `kind` | **yes** | string | `"bridge"` or `"friend_node"` |
@@ -387,6 +389,7 @@ If an admin manually created a device on relay N with a placeholder serial and `
 
 ## Related docs
 
+- **[Gateway device sync — developer guide](./gateway-device-sync-developer-guide.md)** — narrative guide: inventory vs state, manual devices, tombstones, recommended patterns
 - `cursorDocs/device-metadata-editing.md` — admin add/edit UI field mapping to these payload names
 - `cursorDocs/gateway-integration.md` — WS auth, PROXY, operational notes
 - `cursorDocs/gateway-access-events.md` — lock/unlock state vs access-events (grants, denials, keypad)
