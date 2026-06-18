@@ -9,9 +9,14 @@ import {
   type GatewayInventoryDeviceFilters,
 } from '@/models/gateway-inventory-device.model';
 import { GatewayModel } from '@/models/gateway.model';
-import type { InventorySyncResult } from '@/services/device-sync.service';
+import type { InventorySyncResult, StateUpdateResult } from '@/services/device-sync.service';
 import type { DeviceSyncLogEntry } from '@/types/gateway-device-sync.types';
-import type { NetworkInfraInventoryItem } from '@/utils/gateway-sync.utils';
+import type { NetworkInfraInventoryItem, NetworkInfraStateUpdate } from '@/utils/gateway-sync.utils';
+import {
+  formatNetworkInfraStateKey,
+  isEmptyNetworkInfraStatePatch,
+  mapNetworkInfraStateUpdateToPatch,
+} from '@/utils/gateway-network-infra-state-map.utils';
 import {
   normalizeNetworkInfraSortKey,
   sortMergedDeviceList,
@@ -200,6 +205,61 @@ export class GatewayInventoryDeviceSyncService {
         } catch {
           // skip invalid keys
         }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Partial state/telemetry for sync-managed bridge and friend_node rows.
+   * Does not add or remove inventory membership — use inventory sync for that.
+   */
+  public async updateNetworkInfraDeviceStates(
+    gatewayId: string,
+    updates: NetworkInfraStateUpdate[],
+  ): Promise<StateUpdateResult> {
+    const result: StateUpdateResult = {
+      updated: 0,
+      not_found: [],
+      errors: [],
+    };
+
+    for (const update of updates) {
+      let kind: NetworkInfraSyncKind;
+      let serial: string;
+      try {
+        kind = extractKind(update as unknown as Record<string, unknown>);
+        serial = extractSerial(update as unknown as Record<string, unknown>);
+      } catch (err) {
+        result.errors.push(err instanceof Error ? err.message : String(err));
+        continue;
+      }
+
+      const key = formatNetworkInfraStateKey(kind, serial);
+
+      try {
+        const patch = mapNetworkInfraStateUpdateToPatch(update);
+        if (isEmptyNetworkInfraStatePatch(patch)) {
+          continue;
+        }
+
+        const updated = await this.model.patchByGatewayKindAndSerial(
+          gatewayId,
+          kind,
+          serial,
+          patch,
+        );
+
+        if (updated) {
+          result.updated++;
+        } else {
+          result.not_found.push(key);
+        }
+      } catch (err) {
+        result.errors.push(
+          `Failed to update network infra ${key}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 

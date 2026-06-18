@@ -742,6 +742,12 @@ function inventorySync(ws, facilityId, devices, id, extra = {}) {
   });
 }
 
+function stateSync(ws, facilityId, updates, id, extra = {}) {
+  return proxyWs(ws, id, 'POST', `/internal/gateway/devices/state`, {
+    body: { updates, facility_id: facilityId, ...extra },
+  });
+}
+
 // Verbose HTTP logging
 if (VERBOSE) {
   const sanitizeFacilities = (data) => {
@@ -3343,20 +3349,13 @@ async function run() {
     }
     ok(`Network infra inventory added bridge ${infraBridgeSerial} and friend_node ${infraFriendSerial}`);
 
-    step('Testing inventory re-sync updates network infra state and firmware');
-    const reqInfraInv2 = `req-infra-inv-2-${Date.now()}`;
-    const respInfraInv2 = await inventorySync(
+    step('Testing POST /devices/state (network infra bridge and friend_node partial updates)');
+    const infraLastSeen = '2026-06-18T15:44:54.349684Z';
+    const reqInfraState1 = `req-infra-state-1-${Date.now()}`;
+    const respInfraState1 = await stateSync(
       ws,
       facilityId,
       [
-        gwLockDevice({ lock_id: remainingSerial }),
-        gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
-        gwAccessDevice({
-          access_id: accessSerialMulti,
-          relay_channel: accessRelaySecondary,
-          device_type: 'gate',
-          name: accessRenamed,
-        }),
         gwBridgeDevice({
           serial: infraBridgeSerial,
           state: 'error',
@@ -3367,17 +3366,18 @@ async function run() {
           serial: infraFriendSerial,
           state: 'healthy',
           firmware_version: '2.1.0',
+          last_seen: infraLastSeen,
           info: { role: 'mesh-node', upgraded: true },
         }),
       ],
-      reqInfraInv2,
+      reqInfraState1,
     );
-    if (respInfraInv2.status !== 200 || !respInfraInv2.body?.success) {
-      throw new Error(`Network infra inventory update failed: ${respInfraInv2.status}`);
+    if (respInfraState1.status !== 200 || !respInfraState1.body?.success) {
+      throw new Error(`Network infra state update failed: ${respInfraState1.status}`);
     }
-    const infraInv2 = respInfraInv2.body?.data?.network_infra;
-    if (!infraInv2 || (infraInv2.updated ?? 0) < 1) {
-      throw new Error(`Expected network_infra.updated >= 1, got ${JSON.stringify(infraInv2)}`);
+    const infraState1 = respInfraState1.body?.data?.network_infra;
+    if (!infraState1 || (infraState1.updated ?? 0) < 2) {
+      throw new Error(`Expected network_infra.updated >= 2, got ${JSON.stringify(infraState1)}`);
     }
     const bridgeUpdated = await findNetworkInfraBySerial(token, facilityId, infraBridgeSerial, 'bridge');
     const friendUpdated = await findNetworkInfraBySerial(token, facilityId, infraFriendSerial, 'friend_node');
@@ -3390,7 +3390,26 @@ async function run() {
     if (friendUpdated?.firmware_version !== '2.1.0') {
       throw new Error(`Expected friend_node firmware 2.1.0, got ${friendUpdated?.firmware_version}`);
     }
-    ok('Inventory re-sync updated network infra state and firmware_version');
+    ok('POST /devices/state updated network infra state, firmware_version, and last_seen');
+
+    step('Testing POST /devices/state (network infra not_found for unknown serial)');
+    const unknownInfraSerial = `E2E-BR-MISSING-${Date.now()}`;
+    const reqInfraState2 = `req-infra-state-2-${Date.now()}`;
+    const respInfraState2 = await stateSync(
+      ws,
+      facilityId,
+      [gwBridgeDevice({ serial: unknownInfraSerial, state: 'healthy' })],
+      reqInfraState2,
+    );
+    if (respInfraState2.status !== 200 || !respInfraState2.body?.success) {
+      throw new Error(`Network infra state not_found probe failed: ${respInfraState2.status}`);
+    }
+    const infraState2 = respInfraState2.body?.data?.network_infra;
+    const notFound = infraState2?.not_found ?? [];
+    if (!notFound.includes(`bridge:${unknownInfraSerial}`)) {
+      throw new Error(`Expected bridge:${unknownInfraSerial} in not_found, got ${JSON.stringify(notFound)}`);
+    }
+    ok('POST /devices/state tracks network infra not_found without creating rows');
 
     step('Testing POST /devices/inventory (gateway kind updates bound gateway row)');
     const gatewayMacSerial = 'AA:BB:CC:DD:EE:FF';

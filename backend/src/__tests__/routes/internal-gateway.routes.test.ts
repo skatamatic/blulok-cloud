@@ -89,11 +89,18 @@ const syncNetworkInfraInventoryMock = jest.fn().mockResolvedValue({
   updated: 0,
   errors: [],
 });
+const updateNetworkInfraDeviceStatesMock = jest.fn().mockResolvedValue({
+  updated: 1,
+  not_found: [],
+  errors: [],
+});
 const applyGatewayInventoryUpdateMock = jest.fn().mockResolvedValue(undefined);
 jest.mock('@/services/gateway-inventory-device-sync.service', () => ({
   GatewayInventoryDeviceSyncService: {
     getInstance: jest.fn().mockReturnValue({
       syncNetworkInfraInventory: (...args: unknown[]) => syncNetworkInfraInventoryMock(...args),
+      updateNetworkInfraDeviceStates: (...args: unknown[]) =>
+        updateNetworkInfraDeviceStatesMock(...args),
       applyGatewayInventoryUpdate: (...args: unknown[]) => applyGatewayInventoryUpdateMock(...args),
     }),
   },
@@ -624,6 +631,78 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.data.access_control).toBeDefined();
       expect(updateDeviceStatesMock).toHaveBeenCalledTimes(1);
       expect(updateAccessDeviceStatesMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('performs mixed lock, access_control, and network infra state updates', async () => {
+      updateDeviceStatesMock.mockClear();
+      updateAccessDeviceStatesMock.mockClear();
+      updateNetworkInfraDeviceStatesMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          updates: [
+            { kind: 'lock', lock_id: 'lock-1', online: true },
+            { kind: 'access_control', access_id: 'KP-002', relay_channel: 2, locked: true },
+            { kind: 'bridge', serial: 'BR-1', state: 'healthy' },
+            { kind: 'friend_node', serial: 'FN-1', last_seen: '2026-06-18T15:44:54.349684Z' },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.access_control).toBeDefined();
+      expect(res.body.data.network_infra).toBeDefined();
+      expect(updateDeviceStatesMock).toHaveBeenCalledTimes(1);
+      expect(updateAccessDeviceStatesMock).toHaveBeenCalledTimes(1);
+      expect(updateNetworkInfraDeviceStatesMock).toHaveBeenCalledWith(
+        'gateway-1',
+        expect.arrayContaining([
+          { kind: 'bridge', serial: 'BR-1', state: 'healthy' },
+          expect.objectContaining({
+            kind: 'friend_node',
+            serial: 'FN-1',
+            last_seen: '2026-06-18T15:44:54.349Z',
+          }),
+        ]),
+      );
+    });
+
+    it('accepts friend_node state with null firmware_version', async () => {
+      updateNetworkInfraDeviceStatesMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          updates: [
+            {
+              kind: 'friend_node',
+              serial: '/192.168.3.176:35919',
+              state: 'online',
+              firmware_version: null,
+              last_seen: '2026-06-18T15:44:54.349684Z',
+            },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(updateNetworkInfraDeviceStatesMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects unsupported kinds on state updates', async () => {
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          updates: [{ kind: 'gateway', serial: 'GW-1', state: 'healthy' }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
     });
   });
 

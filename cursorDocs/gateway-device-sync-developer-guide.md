@@ -153,10 +153,10 @@ They appear in the admin UI under **Network Infra** (`device_scope: network_infr
 
 | API | Bridge / friend_node support |
 |-----|------------------------------|
-| `POST …/devices/inventory` | **Yes** — add, remove, and refresh infra rows |
-| `POST …/devices/state` | **No** — only `lock` and `access_control` are accepted in `updates[]` |
+| `POST …/devices/inventory` | **Yes** — add, remove, and refresh infra rows (membership reconcile) |
+| `POST …/devices/state` | **Yes** — partial telemetry only (`state`, `firmware_version`, `info`, `last_seen`, extra metadata). **Does not** add or remove rows |
 
-There is **no** high-frequency heartbeat endpoint for infra. When health, firmware, or `last_seen` changes, include the updated fields on the next **inventory** POST (boot, mesh topology change, or periodic full snapshot — same cadence as §3.5).
+Use **inventory** when mesh topology changes (new bridge, removed friend node). Use **state** for high-frequency health heartbeats (`state`, `last_seen`, firmware bumps) without re-running reconcile — same pattern as locks and access control (§4).
 
 #### 3.6.2 Required fields (per item)
 
@@ -327,7 +327,9 @@ Apply **partial telemetry** without changing device membership:
 
 **Does not:** add devices, remove devices, or change `lock_id` / `access_id` identity (except lock `serial` column when explicitly sent).
 
-**Does not support:** `bridge`, `friend_node`, or `gateway` — refresh network infra via **inventory** only (§3.6).
+**Does not support:** `gateway` kind in `updates[]` (use inventory `kind: "gateway"` for bound gateway self-updates — §3.6.8).
+
+**Network infra (`bridge`, `friend_node`):** partial state updates are supported. Unknown serials return `not_found[]` (HTTP **200**); new infra devices must appear in **inventory** first (§3.6).
 
 ### 4.2 Partial update semantics
 
@@ -367,6 +369,18 @@ If `state` is absent, `locked: true/false` maps to `locked` / `unlocked`.
 
 Invalid ISO timestamps for `last_seen` are **silently skipped** (no error, no write).
 
+**Network infra (`bridge`, `friend_node`):**
+
+| Gateway field | DB column |
+|---------------|-----------|
+| `state` | row `state` → UI `status` (§3.6.5) |
+| `firmware_version` | `firmware_version` (`null` is ignored — omit the field instead) |
+| `info` | `info` JSON |
+| `last_seen` | `metadata.last_seen` |
+| other keys | merged into `metadata` |
+
+Lookup key: `{kind}:{serial}` on **this gateway**. Missing rows → `network_infra.not_found[]`.
+
 ### 4.3 Success response
 
 ```json
@@ -382,6 +396,11 @@ Invalid ISO timestamps for `last_seen` are **silently skipped** (no error, no wr
       "updated": 1,
       "not_found": [],
       "errors": []
+    },
+    "network_infra": {
+      "updated": 1,
+      "not_found": ["bridge:unknown-serial"],
+      "errors": []
     }
   }
 }
@@ -392,8 +411,8 @@ Invalid ISO timestamps for `last_seen` are **silently skipped** (no error, no wr
 | Event | API |
 |-------|-----|
 | Gateway boot, mesh topology change, device commissioned/decommissioned locally | **Inventory** (full `devices[]` — locks, access, **bridge**, **friend_node**) |
-| Bridge/friend_node health or firmware change | **Inventory** (update `state` / `firmware_version` / `last_seen` on existing items) |
-| Periodic connectivity heartbeat (every 30–120s) | **State** (`online` + `last_seen` only — locks and access control) |
+| Bridge/friend_node health, firmware, or `last_seen` heartbeat | **State** (`state`, `firmware_version`, `last_seen`, optional `info`) |
+| Periodic connectivity heartbeat (every 30–120s) | **State** (`online` + `last_seen` — locks, access control, and infra) |
 | Lock state change after motor event | **State** (`state` or `locked`, optional `last_seen`) |
 | Access relay actuation | **State** (`locked`, `online`) |
 | Battery / signal sample | **State** (telemetry fields only) |
@@ -496,7 +515,7 @@ Rules:
 
 ### 6.2 Do not use state API to add devices
 
-Unknown `lock_id` / access composite keys land in `not_found[]`. New hardware must appear in **inventory** first (or be admin-created manual rows).
+Unknown `lock_id`, access composite keys, or `{kind}:{serial}` for bridge/friend_node land in `not_found[]`. New hardware must appear in **inventory** first (or be admin-created manual rows for locks/access).
 
 ### 6.3 Tombstones vs local removal
 

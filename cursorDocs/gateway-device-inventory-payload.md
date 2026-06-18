@@ -252,6 +252,25 @@ When `online`, `locked`, or `last_seen` change on an existing row, the cloud per
 
 ---
 
+## Bridge / friend_node — state update item (`updates[]`)
+
+Partial update by **`kind` + `serial`**. Does **not** add or remove inventory rows — use inventory sync for membership changes (§3.6 in the [developer guide](./gateway-device-sync-developer-guide.md)).
+
+| Field | Required | Type | Default | Enum / constraints | Cloud mapping |
+|-------|----------|------|---------|-------------------|---------------|
+| `kind` | **yes** | string | — | `"bridge"` or `"friend_node"` | Discriminator |
+| `serial` | **yes** | string | — | non-empty | lookup key with `kind` |
+| `state` | no | string | — | free-form | row `state` → UI status (§3.6.5) |
+| `firmware_version` | no | string | — | — | `firmware_version` (`null` ignored — omit field) |
+| `info` | no | object | — | — | `info` JSON column |
+| `last_seen` | no | ISO-8601 / Date | — | — | `metadata.last_seen` (invalid timestamps skipped) |
+
+Unknown `{kind}:{serial}` → `network_infra.not_found[]` entry like `bridge:BR-001-A1B2`. Response includes `data.network_infra` with `updated`, `not_found`, and `errors` counts.
+
+**Not supported on state endpoint:** `kind: "gateway"` (use inventory `kind: "gateway"` instead).
+
+---
+
 ## Enum quick reference
 
 ### Lock `state` (gateway shorthand)

@@ -913,6 +913,7 @@ const ExpandedDetails: React.FC<{
                     isSubmitting={isSubmitting}
                     hasDevice={Boolean(deviceId)}
                     remoteSupported={supportsRemoteUnlock}
+                    deviceStatus={metrics.status}
                     fullWidth
                     size="sm"
                     stopPropagation

@@ -25,6 +25,7 @@ import {
   AccessDeviceStateUpdate,
   type InventorySyncResult,
 } from '@/services/device-sync.service';
+import type { NetworkInfraStateUpdate } from '@/utils/gateway-sync.utils';
 import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH } from '@/constants/gateway-telemetry-log.constants';
@@ -241,8 +242,18 @@ const networkInfraInventoryItemSchema = Joi.object({
   kind: Joi.string().valid('bridge', 'friend_node').required(),
   serial: Joi.string().trim().min(1).required(),
   state: Joi.string().trim().max(64).optional(),
-  firmware_version: Joi.string().trim().max(128).optional(),
+  firmware_version: Joi.string().trim().max(128).allow(null).optional(),
   info: Joi.object().unknown(true).optional(),
+  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+}).unknown(true);
+
+const networkInfraStateItemSchema = Joi.object({
+  kind: Joi.string().valid('bridge', 'friend_node').required(),
+  serial: Joi.string().trim().min(1).required(),
+  state: Joi.string().trim().max(64).optional(),
+  firmware_version: Joi.string().trim().max(128).allow(null).optional(),
+  info: Joi.object().unknown(true).optional(),
+  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
 }).unknown(true);
 
 const gatewayInventoryUpdateSchema = Joi.object({
@@ -309,7 +320,13 @@ const stateUpdateSchema = Joi.object({
   tid: tidField,
   facility_id: Joi.string().optional(),
   updates: Joi.array()
-    .items(Joi.alternatives().try(accessStateUpdateSchema, lockStateUpdateSchema))
+    .items(
+      Joi.alternatives().try(
+        accessStateUpdateSchema,
+        lockStateUpdateSchema,
+        networkInfraStateItemSchema,
+      ),
+    )
     .required(),
 });
 
@@ -460,22 +477,30 @@ router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHand
 
   let lockUpdates: DeviceStateUpdate[];
   let accessUpdates: AccessDeviceStateUpdate[];
+  let networkInfraUpdates: NetworkInfraStateUpdate[];
   try {
     const partitioned = partitionStateUpdatesByKind(value.updates as Record<string, unknown>[]);
     lockUpdates = partitioned.locks as unknown as DeviceStateUpdate[];
     accessUpdates = partitioned.accessControl as unknown as AccessDeviceStateUpdate[];
+    networkInfraUpdates = partitioned.networkInfra as unknown as NetworkInfraStateUpdate[];
   } catch (partitionError: any) {
     res.status(400).json({ success: false, message: partitionError.message });
     return;
   }
 
   const syncService = DeviceSyncService.getInstance();
-  const [lockResult, accessResult] = await Promise.all([
+  const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
+  const infraSyncService = GatewayInventoryDeviceSyncService.getInstance();
+
+  const [lockResult, accessResult, networkInfraResult] = await Promise.all([
     lockUpdates.length > 0
       ? syncService.updateDeviceStates(gateway.id, lockUpdates)
       : Promise.resolve(null),
     accessUpdates.length > 0
       ? syncService.updateAccessDeviceStates(gateway.id, accessUpdates)
+      : Promise.resolve(null),
+    networkInfraUpdates.length > 0
+      ? infraSyncService.updateNetworkInfraDeviceStates(gateway.id, networkInfraUpdates)
       : Promise.resolve(null),
   ]);
 
@@ -492,6 +517,10 @@ router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHand
 
   if (accessResult) {
     responseData.access_control = accessResult;
+  }
+
+  if (networkInfraResult) {
+    responseData.network_infra = networkInfraResult;
   }
 
   res.json({

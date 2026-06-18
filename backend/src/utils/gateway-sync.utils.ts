@@ -88,8 +88,19 @@ export interface NetworkInfraInventoryItem {
   kind: NetworkInfraSyncKind;
   serial: string;
   state?: string;
-  firmware_version?: string;
+  firmware_version?: string | null;
   info?: Record<string, unknown>;
+  last_seen?: string | Date;
+  [key: string]: unknown;
+}
+
+export interface NetworkInfraStateUpdate {
+  kind: NetworkInfraSyncKind;
+  serial: string;
+  state?: string;
+  firmware_version?: string | null;
+  info?: Record<string, unknown>;
+  last_seen?: string | Date;
   [key: string]: unknown;
 }
 
@@ -174,19 +185,26 @@ export function partitionInventoryByKind<T extends Record<string, unknown>>(
 }
 
 export function partitionStateUpdatesByKind<T extends Record<string, unknown>>(
-  updates: T[]
-): { locks: T[]; accessControl: T[] } {
+  updates: T[],
+): { locks: T[]; accessControl: T[]; networkInfra: T[] } {
   const locks: T[] = [];
   const accessControl: T[] = [];
+  const networkInfra: T[] = [];
 
   for (const update of updates) {
-    const kind = resolveGatewayDeviceKind(update);
-    if (kind === 'access_control') {
-      accessControl.push(update);
-    } else {
+    const kind = update.kind;
+    if (kind === 'lock') {
       locks.push(update);
+    } else if (kind === 'access_control') {
+      accessControl.push(update);
+    } else if (kind === 'bridge' || kind === 'friend_node') {
+      networkInfra.push(update);
+    } else {
+      throw new Error(
+        'State update kind must be one of: lock, access_control, bridge, friend_node',
+      );
     }
   }
 
-  return { locks, accessControl };
+  return { locks, accessControl, networkInfra };
 }

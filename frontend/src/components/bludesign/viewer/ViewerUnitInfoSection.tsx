@@ -26,7 +26,7 @@ import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
-import { canUseRemoteUnlockControls } from '@/utils/unitLock.utils';
+import { canExecuteRemoteUnlock, canUseRemoteUnlockControls } from '@/utils/unitLock.utils';
 import type { ViewerSmartAssetState } from './viewerLiveState';
 import {
   formatAccessAction,
@@ -66,7 +66,6 @@ const LAYOUT_CROSSFADE = { duration: 0.38, ease: [0.32, 0.72, 0, 1] as const };
 
 const EXPAND_ROW_CARD = `${DETAIL_CARD} flex min-h-[5rem] flex-1 flex-col`;
 const EXPAND_ROW_BODY = 'min-h-0 flex-1';
-const ACCESS_ROW_BODY = `${EXPAND_ROW_BODY} overflow-y-auto`;
 
 const unitStatusMeta: Record<string, { label: string; className: string }> = {
   occupied: {
@@ -434,6 +433,17 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
 
   const handleUnlock = useCallback(async () => {
     if (!deviceId) return;
+    if (
+      !canExecuteRemoteUnlock({
+        hasDevice: true,
+        remoteSupported: supportsRemoteUnlock,
+        lockStatus: lockStatusRef.current,
+        deviceStatus,
+        isSubmitting: isSubmitting(unit.id),
+      })
+    ) {
+      return;
+    }
     const previousStatus = lockStatusRef.current ?? 'locked';
 
     await requestUnlock({
@@ -449,7 +459,7 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
         }
       },
     });
-  }, [deviceId, unit, facilities, requestUnlock]);
+  }, [deviceId, unit, facilities, requestUnlock, supportsRemoteUnlock, deviceStatus, isSubmitting]);
 
   return (
     <div
@@ -526,10 +536,10 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
           onUnitDetails={() => navigate(`/units/${unit.id}`)}
         />
 
-        <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 py-2.5 pb-4">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-2.5 px-4 py-2.5 pb-4">
           <ExpandRowCard
             title="Recent access"
-            bodyClassName={ACCESS_ROW_BODY}
             action={
               <SectionNavLink
                 label="View all"
@@ -563,51 +573,70 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
             )}
           </ExpandRowCard>
 
-          <ExpandRowCard
-            title="Tenant"
-            action={
-              tenantId ? (
-                <SectionNavLink
-                  label="View tenant"
-                  onClick={() => navigate(`/users/${tenantId}/details`)}
-                />
-              ) : undefined
-            }
-          >
-            <div className="space-y-2">
-              <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
-                <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
-                <span className="truncate">{tenantName}</span>
+          <div className={`grid gap-2.5 ${showRemoteUnlock ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <ExpandRowCard
+              title="Tenant"
+              action={
+                tenantId ? (
+                  <SectionNavLink
+                    label="View tenant"
+                    onClick={() => navigate(`/users/${tenantId}/details`)}
+                  />
+                ) : undefined
+              }
+            >
+              <div className="space-y-2">
+                <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
+                  <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
+                  <span className="truncate">{tenantName}</span>
+                </div>
+                {tenantEmail && (
+                  <a
+                    href={`mailto:${tenantEmail}`}
+                    className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
+                  >
+                    <EnvelopeIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{tenantEmail}</span>
+                  </a>
+                )}
+                {tenantPhone && (
+                  <a
+                    href={`tel:${tenantPhone}`}
+                    className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
+                  >
+                    <PhoneIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span>{tenantPhone}</span>
+                  </a>
+                )}
+                {!tenantEmail && !tenantPhone && (
+                  <p className={TYPE.meta}>
+                    {tenantId ? 'No contact details on file.' : 'No tenant assigned.'}
+                  </p>
+                )}
               </div>
-              {tenantEmail && (
-                <a
-                  href={`mailto:${tenantEmail}`}
-                  className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
-                >
-                  <EnvelopeIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{tenantEmail}</span>
-                </a>
-              )}
-              {tenantPhone && (
-                <a
-                  href={`tel:${tenantPhone}`}
-                  className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
-                >
-                  <PhoneIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span>{tenantPhone}</span>
-                </a>
-              )}
-              {!tenantEmail && !tenantPhone && (
-                <p className={TYPE.meta}>
-                  {tenantId ? 'No contact details on file.' : 'No tenant assigned.'}
-                </p>
-              )}
-            </div>
-          </ExpandRowCard>
+            </ExpandRowCard>
+
+            {showRemoteUnlock && (
+              <ExpandRowCard
+                title="Remote unlock"
+                bodyClassName="flex flex-1 flex-col justify-center"
+              >
+                <RemoteUnlockButton
+                  lockStatus={lockStatus}
+                  isSubmitting={isSubmitting(unit.id)}
+                  hasDevice={hasDevice}
+                  remoteSupported={supportsRemoteUnlock}
+                  deviceStatus={deviceStatus}
+                  fullWidth
+                  size="sm"
+                  onUnlock={handleUnlock}
+                />
+              </ExpandRowCard>
+            )}
+          </div>
 
           <ExpandRowCard
             title="Device"
-            bodyClassName={`${EXPAND_ROW_BODY} flex flex-col`}
             action={
               deviceId ? (
                 <SectionNavLink
@@ -652,21 +681,8 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
             ) : (
               <p className={TYPE.meta}>No BluLok device linked.</p>
             )}
-
-            {showRemoteUnlock && (
-              <div className="mt-auto border-t border-gray-100 pt-2.5 dark:border-gray-700/50">
-                <RemoteUnlockButton
-                  lockStatus={lockStatus}
-                  isSubmitting={isSubmitting(unit.id)}
-                  hasDevice={hasDevice}
-                  remoteSupported={supportsRemoteUnlock}
-                  fullWidth
-                  size="sm"
-                  onUnlock={handleUnlock}
-                />
-              </div>
-            )}
           </ExpandRowCard>
+        </div>
         </div>
       </motion.div>
     </div>

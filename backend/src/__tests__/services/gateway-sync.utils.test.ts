@@ -136,6 +136,23 @@ describe('gateway-sync.utils', () => {
 
       expect(result.locks).toHaveLength(1);
       expect(result.accessControl).toHaveLength(1);
+      expect(result.networkInfra).toHaveLength(0);
+    });
+
+    it('routes bridge and friend_node to networkInfra', () => {
+      const result = partitionStateUpdatesByKind([
+        { kind: 'bridge', serial: 'BR-1', state: 'healthy' },
+        { kind: 'friend_node', serial: 'FN-1', last_seen: '2026-06-18T15:44:54.349684Z' },
+      ]);
+
+      expect(result.networkInfra).toHaveLength(2);
+      expect(result.locks).toHaveLength(0);
+    });
+
+    it('rejects unsupported state kinds', () => {
+      expect(() =>
+        partitionStateUpdatesByKind([{ kind: 'gateway', serial: 'GW-1', state: 'healthy' }]),
+      ).toThrow(/bridge, friend_node/);
     });
   });
 });

@@ -52,6 +52,7 @@ const KNOWN_METADATA_KEYS = new Set([
   'state',
   'firmware_version',
   'info',
+  'last_seen',
 ]);
 
 export class GatewayInventoryDeviceModel {
@@ -139,6 +140,21 @@ export class GatewayInventoryDeviceModel {
     return rows.map((row) => this.mapRow(row));
   }
 
+  async findByGatewayKindAndSerial(
+    gatewayId: string,
+    deviceKind: NetworkInfraSyncKind,
+    deviceSerial: string,
+  ): Promise<GatewayInventoryDeviceRow | null> {
+    const row = await this.knex('gateway_inventory_devices')
+      .where({
+        gateway_id: gatewayId,
+        device_kind: deviceKind,
+        device_serial: deviceSerial,
+      })
+      .first();
+    return row ? this.mapRow(row) : null;
+  }
+
   async findById(id: string): Promise<GatewayInventoryDeviceRow | null> {
     const row = await this.knex('gateway_inventory_devices').where('id', id).first();
     return row ? this.mapRow(row) : null;
@@ -223,6 +239,52 @@ export class GatewayInventoryDeviceModel {
     });
 
     return (await this.findById(id))!;
+  }
+
+  async patchByGatewayKindAndSerial(
+    gatewayId: string,
+    deviceKind: NetworkInfraSyncKind,
+    deviceSerial: string,
+    patch: {
+      state?: string | null;
+      firmwareVersion?: string | null;
+      info?: Record<string, unknown>;
+      metadata?: Record<string, unknown>;
+      lastSeen?: Date;
+    },
+  ): Promise<GatewayInventoryDeviceRow | null> {
+    const existing = await this.findByGatewayKindAndSerial(gatewayId, deviceKind, deviceSerial);
+    if (!existing) {
+      return null;
+    }
+
+    const payload: Record<string, unknown> = { updated_at: new Date() };
+
+    if (patch.state !== undefined) {
+      payload.state = patch.state;
+    }
+    if (patch.firmwareVersion !== undefined) {
+      payload.firmware_version = patch.firmwareVersion;
+    }
+    if (patch.info !== undefined) {
+      payload.info = JSON.stringify(patch.info);
+    }
+    if (patch.metadata !== undefined) {
+      payload.metadata = JSON.stringify({
+        ...existing.metadata,
+        ...patch.metadata,
+      });
+    }
+    if (patch.lastSeen !== undefined) {
+      payload.last_seen = patch.lastSeen;
+    }
+
+    if (Object.keys(payload).length <= 1) {
+      return existing;
+    }
+
+    await this.knex('gateway_inventory_devices').where('id', existing.id).update(payload);
+    return this.findById(existing.id);
   }
 
   async deleteById(id: string): Promise<boolean> {
