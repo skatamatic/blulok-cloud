@@ -40,6 +40,8 @@ const saveFacilitySchema = Joi.object({
   thumbnail: Joi.string().optional().allow(null, ''),
   /** When duplicating a facility, copy layout-source.png from this facility id. */
   copyLayoutSourceFrom: Joi.string().uuid().optional(),
+  /** When duplicating a facility, copy terrain sidecars from this facility id. */
+  copyTerrainFrom: Joi.string().uuid().optional(),
 });
 
 const updateFacilitySchema = Joi.object({
@@ -77,6 +79,75 @@ function handleLayoutUpload(
   next: NextFunction
 ): void {
   layoutUpload.single('file')(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        res.status(413).json({ error: 'File too large. Maximum size is 25 MB.' });
+        return;
+      }
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    next();
+  });
+}
+
+const TERRAIN_IMAGERY_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const TERRAIN_HEIGHTMAP_MIMES = ['image/png'];
+
+const terrainImageryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (_req, file, cb: FileFilterCallback) => {
+    const ok =
+      TERRAIN_IMAGERY_MIMES.includes(file.mimetype) ||
+      /\.(jpe?g|png|webp)$/i.test(file.originalname);
+    cb(null, ok);
+  },
+});
+
+const terrainHeightmapUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (_req, file, cb: FileFilterCallback) => {
+    const ok =
+      TERRAIN_HEIGHTMAP_MIMES.includes(file.mimetype) ||
+      /\.png$/i.test(file.originalname);
+    cb(null, ok);
+  },
+});
+
+function handleTerrainImageryUpload(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  terrainImageryUpload.single('file')(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        res.status(413).json({ error: 'File too large. Maximum size is 25 MB.' });
+        return;
+      }
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    next();
+  });
+}
+
+function handleTerrainHeightmapUpload(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  terrainHeightmapUpload.single('file')(req, res, (err: unknown) => {
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         res.status(413).json({ error: 'File too large. Maximum size is 25 MB.' });
@@ -202,6 +273,262 @@ router.put(
 );
 
 /**
+ * GET /api/v1/bludesign/facilities/terrain-data/:terrainDataId/imagery
+ */
+router.get('/terrain-data/:terrainDataId/imagery', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { terrainDataId } = req.params;
+    const buffer = await getFacilityService().loadTerrainDataImagery(terrainDataId, userId);
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(buffer);
+  } catch (error) {
+    const status = layoutSourceStatus(error);
+    if (status >= 500) console.error('Error fetching terrain imagery:', error);
+    res.status(status).json({
+      error: status === 404 ? 'Terrain imagery not found' : 'Failed to fetch terrain imagery',
+    });
+  }
+});
+
+/**
+ * PUT /api/v1/bludesign/facilities/terrain-data/:terrainDataId/imagery
+ */
+router.put(
+  '/terrain-data/:terrainDataId/imagery',
+  authenticateToken,
+  handleTerrainImageryUpload,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      if (!req.file?.buffer) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const { terrainDataId } = req.params;
+      await getFacilityService().saveTerrainDataImagery(terrainDataId, userId, req.file.buffer);
+      res.json({ success: true });
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error saving terrain imagery:', error);
+      res.status(status).json({
+        error: status === 400 ? (error as Error).message : 'Failed to save terrain imagery',
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/v1/bludesign/facilities/terrain-data/:terrainDataId/heightmap
+ */
+router.get('/terrain-data/:terrainDataId/heightmap', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { terrainDataId } = req.params;
+    const buffer = await getFacilityService().loadTerrainDataHeightmap(terrainDataId, userId);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(buffer);
+  } catch (error) {
+    const status = layoutSourceStatus(error);
+    if (status >= 500) console.error('Error fetching terrain heightmap:', error);
+    res.status(status).json({
+      error: status === 404 ? 'Terrain heightmap not found' : 'Failed to fetch terrain heightmap',
+    });
+  }
+});
+
+/**
+ * PUT /api/v1/bludesign/facilities/terrain-data/:terrainDataId/heightmap
+ */
+router.put(
+  '/terrain-data/:terrainDataId/heightmap',
+  authenticateToken,
+  handleTerrainHeightmapUpload,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      if (!req.file?.buffer) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const { terrainDataId } = req.params;
+      await getFacilityService().saveTerrainDataHeightmap(terrainDataId, userId, req.file.buffer);
+      res.json({ success: true });
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error saving terrain heightmap:', error);
+      res.status(status).json({
+        error: status === 400 ? (error as Error).message : 'Failed to save terrain heightmap',
+      });
+    }
+  }
+);
+
+/**
+ * DELETE /api/v1/bludesign/facilities/terrain-data/:terrainDataId
+ */
+router.delete(
+  '/terrain-data/:terrainDataId',
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { terrainDataId } = req.params;
+      await getFacilityService().deleteTerrainData(terrainDataId, userId);
+      res.json({ success: true });
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error deleting terrain data:', error);
+      res.status(status).json({
+        error: status === 400 ? (error as Error).message : 'Failed to delete terrain data',
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/v1/bludesign/facilities/:id/terrain-imagery
+ */
+router.get('/:id/terrain-imagery', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { id } = req.params;
+    const buffer = await getFacilityService().loadTerrainImagery(id, userId);
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(buffer);
+  } catch (error) {
+    const status = layoutSourceStatus(error);
+    if (status >= 500) console.error('Error fetching terrain imagery:', error);
+    res.status(status).json({
+      error: status === 404 ? 'Terrain imagery not found' : 'Failed to fetch terrain imagery',
+    });
+  }
+});
+
+/**
+ * PUT /api/v1/bludesign/facilities/:id/terrain-imagery
+ */
+router.put(
+  '/:id/terrain-imagery',
+  authenticateToken,
+  handleTerrainImageryUpload,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      if (!req.file?.buffer) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const { id } = req.params;
+      await getFacilityService().saveTerrainImagery(id, userId, req.file.buffer);
+      res.json({ success: true });
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error saving terrain imagery:', error);
+      res.status(status).json({
+        error:
+          status === 404
+            ? 'Facility not found'
+            : status === 400
+              ? (error as Error).message
+              : 'Failed to save terrain imagery',
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/v1/bludesign/facilities/:id/terrain-heightmap
+ */
+router.get('/:id/terrain-heightmap', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { id } = req.params;
+    const buffer = await getFacilityService().loadTerrainHeightmap(id, userId);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(buffer);
+  } catch (error) {
+    const status = layoutSourceStatus(error);
+    if (status >= 500) console.error('Error fetching terrain heightmap:', error);
+    res.status(status).json({
+      error: status === 404 ? 'Terrain heightmap not found' : 'Failed to fetch terrain heightmap',
+    });
+  }
+});
+
+/**
+ * PUT /api/v1/bludesign/facilities/:id/terrain-heightmap
+ */
+router.put(
+  '/:id/terrain-heightmap',
+  authenticateToken,
+  handleTerrainHeightmapUpload,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      if (!req.file?.buffer) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const { id } = req.params;
+      await getFacilityService().saveTerrainHeightmap(id, userId, req.file.buffer);
+      res.json({ success: true });
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error saving terrain heightmap:', error);
+      res.status(status).json({
+        error:
+          status === 404
+            ? 'Facility not found'
+            : status === 400
+              ? (error as Error).message
+              : 'Failed to save terrain heightmap',
+      });
+    }
+  }
+);
+
+/**
  * GET /api/v1/bludesign/facilities/:id
  * Get a specific facility
  */
@@ -246,13 +573,14 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Respo
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { name, data, thumbnail, copyLayoutSourceFrom } = value;
+    const { name, data, thumbnail, copyLayoutSourceFrom, copyTerrainFrom } = value;
     const facility = await getFacilityService().saveFacility(
       userId,
       name,
       data,
       thumbnail,
       copyLayoutSourceFrom,
+      copyTerrainFrom,
     );
 
     res.status(201).json(facility);

@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import { AccessControlDevice, BluLokDevice } from '@/types/facility.types';
+import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon, SignalIcon, WifiIcon, ServerIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { AccessControlDevice, BluLokDevice, NetworkInfraDevice } from '@/types/facility.types';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
+import { formatDateTime } from '@/utils/datetime.utils';
 import {
   formatBluLokDeviceSubtitle,
   formatBluLokLockNumberLabel,
@@ -205,6 +206,119 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+const networkInfraKindLabels: Record<NetworkInfraDevice['device_kind'], string> = {
+  gateway: 'Facility Gateway',
+  bridge: 'Bridge',
+  friend_node: 'Friend Node',
+};
+
+const networkInfraKindIcons: Record<NetworkInfraDevice['device_kind'], typeof ServerIcon> = {
+  gateway: ServerIcon,
+  bridge: SignalIcon,
+  friend_node: WifiIcon,
+};
+
+export function NetworkInfraDeviceCard({
+  device,
+  canManage = false,
+  onDelete,
+  onManageGateway,
+}: {
+  device: NetworkInfraDevice;
+  canManage?: boolean;
+  onDelete?: (device: NetworkInfraDevice) => void;
+  onManageGateway?: () => void;
+}) {
+  const KindIcon = networkInfraKindIcons[device.device_kind] || ServerIcon;
+  const StatusIcon = (statusIcons as Record<string, typeof CheckCircleIcon>)[device.status] || CheckCircleIcon;
+  const displayTitle =
+    device.device_kind === 'gateway' ? device.name : networkInfraKindLabels[device.device_kind];
+
+  return (
+    <div
+      id={`device-${device.id}`}
+      className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 hover:shadow-lg hover:scale-[1.01]"
+    >
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center">
+          <div className="p-3 bg-indigo-100 dark:bg-indigo-900/20 rounded-lg mr-4">
+            <KindIcon className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">{displayTitle}</h3>
+              {!device.deletable && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+                  Read-only
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">{device.device_serial}</p>
+            {device.device_kind === 'gateway' && (
+              <p className="text-sm text-gray-500 dark:text-gray-400">{networkInfraKindLabels.gateway}</p>
+            )}
+          </div>
+        </div>
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${(statusColors as Record<string, string>)[device.status] || statusColors.unknown}`}>
+          <StatusIcon className="h-3 w-3 mr-1" />
+          {device.status}
+        </span>
+      </div>
+
+      <div className="space-y-2 text-sm">
+        {device.firmware_version && (
+          <div className="flex items-center justify-between">
+            <span className="text-gray-500 dark:text-gray-400">Firmware</span>
+            <span className="font-medium text-gray-900 dark:text-white">{device.firmware_version}</span>
+          </div>
+        )}
+        {device.last_seen && (
+          <div className="flex items-center justify-between">
+            <span className="text-gray-500 dark:text-gray-400">Last seen</span>
+            <span className="font-medium text-gray-900 dark:text-white">{formatDateTime(device.last_seen)}</span>
+          </div>
+        )}
+        {device.facility_name && (
+          <div className="flex items-center justify-between">
+            <span className="text-gray-500 dark:text-gray-400">Facility</span>
+            <span className="font-medium text-gray-900 dark:text-white">{device.facility_name}</span>
+          </div>
+        )}
+        {device.gateway_name && device.device_kind !== 'gateway' && (
+          <div className="flex items-center justify-between">
+            <span className="text-gray-500 dark:text-gray-400">Gateway</span>
+            <span className="font-medium text-gray-900 dark:text-white">{device.gateway_name}</span>
+          </div>
+        )}
+      </div>
+
+      {(device.device_kind === 'gateway' && onManageGateway) || (canManage && device.deletable && onDelete) ? (
+      <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+        {device.device_kind === 'gateway' && onManageGateway && (
+          <button
+            type="button"
+            onClick={onManageGateway}
+            className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md text-primary-700 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-colors"
+          >
+            Manage gateway
+          </button>
+        )}
+        {canManage && device.deletable && onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(device)}
+            className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+          >
+            <TrashIcon className="h-4 w-4 mr-1" />
+            Remove
+          </button>
+        )}
+      </div>
+      ) : null}
     </div>
   );
 }

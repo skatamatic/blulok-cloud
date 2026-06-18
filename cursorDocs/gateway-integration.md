@@ -59,7 +59,7 @@ See [Gateway Swap / Recovery — Operator & Developer Guide](./gateway-swap-reco
 ### Who may connect
 
 - Roles allowed: **`facility_admin`**, **`admin`**, **`dev_admin`** (see `AUTH` handler in `websocket-gateway.transport.ts`).
-- **`facility_admin`**: JWT must include **`facilityIds`** containing the same **`facilityId`** sent in `AUTH`.
+- **`facility_admin`**: live DB association check for the `facilityId` sent in `AUTH` (JWT `facilityIds` are not used).
 
 If anything is wrong, the socket receives `ERROR` with codes such as `AUTH_FAILED`, `AUTH_FORBIDDEN`, `AUTH_BAD_REQUEST`, `AUTH_RATE_LIMITED`, then the connection is closed.
 
@@ -205,6 +205,7 @@ Unified internal routes (via `PROXY_REQUEST` or direct REST):
 
 | `POST /api/v1/internal/gateway/devices/inventory` | Reconcile locks (`kind: lock`, `lock_id`) and access keypads (`kind: access_control`, `access_id`, optional `relay_channel` default 1) |
 | `POST /api/v1/internal/gateway/devices/state` | Partial telemetry: locks use full telemetry; access uses `online` / `locked` only |
+| `POST /api/v1/internal/gateway/access-events` | Credential-based access outcomes (grants, denials, keypad, admin remote open) — see [`gateway-access-events.md`](gateway-access-events.md) |
 | `GET /api/v1/internal/gateway/access-codes` | Poll keypad codes after access devices exist |
 
 **Removal policy:** inventory sync removes only auto-provisioned devices (`metadata.createdFromGatewaySync`). Manually created locks/access rows are never deleted by a gateway delta.
@@ -225,12 +226,12 @@ After access inventory changes, the backend enqueues an access-code push in **`a
 
 ### Cloud inventory deletion (`DEVICE_DELETED`)
 
-When an admin or facility admin removes a BluLok or access-control row via **`DELETE /api/v1/devices/blulok/:id`** or **`DELETE /api/v1/devices/access-control/:id`**, the backend deletes the cloud row and enqueues a tombstone in **`device_deletion_outbox`**. Delivery uses the same durable pattern as access-code pushes:
+When an admin or facility admin removes a BluLok, access-control, or network-infra row via **`DELETE /api/v1/devices/blulok/:id`**, **`DELETE /api/v1/devices/access-control/:id`**, or **`DELETE /api/v1/devices/network-infra/:id`**, the backend deletes the cloud row and enqueues a tombstone in **`device_deletion_outbox`**. Delivery uses the same durable pattern as access-code pushes:
 
 | Step | Behavior |
 |------|----------|
-| Enqueue | Row keyed by facility + device kind + `lock_id` or `access_id::relay_channel` |
-| Online gateway | Signed JWT `{ cmd_type: "DEVICE_DELETED", lock_id \| access_id + relay_channel, device_kind, nonce }` over inbound WS |
+| Enqueue | Row keyed by facility + device kind + `lock_id`, `access_id::relay_channel`, or infra `serial` |
+| Online gateway | Signed JWT `{ cmd_type: "DEVICE_DELETED", device_kind, lock_id \| access_id + relay_channel \| serial, nonce }` over inbound WS |
 | Gateway ACK | **`DEVICE_DELETED_ACK`** `{ nonce, success }` marks outbox **`delivered`** |
 | Offline gateway | Row stays **`pending`**; **`AUTH_OK`** reconnect flush + scheduler retry |
 | Re-add before ACK | Inventory sync or manual create cancels active tombstone (`cancelled`) |
@@ -329,14 +330,14 @@ The Facility → Gateway → **DevTools/Diag** panel (DEV_ADMIN only) streams ra
 - **Gateway status cache:** `GatewayStatusSubscriptionManager.broadcastUpdate` always calls `invalidateCache()` before loading gateways so **HTTP/BaseGateway** DB updates and inbound WS both fan out **fresh** rows (not a stale 5s `findAll` cache). Tests live in `gateway-status-subscription-manager.test.ts`.
 - **Dashboard client parsing:** `frontend/src/__tests__/services/websocket.service.test.ts` covers `gateway_status_update`, `device_status_update`, and `units_update` dispatch to `onMessage` handlers (same path the app uses for lock + gateway UI).
 - **Units management realtime:** `frontend/src/__tests__/pages/UnitsManagementPage.test.tsx` mocks `WebSocketContext` and asserts facility-scoped `device_status` + `units` subscriptions (`useLockDeviceRealtime`).
-- **Live backend E2E:** `backend/npm run ws:e2e` (`scripts/ws-gateway-e2e.js`) exercises `/ws/gateway` PROXY → `devices/state`, then dashboard `/ws` subscriptions for **`device_status_update`**, **`units_update`**, and **`gateway_status_update`** (plus stress paths). Includes **unified device sync**: mixed `devices/inventory` (locks + `kind: access_control`), access-only state updates, relay delta add/remove, and validation failures. Includes **device commissioning** HTTP checks: `DELETE /devices/blulok/:id/unassign`, online/offline **`DELETE /devices/blulok/:id`** with **`DEVICE_DELETED`** / **`DEVICE_DELETED_ACK`**, facility-admin in-facility inventory delete, re-add cancels tombstone, post-tombstone sync, and access-control **`DELETE /devices/access-control/:id`**. While subscribed with **`device_id`** (same filter as `useLockDeviceRealtime` / the web app), it asserts **`lock_status`** after **HTTP** `PUT .../devices/blulok/:id/lock` and after **gateway** `devices/state` LOCKED/UNLOCKED, plus **`units_update`** after a gateway lock change. It also decodes route pass JWTs from **`POST /passes/request`** and asserts **`user_role`** (`tenant` for primary/shared users; **`facility_admin`** for the provisioned facility admin). **Access-code outbox:** disconnects inbound WS, facility admin **`PUT /access-codes/manual/set`** (same as Access Code UI) while offline → DB updated, **`push-state=pending`**, no unicast; reconnect **`AUTH_OK`** flushes outbox → **`ACCESS_CODE_UPDATE`** + **`push-state=active`**. Defaults: read **`PORT`** from the **`backend/.env` file** (local dev template uses **3000**; not shell `PORT`, so another process cannot steal the port), then `127.0.0.1`. Override with **`E2E_API_PORT`** / **`BACKEND_PORT`**, or **`API_BASE_URL`** (WebSocket defaults follow the same host:port unless `WS_URL` / `UI_WS_URL` are set), or **`E2E_HOST`** for host-only.
+- **Live backend E2E:** `backend/npm run ws:e2e` (`scripts/ws-gateway-e2e.js`) exercises `/ws/gateway` PROXY → `devices/state`, then dashboard `/ws` subscriptions for **`device_status_update`**, **`units_update`**, and **`gateway_status_update`** (plus stress paths). Includes **unified device sync**: mixed `devices/inventory` (locks + `kind: access_control` + **`bridge` / `friend_node` / `gateway` inventory update**), access-only state updates, relay delta add/remove, network-infra state/firmware refresh and sync-managed removal, and validation failures. **Gateway Swap Recovery** asserts `GET .../recovery/inventory-preview` includes bridge/friend_node (schema v2, facility gateway excluded) and that infra rows survive bypass/rebind. Includes **device commissioning** HTTP checks: `DELETE /devices/blulok/:id/unassign`, online/offline **`DELETE /devices/blulok/:id`** with **`DEVICE_DELETED`** / **`DEVICE_DELETED_ACK`**, facility-admin in-facility inventory delete, re-add cancels tombstone, post-tombstone sync, and access-control **`DELETE /devices/access-control/:id`**. While subscribed with **`device_id`** (same filter as `useLockDeviceRealtime` / the web app), it asserts **`lock_status`** after **HTTP** `PUT .../devices/blulok/:id/lock` and after **gateway** `devices/state` LOCKED/UNLOCKED, plus **`units_update`** after a gateway lock change. It also decodes route pass JWTs from **`POST /passes/request`** and asserts **`user_role`** (`tenant` for primary/shared users; **`facility_admin`** for the provisioned facility admin). **Access-code outbox:** disconnects inbound WS, facility admin **`PUT /access-codes/manual/set`** (same as Access Code UI) while offline → DB updated, **`push-state=pending`**, no unicast; reconnect **`AUTH_OK`** flushes outbox → **`ACCESS_CODE_UPDATE`** + **`push-state=active`**. Defaults: read **`PORT`** from the **`backend/.env` file** (local dev template uses **3000**; not shell `PORT`, so another process cannot steal the port), then `127.0.0.1`. Override with **`E2E_API_PORT`** / **`BACKEND_PORT`**, or **`API_BASE_URL`** (WebSocket defaults follow the same host:port unless `WS_URL` / `UI_WS_URL` are set), or **`E2E_HOST`** for host-only.
 - **Facility Gateway tab UI:** `frontend/src/__tests__/components/Gateway/FacilityGatewayTab.test.tsx` — amber “Inbound WebSocket session is active” when `getGatewayWsStatus.connected` but no gateway row; “Gateway status (database)” when a row exists.
 
 ## Quick checklist
 
 - [ ] `CLOUD_WS` / `CLOUD_API` host matches the **deployed** backend URL.
 - [ ] JWT from **that** backend; not expired; role `facility_admin` | `admin` | `dev_admin`.
-- [ ] `facilityId` is a real facility UUID; for `facility_admin`, it appears in JWT `facilityIds`.
+- [ ] `facilityId` is a real facility UUID; for `facility_admin`, the user has a live DB association to that facility.
 - [ ] First message after connect is **`AUTH`** JSON (not query-string token).
 - [ ] If connections flap or commands never arrive on Cloud Run, check **instance count** and **timeouts** (`--timeout=3600` for gateway WS).
 - [ ] For “always connected” behavior on Cloud Run: accept **hourly** TCP recycle and rely on **fast gateway reconnect** + **`min-instances`**. For **no** hard cap, plan a **non–Cloud Run** WebSocket tier (see §3).

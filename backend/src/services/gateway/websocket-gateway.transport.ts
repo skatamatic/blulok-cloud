@@ -683,10 +683,15 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           safeSend(ws, { type: 'ERROR', code: 'AUTH_BAD_REQUEST', message: 'facilityId required' });
           return closeAndCleanup();
         }
-        // Facility admin must be scoped to this facility
+        // Facility admin must be scoped to this facility (live DB associations, not JWT)
         if (decoded.role === UserRole.FACILITY_ADMIN) {
-          const scopes = decoded.facilityIds || [];
-          if (!scopes.includes(facilityId)) {
+          const { FacilityAccessService } = await import('@/services/facility-access.service');
+          const hasAccess = await FacilityAccessService.hasAccessToFacility(
+            decoded.userId,
+            decoded.role as UserRole,
+            facilityId
+          );
+          if (!hasAccess) {
             logger.warn(`Gateway WS AUTH forbidden (facility not permitted) user=${decoded.userId} role=${decoded.role} remote=${remote} facility=${facilityId}`);
             safeSend(ws, { type: 'ERROR', code: 'AUTH_FORBIDDEN', message: 'Facility not permitted' });
             return closeAndCleanup();

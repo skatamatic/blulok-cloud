@@ -177,14 +177,28 @@ Single-user reads (`GET /users/:id`, `/details`) use `UserListScopeService.canRe
    }
    ```
 
-4. **JWT Token**: Contains user ID, email, role, and expires in 30 days
+4. **JWT Token**: Contains user ID, email, role, optional `facilityIds` snapshot, and expires in 30 days
 
 ### Token Management
 
 - **Storage**: Client stores JWT in localStorage
 - **Header**: Sent as `Authorization: Bearer <token>`
 - **Expiration**: 30 days (configurable via `JWT_EXPIRES_IN`)
-- **Refresh**: Manual re-login required (future: refresh tokens)
+- **Refresh**: `POST /auth/refresh-token` re-issues JWT with live scope; clients should also call `GET /auth/profile` for UI scope
+
+### Live facility scope (JWT is not authoritative)
+
+JWT `facilityIds` are a **login snapshot only**. The backend **never** uses raw JWT claims for authorization:
+
+| Layer | Behavior |
+|-------|----------|
+| **REST** | `authenticateToken` replaces `req.user.facilityIds` on every request via `FacilityAccessService` |
+| **Facility resolution** | `facility_admin` → `user_facility_associations`; `tenant` / `maintenance` → active `unit_assignments` + `key_sharing` |
+| **Dashboard WebSocket** | Loads scope at connect; refreshes on heartbeat and on association changes (`scope_update` message) |
+| **Gateway WebSocket** | `facility_admin` AUTH checks live DB access, not JWT |
+| **Frontend UI** | `GlobalFacilityContext` (`GET /facilities`) and `GET /auth/profile` — not JWT decode |
+
+Use `applyFacilityScope(req)` or `FacilityAccessService.hasAccessToFacility()` for new routes instead of reading JWT payloads directly.
 
 ## Authorization & Page Access
 

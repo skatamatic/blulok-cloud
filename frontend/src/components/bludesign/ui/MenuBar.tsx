@@ -187,6 +187,7 @@ interface PanelVisibility {
   skins: boolean;
   datasource: boolean;
   buildingSkin: boolean;
+  terrain: boolean;
 }
 
 interface MenuBarProps {
@@ -312,6 +313,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
             { label: `${panelVisibility.floors ? '✓ ' : '  '}Floors`, onClick: () => onTogglePanelVisibility('floors') },
             { label: `${panelVisibility.skins ? '✓ ' : '  '}Theme`, onClick: () => onTogglePanelVisibility('skins') },
             { label: `${panelVisibility.datasource ? '✓ ' : '  '}Data Source`, onClick: () => onTogglePanelVisibility('datasource') },
+            { label: `${panelVisibility.terrain ? '✓ ' : '  '}Terrain`, onClick: () => onTogglePanelVisibility('terrain') },
           ] : []),
           { divider: true } as MenuItem,
           // Layout section header

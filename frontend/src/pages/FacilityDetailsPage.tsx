@@ -26,15 +26,15 @@ import {
   TrashIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
+import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, NetworkInfraDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
-import { UserRole } from '@/types/auth.types';
-import { FacilityLockTimeoutSetting } from '@/components/Facility/FacilityLockTimeoutSetting';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
+import { UserRole } from '@/types/auth.types';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
+import { FacilityLockTimeoutSetting } from '@/components/Facility/FacilityLockTimeoutSetting';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
 import { SchedulesHubTab } from '@/components/Schedules/SchedulesHubTab';
 import { AccessCodeManagementTab } from '@/components/AccessCodes/AccessCodeManagementTab';
@@ -42,7 +42,7 @@ import { MyAccessCodes } from '@/components/AccessCodes/MyAccessCodes';
 import { DeviceGroupManager } from '@/components/AccessCodes/DeviceGroupManager';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
-import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared } from '@/components/Devices/DeviceCards';
+import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared, NetworkInfraDeviceCard } from '@/components/Devices/DeviceCards';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import {
   DetailsPageHeader,
@@ -119,6 +119,8 @@ const sanitizeFilters = (filters: Record<string, unknown>) => {
   Object.entries(filters).forEach(([key, value]) => {
     if (value === undefined || value === null) return;
     if (typeof value === 'string' && value.trim() === '') return;
+    if (key === 'device_type' && value === 'all') return;
+    if (key === 'device_scope' && value === 'operational') return;
     sanitized[key] = value;
   });
   return sanitized;
@@ -131,7 +133,7 @@ export default function FacilityDetailsPage() {
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({ showWithoutFromPath: false });
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const { selectedFacilityId, setSelectedFacilityId, isAllFacilitiesSelected } = useGlobalFacility();
+  const { selectedFacilityId, setSelectedFacilityId, isAllFacilitiesSelected, facilities } = useGlobalFacility();
   const [facility, setFacility] = useState<Facility | null>(null);
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -156,7 +158,9 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   if (value === 'overview') return 'facility';
   return isFacilityTab(value) ? value : null;
 };
-  type FacilityDeviceListItem = (AccessControlDevice | BluLokDevice) & { device_category: string };
+  type FacilityDeviceListItem =
+    | ((AccessControlDevice | BluLokDevice) & { device_category: string })
+    | NetworkInfraDevice;
 
   // Get initial tab from URL query parameter or location state
   const getInitialTab = (): FacilityTab => {
@@ -188,10 +192,13 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const [deviceFilters, setDeviceFilters] = useState<DeviceFilters>({
     search: '',
     device_type: 'all',
+    device_scope: 'operational',
     status: '',
     sortBy: 'name',
     sortOrder: 'asc',
   });
+  const [showDeleteInfraConfirm, setShowDeleteInfraConfirm] = useState<NetworkInfraDevice | null>(null);
+  const [deletingInfraDevice, setDeletingInfraDevice] = useState(false);
   const [deviceLoading, setDeviceLoading] = useState(false);
   const [devicesInitialLoad, setDevicesInitialLoad] = useState(true);
   const [unitFiltersExpanded, setUnitFiltersExpanded] = useState(false);
@@ -234,7 +241,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const canEditFacilitySettings = (() => {
     if (!canManage || !id) return false;
     if (authState.user?.role === UserRole.FACILITY_ADMIN) {
-      return authState.user.facilityIds?.includes(id) ?? false;
+      return facilities.some((f) => f.id === id);
     }
     return true;
   })();
@@ -245,6 +252,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     enabled: !isTenant && !!facility?.id,
   });
   const canDelete = ['admin', 'dev_admin'].includes(authState.user?.role || '');
+  const isNetworkInfraDeviceScope = deviceFilters.device_scope === 'network_infra';
 
   // Refs for debouncing WebSocket-triggered refreshes
   const loadDevicesRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
@@ -402,6 +410,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
       setDevicesInitialLoad(false);
     } catch (error) {
       console.error('Failed to load facility devices:', error);
+      addToast({ type: 'error', title: 'Failed to load devices' });
     } finally {
       setDeviceLoading(false);
     }
@@ -588,6 +597,35 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     setDevicePage(1);
   };
 
+  const handleDeviceScopeFilter = (scope: string) => {
+    setDeviceFilters(prev => ({
+      ...prev,
+      device_scope: scope as DeviceFilters['device_scope'],
+      device_type: scope === 'network_infra' ? 'all' : prev.device_type,
+    }));
+    setDevicePage(1);
+  };
+
+  const handleDeleteInfraDevice = async () => {
+    if (!showDeleteInfraConfirm) return;
+
+    try {
+      setDeletingInfraDevice(true);
+      await apiService.removeNetworkInfraDeviceFromCloudInventory(showDeleteInfraConfirm.id);
+      addToast({ type: 'success', title: 'Network device removed from inventory' });
+      await loadFacilityDevices();
+      setShowDeleteInfraConfirm(null);
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { message?: string } } };
+      addToast({
+        type: 'error',
+        title: apiError?.response?.data?.message || 'Failed to remove network device',
+      });
+    } finally {
+      setDeletingInfraDevice(false);
+    }
+  };
+
   const handleDeviceStatusFilter = (status: string) => {
     setDeviceFilters(prev => ({ ...prev, status: status === prev.status ? '' : status }));
     setDevicePage(1);
@@ -631,6 +669,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const headerActions = useMemo(() => {
     if (!canManage) return null;
     if (activeTab === 'devices') {
+      if (isNetworkInfraDeviceScope) return null;
       return (
         <DetailsPagePrimaryAction
           label="Add device"
@@ -655,7 +694,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
       );
     }
     return null;
-  }, [activeTab, canManage]);
+  }, [activeTab, canManage, isNetworkInfraDeviceScope]);
 
   if (loading) {
     return (
@@ -1065,6 +1104,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               setDeviceFilters({
                 search: '',
                 device_type: 'all',
+                device_scope: 'operational',
                 status: '',
                 sortBy: 'name',
                 sortOrder: 'asc',
@@ -1073,6 +1113,16 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
             }}
             sections={[
               {
+                title: 'Device Scope',
+                icon: <ServerIcon className="h-5 w-5" />,
+                options: [
+                  { key: 'operational', label: 'Access Control + Locks', color: 'primary' },
+                  { key: 'network_infra', label: 'Network Infra', color: 'blue' },
+                ],
+                selected: deviceFilters.device_scope || 'operational',
+                onSelect: handleDeviceScopeFilter,
+              },
+              ...(!isNetworkInfraDeviceScope ? [{
                 title: 'Device Type',
                 icon: <FunnelIcon className="h-5 w-5" />,
                 options: [
@@ -1082,7 +1132,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                 ],
                 selected: deviceFilters.device_type || 'all',
                 onSelect: handleDeviceTypeFilter,
-              },
+              }] : []),
               {
                 title: 'Status',
                 icon: <BoltIcon className="h-5 w-5" />,
@@ -1116,7 +1166,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               <ServerIcon className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No devices found</h3>
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {deviceFilters.search || deviceFilters.status || (deviceFilters.device_type && deviceFilters.device_type !== 'all')
+                {deviceFilters.search || deviceFilters.status || (!isNetworkInfraDeviceScope && deviceFilters.device_type && deviceFilters.device_type !== 'all')
                   ? 'Try adjusting your filters.'
                   : 'This facility does not have any devices yet.'}
               </p>
@@ -1131,6 +1181,17 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               {deviceViewMode === 'grid' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {facilityDevices.map((device) => {
+                    if (device.device_category === 'network_infra') {
+                      return (
+                        <NetworkInfraDeviceCard
+                          key={device.id}
+                          device={device as NetworkInfraDevice}
+                          canManage={canManage}
+                          onDelete={(d) => setShowDeleteInfraConfirm(d)}
+                          onManageGateway={() => setActiveTab('gateway')}
+                        />
+                      );
+                    }
                     if (device.device_category === 'blulok') {
                       const bluLokDevice = device as BluLokDevice;
                       return (
@@ -1183,23 +1244,72 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                           onSort={handleFacilityDeviceColumnSort}
                         />
                         <SortableTableTh
-                          label="Location"
-                          columnKey="facility_name"
+                          label={isNetworkInfraDeviceScope ? 'Gateway' : 'Location'}
+                          columnKey={isNetworkInfraDeviceScope ? 'gateway_name' : 'facility_name'}
                           sortBy={deviceFilters.sortBy || 'name'}
                           sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
                           onSort={handleFacilityDeviceColumnSort}
                         />
                         <SortableTableTh
-                          label="Last Activity"
-                          columnKey="last_activity"
+                          label={isNetworkInfraDeviceScope ? 'Last Seen' : 'Last Activity'}
+                          columnKey={isNetworkInfraDeviceScope ? 'last_seen' : 'last_activity'}
                           sortBy={deviceFilters.sortBy || 'name'}
                           sortOrder={deviceFilters.sortOrder === 'desc' ? 'desc' : 'asc'}
                           onSort={handleFacilityDeviceColumnSort}
                         />
+                        {isNetworkInfraDeviceScope && canManage && (
+                          <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                            Actions
+                          </th>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                       {facilityDevices.map((device) => {
+                        if (device.device_category === 'network_infra') {
+                          const infraDevice = device as NetworkInfraDevice;
+                          const StatusIcon =
+                            deviceListStatusIcons[infraDevice.status as keyof typeof deviceListStatusIcons] || CheckCircleIcon;
+                          return (
+                            <tr key={`network-infra-${infraDevice.id}`} className="hover:bg-blue-50/50 dark:hover:bg-blue-900/10">
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                  {infraDevice.device_kind === 'gateway' ? infraDevice.name : infraDevice.device_kind.replace('_', ' ')}
+                                </div>
+                                <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">{infraDevice.device_serial}</div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm capitalize">{infraDevice.device_kind.replace('_', ' ')}</td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${deviceListStatusColors[infraDevice.status as keyof typeof deviceListStatusColors] || deviceListStatusColors.unknown}`}>
+                                  <StatusIcon className="h-3 w-3 mr-1" />
+                                  {infraDevice.status}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                                {infraDevice.device_kind === 'gateway' ? '—' : (infraDevice.gateway_name || 'N/A')}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                                {infraDevice.last_seen ? formatDateTime(infraDevice.last_seen) : 'Never'}
+                              </td>
+                              {isNetworkInfraDeviceScope && canManage && (
+                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                  {infraDevice.deletable ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowDeleteInfraConfirm(infraDevice)}
+                                      className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                                    >
+                                      Remove
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-400 dark:text-gray-500">Read-only</span>
+                                  )}
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        }
+
                         const isBlulok = device.device_category === 'blulok';
                         const accessDevice = device as AccessControlDevice & { device_category: string };
                         const blulokDevice = device as BluLokDevice & { device_category: string };
@@ -1673,6 +1783,21 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
         variant="danger"
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={confirmDelete}
+      />
+
+      <ConfirmModal
+        isOpen={!!showDeleteInfraConfirm}
+        onClose={() => setShowDeleteInfraConfirm(null)}
+        onConfirm={handleDeleteInfraDevice}
+        title="Remove Network Device"
+        message={
+          showDeleteInfraConfirm
+            ? `Remove ${showDeleteInfraConfirm.device_kind.replace('_', ' ')} "${showDeleteInfraConfirm.device_serial}" from cloud inventory? The gateway will be notified to stop reporting this device.`
+            : ''
+        }
+        confirmText="Remove"
+        cancelText="Cancel"
+        isLoading={deletingInfraDevice}
       />
     </DetailsPageShell>
   );

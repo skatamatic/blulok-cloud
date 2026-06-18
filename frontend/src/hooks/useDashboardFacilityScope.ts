@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 
 /** Max facilities passed to histogram / multi-facility API filters. */
 export const DASHBOARD_FACILITY_SCOPE_LIMIT = 50;
@@ -11,15 +12,17 @@ export type DashboardFacilityWsFilters =
 
 /**
  * Shared facility scope for dashboard widgets (notifications, activity, histogram, etc.).
- * - Single facility selected → filter to that facility.
- * - All facilities + global admin → no filter (all accessible data).
- * - All facilities + scoped role → user's assigned facility IDs.
+ * Uses live facility list from GlobalFacilityContext (GET /facilities), not JWT claims.
  */
 export function useDashboardFacilityScope(facilityFilter?: string) {
   const { authState } = useAuth();
+  const { facilities } = useGlobalFacility();
   const canAccessAllFacilities =
     authState.user?.role === 'admin' || authState.user?.role === 'dev_admin';
-  const allowedFacilityIds = authState.user?.facilityIds;
+  const allowedFacilityIds = useMemo(
+    () => facilities.map((f) => f.id),
+    [facilities],
+  );
 
   const facilityIdsForApi = useMemo((): string[] | undefined => {
     if (facilityFilter) {
@@ -28,8 +31,8 @@ export function useDashboardFacilityScope(facilityFilter?: string) {
     if (canAccessAllFacilities) {
       return undefined;
     }
-    const ids = allowedFacilityIds?.slice(0, DASHBOARD_FACILITY_SCOPE_LIMIT);
-    return ids?.length ? ids : undefined;
+    const ids = allowedFacilityIds.slice(0, DASHBOARD_FACILITY_SCOPE_LIMIT);
+    return ids.length ? ids : undefined;
   }, [facilityFilter, canAccessAllFacilities, allowedFacilityIds]);
 
   const wsFilters = useMemo((): DashboardFacilityWsFilters => {
@@ -53,7 +56,7 @@ export function useDashboardFacilityScope(facilityFilter?: string) {
       if (!facilityId) {
         return false;
       }
-      if (!allowedFacilityIds?.length) {
+      if (!allowedFacilityIds.length) {
         return false;
       }
       return allowedFacilityIds.includes(facilityId);

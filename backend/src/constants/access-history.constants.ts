@@ -61,6 +61,7 @@ export const DENIAL_REASON_MESSAGES: Record<string, string> = {
   expired_access: 'Expired access',
   maintenance_mode: 'Maintenance mode',
   timeout: 'Timed out waiting for gateway confirmation',
+  settlement_mismatch: 'Device did not reach the requested lock state',
 };
 
 export function denialReasonToLabel(reason: string | undefined): string | undefined {

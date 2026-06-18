@@ -697,6 +697,11 @@ class ApiService {
     return response.data;
   }
 
+  async removeNetworkInfraDeviceFromCloudInventory(deviceId: string) {
+    const response = await this.api.delete(`/devices/network-infra/${deviceId}`);
+    return response.data;
+  }
+
   // Units Management
   async getUnits(filters?: object) {
     const response = await this.api.get('/units', { params: filters });

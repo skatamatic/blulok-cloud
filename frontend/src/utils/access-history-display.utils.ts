@@ -1,5 +1,7 @@
 import { AccessLog } from '@/types/access-history.types';
 import { formatDateTime } from '@/utils/datetime.utils';
+import { formatBluLokLockNumberLabel } from '@/utils/blulokDeviceDisplay.utils';
+import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 
 export type AccessLogPresentationMetadata = {
   user?: { id: string; name: string; email?: string; navigation_url: string };
@@ -13,6 +15,7 @@ export type AccessLogPresentationMetadata = {
     type?: string;
     location?: string;
     serial?: string;
+    device_settings?: Record<string, unknown> | null;
     navigation_url: string;
   };
   description?: string;
@@ -61,6 +64,7 @@ const DENIAL_REASON_LABELS: Record<string, string> = {
   expired_access: 'Expired access',
   maintenance_mode: 'Maintenance mode',
   timeout: 'Timed out waiting for gateway confirmation',
+  settlement_mismatch: 'Device did not reach the requested lock state',
 };
 
 const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -80,24 +84,58 @@ export function formatAccessHistoryUnitLabel(
   return raw ? `Unit ${raw}` : null;
 }
 
+function normalizeDeviceLabelCandidate(candidate: string | null | undefined): string | null {
+  if (typeof candidate !== 'string') return null;
+  const trimmed = candidate.trim();
+  if (!trimmed || looksLikeUuid(trimmed)) return null;
+
+  if (trimmed.startsWith('Lock ')) {
+    const rest = trimmed.slice(5).trim();
+    if (looksLikeUuid(rest)) return null;
+  }
+
+  return trimmed;
+}
+
+function resolveBluLokAccessHistoryDeviceLabel(
+  log: AccessLog,
+  meta: AccessLogPresentationMetadata,
+): string | null {
+  const settings = meta.device?.device_settings;
+  const displayName = readDisplayName(settings);
+  if (displayName && !looksLikeUuid(displayName)) return displayName;
+
+  const lockLabel = formatBluLokLockNumberLabel({
+    device_serial: log.device_serial,
+    device_settings: settings,
+  });
+  if (lockLabel !== 'Unknown lock') return lockLabel;
+
+  return null;
+}
+
 /** Human-readable access point / device label (never a cloud row UUID). */
 export function formatAccessHistoryDeviceLabel(
   log: AccessLog,
   meta: AccessLogPresentationMetadata,
 ): string | null {
+  if (log.device_type === 'blulok') {
+    const blulokLabel = resolveBluLokAccessHistoryDeviceLabel(log, meta);
+    if (blulokLabel) return blulokLabel;
+  }
+
   const candidates = [
     meta.device?.name,
     log.device_name,
     log.device_type === 'access_control' ? log.device_location : null,
     meta.device?.location,
-    log.device_serial ? (log.device_type === 'access_control' ? log.device_serial : `Lock ${log.device_serial}`) : null,
+    log.device_serial && log.device_type !== 'blulok' ? log.device_serial : null,
     log.device_type === 'access_control' ? 'Access point' : null,
   ];
 
   for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim() && !looksLikeUuid(candidate)) {
-      return candidate.trim();
-    }
+    const normalized = normalizeDeviceLabelCandidate(candidate);
+    if (normalized) return normalized;
   }
 
   return null;
@@ -105,6 +143,11 @@ export function formatAccessHistoryDeviceLabel(
 
 export function getAccessLogMetadata(log: AccessLog): AccessLogPresentationMetadata {
   return (log.metadata || {}) as AccessLogPresentationMetadata;
+}
+
+/** User details route used by access history deep links. */
+export function getAccessLogUserDetailsPath(userId: string): string {
+  return `/users/${userId}/details`;
 }
 
 export function formatAccessAction(action: string): string {
@@ -305,12 +348,15 @@ export function buildAccessLogDetailItems(
     }
   }
 
-  if (failureDetail && (!omitRow || log.success)) {
+  if (failureDetail) {
     items.push({ label: 'Failure reason', value: failureDetail });
   }
 
   if (meta.description) {
-    items.push({ label: 'Notes', value: meta.description });
+    const notes = meta.description.trim();
+    if (!failureDetail || notes !== failureDetail.trim()) {
+      items.push({ label: 'Notes', value: meta.description });
+    }
   }
 
   if (log.ip_address) {

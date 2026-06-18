@@ -1,5 +1,6 @@
 import { WebSocketService } from './websocket.service';
 import { logger } from '@/utils/logger';
+import type { User } from '@/models/user.model';
 
 /**
  * Model Change Types
@@ -136,5 +137,22 @@ export class ModelHooksService {
       data,
       timestamp: new Date()
     });
+
+    const userId: string | undefined =
+      data?.user_id ?? (changeType === 'update' ? associationId : undefined);
+    if (!userId) {
+      return;
+    }
+
+    try {
+      const { UserModel } = await import('@/models/user.model');
+      const user = (await UserModel.findById(userId)) as User | undefined;
+      if (!user) {
+        return;
+      }
+      await this.wsService.refreshFacilityScopeForUser(userId, user.role);
+    } catch (error) {
+      logger.error('Error refreshing WebSocket facility scope after association change:', error);
+    }
   }
 }

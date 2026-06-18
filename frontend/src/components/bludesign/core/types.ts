@@ -803,7 +803,9 @@ export type EngineEventType =
   | 'history-changed'
   | 'autosave-complete'
   | 'progress-updated'
-  | 'progress-complete';
+  | 'progress-complete'
+  | 'terrain-sidecars-loaded'
+  | 'terrain-cleared';
 
 /** Engine event */
 export interface EngineEvent<T = unknown> {
@@ -969,6 +971,8 @@ export interface FacilityData {
   simulationMode?: boolean;
   /** Pixel-space layout from an import wizard (optional). Source image stored separately. */
   layoutImport?: import('../layout-import/layoutImportMetadata').LayoutImportMetadata;
+  /** Site terrain alignment + fetch metadata (imagery/heightmap stored as sidecars). */
+  terrainConfig?: import('./environment/terrainConfigMetadata').TerrainConfig;
 }
 
 /**

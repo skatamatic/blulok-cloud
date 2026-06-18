@@ -25,12 +25,15 @@ function stageProgress(start: number, span: number, ratio: number): number {
  * Ground is applied before sky so techno space-backdrop sync runs while the active ground
  * preset is already set, and the sky pass preserves the overlay when active.
  */
+import type { ScenePresetApplyOptions } from '../core/environment';
+
 export async function applyViewerViewPresets(
   engine: BluDesignEngine,
   sky: SkyPresetId,
   ground: GroundPresetId,
   onProgress?: (update: ViewerViewPresetProgress) => void,
-  environmentOptions?: EnvironmentOptions
+  environmentOptions?: EnvironmentOptions,
+  terrain?: ScenePresetApplyOptions['terrain']
 ): Promise<void> {
   const report = (progress: number, message: string) => onProgress?.({ progress, message });
   const presetApplyOptions = environmentOptions ? { environmentOptions } : undefined;
@@ -47,6 +50,7 @@ export async function applyViewerViewPresets(
     ground === 'natural' ||
     ground === 'woodland' ||
     ground === 'urban' ||
+    ground === 'local' ||
     splitSpaceLighting;
 
   const skyNeedsDownload = sky === 'natural' || splitSpaceLighting;
@@ -58,6 +62,7 @@ export async function applyViewerViewPresets(
 
   await engine.applyGroundPreset(ground, {
     ...presetApplyOptions,
+    terrain,
     onAssetProgress: (ratio) =>
       report(
         stageProgress(GROUND_STAGE.start, GROUND_STAGE.span, ratio),

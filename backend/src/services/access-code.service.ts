@@ -10,6 +10,7 @@ import { UserRole } from '@/types/auth.types';
 import { AccessDeniedError, AppError, ValidationError } from '@/middleware/error.middleware';
 import { logger } from '@/utils/logger';
 import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
 import { ActivityLogModel } from '@/models/activity-log.model';
 import type { Knex } from 'knex';
 import {
@@ -876,34 +877,13 @@ export class AccessCodeService {
     return this.model.findActive(facilityId, undefined, undefined, scheduleId ?? null);
   }
 
-  private async getAccessibleFacilityIds(userId: string, userRole: UserRole, userFacilityIds?: string[]): Promise<string[]> {
+  private async getAccessibleFacilityIds(userId: string, userRole: UserRole, _userFacilityIds?: string[]): Promise<string[]> {
     if (AuthService.canAccessAllFacilities(userRole)) {
       const rows = await this.db('facilities').select('id');
       return rows.map((r) => r.id as string);
     }
 
-    if (userRole === UserRole.FACILITY_ADMIN) {
-      return userFacilityIds || [];
-    }
-
-    // Tenant/maintenance: facilities where user has active assignment or key share
-    const unitFacilityRows = await this.db('unit_assignments as ua')
-      .select('u.facility_id')
-      .join('units as u', 'u.id', 'ua.unit_id')
-      .where('ua.tenant_id', userId)
-      .where((qb) => {
-        qb.whereNull('ua.access_expires_at').orWhere('ua.access_expires_at', '>', new Date());
-      });
-    const sharedFacilityRows = await this.db('key_sharing as ks')
-      .select('u.facility_id')
-      .join('units as u', 'u.id', 'ks.unit_id')
-      .where('ks.shared_with_user_id', userId)
-      .where('ks.is_active', true)
-      .where((qb) => {
-        qb.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', new Date());
-      });
-
-    return Array.from(new Set([...unitFacilityRows, ...sharedFacilityRows].map((r) => r.facility_id as string)));
+    return FacilityAccessService.getUserFacilityIds(userId, userRole);
   }
 
   private async resolvePairingsForDevices(

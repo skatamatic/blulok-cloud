@@ -54,6 +54,20 @@ describe('FacilityDraftStorage', () => {
     expect(loaded?.name).toBe('My Facility');
   });
 
+  it('round-trips the facility id when provided', () => {
+    const mem = createMemoryStorage();
+    const store = new FacilityDraftStorage(DEFAULT_AUTOSAVE_STORAGE_KEY, mem);
+    store.saveDraft(minimalFacility(), 'fac-123');
+    expect(store.loadFacilityId()).toBe('fac-123');
+  });
+
+  it('loadFacilityId returns null when omitted', () => {
+    const mem = createMemoryStorage();
+    const store = new FacilityDraftStorage(DEFAULT_AUTOSAVE_STORAGE_KEY, mem);
+    store.saveDraft(minimalFacility());
+    expect(store.loadFacilityId()).toBeNull();
+  });
+
   it('peekDraftInfo reflects stored draft', () => {
     const mem = createMemoryStorage();
     const store = new FacilityDraftStorage('k', mem);

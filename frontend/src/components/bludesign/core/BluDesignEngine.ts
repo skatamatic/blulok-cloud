@@ -132,6 +132,7 @@ import {
   computeBluDesignSceneBounds,
   computeFocusOrbitForPlacedObjectMesh,
   computeFocusOrbitForBuilding,
+  computeFocusOrbitForWorldBounds,
   computeSelectedObjectsScreenBounds,
   getHoveredPlacedObjectRotation,
 } from './viewport/editorViewport';
@@ -159,6 +160,7 @@ import { serializeCameraState } from './camera/cameraStateUtils';
 import {
   GroundPlaneManager,
   GroundPresetId,
+  LocalTerrainManager,
   SceneryManager,
   SkyManager,
   SkyPresetId,
@@ -166,8 +168,17 @@ import {
   THEME_BACKGROUND_COLORS,
   resolveEnvironmentOptions,
   type EnvironmentOptions,
+  type LocalEnvironmentOptions,
   type ScenePresetApplyOptions,
 } from './environment';
+import {
+  getTerrainConfigFromFacility,
+  type TerrainConfig,
+} from './environment/terrainConfigMetadata';
+import { TerrainAssetAlignmentController } from './environment/terrainAssetAlignment';
+import { TerrainFlattenController } from './environment/TerrainFlattenController';
+
+export type ViewerTerrainConformMode = 'none' | 'align-assets' | 'flatten-terrain';
 
 export interface BluDesignEngineOptions {
   container: HTMLElement;
@@ -249,10 +260,25 @@ export class BluDesignEngine {
   private layoutImport: LayoutImportMetadata | null = null;
   /** Survives editor saves until the scene is cleared (new facility). */
   private persistedLayoutImport: LayoutImportMetadata | null = null;
+  private terrainConfig: TerrainConfig | null = null;
+  private persistedTerrainConfig: TerrainConfig | null = null;
+  private terrainSetupPreview: ScenePresetApplyOptions['terrain'] | null = null;
   private defaultCamera: SerializedCameraState | null = null;
+  /** Server facility id of the open facility; persisted with drafts so sidecars can be re-fetched on recovery. */
+  private draftFacilityId: string | null = null;
+  /** Blobs + object URLs from the most recent persisted terrain load (for panel hydration). */
+  private loadedTerrainSidecars: import('./environment/terrainSidecarLoader').LoadedTerrainSidecars | null =
+    null;
+  private readonly terrainAssetAlignment = new TerrainAssetAlignmentController();
+  private readonly terrainFlattenController = new TerrainFlattenController();
+  private viewerTerrainConformMode: ViewerTerrainConformMode = 'none';
+  private viewerTerrainFlattenDistance = 8;
+  private viewerTerrainFlattenBlend = 1;
+  private viewerTerrainFlattenBaseline = 0;
 
   private skyManager!: SkyManager;
   private groundPlaneManager!: GroundPlaneManager;
+  private localTerrainManager!: LocalTerrainManager;
   private sceneryManager!: SceneryManager;
   private activeSkyPreset: SkyPresetId = DEFAULT_SCENE_PRESETS.skyPreset;
   private activeGroundPreset: GroundPresetId = DEFAULT_SCENE_PRESETS.groundPreset;
@@ -653,6 +679,7 @@ export class BluDesignEngine {
       scene: this.scene,
       getMaxAnisotropy: () => this.renderer.capabilities.getMaxAnisotropy(),
     });
+    this.localTerrainManager = new LocalTerrainManager(this.scene);
     this.sceneryManager = new SceneryManager({ scene: this.scene });
     this.gridSystem.create();
     if (this.readonly) {
@@ -756,6 +783,7 @@ export class BluDesignEngine {
       setWorkingGridAlignment: (a) => this.setWorkingGridAlignment(a),
       deleteObjectInternal: (id) => this.deleteObjectInternal(id),
       scheduleAutoSave: () => this.scheduleAutoSave(),
+      getDraftFacilityId: () => this.draftFacilityId,
     });
     this.themeUnsubscribe = sub.themeUnsubscribe;
     this.floorObjectReplication = sub.floorObjectReplication;
@@ -1049,6 +1077,198 @@ export class BluDesignEngine {
     this.persistedLayoutImport = metadata;
     this.scheduleAutoSave();
   }
+
+  getTerrainConfig(): TerrainConfig | null {
+    return this.terrainConfig;
+  }
+
+  /**
+   * Associate the open facility's server id so drafts can re-fetch terrain
+   * sidecars (imagery/heightmap) after a page reload + draft recovery.
+   */
+  setDraftFacilityId(facilityId: string | null): void {
+    this.draftFacilityId = facilityId;
+  }
+
+  getDraftFacilityId(): string | null {
+    return this.draftFacilityId;
+  }
+
+  setLoadedTerrainSidecars(
+    assets: import('./environment/terrainSidecarLoader').LoadedTerrainSidecars | null
+  ): void {
+    this.loadedTerrainSidecars = assets;
+    if (assets) {
+      this.emit('terrain-sidecars-loaded', {
+        terrainDataId: assets.terrainDataId,
+        fetchedAt: assets.config.fetchedAt,
+      });
+    }
+  }
+
+  getLoadedTerrainSidecars(): import('./environment/terrainSidecarLoader').LoadedTerrainSidecars | null {
+    return this.loadedTerrainSidecars;
+  }
+
+  /**
+   * Viewer widget only — conform local terrain to assets or assets to terrain.
+   */
+  async configureViewerTerrainConform(options: {
+    mode: ViewerTerrainConformMode;
+    flattenDistance?: number;
+    flattenBlend?: number;
+    flattenBaseline?: number;
+    resetBaselines?: boolean;
+  }): Promise<void> {
+    if (!this.readonly) return;
+
+    if (options.flattenDistance !== undefined) {
+      this.viewerTerrainFlattenDistance = options.flattenDistance;
+    }
+    if (options.flattenBlend !== undefined) {
+      this.viewerTerrainFlattenBlend = options.flattenBlend;
+    }
+    if (options.flattenBaseline !== undefined) {
+      this.viewerTerrainFlattenBaseline = options.flattenBaseline;
+    }
+
+    const previousMode = this.viewerTerrainConformMode;
+    this.viewerTerrainConformMode = options.mode;
+
+    if (previousMode === 'align-assets' && options.mode !== 'align-assets') {
+      this.terrainAssetAlignment.setEnabled(false, this.scene);
+    }
+    if (previousMode === 'flatten-terrain' && options.mode !== 'flatten-terrain') {
+      this.terrainFlattenController.setEnabled(
+        false,
+        this.localTerrainManager.getTerrainMesh(),
+        this.scene
+      );
+    }
+
+    if (options.mode === 'none') {
+      this.terrainAssetAlignment.clear(this.scene);
+      this.terrainFlattenController.clear(
+        this.localTerrainManager.getTerrainMesh(),
+        this.scene
+      );
+      return;
+    }
+
+    if (options.mode === 'align-assets') {
+      this.terrainFlattenController.clear(
+        this.localTerrainManager.getTerrainMesh(),
+        this.scene
+      );
+      const wasEnabled = previousMode === 'align-assets';
+      this.terrainAssetAlignment.setEnabled(true, this.scene);
+      if (options.resetBaselines ?? !wasEnabled) {
+        this.terrainAssetAlignment.resetBaselines();
+      }
+      this.refreshViewerTerrainConform();
+      return;
+    }
+
+    this.terrainAssetAlignment.clear(this.scene);
+    this.terrainFlattenController.setEnabled(
+      true,
+      this.localTerrainManager.getTerrainMesh(),
+      this.scene
+    );
+    this.refreshViewerTerrainConform();
+  }
+
+  /** @deprecated Use configureViewerTerrainConform */
+  async configureViewerTerrainAssetAlignment(options: {
+    enabled: boolean;
+    environmentOptions?: EnvironmentOptions;
+    resetBaselines?: boolean;
+  }): Promise<void> {
+    await this.configureViewerTerrainConform({
+      mode: options.enabled ? 'align-assets' : 'none',
+      resetBaselines: options.resetBaselines,
+    });
+  }
+
+  refreshViewerTerrainConform(): void {
+    if (!this.readonly || this.viewerTerrainConformMode === 'none') return;
+
+    const terrainMesh = this.localTerrainManager.getTerrainMesh();
+    if (!terrainMesh) return;
+
+    if (this.viewerTerrainConformMode === 'align-assets') {
+      this.terrainAssetAlignment.apply({
+        scene: this.scene,
+        terrainMesh,
+      });
+      return;
+    }
+
+    this.terrainFlattenController.apply({
+      scene: this.scene,
+      terrainMesh,
+      distance: this.viewerTerrainFlattenDistance,
+      blend: this.viewerTerrainFlattenBlend,
+      baselineY: this.viewerTerrainFlattenBaseline,
+    });
+  }
+
+  updateViewerTerrainFlattenBaseline(baseline: number): void {
+    if (!this.readonly || this.viewerTerrainConformMode !== 'flatten-terrain') return;
+    this.viewerTerrainFlattenBaseline = baseline;
+    const terrainMesh = this.localTerrainManager.getTerrainMesh();
+    if (terrainMesh) {
+      this.terrainFlattenController.updateBaseline(terrainMesh, baseline, this.scene);
+    }
+  }
+
+  /** @deprecated Use refreshViewerTerrainConform */
+  refreshViewerTerrainAssetAlignment(_environmentOptions?: EnvironmentOptions): void {
+    this.refreshViewerTerrainConform();
+  }
+
+  setTerrainConfig(config: TerrainConfig | null): void {
+    this.terrainConfig = config;
+    this.persistedTerrainConfig = config;
+    this.scheduleAutoSave();
+  }
+
+  /** Editor live preview before Apply — object URLs + partial config. */
+  setTerrainSetupPreview(preview: ScenePresetApplyOptions['terrain'] | null): void {
+    this.terrainSetupPreview = preview;
+  }
+
+  updateTerrainTransform(partial: Partial<TerrainConfig>): void {
+    const merge = (base: TerrainConfig): TerrainConfig => {
+      const next = { ...base, ...partial };
+      if (partial.offset) {
+        next.offset = { ...base.offset, ...partial.offset };
+      }
+      return next;
+    };
+    if (this.terrainSetupPreview?.config) {
+      this.terrainSetupPreview = {
+        ...this.terrainSetupPreview,
+        config: merge(this.terrainSetupPreview.config),
+      };
+    }
+    if (this.terrainConfig) {
+      this.terrainConfig = merge(this.terrainConfig);
+    }
+    this.localTerrainManager.updateTerrainTransform(partial);
+  }
+
+  applyLocalOptions(local: LocalEnvironmentOptions, options?: ScenePresetApplyOptions): void {
+    this.activeEnvironmentOptions = {
+      ...this.activeEnvironmentOptions,
+      local: { ...this.activeEnvironmentOptions.local, ...local },
+    };
+    this.localTerrainManager.applyLocalOptions(local, {
+      ...options,
+      environmentOptions: this.activeEnvironmentOptions,
+    });
+    this.refreshViewerTerrainConform();
+  }
   // ==========================================================================
   // Object Property Management
   // ==========================================================================
@@ -1340,6 +1560,44 @@ export class BluDesignEngine {
     return this.activeGroundPreset;
   }
 
+  hasVisibleLocalTerrain(): boolean {
+    return this.localTerrainManager.isTerrainVisible();
+  }
+
+  /** Tear down terrain mesh (does not revoke sidecar blob URLs — callers own that lifecycle). */
+  resetTerrainVisuals(): void {
+    this.loadedTerrainSidecars = null;
+    this.terrainSetupPreview = null;
+    this.viewerTerrainConformMode = 'none';
+    this.terrainAssetAlignment.clear(this.scene);
+    this.terrainFlattenController.clear(this.localTerrainManager.getTerrainMesh(), this.scene);
+    this.localTerrainManager.dispose();
+  }
+
+  /** Remove terrain from the scene and restore the standard editor grid. */
+  async clearTerrainGround(): Promise<void> {
+    this.resetTerrainVisuals();
+    await this.applyGroundPreset('grid');
+    this.emit('terrain-cleared', {});
+  }
+
+  /** Frame the camera on the active local terrain mesh. Returns false when no terrain is loaded. */
+  focusOnLocalTerrain(): boolean {
+    const bounds = this.localTerrainManager.getWorldBounds();
+    if (!bounds) return false;
+
+    if (this.state.isFloorMode) {
+      this.toggleFullBuildingView();
+    }
+
+    const orbit = computeFocusOrbitForWorldBounds(
+      bounds,
+      this.cameraController.getCamera()
+    );
+    this.cameraController.focusOnWithDistance(orbit.center, orbit.newCameraPos, true);
+    return true;
+  }
+
   async applySkyPreset(preset: SkyPresetId, options?: ScenePresetApplyOptions): Promise<void> {
     const generation = ++this.skyPresetGeneration;
     const previous = this.activeSkyPreset;
@@ -1403,6 +1661,7 @@ export class BluDesignEngine {
         woodland: { ...this.activeEnvironmentOptions.woodland, ...options.environmentOptions.woodland },
         urban: { ...this.activeEnvironmentOptions.urban, ...options.environmentOptions.urban },
         techno: { ...this.activeEnvironmentOptions.techno, ...options.environmentOptions.techno },
+        local: { ...this.activeEnvironmentOptions.local, ...options.environmentOptions.local },
       };
     }
     const bounds = this.calculateSceneBounds();
@@ -1416,6 +1675,7 @@ export class BluDesignEngine {
       this.sceneryManager.hide();
       this.gridSystem.setVisible(true);
       this.state.ui.showGrid = true;
+      this.localTerrainManager.hide();
       await this.groundPlaneManager.applyPreset('grid', bounds, presetOptions);
       if (generation !== this.groundPresetGeneration) return;
       await this.syncTechnoGroundEnvironment(presetOptions);
@@ -1426,13 +1686,65 @@ export class BluDesignEngine {
       this.sceneryManager.hide();
       this.gridSystem.setVisible(false);
       this.state.ui.showGrid = false;
+      this.localTerrainManager.hide();
       await this.groundPlaneManager.applyPreset('techno', bounds, presetOptions);
       if (generation !== this.groundPresetGeneration) return;
       await this.syncTechnoGroundEnvironment(presetOptions);
       return;
     }
 
-    // Natural / woodland keep the grid hidden — semi-transparent grass over the editor grid
+    if (preset === 'local') {
+      this.sceneryManager.hide();
+      this.gridSystem.setVisible(false);
+      this.state.ui.showGrid = false;
+      this.groundPlaneManager.hide();
+      let terrain =
+        presetOptions.terrain ??
+        this.terrainSetupPreview ??
+        null;
+
+      const loadedSidecars = this.getLoadedTerrainSidecars();
+      const configId = this.terrainConfig?.terrainDataId;
+      if (
+        (!terrain?.imageryUrl || !terrain?.heightmapUrl) &&
+        loadedSidecars &&
+        this.terrainConfig &&
+        loadedSidecars.terrainDataId === configId
+      ) {
+        terrain = loadedSidecars;
+      }
+
+      if (
+        (!terrain?.imageryUrl || !terrain?.heightmapUrl) &&
+        this.terrainConfig &&
+        !terrain
+      ) {
+        terrain = {
+          imageryUrl: '',
+          heightmapUrl: '',
+          config: this.terrainConfig,
+        };
+      }
+
+      if (terrain?.imageryUrl && terrain.heightmapUrl) {
+        await this.localTerrainManager.apply(bounds, terrain, presetOptions);
+      } else {
+        this.localTerrainManager.hide();
+        if (this.terrainConfig && !terrain?.imageryUrl) {
+          console.warn('[BluDesignEngine] local ground missing terrain sidecars; falling back to blank');
+          this.activeGroundPreset = 'blank';
+          await this.groundPlaneManager.applyPreset('blank', bounds, presetOptions);
+        }
+      }
+      if (generation !== this.groundPresetGeneration) return;
+      await this.syncTechnoGroundEnvironment(presetOptions);
+      this.syncOutdoorEnvironment();
+      return;
+    }
+
+    this.localTerrainManager.hide();
+
+    // Natural / woodland keep the grid hidden
     // caused moiré / horizontal line artifacts in the facility viewer widget.
     const gridVisible = false;
     this.gridSystem.setVisible(gridVisible);
@@ -1494,7 +1806,8 @@ export class BluDesignEngine {
       this.activeGroundPreset === 'grass' ||
       this.activeGroundPreset === 'natural' ||
       this.activeGroundPreset === 'woodland' ||
-      this.activeGroundPreset === 'urban';
+      this.activeGroundPreset === 'urban' ||
+      this.activeGroundPreset === 'local';
 
     if (outdoor) {
       // Subtle hemisphere boost only — avoid washing out the scene.
@@ -1533,11 +1846,19 @@ export class BluDesignEngine {
       this.activeGroundPreset === 'natural' ||
       this.activeGroundPreset === 'woodland' ||
       this.activeGroundPreset === 'urban' ||
-      this.activeGroundPreset === 'techno'
+      this.activeGroundPreset === 'techno' ||
+      this.activeGroundPreset === 'local'
     ) {
-      this.groundPlaneManager.updateBounds(bounds, {
-        environmentOptions: this.activeEnvironmentOptions,
-      });
+      if (this.activeGroundPreset === 'local') {
+        this.localTerrainManager.updateBounds(bounds, {
+          environmentOptions: this.activeEnvironmentOptions,
+        });
+        this.refreshViewerTerrainConform();
+      } else {
+        this.groundPlaneManager.updateBounds(bounds, {
+          environmentOptions: this.activeEnvironmentOptions,
+        });
+      }
       if (this.activeGroundPreset === 'woodland' || this.activeGroundPreset === 'urban') {
         const layout = this.groundPlaneManager.getSceneryLayoutMetrics();
         if (layout) {
@@ -1623,6 +1944,7 @@ export class BluDesignEngine {
       buildings: this.buildingManager.getAllBuildings(),
       dataSourceConfig: this.dataSourceConfig,
       layoutImport: this.persistedLayoutImport ?? this.layoutImport,
+      terrainConfig: this.persistedTerrainConfig ?? this.terrainConfig,
       defaultCamera: this.defaultCamera,
     });
   }
@@ -1651,9 +1973,21 @@ export class BluDesignEngine {
     const layoutImport = getLayoutImportFromFacility(data as FacilityData);
     this.layoutImport = layoutImport;
     this.persistedLayoutImport = layoutImport;
+
+    // Always drop the previous facility's terrain mesh before importing new data.
+    this.resetTerrainVisuals();
+
+    const terrainConfig = getTerrainConfigFromFacility(data as FacilityData);
+    this.terrainConfig = terrainConfig;
+    this.persistedTerrainConfig = terrainConfig;
     importFacilitySceneData(data, this.getFacilityImportHost());
     // Apply themed bound-state visuals to freshly loaded units.
     this.refreshUnitStateVisuals();
+
+    if (!terrainConfig) {
+      void this.applyGroundPreset('grid');
+      this.emit('terrain-cleared', {});
+    }
   }
 
   getDefaultCamera(): SerializedCameraState | null {
@@ -1715,6 +2049,9 @@ export class BluDesignEngine {
     this.defaultCamera = null;
     this.layoutImport = null;
     this.persistedLayoutImport = null;
+    this.terrainConfig = null;
+    this.persistedTerrainConfig = null;
+    this.resetTerrainVisuals();
     clearFacilityEditorScene({
       getState: () => this.state,
       setWorkingGridAlignment: () => this.setWorkingGridAlignment(null),
@@ -1727,6 +2064,7 @@ export class BluDesignEngine {
       emitStateUpdated: () => this.emit('state-updated', this.state),
       clearDraft: () => this.clearDraft(),
     });
+    void this.applyGroundPreset('grid').then(() => this.emit('terrain-cleared', {}));
   }
 
   // ==========================================================================
@@ -1762,6 +2100,7 @@ export class BluDesignEngine {
         console.log(`[AutoSave] Found draft from ${new Date(info.timestamp).toLocaleString()}`);
       }
 
+      this.draftFacilityId = this.draftStorage.loadFacilityId();
       await this.importSceneDataAsync(data);
       return true;
     } catch (error) {
@@ -2625,6 +2964,7 @@ export class BluDesignEngine {
     this.groundTileManager.dispose();
     this.skyManager.dispose();
     this.groundPlaneManager.dispose();
+    this.localTerrainManager.dispose();
     this.sceneryManager.dispose();
     this.unitStateVisualManager.dispose();
     

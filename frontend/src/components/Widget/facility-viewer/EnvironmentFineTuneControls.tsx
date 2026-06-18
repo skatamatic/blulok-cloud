@@ -9,18 +9,36 @@ import {
   type GroundPresetId,
   type SkyPresetId,
 } from '@/components/bludesign/core/environment/ScenePresets';
-import type { FacilityViewerEnvironmentOptions } from '@/types/widget.types';
+import type {
+  FacilityViewerEnvironmentOptions,
+  FacilityViewerWidgetConfig,
+} from '@/types/widget.types';
+import {
+  DEFAULT_TERRAIN_FLATTEN_DISTANCE,
+  DEFAULT_TERRAIN_FLATTEN_BLEND,
+  DEFAULT_TERRAIN_FLATTEN_BASELINE,
+  TERRAIN_FLATTEN_DISTANCE_RANGE,
+  TERRAIN_FLATTEN_BLEND_RANGE,
+  TERRAIN_FLATTEN_BASELINE_RANGE,
+} from '@/types/widget.types';
 
 interface EnvironmentFineTuneControlsProps {
   skyPreset: SkyPresetId;
   groundPreset: GroundPresetId;
   environmentOptions?: FacilityViewerEnvironmentOptions;
+  hasTerrain?: boolean;
+  terrainAlignAssets?: boolean;
+  terrainFlattenToGround?: boolean;
+  terrainFlattenDistance?: number;
+  terrainFlattenBlend?: number;
+  terrainFlattenBaseline?: number;
   isDark: boolean;
-  onChange: (patch: Partial<{ environmentOptions: FacilityViewerEnvironmentOptions }>) => void;
+  onChange: (patch: Partial<FacilityViewerWidgetConfig>) => void;
 }
 
 interface SliderControlProps {
   label: string;
+  hint?: string;
   value: number;
   min: number;
   max: number;
@@ -46,6 +64,7 @@ interface ToggleControlProps {
 
 const SliderControl: React.FC<SliderControlProps> = ({
   label,
+  hint,
   value,
   min,
   max,
@@ -64,6 +83,11 @@ const SliderControl: React.FC<SliderControlProps> = ({
         {Number.isInteger(step) ? value : value.toFixed(2)}
       </span>
     </div>
+    {hint ? (
+      <p className={`text-[11px] leading-snug ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+        {hint}
+      </p>
+    ) : null}
     <input
       id={id}
       type="range"
@@ -173,6 +197,12 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
   skyPreset,
   groundPreset,
   environmentOptions,
+  hasTerrain = false,
+  terrainAlignAssets = false,
+  terrainFlattenToGround = false,
+  terrainFlattenDistance = DEFAULT_TERRAIN_FLATTEN_DISTANCE,
+  terrainFlattenBlend = DEFAULT_TERRAIN_FLATTEN_BLEND,
+  terrainFlattenBaseline = DEFAULT_TERRAIN_FLATTEN_BASELINE,
   isDark,
   onChange,
 }) => {
@@ -181,6 +211,7 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
   const woodland = environmentOptions?.woodland ?? {};
   const urban = environmentOptions?.urban ?? {};
   const techno = environmentOptions?.techno ?? {};
+  const local = environmentOptions?.local ?? {};
 
   const patchSky = (patch: typeof sky) =>
     onChange({ environmentOptions: patchSection(environmentOptions, 'sky', patch) });
@@ -192,6 +223,8 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
     onChange({ environmentOptions: patchSection(environmentOptions, 'urban', patch) });
   const patchTechno = (patch: typeof techno) =>
     onChange({ environmentOptions: patchSection(environmentOptions, 'techno', patch) });
+  const patchLocal = (patch: typeof local) =>
+    onChange({ environmentOptions: patchSection(environmentOptions, 'local', patch) });
 
   const showSkyFineTune =
     skyPreset === 'blank' ||
@@ -211,7 +244,8 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
   const hasFineTune =
     showSkyFineTune ||
     showGroundFineTune ||
-    groundPreset === 'techno';
+    groundPreset === 'techno' ||
+    groundPreset === 'local';
 
   const dayDefaults = skyPreset === 'sunset'
     ? { elevation: 4, azimuth: 200, turbidity: 8 }
@@ -782,6 +816,165 @@ export const EnvironmentFineTuneControls: React.FC<EnvironmentFineTuneControlsPr
                 onChange={(baseAlpha) => patchTechno({ baseAlpha })}
               />
             )}
+          </div>
+        </section>
+      )}
+
+      {groundPreset === 'local' && (
+        <section>
+          <SectionHeader
+            title="Local terrain"
+            isDark={isDark}
+            onReset={() => onChange({ environmentOptions: resetSection(environmentOptions, 'local') })}
+          />
+          <div className="space-y-4">
+            <SliderControl
+              label="Heightmap amplitude"
+              hint="Multiplies the editor terrain relief (1 = no change)."
+              value={local.elevationAmplitudeScale ?? DEFAULT_ENVIRONMENT_OPTIONS.local.elevationAmplitudeScale!}
+              min={R.local.elevationAmplitudeScale.min}
+              max={R.local.elevationAmplitudeScale.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(elevationAmplitudeScale) => patchLocal({ elevationAmplitudeScale })}
+            />
+            {hasTerrain && (
+              <>
+                <ToggleControl
+                  label="Align assets to terrain"
+                  hint="Sample the terrain mesh at each asset corner to lift and tilt units flush with slopes."
+                  value={terrainAlignAssets}
+                  isDark={isDark}
+                  onChange={(next) =>
+                    onChange({
+                      terrainAlignAssets: next,
+                      terrainFlattenToGround: next ? false : terrainFlattenToGround,
+                    })
+                  }
+                />
+                <ToggleControl
+                  label="Flatten terrain to ground"
+                  hint="Pull terrain relief down to ground level near assets instead of moving units."
+                  value={terrainFlattenToGround}
+                  isDark={isDark}
+                  onChange={(next) =>
+                    onChange({
+                      terrainFlattenToGround: next,
+                      terrainAlignAssets: next ? false : terrainAlignAssets,
+                    })
+                  }
+                />
+                {terrainFlattenToGround && (
+                  <>
+                    <SliderControl
+                      label="Flatten distance"
+                      hint="How far beyond each asset footprint the flatten effect fades out."
+                      value={terrainFlattenDistance}
+                      min={TERRAIN_FLATTEN_DISTANCE_RANGE.min}
+                      max={TERRAIN_FLATTEN_DISTANCE_RANGE.max}
+                      step={0.5}
+                      isDark={isDark}
+                      onChange={(value) => onChange({ terrainFlattenDistance: value })}
+                    />
+                    <SliderControl
+                      label="Flatten blend"
+                      hint="0 = no change; 1 = fully flat at the flatten baseline."
+                      value={terrainFlattenBlend}
+                      min={TERRAIN_FLATTEN_BLEND_RANGE.min}
+                      max={TERRAIN_FLATTEN_BLEND_RANGE.max}
+                      step={0.05}
+                      isDark={isDark}
+                      onChange={(value) => onChange({ terrainFlattenBlend: value })}
+                    />
+                    <SliderControl
+                      label="Flatten baseline"
+                      hint="Relief height (m) to flatten toward; assets are lifted by the same amount."
+                      value={terrainFlattenBaseline}
+                      min={TERRAIN_FLATTEN_BASELINE_RANGE.min}
+                      max={TERRAIN_FLATTEN_BASELINE_RANGE.max}
+                      step={0.5}
+                      isDark={isDark}
+                      onChange={(value) => onChange({ terrainFlattenBaseline: value })}
+                    />
+                  </>
+                )}
+              </>
+            )}
+            <SliderControl
+              label="Fade start"
+              hint="0 = fade from facility center; 1 = default outskirts."
+              value={local.fadeStartScale ?? DEFAULT_ENVIRONMENT_OPTIONS.local.fadeStartScale!}
+              min={R.local.fadeStartScale.min}
+              max={R.local.fadeStartScale.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(fadeStartScale) => patchLocal({ fadeStartScale })}
+            />
+            <SliderControl
+              label="Fade end"
+              hint="0 = tight vignette at center; 1 = default outer edge."
+              value={local.fadeEndScale ?? DEFAULT_ENVIRONMENT_OPTIONS.local.fadeEndScale!}
+              min={R.local.fadeEndScale.min}
+              max={R.local.fadeEndScale.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(fadeEndScale) => patchLocal({ fadeEndScale })}
+            />
+            <SliderControl
+              label="Asset dimming"
+              value={local.assetDim ?? DEFAULT_ENVIRONMENT_OPTIONS.local.assetDim!}
+              min={R.local.assetDim.min}
+              max={R.local.assetDim.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(assetDim) => patchLocal({ assetDim })}
+            />
+            <ToggleControl
+              label="Wireframe outskirts"
+              value={local.showWireframeOutskirts ?? DEFAULT_ENVIRONMENT_OPTIONS.local.showWireframeOutskirts!}
+              isDark={isDark}
+              onChange={(showWireframeOutskirts) => patchLocal({ showWireframeOutskirts })}
+            />
+            {(local.showWireframeOutskirts ?? DEFAULT_ENVIRONMENT_OPTIONS.local.showWireframeOutskirts) && (
+              <>
+                <SliderControl
+                  label="Wireframe start"
+                  value={local.wireframeAmount ?? DEFAULT_ENVIRONMENT_OPTIONS.local.wireframeAmount!}
+                  min={R.local.wireframeAmount.min}
+                  max={R.local.wireframeAmount.max}
+                  step={0.05}
+                  isDark={isDark}
+                  onChange={(wireframeAmount) => patchLocal({ wireframeAmount })}
+                />
+                <SliderControl
+                  label="Wireframe blend"
+                  value={local.wireframeBlend ?? DEFAULT_ENVIRONMENT_OPTIONS.local.wireframeBlend!}
+                  min={R.local.wireframeBlend.min}
+                  max={R.local.wireframeBlend.max}
+                  step={0.01}
+                  isDark={isDark}
+                  onChange={(wireframeBlend) => patchLocal({ wireframeBlend })}
+                />
+              </>
+            )}
+            <SliderControl
+              label="Brightness"
+              value={local.brightness ?? DEFAULT_ENVIRONMENT_OPTIONS.local.brightness!}
+              min={R.local.brightness.min}
+              max={R.local.brightness.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(brightness) => patchLocal({ brightness })}
+            />
+            <SliderControl
+              label="Saturation"
+              value={local.saturation ?? DEFAULT_ENVIRONMENT_OPTIONS.local.saturation!}
+              min={R.local.saturation.min}
+              max={R.local.saturation.max}
+              step={0.05}
+              isDark={isDark}
+              onChange={(saturation) => patchLocal({ saturation })}
+            />
           </div>
         </section>
       )}

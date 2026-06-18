@@ -36,6 +36,7 @@ export interface InitializeBluDesignEditorSubsystemsParams {
   setWorkingGridAlignment: (alignment: GridAlignment | null) => void;
   deleteObjectInternal: (id: string) => void;
   scheduleAutoSave: () => void;
+  getDraftFacilityId: () => string | null;
 }
 
 export interface InitializedBluDesignEditorSubsystems {
@@ -145,6 +146,7 @@ export function initializeBluDesignEditorSubsystems(
     isReadonly: () => p.readonly,
     exportData: () => p.exportSceneData(),
     storage: p.draftStorage,
+    getFacilityId: () => p.getDraftFacilityId(),
     onSaved: (timestamp) => {
       p.emitAutosaveComplete({ timestamp });
     },

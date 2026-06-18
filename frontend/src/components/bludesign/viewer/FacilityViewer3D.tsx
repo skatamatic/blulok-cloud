@@ -32,9 +32,22 @@ import {
   normalizeGroundPreset,
   normalizeSkyPreset,
   type EnvironmentOptions,
+  type ScenePresetApplyOptions,
 } from '../core/environment';
+import { getTerrainConfigFromFacility } from '../core/environment/terrainConfigMetadata';
+import {
+  fetchTerrainSidecarAssets,
+  revokeTerrainSidecarAssets,
+  type LoadedTerrainSidecars,
+} from '../core/environment/terrainSidecarLoader';
 import { applyViewerViewPresets } from './applyViewerViewPresets';
 import type { FacilityResponse } from '@/api/bludesign';
+import {
+  DEFAULT_TERRAIN_FLATTEN_DISTANCE,
+  DEFAULT_TERRAIN_FLATTEN_BLEND,
+  DEFAULT_TERRAIN_FLATTEN_BASELINE,
+  resolveViewerTerrainConformMode,
+} from '@/types/widget.types';
 
 interface FacilityViewer3DProps {
   /** BluDesign facility ID to load */
@@ -50,6 +63,13 @@ interface FacilityViewer3DProps {
   skyPreset?: SkyPresetId;
   groundPreset?: GroundPresetId;
   environmentOptions?: EnvironmentOptions;
+  /** Lift facility assets to sit on local terrain relief (widget only). */
+  terrainAlignAssets?: boolean;
+  /** Flatten terrain near assets instead of lifting units (widget only). */
+  terrainFlattenToGround?: boolean;
+  terrainFlattenDistance?: number;
+  terrainFlattenBlend?: number;
+  terrainFlattenBaseline?: number;
   /** When false, units render in their default locked look (live binding visuals off). */
   bindingEffectsEnabled?: boolean;
   /** Callback when the viewer is ready */
@@ -67,6 +87,11 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   skyPreset = DEFAULT_SCENE_PRESETS.skyPreset,
   groundPreset = DEFAULT_SCENE_PRESETS.groundPreset,
   environmentOptions,
+  terrainAlignAssets = false,
+  terrainFlattenToGround = false,
+  terrainFlattenDistance = DEFAULT_TERRAIN_FLATTEN_DISTANCE,
+  terrainFlattenBlend = DEFAULT_TERRAIN_FLATTEN_BLEND,
+  terrainFlattenBaseline = DEFAULT_TERRAIN_FLATTEN_BASELINE,
   bindingEffectsEnabled = true,
   onReady,
   onError,
@@ -177,7 +202,18 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
     assetStatesRef.current.clear();
     entityToObjectIdsRef.current.clear();
     liveHydratedRef.current = false;
+    revokeTerrainSidecarAssets(terrainAssetsRef.current);
+    terrainAssetsRef.current = undefined;
+    terrainConfigRef.current = null;
+    activeFacilityLoadRef.current += 1;
   }, [bluDesignFacilityId]);
+
+  useEffect(
+    () => () => {
+      revokeTerrainSidecarAssets(terrainAssetsRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     assetStatesRef.current.clear();
@@ -200,6 +236,26 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   const resolvedGroundPreset = normalizeGroundPreset(groundPreset);
   const environmentOptionsRef = useRef(environmentOptions);
   environmentOptionsRef.current = environmentOptions;
+  const terrainAlignAssetsRef = useRef(terrainAlignAssets);
+  terrainAlignAssetsRef.current = terrainAlignAssets;
+  const terrainFlattenToGroundRef = useRef(terrainFlattenToGround);
+  terrainFlattenToGroundRef.current = terrainFlattenToGround;
+  const terrainFlattenDistanceRef = useRef(terrainFlattenDistance);
+  terrainFlattenDistanceRef.current = terrainFlattenDistance;
+  const terrainFlattenBlendRef = useRef(terrainFlattenBlend);
+  terrainFlattenBlendRef.current = terrainFlattenBlend;
+  const terrainFlattenBaselineRef = useRef(terrainFlattenBaseline);
+  terrainFlattenBaselineRef.current = terrainFlattenBaseline;
+  const terrainAssetsRef = useRef<LoadedTerrainSidecars | undefined>(undefined);
+  const terrainConfigRef = useRef<ReturnType<typeof getTerrainConfigFromFacility>>(null);
+  const terrainLoadKeyRef = useRef<string | null>(null);
+  const activeFacilityLoadRef = useRef(0);
+  const prefetchedFacilityRef = useRef(prefetchedFacility);
+  const onReadyRef = useRef(onReady);
+  const onErrorRef = useRef(onError);
+  prefetchedFacilityRef.current = prefetchedFacility;
+  onReadyRef.current = onReady;
+  onErrorRef.current = onError;
   const viewPresetsRef = useRef({
     sky: resolvedSkyPreset,
     ground: resolvedGroundPreset,
@@ -210,6 +266,80 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
   };
   /** Skip one live preset apply after initial load (already applied with progress). */
   const skipNextLivePresetApplyRef = useRef(false);
+  /** Skip one environment tuning pass after initial load (presets already applied). */
+  const skipNextEnvironmentTuningRef = useRef(false);
+
+  const syncTerrainConform = useCallback(
+    async (resetBaselines = false) => {
+      if (!engine || !isDataLoaded) return;
+
+      const mode =
+        resolvedGroundPreset === 'local'
+          ? resolveViewerTerrainConformMode({
+              terrainAlignAssets: terrainAlignAssetsRef.current,
+              terrainFlattenToGround: terrainFlattenToGroundRef.current,
+            })
+          : 'none';
+
+      if (mode === 'none') {
+        await engine.configureViewerTerrainConform({ mode: 'none' });
+        return;
+      }
+
+      if (!engine.hasVisibleLocalTerrain()) {
+        await engine.configureViewerTerrainConform({ mode: 'none' });
+        return;
+      }
+
+      await engine.configureViewerTerrainConform({
+        mode,
+        flattenDistance: terrainFlattenDistanceRef.current,
+        flattenBlend: terrainFlattenBlendRef.current,
+        flattenBaseline: terrainFlattenBaselineRef.current,
+        resetBaselines,
+      });
+    },
+    [engine, isDataLoaded, resolvedGroundPreset]
+  );
+
+  const resolveTerrainAssets = useCallback(async (): Promise<
+    ScenePresetApplyOptions['terrain'] | undefined
+  > => {
+    if (resolvedGroundPreset !== 'local') return undefined;
+    const config = terrainConfigRef.current;
+    if (!config) return undefined;
+
+    const loadKey = `${config.terrainDataId || bluDesignFacilityId}:${config.fetchedAt}`;
+    const existing = terrainAssetsRef.current;
+    if (
+      existing &&
+      terrainLoadKeyRef.current === loadKey &&
+      existing.imageryBlob.size > 0 &&
+      existing.heightmapBlob.size > 0
+    ) {
+      return existing;
+    }
+
+    try {
+      const assets = await fetchTerrainSidecarAssets(config, bluDesignFacilityId);
+      revokeTerrainSidecarAssets(terrainAssetsRef.current);
+      terrainAssetsRef.current = assets;
+      terrainLoadKeyRef.current = loadKey;
+      engine?.setLoadedTerrainSidecars(assets);
+      return assets;
+    } catch (error) {
+      console.warn('[FacilityViewer3D] Terrain sidecars unavailable:', error);
+      if (
+        existing &&
+        terrainLoadKeyRef.current === loadKey &&
+        existing.imageryBlob.size > 0 &&
+        existing.heightmapBlob.size > 0
+      ) {
+        return existing;
+      }
+      return undefined;
+    }
+  }, [bluDesignFacilityId, engine, resolvedGroundPreset]);
 
   const applyViewPresets = useCallback(async () => {
     if (!engine || !isDataLoaded) return;
@@ -217,18 +347,66 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
       skipNextLivePresetApplyRef.current = false;
       return;
     }
+    const terrain =
+      (resolvedGroundPreset === 'local' &&
+      terrainAssetsRef.current &&
+      terrainLoadKeyRef.current &&
+      terrainConfigRef.current &&
+      terrainLoadKeyRef.current ===
+        `${terrainConfigRef.current.terrainDataId || bluDesignFacilityId}:${terrainConfigRef.current.fetchedAt}` &&
+      terrainAssetsRef.current.heightmapBlob.size > 0
+        ? terrainAssetsRef.current
+        : undefined) ??
+      (resolvedGroundPreset === 'local' ? await resolveTerrainAssets() : undefined);
+    let ground = resolvedGroundPreset;
+    if (ground === 'local' && terrainConfigRef.current && !terrain) {
+      ground = 'blank';
+    }
+    await applyViewerViewPresets(
+      engine,
+      resolvedSkyPreset,
+      ground,
+      undefined,
+      environmentOptionsRef.current,
+      terrain
+    );
+    await syncTerrainConform(true);
+  }, [engine, isDataLoaded, resolvedSkyPreset, resolvedGroundPreset, resolveTerrainAssets, syncTerrainConform]);
+
+  const applyEnvironmentTuning = useCallback(async () => {
+    if (!engine || !isDataLoaded) return;
+    if (skipNextEnvironmentTuningRef.current) {
+      skipNextEnvironmentTuningRef.current = false;
+      return;
+    }
+
+    const environmentOptions = environmentOptionsRef.current;
+    if (resolvedGroundPreset === 'local') {
+      const terrain = terrainAssetsRef.current;
+      if (!terrain?.imageryUrl || !terrain.heightmapUrl) return;
+      await engine.applyGroundPreset('local', { environmentOptions, terrain });
+      await engine.applySkyPreset(resolvedSkyPreset, { environmentOptions });
+      engine.refreshGroundPlaneBounds();
+      engine.refreshViewerTerrainConform();
+      return;
+    }
+
     await applyViewerViewPresets(
       engine,
       resolvedSkyPreset,
       resolvedGroundPreset,
       undefined,
-      environmentOptionsRef.current
+      environmentOptions,
+      undefined
     );
-  }, [engine, isDataLoaded, resolvedSkyPreset, resolvedGroundPreset, environmentOptions]);
+  }, [engine, isDataLoaded, resolvedGroundPreset, resolvedSkyPreset]);
 
   // Load facility data when engine is ready
   useEffect(() => {
     if (!isEngineReady || !engine || isDataLoaded) return;
+
+    const loadId = ++activeFacilityLoadRef.current;
+    const isStale = () => loadId !== activeFacilityLoadRef.current;
 
     const loadFacility = async () => {
       try {
@@ -236,7 +414,9 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         setLoadingMessage('Loading facility...');
         
         const facility =
-          prefetchedFacility ?? (await bludesignApi.getFacility(bluDesignFacilityId));
+          prefetchedFacilityRef.current ??
+          (await bludesignApi.getFacility(bluDesignFacilityId));
+        if (isStale()) return;
         
         if (!facility || !facility.data) {
           throw new Error('Facility data not found');
@@ -245,26 +425,61 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         setLoadingProgress(65);
         setLoadingMessage('Building scene...');
 
+        const terrainConfig = getTerrainConfigFromFacility(facility.data);
+        terrainConfigRef.current = terrainConfig;
+
         engine.setEnvironmentSeed(bluDesignFacilityId);
         await engine.importSceneDataAsync(facility.data);
+        if (isStale()) return;
 
         if (engine.getState().isFloorMode) {
           engine.toggleFullBuildingView();
         }
 
+        let terrainAssets: LoadedTerrainSidecars | undefined;
+        const effectiveGround = viewPresetsRef.current.ground;
+        if (effectiveGround === 'local' && terrainConfig) {
+          setLoadingMessage('Loading terrain assets...');
+          try {
+            terrainAssets = await fetchTerrainSidecarAssets(terrainConfig, bluDesignFacilityId);
+            if (isStale()) return;
+            terrainLoadKeyRef.current = `${terrainConfig.terrainDataId || bluDesignFacilityId}:${terrainConfig.fetchedAt}`;
+            terrainAssetsRef.current = terrainAssets;
+          } catch (error) {
+            if (isStale()) return;
+            console.warn('[FacilityViewer3D] Failed to load terrain on facility open:', error);
+            terrainAssets = undefined;
+            terrainAssetsRef.current = undefined;
+            terrainLoadKeyRef.current = null;
+          }
+        } else {
+          terrainAssetsRef.current = undefined;
+          terrainLoadKeyRef.current = null;
+        }
+
         setLoadingProgress(68);
         setLoadingMessage('Preparing view...');
+
+        const applyGround =
+          viewPresetsRef.current.ground === 'local' && terrainConfig && !terrainAssets
+            ? 'blank'
+            : viewPresetsRef.current.ground;
 
         await applyViewerViewPresets(
           engine,
           viewPresetsRef.current.sky,
-          viewPresetsRef.current.ground,
+          applyGround,
           ({ progress, message }) => {
             setLoadingProgress(progress);
             setLoadingMessage(message);
           },
-          environmentOptionsRef.current
+          environmentOptionsRef.current,
+          terrainAssets
         );
+        if (terrainAssets) {
+          engine.setLoadedTerrainSidecars(terrainAssets);
+        }
+        await syncTerrainConform(true);
 
         const entityIndex = new Map<string, string[]>();
         for (const obj of engine.getSceneManager().getAllPlacedObjects()) {
@@ -282,24 +497,74 @@ export const FacilityViewer3D: React.FC<FacilityViewer3DProps> = ({
         // Brief moment at 100% so the overlay can show the success state.
         setLoadingProgress(100);
         await new Promise((resolve) => setTimeout(resolve, 280));
+        if (isStale()) return;
         skipNextLivePresetApplyRef.current = true;
+        skipNextEnvironmentTuningRef.current = true;
         setIsDataLoaded(true);
-        onReady?.();
+        onReadyRef.current?.();
         
       } catch (error) {
         console.error('Failed to load facility:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to load facility';
         setLoadError(errorMessage);
-        onError?.(error instanceof Error ? error : new Error(errorMessage));
+        onErrorRef.current?.(error instanceof Error ? error : new Error(errorMessage));
       }
     };
 
-    loadFacility();
-  }, [isEngineReady, engine, bluDesignFacilityId, isDataLoaded, onReady, onError, prefetchedFacility]);
+    void loadFacility();
+
+    return () => {
+      activeFacilityLoadRef.current += 1;
+    };
+  }, [isEngineReady, engine, bluDesignFacilityId, isDataLoaded, syncTerrainConform]);
+
+  useEffect(() => {
+    void syncTerrainConform(true);
+  }, [
+    syncTerrainConform,
+    terrainAlignAssets,
+    terrainFlattenToGround,
+  ]);
+
+  useEffect(() => {
+    if (!engine || !isDataLoaded || resolvedGroundPreset !== 'local') {
+      return;
+    }
+    const mode = resolveViewerTerrainConformMode({
+      terrainAlignAssets,
+      terrainFlattenToGround,
+    });
+    if (mode === 'none') return;
+    void engine.configureViewerTerrainConform({
+      mode,
+      flattenDistance: terrainFlattenDistance,
+      flattenBlend: terrainFlattenBlend,
+    });
+  }, [
+    engine,
+    isDataLoaded,
+    terrainAlignAssets,
+    terrainFlattenToGround,
+    terrainFlattenDistance,
+    terrainFlattenBlend,
+    resolvedGroundPreset,
+    environmentOptions?.local?.elevationAmplitudeScale,
+  ]);
+
+  useEffect(() => {
+    if (!engine || !isDataLoaded || resolvedGroundPreset !== 'local' || !terrainFlattenToGround) {
+      return;
+    }
+    engine.updateViewerTerrainFlattenBaseline(terrainFlattenBaseline);
+  }, [engine, isDataLoaded, terrainFlattenToGround, resolvedGroundPreset, terrainFlattenBaseline]);
 
   useEffect(() => {
     void applyViewPresets();
   }, [applyViewPresets]);
+
+  useEffect(() => {
+    void applyEnvironmentTuning();
+  }, [applyEnvironmentTuning, environmentOptions]);
 
   const applyObjectVisualState = useCallback(
     (objectId: string, stateUpdate: ViewerSmartAssetState) => {

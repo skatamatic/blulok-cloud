@@ -4,6 +4,7 @@ import {
   isGatewaySyncManaged,
   isValidRelayChannel,
   partitionInventoryByKind,
+  partitionInventoryItems,
   partitionStateUpdatesByKind,
   resolveAccessDeviceKey,
   resolveAccessRelayChannel,
@@ -104,6 +105,25 @@ describe('gateway-sync.utils', () => {
 
       expect(result.locks).toHaveLength(1);
       expect(result.accessControl).toHaveLength(1);
+    });
+  });
+
+  describe('partitionInventoryItems', () => {
+    it('routes network infra and gateway update items separately', () => {
+      const result = partitionInventoryItems([
+        { kind: 'lock', lock_id: 'lock-1' },
+        { kind: 'bridge', serial: 'BR-1' },
+        { kind: 'friend_node', serial: 'FN-1' },
+        { kind: 'gateway', firmware_version: '1.2.3' },
+      ]);
+
+      expect(result.locks).toHaveLength(1);
+      expect(result.networkInfra).toHaveLength(2);
+      expect(result.gatewayUpdates).toHaveLength(1);
+    });
+
+    it('rejects unknown kinds', () => {
+      expect(() => partitionInventoryItems([{ kind: 'sensor', serial: 'X' }])).toThrow(/kind must be one of/);
     });
   });
 

@@ -2,6 +2,8 @@
  * Sky and ground preset definitions for BluDesign viewer environments.
  */
 
+import type { TerrainConfig } from './terrainConfigMetadata';
+
 export type SkyPresetId = 'blank' | 'day' | 'sunset' | 'night' | 'natural' | 'space';
 
 export type GroundPresetId =
@@ -12,7 +14,8 @@ export type GroundPresetId =
   | 'natural'
   | 'woodland'
   | 'urban'
-  | 'techno';
+  | 'techno'
+  | 'local';
 
 export interface SkyPresetDefinition {
   id: SkyPresetId;
@@ -131,6 +134,12 @@ export const GROUND_PRESETS: GroundPresetDefinition[] = [
     description: 'Tron-inspired glowing grid with animated pulses',
     swatchClass: 'from-cyan-400 via-[#147FD4] to-black',
   },
+  {
+    id: 'local',
+    label: 'Local Terrain',
+    description: 'Real satellite imagery and elevation for this site',
+    swatchClass: 'from-green-700 via-emerald-600 to-sky-400',
+  },
 ];
 
 export const DEFAULT_SCENE_PRESETS = {
@@ -179,7 +188,8 @@ export function viewPresetsRequireAssetDownload(
     ground === 'concrete' ||
     ground === 'natural' ||
     ground === 'woodland' ||
-    ground === 'urban'
+    ground === 'urban' ||
+    ground === 'local'
   );
 }
 
@@ -268,6 +278,21 @@ export interface TechnoEnvironmentOptions {
   baseAlpha?: number;
 }
 
+export interface LocalEnvironmentOptions {
+  /** Viewer multiplier on editor `elevationAmplitude` (1 = no change). */
+  elevationAmplitudeScale?: number;
+  /** 0 = radial fade begins at facility center; 1 = default outskirts distance. */
+  fadeStartScale?: number;
+  /** 0 = tight vignette at center; 1 = default outer fade distance. */
+  fadeEndScale?: number;
+  assetDim?: number;
+  showWireframeOutskirts?: boolean;
+  wireframeAmount?: number;
+  wireframeBlend?: number;
+  brightness?: number;
+  saturation?: number;
+}
+
 /** Persisted partial overrides — only non-default values need to be stored. */
 export interface EnvironmentOptions {
   sky?: SkyEnvironmentOptions;
@@ -275,6 +300,7 @@ export interface EnvironmentOptions {
   woodland?: WoodlandEnvironmentOptions;
   urban?: UrbanEnvironmentOptions;
   techno?: TechnoEnvironmentOptions;
+  local?: LocalEnvironmentOptions;
 }
 
 export const DEFAULT_ENVIRONMENT_OPTIONS: Required<{
@@ -283,6 +309,7 @@ export const DEFAULT_ENVIRONMENT_OPTIONS: Required<{
   woodland: WoodlandEnvironmentOptions;
   urban: UrbanEnvironmentOptions;
   techno: TechnoEnvironmentOptions;
+  local: LocalEnvironmentOptions;
 }> = {
   sky: {
     atmosphereIntensity: 2,
@@ -339,6 +366,17 @@ export const DEFAULT_ENVIRONMENT_OPTIONS: Required<{
     superLineThickness: 1,
     platformGlow: 0.12,
     baseAlpha: 0.06,
+  },
+  local: {
+    elevationAmplitudeScale: 1,
+    fadeStartScale: 1,
+    fadeEndScale: 1,
+    assetDim: 0.35,
+    showWireframeOutskirts: true,
+    wireframeAmount: 0.65,
+    wireframeBlend: 0.2,
+    brightness: 1,
+    saturation: 1,
   },
 };
 
@@ -402,6 +440,16 @@ export const ENVIRONMENT_OPTION_RANGES = {
     superLineThickness: { min: 0.2, max: 4 },
     platformGlow: { min: 0, max: 1 },
     baseAlpha: { min: 0, max: 0.5 },
+  },
+  local: {
+    elevationAmplitudeScale: { min: 0, max: 4 },
+    fadeStartScale: { min: 0, max: 1 },
+    fadeEndScale: { min: 0, max: 1 },
+    assetDim: { min: 0, max: 1 },
+    wireframeAmount: { min: 0.2, max: 0.95 },
+    wireframeBlend: { min: 0.05, max: 0.5 },
+    brightness: { min: 0.3, max: 2 },
+    saturation: { min: 0, max: 2 },
   },
 } as const;
 
@@ -561,6 +609,30 @@ export function normalizeEnvironmentOptions(value: unknown): EnvironmentOptions 
       baseAlpha: (v) =>
         clampToRange(v, R.techno.baseAlpha, DEFAULT_ENVIRONMENT_OPTIONS.techno.baseAlpha!),
     }),
+    local: mergePartialSection<LocalEnvironmentOptions>(raw.local, {
+      elevationAmplitudeScale: (v) =>
+        clampToRange(
+          v,
+          R.local.elevationAmplitudeScale,
+          DEFAULT_ENVIRONMENT_OPTIONS.local.elevationAmplitudeScale!,
+        ),
+      fadeStartScale: (v) =>
+        clampToRange(v, R.local.fadeStartScale, DEFAULT_ENVIRONMENT_OPTIONS.local.fadeStartScale!),
+      fadeEndScale: (v) =>
+        clampToRange(v, R.local.fadeEndScale, DEFAULT_ENVIRONMENT_OPTIONS.local.fadeEndScale!),
+      assetDim: (v) =>
+        clampToRange(v, R.local.assetDim, DEFAULT_ENVIRONMENT_OPTIONS.local.assetDim!),
+      showWireframeOutskirts: (v) =>
+        normalizeBoolean(v, DEFAULT_ENVIRONMENT_OPTIONS.local.showWireframeOutskirts!),
+      wireframeAmount: (v) =>
+        clampToRange(v, R.local.wireframeAmount, DEFAULT_ENVIRONMENT_OPTIONS.local.wireframeAmount!),
+      wireframeBlend: (v) =>
+        clampToRange(v, R.local.wireframeBlend, DEFAULT_ENVIRONMENT_OPTIONS.local.wireframeBlend!),
+      brightness: (v) =>
+        clampToRange(v, R.local.brightness, DEFAULT_ENVIRONMENT_OPTIONS.local.brightness!),
+      saturation: (v) =>
+        clampToRange(v, R.local.saturation, DEFAULT_ENVIRONMENT_OPTIONS.local.saturation!),
+    }),
   };
 }
 
@@ -571,6 +643,7 @@ export function resolveEnvironmentOptions(partial?: EnvironmentOptions): {
   woodland: WoodlandEnvironmentOptions;
   urban: UrbanEnvironmentOptions;
   techno: TechnoEnvironmentOptions;
+  local: LocalEnvironmentOptions;
 } {
   const normalized = normalizeEnvironmentOptions(partial ?? {});
   return {
@@ -579,6 +652,7 @@ export function resolveEnvironmentOptions(partial?: EnvironmentOptions): {
     woodland: { ...DEFAULT_ENVIRONMENT_OPTIONS.woodland, ...normalized.woodland },
     urban: { ...DEFAULT_ENVIRONMENT_OPTIONS.urban, ...normalized.urban },
     techno: { ...DEFAULT_ENVIRONMENT_OPTIONS.techno, ...normalized.techno },
+    local: { ...DEFAULT_ENVIRONMENT_OPTIONS.local, ...normalized.local },
   };
 }
 
@@ -589,4 +663,10 @@ export interface ScenePresetApplyOptions {
   environmentSeed?: string;
   /** Resolved environment tuning overrides. */
   environmentOptions?: EnvironmentOptions;
+  /** Local terrain sidecar URLs + alignment config (ground=local). */
+  terrain?: {
+    imageryUrl: string;
+    heightmapUrl: string;
+    config: TerrainConfig;
+  };
 }

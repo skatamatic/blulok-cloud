@@ -32,6 +32,8 @@ interface ViewControlsPanelProps {
   hasImportPlan?: boolean;
   showImportPlan?: boolean;
   onToggleImportPlan?: () => void;
+  showTerrain?: boolean;
+  onToggleTerrain?: () => void;
 }
 
 export const ViewControlsPanel: React.FC<ViewControlsPanelProps> = ({
@@ -47,6 +49,8 @@ export const ViewControlsPanel: React.FC<ViewControlsPanelProps> = ({
   hasImportPlan,
   showImportPlan,
   onToggleImportPlan,
+  showTerrain,
+  onToggleTerrain,
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'dark';
@@ -180,6 +184,21 @@ export const ViewControlsPanel: React.FC<ViewControlsPanelProps> = ({
             >
               <MapIcon className="w-4 h-4" />
               <span>{showImportPlan ? 'Import Plan Open' : 'Show Import Plan'}</span>
+            </button>
+          )}
+          {onToggleTerrain && (
+            <button
+              className={`flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded-md font-medium transition-all duration-150 ${
+                showTerrain
+                  ? 'bg-primary-600/90 text-white'
+                  : isDark
+                    ? 'bg-gray-700/30 text-gray-400 hover:bg-gray-700/40'
+                    : 'bg-gray-200/40 text-gray-500 hover:bg-gray-200/60'
+              }`}
+              onClick={onToggleTerrain}
+            >
+              <MapIcon className="w-4 h-4" />
+              <span>{showTerrain ? 'Terrain Setup Open' : 'Terrain Setup'}</span>
             </button>
           )}
         </div>

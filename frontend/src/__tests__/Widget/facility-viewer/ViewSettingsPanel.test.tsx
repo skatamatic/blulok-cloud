@@ -83,4 +83,20 @@ describe('ViewSettingsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancel).toHaveBeenCalled();
   });
+
+  it('disables local terrain preset when facility has no terrain config', () => {
+    renderPanel({ hasTerrain: false });
+    const localButton = screen.getByRole('button', { name: /Local Terrain/i });
+    expect(localButton).toBeDisabled();
+    expect(localButton).toHaveAttribute(
+      'title',
+      'Set up local terrain in the BluDesign editor'
+    );
+  });
+
+  it('enables local terrain preset when facility has terrain config', () => {
+    renderPanel({ hasTerrain: true });
+    const localButton = screen.getByRole('button', { name: /Local Terrain/i });
+    expect(localButton).not.toBeDisabled();
+  });
 });

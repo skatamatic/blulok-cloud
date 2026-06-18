@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import type { SignOptions } from 'jsonwebtoken';
 import { config } from '@/config/environment';
 import { UserModel, User } from '@/models/user.model';
-import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { FacilityAccessService } from '@/services/facility-access.service';
 import { JWTPayload, LoginRequest, LoginResponse, CreateUserRequest, UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { toE164 } from '@/utils/phone.util';
@@ -103,10 +103,11 @@ export class AuthService {
           logger.warn(`Failed to update last login for ${loginIdentifier}:`, updateError);
         }
 
-        // Get user's facility associations if they're facility-scoped
+        // Embed live facility scope in JWT (REST/WS re-hydrate from DB on each request)
         let facilityIds: string[] = [];
         if (this.isFacilityScoped(user.role as UserRole)) {
-          facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(user.id);
+          const { FacilityAccessService } = await import('@/services/facility-access.service');
+          facilityIds = await FacilityAccessService.getUserFacilityIds(user.id, user.role as UserRole);
         }
 
         // Generate JWT token
@@ -350,12 +351,6 @@ export class AuthService {
   }
 
   public static async canAccessFacility(userId: string, userRole: UserRole, facilityId: string): Promise<boolean> {
-    // Global admins can access any facility
-    if (this.canAccessAllFacilities(userRole)) {
-      return true;
-    }
-
-    // Check if user has association with this facility
-    return UserFacilityAssociationModel.hasAccessToFacility(userId, facilityId);
+    return FacilityAccessService.hasAccessToFacility(userId, userRole, facilityId);
   }
 }

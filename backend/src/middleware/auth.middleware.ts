@@ -1,9 +1,19 @@
 import { Response, NextFunction, RequestHandler } from 'express';
 import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
-import { AppError } from '@/middleware/error.middleware';
+import { AppError, asyncHandler } from '@/middleware/error.middleware';
 
-export const authenticateToken: RequestHandler = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
+/**
+ * Verify JWT and attach the authenticated user to the request.
+ * For facility-scoped roles, overwrites `facilityIds` with live DB associations
+ * so route handlers never authorize or filter using stale JWT claims.
+ */
+export const authenticateToken = asyncHandler(async (
+  req: AuthenticatedRequest,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
@@ -17,8 +27,16 @@ export const authenticateToken: RequestHandler = (req: AuthenticatedRequest, _re
   }
 
   req.user = decoded;
+
+  if (AuthService.isFacilityScoped(decoded.role as UserRole)) {
+    req.user.facilityIds = await FacilityAccessService.getUserFacilityIds(
+      decoded.userId,
+      decoded.role as UserRole
+    );
+  }
+
   next();
-};
+});
 
 export const requireRoles = (roles: UserRole[]): RequestHandler => {
   return ((req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
@@ -228,8 +246,9 @@ export const requireFacilityScope: RequestHandler = (req: AuthenticatedRequest, 
 };
 
 /**
- * Helper to extract facility filters for queries
- * Returns facility IDs that should be used for filtering, or undefined if global admin
+ * Helper to extract facility filters for queries.
+ * Returns facility IDs that should be used for filtering, or undefined if global admin.
+ * Requires `authenticateToken` (hydrates facilityIds from DB for scoped roles).
  */
 export const applyFacilityScope = (req: AuthenticatedRequest): string[] | undefined => {
   if (!req.user) {

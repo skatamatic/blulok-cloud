@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
-import { generateHighlightId, calculatePageForItem, navigateAndHighlightWithAutoPagination, navigateAndHighlight } from '@/utils/navigation.utils';
+import { generateHighlightId, navigateAndHighlightWithAutoPagination } from '@/utils/navigation.utils';
 import { withReturnPath } from '@/hooks/useBackNavigation';
 import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
@@ -483,24 +483,8 @@ export default function AccessHistoryPage() {
           id: targetId,
           type: targetType
         });
-      } else {
-        // For users, calculate page from current logs
-        let calculatedPage = 1;
-
-        if (targetType === 'user') {
-          // For users, we need to find the user in the current logs and calculate page
-          const userIndex = logs.findIndex(log => log.user_id === targetId);
-          if (userIndex !== -1) {
-            calculatedPage = calculatePageForItem(userIndex, 50); // Access history uses 50 items per page
-          }
-        }
-
-        // Use the navigation utility for highlighting
-        await navigateAndHighlight(navigate, {
-          id: targetId,
-          type: targetType,
-          page: calculatedPage
-        });
+      } else if (targetType === 'user') {
+        navigate(`/users/${targetId}/details`, { state: withReturnPath(location) });
       }
     } else {
       // Fallback to regular navigation
@@ -1072,15 +1056,15 @@ export default function AccessHistoryPage() {
                       
                       {isExpanded && (
                         <tr className="bg-gray-50/80 dark:bg-gray-900/40">
-                          <td colSpan={7} className="px-6 py-5">
-                            <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
-                              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                          <td colSpan={7} className="px-6 py-5 max-w-0">
+                            <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+                              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                                 {detailItems.map((item) => (
                                   <div key={item.label} className="min-w-0">
                                     <dt className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                                       {item.label}
                                     </dt>
-                                    <dd className="mt-1 text-sm text-gray-900 dark:text-white break-words">
+                                    <dd className="mt-1 text-sm text-gray-900 dark:text-white break-words [overflow-wrap:anywhere]">
                                       {item.href ? (
                                         <button
                                           type="button"
@@ -1105,7 +1089,7 @@ export default function AccessHistoryPage() {
                                 ))}
                               </div>
                               {metadata.device && (
-                                <div className="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                                <div className="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-wrap justify-end gap-2 min-w-0">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();

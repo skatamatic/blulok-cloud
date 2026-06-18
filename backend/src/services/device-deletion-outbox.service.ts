@@ -7,6 +7,7 @@ import {
   DeviceDeletionOutboxRow,
   EnqueueDeviceDeletionInput,
 } from '@/models/device-deletion-outbox.model';
+import { isNetworkInfraSyncKind } from '@/config/gateway-device-kinds';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
@@ -149,6 +150,15 @@ export class DeviceDeletionOutboxService {
     await this.outbox.cancelActiveForAccessControl(facilityId, accessId, relayChannel, reason);
   }
 
+  public async cancelForNetworkInfra(
+    facilityId: string,
+    deviceKind: 'bridge' | 'friend_node',
+    deviceSerial: string,
+    reason = 'Device re-added to cloud inventory',
+  ): Promise<void> {
+    await this.outbox.cancelActiveForNetworkInfra(facilityId, deviceKind, deviceSerial, reason);
+  }
+
   /** Dev/E2E: latest active outbox row for a BluLok lock_id. */
   public async findActiveOutboxForBlulok(
     facilityId: string,
@@ -220,15 +230,21 @@ export class DeviceDeletionOutboxService {
       cmd_type: 'DEVICE_DELETED',
       facility_id: row.facility_id,
       gateway_id: row.gateway_id,
-      device_kind: row.device_kind === 'blulok' ? 'lock' : 'access_control',
       nonce,
     };
 
     if (row.device_kind === 'blulok') {
+      payload.device_kind = 'lock';
       payload.lock_id = row.lock_id;
-    } else {
+    } else if (row.device_kind === 'access_control') {
+      payload.device_kind = 'access_control';
       payload.access_id = row.access_id;
       payload.relay_channel = row.relay_channel ?? 1;
+    } else if (isNetworkInfraSyncKind(row.device_kind)) {
+      payload.device_kind = row.device_kind;
+      payload.serial = row.device_serial;
+    } else {
+      throw new Error(`Unsupported device deletion kind: ${row.device_kind}`);
     }
 
     return Ed25519Service.signCommandJwt(payload);

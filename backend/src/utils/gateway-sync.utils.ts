@@ -1,4 +1,13 @@
-export type GatewayDeviceKind = 'lock' | 'access_control';
+import {
+  getGatewayDeviceKindDefinition,
+  isAllowedInventoryKind,
+  isNetworkInfraSyncKind,
+  type GatewayInventoryKind,
+  type NetworkInfraSyncKind,
+  type OperationalDeviceKind,
+} from '@/config/gateway-device-kinds';
+
+export type GatewayDeviceKind = OperationalDeviceKind;
 
 /** Default relay when gateway omits relay_channel (single-relay access hardware). */
 export const DEFAULT_ACCESS_RELAY_CHANNEL = 1;
@@ -75,6 +84,24 @@ export function hasAdminIdentityOverride(metadata: Record<string, unknown> | nul
   return Boolean(metadata && typeof metadata === 'object' && metadata.adminIdentityOverride === true);
 }
 
+export interface NetworkInfraInventoryItem {
+  kind: NetworkInfraSyncKind;
+  serial: string;
+  state?: string;
+  firmware_version?: string;
+  info?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface GatewayInventoryUpdateItem {
+  kind: 'gateway';
+  serial?: string;
+  state?: string;
+  firmware_version?: string;
+  info?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export function resolveGatewayDeviceKind(item: Record<string, unknown>): GatewayDeviceKind {
   const kind = item.kind;
   if (kind === 'lock' || kind === 'access_control') {
@@ -83,14 +110,49 @@ export function resolveGatewayDeviceKind(item: Record<string, unknown>): Gateway
   throw new Error('Device item must include kind ("lock" or "access_control")');
 }
 
-export function partitionInventoryByKind<T extends Record<string, unknown>>(
-  devices: T[]
-): { locks: T[]; accessControl: T[] } {
+export function classifyInventoryItem(item: Record<string, unknown>): {
+  category: 'operational' | 'network_infra';
+  kind: GatewayInventoryKind;
+} {
+  const kind = item.kind;
+  if (typeof kind !== 'string' || !isAllowedInventoryKind(kind)) {
+    throw new Error(
+      `Device item kind must be one of: lock, access_control, bridge, friend_node, gateway`,
+    );
+  }
+
+  const definition = getGatewayDeviceKindDefinition(kind)!;
+  return {
+    category: definition.category,
+    kind,
+  };
+}
+
+export function partitionInventoryItems<T extends Record<string, unknown>>(
+  devices: T[],
+): {
+  locks: T[];
+  accessControl: T[];
+  networkInfra: T[];
+  gatewayUpdates: T[];
+} {
   const locks: T[] = [];
   const accessControl: T[] = [];
+  const networkInfra: T[] = [];
+  const gatewayUpdates: T[] = [];
 
   for (const device of devices) {
-    const kind = resolveGatewayDeviceKind(device);
+    const { category, kind } = classifyInventoryItem(device);
+    if (kind === 'gateway') {
+      gatewayUpdates.push(device);
+      continue;
+    }
+    if (category === 'network_infra') {
+      if (isNetworkInfraSyncKind(kind)) {
+        networkInfra.push(device);
+      }
+      continue;
+    }
     if (kind === 'access_control') {
       accessControl.push(device);
     } else {
@@ -98,7 +160,17 @@ export function partitionInventoryByKind<T extends Record<string, unknown>>(
     }
   }
 
-  return { locks, accessControl };
+  return { locks, accessControl, networkInfra, gatewayUpdates };
+}
+
+export function partitionInventoryByKind<T extends Record<string, unknown>>(
+  devices: T[]
+): { locks: T[]; accessControl: T[] } {
+  const partitioned = partitionInventoryItems(devices);
+  return {
+    locks: partitioned.locks,
+    accessControl: partitioned.accessControl,
+  };
 }
 
 export function partitionStateUpdatesByKind<T extends Record<string, unknown>>(

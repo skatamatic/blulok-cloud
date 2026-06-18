@@ -104,6 +104,37 @@ describe('access-history-display.utils', () => {
     expect(items.some((item) => item.label === 'Occurred')).toBe(false);
   });
 
+  it('shows failure reason in compact detail mode for failed events', () => {
+    const denied: AccessLog = {
+      ...baseLog,
+      action: 'unlock_attempt',
+      success: false,
+      metadata: {
+        failure_summary: 'Remote unlock failed: device remained locked',
+        description: 'Remote unlock failed: device remained locked',
+      },
+    };
+    const items = buildAccessLogDetailItems(denied, true, { omitRowSummaryFields: true });
+    expect(items.some((item) => item.label === 'Failure reason')).toBe(true);
+    expect(items.some((item) => item.label === 'Notes')).toBe(false);
+  });
+
+  it('combines settlement mismatch label with result message', () => {
+    const denied: AccessLog = {
+      ...baseLog,
+      action: 'unlock_attempt',
+      success: false,
+      denial_reason: 'settlement_mismatch',
+      reason: 'Remote unlock failed: device remained locked',
+      metadata: {
+        failure_summary:
+          'Device did not reach the requested lock state — Remote unlock failed: device remained locked',
+      },
+    };
+    expect(getAccessFailureDetail(denied)).toContain('did not reach the requested lock state');
+    expect(getAccessFailureDetail(denied)).toContain('remained locked');
+  });
+
   it('hides uuid-shaped unit numbers and device ids from labels', () => {
     const uuid = '550e8400-e29b-41d4-a716-446655440011';
     const acLog: AccessLog = {
@@ -121,5 +152,25 @@ describe('access-history-display.utils', () => {
     expect(formatAccessHistoryDeviceLabel(acLog, {
       device: { id: uuid, name: uuid, navigation_url: `/devices/access-control/${uuid}` },
     })).toBe('Access point');
+  });
+
+  it('shows BluLok lock number instead of lock id UUID', () => {
+    const lockId = 'ae4097b2-16b3-4b1d-b964-6021c7be6ea2';
+    const log: AccessLog = {
+      ...baseLog,
+      device_serial: lockId,
+      device_name: `Lock ${lockId}`,
+      metadata: {
+        ...baseLog.metadata,
+        device: {
+          id: 'dev-1',
+          name: `Lock ${lockId}`,
+          navigation_url: '/devices/blulok/dev-1',
+          device_settings: { lockNumber: 106 },
+        },
+      },
+    };
+
+    expect(formatAccessHistoryDeviceLabel(log, getAccessLogMetadata(log))).toBe('Lock #106');
   });
 });

@@ -12,6 +12,16 @@ jest.mock('@/contexts/AuthContext', () => ({
   }),
 }));
 
+const mockGlobalFacilityState = {
+  facilities: [] as { id: string; name: string }[],
+  selectedFacilityId: '__ALL_FACILITIES__',
+  isAllFacilitiesSelected: true,
+};
+
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  useGlobalFacility: () => mockGlobalFacilityState,
+}));
+
 jest.mock('@/hooks/useBackNavigation', () => ({
   useDetailsBackNavigation: () => ({
     goBack: jest.fn(),

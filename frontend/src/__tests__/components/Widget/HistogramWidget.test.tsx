@@ -22,17 +22,31 @@ const mockUser = {
   facilityNames: ['Downtown Storage', 'Warehouse District', 'Airport Facility'],
 };
 
+const mockAuthState = { user: mockUser, isAuthenticated: true };
+const mockFacilities = [
+  { id: 'facility-1', name: 'Downtown Storage' },
+  { id: 'facility-2', name: 'Warehouse District' },
+  { id: 'facility-3', name: 'Airport Facility' },
+] as const;
+const mockGlobalFacilityState = {
+  facilities: mockFacilities,
+  selectedFacilityId: '__ALL_FACILITIES__',
+  isAllFacilitiesSelected: true,
+};
+
 jest.mock('@/contexts/AuthContext', () => ({
   ...jest.requireActual('@/contexts/AuthContext'),
   useAuth: () => ({
-    authState: {
-      user: mockUser,
-      isAuthenticated: true,
-    },
+    authState: mockAuthState,
     login: jest.fn(),
     logout: jest.fn(),
   }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  ...jest.requireActual('@/contexts/GlobalFacilityContext'),
+  useGlobalFacility: () => mockGlobalFacilityState,
 }));
 
 jest.mock('@/contexts/WebSocketContext', () => ({
@@ -121,9 +135,11 @@ describe('HistogramWidget', () => {
       renderWithProviders(<HistogramWidget id="test-widget" title="Activity Histogram" />);
 
       await waitFor(() => {
-        expect(mockGetActivityStats).toHaveBeenCalledWith({
-          period: 'month',
-        });
+        expect(mockGetActivityStats).toHaveBeenCalledWith(
+          expect.objectContaining({
+            period: 'month',
+          }),
+        );
       });
     });
   });

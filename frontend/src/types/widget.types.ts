@@ -274,7 +274,8 @@ export type FacilityViewerGroundPreset =
   | 'natural'
   | 'woodland'
   | 'urban'
-  | 'techno';
+  | 'techno'
+  | 'local';
 
 /** Re-export for widget config — keep in sync with ScenePresets EnvironmentOptions. */
 export type {
@@ -283,12 +284,43 @@ export type {
   GroundEnvironmentOptions,
   WoodlandEnvironmentOptions,
   UrbanEnvironmentOptions,
+  LocalEnvironmentOptions,
 } from '@/components/bludesign/core/environment/ScenePresets';
 
 export interface FacilityViewerWidgetConfig {
   skyPreset?: FacilityViewerSkyPreset;
   groundPreset?: FacilityViewerGroundPreset;
   environmentOptions?: import('@/components/bludesign/core/environment/ScenePresets').EnvironmentOptions;
+  /** Lift facility assets to sit on local terrain relief (viewer widget only). */
+  terrainAlignAssets?: boolean;
+  /** Flatten terrain to ground level near assets (mutually exclusive with terrainAlignAssets). */
+  terrainFlattenToGround?: boolean;
+  /** Meters beyond each asset footprint where terrain flattening fades out. */
+  terrainFlattenDistance?: number;
+  /** Flatten strength (0 = off, 1 = full flatten at asset). */
+  terrainFlattenBlend?: number;
+  /** Relief height (m) to flatten toward; raise above 0 to avoid recessed pockets on high terrain. */
+  terrainFlattenBaseline?: number;
+}
+
+export const DEFAULT_TERRAIN_FLATTEN_DISTANCE = 8;
+export const DEFAULT_TERRAIN_FLATTEN_BLEND = 1;
+export const DEFAULT_TERRAIN_FLATTEN_BASELINE = 0;
+export const TERRAIN_FLATTEN_DISTANCE_RANGE = { min: 1, max: 40 } as const;
+export const TERRAIN_FLATTEN_BLEND_RANGE = { min: 0, max: 1 } as const;
+export const TERRAIN_FLATTEN_BASELINE_RANGE = { min: 0, max: 40 } as const;
+
+export type ViewerTerrainConformMode = 'none' | 'align-assets' | 'flatten-terrain';
+
+export function resolveViewerTerrainConformMode(
+  config: Pick<
+    FacilityViewerWidgetConfig,
+    'terrainAlignAssets' | 'terrainFlattenToGround'
+  >
+): ViewerTerrainConformMode {
+  if (config.terrainFlattenToGround) return 'flatten-terrain';
+  if (config.terrainAlignAssets) return 'align-assets';
+  return 'none';
 }
 
 export const DEFAULT_FACILITY_VIEWER_CONFIG: FacilityViewerWidgetConfig = {

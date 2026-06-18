@@ -46,8 +46,8 @@ describe('AccessHistoryReadService', () => {
         created_at: new Date(),
         updated_at: new Date(),
         metadata: { device_type: 'blulok' },
-        device_serial: 'GW-123',
-        blulok_device_name: 'Front Gate Lock',
+        device_serial: 'ae4097b2-16b3-4b1d-b964-6021c7be6ea2',
+        blulok_device_settings: { displayName: 'Front Gate Lock' },
         facility_name: 'Petrolia Storage Facility',
       },
     ]);
@@ -60,6 +60,31 @@ describe('AccessHistoryReadService', () => {
     expect(result.logs[0].device_name).toBe('Front Gate Lock');
     expect(result.logs[0].metadata?.actor).toEqual({ type: 'gateway', name: 'Gateway' });
     expect(result.logs[0].metadata?.device).toMatchObject({ name: 'Front Gate Lock' });
+  });
+
+  it('resolves BluLok lock number when serial is a lock id UUID', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-lock-number',
+        activity_type: 'lock',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'gateway',
+        actor_name: 'Gateway',
+        result: 'success',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: { device_type: 'blulok' },
+        device_serial: 'ae4097b2-16b3-4b1d-b964-6021c7be6ea2',
+        blulok_device_settings: { lockNumber: 106 },
+        facility_name: 'Petrolia Storage Facility',
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, { action: 'lock' });
+    expect(result.logs[0].device_name).toBe('Lock #106');
   });
 
   it('uses end-of-day UTC for date-only date_to filters', async () => {

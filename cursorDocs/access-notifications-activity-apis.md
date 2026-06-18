@@ -449,6 +449,8 @@ Failed remote commands (gateway reject, send error, timeout) write `access_attem
 
 Gateway `access_denied` events are mapped to API action `unlock_attempt` with structured `denial_reason` and `metadata.failure_summary` for UI display.
 
+**Gateway ingestion contract:** see [`gateway-access-events.md`](./gateway-access-events.md) for the full `POST /internal/gateway/access-events` schema, examples, and when to use `devices/state` vs access-events.
+
 ---
 
 ## Data Retention & Storage Limits

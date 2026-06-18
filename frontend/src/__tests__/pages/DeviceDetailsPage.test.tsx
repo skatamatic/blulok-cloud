@@ -61,17 +61,17 @@ jest.mock('@/components/Modal/ConfirmModal', () => ({
 }));
 
 jest.mock('@/components/Devices/EditDeviceMetadataModal', () => ({
-  EditDeviceMetadataModal: ({ isOpen, onClose, onSaved }: {
+  EditDeviceMetadataModal: ({ isOpen, onClose, onSuccess }: {
     isOpen: boolean;
     onClose: () => void;
-    onSaved?: () => void;
+    onSuccess?: () => void;
   }) =>
     isOpen ? (
       <div data-testid="edit-metadata-modal" role="dialog">
         <button type="button" onClick={onClose} data-testid="close-metadata-modal">
           Close
         </button>
-        <button type="button" onClick={() => onSaved?.()} data-testid="save-metadata-modal">
+        <button type="button" onClick={() => onSuccess?.()} data-testid="save-metadata-modal">
           Save
         </button>
       </div>

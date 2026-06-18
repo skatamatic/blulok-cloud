@@ -8,6 +8,14 @@ import { logger } from '@/utils/logger';
 import type { Knex } from 'knex';
 export type BluLokInventoryDeleteSource = 'admin_api' | 'gateway_sync';
 export type AccessControlInventoryDeleteSource = 'admin_api' | 'gateway_sync';
+export type NetworkInfraInventoryDeleteSource = 'admin_api' | 'gateway_sync';
+
+export interface NetworkInfraInventoryDeleteResult {
+  gatewayId: string;
+  facilityId: string | null;
+  deviceKind: 'bridge' | 'friend_node';
+  deviceSerial: string;
+}
 
 export interface BluLokInventoryDeleteResult {
   gatewayId: string;
@@ -425,6 +433,70 @@ export class DevicesService {
     };
   }
 
+  async removeNetworkInfraDeviceFromCloudInventory(
+    deviceId: string,
+    options: { performedBy: string },
+  ): Promise<NetworkInfraInventoryDeleteResult> {
+    return this.deleteNetworkInfraFromInventory(deviceId, {
+      performedBy: options.performedBy,
+      source: 'admin_api',
+    });
+  }
+
+  async deleteNetworkInfraFromInventory(
+    deviceId: string,
+    options: {
+      performedBy?: string;
+      source: NetworkInfraInventoryDeleteSource;
+    },
+  ): Promise<NetworkInfraInventoryDeleteResult> {
+    const knex = DatabaseService.getInstance().connection;
+
+    const result = await knex.transaction(async (trx) => {
+      const device = await trx('gateway_inventory_devices').where('id', deviceId).first();
+      if (!device) {
+        throw new Error('Device not found');
+      }
+
+      const gateway = await trx('gateways').where('id', device.gateway_id).first();
+      const facilityId: string | null = gateway?.facility_id ?? null;
+      const deviceKind = String(device.device_kind) as 'bridge' | 'friend_node';
+      const deviceSerial = String(device.device_serial);
+
+      const deleted = await trx('gateway_inventory_devices').where('id', deviceId).del();
+      if (!deleted) {
+        throw new Error('Device not found');
+      }
+
+      return {
+        gatewayId: String(device.gateway_id),
+        facilityId,
+        deviceKind,
+        deviceSerial,
+      };
+    });
+
+    if (options.source !== 'gateway_sync' && result.facilityId) {
+      try {
+        const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+        await DeviceDeletionOutboxService.getInstance().enqueueDeletion({
+          facilityId: result.facilityId,
+          gatewayId: result.gatewayId,
+          deviceKind: result.deviceKind,
+          deviceSerial: result.deviceSerial,
+        });
+      } catch (err) {
+        logger.warn('Failed to enqueue DEVICE_DELETED tombstone for network infra device:', err);
+      }
+    }
+
+    logger.info(
+      `Network infra device ${deviceId} removed from cloud inventory (source=${options.source}, by=${options.performedBy ?? 'system'}, facility=${result.facilityId ?? 'none'})`,
+    );
+
+    return result;
+  }
+
   private async willRemoveAccessCodeGroupMembership(
     trx: Knex.Transaction,
     deviceId: string,
@@ -547,6 +619,43 @@ export class DevicesService {
       return false;
     } catch (error: unknown) {
       logger.error('Error checking user access to access control device:', error);
+      return false;
+    }
+  }
+
+  async hasUserAccessToNetworkInfraDevice(
+    deviceId: string,
+    userId: string,
+    userRole: UserRole,
+  ): Promise<boolean> {
+    try {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+        return true;
+      }
+
+      if (userRole === UserRole.FACILITY_ADMIN) {
+        const knex = DatabaseService.getInstance().connection;
+        const foundDevice = await knex('gateway_inventory_devices').where('id', deviceId).first();
+        if (!foundDevice) {
+          return false;
+        }
+
+        const gateway = await knex('gateways').where('id', foundDevice.gateway_id).first();
+        if (!gateway?.facility_id) {
+          return false;
+        }
+
+        const userFacilities = await knex('user_facility_associations')
+          .where('user_id', userId)
+          .where('facility_id', gateway.facility_id)
+          .first();
+
+        return !!userFacilities;
+      }
+
+      return false;
+    } catch (error: unknown) {
+      logger.error('Error checking user access to network infra device:', error);
       return false;
     }
   }

@@ -54,6 +54,29 @@ export function computeBluDesignSceneBounds(deps: {
   return bounds;
 }
 
+/** Frame an isometric-style orbit around an axis-aligned world bounds box. */
+export function computeFocusOrbitForWorldBounds(
+  bounds: THREE.Box3,
+  camera: THREE.Camera
+): { center: THREE.Vector3; newCameraPos: THREE.Vector3 } {
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+  bounds.getCenter(center);
+  bounds.getSize(size);
+
+  const maxDim = Math.max(size.x, size.y, size.z, 1);
+  const targetDistance = maxDim * 1.35;
+
+  const currentDir = new THREE.Vector3();
+  camera.getWorldDirection(currentDir);
+
+  const offset = currentDir.negate().multiplyScalar(Math.max(targetDistance, 24));
+  offset.y = Math.max(offset.y, targetDistance * 0.55);
+
+  const newCameraPos = center.clone().add(offset);
+  return { center, newCameraPos };
+}
+
 export function computeFocusOrbitForPlacedObjectMesh(
   mesh: THREE.Object3D,
   camera: THREE.Camera

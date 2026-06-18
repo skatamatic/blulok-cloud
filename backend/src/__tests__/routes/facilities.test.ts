@@ -1,6 +1,9 @@
 import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectForbidden, expectNotFound } from '@/__tests__/utils/mock-test-helpers';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { AuthService } from '@/services/auth.service';
+import { UserRole } from '@/types/auth.types';
 
 describe('Facilities Routes', () => {
   let app: any;
@@ -77,6 +80,59 @@ describe('Facilities Routes', () => {
       expect(response.body).toHaveProperty('total');
       // Should only return facilities where admin has units
       expect(response.body.facilities.length).toBeGreaterThan(0);
+    });
+
+    it('should list facilities from live DB associations even when JWT facilityIds are stale', async () => {
+      const liveFacilityIds = [
+        '550e8400-e29b-41d4-a716-446655440001',
+        '550e8400-e29b-41d4-a716-446655440002',
+      ];
+      const getIdsMock = UserFacilityAssociationModel.getUserFacilityIds as jest.Mock;
+      getIdsMock.mockResolvedValueOnce(liveFacilityIds);
+
+      const response = await request(app)
+        .get('/api/v1/facilities')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      const returnedIds = response.body.facilities.map((f: { id: string }) => f.id);
+      expect(returnedIds).toEqual(
+        expect.arrayContaining(liveFacilityIds)
+      );
+      expect(response.body.total).toBe(liveFacilityIds.length);
+      expect(returnedIds.length).toBe(liveFacilityIds.length);
+    });
+
+    it('should list only DB-associated facilities when JWT still includes a removed facility', async () => {
+      const facilityOne = '550e8400-e29b-41d4-a716-446655440001';
+      const facilityTwo = '550e8400-e29b-41d4-a716-446655440002';
+      const jwtWithBothFacilities = AuthService.generateToken(
+        {
+          id: 'facility-admin-1',
+          email: 'facilityadmin@test.com',
+          role: UserRole.FACILITY_ADMIN,
+          password_hash: 'hashed-password',
+          first_name: 'Facility',
+          last_name: 'Admin',
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        } as any,
+        [facilityOne, facilityTwo]
+      );
+
+      const getIdsMock = UserFacilityAssociationModel.getUserFacilityIds as jest.Mock;
+      getIdsMock.mockResolvedValueOnce([facilityOne]);
+
+      const response = await request(app)
+        .get('/api/v1/facilities')
+        .set('Authorization', `Bearer ${jwtWithBothFacilities}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.total).toBe(1);
+      expect(response.body.facilities.map((f: { id: string }) => f.id)).toEqual([facilityOne]);
     });
 
     it('should return only facilities with units for TENANT', async () => {
@@ -216,6 +272,35 @@ describe('Facilities Routes', () => {
       const response = await request(app)
         .get('/api/v1/facilities/facility-2')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 403 for removed facility even when JWT still includes it', async () => {
+      const facilityOne = '550e8400-e29b-41d4-a716-446655440001';
+      const facilityTwo = '550e8400-e29b-41d4-a716-446655440002';
+      const jwtWithBothFacilities = AuthService.generateToken(
+        {
+          id: 'facility-admin-1',
+          email: 'facilityadmin@test.com',
+          role: UserRole.FACILITY_ADMIN,
+          password_hash: 'hashed-password',
+          first_name: 'Facility',
+          last_name: 'Admin',
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        } as any,
+        [facilityOne, facilityTwo]
+      );
+
+      const getIdsMock = UserFacilityAssociationModel.getUserFacilityIds as jest.Mock;
+      getIdsMock.mockResolvedValueOnce([facilityOne]);
+
+      const response = await request(app)
+        .get(`/api/v1/facilities/${facilityTwo}`)
+        .set('Authorization', `Bearer ${jwtWithBothFacilities}`)
         .expect(403);
 
       expectForbidden(response);

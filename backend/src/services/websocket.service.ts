@@ -6,7 +6,7 @@ import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { SubscriptionRegistry } from './subscriptions/subscription-registry';
 import { GatewayTelemetryLogService } from './gateway-telemetry-log.service';
-import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { FacilityAccessService } from '@/services/facility-access.service';
 
 /**
  * WebSocket Subscription Interface
@@ -38,6 +38,7 @@ interface WebSocketClientContext {
   subscriptions: Map<string, Subscription>;
   pendingSubscriptionKeys: Set<string>;
   facilityIds?: string[];
+  heartbeatCount: number;
 }
 
 /**
@@ -48,7 +49,7 @@ interface WebSocketClientContext {
  */
 export interface WebSocketMessage {
   /** Message type determining how the message should be processed */
-  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update';
+  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update' | 'scope_update';
   /** Subscription ID for targeted messages */
   subscriptionId?: string;
   /** Type of subscription being referenced */
@@ -183,20 +184,22 @@ export class WebSocketService {
       }
 
       const decoded = verify(token, config.jwt.secret) as any;
-      
-      // SECURITY: Load facility IDs for all non-global roles
+
+      const role = decoded.role as UserRole;
       let facilityIds: string[] | undefined;
-      if (decoded.role !== UserRole.ADMIN && decoded.role !== UserRole.DEV_ADMIN) {
-        facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(decoded.userId);
-        logger.info(`🔌 Loaded ${facilityIds.length} facility IDs for user ${decoded.userId} (${decoded.role})`);
+      if (role !== UserRole.ADMIN && role !== UserRole.DEV_ADMIN) {
+        const liveIds = await FacilityAccessService.getUserFacilityIds(decoded.userId, role);
+        facilityIds = liveIds.length > 0 ? liveIds : undefined;
+        logger.info(`🔌 Loaded ${liveIds.length} facility IDs for user ${decoded.userId} (${role})`);
       }
-      
-      const client = {
+
+      const client: WebSocketClientContext = {
         userId: decoded.userId,
-        userRole: decoded.role as UserRole,
+        userRole: role,
         subscriptions: new Map<string, Subscription>(),
         pendingSubscriptionKeys: new Set<string>(),
-        facilityIds, // Include facility IDs for RBAC enforcement in subscriptions
+        facilityIds,
+        heartbeatCount: 0,
       };
 
       this.clients.set(ws, client);
@@ -250,11 +253,41 @@ export class WebSocketService {
     }
   }
 
+  private async refreshClientFacilityScope(client: WebSocketClientContext): Promise<boolean> {
+    if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
+      return false;
+    }
+
+    const liveIds = await FacilityAccessService.getUserFacilityIds(client.userId, client.userRole);
+    const next = liveIds.length > 0 ? liveIds : undefined;
+    const prevKey = JSON.stringify(client.facilityIds ?? []);
+    const nextKey = JSON.stringify(next ?? []);
+    client.facilityIds = next;
+    return prevKey !== nextKey;
+  }
+
+  /** Re-load facility scope for every dashboard WS client belonging to a user. */
+  public async refreshFacilityScopeForUser(userId: string, userRole: UserRole): Promise<void> {
+    for (const [ws, client] of this.clients.entries()) {
+      if (client.userId !== userId) continue;
+      const changed = await this.refreshClientFacilityScope(client);
+      if (changed && ws.readyState === WebSocket.OPEN) {
+        this.sendMessage(ws, {
+          type: 'scope_update',
+          data: { facilityIds: client.facilityIds ?? [] },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
   private async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): Promise<void> {
     if (!message.subscriptionType) {
       this.sendError(ws, 'Subscription type required');
       return;
     }
+
+    await this.refreshClientFacilityScope(client);
 
     const subscriptionKey = this.makeSubscriptionKey(message.subscriptionType, message.data);
     const existing = Array.from(client.subscriptions.values()).find((sub: Subscription) =>
@@ -368,6 +401,19 @@ export class WebSocketService {
       if (subscription) {
         subscription.lastHeartbeat = new Date();
       }
+    }
+
+    client.heartbeatCount += 1;
+    if (client.heartbeatCount % 4 === 0) {
+      void this.refreshClientFacilityScope(client).then((changed) => {
+        if (changed && ws.readyState === WebSocket.OPEN) {
+          this.sendMessage(ws, {
+            type: 'scope_update',
+            data: { facilityIds: client.facilityIds ?? [] },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      });
     }
 
     this.sendMessage(ws, {

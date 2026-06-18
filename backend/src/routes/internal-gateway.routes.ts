@@ -29,7 +29,8 @@ import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH } from '@/constants/gateway-telemetry-log.constants';
 import { normalizeAddLogBody } from '@/utils/gateway-telemetry-log-ingest.utils';
-import { partitionInventoryByKind, partitionStateUpdatesByKind } from '@/utils/gateway-sync.utils';
+import { partitionInventoryItems, partitionStateUpdatesByKind } from '@/utils/gateway-sync.utils';
+import type { NetworkInfraInventoryItem } from '@/utils/gateway-sync.utils';
 import { AccessCodeService } from '@/services/access-code.service';
 import { GatewayModel } from '@/models/gateway.model';
 import { AuthService } from '@/services/auth.service';
@@ -236,11 +237,35 @@ const lockInventoryItemSchema = Joi.object({
 
 const accessInventoryItemSchema = Joi.object(accessInventoryFields);
 
+const networkInfraInventoryItemSchema = Joi.object({
+  kind: Joi.string().valid('bridge', 'friend_node').required(),
+  serial: Joi.string().trim().min(1).required(),
+  state: Joi.string().trim().max(64).optional(),
+  firmware_version: Joi.string().trim().max(128).optional(),
+  info: Joi.object().unknown(true).optional(),
+}).unknown(true);
+
+const gatewayInventoryUpdateSchema = Joi.object({
+  kind: Joi.string().valid('gateway').required(),
+  serial: Joi.string().trim().min(1).optional(),
+  state: Joi.string().trim().max(64).optional(),
+  firmware_version: Joi.string().trim().max(128).optional(),
+  info: Joi.object().unknown(true).optional(),
+  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
+}).unknown(true);
+
 const inventorySyncSchema = Joi.object({
   tid: tidField,
   facility_id: Joi.string().optional(),
   devices: Joi.array()
-    .items(Joi.alternatives().try(accessInventoryItemSchema, lockInventoryItemSchema))
+    .items(
+      Joi.alternatives().try(
+        accessInventoryItemSchema,
+        lockInventoryItemSchema,
+        networkInfraInventoryItemSchema,
+        gatewayInventoryUpdateSchema,
+      ),
+    )
     .required(),
 });
 
@@ -315,27 +340,42 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
     return;
   }
 
-  // Perform inventory sync (locks + optional access control)
+  // Perform inventory sync (locks + optional access control + network infra)
   let lockDevices: DeviceInventoryItem[];
   let accessDevices: AccessDeviceInventoryItem[];
+  let networkInfraDevices: NetworkInfraInventoryItem[];
+  let gatewayUpdates: Record<string, unknown>[];
   try {
-    const partitioned = partitionInventoryByKind(value.devices as Record<string, unknown>[]);
+    const partitioned = partitionInventoryItems(value.devices as Record<string, unknown>[]);
     lockDevices = partitioned.locks as unknown as DeviceInventoryItem[];
     accessDevices = partitioned.accessControl as unknown as AccessDeviceInventoryItem[];
+    networkInfraDevices = partitioned.networkInfra as unknown as NetworkInfraInventoryItem[];
+    gatewayUpdates = partitioned.gatewayUpdates;
   } catch (partitionError: any) {
     res.status(400).json({ success: false, message: partitionError.message });
     return;
   }
 
   const syncService = DeviceSyncService.getInstance();
-  const [lockResult, accessResult] = await Promise.all([
-    lockDevices.length > 0
-      ? syncService.syncDeviceInventory(gateway.id, lockDevices)
-      : Promise.resolve(null),
-    accessDevices.length > 0
-      ? syncService.syncAccessDeviceInventory(gateway.id, facilityId, accessDevices)
-      : Promise.resolve(null),
+  const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
+  const infraSyncService = GatewayInventoryDeviceSyncService.getInstance();
+
+  const [lockResult, accessResult, networkInfraResult] = await Promise.all([
+    syncService.syncDeviceInventory(gateway.id, lockDevices),
+    syncService.syncAccessDeviceInventory(gateway.id, facilityId, accessDevices),
+    infraSyncService.syncNetworkInfraInventory(gateway.id, networkInfraDevices),
   ]);
+
+  for (const gatewayUpdate of gatewayUpdates) {
+    try {
+      await infraSyncService.applyGatewayInventoryUpdate(gateway.id, gatewayUpdate);
+    } catch (gatewayUpdateError: any) {
+      logger.warn('[DEVICE-SYNC] Failed to apply gateway inventory update', {
+        gatewayId: gateway.id,
+        error: gatewayUpdateError?.message || String(gatewayUpdateError),
+      });
+    }
+  }
 
   const result = lockResult ?? {
     added: 0,
@@ -353,6 +393,10 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
     responseData.access_control = accessResult;
   }
 
+  if (networkInfraResult) {
+    responseData.network_infra = networkInfraResult;
+  }
+
   try {
     await GatewayDeviceSyncLogService.getInstance().recordInventorySync({
       gatewayId: gateway.id,
@@ -360,6 +404,7 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
       source: 'gateway_ws',
       lockResult,
       accessResult,
+      networkInfraResult,
     });
   } catch (logError) {
     logger.warn('[DEVICE-SYNC] Failed to persist inventory sync log', { logError });
@@ -372,6 +417,7 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
           removed: result.removed,
           unchanged: result.unchanged,
           skipped_manual: result.skipped_manual,
+          updated: result.updated,
           errors: result.errors,
         }
       : null;
@@ -384,6 +430,7 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
     inventory_summary: {
       locks: summarize(lockResult),
       access_control: summarize(accessResult),
+      network_infra: summarize(networkInfraResult),
     },
   });
 

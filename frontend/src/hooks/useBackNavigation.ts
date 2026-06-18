@@ -4,6 +4,8 @@ import { getBackButtonLabel } from '@/utils/back-navigation.utils';
 
 type BackNavigationState = {
   fromPath?: string;
+  /** Prior location.state to restore when falling back to fromPath without browser history. */
+  returnState?: unknown;
 };
 
 export const getCurrentPath = (location: Pick<Location, 'pathname' | 'search' | 'hash'>): string =>
@@ -18,11 +20,12 @@ export const hasInAppHistory = (): boolean => {
 };
 
 export const withReturnPath = <T extends Record<string, unknown> = Record<string, never>>(
-  location: Pick<Location, 'pathname' | 'search' | 'hash'>,
+  location: Pick<Location, 'pathname' | 'search' | 'hash' | 'state'>,
   state?: T,
 ): T & BackNavigationState => ({
   ...(state || ({} as T)),
   fromPath: getCurrentPath(location),
+  returnState: location.state,
 });
 
 export const useBackNavigation = (fallbackPath: string, replaceFallback: boolean = true) => {
@@ -30,11 +33,23 @@ export const useBackNavigation = (fallbackPath: string, replaceFallback: boolean
   const location = useLocation();
 
   return useCallback(() => {
-    const fromPath = (location.state as BackNavigationState | null)?.fromPath;
+    const navState = location.state as BackNavigationState | null;
+    const fromPath = navState?.fromPath;
     const currentPath = getCurrentPath(location);
 
     if (fromPath && fromPath !== currentPath) {
-      navigate(fromPath);
+      // Forward links use push + withReturnPath; pop the stack instead of pushing fromPath again.
+      if (hasInAppHistory()) {
+        navigate(-1);
+        return;
+      }
+
+      navigate(fromPath, {
+        replace: true,
+        ...(navState?.returnState !== undefined && navState?.returnState !== null
+          ? { state: navState.returnState }
+          : {}),
+      });
       return;
     }
 

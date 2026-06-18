@@ -37,6 +37,7 @@ import Joi from 'joi';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { UserModel, User } from '@/models/user.model';
 import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken, requireUserManagement } from '@/middleware/auth.middleware';
@@ -100,7 +101,7 @@ router.get('/:userId', asyncHandler(async (req: AuthenticatedRequest, res: Respo
   }
 
   // Get facility associations
-  const facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
+  const facilityIds = await FacilityAccessService.getUserFacilityIds(userId, user.role as UserRole);
 
   res.json({
     success: true,

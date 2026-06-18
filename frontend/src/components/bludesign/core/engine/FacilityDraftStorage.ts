@@ -10,6 +10,8 @@ export const DEFAULT_AUTOSAVE_STORAGE_KEY = 'bludesign-autosave-draft';
 export interface FacilityDraftEnvelope {
   timestamp: number;
   data: FacilityData;
+  /** Server facility id this draft belongs to (enables sidecar re-fetch on recovery). */
+  facilityId?: string | null;
 }
 
 export class FacilityDraftStorage {
@@ -21,10 +23,11 @@ export class FacilityDraftStorage {
   /**
    * Write current facility snapshot as a draft envelope.
    */
-  saveDraft(data: FacilityData): void {
+  saveDraft(data: FacilityData, facilityId?: string | null): void {
     const draft: FacilityDraftEnvelope = {
       timestamp: Date.now(),
       data,
+      facilityId: facilityId ?? null,
     };
     this.storage.setItem(this.storageKey, JSON.stringify(draft));
   }
@@ -77,6 +80,16 @@ export class FacilityDraftStorage {
     if (!raw) return null;
     const envelope = this.parseEnvelope(raw);
     return envelope?.data ?? null;
+  }
+
+  /**
+   * Server facility id stored with the draft, if any.
+   */
+  loadFacilityId(): string | null {
+    const raw = this.readRaw();
+    if (!raw) return null;
+    const envelope = this.parseEnvelope(raw);
+    return envelope?.facilityId ?? null;
   }
 
   clear(): void {

@@ -10,6 +10,8 @@ export interface DraftAutoSaveSchedulerDeps {
   isReadonly: () => boolean;
   exportData: () => FacilityData;
   storage: FacilityDraftStorage;
+  /** Server facility id the current draft belongs to (for sidecar re-fetch on recovery). */
+  getFacilityId?: () => string | null;
   /** Called after a successful immediate save (debounced or explicit). */
   onSaved: (timestamp: number) => void;
 }
@@ -48,7 +50,7 @@ export class DraftAutoSaveScheduler {
 
     try {
       const data = this.deps.exportData();
-      this.deps.storage.saveDraft(data);
+      this.deps.storage.saveDraft(data, this.deps.getFacilityId?.() ?? null);
       this.lastSaveTime = Date.now();
       console.log('[AutoSave] Draft saved to local storage');
       this.deps.onSaved(this.lastSaveTime);

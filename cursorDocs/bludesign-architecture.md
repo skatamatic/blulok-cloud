@@ -1011,6 +1011,85 @@ When the widget tab is hidden or `isRenderActive` is false, updates accumulate i
 
 **Requires `bluLokFacilityId`** — pass the linked BluLok facility ID (widget and FMS do this automatically; BluDesign View page passes it from facility link metadata).
 
+## Site terrain data providers
+
+Backend module for fetching real-world **elevation** and **satellite imagery** tiles around a facility location, plus the **`local` ground preset** that drapes stitched imagery on a displaced terrain mesh in the editor and dashboard widget.
+
+### `local` ground preset (integrated)
+
+| Concern | Storage / API |
+|---------|----------------|
+| Alignment + fetch params | `terrainConfig` in `data.json` |
+| Terrain asset identity | `terrainConfig.terrainDataId` in `data.json` |
+| Satellite imagery | Terrain sidecar `bludesign/terrain-data/{userId}/{terrainDataId}/imagery.jpg` |
+| 16-bit heightmap | Terrain sidecar `bludesign/terrain-data/{userId}/{terrainDataId}/heightmap.png` |
+| Live fetch (editor) | `POST /api/v1/bludesign/site-terrain/fetch` (auth; keeps Esri key server-side) |
+| Sidecar GET/PUT | `GET/PUT …/facilities/terrain-data/:terrainDataId/imagery` and `heightmap` |
+| Sidecar DELETE | `DELETE …/facilities/terrain-data/:terrainDataId` (imagery + heightmap) |
+
+**Editor:** View → **Terrain Setup** panel — enter lat/lng + radius, **Fetch**, align with transform sliders (offset, scale, yaw, elevation amplitude, base opacity), **Apply**. Applying stores a generated `terrainDataId` in `terrainConfig` and uploads imagery/heightmap sidecars by that id, so drafts and saved facilities use the same restore path. Saves upload pending terrain sidecars before writing facility metadata, preventing a persisted `terrainConfig` from pointing at missing files. If metadata exists but sidecars are unavailable, the panel shows a warning with retry rather than pretending the terrain is fully loaded. **Delete terrain** clears the mesh, removes `terrainConfig`, deletes stored sidecars, and restores the standard grid. Save the facility to persist removal.
+
+**Widget:** `groundPreset: 'local'` is enabled only when `terrainConfig` exists on the facility; fine-tune controls adjust heightmap amplitude (viewer multiplier on editor relief), radial fade (0 = facility center through default outskirts), asset dimming, wireframe outskirts, brightness, and saturation (`environmentOptions.local`). Optional **`terrainAlignAssets`** lifts and tilts selectable facility assets so their footprint sits flush on the rendered terrain mesh. Heights come from **`localTerrainHeightField.ts`** (`LocalTerrainHeightField`), an O(1) analytic sampler that mirrors the vertex shader exactly: because the terrain mesh only translates, rotates about Y, and scales with `scale.y === 1`, world surface Y is `mesh.position.y + vHeight`, so it inverts the mesh world matrix once, maps a world XZ query into unit-plane UV (`u = localX + 0.5`, `v = 0.5 − localZ`), and evaluates the same grid-vertex relief (bilinear RG8 heightmap fetch interpolated across the mesh cell). Four footprint corners feed `computeTerrainPlaneNormal` for slope tilt; no geometry cloning or raycasting (replaces the old `terrainMeshSurface.ts`). Mutually exclusive **`terrainFlattenToGround`** instead pulls terrain relief toward a configurable baseline near each asset footprint using a GPU influence map (`terrainFlattenMap.ts`, `TerrainFlattenController.ts`) with **flatten distance** (fade radius in meters), **flatten blend** (strength 0–1), and **flatten baseline** (relief meters to flatten toward). Because the shader only blends `blend` of the way toward the baseline directly under a footprint, `TerrainFlattenController` does **not** lift assets by the raw baseline (which floated them); instead it reuses `LocalTerrainHeightField` + the same influence formula (`boxDistanceXZ`/`computeFlattenInfluence`) to sample the *actual* flattened world surface under each asset footprint (corners + center) and rests the asset bottom flush on it. Both modes are viewer-widget only (`TerrainAssetAlignmentController`). On open, the viewer imports facility scene data first, then fetches terrain sidecars from the API and applies them — blob URL lifetime is owned by the viewer (not revoked on `importSceneData`). Live preset changes reuse already-loaded sidecars in the viewer ref instead of re-downloading.
+
+**Rendering:** `LocalTerrainManager` + `localTerrainGround` shader — displaced plane from heightmap, draped imagery, radial fade, facility asset dimming, optional wireframe outskirts blend.
+
+### Location
+
+```
+backend/src/bludesign/services/site-terrain/
+├── types.ts                         # TileCoordinate, GeoBounds, SitePackResult, errors
+├── elevation-provider.interface.ts  # Pluggable elevation tile source
+├── imagery-provider.interface.ts    # Pluggable imagery tile source
+├── elevation-decoders.ts            # Terrarium + Mapbox-RGB height decode
+├── tile-math.ts                     # Web Mercator tile indices, bounds, auto-zoom
+├── tile-stitcher.ts                 # Fetch tiles + composite + crop to geo bounds
+├── site-terrain.factory.ts          # createElevationProvider / createImageryProvider
+├── site-terrain.service.ts          # SiteTerrainService.fetchSitePack()
+├── heightmap-encoder.ts             # 16-bit PNG + JPEG helpers for fetch API
+└── providers/
+    ├── terrarium.provider.ts        # AWS Mapzen Terrarium (free, no key)
+    ├── esri-world-imagery.provider.ts
+    ├── mapbox-terrain-rgb.provider.ts
+    ├── mapbox-satellite.provider.ts
+    └── stub.*.provider.ts           # Deterministic offline tiles for tests
+```
+
+Elevation and imagery providers are **independent** — e.g. Terrarium elevation + Esri imagery (default free stack).
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SITE_TERRAIN_ELEVATION_PROVIDER` | `terrarium` | `terrarium` \| `mapbox-terrain-rgb` \| `stub` |
+| `SITE_TERRAIN_IMAGERY_PROVIDER` | `esri-world-imagery` | `esri-world-imagery` \| `mapbox-satellite` \| `stub` |
+| `ESRI_API_KEY` | — | Required for Esri imagery |
+| `MAPBOX_ACCESS_TOKEN` | — | Required when Mapbox providers selected |
+
+### CLI test harness
+
+```bash
+cd backend
+npm run terrain:fetch-harness -- --lat 43.653 --lng -79.383 --radius 400 --out ./terrain-harness-out
+npm run terrain:fetch-harness -- --stub --lat 43.653 --lng -79.383   # offline stub providers
+```
+
+Writes `imagery.jpg`, `elevation.png` (normalized grayscale preview), `elevation-meta.json`, and `manifest.json` (attributions, tile counts).
+
+### Fetch API response
+
+`POST /bludesign/site-terrain/fetch` body: `{ lat, lng, radiusMeters, detailLevel?, imageryZoom?, elevationZoom? }` where `detailLevel` is `low` | `med` | `max` (default `max`) and controls auto tile zoom when explicit zooms are omitted. Response: `{ imageryBase64, heightmapBase64, meta }` where `meta` includes width/height, minM/maxM, zooms, bounds, providers, attribution, `detailLevel`, and `worldSizeMeters`.
+
+Height reconstruction in the shader: `h = minM + (sample.r) * (maxM - minM)` (16-bit PNG decoded by the browser as normalized grayscale).
+
+### Attribution
+
+Display provider attributions in any UI that shows stitched imagery. Defaults: Mapzen/AWS for elevation, Esri/Maxar for imagery.
+
+### Tests
+
+- Unit: `backend/src/__tests__/bludesign/services/site-terrain/`
+- Integration (network): `backend/src/__tests__/integration/site-terrain-provider.integration.test.ts` — Terrarium always runs; Esri tests skip without `ESRI_API_KEY`.
+
 ## Layout Import (image/PDF → unit detection)
 
 The **layout-import detection engine** turns a raster facility site plan into

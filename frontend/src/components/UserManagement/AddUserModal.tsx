@@ -118,10 +118,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
         const res = await apiService.getFacilities();
         if (cancelled || !res?.success || !Array.isArray(res.facilities)) return;
         let list = res.facilities as Array<{ id: string; name: string }>;
-        if (authState.user?.role === UserRole.FACILITY_ADMIN && authState.user.facilityIds?.length) {
-          const allowed = new Set(authState.user.facilityIds);
-          list = list.filter((f) => allowed.has(f.id));
-        }
+        // GET /facilities already returns only facilities the requester can access.
         setFacilitiesForSelect(list);
       } catch {
         if (!cancelled) setFacilitiesForSelect([]);
@@ -132,7 +129,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, authState.user?.role, authState.user?.facilityIds]);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {

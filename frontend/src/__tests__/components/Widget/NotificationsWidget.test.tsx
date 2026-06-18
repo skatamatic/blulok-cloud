@@ -48,13 +48,23 @@ const mockUser = {
   facilityNames: ['Site A', 'Site B'],
 };
 
+// Stable identities — inline objects/arrays make hook deps change every render and
+// re-fire NotificationsWidget's load effect in an infinite loop (hangs Jest).
+const mockAuthState = { user: mockUser, isAuthenticated: true };
+const mockFacilities = [
+  { id: 'fac-123', name: '621 Sandbox' },
+  { id: 'fac-456', name: 'Site B' },
+] as const;
+const mockGlobalFacilityState = {
+  facilities: mockFacilities,
+  selectedFacilityId: '__ALL_FACILITIES__',
+  isAllFacilitiesSelected: true,
+};
+
 jest.mock('@/contexts/AuthContext', () => ({
   ...jest.requireActual('@/contexts/AuthContext'),
   useAuth: () => ({
-    authState: {
-      user: mockUser,
-      isAuthenticated: true,
-    },
+    authState: mockAuthState,
     login: jest.fn(),
     logout: jest.fn(),
   }),
@@ -63,14 +73,7 @@ jest.mock('@/contexts/AuthContext', () => ({
 
 jest.mock('@/contexts/GlobalFacilityContext', () => ({
   ...jest.requireActual('@/contexts/GlobalFacilityContext'),
-  useGlobalFacility: () => ({
-    facilities: [
-      { id: 'fac-123', name: '621 Sandbox' },
-      { id: 'fac-456', name: 'Site B' },
-    ],
-    selectedFacilityId: '__ALL_FACILITIES__',
-    isAllFacilitiesSelected: true,
-  }),
+  useGlobalFacility: () => mockGlobalFacilityState,
 }));
 
 jest.mock('framer-motion', () => ({

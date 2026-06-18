@@ -39,7 +39,8 @@
     "device-metadata:e2e": "node scripts/device-metadata-e2e.js",
     "storage:e2e": "node scripts/storage-e2e.js",
     "bludesign:detect": "node -r ts-node/register -r tsconfig-paths/register scripts/bludesign-detect.ts",
-    "bludesign:detect:test": "jest --runTestsByPath src/bludesign/layout-import/__tests__/detectUnits.regression.test.ts --testPathIgnorePatterns /node_modules/"
+    "bludesign:detect:test": "jest --runTestsByPath src/bludesign/layout-import/__tests__/detectUnits.regression.test.ts --testPathIgnorePatterns /node_modules/",
+    "terrain:fetch-harness": "node -r ts-node/register -r tsconfig-paths/register scripts/terrain-fetch-harness.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",

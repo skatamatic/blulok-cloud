@@ -329,22 +329,42 @@ export interface DeviceFilters {
   facility_id?: string;
   gateway_id?: string;
   device_type?: 'access_control' | 'blulok' | 'all';
+  device_scope?: 'operational' | 'network_infra' | 'all';
   status?: string;
   search?: string;
   sortBy?:
     | 'name'
     | 'unit_number'
     | 'device_type'
+    | 'device_kind'
     | 'status'
     | 'facility_name'
     | 'gateway_name'
     | 'last_activity'
+    | 'last_seen'
     | 'created_at';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
   /** Backend returns only id + device_category (ordered like the full list). */
   projection?: 'id';
+}
+
+export interface NetworkInfraDevice {
+  id: string;
+  device_category: 'network_infra';
+  device_kind: 'gateway' | 'bridge' | 'friend_node';
+  name: string;
+  device_serial: string;
+  status: string;
+  firmware_version?: string | null;
+  info?: Record<string, unknown>;
+  facility_id?: string | null;
+  facility_name?: string | null;
+  gateway_id: string;
+  gateway_name?: string | null;
+  last_seen?: string | null;
+  deletable: boolean;
 }
 
 export interface UnitFilters {

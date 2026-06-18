@@ -143,4 +143,77 @@ describe('FacilityStorageAdapter', () => {
       );
     });
   });
+
+  describe('terrain sidecars', () => {
+    it('should upload JPEG imagery to terrain-imagery path', async () => {
+      const jpg = Buffer.from('fake-jpg');
+      await adapter.saveTerrainImagery('user-1', 'fac-1', jpg);
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-1/terrain-imagery.jpg',
+        jpg,
+        'image/jpeg',
+      );
+    });
+
+    it('should upload PNG heightmap to terrain-heightmap path', async () => {
+      const png = Buffer.from('fake-png');
+      await adapter.saveTerrainHeightmap('user-1', 'fac-1', png);
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-1/terrain-heightmap.png',
+        png,
+        'image/png',
+      );
+    });
+
+    it('should upload terrain-data imagery by terrainDataId', async () => {
+      const jpg = Buffer.from('fake-jpg');
+      await adapter.saveTerrainDataImagery('user-1', 'terrain-1', jpg);
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/terrain-data/user-1/terrain-1/imagery.jpg',
+        jpg,
+        'image/jpeg',
+      );
+    });
+
+    it('should upload terrain-data heightmap by terrainDataId', async () => {
+      const png = Buffer.from('fake-png');
+      await adapter.saveTerrainDataHeightmap('user-1', 'terrain-1', png);
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/terrain-data/user-1/terrain-1/heightmap.png',
+        png,
+        'image/png',
+      );
+    });
+
+    it('should delete terrain-data sidecars by terrainDataId', async () => {
+      await adapter.deleteTerrainData('user-1', 'terrain-1');
+      expect(mockBase.deleteFile).toHaveBeenCalledWith(
+        'bludesign/terrain-data/user-1/terrain-1/imagery.jpg',
+      );
+      expect(mockBase.deleteFile).toHaveBeenCalledWith(
+        'bludesign/terrain-data/user-1/terrain-1/heightmap.png',
+      );
+    });
+
+    it('should copy terrain assets between facility folders', async () => {
+      const jpg = Buffer.from('imagery');
+      const png = Buffer.from('heightmap');
+      mockBase.downloadFile
+        .mockResolvedValueOnce(jpg)
+        .mockResolvedValueOnce(png);
+
+      await adapter.copyTerrainAssets('user-1', 'fac-source', 'fac-target');
+
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-target/terrain-imagery.jpg',
+        jpg,
+        'image/jpeg',
+      );
+      expect(mockBase.uploadFile).toHaveBeenCalledWith(
+        'bludesign/user-facilities/user-1/fac-target/terrain-heightmap.png',
+        png,
+        'image/png',
+      );
+    });
+  });
 });

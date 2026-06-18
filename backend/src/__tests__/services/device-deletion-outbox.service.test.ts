@@ -7,6 +7,7 @@ const mockMarkDelivered = jest.fn();
 const mockScheduleRetry = jest.fn();
 const mockCancelActiveForBlulok = jest.fn();
 const mockCancelActiveForAccessControl = jest.fn();
+const mockCancelActiveForNetworkInfra = jest.fn();
 const mockRecoverStaleInProgress = jest.fn();
 const mockFindDue = jest.fn();
 
@@ -21,6 +22,7 @@ jest.mock('@/models/device-deletion-outbox.model', () => ({
     scheduleRetry: mockScheduleRetry,
     cancelActiveForBlulok: mockCancelActiveForBlulok,
     cancelActiveForAccessControl: mockCancelActiveForAccessControl,
+    cancelActiveForNetworkInfra: mockCancelActiveForNetworkInfra,
     recoverStaleInProgress: mockRecoverStaleInProgress,
     findDue: mockFindDue,
   })),
@@ -65,6 +67,7 @@ describe('DeviceDeletionOutboxService', () => {
     lock_id: 'LOCK-123',
     access_id: null,
     relay_channel: null,
+    device_serial: null,
     status: 'pending' as const,
     attempt_count: 0,
   };
@@ -89,6 +92,7 @@ describe('DeviceDeletionOutboxService', () => {
     mockFindDue.mockResolvedValue([]);
     mockCancelActiveForBlulok.mockResolvedValue(1);
     mockCancelActiveForAccessControl.mockResolvedValue(1);
+    mockCancelActiveForNetworkInfra.mockResolvedValue(1);
     service = DeviceDeletionOutboxService.getInstance();
   });
 
@@ -179,6 +183,44 @@ describe('DeviceDeletionOutboxService', () => {
     const nonce = (Ed25519Service.signCommandJwt as jest.Mock).mock.calls[0][0].nonce as string;
     service.handleDeviceDeletedAck('fac-1', { nonce, accepted: true });
     await flushPromise;
+  });
+
+  it('flushPendingForFacility signs network infra payload with serial', async () => {
+    const infraRow = {
+      ...blulokRow,
+      device_kind: 'bridge' as const,
+      lock_id: null,
+      device_serial: 'BR-001',
+    };
+    mockFindNextDeliverableForFacility.mockReset();
+    mockFindNextDeliverableForFacility
+      .mockResolvedValueOnce(infraRow)
+      .mockResolvedValue(null);
+
+    const flushPromise = service.flushPendingForFacility('fac-1');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(Ed25519Service.signCommandJwt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cmd_type: 'DEVICE_DELETED',
+        device_kind: 'bridge',
+        serial: 'BR-001',
+      }),
+    );
+
+    const nonce = (Ed25519Service.signCommandJwt as jest.Mock).mock.calls[0][0].nonce as string;
+    service.handleDeviceDeletedAck('fac-1', { nonce, accepted: true });
+    await flushPromise;
+  });
+
+  it('cancelForNetworkInfra delegates to outbox model', async () => {
+    await service.cancelForNetworkInfra('fac-1', 'bridge', 'BR-001');
+    expect(mockCancelActiveForNetworkInfra).toHaveBeenCalledWith(
+      'fac-1',
+      'bridge',
+      'BR-001',
+      'Device re-added to cloud inventory',
+    );
   });
 
   it('skips flush when gateway is offline', async () => {

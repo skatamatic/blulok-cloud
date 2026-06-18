@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { apiService } from '@/services/api.service';
 import { Facility } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { websocketService } from '@/services/websocket.service';
 
 // Special constant for "All Facilities" option
 export const ALL_FACILITIES_ID = '__ALL_FACILITIES__';
@@ -57,7 +58,7 @@ export const GlobalFacilityProvider: React.FC<GlobalFacilityProviderProps> = ({ 
     }
   };
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     // Don't make API calls if not authenticated or still loading auth
     if (!authState.isAuthenticated || authState.isLoading) {
       setIsLoading(false);
@@ -116,16 +117,24 @@ export const GlobalFacilityProvider: React.FC<GlobalFacilityProviderProps> = ({ 
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [authState.isAuthenticated, authState.isLoading]);
 
   useEffect(() => {
-    // Wait for auth to finish loading before making any API calls
     if (authState.isLoading) {
       return;
     }
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authState.isAuthenticated, authState.isLoading]);
+
+  useEffect(() => {
+    if (!authState.isAuthenticated) {
+      return;
+    }
+    return websocketService.onScopeUpdate(() => {
+      void refresh();
+    });
+  }, [authState.isAuthenticated, refresh]);
 
   return (
     <GlobalFacilityContext.Provider value={{

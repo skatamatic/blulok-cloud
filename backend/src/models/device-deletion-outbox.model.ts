@@ -15,7 +15,9 @@ export type DeviceDeletionOutboxStatus =
   | 'dead_letter'
   | 'cancelled';
 
-export type DeviceDeletionKind = 'blulok' | 'access_control';
+import { NetworkInfraSyncKind, isNetworkInfraSyncKind } from '@/config/gateway-device-kinds';
+
+export type DeviceDeletionKind = 'blulok' | 'access_control' | NetworkInfraSyncKind;
 
 export interface DeviceDeletionOutboxRow {
   id: string;
@@ -25,6 +27,7 @@ export interface DeviceDeletionOutboxRow {
   lock_id: string | null;
   access_id: string | null;
   relay_channel: number | null;
+  device_serial: string | null;
   status: DeviceDeletionOutboxStatus;
   last_nonce: string | null;
   attempt_count: number;
@@ -41,6 +44,11 @@ export interface EnqueueDeviceDeletionInput {
   lockId?: string;
   accessId?: string;
   relayChannel?: number;
+  deviceSerial?: string;
+}
+
+function isInfraDeletionKind(deviceKind: DeviceDeletionKind): deviceKind is NetworkInfraSyncKind {
+  return isNetworkInfraSyncKind(deviceKind);
 }
 
 const ACTIVE_STATUSES: DeviceDeletionOutboxStatus[] = ['pending', 'in_progress', 'failed'];
@@ -61,10 +69,12 @@ export class DeviceDeletionOutboxModel {
 
     if (input.deviceKind === 'blulok') {
       query = query.where('lock_id', input.lockId ?? null);
-    } else {
+    } else if (input.deviceKind === 'access_control') {
       query = query
         .where('access_id', input.accessId ?? null)
         .where('relay_channel', input.relayChannel ?? 1);
+    } else if (isInfraDeletionKind(input.deviceKind)) {
+      query = query.where('device_serial', input.deviceSerial ?? null);
     }
 
     const existing = await query.orderBy('updated_at', 'desc').first();
@@ -91,6 +101,7 @@ export class DeviceDeletionOutboxModel {
       lock_id: input.lockId ?? null,
       access_id: input.accessId ?? null,
       relay_channel: input.relayChannel ?? null,
+      device_serial: input.deviceSerial ?? null,
       status: 'pending',
       attempt_count: 0,
       last_error: null,
@@ -200,6 +211,53 @@ export class DeviceDeletionOutboxModel {
         last_error: reason,
         updated_at: new Date(),
       });
+  }
+
+  async cancelActiveForNetworkInfra(
+    facilityId: string,
+    deviceKind: NetworkInfraSyncKind,
+    deviceSerial: string,
+    reason: string,
+  ): Promise<number> {
+    return this.knex('device_deletion_outbox')
+      .where('facility_id', facilityId)
+      .where('device_kind', deviceKind)
+      .where('device_serial', deviceSerial)
+      .whereIn('status', ACTIVE_STATUSES)
+      .update({
+        status: 'cancelled',
+        last_error: reason,
+        updated_at: new Date(),
+      });
+  }
+
+  async findActiveForNetworkInfra(
+    facilityId: string,
+    deviceKind: NetworkInfraSyncKind,
+    deviceSerial: string,
+  ): Promise<DeviceDeletionOutboxRow | null> {
+    const row = await this.knex('device_deletion_outbox')
+      .where('facility_id', facilityId)
+      .where('device_kind', deviceKind)
+      .where('device_serial', deviceSerial)
+      .whereIn('status', ACTIVE_STATUSES)
+      .orderBy('updated_at', 'desc')
+      .first();
+    return (row as DeviceDeletionOutboxRow) || null;
+  }
+
+  async findLatestForNetworkInfra(
+    facilityId: string,
+    deviceKind: NetworkInfraSyncKind,
+    deviceSerial: string,
+  ): Promise<DeviceDeletionOutboxRow | null> {
+    const row = await this.knex('device_deletion_outbox')
+      .where('facility_id', facilityId)
+      .where('device_kind', deviceKind)
+      .where('device_serial', deviceSerial)
+      .orderBy('updated_at', 'desc')
+      .first();
+    return (row as DeviceDeletionOutboxRow) || null;
   }
 
   async scheduleRetry(id: string, error: string, attemptCount: number): Promise<DeviceDeletionOutboxStatus> {

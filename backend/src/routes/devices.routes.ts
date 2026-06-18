@@ -76,6 +76,7 @@ import { AccessCodeService } from '@/services/access-code.service';
 import { validate } from '@/middleware/validator.middleware';
 import {
   normalizeDeviceListSortKey,
+  normalizeNetworkInfraSortKey,
   sortMergedDeviceList,
   needsInMemoryDeviceSort,
 } from '@/utils/merged-device-list.utils';
@@ -188,6 +189,7 @@ const deviceStatusSchema = Joi.object({
 const listQuerySchema = Joi.object({
   facility_id: Joi.string().optional(),
   device_type: Joi.string().valid('access_control', 'blulok', 'all').optional(),
+  device_scope: Joi.string().valid('operational', 'network_infra', 'all').optional(),
   status: Joi.string().optional(),
   search: Joi.string().max(200).optional(),
   sortBy: Joi.string().optional(),
@@ -221,6 +223,7 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
     const user = req.user!;
     const q = req.query as Record<string, unknown>;
     const { facility_id, device_type, status, search } = q;
+    const deviceScope = (q.device_scope as string | undefined) || 'operational';
     const sortByParam = (q.sortBy ?? q.sort_by) as string | undefined;
     const sortOrderParam = (q.sortOrder ?? q.sort_order) as string | undefined;
     const projectionRaw = q.projection as string | undefined;
@@ -255,6 +258,38 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
     const sortKey = normalizeDeviceListSortKey(sortByParam);
     const order: 'asc' | 'desc' = sortOrderParam === 'desc' ? 'desc' : 'asc';
 
+    if (deviceScope === 'network_infra') {
+      const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
+      const infraSortKey = normalizeNetworkInfraSortKey(sortByParam);
+      const infraFilters = {
+        status: status as string | undefined,
+        search: search as string | undefined,
+        sortBy: infraSortKey as any,
+        sortOrder: order,
+        offset: offsetNum,
+        limit: limitParsed ?? (projectionId ? undefined : DEFAULT_DEVICE_LIST_LIMIT),
+        ...(allowedFacilityId ? { facility_id: allowedFacilityId } : {}),
+        ...(allowedFacilityIds ? { facility_ids: allowedFacilityIds } : {}),
+      };
+      const { devices: networkInfraDevices, total: networkInfraTotal } =
+        await GatewayInventoryDeviceSyncService.getInstance().listNetworkInfraDevices(infraFilters);
+
+      if (projectionId) {
+        res.json({
+          success: true,
+          devices: networkInfraDevices.map((d) => ({
+            id: d.id,
+            device_category: d.device_category,
+          })),
+          total: networkInfraTotal,
+        });
+        return;
+      }
+
+      res.json({ success: true, devices: networkInfraDevices, total: networkInfraTotal });
+      return;
+    }
+
     const baseFilters: DeviceFilters = {
       device_type: device_type as any,
       status: status as string,
@@ -270,8 +305,9 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
     let total = 0;
 
     const dt = device_type as string | undefined;
+    const mergeAllScopes = deviceScope === 'all';
 
-    if (needsInMemoryDeviceSort(dt, sortKey)) {
+    if (needsInMemoryDeviceSort(dt, sortKey) || mergeAllScopes) {
       const fetchFilters: DeviceFilters = {
         ...baseFilters,
         sortBy: 'created_at',
@@ -294,6 +330,18 @@ router.get('/', requireNotTenant, validate(listQuerySchema, 'query'), async (req
       } else {
         const blulokDevices = await deviceModel.findBluLokDevices(fetchFilters);
         devices = blulokDevices.map((d) => ({ ...d, device_category: 'blulok' }));
+      }
+
+      if (mergeAllScopes) {
+        const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
+        const { devices: networkInfraDevices } =
+          await GatewayInventoryDeviceSyncService.getInstance().listNetworkInfraDevices({
+            status: status as string | undefined,
+            search: search as string | undefined,
+            ...(allowedFacilityId ? { facility_id: allowedFacilityId } : {}),
+            ...(allowedFacilityIds ? { facility_ids: allowedFacilityIds } : {}),
+          });
+        devices = [...devices, ...networkInfraDevices];
       }
 
       sortMergedDeviceList(devices, sortKey, order);
@@ -730,6 +778,50 @@ router.put(
       throw err;
     }
   })
+);
+
+// DELETE /api/devices/network-infra/:deviceId - Remove network infra device from cloud inventory
+router.delete(
+  '/network-infra/:deviceId',
+  requireAdminOrFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { deviceId } = req.params;
+
+    if (!deviceId) {
+      res.status(400).json({ success: false, message: 'deviceId is required' });
+      return;
+    }
+
+    try {
+      const devicesService = DevicesService.getInstance();
+      const hasAccess = await devicesService.hasUserAccessToNetworkInfraDevice(
+        deviceId,
+        user.userId,
+        user.role,
+      );
+      if (!hasAccess) {
+        res.status(403).json({ success: false, message: 'Access denied to this device' });
+        return;
+      }
+
+      const summary = await devicesService.removeNetworkInfraDeviceFromCloudInventory(deviceId, {
+        performedBy: user.userId,
+      });
+
+      res.status(200).json({
+        success: true,
+        message:
+          'Network infrastructure device removed from cloud inventory. The gateway has been notified to stop reporting this device; if offline, the tombstone command will be delivered on reconnect.',
+        removed: summary,
+      });
+    } catch (error: any) {
+      logger.error('Error removing network infra device from inventory:', error);
+      const message = error?.message || 'Failed to remove device from inventory';
+      const status = /not found/i.test(message) ? 404 : 500;
+      res.status(status).json({ success: false, message });
+    }
+  }),
 );
 
 // DELETE /api/devices/access-control/:deviceId - Remove access control device from cloud inventory

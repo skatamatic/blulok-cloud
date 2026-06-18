@@ -40,7 +40,7 @@
 
 - **Selector**: `GlobalFacilityContext` (`selectedFacilityId`, `ALL_FACILITIES_ID`).
 - **Dashboard**: `DashboardPage` computes `effectiveFacilityId` (undefined when “All facilities”) and passes **`facilityFilter`** into widgets that support it (activity monitor, remote gate, histogram, notifications, battery, unlocked units).
-- **Shared hook**: `useDashboardFacilityScope(facilityFilter)` — single facility → that ID; global admin + all facilities → no filter; scoped roles + all facilities → user's `facilityIds`. Used by notifications widget and histogram (fixes global admins being incorrectly limited to profile `facilityIds`).
+- **Shared hook**: `useDashboardFacilityScope(facilityFilter)` — single facility → that ID; global admin + all facilities → no filter; scoped roles + all facilities → live facility list from `GlobalFacilityContext` (`GET /facilities`). Used by notifications widget and histogram.
 - **Notifications widget**: loads up to 100 rows per page from REST with **`includeExpired: true`** (historical + expired alerts); default tab is **All**; WebSocket merges live updates. Not the same data as Activity Monitor.
 - **Hooks**: `useUnitsData(facilityId)` forwards **`facility_id`** to `GET /units` and `GET /units/unlocked`, and refreshes on **`device_status` / `units`** via `useLockDeviceRealtime`.
 - **General stats**: `useGeneralStatsData` passes optional **`facility_id`** to **`GET /dashboard/general-stats`** when a single facility is selected. WebSocket **`general_stats`** updates apply only for “all facilities”; when facility-scoped, **`device_status` / `units`** trigger debounced REST refetch.
@@ -55,7 +55,7 @@
 - **Shared keys**: **`key_sharing`** subscription (optional `{ facility_id }`); server pushes **`key_sharing_update`** after create/update/revoke; RBAC mirrors REST `/key-sharing`.
 - **Unsubscribe fallback**: server resolves unsubscription by `subscriptionType` + `data` filters when `subscriptionId` is missing/stale.
 - **Dashboard header**: live connection pill (`Live` / `Reconnecting…` / `Offline`) reflects transport state; use **`useWebSocketSubscription`** in widgets instead of inline `subscribe()` effects.
-- **Backend** (`backend/src/services/websocket.service.ts`): JWT on upgrade; **`UserFacilityAssociationModel.getUserFacilityIds`** on connect for non-global roles; duplicate subscribe requests for the same type+filters return the existing subscription id; subscription managers validate facility/device/unit access per filter.
+- **Backend** (`backend/src/services/websocket.service.ts`): JWT on upgrade; **`FacilityAccessService.getUserFacilityIds`** on connect (refreshed on heartbeat + association changes via `scope_update`); duplicate subscribe requests for the same type+filters return the existing subscription id; subscription managers validate facility/device/unit access per filter.
 - **No per-widget Refresh buttons** — dashboard escape hatch is the page-level reload control only.
 
 ## Backend: dashboard general stats

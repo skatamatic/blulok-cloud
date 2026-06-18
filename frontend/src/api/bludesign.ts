@@ -22,6 +22,8 @@ export interface SaveFacilityRequest {
   thumbnail?: string;
   /** Copy layout-source.png from an existing facility when saving a duplicate. */
   copyLayoutSourceFrom?: string;
+  /** Copy terrain sidecars from an existing facility when saving a duplicate. */
+  copyTerrainFrom?: string;
 }
 
 export interface UpdateFacilityRequest {
@@ -73,12 +75,14 @@ export async function saveFacility(
   data: FacilityData,
   thumbnail?: string,
   copyLayoutSourceFrom?: string,
+  copyTerrainFrom?: string,
 ): Promise<FacilityResponse> {
   return await apiService.post(`${API_BASE}/facilities`, {
     name,
     data,
     thumbnail,
     ...(copyLayoutSourceFrom ? { copyLayoutSourceFrom } : {}),
+    ...(copyTerrainFrom ? { copyTerrainFrom } : {}),
   });
 }
 
@@ -126,6 +130,135 @@ export async function getLayoutSourceImage(facilityId: string): Promise<Blob> {
  */
 export async function fetchLayoutSourceObjectUrl(facilityId: string): Promise<string> {
   const blob = await getLayoutSourceImage(facilityId);
+  return URL.createObjectURL(blob);
+}
+
+// ==========================================================================
+// Site terrain (local ground preset)
+// ==========================================================================
+
+export interface FetchSiteTerrainParams {
+  lat: number;
+  lng: number;
+  radiusMeters: number;
+  detailLevel?: 'low' | 'med' | 'max';
+  imageryZoom?: number;
+  elevationZoom?: number;
+}
+
+export interface FetchSiteTerrainResponse {
+  imageryBase64: string;
+  heightmapBase64: string;
+  meta: {
+    width: number;
+    height: number;
+    minM: number;
+    maxM: number;
+    imageryZoom: number;
+    elevationZoom: number;
+    detailLevel?: 'low' | 'med' | 'max';
+    imageryMetersPerPixel: number;
+    bounds: { north: number; south: number; east: number; west: number };
+    providers: { elevation: string; imagery: string };
+    attribution: { elevation: string; imagery: string };
+    worldSizeMeters: number;
+  };
+}
+
+export async function fetchSiteTerrain(
+  params: FetchSiteTerrainParams
+): Promise<FetchSiteTerrainResponse> {
+  return apiService.post(`${API_BASE}/site-terrain/fetch`, params);
+}
+
+export async function uploadTerrainImagery(terrainDataId: string, file: Blob): Promise<void> {
+  const formData = new FormData();
+  formData.append('file', file, 'terrain-imagery.jpg');
+  await apiService.put(`${API_BASE}/facilities/terrain-data/${terrainDataId}/imagery`, formData, {
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+}
+
+export async function uploadTerrainHeightmap(terrainDataId: string, file: Blob): Promise<void> {
+  const formData = new FormData();
+  formData.append('file', file, 'terrain-heightmap.png');
+  await apiService.put(`${API_BASE}/facilities/terrain-data/${terrainDataId}/heightmap`, formData, {
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+}
+
+function terrainSidecarUrl(terrainDataId: string, kind: 'imagery' | 'heightmap'): string {
+  const root = getApiBaseUrl();
+  const prefix = root ? `${root}/api/v1` : '/api/v1';
+  return `${prefix}${API_BASE}/facilities/terrain-data/${terrainDataId}/${kind}`;
+}
+
+function isRetryableTerrainFetchError(err: unknown): boolean {
+  const e = err as { code?: string; name?: string; message?: string };
+  return (
+    e?.code === 'ERR_NETWORK' ||
+    e?.code === 'ECONNABORTED' ||
+    e?.name === 'TypeError' ||
+    (typeof e?.message === 'string' && e.message.toLowerCase().includes('network'))
+  );
+}
+
+async function fetchTerrainBlobWithRetry(
+  terrainDataId: string,
+  kind: 'imagery' | 'heightmap',
+  attempts = 5
+): Promise<Blob> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('authToken') : null;
+  const url = terrainSidecarUrl(terrainDataId, kind);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const response = await fetch(url, { headers, credentials: 'same-origin' });
+      if (!response.ok) {
+        const httpError = new Error(`Terrain ${kind} HTTP ${response.status}`) as Error & {
+          response?: { status: number };
+        };
+        httpError.response = { status: response.status };
+        throw httpError;
+      }
+      return await response.blob();
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts - 1 && isRetryableTerrainFetchError(err)) {
+        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError ?? new Error(`Terrain ${kind} fetch failed`);
+}
+
+export async function getTerrainImagery(terrainDataId: string): Promise<Blob> {
+  return fetchTerrainBlobWithRetry(terrainDataId, 'imagery');
+}
+
+export async function getTerrainHeightmap(terrainDataId: string): Promise<Blob> {
+  return fetchTerrainBlobWithRetry(terrainDataId, 'heightmap');
+}
+
+export async function deleteTerrainData(terrainDataId: string): Promise<void> {
+  await apiService.delete(`${API_BASE}/facilities/terrain-data/${terrainDataId}`);
+}
+
+export async function fetchTerrainImageryObjectUrl(terrainDataId: string): Promise<string> {
+  const blob = await getTerrainImagery(terrainDataId);
+  return URL.createObjectURL(blob);
+}
+
+export async function fetchTerrainHeightmapObjectUrl(terrainDataId: string): Promise<string> {
+  const blob = await getTerrainHeightmap(terrainDataId);
   return URL.createObjectURL(blob);
 }
 

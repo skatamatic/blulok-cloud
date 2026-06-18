@@ -104,6 +104,7 @@ export class FacilityService {
     data: FacilityData,
     thumbnail?: string,
     copyLayoutSourceFrom?: string,
+    copyTerrainFrom?: string,
   ): Promise<Facility> {
     const id = uuidv4();
     const now = new Date();
@@ -124,6 +125,10 @@ export class FacilityService {
 
     if (copyLayoutSourceFrom) {
       await this.copyLayoutSourceBetweenFacilities(copyLayoutSourceFrom, id, userId);
+    }
+
+    if (copyTerrainFrom) {
+      await this.copyTerrainBetweenFacilities(copyTerrainFrom, id, userId);
     }
 
     return {
@@ -228,6 +233,82 @@ export class FacilityService {
     return this.storage.loadLayoutSource(userId, id);
   }
 
+  async saveTerrainImagery(id: string, userId: string, buffer: Buffer): Promise<void> {
+    const row = await this.db('bludesign_user_facilities')
+      .where({ id, user_id: userId })
+      .first();
+    if (!row) {
+      throw new NotFoundError('Facility');
+    }
+    await this.storage.saveTerrainImagery(userId, id, buffer);
+  }
+
+  async loadTerrainImagery(id: string, userId: string): Promise<Buffer> {
+    const row = await this.db('bludesign_user_facilities')
+      .where({ id, user_id: userId })
+      .first();
+    if (!row) {
+      throw new NotFoundError('Facility');
+    }
+    return this.storage.loadTerrainImagery(userId, id);
+  }
+
+  async saveTerrainDataImagery(terrainDataId: string, userId: string, buffer: Buffer): Promise<void> {
+    await this.storage.saveTerrainDataImagery(userId, terrainDataId, buffer);
+  }
+
+  async loadTerrainDataImagery(terrainDataId: string, userId: string): Promise<Buffer> {
+    try {
+      return await this.storage.loadTerrainDataImagery(userId, terrainDataId);
+    } catch (error) {
+      const row = await this.db('bludesign_user_facilities')
+        .where({ id: terrainDataId, user_id: userId })
+        .first();
+      if (!row) throw error;
+      return this.storage.loadTerrainImagery(userId, terrainDataId);
+    }
+  }
+
+  async saveTerrainHeightmap(id: string, userId: string, buffer: Buffer): Promise<void> {
+    const row = await this.db('bludesign_user_facilities')
+      .where({ id, user_id: userId })
+      .first();
+    if (!row) {
+      throw new NotFoundError('Facility');
+    }
+    await this.storage.saveTerrainHeightmap(userId, id, buffer);
+  }
+
+  async loadTerrainHeightmap(id: string, userId: string): Promise<Buffer> {
+    const row = await this.db('bludesign_user_facilities')
+      .where({ id, user_id: userId })
+      .first();
+    if (!row) {
+      throw new NotFoundError('Facility');
+    }
+    return this.storage.loadTerrainHeightmap(userId, id);
+  }
+
+  async saveTerrainDataHeightmap(terrainDataId: string, userId: string, buffer: Buffer): Promise<void> {
+    await this.storage.saveTerrainDataHeightmap(userId, terrainDataId, buffer);
+  }
+
+  async loadTerrainDataHeightmap(terrainDataId: string, userId: string): Promise<Buffer> {
+    try {
+      return await this.storage.loadTerrainDataHeightmap(userId, terrainDataId);
+    } catch (error) {
+      const row = await this.db('bludesign_user_facilities')
+        .where({ id: terrainDataId, user_id: userId })
+        .first();
+      if (!row) throw error;
+      return this.storage.loadTerrainHeightmap(userId, terrainDataId);
+    }
+  }
+
+  async deleteTerrainData(terrainDataId: string, userId: string): Promise<void> {
+    await this.storage.deleteTerrainData(userId, terrainDataId);
+  }
+
   /**
    * Copy layout-source.png from an existing facility into a newly saved one.
    * Skips silently when the source has no plan file (metadata-only copies still succeed).
@@ -252,6 +333,34 @@ export class FacilityService {
     } catch (error) {
       logger.warn(
         `Layout source copy skipped (${sourceFacilityId} → ${targetFacilityId}):`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  /**
+   * Copy terrain sidecars from an existing facility into a newly saved one.
+   */
+  async copyTerrainBetweenFacilities(
+    sourceFacilityId: string,
+    targetFacilityId: string,
+    userId: string,
+  ): Promise<void> {
+    const source = await this.getFacility(sourceFacilityId, userId);
+    if (!source) {
+      throw new NotFoundError('Facility');
+    }
+
+    const target = await this.getFacility(targetFacilityId, userId);
+    if (!target) {
+      throw new NotFoundError('Facility');
+    }
+
+    try {
+      await this.storage.copyTerrainAssets(userId, sourceFacilityId, targetFacilityId);
+    } catch (error) {
+      logger.warn(
+        `Terrain copy skipped (${sourceFacilityId} → ${targetFacilityId}):`,
         error instanceof Error ? error.message : error,
       );
     }

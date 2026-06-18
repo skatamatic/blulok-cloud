@@ -12,6 +12,7 @@ import {
 } from '@/constants/access-history.constants';
 import { parseQueryDateFrom, parseQueryDateTo, toIsoStringOrEpoch } from '@/utils/datetime.utils';
 import { mapLegacyAccessAction, mapLegacyAccessMethod } from '@/utils/access-history-remote.utils';
+import { resolveBluLokDeviceDisplayName } from '@/utils/blulok-device-display.utils';
 
 export type QueryFilters = {
   facility_id?: string;
@@ -396,9 +397,10 @@ export class AccessHistoryReadService {
       return 'Access point';
     }
 
-    if (ctx.blulok_device_name) return ctx.blulok_device_name;
-    if (ctx.device_serial) return `Lock ${ctx.device_serial}`;
-    return undefined;
+    return resolveBluLokDeviceDisplayName({
+      device_settings: ctx.blulok_device_settings,
+      device_serial: ctx.device_serial,
+    });
   }
 
   private normalizeActionFilter(action: string): string {
@@ -455,14 +457,14 @@ export class AccessHistoryReadService {
           id: initiatedId,
           name: initiatedName,
           role: typeof ib.role === 'string' ? ib.role : undefined,
-          navigation_url: `/users?highlight=${initiatedId}`,
+          navigation_url: `/users/${initiatedId}/details`,
         };
       }
     } else if (row.actor_type === 'user' && userId && userName && baseMetadata.initiated_remotely) {
       presentation.initiated_by = {
         id: userId,
         name: userName,
-        navigation_url: `/users?highlight=${userId}`,
+        navigation_url: `/users/${userId}/details`,
       };
     }
 
@@ -474,7 +476,7 @@ export class AccessHistoryReadService {
       presentation.user = {
         id: userId,
         name: userName,
-        navigation_url: `/users?highlight=${userId}`,
+        navigation_url: `/users/${userId}/details`,
       };
     } else if (row.actor_type) {
       presentation.actor = {
@@ -506,6 +508,9 @@ export class AccessHistoryReadService {
         type: deviceType,
         location: ctx.device_location || undefined,
         serial: ctx.device_serial || undefined,
+        ...(deviceType === 'blulok' && ctx.blulok_device_settings
+          ? { device_settings: ctx.blulok_device_settings }
+          : {}),
         navigation_url: deviceType === 'blulok'
           ? `/devices/blulok/${row.device_id}`
           : `/devices/access-control/${row.device_id}`,

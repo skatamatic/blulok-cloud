@@ -22,13 +22,16 @@ export class GatewayDeviceSyncLogService {
     facilityName?: string;
     lockResult: InventorySyncResult | null;
     accessResult: InventorySyncResult | null;
+    networkInfraResult?: InventorySyncResult | null;
   }): Promise<void> {
     const lockResult = params.lockResult;
     const accessResult = params.accessResult;
+    const networkInfraResult = params.networkInfraResult ?? null;
 
     const entries: DeviceSyncLogEntry[] = [
       ...(lockResult?.entries ?? []),
       ...(accessResult?.entries ?? []),
+      ...(networkInfraResult?.entries ?? []),
     ];
 
     for (const err of lockResult?.errors ?? []) {
@@ -46,6 +49,16 @@ export class GatewayDeviceSyncLogService {
         entries.push({
           action: 'error',
           device_kind: 'access_control',
+          identifier: '—',
+          reason: err,
+        });
+      }
+    }
+    for (const err of networkInfraResult?.errors ?? []) {
+      if (!entries.some((e) => e.action === 'error' && e.reason === err)) {
+        entries.push({
+          action: 'error',
+          device_kind: 'bridge',
           identifier: '—',
           reason: err,
         });
@@ -71,6 +84,7 @@ export class GatewayDeviceSyncLogService {
       summary: {
         locks: toSummary(lockResult),
         access_control: toSummary(accessResult),
+        network_infra: toSummary(networkInfraResult),
       },
       entries,
     });

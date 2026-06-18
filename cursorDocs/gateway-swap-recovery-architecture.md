@@ -92,7 +92,9 @@ Mirrors provisioning restore chunk flow via `GatewayChunkPushEngine`:
 | `INVENTORY_SNAPSHOT_STATUS_ACK` | Cloud → gateway |
 | `INVENTORY_SNAPSHOT_RESUME` | Cloud → gateway (reconnect) |
 
-Gateway firmware must rebuild its lock DB from the snapshot and reply `INVENTORY_SNAPSHOT_STATUS` with `status: success` and the `recovery_id` / `snapshot_id`.
+Gateway firmware must rebuild its device DB from the snapshot and reply `INVENTORY_SNAPSHOT_STATUS` with `status: success` and the `recovery_id` / `snapshot_id`.
+
+**Snapshot schema v2** includes operational devices (locks, access control) plus sync-managed network infra (`bridge`, `friend_node`). The facility **gateway entity itself is never included** in the snapshot payload.
 
 ## REST API
 

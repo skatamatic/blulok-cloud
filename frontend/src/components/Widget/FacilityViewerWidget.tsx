@@ -21,6 +21,7 @@ import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import * as bludesignApi from '@/api/bludesign';
 import type { FacilityResponse } from '@/api/bludesign';
 import { hasLayoutImport } from '@/components/bludesign/layout-import/layoutImportMetadata';
+import { hasTerrainConfig } from '@/components/bludesign/core/environment/terrainConfigMetadata';
 import {
   normalizeGroundPreset,
   normalizeSkyPreset,
@@ -29,6 +30,9 @@ import {
 } from '@/components/bludesign/core/environment';
 import {
   DEFAULT_FACILITY_VIEWER_CONFIG,
+  DEFAULT_TERRAIN_FLATTEN_DISTANCE,
+  DEFAULT_TERRAIN_FLATTEN_BLEND,
+  DEFAULT_TERRAIN_FLATTEN_BASELINE,
   type FacilityViewerEnvironmentOptions,
   type FacilityViewerWidgetConfig,
 } from '@/types/widget.types';
@@ -94,6 +98,12 @@ interface FacilityViewerWidgetProps {
   skyPreset?: SkyPresetId;
   groundPreset?: GroundPresetId;
   environmentOptions?: FacilityViewerEnvironmentOptions;
+  /** Lift facility assets to sit on local terrain heightmap relief. */
+  terrainAlignAssets?: boolean;
+  terrainFlattenToGround?: boolean;
+  terrainFlattenDistance?: number;
+  terrainFlattenBlend?: number;
+  terrainFlattenBaseline?: number;
   /** Admin layout edit — show view settings controls */
   editable?: boolean;
   onConfigChange?: (patch: Partial<FacilityViewerWidgetConfig>) => void;
@@ -115,6 +125,11 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
   skyPreset = DEFAULT_FACILITY_VIEWER_CONFIG.skyPreset!,
   groundPreset = DEFAULT_FACILITY_VIEWER_CONFIG.groundPreset!,
   environmentOptions,
+  terrainAlignAssets = false,
+  terrainFlattenToGround = false,
+  terrainFlattenDistance = DEFAULT_TERRAIN_FLATTEN_DISTANCE,
+  terrainFlattenBlend = DEFAULT_TERRAIN_FLATTEN_BLEND,
+  terrainFlattenBaseline = DEFAULT_TERRAIN_FLATTEN_BASELINE,
   editable = false,
   onConfigChange,
 }) => {
@@ -148,6 +163,26 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
     viewSettingsOpen && viewSettingsDraft
       ? viewSettingsDraft.environmentOptions
       : environmentOptions;
+  const previewTerrainAlignAssets =
+    viewSettingsOpen && viewSettingsDraft
+      ? viewSettingsDraft.terrainAlignAssets ?? false
+      : terrainAlignAssets;
+  const previewTerrainFlattenToGround =
+    viewSettingsOpen && viewSettingsDraft
+      ? viewSettingsDraft.terrainFlattenToGround ?? false
+      : terrainFlattenToGround;
+  const previewTerrainFlattenDistance =
+    viewSettingsOpen && viewSettingsDraft
+      ? viewSettingsDraft.terrainFlattenDistance ?? DEFAULT_TERRAIN_FLATTEN_DISTANCE
+      : terrainFlattenDistance;
+  const previewTerrainFlattenBlend =
+    viewSettingsOpen && viewSettingsDraft
+      ? viewSettingsDraft.terrainFlattenBlend ?? DEFAULT_TERRAIN_FLATTEN_BLEND
+      : terrainFlattenBlend;
+  const previewTerrainFlattenBaseline =
+    viewSettingsOpen && viewSettingsDraft
+      ? viewSettingsDraft.terrainFlattenBaseline ?? DEFAULT_TERRAIN_FLATTEN_BASELINE
+      : terrainFlattenBaseline;
 
   const openViewSettings = useCallback(() => {
     setViewSettingsDraft(
@@ -155,10 +190,24 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
         skyPreset: resolvedSkyPreset,
         groundPreset: resolvedGroundPreset,
         environmentOptions,
+        terrainAlignAssets,
+        terrainFlattenToGround,
+        terrainFlattenDistance,
+        terrainFlattenBlend,
+        terrainFlattenBaseline,
       })
     );
     setViewSettingsOpen(true);
-  }, [resolvedSkyPreset, resolvedGroundPreset, environmentOptions]);
+  }, [
+    resolvedSkyPreset,
+    resolvedGroundPreset,
+    environmentOptions,
+    terrainAlignAssets,
+    terrainFlattenToGround,
+    terrainFlattenDistance,
+    terrainFlattenBlend,
+    terrainFlattenBaseline,
+  ]);
 
   const closeViewSettings = useCallback(() => {
     setViewSettingsOpen(false);
@@ -183,6 +232,11 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
       skyPreset: viewSettingsDraft.skyPreset,
       groundPreset: viewSettingsDraft.groundPreset,
       environmentOptions: viewSettingsDraft.environmentOptions,
+      terrainAlignAssets: viewSettingsDraft.terrainAlignAssets,
+      terrainFlattenToGround: viewSettingsDraft.terrainFlattenToGround,
+      terrainFlattenDistance: viewSettingsDraft.terrainFlattenDistance,
+      terrainFlattenBlend: viewSettingsDraft.terrainFlattenBlend,
+      terrainFlattenBaseline: viewSettingsDraft.terrainFlattenBaseline,
     });
     closeViewSettings();
   }, [viewSettingsDraft, onConfigChange, closeViewSettings]);
@@ -275,6 +329,8 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
       .catch(() => setPrefetchError(true));
   }, [activeDesignFacility]);
 
+  const hasTerrain = hasTerrainConfig(cachedFacility?.data);
+
   const displayTitle =
     title ||
     (isAllFacilitiesSelected ? 'Facility View' : selectedFacility?.name) ||
@@ -361,6 +417,11 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
               skyPreset={previewSkyPreset}
               groundPreset={previewGroundPreset}
               environmentOptions={previewEnvironmentOptions}
+              terrainAlignAssets={previewTerrainAlignAssets}
+              terrainFlattenToGround={previewTerrainFlattenToGround}
+              terrainFlattenDistance={previewTerrainFlattenDistance}
+              terrainFlattenBlend={previewTerrainFlattenBlend}
+              terrainFlattenBaseline={previewTerrainFlattenBaseline}
               bindingEffectsEnabled={bindingEffectsEnabled}
               onReady={handleReady}
               onError={handleError}
@@ -392,6 +453,20 @@ export const FacilityViewerWidget: React.FC<FacilityViewerWidgetProps> = ({
             skyPreset={viewSettingsDraft?.skyPreset ?? previewSkyPreset}
             groundPreset={viewSettingsDraft?.groundPreset ?? previewGroundPreset}
             environmentOptions={viewSettingsDraft?.environmentOptions ?? previewEnvironmentOptions}
+            hasTerrain={hasTerrain}
+            terrainAlignAssets={viewSettingsDraft?.terrainAlignAssets ?? previewTerrainAlignAssets}
+            terrainFlattenToGround={
+              viewSettingsDraft?.terrainFlattenToGround ?? previewTerrainFlattenToGround
+            }
+            terrainFlattenDistance={
+              viewSettingsDraft?.terrainFlattenDistance ?? previewTerrainFlattenDistance
+            }
+            terrainFlattenBlend={
+              viewSettingsDraft?.terrainFlattenBlend ?? previewTerrainFlattenBlend
+            }
+            terrainFlattenBaseline={
+              viewSettingsDraft?.terrainFlattenBaseline ?? previewTerrainFlattenBaseline
+            }
             onDraftChange={handleViewSettingsDraftChange}
             onApply={handleViewSettingsApply}
             onCancel={handleViewSettingsCancel}

@@ -13,6 +13,7 @@ import { bluDesignThemesRouter } from './themes.routes';
 import { bluDesignSkinsRouter } from './skins.routes';
 import { storageRouter } from './storage.routes';
 import { bluDesignLayoutImportRouter } from './layout-import.routes';
+import { siteTerrainRouter } from './site-terrain.routes';
 
 const router = Router();
 
@@ -37,6 +38,9 @@ router.use('/storage', storageRouter);
 
 // Layout import: image → detected unit candidates
 router.use('/layout-import', bluDesignLayoutImportRouter);
+
+// Site terrain: fetch satellite + elevation tiles (server-side keys)
+router.use('/site-terrain', siteTerrainRouter);
 
 export { router as bluDesignRouter };
 

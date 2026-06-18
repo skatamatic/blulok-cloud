@@ -14,6 +14,7 @@ import { logger } from '@/utils/logger';
 import { FacilityData } from './facility.service';
 
 const FACILITY_PREFIX = 'bludesign/user-facilities';
+const TERRAIN_DATA_PREFIX = 'bludesign/terrain-data';
 
 function assertSafeSegment(value: string, label: string): void {
   if (!value || value.includes('..') || value.includes('/') || value.includes('\\')) {
@@ -31,6 +32,30 @@ function layoutSourcePath(userId: string, facilityId: string): string {
   assertSafeSegment(userId, 'userId');
   assertSafeSegment(facilityId, 'facilityId');
   return `${FACILITY_PREFIX}/${userId}/${facilityId}/layout-source.png`;
+}
+
+function terrainImageryPath(userId: string, facilityId: string): string {
+  assertSafeSegment(userId, 'userId');
+  assertSafeSegment(facilityId, 'facilityId');
+  return `${FACILITY_PREFIX}/${userId}/${facilityId}/terrain-imagery.jpg`;
+}
+
+function terrainHeightmapPath(userId: string, facilityId: string): string {
+  assertSafeSegment(userId, 'userId');
+  assertSafeSegment(facilityId, 'facilityId');
+  return `${FACILITY_PREFIX}/${userId}/${facilityId}/terrain-heightmap.png`;
+}
+
+function terrainDataImageryPath(userId: string, terrainDataId: string): string {
+  assertSafeSegment(userId, 'userId');
+  assertSafeSegment(terrainDataId, 'terrainDataId');
+  return `${TERRAIN_DATA_PREFIX}/${userId}/${terrainDataId}/imagery.jpg`;
+}
+
+function terrainDataHeightmapPath(userId: string, terrainDataId: string): string {
+  assertSafeSegment(userId, 'userId');
+  assertSafeSegment(terrainDataId, 'terrainDataId');
+  return `${TERRAIN_DATA_PREFIX}/${userId}/${terrainDataId}/heightmap.png`;
 }
 
 function directoryPath(userId: string, facilityId: string): string {
@@ -97,6 +122,94 @@ export class FacilityStorageAdapter {
     await this.saveLayoutSource(userId, targetFacilityId, buffer);
     logger.debug(
       `Layout source copied: ${sourceFacilityId} → ${targetFacilityId} for user ${userId}`,
+    );
+  }
+
+  async saveTerrainImagery(userId: string, facilityId: string, data: Buffer): Promise<void> {
+    const base = await this.resolveBase();
+    const path = terrainImageryPath(userId, facilityId);
+    await base.uploadFile(path, data, 'image/jpeg');
+    logger.debug(`Terrain imagery saved to storage: ${path}`);
+  }
+
+  async loadTerrainImagery(userId: string, facilityId: string): Promise<Buffer> {
+    const base = await this.resolveBase();
+    return base.downloadFile(terrainImageryPath(userId, facilityId));
+  }
+
+  async saveTerrainDataImagery(userId: string, terrainDataId: string, data: Buffer): Promise<void> {
+    const base = await this.resolveBase();
+    const path = terrainDataImageryPath(userId, terrainDataId);
+    await base.uploadFile(path, data, 'image/jpeg');
+    logger.debug(`Terrain imagery saved to storage: ${path}`);
+  }
+
+  async loadTerrainDataImagery(userId: string, terrainDataId: string): Promise<Buffer> {
+    const base = await this.resolveBase();
+    return base.downloadFile(terrainDataImageryPath(userId, terrainDataId));
+  }
+
+  async saveTerrainHeightmap(userId: string, facilityId: string, data: Buffer): Promise<void> {
+    const base = await this.resolveBase();
+    const path = terrainHeightmapPath(userId, facilityId);
+    await base.uploadFile(path, data, 'image/png');
+    logger.debug(`Terrain heightmap saved to storage: ${path}`);
+  }
+
+  async loadTerrainHeightmap(userId: string, facilityId: string): Promise<Buffer> {
+    const base = await this.resolveBase();
+    return base.downloadFile(terrainHeightmapPath(userId, facilityId));
+  }
+
+  async saveTerrainDataHeightmap(userId: string, terrainDataId: string, data: Buffer): Promise<void> {
+    const base = await this.resolveBase();
+    const path = terrainDataHeightmapPath(userId, terrainDataId);
+    await base.uploadFile(path, data, 'image/png');
+    logger.debug(`Terrain heightmap saved to storage: ${path}`);
+  }
+
+  async loadTerrainDataHeightmap(userId: string, terrainDataId: string): Promise<Buffer> {
+    const base = await this.resolveBase();
+    return base.downloadFile(terrainDataHeightmapPath(userId, terrainDataId));
+  }
+
+  /** Remove persisted terrain sidecars for a terrain data id (best-effort per file). */
+  async deleteTerrainData(userId: string, terrainDataId: string): Promise<void> {
+    const base = await this.resolveBase();
+    const paths = [
+      terrainDataImageryPath(userId, terrainDataId),
+      terrainDataHeightmapPath(userId, terrainDataId),
+    ];
+    for (const path of paths) {
+      try {
+        await base.deleteFile(path);
+      } catch {
+        // File may not exist (draft never applied, partial upload, etc.)
+      }
+    }
+    logger.debug(`Terrain data deleted from storage: ${terrainDataId} for user ${userId}`);
+  }
+
+  /** Copy terrain sidecars from one facility folder to another (same user). */
+  async copyTerrainAssets(
+    userId: string,
+    sourceFacilityId: string,
+    targetFacilityId: string,
+  ): Promise<void> {
+    try {
+      const imagery = await this.loadTerrainImagery(userId, sourceFacilityId);
+      await this.saveTerrainImagery(userId, targetFacilityId, imagery);
+    } catch {
+      // Source may not have terrain imagery
+    }
+    try {
+      const heightmap = await this.loadTerrainHeightmap(userId, sourceFacilityId);
+      await this.saveTerrainHeightmap(userId, targetFacilityId, heightmap);
+    } catch {
+      // Source may not have terrain heightmap
+    }
+    logger.debug(
+      `Terrain assets copied: ${sourceFacilityId} → ${targetFacilityId} for user ${userId}`,
     );
   }
 

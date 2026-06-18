@@ -12,6 +12,7 @@ export const ALL_PANEL_IDS = [
   'view',
   'defaultCamera',
   'importPlan',
+  'terrain',
   'properties',
   'floors',
   'skins',
@@ -44,6 +45,7 @@ export interface PanelLayoutStateV9 {
   view: ExtendedPanelStateV9;
   defaultCamera: ExtendedPanelStateV9;
   importPlan: ExtendedPanelStateV9;
+  terrain: ExtendedPanelStateV9;
   properties: ExtendedPanelStateV9;
   floors: ExtendedPanelStateV9;
   skins: ExtendedPanelStateV9;

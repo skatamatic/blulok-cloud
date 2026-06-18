@@ -72,6 +72,23 @@ describe('DraftAutoSaveScheduler', () => {
     expect(typeof onSaved.mock.calls[0][0]).toBe('number');
   });
 
+  it('persists the facility id from getFacilityId on save', () => {
+    const mem = createMemoryStorage();
+    const draftStorage = new FacilityDraftStorage('draft-key', mem);
+
+    const sched = new DraftAutoSaveScheduler(1000, {
+      isReadonly: () => false,
+      exportData: () => minimalFacility({ name: 'WithId' }),
+      storage: draftStorage,
+      getFacilityId: () => 'fac-789',
+      onSaved: jest.fn(),
+    });
+
+    sched.saveNow();
+
+    expect(draftStorage.loadFacilityId()).toBe('fac-789');
+  });
+
   it('schedule debounces until delay elapses', () => {
     const mem = createMemoryStorage();
     const draftStorage = new FacilityDraftStorage('k', mem);

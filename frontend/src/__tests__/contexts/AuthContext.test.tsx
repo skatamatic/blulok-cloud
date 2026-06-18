@@ -10,6 +10,7 @@ import { websocketService } from '@/services/websocket.service';
 jest.mock('@/services/api.service', () => ({
   apiService: {
     verifyToken: jest.fn(),
+    getProfile: jest.fn(),
     login: jest.fn(),
     logout: jest.fn(),
   },
@@ -19,6 +20,7 @@ jest.mock('@/services/websocket.service', () => ({
   websocketService: {
     retryConnectionIfNeeded: jest.fn(),
     disconnect: jest.fn(),
+    onScopeUpdate: jest.fn(() => () => {}),
   },
 }));
 
@@ -63,6 +65,10 @@ describe('AuthProvider', () => {
       })
     );
     mockApi.verifyToken.mockResolvedValueOnce({ valid: true } as never);
+    mockApi.getProfile.mockResolvedValueOnce({
+      success: true,
+      user: { id: 'u1', facilityIds: ['fac-1'] },
+    } as never);
 
     render(
       <AuthProvider>
@@ -110,6 +116,10 @@ describe('AuthProvider', () => {
         lastName: 'B',
         role: UserRole.FACILITY_ADMIN,
       },
+    } as never);
+    mockApi.getProfile.mockResolvedValueOnce({
+      success: true,
+      user: { id: 'u1', facilityIds: ['fac-1'] },
     } as never);
 
     render(

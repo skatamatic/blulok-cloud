@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useCallback, ReactNode } from 'react';
 import { AuthState, AuthContextType, LoginCredentials, LoginResponse, User, UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
 import { websocketService } from '@/services/websocket.service';
@@ -7,6 +7,7 @@ import { websocketService } from '@/services/websocket.service';
 type AuthAction =
   | { type: 'LOGIN_START' }
   | { type: 'LOGIN_SUCCESS'; payload: { user: User; token: string } }
+  | { type: 'UPDATE_USER'; payload: { user: User } }
   | { type: 'LOGIN_FAILURE' }
   | { type: 'LOGOUT' }
   | { type: 'SET_LOADING'; payload: boolean };
@@ -21,6 +22,11 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
         token: action.payload.token,
         isAuthenticated: true,
         isLoading: false,
+      };
+    case 'UPDATE_USER':
+      return {
+        ...state,
+        user: action.payload.user,
       };
     case 'LOGIN_FAILURE':
       return {
@@ -56,8 +62,41 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+async function mergeUserWithLiveScope(baseUser: User): Promise<User> {
+  try {
+    const profile = await apiService.getProfile();
+    if (profile?.success && profile.user) {
+      return {
+        ...baseUser,
+        ...profile.user,
+        facilityIds: profile.user.facilityIds ?? baseUser.facilityIds,
+      };
+    }
+  } catch (error) {
+    console.warn('Failed to load live facility scope for user:', error);
+  }
+  return baseUser;
+}
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [authState, dispatch] = useReducer(authReducer, initialState);
+
+  const refreshUserScope = useCallback(async () => {
+    const token = localStorage.getItem('authToken');
+    const userStr = localStorage.getItem('authUser');
+    if (!token || !userStr) {
+      return;
+    }
+
+    try {
+      const baseUser = JSON.parse(userStr) as User;
+      const user = await mergeUserWithLiveScope(baseUser);
+      localStorage.setItem('authUser', JSON.stringify(user));
+      dispatch({ type: 'UPDATE_USER', payload: { user } });
+    } catch (error) {
+      console.warn('Failed to refresh user facility scope:', error);
+    }
+  }, []);
 
   // Initialize auth state from localStorage
   useEffect(() => {
@@ -67,15 +106,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       if (token && userStr) {
         try {
-          const user = JSON.parse(userStr);
-          // Verify token is still valid
+          const baseUser = JSON.parse(userStr);
           await apiService.verifyToken();
+          const user = await mergeUserWithLiveScope(baseUser);
+          localStorage.setItem('authUser', JSON.stringify(user));
           dispatch({ type: 'LOGIN_SUCCESS', payload: { user, token } });
-          
-          // Retry WebSocket connection now that we have a valid token
+
           websocketService.retryConnectionIfNeeded();
         } catch (error) {
-          // Token is invalid, clear storage
           localStorage.removeItem('authToken');
           localStorage.removeItem('authUser');
           dispatch({ type: 'LOGIN_FAILURE' });
@@ -88,23 +126,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     initializeAuth();
   }, []);
 
+  useEffect(() => {
+    if (!authState.isAuthenticated) {
+      return;
+    }
+    return websocketService.onScopeUpdate(() => {
+      void refreshUserScope();
+    });
+  }, [authState.isAuthenticated, refreshUserScope]);
+
   const login = async (credentials: LoginCredentials): Promise<LoginResponse> => {
     dispatch({ type: 'LOGIN_START' });
 
     try {
       const response = await apiService.login(credentials);
-      
+
       if (response.success && response.user && response.token) {
-        // Store in localStorage
         localStorage.setItem('authToken', response.token);
-        localStorage.setItem('authUser', JSON.stringify(response.user));
-        
-        dispatch({ 
-          type: 'LOGIN_SUCCESS', 
-          payload: { user: response.user, token: response.token } 
+        const user = await mergeUserWithLiveScope(response.user);
+        localStorage.setItem('authUser', JSON.stringify(user));
+
+        dispatch({
+          type: 'LOGIN_SUCCESS',
+          payload: { user, token: response.token },
         });
-        
-        // Retry WebSocket connection now that we have a valid token
+
         websocketService.retryConnectionIfNeeded();
       } else {
         dispatch({ type: 'LOGIN_FAILURE' });
@@ -124,21 +170,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       await apiService.logout();
     } catch (error) {
-      // Continue with logout even if API call fails
       console.warn('Logout API call failed:', error);
     }
 
-    // Clear storage and state
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
-    // Clear widget configs to prevent cross-user contamination
     localStorage.removeItem('blulok-widget-layouts');
     localStorage.removeItem('blulok-widget-instances');
     localStorage.removeItem('blulok-dashboard-v2');
-    
-    // Disconnect WebSocket
+
     websocketService.disconnect();
-    
+
     dispatch({ type: 'LOGOUT' });
   };
 
@@ -147,12 +189,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const isAdmin = (): boolean => {
-    return authState.user ? 
+    return authState.user ?
       [UserRole.ADMIN, UserRole.DEV_ADMIN].includes(authState.user.role) : false;
   };
 
   const canManageUsers = (): boolean => {
-    return authState.user ? 
+    return authState.user ?
       [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(authState.user.role) : false;
   };
 
@@ -160,6 +202,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     authState,
     login,
     logout,
+    refreshUserScope,
     isLoading: authState.isLoading,
     hasRole,
     isAdmin,

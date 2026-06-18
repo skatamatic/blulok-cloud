@@ -713,6 +713,7 @@ export class GatewayRecoveryService {
       if (oldId && oldId !== newId) {
         await trx('blulok_devices').where('gateway_id', oldId).update({ gateway_id: newId, updated_at: new Date() });
         await trx('access_control_devices').where('gateway_id', oldId).update({ gateway_id: newId, updated_at: new Date() });
+        await trx('gateway_inventory_devices').where('gateway_id', oldId).update({ gateway_id: newId, updated_at: new Date() });
         await trx('gateways').where('id', oldId).update({ facility_id: null, status: 'offline', updated_at: new Date() });
       }
 

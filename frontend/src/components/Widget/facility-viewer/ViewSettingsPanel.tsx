@@ -24,6 +24,12 @@ export interface ViewSettingsPanelProps {
   skyPreset: SkyPresetId;
   groundPreset: GroundPresetId;
   environmentOptions?: FacilityViewerEnvironmentOptions;
+  hasTerrain?: boolean;
+  terrainAlignAssets?: boolean;
+  terrainFlattenToGround?: boolean;
+  terrainFlattenDistance?: number;
+  terrainFlattenBlend?: number;
+  terrainFlattenBaseline?: number;
   onDraftChange: (patch: Partial<FacilityViewerWidgetConfig>) => void;
   onApply: () => void;
   onCancel: () => void;
@@ -37,6 +43,8 @@ interface PresetCardProps {
   onClick: () => void;
   isDark: boolean;
   compact?: boolean;
+  disabled?: boolean;
+  disabledHint?: string;
 }
 
 const PresetCard: React.FC<PresetCardProps> = ({
@@ -47,15 +55,20 @@ const PresetCard: React.FC<PresetCardProps> = ({
   onClick,
   isDark,
   compact = false,
+  disabled = false,
+  disabledHint,
 }) => (
   <motion.button
     type="button"
     aria-pressed={selected}
-    whileHover={{ scale: 1.02 }}
-    whileTap={{ scale: 0.98 }}
-    onClick={onClick}
+    disabled={disabled}
+    whileHover={disabled ? undefined : { scale: 1.02 }}
+    whileTap={disabled ? undefined : { scale: 0.98 }}
+    onClick={disabled ? undefined : onClick}
+    title={disabled ? disabledHint : undefined}
     className={`
       relative flex flex-col rounded-lg border-2 overflow-hidden text-left transition-shadow
+      ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
       ${selected
         ? 'border-[#147FD4] shadow-md shadow-[#147FD4]/20 ring-1 ring-[#147FD4]/30'
         : isDark
@@ -90,6 +103,12 @@ export const ViewSettingsPanel: React.FC<ViewSettingsPanelProps> = ({
   skyPreset,
   groundPreset,
   environmentOptions,
+  hasTerrain = false,
+  terrainAlignAssets = false,
+  terrainFlattenToGround = false,
+  terrainFlattenDistance,
+  terrainFlattenBlend,
+  terrainFlattenBaseline,
   onDraftChange,
   onApply,
   onCancel,
@@ -197,6 +216,12 @@ export const ViewSettingsPanel: React.FC<ViewSettingsPanelProps> = ({
                       onClick={() => onDraftChange({ groundPreset: preset.id })}
                       isDark={isDark}
                       compact
+                      disabled={preset.id === 'local' && !hasTerrain}
+                      disabledHint={
+                        preset.id === 'local' && !hasTerrain
+                          ? 'Set up local terrain in the BluDesign editor'
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -206,6 +231,12 @@ export const ViewSettingsPanel: React.FC<ViewSettingsPanelProps> = ({
                 skyPreset={skyPreset}
                 groundPreset={groundPreset}
                 environmentOptions={environmentOptions}
+                hasTerrain={hasTerrain}
+                terrainAlignAssets={terrainAlignAssets}
+                terrainFlattenToGround={terrainFlattenToGround}
+                terrainFlattenDistance={terrainFlattenDistance}
+                terrainFlattenBlend={terrainFlattenBlend}
+                terrainFlattenBaseline={terrainFlattenBaseline}
                 isDark={isDark}
                 onChange={onDraftChange}
               />

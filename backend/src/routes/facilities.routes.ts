@@ -37,7 +37,7 @@ import Joi from 'joi';
 import { FacilityModel, Facility } from '../models/facility.model';
 // import { GatewayModel } from '../models/gateway.model';
 import { DeviceModel } from '../models/device.model';
-import { authenticateToken, requireRoles } from '../middleware/auth.middleware';
+import { authenticateToken, requireRoles, applyFacilityScope } from '../middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '../services/database.service';
@@ -127,19 +127,9 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     const user = req.user!;
     const { search, status, sortBy, sortOrder, limit, offset, user_id } = req.query;
 
-    let facilityIds: string[] | undefined;
+    const facilityIds = applyFacilityScope(req);
 
-    // Restrict facility access based on user role
-    if (AuthService.isFacilityAdmin(user.role)) {
-      facilityIds = user.facilityIds;
-    } else if (user.role === UserRole.TENANT) {
-      facilityIds = user.facilityIds;
-    } else if (user.role === UserRole.MAINTENANCE) {
-      facilityIds = user.facilityIds;
-    }
-    // ADMIN and DEV_ADMIN can see all facilities
-
-    if (facilityIds && facilityIds.length === 0) {
+    if (facilityIds !== undefined && facilityIds.length === 0) {
       res.json({ facilities: [], total: 0 });
       return;
     }
@@ -205,12 +195,10 @@ router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
     const user = req.user!;
     const id = req.params.id;
 
-    // Check access permissions
-    if (AuthService.isFacilityAdmin(user.role) || user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-      if (!user.facilityIds?.includes(id)) {
-        res.status(403).json({ error: 'Access denied to this facility' });
-        return;
-      }
+    // facilityIds on req.user are hydrated from DB in authenticateToken
+    if (!AuthService.canAccessAllFacilities(user.role) && !user.facilityIds?.includes(id)) {
+      res.status(403).json({ error: 'Access denied to this facility' });
+      return;
     }
 
     const facility = await facilityModel.findById(String(id));
@@ -282,7 +270,7 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
     const user = req.user!;
     const id = req.params.id;
 
-    // Check permissions
+    // Check permissions (req.user.facilityIds hydrated from DB in authenticateToken)
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(id)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });

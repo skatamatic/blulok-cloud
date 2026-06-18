@@ -97,6 +97,40 @@ function gwLockDevice(fields) {
 function gwAccessDevice(fields) {
   return { kind: 'access_control', ...fields };
 }
+
+function gwBridgeDevice(fields) {
+  return { kind: 'bridge', ...fields };
+}
+
+function gwFriendNodeDevice(fields) {
+  return { kind: 'friend_node', ...fields };
+}
+
+function gwGatewayInventoryUpdate(fields) {
+  return { kind: 'gateway', ...fields };
+}
+
+async function findNetworkInfraBySerial(token, facilityId, serial, deviceKind) {
+  const res = await axios.get(`${API_BASE}/devices`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { device_scope: 'network_infra', facility_id: facilityId, search: serial, limit: 20 },
+  });
+  const devices = res.data?.devices || [];
+  return devices.find(
+    (d) =>
+      d.device_category === 'network_infra'
+      && String(d.device_serial || '').toLowerCase() === String(serial).toLowerCase()
+      && (!deviceKind || d.device_kind === deviceKind),
+  ) || null;
+}
+
+async function listNetworkInfraDevices(token, facilityId) {
+  const res = await axios.get(`${API_BASE}/devices`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { device_scope: 'network_infra', facility_id: facilityId, limit: 100 },
+  });
+  return res.data?.devices || [];
+}
 const EMAIL = process.env.DEV_ADMIN_EMAIL || 'devadmin@blulok.com';
 const PASSWORD = process.env.DEV_ADMIN_PASSWORD || 'DevAdmin123!@#';
 const VERBOSE = process.env.E2E_VERBOSE === '1' || process.env.VERBOSE === '1' || process.argv.includes('--verbose');
@@ -1203,19 +1237,24 @@ function countDeviceDeletedCommands(filterFn) {
   }).length;
 }
 
+/** Later WS property-sync tests expect E2E-KP-MULTI relay 8 from the AC inventory section. */
+function preservedDownstreamAccessControl(name = 'E2E Gate (preserved for downstream tests)') {
+  return gwAccessDevice({
+    access_id: 'E2E-KP-MULTI',
+    relay_channel: 8,
+    device_type: 'gate',
+    name,
+  });
+}
+
+function withPreservedDownstreamAccessControl(devices, name) {
+  return [...devices, preservedDownstreamAccessControl(name)];
+}
+
 async function syncGatewayInventoryLocks(ws, facilityId, lockDevices, opts = {}) {
-  const devices = [...lockDevices];
-  if (opts.preserveAccessControl !== false) {
-    // Later WS property-sync tests expect E2E-KP-MULTI relay 8 from the AC inventory section.
-    devices.push(
-      gwAccessDevice({
-        access_id: 'E2E-KP-MULTI',
-        relay_channel: 8,
-        device_type: 'gate',
-        name: 'E2E Gate (preserved for downstream tests)',
-      }),
-    );
-  }
+  const devices = opts.preserveAccessControl !== false
+    ? withPreservedDownstreamAccessControl(lockDevices, opts.accessControlName)
+    : [...lockDevices];
   const reqId = `req-inv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   ws.send(JSON.stringify({
     type: 'PROXY_REQUEST',
@@ -3251,6 +3290,206 @@ async function run() {
     }
     ok('Access control inventory validation rejects missing access_id');
 
+    // ---- NETWORK INFRA: bridge / friend_node on unified inventory endpoint ----
+    heading('Network Infra Device Sync (bridge / friend_node)');
+    const infraBridgeSerial = `E2E-BR-INV-${Date.now()}`;
+    const infraFriendSerial = `E2E-FN-INV-${Date.now()}`;
+    created.infraBridgeSerial = infraBridgeSerial;
+    created.infraFriendNodeSerial = infraFriendSerial;
+
+    step('Testing POST /devices/inventory (add bridge and friend_node)');
+    const reqInfraInv1 = `req-infra-inv-1-${Date.now()}`;
+    const respInfraInv1 = await inventorySync(
+      ws,
+      facilityId,
+      [
+        gwLockDevice({ lock_id: remainingSerial }),
+        gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+        gwAccessDevice({
+          access_id: accessSerialMulti,
+          relay_channel: accessRelaySecondary,
+          device_type: 'gate',
+          name: accessRenamed,
+        }),
+        gwBridgeDevice({
+          serial: infraBridgeSerial,
+          state: 'healthy',
+          firmware_version: '1.0.0',
+          info: { role: 'primary-bridge' },
+        }),
+        gwFriendNodeDevice({
+          serial: infraFriendSerial,
+          state: 'healthy',
+          firmware_version: '2.0.0',
+          info: { role: 'mesh-node' },
+        }),
+      ],
+      reqInfraInv1,
+    );
+    if (respInfraInv1.status !== 200 || !respInfraInv1.body?.success) {
+      throw new Error(`Network infra inventory add failed: ${respInfraInv1.status}`);
+    }
+    const infraInv1 = respInfraInv1.body?.data?.network_infra;
+    if (!infraInv1 || infraInv1.added < 2) {
+      throw new Error(`Expected network_infra.added >= 2, got ${JSON.stringify(infraInv1)}`);
+    }
+    const bridgeRow = await findNetworkInfraBySerial(token, facilityId, infraBridgeSerial, 'bridge');
+    const friendRow = await findNetworkInfraBySerial(token, facilityId, infraFriendSerial, 'friend_node');
+    if (!bridgeRow || bridgeRow.status !== 'online') {
+      throw new Error(`Expected bridge ${infraBridgeSerial} online after inventory sync, got ${JSON.stringify(bridgeRow)}`);
+    }
+    if (!friendRow || friendRow.status !== 'online') {
+      throw new Error(`Expected friend_node ${infraFriendSerial} online after inventory sync, got ${JSON.stringify(friendRow)}`);
+    }
+    ok(`Network infra inventory added bridge ${infraBridgeSerial} and friend_node ${infraFriendSerial}`);
+
+    step('Testing inventory re-sync updates network infra state and firmware');
+    const reqInfraInv2 = `req-infra-inv-2-${Date.now()}`;
+    const respInfraInv2 = await inventorySync(
+      ws,
+      facilityId,
+      [
+        gwLockDevice({ lock_id: remainingSerial }),
+        gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+        gwAccessDevice({
+          access_id: accessSerialMulti,
+          relay_channel: accessRelaySecondary,
+          device_type: 'gate',
+          name: accessRenamed,
+        }),
+        gwBridgeDevice({
+          serial: infraBridgeSerial,
+          state: 'error',
+          firmware_version: '1.1.0',
+          info: { role: 'primary-bridge', degraded: true },
+        }),
+        gwFriendNodeDevice({
+          serial: infraFriendSerial,
+          state: 'healthy',
+          firmware_version: '2.1.0',
+          info: { role: 'mesh-node', upgraded: true },
+        }),
+      ],
+      reqInfraInv2,
+    );
+    if (respInfraInv2.status !== 200 || !respInfraInv2.body?.success) {
+      throw new Error(`Network infra inventory update failed: ${respInfraInv2.status}`);
+    }
+    const infraInv2 = respInfraInv2.body?.data?.network_infra;
+    if (!infraInv2 || (infraInv2.updated ?? 0) < 1) {
+      throw new Error(`Expected network_infra.updated >= 1, got ${JSON.stringify(infraInv2)}`);
+    }
+    const bridgeUpdated = await findNetworkInfraBySerial(token, facilityId, infraBridgeSerial, 'bridge');
+    const friendUpdated = await findNetworkInfraBySerial(token, facilityId, infraFriendSerial, 'friend_node');
+    if (bridgeUpdated?.status !== 'error') {
+      throw new Error(`Expected bridge status error after state sync, got ${bridgeUpdated?.status}`);
+    }
+    if (bridgeUpdated?.firmware_version !== '1.1.0') {
+      throw new Error(`Expected bridge firmware 1.1.0, got ${bridgeUpdated?.firmware_version}`);
+    }
+    if (friendUpdated?.firmware_version !== '2.1.0') {
+      throw new Error(`Expected friend_node firmware 2.1.0, got ${friendUpdated?.firmware_version}`);
+    }
+    ok('Inventory re-sync updated network infra state and firmware_version');
+
+    step('Testing POST /devices/inventory (gateway kind updates bound gateway row)');
+    const gatewayMacSerial = 'AA:BB:CC:DD:EE:FF';
+    const reqGatewayInv = `req-gateway-inv-${Date.now()}`;
+    const respGatewayInv = await inventorySync(
+      ws,
+      facilityId,
+      [
+        gwLockDevice({ lock_id: remainingSerial }),
+        gwBridgeDevice({
+          serial: infraBridgeSerial,
+          state: 'error',
+          firmware_version: '1.1.0',
+        }),
+        gwFriendNodeDevice({
+          serial: infraFriendSerial,
+          state: 'healthy',
+          firmware_version: '2.1.0',
+        }),
+        gwGatewayInventoryUpdate({
+          serial: gatewayMacSerial,
+          state: 'healthy',
+          firmware_version: '9.9.9-e2e',
+          info: { mesh_version: 'e2e' },
+        }),
+      ],
+      reqGatewayInv,
+    );
+    if (respGatewayInv.status !== 200 || !respGatewayInv.body?.success) {
+      throw new Error(`Gateway inventory update failed: ${respGatewayInv.status}`);
+    }
+    const gatewayDetail = await axios.get(`${API_BASE}/gateways/${gatewayId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const gatewayRow = gatewayDetail.data?.gateway;
+    if (gatewayRow?.firmware_version !== '9.9.9-e2e') {
+      throw new Error(`Expected gateway firmware 9.9.9-e2e, got ${gatewayRow?.firmware_version}`);
+    }
+    if (gatewayRow?.mac_address !== gatewayMacSerial) {
+      throw new Error(`Expected gateway mac_address ${gatewayMacSerial}, got ${gatewayRow?.mac_address}`);
+    }
+    ok('Gateway kind inventory item updated bound gateway firmware and mac_address');
+
+    step('Testing POST /devices/inventory (omit bridge — sync-managed removal)');
+    const reqInfraInv3 = `req-infra-inv-3-${Date.now()}`;
+    const respInfraInv3 = await inventorySync(
+      ws,
+      facilityId,
+      [
+        gwLockDevice({ lock_id: remainingSerial }),
+        gwFriendNodeDevice({
+          serial: infraFriendSerial,
+          state: 'healthy',
+          firmware_version: '2.1.0',
+        }),
+      ],
+      reqInfraInv3,
+    );
+    if (respInfraInv3.status !== 200 || !respInfraInv3.body?.success) {
+      throw new Error(`Network infra inventory delta failed: ${respInfraInv3.status}`);
+    }
+    const infraInv3 = respInfraInv3.body?.data?.network_infra;
+    if (!infraInv3 || infraInv3.removed < 1) {
+      throw new Error(`Expected bridge removed when omitted, got ${JSON.stringify(infraInv3)}`);
+    }
+    const bridgeRemoved = await findNetworkInfraBySerial(token, facilityId, infraBridgeSerial, 'bridge');
+    if (bridgeRemoved) {
+      throw new Error(`Expected bridge ${infraBridgeSerial} removed from cloud inventory`);
+    }
+    ok(`Network infra inventory removed bridge ${infraBridgeSerial} when omitted from sync payload`);
+
+    // Re-add bridge for downstream gateway restore coverage (keep operational devices present)
+    await inventorySync(
+      ws,
+      facilityId,
+      [
+        gwLockDevice({ lock_id: remainingSerial }),
+        gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+        gwAccessDevice({
+          access_id: accessSerialMulti,
+          relay_channel: accessRelaySecondary,
+          device_type: 'gate',
+          name: accessRenamed,
+        }),
+        gwBridgeDevice({
+          serial: infraBridgeSerial,
+          state: 'healthy',
+          firmware_version: '1.1.0',
+        }),
+        gwFriendNodeDevice({
+          serial: infraFriendSerial,
+          state: 'healthy',
+          firmware_version: '2.1.0',
+        }),
+      ],
+      `req-infra-readd-${Date.now()}`,
+    );
+    ok(`Re-added bridge ${infraBridgeSerial} for gateway restore snapshot coverage`);
+
     // Test device removal when assigned to unit
     step('Testing device removal when assigned to unit');
     step('Creating unit-linked device group member for swap-follow validation');
@@ -3394,7 +3633,7 @@ async function run() {
       ok('Unit-linked swap validation group deleted');
     }
 
-    // Clean up remaining inventory test devices
+    // Clean up remaining inventory test devices (keep operational + infra rows needed downstream)
     step('Cleaning up remaining inventory test devices');
     const reqInventoryCleanup = 'req-inventory-cleanup';
     ws.send(JSON.stringify({
@@ -3404,7 +3643,25 @@ async function run() {
       path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
-        devices: [gwLockDevice({ lock_id: remainingSerial })], // Keep only the original device
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            device_type: 'gate',
+            name: accessRenamed,
+          }),
+          gwBridgeDevice({
+            serial: infraBridgeSerial,
+            state: 'healthy',
+            firmware_version: '1.1.0',
+          }),
+          gwFriendNodeDevice({
+            serial: infraFriendSerial,
+            state: 'healthy',
+            firmware_version: '2.1.0',
+          }),
+        ],
       },
     }));
     await waitForProxyResponse(ws, reqInventoryCleanup);
@@ -3728,7 +3985,7 @@ async function run() {
         path: `/internal/gateway/devices/inventory`,
         body: {
           facility_id: facilityId,
-          devices: [
+          devices: withPreservedDownstreamAccessControl([
             gwLockDevice({
               lock_id: remainingSerial,
               firmware_version: '3A0-001',
@@ -3736,7 +3993,7 @@ async function run() {
               locked: false,
               battery_level: 3450,
             }),
-          ],
+          ], accessRenamed),
         },
       }));
       const respRestorePrimary = await waitForProxyResponse(ws, reqRestorePrimary);
@@ -3995,13 +4252,13 @@ async function run() {
       path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: facilityId,
-        devices: [
+        devices: withPreservedDownstreamAccessControl([
           gwLockDevice({
             lock_id: remainingSerial,
             name: subscribedLockRenamed,
             location_description: 'Unit row updated',
           }),
-        ],
+        ], accessRenamed),
       },
     }));
     const respWsLockRename = await waitForProxyResponse(ws, reqWsLockRename);
@@ -6182,9 +6439,9 @@ async function run() {
     );
     ok('Schedule deleted successfully');
 
-    // Verify user schedule was cleared after custom schedule deletion
+    // Verify user schedule was cleared after custom schedule deletion (use primary tenant — has unit access)
     const userScheduleResp = await axios.get(
-      `${API_BASE}/users/${testUserId}/facilities/${created.facilityId}/schedule`,
+      `${API_BASE}/users/${created.primaryTenantId}/facilities/${created.facilityId}/schedule`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     // After custom schedule deletion, user may be reassigned to default or have no schedule
@@ -8093,7 +8350,8 @@ async function run() {
       path: `/internal/gateway/devices/inventory`,
       body: {
         facility_id: created.facilityId,
-        devices: [
+        devices: withPreservedDownstreamAccessControl([
+          gwLockDevice({ lock_id: remainingSerial }),
           gwAccessDevice({
             access_id: multiDoorAccessId,
             relay_channel: multiDoorRelayA,
@@ -8108,7 +8366,7 @@ async function run() {
             name: 'Multi-door relay B',
             online: true,
           }),
-        ],
+        ], accessRenamed),
       },
     }));
     const respMultiDoorInv = await waitForProxyResponse(ws, reqMultiDoorInv);
@@ -9712,6 +9970,33 @@ async function run() {
     } else if (!created.gatewayId || !created.facilityId) {
       info('Skipping Gateway Swap Recovery E2E (no gateway/facility)');
     } else {
+      step('Ensure network infra devices are present before gateway swap recovery');
+      if (!created.infraBridgeSerial || !created.infraFriendNodeSerial) {
+        created.infraBridgeSerial = `E2E-BR-SWAP-${Date.now()}`;
+        created.infraFriendNodeSerial = `E2E-FN-SWAP-${Date.now()}`;
+      }
+      const swapInfraSeed = await inventorySync(
+        ws,
+        created.facilityId,
+        [
+          gwBridgeDevice({
+            serial: created.infraBridgeSerial,
+            state: 'healthy',
+            firmware_version: '1.1.0',
+          }),
+          gwFriendNodeDevice({
+            serial: created.infraFriendNodeSerial,
+            state: 'healthy',
+            firmware_version: '2.1.0',
+          }),
+        ],
+        `swap-infra-seed-${Date.now()}`,
+      );
+      if (swapInfraSeed.status !== 200 || !swapInfraSeed.body?.success) {
+        throw new Error(`Failed to seed network infra before swap recovery: ${swapInfraSeed.status}`);
+      }
+      ok(`Network infra seeded for swap recovery: bridge=${created.infraBridgeSerial}, friend_node=${created.infraFriendNodeSerial}`);
+
       step('Auto-register swap candidate via WS AUTH (no pre-created gateway row)');
       const { randomUUID } = require('crypto');
       const swapGatewayId = randomUUID();
@@ -9746,6 +10031,31 @@ async function run() {
         throw new Error(`Swap candidate not listed: ${JSON.stringify(candidates)}`);
       }
       ok('Swap candidate listed via recovery/candidates');
+
+      step('Recovery inventory-preview includes bridge and friend_node for gateway restore');
+      const previewResp = await axios.get(
+        `${API_BASE}/gateways/${swapGatewayId}/recovery/inventory-preview`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (previewResp.status !== 200) {
+        throw new Error(`Expected inventory-preview 200, got ${previewResp.status}`);
+      }
+      const previewDevices = previewResp.data?.data?.devices || [];
+      const previewBridge = previewDevices.find(
+        (d) => d.kind === 'bridge' && d.serial === created.infraBridgeSerial,
+      );
+      const previewFriend = previewDevices.find(
+        (d) => d.kind === 'friend_node' && d.serial === created.infraFriendNodeSerial,
+      );
+      if (!previewBridge || !previewFriend) {
+        throw new Error(
+          `Expected bridge/friend_node in inventory preview, got ${JSON.stringify(previewDevices)}`,
+        );
+      }
+      if (previewDevices.some((d) => d.kind === 'gateway')) {
+        throw new Error('Facility gateway must not appear in recovery inventory snapshot preview');
+      }
+      ok('Gateway restore inventory-preview includes sync-managed bridge and friend_node');
 
       step('Wait for recovery row to be active');
       await new Promise((r) => setTimeout(r, 500));
@@ -9852,7 +10162,18 @@ async function run() {
       const allowedInv = await inventorySync(
         swapWs,
         created.facilityId,
-        [],
+        [
+          gwBridgeDevice({
+            serial: created.infraBridgeSerial,
+            state: 'healthy',
+            firmware_version: '1.1.0',
+          }),
+          gwFriendNodeDevice({
+            serial: created.infraFriendNodeSerial,
+            state: 'healthy',
+            firmware_version: '2.1.0',
+          }),
+        ],
         `swap-inv-allow-${Date.now()}`,
       );
       if (allowedInv.status === 409) throw new Error('Inventory still blocked after bypass');
@@ -9875,6 +10196,29 @@ async function run() {
         throw new Error(`Expected swap gateway bound to facility, got ${JSON.stringify(newGwResp.data?.gateway)}`);
       }
       ok('Gateway facility binding updated after bypass (old unbound, swap bound)');
+
+      step('Network infra devices remain listed after gateway swap bypass');
+      const infraAfterBypass = await listNetworkInfraDevices(token, created.facilityId);
+      const bridgeAfterBypass = infraAfterBypass.find(
+        (d) => d.device_kind === 'bridge' && d.device_serial === created.infraBridgeSerial,
+      );
+      const friendAfterBypass = infraAfterBypass.find(
+        (d) => d.device_kind === 'friend_node' && d.device_serial === created.infraFriendNodeSerial,
+      );
+      if (!bridgeAfterBypass || !friendAfterBypass) {
+        throw new Error(
+          `Expected network infra after bypass, got ${JSON.stringify(infraAfterBypass.map((d) => ({
+            kind: d.device_kind,
+            serial: d.device_serial,
+          })))}`,
+        );
+      }
+      if (friendAfterBypass.gateway_id !== created.swapGatewayId) {
+        throw new Error(
+          `Expected friend_node rebound to swap gateway ${created.swapGatewayId}, got gateway_id=${friendAfterBypass.gateway_id}`,
+        );
+      }
+      ok('Network infra devices survived gateway swap bypass and rebind to new gateway');
 
       step('Double bypass rejected');
       const doubleBypass = await axios.post(

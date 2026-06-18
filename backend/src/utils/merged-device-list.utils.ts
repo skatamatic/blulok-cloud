@@ -5,10 +5,13 @@ export const DEVICE_LIST_SORT_KEYS = [
   'name',
   'unit_number',
   'device_type',
+  'device_kind',
+  'device_serial',
   'status',
   'facility_name',
   'gateway_name',
   'last_activity',
+  'last_seen',
   'created_at',
 ] as const;
 
@@ -22,7 +25,24 @@ export function normalizeDeviceListSortKey(raw: unknown): DeviceListSortKey {
   return 'name';
 }
 
-function deviceDisplayName(d: { device_category?: string; name?: string; unit_number?: string | null; device_serial?: string }): string {
+/** Maps operational table column keys to network-infra list sort keys. */
+export function normalizeNetworkInfraSortKey(raw: unknown): DeviceListSortKey {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s === 'device_type') return 'device_kind';
+  if (s === 'last_activity') return 'last_seen';
+  return normalizeDeviceListSortKey(raw);
+}
+
+function deviceDisplayName(d: {
+  device_category?: string;
+  name?: string;
+  unit_number?: string | null;
+  device_serial?: string;
+  device_kind?: string;
+}): string {
+  if (d.device_category === 'network_infra') {
+    return String(d.name ?? d.device_serial ?? '');
+  }
   if (d.device_category === 'blulok') {
     return d.unit_number ? String(d.unit_number) : String(d.device_serial ?? '');
   }
@@ -57,21 +77,27 @@ export function compareMergedDevices(
     case 'name':
     case 'unit_number':
       return m * compareNaturalStrings(deviceDisplayName(a as any), deviceDisplayName(b as any));
-    case 'device_type': {
-      const la = a.device_category === 'blulok' ? 'blulok' : String((a as { device_type?: string }).device_type ?? '');
-      const lb = b.device_category === 'blulok' ? 'blulok' : String((b as { device_type?: string }).device_type ?? '');
-      return m * la.localeCompare(lb);
+    case 'device_type':
+    case 'device_kind': {
+      const typeOf = (d: Record<string, unknown>) => {
+        if (d.device_category === 'network_infra') {
+          return String((d as { device_kind?: string }).device_kind ?? '');
+        }
+        if (d.device_category === 'blulok') return 'blulok';
+        return String((d as { device_type?: string }).device_type ?? '');
+      };
+      return m * typeOf(a).localeCompare(typeOf(b));
     }
+    case 'device_serial':
+      return m * String((a as { device_serial?: string }).device_serial ?? '').localeCompare(
+        String((b as { device_serial?: string }).device_serial ?? '')
+      );
     case 'status': {
-      const sa =
-        a.device_category === 'blulok'
-          ? String((a as { device_status?: string }).device_status ?? '')
-          : String((a as { status?: string }).status ?? '');
-      const sb =
-        b.device_category === 'blulok'
-          ? String((b as { device_status?: string }).device_status ?? '')
-          : String((b as { status?: string }).status ?? '');
-      return m * sa.localeCompare(sb);
+      const statusOf = (d: Record<string, unknown>) =>
+        d.device_category === 'blulok'
+          ? String((d as { device_status?: string }).device_status ?? '')
+          : String((d as { status?: string }).status ?? '');
+      return m * statusOf(a).localeCompare(statusOf(b));
     }
     case 'facility_name':
       return m * String((a as { facility_name?: string }).facility_name ?? '').localeCompare(
@@ -82,15 +108,19 @@ export function compareMergedDevices(
         String((b as { gateway_name?: string }).gateway_name ?? '')
       );
     case 'last_activity':
-      return cmpNullableDate(
-        (a as { last_activity?: string }).last_activity,
-        (b as { last_activity?: string }).last_activity,
-        desc
-      );
+    case 'last_seen': {
+      const lastOf = (d: Record<string, unknown>) =>
+        d.device_category === 'network_infra'
+          ? (d as { last_seen?: string | null }).last_seen
+          : (d as { last_activity?: string }).last_activity;
+      return cmpNullableDate(lastOf(a), lastOf(b), desc);
+    }
     case 'created_at':
       return cmpNullableDate(
-        (a as { created_at?: string }).created_at,
-        (b as { created_at?: string }).created_at,
+        (a as { created_at?: string }).created_at ??
+          (a.device_category === 'network_infra' ? (a as { last_seen?: string | null }).last_seen : undefined),
+        (b as { created_at?: string }).created_at ??
+          (b.device_category === 'network_infra' ? (b as { last_seen?: string | null }).last_seen : undefined),
         desc
       );
     default:

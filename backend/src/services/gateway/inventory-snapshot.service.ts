@@ -5,8 +5,10 @@ import { GatewayInventorySnapshotModel } from '@/models/gateway-recovery.model';
 import { getProvisioningStorageProvider } from '@/services/provisioning/provisioning-storage.factory';
 import { logger } from '@/utils/logger';
 
+import { NetworkInfraSyncKind } from '@/config/gateway-device-kinds';
+
 export interface InventorySnapshotDevice {
-  kind: 'lock' | 'access_control';
+  kind: 'lock' | 'access_control' | NetworkInfraSyncKind;
   device_id: string;
   serial: string;
   unit_id?: string | null;
@@ -14,11 +16,14 @@ export interface InventorySnapshotDevice {
   lock_number?: number | null;
   relay_channel?: number | null;
   lock_id?: string | null;
+  state?: string | null;
+  firmware_version?: string | null;
+  info?: Record<string, unknown>;
   properties?: Record<string, unknown>;
 }
 
 export interface InventorySnapshotPayload {
-  schema_version: 1;
+  schema_version: 1 | 2;
   facility_id: string;
   gateway_id: string;
   generated_at: string;
@@ -34,6 +39,7 @@ export class InventorySnapshotService {
     gatewayId: string,
     blulokDevices: Array<Record<string, unknown>>,
     accessControlDevices: Array<Record<string, unknown>>,
+    inventoryDevices: Array<Record<string, unknown>> = [],
   ): InventorySnapshotPayload {
     const devices: InventorySnapshotDevice[] = [];
 
@@ -66,6 +72,24 @@ export class InventorySnapshotService {
       });
     }
 
+    for (const row of inventoryDevices) {
+      const info =
+        row.info && typeof row.info === 'object' && !Array.isArray(row.info)
+          ? (row.info as Record<string, unknown>)
+          : undefined;
+      devices.push({
+        kind: String(row.device_kind) as NetworkInfraSyncKind,
+        device_id: String(row.id),
+        serial: String(row.device_serial || ''),
+        state: row.state != null ? String(row.state) : null,
+        firmware_version: row.firmware_version != null ? String(row.firmware_version) : null,
+        info,
+        properties: {
+          metadata: row.metadata,
+        },
+      });
+    }
+
     devices.sort((a, b) => {
       const keyA = `${a.kind}:${a.serial}`;
       const keyB = `${b.kind}:${b.serial}`;
@@ -73,7 +97,7 @@ export class InventorySnapshotService {
     });
 
     return {
-      schema_version: 1,
+      schema_version: 2,
       facility_id: facilityId,
       gateway_id: gatewayId,
       generated_at: new Date().toISOString(),
@@ -101,6 +125,7 @@ export class InventorySnapshotService {
       targetGatewayId,
       withDevices.blulokDevices,
       withDevices.accessControlDevices,
+      withDevices.inventoryDevices,
     );
     const json = this.serializeDeterministic(payload);
     const binary = Buffer.from(json, 'utf8');
@@ -158,6 +183,7 @@ export class InventorySnapshotService {
       bound.id,
       withDevices.blulokDevices,
       withDevices.accessControlDevices,
+      withDevices.inventoryDevices,
     );
     return payload.devices;
   }

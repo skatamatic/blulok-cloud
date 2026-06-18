@@ -44,6 +44,8 @@ export interface AuthContextType {
   authState: AuthState;
   login: (credentials: LoginCredentials) => Promise<LoginResponse>;
   logout: () => void;
+  /** Re-fetch live facility scope from GET /auth/profile (also triggered on WS scope_update). */
+  refreshUserScope: () => Promise<void>;
   isLoading: boolean;
   hasRole: (roles: UserRole[]) => boolean;
   isAdmin: () => boolean;

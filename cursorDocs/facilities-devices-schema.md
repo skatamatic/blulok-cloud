@@ -8,6 +8,16 @@ This document describes the comprehensive data model for BluLok's facility and d
 
 For **facility-scoped** users (e.g. `FACILITY_ADMIN`), when the query **does not** include `facility_id`, the backend filters with **`facility_ids`** = all facilities assigned to that user (not only the first). This matches dashboard widgets such as **Remote Gate** when “All facilities” is selected so gates in every assigned facility are visible.
 
+**`device_scope` query param** (default `operational`):
+
+| Value | Returns |
+|-------|---------|
+| `operational` | BluLok + access control (existing behavior) |
+| `network_infra` | Facility gateway (from `gateways` table) + `gateway_inventory_devices` (bridge, friend_node) |
+| `all` | Union of both (merged, sorted, then paginated in memory) |
+
+Network infra list items use `device_category: "network_infra"`, `device_kind` (`gateway` \| `bridge` \| `friend_node`), and `deletable: false` for the facility gateway row.
+
 ### LOCK / UNLOCK command JWT (`device_id` claim)
 
 When the cloud delivers **LOCK** / **UNLOCK** over the inbound gateway WebSocket (`{ "type": "COMMAND", "jwt": "..." }`), the signed payload’s **`device_id` claim is the hardware serial**, not the internal UUID—same idea as route passes (`lock:<device_serial>`). **`expires_at`** (unix seconds) is `now + facilities.lock_command_timeout_sec` (default 5 minutes); **`0`** means the lock should not enforce command expiry (facility one-shot mode). Resolution: **BluLok** uses `blulok_devices.device_serial`, then optional `serial`; **access control** uses `metadata` / `device_settings` keys `device_serial` or `serial` if present; otherwise the code falls back to the internal id and logs a warning. Non-WebSocket paths (e.g. HTTP mesh `send-lock-command`) still pass the internal device id to the gateway API and include the same `expires_at` field when supported.
@@ -108,6 +118,29 @@ CREATE TABLE access_control_devices (
   UNIQUE(gateway_id, device_serial, relay_channel) -- Sync identity: access_id + relay per device
 );
 ```
+
+### 3.0 Network infrastructure devices (`gateway_inventory_devices`)
+
+**Purpose:** Record-keeping for mesh hardware reported by the gateway (bridges, friend nodes). No operational commands except cloud-initiated delete notification.
+
+```sql
+CREATE TABLE gateway_inventory_devices (
+  id UUID PRIMARY KEY,
+  gateway_id UUID NOT NULL REFERENCES gateways(id) ON DELETE CASCADE,
+  device_kind VARCHAR(64) NOT NULL,        -- bridge | friend_node
+  device_serial VARCHAR(128) NOT NULL,
+  state VARCHAR(32),
+  firmware_version VARCHAR(64),
+  info JSONB NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  last_seen TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (gateway_id, device_kind, device_serial)
+);
+```
+
+The facility **gateway** itself remains in the `gateways` table and appears in the network-infra devices view but is not stored in this table.
 
 **Key Features**:
 - **Device Types**: Gates, elevators, doors with specific UI treatment

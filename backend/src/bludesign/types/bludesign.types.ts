@@ -503,3 +503,21 @@ export const DEFAULT_MATERIAL_SLOT: MaterialSlot = {
   allowBrandingOverride: true,
 };
 
+// ============================================================================
+// Site terrain providers (elevation + imagery tile sources for facility viewer)
+// ============================================================================
+
+export type {
+  ElevationProviderId,
+  ImageryProviderId,
+  ElevationEncoding,
+  TileCoordinate,
+  GeoPoint,
+  GeoBounds,
+  FetchSitePackRequest,
+  SitePackResult,
+  SiteTerrainProviderConfig,
+} from '../services/site-terrain/types';
+
+export { SiteTerrainError, SiteTerrainErrorCode } from '../services/site-terrain/types';
+

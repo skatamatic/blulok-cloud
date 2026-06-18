@@ -46,6 +46,7 @@ describe('InventorySnapshotService', () => {
         { id: 'd1', device_serial: 'A-001', unit_id: 'u1', unit_number: '101', lock_number: 1 },
       ],
       accessControlDevices: [{ id: 'ac1', device_serial: 'AC-1', relay_channel: 1 }],
+      inventoryDevices: [{ id: 'br1', device_kind: 'bridge', device_serial: 'BR-1', state: 'healthy' }],
     });
     mockSnapshotCreate.mockResolvedValue(undefined);
   });
@@ -60,10 +61,26 @@ describe('InventorySnapshotService', () => {
       ],
       [{ id: 'ac1', device_serial: 'AC-1', relay_channel: 1 }],
     );
-    expect(payload.schema_version).toBe(1);
+    expect(payload.schema_version).toBe(2);
     expect(payload.devices.some((d) => d.serial === 'A-001')).toBe(true);
     expect(payload.devices.some((d) => d.kind === 'access_control')).toBe(true);
     expect(payload.devices[0].serial).toBe('AC-1');
+  });
+
+  it('includes network infra devices in snapshot payload', () => {
+    const payload = InventorySnapshotService.buildSnapshotPayload(
+      'fac-1',
+      'gw-new',
+      [],
+      [],
+      [{ id: 'br1', device_kind: 'bridge', device_serial: 'BR-1', state: 'healthy', info: { hop: 2 } }],
+    );
+    expect(payload.devices).toHaveLength(1);
+    expect(payload.devices[0]).toMatchObject({
+      kind: 'bridge',
+      serial: 'BR-1',
+      state: 'healthy',
+    });
   });
 
   it('serializes deterministically for same payload', () => {
@@ -80,14 +97,14 @@ describe('InventorySnapshotService', () => {
 
   it('previewForFacility returns sorted device list', async () => {
     const devices = await InventorySnapshotService.previewForFacility('fac-1');
-    expect(devices).toHaveLength(3);
-    expect(devices.map((d) => d.serial)).toEqual(['AC-1', 'A-001', 'B-002']);
+    expect(devices).toHaveLength(4);
+    expect(devices.map((d) => d.serial)).toEqual(['AC-1', 'BR-1', 'A-001', 'B-002']);
   });
 
   it('buildAndStoreForFacility writes storage and creates snapshot row', async () => {
     const result = await InventorySnapshotService.buildAndStoreForFacility('fac-1', 'gw-target');
 
-    expect(result.deviceCount).toBe(3);
+    expect(result.deviceCount).toBe(4);
     expect(result.storagePath).toMatch(/^inventory-snapshots\/gw-target\//);
     expect(mockStorage.writePreparedUpload).toHaveBeenCalledWith(
       result.storagePath,
@@ -99,7 +116,7 @@ describe('InventorySnapshotService', () => {
         gateway_id: 'gw-target',
         facility_id: 'fac-1',
         sha256_hash: result.sha256,
-        device_count: 3,
+        device_count: 4,
       }),
     );
   });

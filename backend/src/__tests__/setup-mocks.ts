@@ -100,15 +100,15 @@ jest.mock('../services/auth.service', () => ({
       });
     }),
     generateToken: jest.fn().mockImplementation((user: any, facilityIds?: string[]) => {
-      // Return a mock JWT token with 3 parts (header.payload.signature)
       const header = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
       const payload = Buffer.from(JSON.stringify({
         userId: user.id,
         email: user.email,
-        firstName: user.firstName || 'Test',
-        lastName: user.lastName || 'User',
+        firstName: user.firstName || user.first_name || 'Test',
+        lastName: user.lastName || user.last_name || 'User',
         role: user.role,
-        facilityIds: facilityIds || []
+        facilityIds: facilityIds || [],
+        iat: Date.now(),
       })).toString('base64');
       const signature = 'mock-signature';
       return `${header}.${payload}.${signature}`;
@@ -151,12 +151,15 @@ jest.mock('../services/auth.service', () => ({
       return ['dev_admin', 'admin', 'facility_admin'].includes(role);
     }),
     isFacilityScoped: jest.fn().mockImplementation((role: string) => {
-      return ['facility_admin', 'tenant', 'maintenance'].includes(role);
+      return !['admin', 'dev_admin'].includes(role);
     }),
     canAccessAllFacilities: jest.fn().mockImplementation((role: string) => {
       return ['admin', 'dev_admin'].includes(role);
     }),
-    canAccessFacility: jest.fn().mockResolvedValue(true)
+    canAccessFacility: jest.fn().mockImplementation(async (userId: string, _role: string, facilityId: string) => {
+      const { UserFacilityAssociationModel } = require('../models/user-facility-association.model');
+      return UserFacilityAssociationModel.hasAccessToFacility(userId, facilityId);
+    }),
   }
 }));
 
@@ -1562,33 +1565,22 @@ jest.mock('../models/user.model', () => {
   };
 });
 
-jest.mock('../models/user-facility-association.model', () => ({
-  UserFacilityAssociationModel: {
-        getUserFacilityIds: jest.fn().mockImplementation((userId: string) => {
-          // Return mock facility IDs based on user
-          if (userId === 'facility-admin-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          if (userId === 'facility-admin-2') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          if (userId === 'tenant-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          if (userId === 'tenant-2') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          if (userId === 'tenant-3') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440002']);
-          }
-          if (userId === 'facility2-tenant-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440002']);
-          }
-          if (userId === 'maintenance-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          return Promise.resolve([]);
-        }),
+jest.mock('../models/user-facility-association.model', () => {
+  const mockUserFacilityIds: Record<string, string[]> = {
+    'facility-admin-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
+    'facility-admin-2': ['550e8400-e29b-41d4-a716-446655440001'],
+    'tenant-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
+    'tenant-2': ['550e8400-e29b-41d4-a716-446655440001'],
+    'tenant-3': ['550e8400-e29b-41d4-a716-446655440002'],
+    'facility2-tenant-1': ['550e8400-e29b-41d4-a716-446655440002', 'facility-2'],
+    'maintenance-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
+  };
+
+  return {
+    UserFacilityAssociationModel: {
+      getUserFacilityIds: jest.fn().mockImplementation((userId: string) =>
+        Promise.resolve(mockUserFacilityIds[userId] ?? [])
+      ),
     findByUserId: jest.fn().mockResolvedValue([]),
     findByFacilityId: jest.fn().mockResolvedValue([]),
     getFacilityUserIds: jest.fn().mockResolvedValue([]),
@@ -1605,24 +1597,61 @@ jest.mock('../models/user-facility-association.model', () => ({
         }),
     setUserFacilities: jest.fn().mockResolvedValue(undefined),
     getUsersWithFacilities: jest.fn().mockResolvedValue([]),
-        hasAccessToFacility: jest.fn().mockImplementation((userId: string, facilityId: string) => {
-          // Mock existing associations
-          if (userId === 'tenant-1' && facilityId === '550e8400-e29b-41d4-a716-446655440001') {
-            return Promise.resolve(true);
-          }
-          if (userId === 'tenant-1' && facilityId === '550e8400-e29b-41d4-a716-446655440002') {
-            return Promise.resolve(false);
-          }
-          if (
-            userId === 'facility-admin-2'
-            && (facilityId === '550e8400-e29b-41d4-a716-446655440001' || facilityId === 'facility-1')
-          ) {
-            return Promise.resolve(true);
-          }
-          return Promise.resolve(false);
-        }),
+        hasAccessToFacility: jest.fn().mockImplementation((userId: string, facilityId: string) =>
+          Promise.resolve((mockUserFacilityIds[userId] ?? []).includes(facilityId))
+        ),
   },
-}));
+  };
+});
+
+jest.mock('../services/facility-access.service', () => {
+  const { UserRole } = require('../types/auth.types');
+
+  return {
+    FacilityAccessService: {
+      getUserFacilityIds: jest.fn().mockImplementation(async (userId: string, userRole: string) => {
+        if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+          return [];
+        }
+        const { UserFacilityAssociationModel } = require('../models/user-facility-association.model');
+        return UserFacilityAssociationModel.getUserFacilityIds(userId);
+      }),
+      hasAccessToFacility: jest.fn().mockImplementation(async (userId: string, userRole: string, facilityId: string) => {
+        if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+          return true;
+        }
+        const ids = await require('../services/facility-access.service').FacilityAccessService.getUserFacilityIds(
+          userId,
+          userRole
+        );
+        return ids.includes(facilityId);
+      }),
+      getUserScope: jest.fn().mockImplementation(async (userId: string, userRole: string) => {
+        if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+          return { type: 'all' };
+        }
+        const ids = await require('../services/facility-access.service').FacilityAccessService.getUserFacilityIds(
+          userId,
+          userRole
+        );
+        return { type: 'facility_limited', facilityIds: ids };
+      }),
+      validateFacilityAccess: jest.fn().mockImplementation(async (userId: string, userRole: string, facilityId: string) =>
+        require('../services/facility-access.service').FacilityAccessService.hasAccessToFacility(userId, userRole, facilityId)
+      ),
+      getAccessInfo: jest.fn().mockResolvedValue({
+        role: UserRole.TENANT,
+        scope: 'facility_limited',
+        facilityIds: [],
+        facilityCount: 0,
+      }),
+      getTenantMaintenanceFacilityIds: jest.fn().mockImplementation(async (userId: string) => {
+        const { UserFacilityAssociationModel } = require('../models/user-facility-association.model');
+        return UserFacilityAssociationModel.getUserFacilityIds(userId);
+      }),
+    },
+  };
+});
 
 jest.mock('../models/unit.model', () => {
   const {

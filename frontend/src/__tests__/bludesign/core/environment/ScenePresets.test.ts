@@ -28,6 +28,7 @@ describe('ScenePresets', () => {
       'woodland',
       'urban',
       'techno',
+      'local',
     ]);
   });
 
@@ -66,6 +67,11 @@ describe('ScenePresets', () => {
     ).toEqual({
       techno: { cellSize: 12, glowIntensity: 4 },
     });
+    expect(
+      normalizeEnvironmentOptions({ local: { assetDim: 2, wireframeAmount: 0.1 } })
+    ).toEqual({
+      local: { assetDim: 1, wireframeAmount: 0.2 },
+    });
   });
 
   it('normalizes unknown preset ids to blank', () => {
@@ -87,6 +93,7 @@ describe('ScenePresets', () => {
     expect(viewPresetsRequireAssetDownload('blank', 'natural')).toBe(true);
     expect(viewPresetsRequireAssetDownload('blank', 'woodland')).toBe(true);
     expect(viewPresetsRequireAssetDownload('blank', 'urban')).toBe(true);
+    expect(viewPresetsRequireAssetDownload('blank', 'local')).toBe(true);
     expect(viewPresetsRequireAssetDownload('blank', 'techno')).toBe(false);
     expect(
       viewPresetsRequireAssetDownload('blank', 'techno', { techno: { showSpaceBackdrop: true } })

@@ -244,10 +244,16 @@ jest.mock('@/services/auth.service', () => ({
     generateToken: jest.fn().mockReturnValue('mock-jwt-token'),
     verifyToken: jest.fn().mockImplementation((token) => {
       if (token === 'mock-jwt-token') {
-        return { userId: 'test-user-id', role: 'admin' };
+        return { userId: 'test-user-id', role: 'admin', email: 'admin@example.com' };
       }
       return null;
     }),
+    isFacilityScoped: jest.fn().mockImplementation((role: string) => {
+      return !['admin', 'dev_admin'].includes(role);
+    }),
+    isFacilityAdmin: jest.fn().mockImplementation((role: string) => role === 'facility_admin'),
+    isAdmin: jest.fn().mockImplementation((role: string) => ['admin', 'dev_admin'].includes(role)),
+    canAccessFacility: jest.fn().mockResolvedValue(true),
     hashPassword: jest.fn().mockResolvedValue('hashed-password'),
     comparePassword: jest.fn().mockResolvedValue(true),
     createUser: jest.fn().mockResolvedValue({ success: true, id: 'new-user-id' }),

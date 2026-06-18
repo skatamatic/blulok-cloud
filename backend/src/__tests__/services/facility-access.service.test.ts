@@ -1,8 +1,11 @@
 /**
  * FacilityAccessService — centralized facility RBAC (global vs facility-scoped).
  */
+jest.unmock('@/services/facility-access.service');
+
 import { FacilityAccessService } from '@/services/facility-access.service';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { DatabaseService } from '@/services/database.service';
 import { UserRole } from '@/types/auth.types';
 
 jest.mock('@/models/user-facility-association.model', () => ({
@@ -12,12 +15,49 @@ jest.mock('@/models/user-facility-association.model', () => ({
   },
 }));
 
+jest.mock('@/services/database.service', () => ({
+  DatabaseService: {
+    getInstance: jest.fn(),
+  },
+}));
+
 const mockGetIds = UserFacilityAssociationModel.getUserFacilityIds as jest.MockedFunction<
   typeof UserFacilityAssociationModel.getUserFacilityIds
 >;
 const mockHasAccess = UserFacilityAssociationModel.hasAccessToFacility as jest.MockedFunction<
   typeof UserFacilityAssociationModel.hasAccessToFacility
 >;
+
+function mockDbQueries(options: {
+  assignmentFacilityIds?: string[];
+  keyShareFacilityIds?: string[];
+  assignmentExists?: boolean;
+  keyShareExists?: boolean;
+}) {
+  const assignmentRows = (options.assignmentFacilityIds ?? []).map((facility_id) => ({ facility_id }));
+  const shareRows = (options.keyShareFacilityIds ?? []).map((facility_id) => ({ facility_id }));
+
+  const buildChain = (rows: { facility_id: string }[], firstResult?: unknown) => ({
+    select: jest.fn().mockReturnThis(),
+    join: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    first: jest.fn().mockResolvedValue(firstResult),
+    then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
+      Promise.resolve(rows).then(resolve, reject),
+  });
+
+  const db = jest.fn((table: string) => {
+    if (table === 'unit_assignments as ua') {
+      return buildChain(assignmentRows, options.assignmentExists ? { id: 'a1' } : undefined);
+    }
+    if (table === 'key_sharing as ks') {
+      return buildChain(shareRows, options.keyShareExists ? { id: 'k1' } : undefined);
+    }
+    return buildChain([]);
+  });
+
+  (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
+}
 
 describe('FacilityAccessService', () => {
   beforeEach(() => {
@@ -31,7 +71,7 @@ describe('FacilityAccessService', () => {
       expect(mockGetIds).not.toHaveBeenCalled();
     });
 
-    it('returns associations for facility-scoped roles', async () => {
+    it('returns associations for facility admins', async () => {
       mockGetIds.mockResolvedValueOnce(['fac-a', 'fac-b']);
       await expect(
         FacilityAccessService.getUserFacilityIds('u2', UserRole.FACILITY_ADMIN)
@@ -39,9 +79,21 @@ describe('FacilityAccessService', () => {
       expect(mockGetIds).toHaveBeenCalledWith('u2');
     });
 
-    it('propagates errors from the association model', async () => {
+    it('returns unit and key-share facilities for tenants (not association rows)', async () => {
+      mockDbQueries({
+        assignmentFacilityIds: ['fac-from-unit'],
+        keyShareFacilityIds: ['fac-from-share'],
+      });
+
+      await expect(
+        FacilityAccessService.getUserFacilityIds('tenant-1', UserRole.TENANT)
+      ).resolves.toEqual(expect.arrayContaining(['fac-from-unit', 'fac-from-share']));
+      expect(mockGetIds).not.toHaveBeenCalled();
+    });
+
+    it('propagates errors from the association model for facility admins', async () => {
       mockGetIds.mockRejectedValueOnce(new Error('db down'));
-      await expect(FacilityAccessService.getUserFacilityIds('u1', UserRole.TENANT)).rejects.toThrow('db down');
+      await expect(FacilityAccessService.getUserFacilityIds('u1', UserRole.FACILITY_ADMIN)).rejects.toThrow('db down');
     });
   });
 
@@ -53,7 +105,7 @@ describe('FacilityAccessService', () => {
       expect(mockHasAccess).not.toHaveBeenCalled();
     });
 
-    it('delegates to UserFacilityAssociationModel for other roles', async () => {
+    it('delegates to UserFacilityAssociationModel for facility admins', async () => {
       mockHasAccess.mockResolvedValueOnce(true);
       await expect(
         FacilityAccessService.hasAccessToFacility('u1', UserRole.FACILITY_ADMIN, 'fac-1')
@@ -61,10 +113,25 @@ describe('FacilityAccessService', () => {
       expect(mockHasAccess).toHaveBeenCalledWith('u1', 'fac-1');
     });
 
+    it('checks unit/key-share access for tenants instead of associations', async () => {
+      mockDbQueries({ assignmentExists: true });
+      await expect(
+        FacilityAccessService.hasAccessToFacility('tenant-1', UserRole.TENANT, 'fac-1')
+      ).resolves.toBe(true);
+      expect(mockHasAccess).not.toHaveBeenCalled();
+    });
+
+    it('returns false for tenants with no unit or key-share access', async () => {
+      mockDbQueries({ assignmentExists: false, keyShareExists: false });
+      await expect(
+        FacilityAccessService.hasAccessToFacility('tenant-1', UserRole.TENANT, 'fac-removed')
+      ).resolves.toBe(false);
+    });
+
     it('returns false on error (secure default)', async () => {
       mockHasAccess.mockRejectedValueOnce(new Error('db'));
       await expect(
-        FacilityAccessService.hasAccessToFacility('u1', UserRole.TENANT, 'fac-1')
+        FacilityAccessService.hasAccessToFacility('u1', UserRole.FACILITY_ADMIN, 'fac-1')
       ).resolves.toBe(false);
     });
   });
@@ -76,19 +143,19 @@ describe('FacilityAccessService', () => {
       });
     });
 
-    it('returns facility_limited with ids for scoped users', async () => {
+    it('returns facility_limited with ids for facility admins', async () => {
       mockGetIds.mockResolvedValueOnce(['f1']);
-      await expect(FacilityAccessService.getUserScope('u1', UserRole.TENANT)).resolves.toEqual({
+      await expect(FacilityAccessService.getUserScope('u1', UserRole.FACILITY_ADMIN)).resolves.toEqual({
         type: 'facility_limited',
         facilityIds: ['f1'],
       });
     });
 
-    it('returns empty facilityIds when user has no associations', async () => {
-      mockGetIds.mockResolvedValueOnce([]);
-      await expect(FacilityAccessService.getUserScope('u1', UserRole.TENANT)).resolves.toEqual({
+    it('returns tenant facilities from assignments for tenants', async () => {
+      mockDbQueries({ assignmentFacilityIds: ['fac-unit'] });
+      await expect(FacilityAccessService.getUserScope('t1', UserRole.TENANT)).resolves.toEqual({
         type: 'facility_limited',
-        facilityIds: [],
+        facilityIds: ['fac-unit'],
       });
     });
   });
@@ -97,14 +164,14 @@ describe('FacilityAccessService', () => {
     it('returns true when hasAccessToFacility is true', async () => {
       mockHasAccess.mockResolvedValueOnce(true);
       await expect(
-        FacilityAccessService.validateFacilityAccess('u1', UserRole.TENANT, 'fac-1', 'read')
+        FacilityAccessService.validateFacilityAccess('u1', UserRole.FACILITY_ADMIN, 'fac-1', 'read')
       ).resolves.toBe(true);
     });
 
     it('returns false when hasAccessToFacility is false', async () => {
       mockHasAccess.mockResolvedValueOnce(false);
       await expect(
-        FacilityAccessService.validateFacilityAccess('u1', UserRole.TENANT, 'fac-1', 'read')
+        FacilityAccessService.validateFacilityAccess('u1', UserRole.FACILITY_ADMIN, 'fac-1', 'read')
       ).resolves.toBe(false);
     });
   });
@@ -123,8 +190,8 @@ describe('FacilityAccessService', () => {
       mockGetIds.mockImplementationOnce(() => {
         throw new Error('unexpected');
       });
-      await expect(FacilityAccessService.getAccessInfo('u1', UserRole.TENANT)).resolves.toEqual({
-        role: UserRole.TENANT,
+      await expect(FacilityAccessService.getAccessInfo('u1', UserRole.FACILITY_ADMIN)).resolves.toEqual({
+        role: UserRole.FACILITY_ADMIN,
         scope: 'facility_limited',
         facilityIds: [],
         facilityCount: 0,

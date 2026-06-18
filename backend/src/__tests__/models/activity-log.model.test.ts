@@ -248,8 +248,9 @@ describe('ActivityLogModel', () => {
 
       const selectArgs = mockQueryBuilder.select.mock.calls[0] as string[];
       expect(selectArgs).toContain('blulok_devices.device_serial');
-      expect(selectArgs).toContain('blulok_devices.device_serial as blulok_device_name');
+      expect(selectArgs).toContain('blulok_devices.device_settings as blulok_device_settings_raw');
       expect(selectArgs).toContain('access_control_devices.location_description as device_location');
+      expect(selectArgs).not.toContain('blulok_devices.device_serial as blulok_device_name');
       expect(selectArgs).not.toContain('blulok_devices.name as blulok_device_name');
       expect(selectArgs).not.toContain('blulok_devices.location_description as device_location');
     });

@@ -118,6 +118,45 @@ export class GatewayModel {
     return gateway || null;
   }
 
+  async findBoundGatewaysWithContext(filters: {
+    facility_id?: string;
+    facility_ids?: string[];
+    gateway_id?: string;
+    search?: string;
+    status?: string;
+  } = {}): Promise<Array<Gateway & { facility_name?: string | null }>> {
+    const knex = this.db.connection;
+    let query = knex('gateways')
+      .select('gateways.*', 'facilities.name as facility_name')
+      .leftJoin('facilities', 'gateways.facility_id', 'facilities.id')
+      .whereNotNull('gateways.facility_id');
+
+    if (filters.facility_id) {
+      query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
+    }
+
+    if (filters.gateway_id) {
+      query = query.where('gateways.id', filters.gateway_id);
+    }
+
+    if (filters.search) {
+      const pattern = `%${filters.search.trim()}%`;
+      query = query.where((builder) => {
+        builder
+          .where('gateways.name', 'like', pattern)
+          .orWhere('gateways.mac_address', 'like', pattern);
+      });
+    }
+
+    if (filters.status) {
+      query = query.where('gateways.status', filters.status);
+    }
+
+    return query.orderBy('gateways.name', 'asc');
+  }
+
   async findById(id: string): Promise<Gateway | null> {
     const knex = this.db.connection;
     const gateway = await knex('gateways').where('id', id).first();
@@ -356,6 +395,7 @@ export class GatewayModel {
     gateway: Gateway;
     accessControlDevices: any[];
     blulokDevices: any[];
+    inventoryDevices: any[];
   } | null> {
     const knex = this.db.connection;
     
@@ -372,10 +412,16 @@ export class GatewayModel {
       .where('blulok_devices.gateway_id', id)
       .orderBy('units.unit_number');
 
+    const inventoryDevices = await knex('gateway_inventory_devices')
+      .where('gateway_id', id)
+      .orderBy('device_kind')
+      .orderBy('device_serial');
+
     return {
       gateway,
       accessControlDevices,
-      blulokDevices
+      blulokDevices,
+      inventoryDevices,
     };
   }
 }

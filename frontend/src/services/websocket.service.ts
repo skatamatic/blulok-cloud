@@ -18,6 +18,7 @@ class WebSocketService implements IWebSocketService {
   private messageHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
   private connectionHandlers: Set<(connected: boolean) => void> = new Set();
   private reconnectingHandlers: Set<(reconnecting: boolean) => void> = new Set();
+  private scopeUpdateHandlers: Set<() => void> = new Set();
   private isConnected = false;
   private isReconnecting = false;
 
@@ -190,6 +191,9 @@ class WebSocketService implements IWebSocketService {
         case 'notifications_count_update':
         case 'notification_deleted':
           this.handleNotificationsMessage(message);
+          break;
+        case 'scope_update':
+          this.scopeUpdateHandlers.forEach((handler) => handler());
           break;
         default:
           break;
@@ -534,6 +538,13 @@ class WebSocketService implements IWebSocketService {
     this.reconnectingHandlers.add(handler);
     return () => {
       this.reconnectingHandlers.delete(handler);
+    };
+  }
+
+  public onScopeUpdate(handler: () => void): () => void {
+    this.scopeUpdateHandlers.add(handler);
+    return () => {
+      this.scopeUpdateHandlers.delete(handler);
     };
   }
 

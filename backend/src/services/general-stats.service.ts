@@ -2,6 +2,7 @@ import { DatabaseService } from './database.service';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
 import { AccessDeniedError } from '@/middleware/error.middleware';
 
 /**
@@ -106,8 +107,7 @@ export class GeneralStatsService {
     }
 
     if (userRole === UserRole.FACILITY_ADMIN || userRole === UserRole.MAINTENANCE) {
-      const { UserFacilityAssociationModel } = await import('@/models/user-facility-association.model') as any;
-      const facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
+      const facilityIds = await FacilityAccessService.getUserFacilityIds(userId, userRole);
       return { type: 'facility_limited', facilityIds };
     }
 

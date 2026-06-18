@@ -34,6 +34,8 @@ export default defineConfig(({ mode }) => {
           target: apiProxyTarget,
           changeOrigin: true,
           secure: false,
+          timeout: 120_000,
+          proxyTimeout: 120_000,
         },
       },
     },

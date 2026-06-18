@@ -10,7 +10,7 @@ import { authenticateToken } from '@/middleware/auth.middleware';
 import { InviteService } from '@/services/invite.service';
 import { OTPService } from '@/services/otp.service';
 import { UserModel, User } from '@/models/user.model';
-import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { FacilityAccessService } from '@/services/facility-access.service';
 import { logger } from '@/utils/logger';
 import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
 import bcrypt from 'bcrypt';
@@ -71,6 +71,21 @@ const inviteVerifyLimiterRaw = rateLimit({
 });
 
 const bypassSvc = RateLimitBypassService.getInstance();
+
+function profileUserPayload(req: AuthenticatedRequest) {
+  const user = req.user!;
+  const facilityIds = AuthService.canAccessAllFacilities(user.role)
+    ? []
+    : (user.facilityIds ?? []);
+  return {
+    id: user.userId,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    facilityIds,
+  };
+}
 
 const inviteRequestLimiter: typeof inviteRequestLimiterRaw = ((req: Request, res: Response, next: any) => {
   if (bypassSvc.shouldBypass(req)) return next();
@@ -196,13 +211,7 @@ router.post('/change-password', authenticateToken as any, asyncHandler(async (re
 router.get('/profile', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   res.json({
     success: true,
-    user: {
-      id: req.user!.userId,
-      email: req.user!.email,
-      firstName: req.user!.firstName,
-      lastName: req.user!.lastName,
-      role: req.user!.role
-    }
+    user: profileUserPayload(req),
   });
 }));
 
@@ -221,13 +230,7 @@ router.get('/verify-token', authenticateToken as any, asyncHandler(async (req: A
   res.json({
     success: true,
     message: 'Token is valid',
-    user: {
-      id: req.user!.userId,
-      email: req.user!.email,
-      firstName: req.user!.firstName,
-      lastName: req.user!.lastName,
-      role: req.user!.role
-    }
+    user: profileUserPayload(req),
   });
 }));
 
@@ -258,7 +261,7 @@ router.post('/refresh-token', authenticateToken as any, asyncHandler(async (req:
     // Get fresh facility associations if user is facility-scoped
     let facilityIds: string[] = [];
     if (AuthService.isFacilityScoped(user.role as UserRole)) {
-      facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(user.id);
+      facilityIds = await FacilityAccessService.getUserFacilityIds(user.id, user.role as UserRole);
     }
 
     // Generate new token with fresh user data
@@ -273,8 +276,9 @@ router.post('/refresh-token', authenticateToken as any, asyncHandler(async (req:
         email: user.email,
         firstName: user.first_name,
         lastName: user.last_name,
-        role: user.role as UserRole
-      }
+        role: user.role as UserRole,
+        facilityIds,
+      },
     });
   } catch (error) {
     logger.error('Error refreshing token:', error);

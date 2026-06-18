@@ -10,6 +10,7 @@ import {
 import { apiService } from '@/services/api.service';
 import { Facility } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
 import {
   DetailsPageHeader,
@@ -29,6 +30,7 @@ export default function EditFacilityPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const { facilities } = useGlobalFacility();
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({
     fallbackPath: id ? `/facilities/${id}?tab=facility` : '/dashboard',
   });
@@ -59,7 +61,7 @@ export default function EditFacilityPage() {
   const canEditThisFacility = (() => {
     if (!canManage || !id) return false;
     if (authState.user?.role === UserRole.FACILITY_ADMIN) {
-      return authState.user.facilityIds?.includes(id) ?? false;
+      return facilities.some((f) => f.id === id);
     }
     return true;
   })();

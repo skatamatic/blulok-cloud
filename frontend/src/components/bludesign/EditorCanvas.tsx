@@ -49,10 +49,12 @@ import {
 } from './ui/panelLayoutV9';
 import { MenuBar } from './ui/MenuBar';
 import { ImportPlanPanelContent } from './editor/ImportPlanPanel';
+import { TerrainPanel, type PendingTerrainAssets } from './ui/panels/TerrainPanel';
 import {
   editorImportPlanUnitColor,
   hasLayoutImport,
 } from './layout-import/layoutImportMetadata';
+import { applyStoredTerrainToEngine } from './core/environment/terrainSidecarLoader';
 import { EditorHelpModal } from './ui/dialogs/EditorHelpModal';
 import { SelectionOverlay } from './ui/SelectionOverlay';
 import { SaveDialog } from './ui/dialogs/SaveDialog';
@@ -94,7 +96,10 @@ import {
   BuildingOffice2Icon,
   VideoCameraIcon,
   PhotoIcon,
+  MapPinIcon,
   ArrowsPointingOutIcon,
+  SignalIcon,
+  SignalSlashIcon,
 } from '@heroicons/react/24/outline';
 
 interface EditorCanvasProps {
@@ -235,6 +240,18 @@ const getDefaultLayout = (containerWidth: number): PanelLayoutState => {
       relY: 1,
       placement: 'float',
     },
+
+    terrain: {
+      x: leftMargin,
+      y: 120,
+      width: 320,
+      height: 480,
+      collapsed: false,
+      visible: false,
+      relX: 0,
+      relY: 0,
+      placement: 'dock-right',
+    },
     
     // Properties panel - below view / default camera slot
     properties: { 
@@ -350,6 +367,10 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [currentFacilityId, setCurrentFacilityId] = useState<string | null>(null);
   const [currentFacilityName, setCurrentFacilityName] = useState<string | null>(null);
   const [pendingLayoutSourceFile, setPendingLayoutSourceFile] = useState<File | null>(null);
+  const [pendingTerrainAssets, setPendingTerrainAssets] = useState<PendingTerrainAssets | null>(null);
+  const [terrainSetupActive, setTerrainSetupActive] = useState(false);
+  // Live data: animations + bound-state visuals on placed assets (mirrors the viewer widget).
+  const [liveDataEnabled, setLiveDataEnabled] = useState(true);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [showLoadDialog, setShowLoadDialog] = useState(false);
@@ -576,6 +597,22 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     });
   }, [bringPanelToFront]);
 
+  const toggleTerrainPanel = useCallback(() => {
+    setPanelLayout((prev) => {
+      const nextVisible = !prev.terrain.visible;
+      if (nextVisible) {
+        bringPanelToFront('terrain');
+        if (prev.terrain.placement === 'dock-right' && !prev.docks.right.panelIds.includes('terrain')) {
+          return dockPanel(prev, 'terrain', 'right');
+        }
+      }
+      return {
+        ...prev,
+        terrain: { ...prev.terrain, visible: nextVisible },
+      };
+    });
+  }, [bringPanelToFront]);
+
   useEffect(() => {
     if (!layoutImport && panelLayout.importPlan.visible) {
       togglePanelVisibility('importPlan', false);
@@ -587,7 +624,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setPanelLayout((prev) => {
       const updated = { ...prev };
       for (const id of ALL_PANEL_IDS) {
-        if (id === 'importPlan') continue;
+        if (id === 'importPlan' || id === 'terrain') continue;
         updated[id] = { ...updated[id], visible: true };
       }
       return updated;
@@ -615,6 +652,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setCurrentFacilityName(null);
     setCurrentFacilityId(null);
     setPendingLayoutSourceFile(null);
+    setPendingTerrainAssets(null);
+    setTerrainSetupActive(false);
     togglePanelVisibility('importPlan', false);
     setHasUnsavedChanges(false);
     addToast({ type: 'info', title: 'New Facility', message: 'Started a new facility.' });
@@ -644,6 +683,19 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     return data;
   }, [engine, currentFacilityName, dataSourceConfig]);
 
+  const uploadPendingTerrainSidecars = useCallback(
+    async () => {
+      const terrainDataId = engine?.getTerrainConfig()?.terrainDataId;
+      if (!pendingTerrainAssets || !terrainDataId) return;
+      await Promise.all([
+        bludesignApi.uploadTerrainImagery(terrainDataId, pendingTerrainAssets.imagery),
+        bludesignApi.uploadTerrainHeightmap(terrainDataId, pendingTerrainAssets.heightmap),
+      ]);
+      setPendingTerrainAssets(null);
+    },
+    [engine, pendingTerrainAssets]
+  );
+
   const handleSave = useCallback(async () => {
     if (!engine) return;
     
@@ -652,6 +704,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       try {
         const data = buildSavePayload();
         if (!data) return;
+        await uploadPendingTerrainSidecars();
         const thumbnail = await engine.captureScreenshot();
         await bludesignApi.updateFacility(currentFacilityId, data, thumbnail);
         setHasUnsavedChanges(false);
@@ -666,7 +719,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       // Show save dialog for new facility
       setShowSaveDialog(true);
     }
-  }, [engine, currentFacilityId, currentFacilityName, buildSavePayload, addToast]);
+  }, [engine, currentFacilityId, currentFacilityName, buildSavePayload, addToast, uploadPendingTerrainSidecars]);
 
   // Clipboard handlers (must be before useKeyboardShortcuts)
   const handleCopy = useCallback(() => {
@@ -1020,27 +1073,29 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       
       if (currentFacilityId) {
         // Save as new (not update existing)
+        await uploadPendingTerrainSidecars();
         const response = await bludesignApi.saveFacility(
           name,
           data,
           thumbnail,
           copyLayoutSourceFrom,
         );
-        setCurrentFacilityId(response.id);
-        setCurrentFacilityName(response.name);
         if (layoutFileToUpload) {
           await bludesignApi.uploadLayoutSource(response.id, layoutFileToUpload);
           setPendingLayoutSourceFile(null);
         }
+        setCurrentFacilityId(response.id);
+        setCurrentFacilityName(response.name);
       } else {
         // Save new
+        await uploadPendingTerrainSidecars();
         const response = await bludesignApi.saveFacility(name, data, thumbnail);
-        setCurrentFacilityId(response.id);
-        setCurrentFacilityName(response.name);
         if (layoutFileToUpload) {
           await bludesignApi.uploadLayoutSource(response.id, layoutFileToUpload);
           setPendingLayoutSourceFile(null);
         }
+        setCurrentFacilityId(response.id);
+        setCurrentFacilityName(response.name);
       }
       
       setHasUnsavedChanges(false);
@@ -1051,7 +1106,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       console.error('Failed to save facility:', error);
       throw error;
     }
-  }, [engine, currentFacilityId, dataSourceConfig, pendingLayoutSourceFile]);
+  }, [engine, currentFacilityId, dataSourceConfig, pendingLayoutSourceFile, uploadPendingTerrainSidecars]);
 
   const handleLoadDialogLoad = useCallback(async (id: string) => {
     if (!engine) return;
@@ -1064,6 +1119,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       setCurrentFacilityId(facility.id);
       setCurrentFacilityName(facility.name);
       setPendingLayoutSourceFile(null);
+      setPendingTerrainAssets(null);
       togglePanelVisibility('importPlan', false);
       setHasUnsavedChanges(false);
       setShowLoadDialog(false);
@@ -1071,6 +1127,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       // Restore data source configuration from engine (set during importSceneData)
       const restoredDataSource = engine.getDataSourceConfig();
       setDataSourceConfig(restoredDataSource || { type: 'none' });
+
+      await applyStoredTerrainToEngine(engine, facility.id, facility.data);
       
       // Sync activeThemeId with what was actually applied
       // (the theme-missing event handler will update to default if theme was missing)
@@ -1309,6 +1367,22 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         setDataSourceConfig(restoredDataSource);
       }
       togglePanelVisibility('importPlan', false);
+
+      // Re-associate the draft with its server facility and re-fetch terrain
+      // sidecars (imagery/heightmap blobs aren't stored in the draft itself).
+      const recoveredFacilityId = engine.getDraftFacilityId();
+      if (recoveredFacilityId) {
+        setCurrentFacilityId(recoveredFacilityId);
+        if (engine.getTerrainConfig()) {
+          setLoadingState({ type: 'draft', subtitle: 'Restoring terrain...', progress: 97 });
+          const facility = await bludesignApi.getFacility(recoveredFacilityId).catch(() => null);
+          await applyStoredTerrainToEngine(
+            engine,
+            recoveredFacilityId,
+            facility?.data ?? engine.exportSceneData()
+          );
+        }
+      }
     }
     
     setLoadingState({ type: 'none', progress: 100 });
@@ -1362,6 +1436,12 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     const floorManager = engine.getFloorManager();
     floorManager.setGhostingConfig(prefs.floorGhosting);
   }, [engine]);
+
+  // Keep the engine's draft facility id in sync so autosaved drafts can
+  // re-fetch terrain sidecars after a page reload + draft recovery.
+  useEffect(() => {
+    engine?.setDraftFacilityId(currentFacilityId);
+  }, [engine, currentFacilityId]);
   
   // Load initial facility if provided (layout-import handoff or view mode)
   useEffect(() => {
@@ -1389,6 +1469,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           if (restoredDataSource) {
             setDataSourceConfig(restoredDataSource);
           }
+          await applyStoredTerrainToEngine(engine, facility.id, facility.data);
         }
       } catch (error) {
         console.error('Failed to load facility:', error);
@@ -1543,6 +1624,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           if (restoredDataSource) {
             setDataSourceConfig(restoredDataSource);
           }
+
+          await applyStoredTerrainToEngine(engine, lastFacility.id, lastFacility.data);
           
           setLoadingState({ type: 'facility', subtitle: 'Ready!', progress: 100 });
         } else if (!cancelled) {
@@ -1817,6 +1900,37 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
             hasImportPlan={!!layoutImport}
             showImportPlan={panelLayout.importPlan.visible}
             onToggleImportPlan={toggleImportPlanPanel}
+            showTerrain={panelLayout.terrain.visible}
+            onToggleTerrain={toggleTerrainPanel}
+          />
+        );
+      case 'terrain':
+        if (!engine) return null;
+        return (
+          <TerrainPanel
+            engine={engine}
+            facilityId={currentFacilityId}
+            setupActive={terrainSetupActive}
+            onSetupActiveChange={setTerrainSetupActive}
+            onPendingAssets={setPendingTerrainAssets}
+            onTerrainApplied={() => {
+              setHasUnsavedChanges(true);
+              addToast({
+                type: 'success',
+                title: 'Terrain applied',
+                message: 'Local terrain is aligned. Save the facility to persist.',
+              });
+            }}
+            onTerrainDeleted={() => {
+              setPendingTerrainAssets(null);
+              setHasUnsavedChanges(true);
+              addToast({
+                type: 'success',
+                title: 'Terrain removed',
+                message: 'Save the facility to persist.',
+              });
+            }}
+            width={assetsInnerWidth ?? panelLayout.terrain.width ?? 320}
           />
         );
       case 'importPlan':
@@ -1977,6 +2091,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         return { title: 'Default Camera', icon: <VideoCameraIcon className="w-4 h-4" /> };
       case 'importPlan':
         return { title: 'Import Plan', icon: <PhotoIcon className="w-4 h-4" /> };
+      case 'terrain':
+        return { title: 'Terrain', icon: <MapPinIcon className="w-4 h-4" /> };
       case 'properties':
         return { title: 'Properties', icon: <AdjustmentsHorizontalIcon className="w-4 h-4" /> };
       case 'buildingSkin':
@@ -2042,6 +2158,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
           skins: panelLayout.skins?.visible ?? true,
           datasource: panelLayout.datasource?.visible ?? false,
           buildingSkin: panelLayout.buildingSkin?.visible ?? true,
+          terrain: panelLayout.terrain?.visible ?? false,
         }}
         onTogglePanelVisibility={(panel) =>
           togglePanelVisibility(panel as keyof Omit<PanelLayoutState, 'docks'>)
@@ -2680,6 +2797,40 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                   </button>
                 </>
               )}
+
+              <div className={`w-px h-6 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+
+              <button
+                type="button"
+                title={
+                  liveDataEnabled
+                    ? 'Live data: on — animations and bound-state visuals active'
+                    : 'Live data: off — assets render in their default look'
+                }
+                aria-label={liveDataEnabled ? 'Turn off live data' : 'Turn on live data'}
+                aria-pressed={liveDataEnabled}
+                onClick={() => {
+                  if (!engine) return;
+                  const next = !liveDataEnabled;
+                  setLiveDataEnabled(next);
+                  engine.setBindingEffectsEnabled(next);
+                }}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border transition-all duration-200 ease-out ${
+                  liveDataEnabled
+                    ? isDark
+                      ? 'border-[#147fd4] bg-[#147fd4]/25 text-[#6ec3ff] ring-1 ring-[#147fd4]/40'
+                      : 'border-[#147fd4] bg-[#147fd4]/12 text-[#0b5fa8] ring-1 ring-[#147fd4]/30'
+                    : isDark
+                      ? 'border-gray-700 bg-gray-800 text-gray-300 hover:border-primary-500 hover:bg-primary-600/20'
+                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-primary-400 hover:bg-primary-500/10'
+                } hover:scale-105 hover:shadow-lg active:scale-95`}
+              >
+                {liveDataEnabled ? (
+                  <SignalIcon className="h-5 w-5" aria-hidden />
+                ) : (
+                  <SignalSlashIcon className="h-5 w-5" aria-hidden />
+                )}
+              </button>
             </div>
           </div>
         )}

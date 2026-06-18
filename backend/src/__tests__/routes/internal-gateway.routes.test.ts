@@ -82,6 +82,31 @@ jest.mock('@/services/device-sync.service', () => {
   };
 });
 
+const syncNetworkInfraInventoryMock = jest.fn().mockResolvedValue({
+  added: 0,
+  removed: 0,
+  unchanged: 0,
+  updated: 0,
+  errors: [],
+});
+const applyGatewayInventoryUpdateMock = jest.fn().mockResolvedValue(undefined);
+jest.mock('@/services/gateway-inventory-device-sync.service', () => ({
+  GatewayInventoryDeviceSyncService: {
+    getInstance: jest.fn().mockReturnValue({
+      syncNetworkInfraInventory: (...args: unknown[]) => syncNetworkInfraInventoryMock(...args),
+      applyGatewayInventoryUpdate: (...args: unknown[]) => applyGatewayInventoryUpdateMock(...args),
+    }),
+  },
+}));
+
+jest.mock('@/services/gateway-device-sync-log.service', () => ({
+  GatewayDeviceSyncLogService: {
+    getInstance: jest.fn().mockReturnValue({
+      recordInventorySync: jest.fn().mockResolvedValue(undefined),
+    }),
+  },
+}));
+
 jest.mock('@/services/provisioning/provisioning-backup.service', () => ({
   ProvisioningBackupService: {
     prepareUpload: jest.fn().mockResolvedValue({

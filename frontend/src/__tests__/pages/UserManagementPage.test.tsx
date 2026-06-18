@@ -125,7 +125,7 @@ describe('UserManagementPage', () => {
     await user.click(screen.getByText('Ada Lovelace'));
 
     expect(mockNavigate).toHaveBeenCalledWith('/users/user-1/details', {
-      state: { fromPath: '/' },
+      state: { fromPath: '/', returnState: null },
     });
   });
 

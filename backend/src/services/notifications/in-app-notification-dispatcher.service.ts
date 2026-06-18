@@ -9,6 +9,7 @@ import { InAppNotificationType, LOW_BATTERY_THRESHOLD_PERCENT } from '@/constant
 import { NOTIFICATION_UNREAD_RETENTION_DAYS } from '@/constants/notification-retention.constants';
 
 import { UserRole } from '@/types/auth.types';
+import type { DeviceSyncKind } from '@/types/gateway-device-sync.types';
 
 import { logger } from '@/utils/logger';
 
@@ -526,7 +527,7 @@ export class InAppNotificationDispatcher {
 
     deviceSerial: string;
 
-    deviceKind: 'blulok' | 'access_control';
+    deviceKind: DeviceSyncKind;
 
     title: string;
 

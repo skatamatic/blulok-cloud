@@ -61,14 +61,46 @@ Both inventory and state bodies share these optional envelope fields:
 
 ## Device kind (required)
 
-Every element in `devices[]` or `updates[]` **must** include `"kind": "lock"` or `"kind": "access_control"`. The cloud does not infer kind from field presence.
+Every element in `devices[]` or `updates[]` **must** include an explicit `"kind"`. The cloud does not infer kind from field presence.
 
-| `kind` | Identity field | Stored as |
-|--------|----------------|-----------|
-| `"lock"` | `lock_id` (required) | `blulok_devices.device_serial` |
-| `"access_control"` | `access_id` (required) | `access_control_devices.device_serial` |
+**Allowlist:** `lock`, `access_control`, `bridge`, `friend_node`, `gateway` (unknown kinds → **400**).
 
-Admin REST APIs use `device_serial` for both device types; the gateway PROXY contract uses **`lock_id`** and **`access_id`** only.
+| `kind` | Category | Identity field | Stored as |
+|--------|----------|----------------|-----------|
+| `"lock"` | operational | `lock_id` (required) | `blulok_devices.device_serial` |
+| `"access_control"` | operational | `access_id` (required) | `access_control_devices.device_serial` |
+| `"bridge"` | network infra | `serial` (required) | `gateway_inventory_devices` |
+| `"friend_node"` | network infra | `serial` (required) | `gateway_inventory_devices` |
+| `"gateway"` | display-only update | — | Updates bound `gateways` row (never duplicated; never in recovery snapshot) |
+
+Admin REST APIs use `device_serial` for operational devices; the gateway PROXY contract uses **`lock_id`**, **`access_id`**, and **`serial`** (infra) respectively.
+
+---
+
+## Network infra — inventory item (`devices[]`)
+
+Stored in **`gateway_inventory_devices`**. Record-keeping only — no lock/unlock, access codes, or unit assignment.
+
+| Field | Required | Type | Notes |
+|-------|----------|------|-------|
+| `kind` | **yes** | string | `"bridge"` or `"friend_node"` |
+| `serial` | **yes** | string | Unique per `(gateway, kind)` |
+| `state` | no | string | e.g. `healthy`, `error` (passthrough) |
+| `firmware_version` | no | string | Stored on row |
+| `info` | no | object | Stored in `info` JSON column |
+| *(extra fields)* | no | any | Merged into `metadata` JSON |
+
+**Removal:** Omitted sync-managed infra rows are **hard-deleted** (no tombstone — gateway already dropped them). Reconciliation runs on **every** inventory POST, including when the payload contains **no** bridge/friend_node items (stale cloud rows are removed).
+
+**Re-add after cloud delete:** When a bridge/friend_node reappears in inventory, pending **`device_deletion_outbox`** tombstones for that `(facility, kind, serial)` are cancelled (same pattern as locks/access control).
+
+**`last_seen`:** Updated only when the gateway includes `last_seen` on the inventory item; omitted fields do **not** overwrite the existing timestamp.
+
+**Cloud-initiated removal:** **`DELETE /devices/network-infra/:id`** enqueues **`DEVICE_DELETED`** with `{ device_kind: "bridge"|"friend_node", serial }`.
+
+### Facility gateway inventory update (`kind: "gateway"`)
+
+Optional. Updates the facility's bound **`gateways`** row (`firmware_version`, `status` from `state`, `last_seen`, `metadata.inventory_info` from `info`). Does **not** create a duplicate device row and omission from inventory does **not** unbind the gateway.
 
 ---
 
@@ -357,5 +389,6 @@ If an admin manually created a device on relay N with a placeholder serial and `
 
 - `cursorDocs/device-metadata-editing.md` — admin add/edit UI field mapping to these payload names
 - `cursorDocs/gateway-integration.md` — WS auth, PROXY, operational notes
+- `cursorDocs/gateway-access-events.md` — lock/unlock state vs access-events (grants, denials, keypad)
 - `cursorDocs/facilities-devices-schema.md` — DB schema & admin REST API
 - `cursorDocs/firmware-ota-architecture.md` — firmware OTA (separate from inventory sync)

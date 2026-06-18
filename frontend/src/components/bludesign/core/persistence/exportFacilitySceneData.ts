@@ -1,5 +1,7 @@
 import type { LayoutImportMetadata } from '../../layout-import/layoutImportMetadata';
 import { attachLayoutImportToFacilityData } from '../../layout-import/layoutImportMetadata';
+import type { TerrainConfig } from '../environment/terrainConfigMetadata';
+import { attachTerrainConfigToFacilityData } from '../environment/terrainConfigMetadata';
 import type { EditorState, SerializedCameraState } from '../types';
 import type {
   Building,
@@ -22,6 +24,7 @@ export type ExportFacilitySceneDataInput = {
   buildings: Building[];
   dataSourceConfig: DataSourceConfig | null;
   layoutImport?: LayoutImportMetadata | null;
+  terrainConfig?: TerrainConfig | null;
   defaultCamera?: SerializedCameraState | null;
 };
 
@@ -54,5 +57,8 @@ export function exportFacilitySceneData(input: ExportFacilitySceneDataInput): Fa
     dataSource: input.dataSourceConfig || undefined,
   };
 
-  return attachLayoutImportToFacilityData(base, input.layoutImport);
+  return attachTerrainConfigToFacilityData(
+    attachLayoutImportToFacilityData(base, input.layoutImport),
+    input.terrainConfig
+  );
 }

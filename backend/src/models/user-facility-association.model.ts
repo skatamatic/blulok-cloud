@@ -140,7 +140,7 @@ export class UserFacilityAssociationModel extends BaseModel {
     
     // Trigger model change hook
     if (deleted > 0) {
-      await this.hooks.onUserFacilityAssociationChange('delete', `${userId}-${facilityId}`);
+      await this.hooks.onUserFacilityAssociationChange('delete', `${userId}-${facilityId}`, { user_id: userId });
     }
     
     return deleted;
@@ -163,7 +163,7 @@ export class UserFacilityAssociationModel extends BaseModel {
     }
     
     // Trigger model change hook for bulk update
-    await this.hooks.onUserFacilityAssociationChange('update', userId, { facilityIds });
+    await this.hooks.onUserFacilityAssociationChange('update', userId, { user_id: userId, facilityIds });
   }
 
   public static async getUsersWithFacilities(): Promise<any[]> {

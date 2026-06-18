@@ -578,7 +578,9 @@ export class LockCommandService {
           device_type: params.deviceType,
           ...(params.errorMessage.toLowerCase().includes('timeout')
             ? { denial_reason: 'timeout' }
-            : {}),
+            : params.errorMessage.toLowerCase().includes('remained')
+              ? { denial_reason: 'settlement_mismatch' }
+              : {}),
         },
       });
     } catch (error: unknown) {

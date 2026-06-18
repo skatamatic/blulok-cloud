@@ -235,6 +235,11 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
           skyPreset={normalizeSkyPreset(viewerConfig.skyPreset)}
           groundPreset={normalizeGroundPreset(viewerConfig.groundPreset)}
           environmentOptions={viewerConfig.environmentOptions}
+          terrainAlignAssets={viewerConfig.terrainAlignAssets}
+          terrainFlattenToGround={viewerConfig.terrainFlattenToGround}
+          terrainFlattenDistance={viewerConfig.terrainFlattenDistance}
+          terrainFlattenBlend={viewerConfig.terrainFlattenBlend}
+          terrainFlattenBaseline={viewerConfig.terrainFlattenBaseline}
           editable={layoutEditable}
           onConfigChange={
             layoutEditable && onWidgetConfigChange
