@@ -68,13 +68,6 @@ describe('FacilityGatewayTab', () => {
       success: true,
       gateways: []
     });
-    mockApiService.getGatewayReassignmentCandidates.mockResolvedValue({
-      success: true,
-      gateways: []
-    } as any);
-    mockApiService.reassignGateway.mockResolvedValue({
-      success: true
-    } as any);
     mockApiService.getGatewayWsStatus = jest.fn().mockResolvedValue({
       success: true,
       facilityId,
@@ -158,7 +151,7 @@ describe('FacilityGatewayTab', () => {
       renderComponent();
       await waitFor(() => {
         expect(screen.getByText('No gateway assigned')).toBeInTheDocument();
-        expect(screen.getByText(/Contact BluLok for setup assistance/i)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Open Swap / Recovery' })).toBeInTheDocument();
       });
     });
 
@@ -171,7 +164,7 @@ describe('FacilityGatewayTab', () => {
       await waitFor(() => {
         expect(screen.getByRole('status')).toBeInTheDocument();
         expect(screen.getByText('WebSocket session active — no gateway assigned yet')).toBeInTheDocument();
-        expect(screen.getByText(/does not have a gateway record/i)).toBeInTheDocument();
+        expect(screen.getByText(/does not have a bound gateway yet/i)).toBeInTheDocument();
       });
     });
 
@@ -195,47 +188,11 @@ describe('FacilityGatewayTab', () => {
       });
     });
 
-    it('should render assignment controls for admin when no gateway exists', async () => {
-      mockApiService.getGatewayReassignmentCandidates.mockResolvedValue({
-        success: true,
-        gateways: [
-          {
-            id: 'gateway-2',
-            facility_id: 'facility-2',
-            name: 'Candidate Gateway',
-            status: 'online',
-          },
-        ],
-      } as any);
-
+    it('shows swap recovery entry point when no gateway exists and user can manage gateway', async () => {
       renderComponent();
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: 'Assign Gateway' })).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Assign Gateway' })).toBeInTheDocument();
-      });
-    });
-
-    it('should render replace controls for admin when gateway exists', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Current Gateway',
-        status: 'online',
-        gateway_type: 'http',
-      };
-
-      mockApiService.getGatewayReassignmentCandidates.mockResolvedValue({
-        success: true,
-        gateways: [{ id: 'gateway-3', facility_id: null, name: 'Unassigned Gateway', status: 'online' }],
-      } as any);
-
-      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'online' }));
-
-      await waitFor(() => {
-        expect(screen.getByRole('heading', { name: 'Replace Gateway' })).toBeInTheDocument();
-        expect(screen.getByText(/Current gateway:/)).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Replace Gateway' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Open Swap / Recovery' })).toBeInTheDocument();
       });
     });
 

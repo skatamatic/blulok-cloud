@@ -430,16 +430,6 @@ class ApiService {
     return response.data;
   }
 
-  async reassignGateway(id: string, targetFacilityId: string) {
-    const response = await this.api.patch(`/gateways/${id}/reassign`, { targetFacilityId });
-    return response.data;
-  }
-
-  async getGatewayReassignmentCandidates(facilityId: string) {
-    const response = await this.api.get(`/gateways/reassignment-candidates/${facilityId}`);
-    return response.data as { success: boolean; gateways: unknown[] };
-  }
-
   async updateGatewayStatus(id: string, status: string) {
     const response = await this.api.put(`/gateways/${id}/status`, { status });
     return response.data;
@@ -761,6 +751,7 @@ class ApiService {
     facility_id: string;
     group_type?: 'zone' | 'access_code';
     is_global_shared?: boolean;
+    is_default?: boolean;
     name: string;
     description?: string;
     settings?: Record<string, unknown>;
@@ -773,6 +764,7 @@ class ApiService {
   async updateDeviceGroup(groupId: string, payload: {
     group_type?: 'zone' | 'access_code';
     is_global_shared?: boolean;
+    is_default?: boolean;
     name?: string;
     description?: string;
     settings?: Record<string, unknown>;

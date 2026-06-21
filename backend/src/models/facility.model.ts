@@ -299,6 +299,14 @@ export class FacilityModel {
       logger.error(`Failed to initialize default schedules for facility ${facilityId}:`, error);
     }
 
+    try {
+      const { DeviceGroupService } = await import('@/services/device-group.service');
+      await DeviceGroupService.getInstance().ensureDefaultGroup(facilityId);
+    } catch (error) {
+      const { logger } = await import('@/utils/logger');
+      logger.error(`Failed to initialize default access group for facility ${facilityId}:`, error);
+    }
+
     // Trigger model change hook for event-driven operations
     await this.hooks.onFacilityChange('create', facility.id, facility);
 

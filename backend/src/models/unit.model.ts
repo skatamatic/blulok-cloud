@@ -4,6 +4,7 @@ import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { FacilityAccessService } from '@/services/facility-access.service';
 import { compareNaturalStrings } from '@/utils/natural-string-compare';
+import { DeviceGroupModel } from '@/models/device-group.model';
 
 /** Allowed GET /units sort_by values (query param may be camelCase sortBy from clients). */
 const UNIT_LIST_SORT_WHITELIST = [
@@ -1201,6 +1202,8 @@ export class UnitModel {
         access_expires_at: assignment.access_expires_at
       }));
 
+      const accessGroups = await new DeviceGroupModel().getGroupsForBlulokUnit(unitId, result.device_id ?? null);
+
       // Transform result to match expected format
       return {
         id: result.id,
@@ -1246,7 +1249,8 @@ export class UnitModel {
           last_name: result.tenant_last_name,
           email: result.tenant_email
         } : null,
-        shared_tenants: sharedTenants
+        shared_tenants: sharedTenants,
+        access_groups: accessGroups,
       };
 
     } catch (error) {

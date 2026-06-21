@@ -2,23 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
-import {
-  LockClosedIcon,
-  LockOpenIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  Battery50Icon,
-  Battery100Icon,
-  UserIcon,
-  ShieldExclamationIcon,
-  ArrowTopRightOnSquareIcon,
-  PencilIcon,
-  SignalIcon,
-} from '@heroicons/react/24/outline';
+import { PencilIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
-import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation, replaceSearchParams } from '@/hooks/useBackNavigation';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
@@ -33,7 +21,6 @@ import { formatAccessDeviceListSubtitle, isGatewaySyncProvisioned } from '@/util
 import {
   formatBluLokDeviceSubtitle,
   formatBluLokLockNumberLabel,
-  getBluLokLockNumber,
 } from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 import { formatMetadataSideEffectsToast } from '@/utils/deviceApiErrors';
@@ -45,7 +32,10 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
-import { formatDateTime } from '@/utils/datetime.utils';
+import { detailsBtnSecondarySm, detailsTabCountBadgeClass, detailsUnlockButtonClass } from '@/components/Common/details-page.styles';
+import { DeviceDetailsOverview } from '@/components/Devices/DeviceDetailsOverview';
+import { loadAccessGroupRefsForDevice } from '@/utils/access-groups-load.utils';
+import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
 
 interface DeviceDetails {
   id: string;
@@ -109,32 +99,13 @@ interface DenylistEntry {
   };
 }
 
-type TabType = 'overview' | 'denylist' | 'diagnostics';
 type DeviceCategory = 'blulok' | 'access_control';
+type DeviceTab = 'overview' | 'denylist';
 
-const statusColors = {
-  online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
-  offline: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
-  low_battery: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-  error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
-};
-
-const lockStatusColors: Record<DeviceDetails['lock_status'], string> = {
-  locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
-  unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
-  locking: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 animate-pulse',
-  unlocking: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 animate-pulse',
-  error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
-  maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-  unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
-};
-
-const sourceLabels = {
-  user_deactivation: 'User Deactivated',
-  unit_unassignment: 'Unit Unassigned',
-  fms_sync: 'FMS Sync',
-  key_sharing_revocation: 'Key Sharing Revoked',
-};
+function getDeviceTabFromSearch(search: string): DeviceTab {
+  const tab = new URLSearchParams(search).get('tab');
+  return tab === 'denylist' ? 'denylist' : 'overview';
+}
 
 export default function DeviceDetailsPage() {
   const { deviceId } = useParams<{ deviceId: string }>();
@@ -149,10 +120,10 @@ export default function DeviceDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingDenylist, setLoadingDenylist] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [deviceCategory, setDeviceCategory] = useState<DeviceCategory | null>(null);
+  const [activeTab, setActiveTab] = useState<DeviceTab>(() => getDeviceTabFromSearch(location.search));
   const [effectiveAccessCode, setEffectiveAccessCode] = useState<EffectiveAccessCode | null>(null);
-  const [deviceGroupNames, setDeviceGroupNames] = useState<string[]>([]);
+  const [deviceAccessGroups, setDeviceAccessGroups] = useState<UnitAccessGroupRef[]>([]);
   const [showEditMetadataModal, setShowEditMetadataModal] = useState(false);
   const [showUnassignFromUnitConfirm, setShowUnassignFromUnitConfirm] = useState(false);
   const [unassigningFromUnit, setUnassigningFromUnit] = useState(false);
@@ -173,23 +144,9 @@ export default function DeviceDetailsPage() {
     }
   }, [deviceId, device?.lock_status, syncLockStatus]);
 
-  // Handle tab from URL query parameter
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const tabParam = urlParams.get('tab');
-    if (tabParam && ['overview', 'denylist', 'diagnostics'].includes(tabParam)) {
-      setActiveTab(tabParam as TabType);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (deviceId) {
-      loadDeviceDetails();
-      if (activeTab === 'denylist' && deviceCategory === 'blulok') {
-        loadDenylist();
-      }
-    }
-  }, [deviceId, activeTab, deviceCategory]);
+    setActiveTab(getDeviceTabFromSearch(location.search));
+  }, [location.search]);
 
   useEffect(() => {
     if (deviceCategory === 'access_control' && activeTab === 'denylist') {
@@ -198,28 +155,40 @@ export default function DeviceDetailsPage() {
   }, [deviceCategory, activeTab]);
 
   useEffect(() => {
+    if (deviceId && deviceCategory === 'blulok' && (activeTab === 'denylist' || denylistEntries.length === 0)) {
+      loadDenylist();
+    }
+  }, [deviceId, deviceCategory, activeTab]);
+
+  useEffect(() => {
+    if (deviceId) {
+      loadDeviceDetails();
+    }
+  }, [deviceId]);
+
+  useEffect(() => {
     const loadDeviceGroups = async () => {
       if (!device?.facility_id || !device?.id) {
-        setDeviceGroupNames([]);
+        setDeviceAccessGroups([]);
         return;
       }
 
       try {
-        const groupsResponse = await apiService.getDeviceGroups(device.facility_id);
-        const groups = groupsResponse.data || [];
-        const details = await Promise.all(groups.map((group) => apiService.getDeviceGroup(group.id)));
-        const names = details
-          .filter((detail) => (detail.data.members || []).some((member) => member.device_id === device.id))
-          .map((detail) => detail.data.name);
-        setDeviceGroupNames(names);
+        const refs = await loadAccessGroupRefsForDevice(
+          device.facility_id,
+          device.id,
+          deviceCategory === 'blulok' ? 'blulok' : 'access_control',
+          device.unit_id,
+        );
+        setDeviceAccessGroups(refs);
       } catch (loadError) {
         console.error('Failed to load device groups:', loadError);
-        setDeviceGroupNames([]);
+        setDeviceAccessGroups([]);
       }
     };
 
     loadDeviceGroups().catch(() => undefined);
-  }, [device?.facility_id, device?.id]);
+  }, [device?.facility_id, device?.id, device?.unit_id, deviceCategory]);
 
   useEffect(() => {
     const loadEffectiveCode = async () => {
@@ -451,44 +420,87 @@ export default function DeviceDetailsPage() {
     }
   };
 
-  const handleTabChange = (tab: TabType) => {
-    setActiveTab(tab);
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', tab);
-    window.history.pushState({}, '', url.toString());
-
-    if (tab === 'denylist' && denylistEntries.length === 0) {
-      loadDenylist();
+  const handleSendDenylistAdd = async () => {
+    if (!device) return;
+    const values = await openPrompt({
+      title: 'DENYLIST_ADD',
+      fields: [
+        { key: 'userId', label: 'User ID', required: true },
+        {
+          key: 'deviceIds',
+          label: 'Device IDs (comma-separated)',
+          defaultValue: device.id,
+          required: true,
+        },
+      ],
+    });
+    if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
+    const targetDeviceIds = values.deviceIds
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (targetDeviceIds.length === 0) return;
+    try {
+      const res = await apiService.sendGatewayCommand({
+        facilityId: device.facility_id,
+        command: 'DENYLIST_ADD',
+        targetDeviceIds,
+        userId: values.userId.trim(),
+      });
+      addToast({ type: 'success', title: `DENYLIST_ADD sent: ${res.success}` });
+      await loadDenylist();
+    } catch (err: unknown) {
+      const message =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+          : undefined;
+      addToast({ type: 'error', title: message || 'Failed to send DENYLIST_ADD' });
     }
   };
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'Permanent';
-    const date = new Date(dateString);
-    const now = new Date();
-    const isExpired = date < now;
-    return (
-      <span className={isExpired ? 'text-red-600 dark:text-red-400' : ''}>
-        {formatDateTime(dateString)}
-        {isExpired && ' (Expired)'}
-      </span>
-    );
+  const handleSendDenylistRemove = async () => {
+    if (!device) return;
+    const values = await openPrompt({
+      title: 'DENYLIST_REMOVE',
+      fields: [
+        { key: 'userId', label: 'User ID', required: true },
+        {
+          key: 'deviceIds',
+          label: 'Device IDs (comma-separated)',
+          defaultValue: device.id,
+          required: true,
+        },
+      ],
+    });
+    if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
+    const targetDeviceIds = values.deviceIds
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (targetDeviceIds.length === 0) return;
+    try {
+      const res = await apiService.sendGatewayCommand({
+        facilityId: device.facility_id,
+        command: 'DENYLIST_REMOVE',
+        targetDeviceIds,
+        userId: values.userId.trim(),
+      });
+      addToast({ type: 'success', title: `DENYLIST_REMOVE sent: ${res.success}` });
+      await loadDenylist();
+    } catch (err: unknown) {
+      const message =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+          : undefined;
+      addToast({ type: 'error', title: message || 'Failed to send DENYLIST_REMOVE' });
+    }
   };
 
-  const getTimeUntilExpiration = (dateString: string | null) => {
-    if (!dateString) return null;
-    const date = new Date(dateString);
-    const now = new Date();
-    const diff = date.getTime() - now.getTime();
-    
-    if (diff <= 0) return 'Expired';
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(hours / 24);
-    
-    if (days > 0) return `${days} day${days !== 1 ? 's' : ''}`;
-    if (hours > 0) return `${hours} hour${hours !== 1 ? 's' : ''}`;
-    return '< 1 hour';
+  const handleTabChange = (tab: DeviceTab) => {
+    setActiveTab(tab);
+    replaceSearchParams(navigate, location, (params) => {
+      params.set('tab', tab);
+    });
   };
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
@@ -509,10 +521,6 @@ export default function DeviceDetailsPage() {
     );
   }
 
-  const BatteryIcon = device.battery_level !== undefined && device.battery_level < 20
-    ? Battery50Icon
-    : Battery100Icon;
-
   const deviceSubtitle =
     deviceCategory === 'access_control'
       ? formatAccessDeviceListSubtitle({
@@ -524,8 +532,6 @@ export default function DeviceDetailsPage() {
 
   const blulokDisplayName =
     deviceCategory === 'blulok' ? readDisplayName(device.device_settings) : '';
-  const blulokLockNumber =
-    deviceCategory === 'blulok' ? getBluLokLockNumber(device) : null;
 
   const deviceTabs = [
     { key: 'overview', label: 'Overview' },
@@ -536,14 +542,13 @@ export default function DeviceDetailsPage() {
             label: 'Denylist',
             badge:
               denylistEntries.length > 0 ? (
-                <span className="ml-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
+                <span className={detailsTabCountBadgeClass}>
                   {denylistEntries.length}
                 </span>
               ) : undefined,
           },
         ]
       : []),
-    { key: 'diagnostics', label: 'Diagnostics' },
   ];
 
   return (
@@ -556,12 +561,7 @@ export default function DeviceDetailsPage() {
             ? blulokDisplayName || device.name || formatBluLokLockNumberLabel(device)
             : device.name || device.device_serial
         }
-        subtitle={
-          <>
-            {deviceSubtitle}
-            {device.unit_number ? ` • Unit ${device.unit_number}` : null}
-          </>
-        }
+        subtitle={deviceSubtitle}
         meta={
           deviceCategory === 'access_control' && isGatewaySyncProvisioned(device.metadata) ? (
             <span className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-300">
@@ -575,7 +575,7 @@ export default function DeviceDetailsPage() {
               <button
                 type="button"
                 onClick={() => setShowEditMetadataModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                className={`${detailsBtnSecondarySm} gap-1.5`}
               >
                 <PencilIcon className="h-4 w-4" />
                 Edit device
@@ -588,13 +588,11 @@ export default function DeviceDetailsPage() {
                 (deviceCategory === 'access_control' && device.device_status !== 'online')
               }
               onClick={() => void handleRemoteUnlock()}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                isLockTransitionPending(device.lock_status) || isSubmitting(deviceId)
-                  ? 'bg-blue-600 text-white animate-pulse'
-                  : canRequestRemoteUnlock(device.lock_status)
-                    ? 'bg-green-600 hover:bg-green-700 text-white'
-                    : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
-              }`}
+              className={detailsUnlockButtonClass({
+                pending:
+                  isLockTransitionPending(device.lock_status) || isSubmitting(deviceId),
+                canUnlock: canRequestRemoteUnlock(device.lock_status),
+              })}
             >
               {isLockTransitionPending(device.lock_status) || isSubmitting(deviceId)
                 ? 'Unlocking…'
@@ -607,612 +605,28 @@ export default function DeviceDetailsPage() {
         }
       />
 
-      <DetailsTabNav tabs={deviceTabs} activeKey={activeTab} onChange={(key) => handleTabChange(key as TabType)} />
+      <DetailsTabNav
+        tabs={deviceTabs}
+        activeKey={activeTab}
+        onChange={(key) => handleTabChange(key as DeviceTab)}
+      />
 
-      {/* Tab Content */}
-      {activeTab === 'overview' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          <div className="p-6 space-y-6">
-            {/* Quick Links */}
-            <div className="flex flex-wrap gap-3">
-              {device.primary_tenant && (
-                <button
-                  onClick={() =>
-                    navigate(`/users/${device.primary_tenant?.id}/details`, {
-                      state: withReturnPath(location),
-                    })
-                  }
-                  className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                >
-                  <UserIcon className="h-4 w-4 mr-2" />
-                  {device.primary_tenant.first_name} {device.primary_tenant.last_name}
-                </button>
-              )}
-              {device.unit_id && device.unit_number && (
-                <button
-                  onClick={() =>
-                    navigate(`/units/${device.unit_id}`, { state: withReturnPath(location) })
-                  }
-                  className="inline-flex items-center px-3 py-2 text-sm rounded-md bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                >
-                  <ArrowTopRightOnSquareIcon className="h-4 w-4 mr-2" />
-                  Unit {device.unit_number}
-                </button>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Device Groups</p>
-              {deviceGroupNames.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {deviceGroupNames.map((groupName) => (
-                    <span
-                      key={groupName}
-                      className="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300"
-                    >
-                      {groupName}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  This device is not currently assigned to a group.
-                </p>
-              )}
-            </div>
-            {deviceCategory === 'blulok' && canManage && (
-              <div className="rounded-lg border border-gray-200 dark:border-gray-600 p-4 space-y-3">
-                <p className="text-sm font-medium text-gray-900 dark:text-white">Unit assignment</p>
-                {device.unit_id && device.unit_number ? (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <p className="text-sm text-gray-600 dark:text-gray-300">
-                      This lock is assigned to unit <span className="font-medium">{device.unit_number}</span>.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowUnassignFromUnitConfirm(true)}
-                      className="rounded-md border border-red-300 dark:border-red-800 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/30"
-                    >
-                      Unassign from unit
-                    </button>
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-600 dark:text-gray-300">
-                    This lock is not assigned to a unit. Assign it from the unit&apos;s page when ready.
-                  </p>
-                )}
-              </div>
-            )}
-            {canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') && (
-              <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
-                <p className="text-sm font-medium text-red-900 dark:text-red-200">Remove from facility (cloud inventory)</p>
-                <p className="text-sm text-red-800/90 dark:text-red-100/90">
-                  Deletes this device&apos;s cloud record for the current gateway, including group memberships
-                  {deviceCategory === 'blulok' ? ', unit link (if any), and denylist entries' : ''}. Route passes
-                  already issued expire on schedule. The gateway is notified to stop reporting this device; if offline,
-                  the tombstone command is delivered on reconnect.
-                  {deviceCategory === 'blulok' && device.unit_id ? (
-                    <>
-                      {' '}
-                      This lock is still assigned to unit{' '}
-                      <span className="font-medium">{device.unit_number ?? ''}</span> — consider{' '}
-                      <span className="font-medium">Unassign from unit</span> first if it should remain in this facility.
-                    </>
-                  ) : null}{' '}
-                  To bind the{' '}
-                  <span className="font-medium">gateway</span> to another facility, use the facility{' '}
-                  <button
-                    type="button"
-                    className="font-medium text-red-900 dark:text-red-100 underline"
-                    onClick={() =>
-                      navigate(`/facilities/${device.facility_id}?tab=gateway`, {
-                        state: withReturnPath(location),
-                      })
-                    }
-                  >
-                    Gateway
-                  </button>{' '}
-                  tab (admin reassignment).
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowRemoveInventoryConfirm(true)}
-                  className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
-                >
-                  {deviceCategory === 'blulok'
-                    ? 'Remove lock from cloud inventory…'
-                    : 'Remove access device from cloud inventory…'}
-                </button>
-              </div>
-            )}
-            {deviceCategory === 'access_control' && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Current Effective Access Code</p>
-                {effectiveAccessCode ? (
-                  <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 px-3 py-2">
-                    <div className="font-mono tracking-widest text-base text-gray-900 dark:text-white">{effectiveAccessCode.code}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      Source: {effectiveAccessCode.source_scope_name} • Valid until {formatDateTime(effectiveAccessCode.valid_until)}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">No effective code assigned to this device.</p>
-                )}
-              </div>
-            )}
-            {deviceCategory === 'access_control' && (
-              <div className="rounded-lg border border-gray-200 dark:border-gray-600 p-4">
-                <p className="mb-3 text-sm font-medium text-gray-900 dark:text-white">Access methods</p>
-                <div className="flex flex-wrap gap-2">
-                  {(device.access_methods && device.access_methods.length > 0
-                    ? device.access_methods
-                    : ['app']
-                  ).map((method) => (
-                    <span
-                      key={method}
-                      className="inline-flex items-center rounded-full bg-primary-50 px-2.5 py-1 text-xs font-medium capitalize text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
-                    >
-                      {method}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(deviceCategory === 'access_control' || deviceCategory === 'blulok') &&
-              device.supports_remote_lock !== true && (
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Remote control from the cloud is unlock-only for this hardware. Re-lock on site.
-              </p>
-            )}
-            {/* Device Status */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <div>
-                <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Device Status</label>
-                <div className="mt-1">
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColors[device.device_status] || statusColors.offline}`}>
-                    <CheckCircleIcon className="h-4 w-4 mr-1" />
-                    {device.device_status}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Lock Status</label>
-                <div className="mt-1">
-                  <span
-                    className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                      lockStatusColors[device.lock_status] || lockStatusColors.unknown
-                    }`}
-                  >
-                    {device.lock_status === 'locked' ||
-                    device.lock_status === 'locking' ? (
-                      <LockClosedIcon className="h-4 w-4 mr-1" />
-                    ) : device.lock_status === 'unlocked' ||
-                      device.lock_status === 'unlocking' ? (
-                      <LockOpenIcon className="h-4 w-4 mr-1" />
-                    ) : (
-                      <ExclamationTriangleIcon className="h-4 w-4 mr-1" />
-                    )}
-                    {device.lock_status}
-                  </span>
-                </div>
-              </div>
-
-              {device.battery_level !== undefined && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Battery Level</label>
-                  <div className="mt-1 flex items-center">
-                    <BatteryIcon className={`h-5 w-5 mr-2 ${
-                      device.battery_level < 20 ? 'text-red-500' : 
-                      device.battery_level < 50 ? 'text-yellow-500' : 'text-green-500'
-                    }`} />
-                    <span className="text-lg font-medium text-gray-900 dark:text-white">
-                      {device.battery_level}%
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {device.signal_strength !== undefined && device.signal_strength !== null && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Signal Strength</label>
-                  <div className="mt-1 flex items-center">
-                    <SignalIcon className={`h-5 w-5 mr-2 ${
-                      device.signal_strength >= -50 ? 'text-green-500' :
-                      device.signal_strength >= -70 ? 'text-yellow-500' : 'text-red-500'
-                    }`} />
-                    <span className="text-lg font-medium text-gray-900 dark:text-white">
-                      {device.signal_strength} dBm
-                    </span>
-                    <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">
-                      ({device.signal_strength >= -50 ? 'Excellent' :
-                        device.signal_strength >= -60 ? 'Good' :
-                        device.signal_strength >= -70 ? 'Fair' : 'Weak'})
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {device.temperature !== undefined && device.temperature !== null && (() => {
-                const tempNum = typeof device.temperature === 'number' ? device.temperature : Number(device.temperature);
-                if (isNaN(tempNum)) return null;
-                return (
-                  <div>
-                    <label className="text-sm font-medium text-gray-500 dark:text-gray-400">Temperature</label>
-                    <div className="mt-1 flex items-center">
-                      <span className={`text-lg font-medium ${
-                        tempNum > 50 ? 'text-red-500' :
-                        tempNum < 5 ? 'text-blue-500' : 'text-gray-900 dark:text-white'
-                      }`}>
-                        {tempNum.toFixed(1)}°C
-                      </span>
-                      {tempNum > 50 && (
-                        <span className="ml-2 text-sm text-red-500">⚠ High</span>
-                      )}
-                      {tempNum < 5 && (
-                        <span className="ml-2 text-sm text-blue-500">❄ Low</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* Error Information */}
-            {device.error_code && (
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                <div className="flex items-start">
-                  <ExclamationTriangleIcon className="h-5 w-5 text-red-500 mr-3 mt-0.5" />
-                  <div>
-                    <h4 className="text-sm font-semibold text-red-800 dark:text-red-400">
-                      Error: {device.error_code}
-                    </h4>
-                    {device.error_message && (
-                      <p className="mt-1 text-sm text-red-700 dark:text-red-300">
-                        {device.error_message}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Device Information */}
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Device Information</h3>
-              <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {deviceCategory === 'blulok' && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Lock number</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-                      {blulokLockNumber != null ? `#${blulokLockNumber}` : '—'}
-                    </dd>
-                  </div>
-                )}
-                <div>
-                  <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                    {deviceCategory === 'access_control' ? 'Hardware Serial (access_id)' : 'Hardware serial (lock_id)'}
-                  </dt>
-                  <dd className="mt-1 text-sm font-mono text-gray-900 dark:text-white">{device.device_serial}</dd>
-                </div>
-                {deviceCategory === 'access_control' && device.relay_channel != null && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Relay Channel</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">#{device.relay_channel}</dd>
-                  </div>
-                )}
-                {deviceCategory === 'access_control' && device.device_type && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Device Type</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white capitalize">{device.device_type}</dd>
-                  </div>
-                )}
-                {deviceCategory === 'access_control' && device.location_description && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Location</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.location_description}</dd>
-                  </div>
-                )}
-                {deviceCategory === 'access_control' && device.gateway_name && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Gateway</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.gateway_name}</dd>
-                  </div>
-                )}
-                {deviceCategory === 'access_control' && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Provisioning</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-                      {isGatewaySyncProvisioned(device.metadata) ? 'Gateway inventory sync' : 'Manual (admin)'}
-                    </dd>
-                  </div>
-                )}
-                {device.serial && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Gateway Serial</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.serial}</dd>
-                  </div>
-                )}
-                {device.firmware_version && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Firmware Version</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">{device.firmware_version}</dd>
-                  </div>
-                )}
-                {device.unit_number && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Unit</dt>
-                    <dd className="mt-1">
-                      <button
-                        onClick={() =>
-                    navigate(`/units/${device.unit_id}`, { state: withReturnPath(location) })
-                  }
-                        className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
-                      >
-                        Unit {device.unit_number}
-                        <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-                      </button>
-                    </dd>
-                  </div>
-                )}
-                <div>
-                  <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Facility</dt>
-                  <dd className="mt-1">
-                    <button
-                      onClick={() =>
-                        navigate(`/facilities/${device.facility_id}`, {
-                          state: withReturnPath(location),
-                        })
-                      }
-                      className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
-                    >
-                      {device.facility_name}
-                      <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-                    </button>
-                  </dd>
-                </div>
-                {device.last_activity && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Activity</dt>
-                    <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-                      {formatDateTime(device.last_activity)}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </div>
-
-            {/* Primary Tenant */}
-            {device.primary_tenant && (
-              <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Primary Tenant</h3>
-                <div className="flex items-center">
-                  <UserIcon className="h-5 w-5 text-gray-400 mr-3" />
-                  <div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">
-                      {device.primary_tenant.first_name} {device.primary_tenant.last_name}
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">{device.primary_tenant.email}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'denylist' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">Denylist Entries</h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Users currently denied access to this device
-                </p>
-              </div>
-            </div>
-
-            {isDevAdmin && device && (
-              <div className="mb-8 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/60 dark:bg-amber-950/25 p-5">
-                <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
-                  Gateway denylist commands (Dev Admin)
-                </h4>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
-                  Same flow as Facility Gateway → Dev Tools: sends signed DENYLIST_ADD / DENYLIST_REMOVE to this
-                  facility&apos;s connected gateway. Device IDs default to this lock; you can add more
-                  comma-separated IDs. Requires an active gateway WebSocket session for delivery.
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const values = await openPrompt({
-                        title: 'DENYLIST_ADD',
-                        fields: [
-                          { key: 'userId', label: 'User ID', required: true },
-                          {
-                            key: 'deviceIds',
-                            label: 'Device IDs (comma-separated)',
-                            defaultValue: device.id,
-                            required: true,
-                          },
-                        ],
-                      });
-                      if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
-                      const targetDeviceIds = values.deviceIds
-                        .split(',')
-                        .map((id) => id.trim())
-                        .filter(Boolean);
-                      if (targetDeviceIds.length === 0) return;
-                      try {
-                        const res = await apiService.sendGatewayCommand({
-                          facilityId: device.facility_id,
-                          command: 'DENYLIST_ADD',
-                          targetDeviceIds,
-                          userId: values.userId.trim(),
-                        });
-                        addToast({ type: 'success', title: `DENYLIST_ADD sent: ${res.success}` });
-                        await loadDenylist();
-                      } catch (err: unknown) {
-                        const message =
-                          err && typeof err === 'object' && 'response' in err
-                            ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
-                            : undefined;
-                        addToast({
-                          type: 'error',
-                          title: message || 'Failed to send DENYLIST_ADD',
-                        });
-                      }
-                    }}
-                    className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
-                  >
-                    DENYLIST_ADD
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const values = await openPrompt({
-                        title: 'DENYLIST_REMOVE',
-                        fields: [
-                          { key: 'userId', label: 'User ID', required: true },
-                          {
-                            key: 'deviceIds',
-                            label: 'Device IDs (comma-separated)',
-                            defaultValue: device.id,
-                            required: true,
-                          },
-                        ],
-                      });
-                      if (!values?.userId?.trim() || !values?.deviceIds?.trim()) return;
-                      const targetDeviceIds = values.deviceIds
-                        .split(',')
-                        .map((id) => id.trim())
-                        .filter(Boolean);
-                      if (targetDeviceIds.length === 0) return;
-                      try {
-                        const res = await apiService.sendGatewayCommand({
-                          facilityId: device.facility_id,
-                          command: 'DENYLIST_REMOVE',
-                          targetDeviceIds,
-                          userId: values.userId.trim(),
-                        });
-                        addToast({ type: 'success', title: `DENYLIST_REMOVE sent: ${res.success}` });
-                        await loadDenylist();
-                      } catch (err: unknown) {
-                        const message =
-                          err && typeof err === 'object' && 'response' in err
-                            ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
-                            : undefined;
-                        addToast({
-                          type: 'error',
-                          title: message || 'Failed to send DENYLIST_REMOVE',
-                        });
-                      }
-                    }}
-                    className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
-                  >
-                    DENYLIST_REMOVE
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {loadingDenylist ? (
-              <div className="flex justify-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-              </div>
-            ) : denylistEntries.length === 0 ? (
-              <div className="text-center py-12">
-                <ShieldExclamationIcon className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No denylist entries</h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  All users have access to this device
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                  <thead className="bg-gray-50 dark:bg-gray-900">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        User
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Source
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Expires
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Time Remaining
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Created
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                    {denylistEntries.map((entry) => {
-                      const isExpired = entry.expires_at ? new Date(entry.expires_at) < new Date() : false;
-                      return (
-                        <tr key={entry.id} className={isExpired ? 'opacity-60' : ''}>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center">
-                              <div>
-                                <div className="text-sm font-medium text-gray-900 dark:text-white">
-                                  {entry.user.first_name && entry.user.last_name
-                                    ? `${entry.user.first_name} ${entry.user.last_name}`
-                                    : entry.user.email || entry.user_id}
-                                </div>
-                                {entry.user.email && (
-                                  <div className="text-sm text-gray-500 dark:text-gray-400">
-                                    {entry.user.email}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300">
-                              {sourceLabels[entry.source] || entry.source}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                            {formatDate(entry.expires_at)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                            {entry.expires_at ? (
-                              <span className={isExpired ? 'text-red-600 dark:text-red-400' : ''}>
-                                {getTimeUntilExpiration(entry.expires_at)}
-                              </span>
-                            ) : (
-                              <span className="text-gray-400">Permanent</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                            {formatDateTime(entry.created_at)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'diagnostics' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          <div className="p-6">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Diagnostics</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Diagnostic information will be available here in a future update.
-            </p>
-          </div>
-        </div>
-      )}
+      <DeviceDetailsOverview
+        activeTab={activeTab}
+        device={device}
+        deviceCategory={deviceCategory ?? 'blulok'}
+        location={location}
+        deviceAccessGroups={deviceAccessGroups}
+        effectiveAccessCode={effectiveAccessCode}
+        denylistEntries={denylistEntries}
+        loadingDenylist={loadingDenylist}
+        canManage={canManage}
+        isDevAdmin={isDevAdmin}
+        onUnassignFromUnit={() => setShowUnassignFromUnitConfirm(true)}
+        onRemoveFromInventory={() => setShowRemoveInventoryConfirm(true)}
+        onSendDenylistAdd={handleSendDenylistAdd}
+        onSendDenylistRemove={handleSendDenylistRemove}
+      />
 
       <ConfirmModal
         isOpen={showUnassignFromUnitConfirm}

@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import { renderHook, act } from '@testing-library/react';
-import { useBackNavigation, withReturnPath, useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import { useBackNavigation, withReturnPath, useDetailsBackNavigation, replaceSearchParams } from '@/hooks/useBackNavigation';
 
 const mockNavigate = jest.fn();
 
@@ -36,6 +36,29 @@ describe('withReturnPath', () => {
       fromPath: '/only',
       returnState: null,
     });
+  });
+});
+
+describe('replaceSearchParams', () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+  });
+
+  it('updates search while preserving location.state', () => {
+    const location = {
+      pathname: '/units/unit-1',
+      search: '?tab=overview',
+      state: { fromPath: '/facilities/f1?tab=units' },
+    };
+
+    replaceSearchParams(mockNavigate, location, (params) => {
+      params.set('tab', 'tenant');
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      { pathname: '/units/unit-1', search: 'tab=tenant' },
+      { replace: true, state: { fromPath: '/facilities/f1?tab=units' } },
+    );
   });
 });
 

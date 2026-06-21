@@ -6,6 +6,7 @@ import { apiService } from '@/services/api.service';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlight } from '@/hooks/useHighlight';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { SortableHeader } from '@/components/UserManagement/SortableHeader';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
@@ -184,33 +185,30 @@ export default function UserManagementPage() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-white">User Management</h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Manage user accounts, roles, and permissions for your BluLok system.
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          {searchLoading && (
-            <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
-              <span>Updating...</span>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowCreateModal(true)}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 dark:focus:ring-offset-gray-900 transition-colors"
-            disabled={loading}
-          >
-            <PlusIcon className="h-4 w-4 mr-2" />
-            Add User
-          </button>
-        </div>
-      </div>
+    <div className="space-y-4">
+      <ListPageHeader
+        title="User Management"
+        subtitle="Manage user accounts, roles, and permissions for your BluLok system."
+        actions={
+          <>
+            {searchLoading && (
+              <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600" />
+                <span>Updating...</span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(true)}
+              className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:focus:ring-offset-gray-900"
+              disabled={loading}
+            >
+              <PlusIcon className="mr-2 h-4 w-4" />
+              Add User
+            </button>
+          </>
+        }
+      />
 
       {error && (
         <div className="rounded-md bg-red-50 dark:bg-red-900/20 p-4 mb-6">
@@ -232,7 +230,7 @@ export default function UserManagementPage() {
         sections={[
           {
             title: 'Role',
-            icon: <FunnelIcon className="h-5 w-5" />,
+            icon: <FunnelIcon className="h-4 w-4" />,
             type: 'select',
             options: [
               { key: '', label: 'All Roles' },

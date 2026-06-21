@@ -76,7 +76,7 @@ Each element is one entitlement target. Implementations must parse the **prefix*
 |--------|--------|---------|
 | `lock:` | `lock:{lockSerial}` | Direct access to the BluLok device with that **device serial** (as stored on `blulok_devices`). |
 | `shared_key:` | `shared_key:{primaryTenantUserId}:{lockSerial}` | Access via key share: **primary** (granting) tenant user id and the **shared lock serial**. The pass subject is the **recipient** user. |
-| `access_control:` | `access_control:{deviceId}` | Access to an **access control** device (UUID **id** from `access_control_devices`), e.g. app-entry doors in the user’s zone groups. |
+| `access_control:` | `access_control:{deviceId}` | Access to an **access control** device (UUID **id** from `access_control_devices`), e.g. app-entry doors in the user’s access groups or the facility default group. |
 
 Resolution logic (who gets which audiences) lives in [`backend/src/services/passes/audience-resolver.service.ts`](../backend/src/services/passes/audience-resolver.service.ts).
 
@@ -86,7 +86,7 @@ Resolution logic (who gets which audiences) lives in [`backend/src/services/pass
 |------|-------------------------|-------------------|
 | `admin`, `dev_admin` | All locks (optional facility filter) | App-entry devices in scope |
 | `facility_admin` | **None** — managers do not unlock unit locks via route pass | App-entry devices in **currently assigned** facilities (from DB, not login JWT) |
-| `tenant`, `maintenance` | Assigned / shared unit locks only | Zone-linked app-entry for those locks |
+| `tenant`, `maintenance` | Assigned / shared unit locks only | Specific-group and default/global app-entry devices in assigned facilities |
 
 **Important:** `aud` can reference **multiple facilities** in one pass (e.g. a tenant with units in more than one site). Schedule data is **per facility** and must be evaluated against the facility of the lock or access point being used (see below).
 

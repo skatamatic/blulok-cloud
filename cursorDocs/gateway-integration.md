@@ -169,15 +169,15 @@ For physical/simulated gateways the badge was driven **only** by the 5s HTTP pol
 
 For **all** gateway types with a `gateways` row (physical, simulated, http, or untyped), **`AUTH`** on `/ws/gateway` sets the row **`status` → online** and **`last_seen`**; disconnect/heartbeat-timeout sets **`offline`** (preserving `last_seen`). Each transition invalidates the status cache and broadcasts `gateway_status_update`.
 
-**`AUTH` does not set `gateways.facility_id`** (no auto-link of unassigned inventory on first connect). The facility must **already** have a gateway row (admin **reassign**, `POST /gateways`, seed, etc.) for **`findByFacilityId`** to resolve.
+**`AUTH` does not set `gateways.facility_id`** on every connect (no silent link of arbitrary unassigned inventory). Binding happens via **Swap / Recovery finalize/bypass**, first-install auto-bind when the facility has no gateway, or admin `POST /gateways` / seed. Until bound, **`findByFacilityId`** may not resolve a production gateway for device sync.
 
-**On connect,** if that row exists, the server **does** update **`status` → online** and **`last_seen`** so the dashboard shows **online** right away — that is **liveness**, not creation of the `facility_id` association. Unassigned gateways (`facility_id` NULL) are unchanged by WS until an admin uses **reassign** (or another API sets `facility_id`).
+**On connect,** if a **bound** row exists for the facility, the server **does** update **`status` → online** and **`last_seen`** so the dashboard shows **online** right away — that is **liveness**, not creation of the `facility_id` association. Unbound swap candidates (`facility_id` NULL) stay unbound until recovery completes.
 
 ### New facility + mesh “connected” (possible confusion)
 
 - **`AUTH` on `/ws/gateway`** only needs a valid JWT and a `facilityId` that matches your role. It does **not** require a row in **`gateways`** for that facility.
 - So you can create a **new facility**, point the mesh at that facility UUID, and the **inbound WebSocket session is “connected”** from the cloud’s point of view (`GET /api/v1/gateways/status/:facilityId` reads in-memory state).
-- The **Facility → Gateway** tab loads **`GET /api/v1/gateways?facility_id=...`**. If no gateway row exists yet, the UI shows **“No Gateway Configured”** even though the mesh session is up — unless you also created/assigned a gateway record.
+- The **Facility → Gateway** tab loads **`GET /api/v1/gateways?facility_id=...`**. If no gateway row is bound yet, the UI shows **“No gateway assigned”** even though the mesh session is up — use **Swap / Recovery** to bind hardware.
 - **Two different things:** (1) **session connected** = someone authenticated to `/ws/gateway` for this facility; (2) **gateway configured** = a **`gateways`** row exists with `facility_id` set (needed for device sync, firmware targeting, etc.). The dashboard now calls out this split when a session is active but no record exists.
 
 ## Facility UI gateway status (Facility tab + Gateway tab)

@@ -250,8 +250,7 @@ export class AccessCodeService {
 
       const groups = await trx('device_groups')
         .select('id')
-        .where('facility_id', facilityId)
-        .andWhere('group_type', 'access_code');
+        .where('facility_id', facilityId);
       for (const group of groups) {
         const groupId = String(group.id);
         const latestAlwaysOn = await trx('access_codes')
@@ -378,14 +377,12 @@ export class AccessCodeService {
   public async getGroupConfig(groupId: string): Promise<AccessCodeGroupConfig> {
     const group = await this.groups.findById(groupId);
     if (!group) throw new ValidationError('group not found');
-    if (group.group_type !== 'access_code') throw new ValidationError('group must be access_code type');
     return this.extractGroupConfig(group.settings);
   }
 
   public async upsertGroupConfig(groupId: string, patch: Partial<AccessCodeGroupConfig>): Promise<AccessCodeGroupConfig> {
     const group = await this.groups.findById(groupId);
     if (!group) throw new ValidationError('group not found');
-    if (group.group_type !== 'access_code') throw new ValidationError('group must be access_code type');
     const current = this.extractGroupConfig(group.settings);
     const next = this.normalizeGroupConfig({ ...current, ...patch });
     const nextSettings = {
@@ -512,7 +509,7 @@ export class AccessCodeService {
     const keypadDeviceIds = new Set(await this.getKeypadDeviceIdsForFacility(facilityId));
     if (keypadDeviceIds.size === 0) return [];
 
-    const groups = await this.groups.findByFacility(facilityId, 'access_code');
+    const groups = await this.groups.findByFacility(facilityId);
     const scopes: RotationScope[] = [];
     for (const group of groups) {
       if (!group.is_active) continue;
@@ -530,8 +527,8 @@ export class AccessCodeService {
 
   private async getGroupScopedConfig(groupId: string): Promise<AccessCodeGroupConfig> {
     const group = await this.groups.findById(groupId);
-    if (!group || group.group_type !== 'access_code') {
-      throw new ValidationError('device_group scope must reference an access_code group');
+    if (!group) {
+      throw new ValidationError('device_group scope must reference a valid access group');
     }
     return this.extractGroupConfig(group.settings);
   }
@@ -553,9 +550,6 @@ export class AccessCodeService {
       if (group.facility_id !== facilityId) {
         throw new AccessDeniedError('device_group does not belong to this facility');
       }
-      if (group.group_type !== 'access_code') {
-        throw new ValidationError('device_group scope must reference an access_code group');
-      }
       return;
     }
 
@@ -575,14 +569,14 @@ export class AccessCodeService {
       .join('device_groups as g', 'g.id', 'gm.group_id')
       .select('g.id', 'g.name')
       .where('g.facility_id', facilityId)
-      .andWhere('g.group_type', 'access_code')
       .andWhere('g.is_active', true)
+      .andWhere('g.is_default', false)
       .andWhere('gm.device_type', 'access_control')
       .andWhere('gm.device_id', scopeId)
       .first();
     if (activeMembership) {
       throw new ValidationError(
-        `device belongs to access-code group "${String(activeMembership.name)}"; set the group code instead of a device override`,
+        `device belongs to access group "${String(activeMembership.name)}"; set the group code instead of a device override`,
       );
     }
   }
@@ -1065,7 +1059,6 @@ export class AccessCodeService {
       .join('access_control_devices as d', 'd.id', 'gm.device_id')
       .join('gateways as gw', 'gw.id', 'd.gateway_id')
       .whereIn('g.facility_id', targetFacilityIds)
-      .where('g.group_type', 'access_code')
       .andWhere('g.is_global_shared', true)
       .andWhere('g.is_active', true)
       .andWhere('gm.device_type', 'access_control')
@@ -1081,8 +1074,8 @@ export class AccessCodeService {
         .join('access_control_devices as d', 'd.id', 'access_members.device_id')
         .join('gateways as gw', 'gw.id', 'd.gateway_id')
         .whereIn('g.facility_id', targetFacilityIds)
-        .where('g.group_type', 'access_code')
         .andWhere('g.is_active', true)
+        .andWhere('g.is_default', false)
         .andWhere('access_members.device_type', 'access_control')
         .andWhere('user_members.device_type', 'blulok')
         .whereIn('user_members.device_id', accessibleBluLokDeviceIds)

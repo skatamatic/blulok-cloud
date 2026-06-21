@@ -3,11 +3,12 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { 
   HomeIcon,
-  FunnelIcon,
+  SignalIcon,
   UserIcon,
   LockClosedIcon,
   LockOpenIcon,
@@ -644,30 +645,27 @@ export default function UnitsPage() {
   const allUnitTypes = ['Small', 'Medium', 'Large', 'Extra Large', 'XL', 'XXL'];
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            {isTenant ? 'My Units' : 'Units'}
-          </h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            {isTenant ? 'View and manage your assigned units' : 'Manage storage units and tenant assignments'}
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          {!isTenant && <ViewModeToggle value={viewMode} onChange={setViewMode} showText={false} />}
-          {canManage && (
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 dark:focus:ring-offset-gray-900 transition-colors"
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              Add Unit
-            </button>
-          )}
-        </div>
-      </div>
+    <div className="space-y-4">
+      <ListPageHeader
+        title={isTenant ? 'My Units' : 'Units'}
+        subtitle={
+          isTenant ? 'View and manage your assigned units' : 'Manage storage units and tenant assignments'
+        }
+        actions={
+          <>
+            {!isTenant && <ViewModeToggle value={viewMode} onChange={setViewMode} showText={false} />}
+            {canManage && (
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+              >
+                <PlusIcon className="mr-2 h-4 w-4" />
+                Add Unit
+              </button>
+            )}
+          </>
+        }
+      />
 
       {/* Filters */}
       <ExpandableFilters
@@ -691,48 +689,49 @@ export default function UnitsPage() {
         sections={[
           {
             title: 'Status',
-            icon: <FunnelIcon className="h-5 w-5" />,
+            icon: <SignalIcon className="h-4 w-4" />,
             options: [
-              { key: '', label: 'All Status' },
+              { key: '', label: 'All Status', color: 'primary' },
               { key: 'available', label: 'Available', color: 'green' },
               { key: 'occupied', label: 'Occupied', color: 'blue' },
               { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
-              { key: 'reserved', label: 'Reserved', color: 'purple' }
+              { key: 'reserved', label: 'Reserved', color: 'purple' },
             ],
             selected: filters.status || '',
-            onSelect: handleStatusFilter
+            onSelect: handleStatusFilter,
           },
           {
             title: 'Unit Type',
-            icon: <HomeIcon className="h-5 w-5" />,
+            icon: <HomeIcon className="h-4 w-4" />,
             options: [
-              { key: '', label: 'All Types' },
-              ...allUnitTypes.map(type => ({
+              { key: '', label: 'All Types', color: 'primary' },
+              ...allUnitTypes.map((type) => ({
                 key: type,
                 label: type,
-                color: 'primary'
-              }))
+                color: 'primary',
+              })),
             ],
             selected: filters.unit_type || '',
-            onSelect: handleTypeFilter
+            onSelect: handleTypeFilter,
           },
-          // Only show user filter for non-tenants (facility is handled by prominent dropdown)
-          ...(!isTenant ? [
-            {
-              title: 'User',
-              icon: <UserIcon className="h-5 w-5" />,
-              type: 'select' as const,
-              options: [
-                { key: '', label: 'All Users' },
-                ...users.map(user => ({
-                  key: user.id,
-                  label: `${user.firstName} ${user.lastName}`
-                }))
-              ],
-              selected: filters.tenant_id || '',
-              onSelect: handleUserFilter
-            }
-          ] : [])
+          ...(!isTenant
+            ? [
+                {
+                  title: 'User',
+                  icon: <UserIcon className="h-4 w-4" />,
+                  type: 'select' as const,
+                  options: [
+                    { key: '', label: 'All Users' },
+                    ...users.map((user) => ({
+                      key: user.id,
+                      label: `${user.firstName} ${user.lastName}`,
+                    })),
+                  ],
+                  selected: filters.tenant_id || '',
+                  onSelect: handleUserFilter,
+                },
+              ]
+            : []),
         ]}
       />
 

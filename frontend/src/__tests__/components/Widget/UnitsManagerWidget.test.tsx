@@ -83,8 +83,9 @@ const sampleUnits = {
       device_status: 'online',
       blulok_device: {
         id: 'dev-2',
-        supports_remote_lock: false,
+        supports_remote_lock: true,
         lock_status: 'unlocked',
+        device_status: 'online',
       },
       tenant_name: null,
     },
@@ -174,9 +175,8 @@ describe('UnitsManagerWidget', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Unit C-301/ }));
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /No device/i })).toBeDisabled();
-    });
+    const btn = await screen.findByRole('button', { name: /no blulok device linked/i });
+    expect(btn).toBeDisabled();
   });
 
   it('disables unlock for already-unlocked units', async () => {
@@ -185,10 +185,8 @@ describe('UnitsManagerWidget', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Unit B-204/ }));
 
-    await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /^Unlocked$/i });
-      expect(btn).toBeDisabled();
-    });
+    const btn = await screen.findByRole('button', { name: /already unlocked/i });
+    expect(btn).toBeDisabled();
   });
 
   it('calls updateLockStatus when remote unlock pressed', async () => {

@@ -54,7 +54,10 @@ export class AccessRevocationListenerService {
     this.events.onTenantUnassigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        const denylistTargets = await AccessControlZoneAccessService.getDenylistTargetsForUnits([event.unitId]);
+        const denylistTargets = await AccessControlZoneAccessService.getDenylistTargetsForUserRevocation(
+          [event.unitId],
+          event.tenantId,
+        );
 
         if (denylistTargets.length === 0) {
           logger.info(`No devices found for unit ${event.unitId}, skipping denylist update`);
@@ -102,7 +105,10 @@ export class AccessRevocationListenerService {
     this.events.onTenantAssigned(async (event: UnitAssignmentEvent) => {
       try {
         const knex = DatabaseService.getInstance().connection;
-        const denylistTargets = await AccessControlZoneAccessService.getDenylistTargetsForUnits([event.unitId]);
+        const denylistTargets = await AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant(
+          [event.unitId],
+          event.tenantId,
+        );
         const deviceIds = denylistTargets.map((target) => target.device_id);
 
         if (deviceIds.length === 0) {

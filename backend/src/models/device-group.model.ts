@@ -9,6 +9,7 @@ export interface DeviceGroup {
   facility_id: string;
   group_type: DeviceGroupType;
   is_global_shared: boolean;
+  is_default: boolean;
   access_code_current_code?: string | null;
   access_code_current_valid_from?: Date | null;
   access_code_current_valid_until?: Date | null;
@@ -34,6 +35,7 @@ export interface CreateDeviceGroupData {
   facility_id: string;
   group_type?: DeviceGroupType;
   is_global_shared?: boolean;
+  is_default?: boolean;
   name: string;
   description?: string;
   settings?: Record<string, unknown>;
@@ -43,6 +45,7 @@ export interface CreateDeviceGroupData {
 export interface UpdateDeviceGroupData {
   group_type?: DeviceGroupType;
   is_global_shared?: boolean;
+  is_default?: boolean;
   access_code_current_code?: string | null;
   access_code_current_valid_from?: Date | null;
   access_code_current_valid_until?: Date | null;
@@ -74,6 +77,7 @@ export class DeviceGroupModel {
       ...(row as unknown as DeviceGroup),
       group_type: ((row.group_type as DeviceGroupType) || 'zone'),
       is_global_shared: Boolean(row.is_global_shared),
+      is_default: Boolean(row.is_default),
       access_code_current_code: (row.access_code_current_code as string | null) ?? null,
       access_code_current_valid_from: row.access_code_current_valid_from ? new Date(String(row.access_code_current_valid_from)) : null,
       access_code_current_valid_until: row.access_code_current_valid_until ? new Date(String(row.access_code_current_valid_until)) : null,
@@ -90,6 +94,7 @@ export class DeviceGroupModel {
       facility_id: data.facility_id,
       group_type: data.group_type || 'zone',
       is_global_shared: Boolean(data.is_global_shared),
+      is_default: Boolean(data.is_default),
       name: data.name,
       description: data.description ?? null,
       settings: data.settings ? JSON.stringify(data.settings) : null,
@@ -112,7 +117,9 @@ export class DeviceGroupModel {
     if (groupType) {
       query.andWhere('group_type', groupType);
     }
-    const rows = await query.orderBy('name', 'asc');
+    const rows = await query
+      .orderBy('is_default', 'desc')
+      .orderBy('name', 'asc');
     return rows.map((row) => this.deserializeGroup(row as Record<string, unknown>));
   }
 
@@ -122,6 +129,7 @@ export class DeviceGroupModel {
     if (data.name !== undefined) payload.name = data.name;
     if (data.group_type !== undefined) payload.group_type = data.group_type;
     if (data.is_global_shared !== undefined) payload.is_global_shared = Boolean(data.is_global_shared);
+    if (data.is_default !== undefined) payload.is_default = Boolean(data.is_default);
     if (data.access_code_current_code !== undefined) payload.access_code_current_code = data.access_code_current_code;
     if (data.access_code_current_valid_from !== undefined) payload.access_code_current_valid_from = data.access_code_current_valid_from;
     if (data.access_code_current_valid_until !== undefined) payload.access_code_current_valid_until = data.access_code_current_valid_until;
@@ -254,6 +262,46 @@ export class DeviceGroupModel {
       .update({ device_id: deviceId });
   }
 
+  async findDefaultByFacility(facilityId: string): Promise<DeviceGroup | null> {
+    const knex = this.db.connection;
+    const row = await knex('device_groups')
+      .where({ facility_id: facilityId, is_default: true })
+      .first();
+    return row ? this.deserializeGroup(row as Record<string, unknown>) : null;
+  }
+
+  async countAccessControlMembershipsForDevice(
+    deviceId: string,
+    facilityId: string,
+    options?: {
+      excludeDefault?: boolean;
+      excludeGroupId?: string;
+      specificGroupsOnly?: boolean;
+      deviceType?: DeviceGroupMemberType;
+    },
+  ): Promise<number> {
+    const knex = this.db.connection;
+    const query = knex('device_group_members as m')
+      .join('device_groups as dg', 'dg.id', 'm.group_id')
+      .where('m.device_id', deviceId)
+      .andWhere('m.device_type', options?.deviceType ?? 'access_control')
+      .andWhere('dg.facility_id', facilityId)
+      .andWhere('dg.is_active', true);
+
+    if (options?.specificGroupsOnly) {
+      query.andWhere('dg.is_default', false);
+      query.andWhere('dg.is_global_shared', false);
+    } else if (options?.excludeDefault) {
+      query.andWhere('dg.is_default', false);
+    }
+    if (options?.excludeGroupId) {
+      query.andWhereNot('dg.id', options.excludeGroupId);
+    }
+
+    const row = await query.count<{ count: string | number }[]>('* as count').first();
+    return Number(row?.count ?? 0);
+  }
+
   async getGroupsForDevice(deviceId: string): Promise<DeviceGroup[]> {
     const knex = this.db.connection;
     const rows = await knex('device_groups')
@@ -262,6 +310,45 @@ export class DeviceGroupModel {
       .where('device_group_members.device_id', deviceId)
       .orderBy('device_groups.name', 'asc');
     return rows.map((row) => this.deserializeGroup(row as Record<string, unknown>));
+  }
+
+  async getGroupsForBlulokUnit(unitId: string, deviceId?: string | null): Promise<Array<Pick<DeviceGroup, 'id' | 'name' | 'is_default'>>> {
+    const knex = this.db.connection;
+    const resolvedDeviceId = deviceId ? String(deviceId) : null;
+
+    const query = knex('device_groups as dg')
+      .select('dg.id', 'dg.name', 'dg.is_default')
+      .join('device_group_members as m', 'm.group_id', 'dg.id')
+      .leftJoin('blulok_devices as bd', function joinCurrentLock() {
+        this.on('bd.unit_id', '=', 'm.source_unit_id').andOnVal('m.device_type', '=', 'blulok');
+      })
+      .where('dg.is_active', true)
+      .andWhere(function matchMembership() {
+        this.where(function unitLinked() {
+          this.where('m.device_type', 'blulok').andWhere('m.source_unit_id', unitId);
+        });
+
+        if (resolvedDeviceId) {
+          // Mirror frontend isDeviceGroupMember: direct device_id match on the member row.
+          this.orWhere('m.device_id', resolvedDeviceId);
+          // BluLok rows tied to the unit's current lock (handles lock swaps via source_unit_id).
+          this.orWhere(function blulokDeviceLinked() {
+            this.where('m.device_type', 'blulok').andWhere(function idMatch() {
+              this.where('m.device_id', resolvedDeviceId).orWhere('bd.id', resolvedDeviceId);
+            });
+          });
+        }
+      })
+      .groupBy('dg.id', 'dg.name', 'dg.is_default')
+      .orderBy('dg.is_default', 'desc')
+      .orderBy('dg.name', 'asc');
+
+    const rows = await query;
+    return rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      is_default: Boolean(row.is_default),
+    }));
   }
 }
 

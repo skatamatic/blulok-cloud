@@ -4,7 +4,7 @@ import { DatabaseService } from '@/services/database.service';
 jest.mock('@/services/database.service');
 jest.mock('@/services/access-control-zone-access.service', () => ({
   AccessControlZoneAccessService: {
-    getDenylistTargetsForUnits: jest.fn(),
+    getDenylistRemovalTargetsForUserGrant: jest.fn(),
   },
 }));
 
@@ -313,7 +313,7 @@ describe('DenylistEntryModel', () => {
   describe('removeForUnits', () => {
     it('removes entries for devices in specified units', async () => {
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([
         { device_id: 'device-1', device_type: 'blulok' },
         { device_id: 'device-2', device_type: 'blulok' },
       ]);
@@ -338,7 +338,7 @@ describe('DenylistEntryModel', () => {
 
     it('returns 0 if no devices found for units', async () => {
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([]);
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([]);
 
       mockKnex.mockImplementation(() => ({}));
 
@@ -350,7 +350,7 @@ describe('DenylistEntryModel', () => {
   describe('findByUnitsAndUser', () => {
     it('finds entries for devices in specified units', async () => {
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([
         { device_id: 'device-1', device_type: 'blulok' },
       ]);
 

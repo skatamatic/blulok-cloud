@@ -7,7 +7,7 @@ import {
   expectSuccess,
   expectBadRequest,
 } from '@/__tests__/utils/mock-test-helpers';
-import { ConflictError } from '@/middleware/error.middleware';
+import { ConflictError, ValidationError } from '@/middleware/error.middleware';
 
 const mockCreate = jest.fn().mockResolvedValue({
   id: 'grp-1',
@@ -111,6 +111,18 @@ describe('Device Groups Routes', () => {
       .expect(201);
 
     expectSuccess(response);
+  });
+
+  it('returns 400 when deleting protected default access group', async () => {
+    mockDelete.mockRejectedValueOnce(new ValidationError('The default access group cannot be deleted'));
+
+    const response = await request(app)
+      .delete('/api/v1/device-groups/grp-default')
+      .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+      .expect(400);
+
+    expect(response.body.success).toBe(false);
+    expect(String(response.body.message || '')).toContain('default access group');
   });
 
   it('returns 409 with explicit conflict code for exclusivity violations', async () => {

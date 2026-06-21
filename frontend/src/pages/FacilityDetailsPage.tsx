@@ -37,12 +37,13 @@ import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import { FacilityLockTimeoutSetting } from '@/components/Facility/FacilityLockTimeoutSetting';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
 import { SchedulesHubTab } from '@/components/Schedules/SchedulesHubTab';
-import { AccessCodeManagementTab } from '@/components/AccessCodes/AccessCodeManagementTab';
 import { MyAccessCodes } from '@/components/AccessCodes/MyAccessCodes';
 import { DeviceGroupManager } from '@/components/AccessCodes/DeviceGroupManager';
+import { readFacilityAccessGroupId, FACILITY_ACCESS_GROUP_ID_PARAM } from '@/components/AccessCodes/access-groups.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared, NetworkInfraDeviceCard } from '@/components/Devices/DeviceCards';
+import { DeviceTypeBadge, DeviceTypeIcon } from '@/components/Common/DeviceTypeIcon';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import {
   DetailsPageHeader,
@@ -51,12 +52,13 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
-import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation, replaceSearchParams, withReturnPath } from '@/hooks/useBackNavigation';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
+import { formatNetworkInfraKindLabel } from '@/utils/device-icon.utils';
 import {
   formatBluLokDeviceSubtitle,
   formatBluLokLockNumberLabel,
@@ -71,13 +73,6 @@ import { SortableTableTh } from '@/components/Common/SortableTableTh';
 const DEVICES_PAGE_LIMIT = 30;
 const UNITS_PAGE_LIMIT = 20;
 const DEFAULT_UNIT_TYPES = ['Small', 'Medium', 'Large', 'Extra Large', 'XL', 'XXL'];
-
-const deviceTypeIcons = {
-  gate: BoltIcon,
-  elevator: CubeIcon,
-  door: KeyIcon,
-  blulok: LockClosedIcon,
-};
 
 const deviceListStatusIcons = {
   online: CheckCircleIcon,
@@ -178,6 +173,24 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   };
   
   const [activeTab, setActiveTab] = useState<FacilityTab>(getInitialTab());
+  const accessGroupIdFromUrl = useMemo(
+    () => readFacilityAccessGroupId(location.search),
+    [location.search],
+  );
+
+  const handleAccessGroupChange = useCallback(
+    (groupId: string) => {
+      replaceSearchParams(navigate, location, (params) => {
+        params.set('tab', 'device-groups');
+        if (groupId) {
+          params.set(FACILITY_ACCESS_GROUP_ID_PARAM, groupId);
+        } else {
+          params.delete(FACILITY_ACCESS_GROUP_ID_PARAM);
+        }
+      });
+    },
+    [location, navigate],
+  );
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [showCreateDeviceGroup, setShowCreateDeviceGroup] = useState(false);
@@ -298,14 +311,16 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     if (normalizedTab) {
       setActiveTab(normalizedTab);
       if (tabParam === 'overview') {
-        urlParams.set('tab', 'facility');
-        navigate(`${location.pathname}?${urlParams.toString()}`, { replace: true });
+        replaceSearchParams(navigate, location, (params) => {
+          params.set('tab', 'facility');
+        });
       }
     } else if (!tabParam && facility) {
-      urlParams.set('tab', 'facility');
-      navigate(`${location.pathname}?${urlParams.toString()}`, { replace: true });
+      replaceSearchParams(navigate, location, (params) => {
+        params.set('tab', 'facility');
+      });
     }
-  }, [location.search, location.pathname, navigate, facility]);
+  }, [location.search, location.pathname, location.state, navigate, facility]);
 
   const debouncedFacilityDevicesWsRefresh = useCallback(() => {
     void loadDevicesRef.current({ background: true });
@@ -485,6 +500,14 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     if (activeTab !== 'devices') return;
     loadFacilityDevices();
   }, [activeTab, loadFacilityDevices]);
+
+  useEffect(() => {
+    if (isTenant || !canManage || activeTab !== 'access-codes') return;
+    setActiveTab('device-groups');
+    replaceSearchParams(navigate, location, (params) => {
+      params.set('tab', 'device-groups');
+    });
+  }, [activeTab, canManage, isTenant, location, navigate]);
 
   useEffect(() => {
     if (!facility?.id || !canManage) return;
@@ -886,8 +909,8 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
     { key: 'units', label: 'Units', icon: HomeIcon },
     { key: 'schedules', label: 'Schedules', icon: ClockIcon },
-    { key: 'access-codes', label: 'Access Codes', icon: KeyIcon },
-    ...(!isTenant && canManage ? [{ key: 'device-groups', label: 'Device Groups', icon: RectangleGroupIcon }] : []),
+    ...(isTenant || !canManage ? [{ key: 'access-codes', label: 'Access Codes', icon: KeyIcon }] : []),
+    ...(!isTenant && canManage ? [{ key: 'device-groups', label: 'Access Groups', icon: RectangleGroupIcon }] : []),
     ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
     ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : []),
   ];
@@ -903,7 +926,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
             <img
               src={`data:${facility.image_mime_type};base64,${facility.branding_image}`}
               alt={facility.name}
-              className="h-16 w-16 rounded-lg object-contain bg-white dark:bg-gray-100 p-1 border border-gray-200 dark:border-gray-600 flex-shrink-0"
+              className="h-10 w-10 rounded-lg border border-gray-200 bg-white object-contain p-1 dark:border-gray-600 dark:bg-gray-100"
             />
           ) : undefined
         }
@@ -914,9 +937,9 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
         activeKey={activeTab}
         onChange={(key) => {
           setActiveTab(key as FacilityTab);
-          const newSearchParams = new URLSearchParams(location.search);
-          newSearchParams.set('tab', key);
-          navigate(`${location.pathname}?${newSearchParams.toString()}`, { replace: true });
+          replaceSearchParams(navigate, location, (params) => {
+            params.set('tab', key);
+          });
         }}
       />
 
@@ -1114,28 +1137,34 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
             sections={[
               {
                 title: 'Device Scope',
-                icon: <ServerIcon className="h-5 w-5" />,
+                icon: <ServerIcon className="h-4 w-4" />,
+                span: 'full' as const,
                 options: [
-                  { key: 'operational', label: 'Access Control + Locks', color: 'primary' },
-                  { key: 'network_infra', label: 'Network Infra', color: 'blue' },
+                  { key: 'all', label: 'All Devices', color: 'primary' },
+                  { key: 'operational', label: 'Access + Locks', color: 'blue' },
+                  { key: 'network_infra', label: 'Network Infra', color: 'gray' },
                 ],
                 selected: deviceFilters.device_scope || 'operational',
                 onSelect: handleDeviceScopeFilter,
               },
-              ...(!isNetworkInfraDeviceScope ? [{
-                title: 'Device Type',
-                icon: <FunnelIcon className="h-5 w-5" />,
-                options: [
-                  { key: 'all', label: 'All Devices', color: 'primary' },
-                  { key: 'access_control', label: 'Access Control', color: 'blue' },
-                  { key: 'blulok', label: 'BluLok', color: 'green' },
-                ],
-                selected: deviceFilters.device_type || 'all',
-                onSelect: handleDeviceTypeFilter,
-              }] : []),
+              ...(!isNetworkInfraDeviceScope
+                ? [
+                    {
+                      title: 'Device Type',
+                      icon: <FunnelIcon className="h-4 w-4" />,
+                      options: [
+                        { key: 'all', label: 'All Types', color: 'primary' },
+                        { key: 'access_control', label: 'Access Control', color: 'blue' },
+                        { key: 'blulok', label: 'BluLok', color: 'green' },
+                      ],
+                      selected: deviceFilters.device_type || 'all',
+                      onSelect: handleDeviceTypeFilter,
+                    },
+                  ]
+                : []),
               {
                 title: 'Status',
-                icon: <BoltIcon className="h-5 w-5" />,
+                icon: <BoltIcon className="h-4 w-4" />,
                 options: [
                   { key: '', label: 'All Status', color: 'primary' },
                   { key: 'online', label: 'Online', color: 'green' },
@@ -1270,15 +1299,30 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                           const infraDevice = device as NetworkInfraDevice;
                           const StatusIcon =
                             deviceListStatusIcons[infraDevice.status as keyof typeof deviceListStatusIcons] || CheckCircleIcon;
+                          const infraIconDevice = {
+                            device_category: 'network_infra' as const,
+                            device_kind: infraDevice.device_kind,
+                          };
                           return (
                             <tr key={`network-infra-${infraDevice.id}`} className="hover:bg-blue-50/50 dark:hover:bg-blue-900/10">
                               <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="text-sm font-medium text-gray-900 dark:text-white">
-                                  {infraDevice.device_kind === 'gateway' ? infraDevice.name : infraDevice.device_kind.replace('_', ' ')}
+                                <div className="flex items-center">
+                                  <DeviceTypeIcon device={infraIconDevice} size="sm" className="mr-3" />
+                                  <div>
+                                    <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                      {infraDevice.device_kind === 'gateway'
+                                        ? infraDevice.name
+                                        : formatNetworkInfraKindLabel(infraDevice.device_kind)}
+                                    </div>
+                                    <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                                      {infraDevice.device_serial}
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">{infraDevice.device_serial}</div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm capitalize">{infraDevice.device_kind.replace('_', ' ')}</td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <DeviceTypeBadge device={infraIconDevice} />
+                              </td>
                               <td className="px-6 py-4 whitespace-nowrap">
                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${deviceListStatusColors[infraDevice.status as keyof typeof deviceListStatusColors] || deviceListStatusColors.unknown}`}>
                                   <StatusIcon className="h-3 w-3 mr-1" />
@@ -1314,9 +1358,12 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                         const accessDevice = device as AccessControlDevice & { device_category: string };
                         const blulokDevice = device as BluLokDevice & { device_category: string };
                         const lastActivity = isBlulok ? blulokDevice.last_activity : accessDevice.last_activity;
-                        const DeviceIcon = isBlulok
-                          ? LockClosedIcon
-                          : deviceTypeIcons[accessDevice.device_type as keyof typeof deviceTypeIcons] || ServerIcon;
+                        const iconDevice = isBlulok
+                          ? ({ device_category: 'blulok' } as const)
+                          : ({
+                              device_category: 'access_control' as const,
+                              device_type: accessDevice.device_type,
+                            } as const);
                         const st = isBlulok ? blulokDevice.device_status : accessDevice.status;
                         const StatusIcon =
                           deviceListStatusIcons[st as keyof typeof deviceListStatusIcons] || CheckCircleIcon;
@@ -1332,10 +1379,8 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                           >
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center">
-                                <div className={`p-2 rounded-lg ${isBlulok ? 'bg-blue-100 dark:bg-blue-900/20' : 'bg-primary-100 dark:bg-primary-900/20'}`}>
-                                  <DeviceIcon className={`h-4 w-4 ${isBlulok ? 'text-blue-600 dark:text-blue-400' : 'text-primary-600 dark:text-primary-400'}`} />
-                                </div>
-                                <div className="ml-3">
+                                <DeviceTypeIcon device={iconDevice} size="sm" className="mr-3" />
+                                <div>
                                   <div className="text-sm font-medium text-gray-900 dark:text-white">
                                     {isBlulok
                                       ? formatBluLokLockNumberLabel(blulokDevice)
@@ -1352,11 +1397,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                isBlulok ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' : 'bg-primary-100 text-primary-800 dark:bg-primary-900/20 dark:text-primary-400'
-                              }`}>
-                                {isBlulok ? 'BluLok' : accessDevice.device_type?.replace('_', ' ') || '—'}
-                              </span>
+                              <DeviceTypeBadge device={iconDevice} />
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${deviceListStatusColors[st] || deviceListStatusColors.unknown}`}>
@@ -1457,7 +1498,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
             sections={[
               {
                 title: 'Status',
-                icon: <SignalIcon className="h-5 w-5" />,
+                icon: <SignalIcon className="h-4 w-4" />,
                 options: [
                   { key: '', label: 'All Status', color: 'primary' },
                   { key: 'available', label: 'Available', color: 'green' },
@@ -1470,7 +1511,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               },
               {
                 title: 'Unit Type',
-                icon: <HomeIcon className="h-5 w-5" />,
+                icon: <HomeIcon className="h-4 w-4" />,
                 options: [
                   { key: '', label: 'All Types', color: 'primary' },
                   ...DEFAULT_UNIT_TYPES.map(type => ({
@@ -1722,11 +1763,14 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               device_category: 'blulok' as const,
             }))),
           ]}
+          accessControlDevices={deviceHierarchy?.accessControlDevices || []}
           groups={deviceGroups}
           onGroupsChanged={loadDeviceGroups}
           createDialogOpen={showCreateDeviceGroup}
           onCreateDialogChange={setShowCreateDeviceGroup}
           hideInlineAddButton
+          initialGroupId={accessGroupIdFromUrl}
+          onGroupChange={handleAccessGroupChange}
         />
       )}
 
@@ -1741,14 +1785,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
       )}
 
       {activeTab === 'access-codes' && facility && (
-        (isTenant || !canManage) ? (
-          <MyAccessCodes facilityId={facility.id} />
-        ) : (
-          <AccessCodeManagementTab
-            facilityId={facility.id}
-            devices={deviceHierarchy?.accessControlDevices || []}
-          />
-        )
+        <MyAccessCodes facilityId={facility.id} />
       )}
 
       {/* Add Device Modal */}

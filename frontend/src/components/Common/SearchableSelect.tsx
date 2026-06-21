@@ -53,12 +53,8 @@ export function SearchableSelect({
   useEffect(() => {
     if (selectedOption) {
       setQuery(typeof selectedOption.label === 'string' ? selectedOption.label : '');
-      return;
     }
-    if (!value) {
-      setQuery('');
-    }
-  }, [selectedOption, value]);
+  }, [selectedOption]);
 
   useEffect(() => {
     return () => {

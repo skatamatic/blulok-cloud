@@ -21,7 +21,7 @@ Non-goal: changing the phased recovery pipeline or the “don’t trust new hard
 
 | Topic | Decision |
 |-------|----------|
-| **Identity** | Device sends its gateway **GUID** (`gateways.id`) in `AUTH.gatewayId` — the same GUID shown today in the “Replace Gateway” dropdown (`{name} ({id})`). Unknown GUID ⇒ find-or-create on that GUID. Dedup is on the **primary key**; no new MAC/serial column. |
+| **Identity** | Device sends its gateway **GUID** (`gateways.id`) in `AUTH.gatewayId` — the same GUID shown in the Swap / Recovery tab. Unknown GUID ⇒ find-or-create on that GUID. Dedup is on the **primary key**; no new MAC/serial column. |
 | **Gating** | The only gate is the **existing AUTH credential**: a valid JWT that is `facility_admin` **scoped to this facility**, or `admin` / `dev_admin` (any facility). No env flag. |
 | **First gateway (empty facility)** | If the facility has **no bound gateway**, auto-create **and auto-bind** the connecting gateway as the `active` session (first-time install). |
 | **Existing bound gateway** | Auto-create an **unbound** gateway (`facility_id = null`) and park it as `swap_candidate`; the bound gateway keeps the `active` session. |
@@ -159,7 +159,7 @@ sequenceDiagram
 Dedup is on the existing `gateways.id` primary key. `facility_id` is already nullable. We only set `metadata.autoRegistered`.
 
 ### Frontend
-- No required changes (auto-registered candidates already surface via the recovery candidates API and the “Replace Gateway” dropdown).
+- Auto-registered candidates surface via `GET /gateways/facility/:facilityId/recovery/candidates` and the **Swap / Recovery** tab.
 - Optional polish: badge auto-registered candidates (“auto-registered”) in the Swap / Recovery tab; allow rename of the generated `name`.
 
 ### Docs

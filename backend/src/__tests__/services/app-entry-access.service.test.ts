@@ -89,14 +89,25 @@ describe('AppEntryAccessService', () => {
     expect(adminQuery.where).toHaveBeenCalledWith('g.facility_id', 'fac-1');
   });
 
-  it('returns zone-linked app-entry devices for tenant including shared-key lock access', async () => {
+  it('returns scoped and global app-entry devices for tenant including shared-key lock access', async () => {
     const assignedRows = [{ device_id: 'lock-assigned-1' }];
     const sharedRows = [{ device_id: 'lock-shared-1' }];
-    const zoneRows = [{ id: 'ac-zone-1' }, { id: 'ac-zone-2' }];
+    const assignedFacilityRows = [{ facility_id: 'fac-1' }];
+    const sharedFacilityRows: any[] = [];
+    const scopedRows = [{ id: 'ac-zone-1' }];
+    const globalRows = [{ id: 'ac-global-1' }];
+    const callCounts: Record<string, number> = {};
     const db: any = jest.fn((table: string) => {
-      if (table === 'unit_assignments as ua') return makeThenableQuery(assignedRows);
-      if (table === 'key_sharing as ks') return makeThenableQuery(sharedRows);
-      if (table === 'device_group_members as zone_access') return makeThenableQuery(zoneRows);
+      callCounts[table] = (callCounts[table] || 0) + 1;
+      if (table === 'unit_assignments as ua') {
+        return makeThenableQuery(callCounts[table] === 1 ? assignedRows : assignedFacilityRows);
+      }
+      if (table === 'key_sharing as ks') {
+        return makeThenableQuery(callCounts[table] === 1 ? sharedRows : sharedFacilityRows);
+      }
+      if (table === 'device_group_members as zone_access') {
+        return makeThenableQuery(callCounts[table] === 1 ? scopedRows : globalRows);
+      }
       throw new Error(`Unexpected table: ${table}`);
     });
     db.fn = { now: () => new Date() };
@@ -107,18 +118,46 @@ describe('AppEntryAccessService', () => {
       facilityId: 'fac-1',
     });
 
-    expect(deviceIds).toEqual(['ac-zone-1', 'ac-zone-2']);
+    expect(deviceIds).toEqual(['ac-zone-1', 'ac-global-1']);
   });
 
-  it('returns empty for tenant when no accessible lock devices exist', async () => {
+  it('returns global app-entry devices for tenant even without lock group membership', async () => {
+    const assignedRows: any[] = [];
+    const sharedRows: any[] = [];
+    const assignedFacilityRows = [{ facility_id: 'fac-1' }];
+    const sharedFacilityRows: any[] = [];
+    const globalRows = [{ id: 'ac-global-1' }];
+    const callCounts: Record<string, number> = {};
+    const db: any = jest.fn((table: string) => {
+      callCounts[table] = (callCounts[table] || 0) + 1;
+      if (table === 'unit_assignments as ua') {
+        return makeThenableQuery(callCounts[table] === 1 ? assignedRows : assignedFacilityRows);
+      }
+      if (table === 'key_sharing as ks') {
+        return makeThenableQuery(callCounts[table] === 1 ? sharedRows : sharedFacilityRows);
+      }
+      if (table === 'device_group_members as zone_access') {
+        return makeThenableQuery(globalRows);
+      }
+      throw new Error(`Unexpected table: ${table}`);
+    });
+    db.fn = { now: () => new Date() };
+
+    const deviceIds = await AppEntryAccessService.resolveDeviceIds(db, {
+      userId: 'tenant-1',
+      userRole: UserRole.TENANT,
+      facilityId: 'fac-1',
+    });
+
+    expect(deviceIds).toEqual(['ac-global-1']);
+  });
+
+  it('returns empty for tenant when no facility access exists', async () => {
     const assignedRows: any[] = [];
     const sharedRows: any[] = [];
     const db: any = jest.fn((table: string) => {
       if (table === 'unit_assignments as ua') return makeThenableQuery(assignedRows);
       if (table === 'key_sharing as ks') return makeThenableQuery(sharedRows);
-      if (table === 'device_group_members as zone_access') {
-        throw new Error('zone query should not execute when lock scope is empty');
-      }
       throw new Error(`Unexpected table: ${table}`);
     });
     db.fn = { now: () => new Date() };
@@ -132,17 +171,24 @@ describe('AppEntryAccessService', () => {
     expect(deviceIds).toEqual([]);
   });
 
-  it('returns zone-linked devices for tenant without explicit facility scope', async () => {
+  it('returns scoped devices for tenant without explicit facility scope', async () => {
     const assignedRows = [{ device_id: 'lock-assigned-1' }];
     const sharedRows: any[] = [];
-    const zoneRows = [{ id: 'ac-zone-1' }];
-    let zoneQuery: any;
+    const assignedFacilityRows = [{ facility_id: 'fac-1' }];
+    const sharedFacilityRows: any[] = [];
+    const scopedRows = [{ id: 'ac-zone-1' }];
+    const globalRows: any[] = [];
+    const callCounts: Record<string, number> = {};
     const db: any = jest.fn((table: string) => {
-      if (table === 'unit_assignments as ua') return makeThenableQuery(assignedRows);
-      if (table === 'key_sharing as ks') return makeThenableQuery(sharedRows);
+      callCounts[table] = (callCounts[table] || 0) + 1;
+      if (table === 'unit_assignments as ua') {
+        return makeThenableQuery(callCounts[table] === 1 ? assignedRows : assignedFacilityRows);
+      }
+      if (table === 'key_sharing as ks') {
+        return makeThenableQuery(callCounts[table] === 1 ? sharedRows : sharedFacilityRows);
+      }
       if (table === 'device_group_members as zone_access') {
-        zoneQuery = makeThenableQuery(zoneRows);
-        return zoneQuery;
+        return makeThenableQuery(callCounts[table] === 1 ? scopedRows : globalRows);
       }
       throw new Error(`Unexpected table: ${table}`);
     });
@@ -151,10 +197,9 @@ describe('AppEntryAccessService', () => {
     const deviceIds = await AppEntryAccessService.resolveDeviceIds(db, {
       userId: 'tenant-1',
       userRole: UserRole.TENANT,
-      facilityIds: [],
+      facilityIds: ['fac-1'],
     });
 
-    expect(zoneQuery.andWhereRaw).not.toHaveBeenCalled();
     expect(deviceIds).toEqual(['ac-zone-1']);
   });
 });

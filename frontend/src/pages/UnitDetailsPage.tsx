@@ -1,36 +1,35 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, Link, useLocation } from 'react-router-dom';
+import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
-import { UserFilter } from '@/components/Common/UserFilter';
 import { EditUnitModal } from '@/components/Units/EditUnitModal';
 import { DeviceAssignmentModal } from '@/components/Devices/DeviceAssignmentModal';
-import { ShareKeyModal } from '@/components/Units/ShareKeyModal';
 import {
   HomeIcon,
-  UserIcon,
-  CpuChipIcon,
-  LockClosedIcon,
-  LockOpenIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   ClockIcon,
   WrenchScrewdriverIcon,
   BuildingOfficeIcon,
-  KeyIcon,
   PencilIcon,
-  PlusIcon,
-  XMarkIcon,
-  ArrowPathIcon,
-  ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline';
-import { useDetailsBackNavigation, withReturnPath } from '@/hooks/useBackNavigation';
+import { useDetailsBackNavigation, replaceSearchParams, withReturnPath } from '@/hooks/useBackNavigation';
 import {
   DetailsPageHeader,
+  DetailsPageLoading,
   DetailsPageNotFound,
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
+import { detailsBtnSecondarySm, detailsTabCountBadgeClass, detailsUnlockButtonClass } from '@/components/Common/details-page.styles';
+import {
+  deviceStatusColors,
+  lockStatusColors,
+  unitStatusColors,
+} from '@/utils/statusBadge.utils';
+import { UnitDetailsOverview, type UnitDetailsTab } from '@/components/Units/UnitDetailsOverview';
+import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
+import { loadAccessGroupRefsForBlulokLock } from '@/utils/access-groups-load.utils';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
@@ -39,7 +38,6 @@ import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
-import { formatDate, formatDateTime } from '@/utils/datetime.utils';
 
 interface UnitDetails {
   id: string;
@@ -83,39 +81,18 @@ interface UnitDetails {
     access_granted_at: string;
     access_expires_at?: string;
   }>;
+  access_groups?: UnitAccessGroupRef[];
   created_at: string;
   updated_at: string;
 }
 
-const statusColors = {
-  available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
-  occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
-  maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-  reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
-};
+const statusColors = unitStatusColors;
 
 const statusIcons = {
   available: CheckCircleIcon,
   occupied: HomeIcon,
   maintenance: WrenchScrewdriverIcon,
   reserved: ClockIcon
-};
-
-const deviceStatusColors = {
-  online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
-  offline: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
-  low_battery: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-  error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-};
-
-const lockStatusColors: Record<string, string> = {
-  locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
-  unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
-  locking: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 animate-pulse',
-  unlocking: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 animate-pulse',
-  error: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
-  maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
-  unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
 };
 
 const deviceStatusIcons = {
@@ -126,56 +103,29 @@ const deviceStatusIcons = {
 };
 
 
+function getUnitTabFromSearch(search: string): UnitDetailsTab {
+  const tab = new URLSearchParams(search).get('tab');
+  if (tab === 'tenant' || tab === 'device') return tab;
+  return 'overview';
+}
+
 export default function UnitDetailsPage() {
   const { unitId } = useParams<{ unitId: string }>();
   const { authState } = useAuth();
   const { addToast } = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/units' });
   const [unit, setUnit] = useState<UnitDetails | null>(null);
-  const [boundDeviceGroupNames, setBoundDeviceGroupNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'tenant' | 'device'>('overview');
-  const [showShareModal, setShowShareModal] = useState(false);
   const canManageUnits = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const canChangePrimaryTenant = canManageUnits; // Only admins can change primary tenant
   const isPrimaryTenant = unit?.primary_tenant?.id === authState.user?.id;
   const canManageSharedAccess = canManageUnits || isPrimaryTenant; // Primary tenant can manage shared access
 
-  // Handle tab from URL query parameter
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const tabParam = urlParams.get('tab');
-    if (tabParam && ['overview', 'tenant', 'device'].includes(tabParam)) {
-      setActiveTab(tabParam as 'overview' | 'tenant' | 'device');
-    }
-  }, []);
   const [assigningTenant, setAssigningTenant] = useState(false);
 
-  useEffect(() => {
-    const loadBoundDeviceGroups = async () => {
-      if (!canManageUnits || !unit?.facility_id || !unit.blulok_device?.id) {
-        setBoundDeviceGroupNames([]);
-        return;
-      }
-
-      try {
-        const groupsResponse = await apiService.getDeviceGroups(unit.facility_id);
-        const groups = groupsResponse.data || [];
-        const details = await Promise.all(groups.map((group) => apiService.getDeviceGroup(group.id)));
-        const names = details
-          .filter((detail) => (detail.data.members || []).some((member) => member.device_id === unit.blulok_device?.id))
-          .map((detail) => detail.data.name);
-        setBoundDeviceGroupNames(names);
-      } catch (loadError) {
-        console.error('Failed to load bound device groups:', loadError);
-        setBoundDeviceGroupNames([]);
-      }
-    };
-
-    loadBoundDeviceGroups().catch(() => undefined);
-  }, [canManageUnits, unit?.facility_id, unit?.blulok_device?.id]);
   const [removingTenant, setRemovingTenant] = useState<string | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedPrimaryTenant, setSelectedPrimaryTenant] = useState<string>('');
@@ -183,6 +133,8 @@ export default function UnitDetailsPage() {
   const [showAddSharedAccess, setShowAddSharedAccess] = useState(false);
   const [showPrimaryTenantChange, setShowPrimaryTenantChange] = useState(false);
   const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
+  const [accessGroups, setAccessGroups] = useState<UnitAccessGroupRef[]>([]);
+  const [activeTab, setActiveTab] = useState<UnitDetailsTab>(() => getUnitTabFromSearch(location.search));
   const unitLockStatusRef = useRef<string | undefined>(undefined);
   const { facilities: globalFacilities, selectedFacility } = useGlobalFacility();
   const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
@@ -198,10 +150,44 @@ export default function UnitDetailsPage() {
   }, [unitId, unit?.blulok_device?.lock_status, syncLockStatus]);
 
   useEffect(() => {
+    setActiveTab(getUnitTabFromSearch(location.search));
+  }, [location.search]);
+
+  useEffect(() => {
     if (unitId) {
       loadUnitDetails();
     }
   }, [unitId]);
+
+  useEffect(() => {
+    const loadAccessGroups = async () => {
+      if (!unit?.facility_id || !unit?.blulok_device?.id || !unitId) {
+        setAccessGroups(unit?.access_groups || []);
+        return;
+      }
+
+      try {
+        const refs = await loadAccessGroupRefsForBlulokLock(
+          unit.facility_id,
+          unit.blulok_device.id,
+          unitId,
+        );
+        setAccessGroups(refs);
+      } catch (error) {
+        console.error('Failed to load unit access groups:', error);
+        setAccessGroups(unit.access_groups || []);
+      }
+    };
+
+    void loadAccessGroups();
+  }, [unit?.facility_id, unit?.blulok_device?.id, unitId, unit?.access_groups]);
+
+  const handleTabChange = (tab: UnitDetailsTab) => {
+    setActiveTab(tab);
+    replaceSearchParams(navigate, location, (params) => {
+      params.set('tab', tab);
+    });
+  };
 
   const mergeBlulokFromSnapshots = useCallback((rows: LockDeviceSnapshot[]) => {
     if (rows.length === 0) return;
@@ -365,27 +351,8 @@ export default function UnitDetailsPage() {
     });
   };
 
-  const tabs = [
-    { key: 'overview', label: 'Overview', icon: HomeIcon },
-    { key: 'tenant', label: 'Tenant', icon: UserIcon },
-    { key: 'device', label: 'Device', icon: CpuChipIcon },
-  ];
-
   if (loading) {
-    return (
-      <DetailsPageShell>
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-6"></div>
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <div className="space-y-4">
-              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
-              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
-              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
-            </div>
-          </div>
-        </div>
-      </DetailsPageShell>
-    );
+    return <DetailsPageLoading />;
   }
 
   if (error || !unit) {
@@ -400,6 +367,22 @@ export default function UnitDetailsPage() {
   }
 
   const StatusIcon = statusIcons[unit.status];
+  const sharedTenantCount = unit.shared_tenants?.length ?? 0;
+
+  const unitTabs = [
+    { key: 'overview', label: 'Overview' },
+    {
+      key: 'tenant',
+      label: 'Tenant & Sharing',
+      badge:
+        sharedTenantCount > 0 ? (
+          <span className={detailsTabCountBadgeClass}>
+            {sharedTenantCount}
+          </span>
+        ) : undefined,
+    },
+    { key: 'device', label: 'Device' },
+  ];
 
   return (
     <DetailsPageShell>
@@ -408,23 +391,18 @@ export default function UnitDetailsPage() {
         backLabel={backLabel}
         title={`Unit ${unit.unit_number}`}
         subtitle={<span className="capitalize">{unit.unit_type}</span>}
-        media={
-          <div className="p-3 bg-gray-100 dark:bg-gray-700 rounded-xl shrink-0">
-            <StatusIcon className="h-8 w-8 text-gray-500 dark:text-gray-400" />
-          </div>
-        }
         meta={
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               to={`/facilities/${unit.facility_id}`}
               state={withReturnPath(location)}
-              className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+              className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
-              <BuildingOfficeIcon className="h-4 w-4 mr-1.5" />
+              <BuildingOfficeIcon className="mr-1 h-3.5 w-3.5" />
               {unit.facility_name}
             </Link>
-            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColors[unit.status]}`}>
-              <StatusIcon className="h-4 w-4 mr-2" />
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[unit.status]}`}>
+              <StatusIcon className="mr-1 h-3.5 w-3.5" />
               {unit.status}
             </span>
           </div>
@@ -441,13 +419,11 @@ export default function UnitDetailsPage() {
                       !isLockTransitionPending(unit.blulok_device.lock_status))
                   }
                   onClick={() => void handleRemoteUnlock()}
-                  className={`inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                    isLockTransitionPending(unit.blulok_device.lock_status) || isSubmitting(unitId)
-                      ? 'bg-blue-600 text-white animate-pulse'
-                      : canRequestRemoteUnlock(unit.blulok_device.lock_status)
-                        ? 'bg-green-600 text-white hover:bg-green-700'
-                        : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
-                  }`}
+                  className={detailsUnlockButtonClass({
+                    pending:
+                      isLockTransitionPending(unit.blulok_device.lock_status) || isSubmitting(unitId),
+                    canUnlock: canRequestRemoteUnlock(unit.blulok_device.lock_status),
+                  })}
                 >
                   {isLockTransitionPending(unit.blulok_device.lock_status) || isSubmitting(unitId)
                     ? 'Unlocking…'
@@ -458,7 +434,7 @@ export default function UnitDetailsPage() {
               )}
               <button
                 onClick={() => setShowEditModal(true)}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                className={detailsBtnSecondarySm}
               >
                 <PencilIcon className="h-4 w-4 mr-2" />
                 Edit Unit
@@ -469,626 +445,60 @@ export default function UnitDetailsPage() {
       />
 
       <DetailsTabNav
-        tabs={tabs}
+        tabs={unitTabs}
         activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as 'overview' | 'tenant' | 'device')}
+        onChange={(key) => handleTabChange(key as UnitDetailsTab)}
       />
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-visible">
-          <div className="p-6">
-            {/* Overview Tab */}
-            {activeTab === 'overview' && (
-              <div className="space-y-8">
-                {/* Basic Information */}
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Basic Information</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Unit Number</label>
-                  <p className="mt-1 text-sm text-gray-900 dark:text-white">{unit.unit_number}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Unit Type</label>
-                  <p className="mt-1 text-sm text-gray-900 dark:text-white capitalize">{unit.unit_type}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Unit Status</label>
-                  <div className="mt-1">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${unit.primary_tenant ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'}`}>
-                      {unit.primary_tenant ? 'Occupied' : 'Unoccupied'}
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Device Status</label>
-                  <div className="mt-1">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${unit.blulok_device ? deviceStatusColors[unit.blulok_device.device_status as keyof typeof deviceStatusColors] : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'}`}>
-                      {unit.blulok_device ? (
-                        <>
-                          {unit.blulok_device.device_status}
-                          {unit.blulok_device.lock_status && (
-                            <span className="ml-1">
-                              ({unit.blulok_device.lock_status})
-                            </span>
-                          )}
-                        </>
-                      ) : 'No Device'}
-                    </span>
-                  </div>
-                </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Facility</label>
-                      <p className="mt-1 text-sm text-gray-900 dark:text-white">
-                        <Link
-                          to={`/facilities/${unit.facility_id}`}
-                          state={withReturnPath(location)}
-                          className="text-primary-600 hover:text-primary-500 dark:text-primary-400"
-                        >
-                          {unit.facility_name}
-                        </Link>
-                      </p>
-                </div>
-              </div>
-            </div>
-
-                {/* Sync Information */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Last Updated</label>
-                  <p className="mt-1 text-sm text-gray-900 dark:text-white">
-                    Added manually on {formatDate(unit.created_at)}
-                  </p>
-                </div>
-
-                {/* Description */}
-                {unit.description && (
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Description</h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">{unit.description}</p>
-                  </div>
-                )}
-
-                {/* Features */}
-                {unit.features && unit.features.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Features</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {unit.features.map((feature, index) => (
-                        <span
-                          key={index}
-                          className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400"
-                        >
-                          {feature}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Device Status */}
-                {unit.blulok_device && (
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Device Status</h3>
-                    <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Device Serial</label>
-                    <p className="mt-1 text-sm text-gray-900 dark:text-white font-mono">{unit.blulok_device.device_serial}</p>
-                  </div>
-                  <div>
-                          <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Lock Status</label>
-                    <div className="mt-1">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${lockStatusColors[unit.blulok_device.lock_status] || lockStatusColors.unknown}`}>
-                              {unit.blulok_device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : <LockOpenIcon className="h-3 w-3 mr-1" />}
-                              {unit.blulok_device.lock_status}
-                      </span>
-                    </div>
-                  </div>
-                  <div>
-                          <label className="block text-sm font-medium text-gray-500 dark:text-gray-400">Device Status</label>
-                    <div className="mt-1">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${deviceStatusColors[unit.blulok_device.device_status as keyof typeof deviceStatusColors]}`}>
-                              {unit.blulok_device.device_status === 'online' ? <CheckCircleIcon className="h-3 w-3 mr-1" /> : <ExclamationTriangleIcon className="h-3 w-3 mr-1" />}
-                              {unit.blulok_device.device_status}
-                      </span>
-                    </div>
-                  </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-              </div>
-            )}
-
-            {/* Tenant Tab */}
-            {activeTab === 'tenant' && (
-              <div className="space-y-8">
-                {/* Primary Tenant */}
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white">Primary Tenant</h3>
-                    {canChangePrimaryTenant && !showPrimaryTenantChange && (
-                      <button
-                        onClick={() => setShowPrimaryTenantChange(true)}
-                        className="inline-flex items-center px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                      >
-                        <PencilIcon className="h-4 w-4 mr-1" />
-                        {unit.primary_tenant ? 'Change Primary' : 'Assign Primary'}
-                      </button>
-                    )}
-                  </div>
-
-                  {unit.primary_tenant ? (
-                    <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-6">
-                      <div className="flex items-center space-x-4">
-                        <div className="flex-shrink-0">
-                          <div className="w-12 h-12 bg-primary-500 rounded-full flex items-center justify-center">
-                            <span className="text-white font-medium text-lg">
-                              {unit.primary_tenant.first_name[0]}{unit.primary_tenant.last_name[0]}
-                            </span>
-                          </div>
-                        </div>
-                  <div>
-                          <h4 className="text-lg font-medium text-gray-900 dark:text-white">
-                            {unit.primary_tenant.first_name} {unit.primary_tenant.last_name}
-                          </h4>
-                          <p className="text-sm text-gray-600 dark:text-gray-400">{unit.primary_tenant.email}</p>
-                  </div>
-                </div>
-              </div>
-                  ) : (
-                    <div className="text-center py-12 bg-gray-50 dark:bg-gray-700 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600">
-                      <UserIcon className="mx-auto h-12 w-12 text-gray-400" />
-                      <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No primary tenant</h3>
-                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">This unit is currently unassigned.</p>
-                    </div>
-                  )}
-
-                  {/* Change Primary Tenant Form */}
-                  {canChangePrimaryTenant && showPrimaryTenantChange && (
-                    <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                      <div className="flex items-start justify-between mb-3">
-                  <div>
-                          <h4 className="text-sm font-medium text-blue-900 dark:text-blue-200">
-                            {unit.primary_tenant ? 'Change Primary Tenant' : 'Assign Primary Tenant'}
-                          </h4>
-                          <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                            Search for a tenant below and click Apply to {unit.primary_tenant ? 'change' : 'assign'} the primary tenant.
-                    </p>
-                  </div>
-                        <button
-                          onClick={() => {
-                            setShowPrimaryTenantChange(false);
-                            setSelectedPrimaryTenant('');
-                          }}
-                          className="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100"
-                        >
-                          <XMarkIcon className="h-5 w-5" />
-                        </button>
-                      </div>
-                      <div className="relative">
-                        <UserFilter
-                          value={selectedPrimaryTenant}
-                          onChange={setSelectedPrimaryTenant}
-                          placeholder="Search for tenant..."
-                          className="w-full"
-                          facilityId={unit.facility_id}
-                          roleFilter="tenant"
-                        />
-                      </div>
-                      <div className="mt-3 flex justify-end space-x-2">
-                        <button
-                          onClick={() => {
-                            setShowPrimaryTenantChange(false);
-                            setSelectedPrimaryTenant('');
-                          }}
-                          className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (selectedPrimaryTenant) {
-                              handleAssignTenant(selectedPrimaryTenant, true);
-                              setShowPrimaryTenantChange(false);
-                              setSelectedPrimaryTenant('');
-                            }
-                          }}
-                          disabled={!selectedPrimaryTenant || assigningTenant}
-                          className="px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {assigningTenant ? 'Applying...' : 'Apply Change'}
-                        </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-                {/* Shared Keys/Access */}
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="text-lg font-medium text-gray-900 dark:text-white">Shared Access</h3>
-                      {canManageSharedAccess && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Share access with up to 4 additional tenants
-                        </p>
-                      )}
-                    </div>
-                    {canManageSharedAccess && unit.primary_tenant && (!unit.shared_tenants || unit.shared_tenants.length < 4) && (
-                <button
-                        onClick={() => {
-                          setSelectedSharedTenant('');
-                          setShowAddSharedAccess(true);
-                        }}
-                        className="inline-flex items-center px-3 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 transition-colors"
-                >
-                        <PlusIcon className="h-4 w-4 mr-2" />
-                        Add Shared Access
-                </button>
-                    )}
-                  </div>
-
-                  {/* Inline Add Shared Access form (moved above list) */}
-                  {canManageSharedAccess && unit.primary_tenant && showAddSharedAccess && (!unit.shared_tenants || unit.shared_tenants.length < 4) && (
-                    <div className="mt-3 mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h4 className="text-sm font-medium text-green-900 dark:text-green-200 flex items-center">
-                            <PlusIcon className="h-4 w-4 mr-1" />
-                            Add Shared Access
-                          </h4>
-                          <p className="text-xs text-green-700 dark:text-green-300 mt-1">
-                            Search for a tenant below and click Add to grant them access.
-                            {unit.shared_tenants && ` (${4 - unit.shared_tenants.length} slot${4 - unit.shared_tenants.length !== 1 ? 's' : ''} remaining)`}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setShowAddSharedAccess(false);
-                            setSelectedSharedTenant('');
-                          }}
-                          className="text-green-700 dark:text-green-300 hover:text-green-900 dark:hover:text-green-100"
-                        >
-                          <XMarkIcon className="h-5 w-5" />
-                        </button>
-                      </div>
-                      <div className="relative z-10">
-                        <UserFilter
-                          value={selectedSharedTenant}
-                          onChange={setSelectedSharedTenant}
-                          placeholder="Search for tenant..."
-                          className="w-full"
-                          facilityId={unit.facility_id}
-                          roleFilter="tenant"
-                          excludeUserIds={[authState.user?.id || '']}
-                        />
-                      </div>
-                      {selectedSharedTenant && (
-                        <div className="mt-3 flex justify-end space-x-2">
-                          <button
-                            onClick={() => {
-                              setShowAddSharedAccess(false);
-                              setSelectedSharedTenant('');
-                            }}
-                            className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={async () => {
-                              await handleAssignTenant(selectedSharedTenant, false);
-                              setShowAddSharedAccess(false);
-                              setSelectedSharedTenant('');
-                            }}
-                            disabled={assigningTenant}
-                            className="px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          >
-                            {assigningTenant ? 'Adding...' : 'Add Access'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {unit.shared_tenants && unit.shared_tenants.length > 0 ? (
-                    <div className="space-y-3">
-                      {unit.shared_tenants.map((tenant, index) => (
-                        <div key={index} className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-3">
-                              <div className="flex-shrink-0">
-                                <div className="w-10 h-10 bg-purple-500 rounded-full flex items-center justify-center">
-                                  <span className="text-white font-medium text-sm">
-                                    {tenant.first_name[0]}{tenant.last_name[0]}
-                                  </span>
-                                </div>
-                              </div>
-                              <div>
-                                <p className="text-sm font-medium text-gray-900 dark:text-white">
-                                  {tenant.first_name} {tenant.last_name}
-                                </p>
-                                <p className="text-xs text-gray-600 dark:text-gray-400">{tenant.email}</p>
-                              </div>
-                            </div>
-                            {canManageSharedAccess && (
-                  <button
-                                onClick={() => handleRemoveTenant(tenant.id)}
-                                disabled={removingTenant === tenant.id}
-                                className="inline-flex items-center px-2 py-1 border border-red-300 dark:border-red-600 rounded text-xs font-medium text-red-700 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                              >
-                                {removingTenant === tenant.id ? (
-                                  <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <>
-                                    <XMarkIcon className="h-4 w-4 mr-1" />
-                                    Remove
-                                  </>
-                                )}
-                  </button>
-                )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 bg-gray-50 dark:bg-gray-700 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600">
-                      <KeyIcon className="mx-auto h-10 w-10 text-gray-400" />
-                      <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No shared access</h3>
-                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                        {canManageSharedAccess 
-                          ? 'No additional tenants have access to this unit.' 
-                          : 'Only the primary tenant can access this unit.'}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Removed bottom add form in favor of inline form above */}
-
-                  {/* Max limit reached message */}
-                  {canManageSharedAccess && unit.primary_tenant && unit.shared_tenants && unit.shared_tenants.length >= 4 && (
-                    <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                      <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                        Maximum shared access limit reached (4 tenants). Remove a tenant to add another.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* No primary tenant message */}
-                  {!unit.primary_tenant && canManageSharedAccess && (
-                    <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                      <p className="text-sm text-blue-800 dark:text-blue-200">
-                        Assign a primary tenant before adding shared access.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Device Tab */}
-            {activeTab === 'device' && (
-              <div className="space-y-8">
-                {unit.blulok_device ? (
-                  <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center">
-                        <div className="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-lg mr-4">
-                          <LockClosedIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-                        </div>
-                        <div>
-                          <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                            Unit {unit.unit_number}
-                          </h3>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">{unit.blulok_device.device_serial}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        {(() => {
-                          const StatusIcon = deviceStatusIcons[unit.blulok_device.device_status as keyof typeof deviceStatusIcons] || ExclamationTriangleIcon;
-                          return (
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${deviceStatusColors[unit.blulok_device.device_status as keyof typeof deviceStatusColors]}`}>
-                              <StatusIcon className="h-3 w-3 mr-1" />
-                              {unit.blulok_device.device_status}
-                            </span>
-                          );
-                        })()}
-                      </div>
-                    </div>
-
-                    {unit.primary_tenant && (
-                      <div className="flex items-center text-sm text-gray-600 dark:text-gray-400 mb-4">
-                        <UserIcon className="h-4 w-4 mr-2" />
-                        <span>
-                          {unit.primary_tenant.first_name} {unit.primary_tenant.last_name}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="mb-4">
-                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Device Groups</p>
-                      {boundDeviceGroupNames.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {boundDeviceGroupNames.map((groupName) => (
-                            <span
-                              key={groupName}
-                              className="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300"
-                            >
-                              {groupName}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          This bound device is not in any group.
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${lockStatusColors[unit.blulok_device.lock_status] || lockStatusColors.unknown}`}>
-                          {unit.blulok_device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : 
-                           unit.blulok_device.lock_status === 'unlocked' ? <LockOpenIcon className="h-3 w-3 mr-1" /> :
-                           <ExclamationTriangleIcon className="h-3 w-3 mr-1" />}
-                          {unit.blulok_device.lock_status}
-                        </span>
-                      </div>
-                      {unit.blulok_device.battery_level !== null && unit.blulok_device.battery_level !== undefined && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-500 dark:text-gray-400">Battery Level</span>
-                          <span className={`font-medium ${
-                            unit.blulok_device.battery_level < 20 ? 'text-red-500' : 
-                            unit.blulok_device.battery_level < 50 ? 'text-yellow-500' : 'text-green-500'
-                          }`}>
-                            {unit.blulok_device.battery_level}%
-                          </span>
-                        </div>
-                      )}
-                      {unit.blulok_device.firmware_version && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-500 dark:text-gray-400">Firmware Version</span>
-                          <span className="font-medium text-gray-900 dark:text-white">{unit.blulok_device.firmware_version}</span>
-                        </div>
-                      )}
-                      {unit.blulok_device.signal_strength !== null && unit.blulok_device.signal_strength !== undefined && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-500 dark:text-gray-400">Signal Strength</span>
-                          <span className={`font-medium ${
-                            unit.blulok_device.signal_strength >= -50 ? 'text-green-500' :
-                            unit.blulok_device.signal_strength >= -70 ? 'text-yellow-500' : 'text-red-500'
-                          }`}>
-                            {unit.blulok_device.signal_strength} dBm
-                            <span className="text-xs ml-1">
-                              ({unit.blulok_device.signal_strength >= -50 ? 'Excellent' :
-                                unit.blulok_device.signal_strength >= -70 ? 'Good' : 'Poor'})
-                            </span>
-                          </span>
-                        </div>
-                      )}
-                      {unit.blulok_device.temperature !== null && unit.blulok_device.temperature !== undefined && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-500 dark:text-gray-400">Temperature</span>
-                          <span className={`font-medium ${
-                            Number(unit.blulok_device.temperature) < 0 || Number(unit.blulok_device.temperature) > 45 ? 'text-red-500' :
-                            Number(unit.blulok_device.temperature) < 10 || Number(unit.blulok_device.temperature) > 35 ? 'text-yellow-500' : 'text-green-500'
-                          }`}>
-                            {Number(unit.blulok_device.temperature).toFixed(1)}°C
-                          </span>
-                        </div>
-                      )}
-                      {(unit.blulok_device.error_code || unit.blulok_device.error_message) && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-500 dark:text-gray-400">Error</span>
-                          <span className="font-medium text-red-500">
-                            {unit.blulok_device.error_code && <span className="font-mono">{unit.blulok_device.error_code}: </span>}
-                            {unit.blulok_device.error_message || 'Unknown error'}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-500 dark:text-gray-400">Facility</span>
-                        <span className="font-medium text-gray-900 dark:text-white">{unit.facility_name}</span>
-                      </div>
-                      {unit.blulok_device.last_seen && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-500 dark:text-gray-400">Last Seen</span>
-                          <span className="font-medium text-gray-900 dark:text-white">
-                            {formatDateTime(unit.blulok_device.last_seen)}
-                          </span>
-                        </div>
-                      )}
-                      {unit.blulok_device.last_activity && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-500 dark:text-gray-400">Last Activity</span>
-                          <span className="font-medium text-gray-900 dark:text-white">
-                            {formatDateTime(unit.blulok_device.last_activity)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
-                      <div className="flex items-center justify-between space-x-2">
-                        <div className="flex space-x-3">
-                          <Link
-                            to={`/devices/${unit.blulok_device.id}`}
-                            state={withReturnPath(location)}
-                            className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-                          >
-                            <CpuChipIcon className="h-4 w-4 mr-1" />
-                            View Device Details
-                            <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-                          </Link>
-                        </div>
-                        {canManageUnits && (
-                          <div className="flex items-center space-x-2">
-                            <button
-                              onClick={() => setShowDeviceAssignmentModal(true)}
-                              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-900/20 dark:text-gray-300 dark:hover:bg-gray-800"
-                            >
-                              <ArrowPathIcon className="h-4 w-4 mr-2" />
-                              Change Device
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleRemoteUnlock()}
-                              disabled={
-                                isSubmitting(unitId) ||
-                                (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
-                                  !isLockTransitionPending(unit.blulok_device.lock_status))
-                              }
-                              className={`inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                                isLockTransitionPending(unit.blulok_device.lock_status) || isSubmitting(unitId)
-                                  ? 'bg-blue-600 text-white animate-pulse'
-                                  : canRequestRemoteUnlock(unit.blulok_device.lock_status)
-                                    ? 'bg-green-600 hover:bg-green-700 text-white'
-                                    : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
-                              }`}
-                            >
-                              {isLockTransitionPending(unit.blulok_device.lock_status) || isSubmitting(unitId)
-                                ? 'Unlocking…'
-                                : canRequestRemoteUnlock(unit.blulok_device.lock_status)
-                                  ? 'Unlock'
-                                  : 'Unlocked'}
-                            </button>
-                            <button
-                              onClick={() => setShowShareModal(true)}
-                              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-primary-600 text-white hover:bg-primary-700"
-                            >
-                              Share Key
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Device Assignment</h3>
-                    <div className="text-center py-12">
-                      <CpuChipIcon className="mx-auto h-12 w-12 text-gray-400" />
-                      <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No device assigned</h3>
-                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">This unit does not have a BluLok device assigned to it.</p>
-                      {canManageUnits && (
-                        <div className="mt-6">
-                          <button 
-                            onClick={() => setShowDeviceAssignmentModal(true)}
-                            className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors"
-                          >
-                            <PlusIcon className="h-4 w-4 mr-2" />
-                            Assign Device
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                </div>
-            )}
-          </div>
-      </div>
+      <UnitDetailsOverview
+        activeTab={activeTab}
+        unit={unit}
+        accessGroups={accessGroups}
+        location={location}
+        unitId={unitId}
+        statusColors={statusColors}
+        lockStatusColors={lockStatusColors}
+        deviceStatusColors={deviceStatusColors}
+        deviceStatusIcons={deviceStatusIcons}
+        canManageUnits={canManageUnits}
+        canChangePrimaryTenant={canChangePrimaryTenant}
+        canManageSharedAccess={canManageSharedAccess}
+        assigningTenant={assigningTenant}
+        removingTenant={removingTenant}
+        showPrimaryTenantChange={showPrimaryTenantChange}
+        showAddSharedAccess={showAddSharedAccess}
+        selectedPrimaryTenant={selectedPrimaryTenant}
+        selectedSharedTenant={selectedSharedTenant}
+        currentUserId={authState.user?.id}
+        isSubmittingUnlock={Boolean(unitId && isSubmitting(unitId))}
+        onAssignPrimary={() => {
+          if (selectedPrimaryTenant) {
+            void handleAssignTenant(selectedPrimaryTenant, true);
+            setShowPrimaryTenantChange(false);
+            setSelectedPrimaryTenant('');
+          }
+        }}
+        onRemoveTenant={(tenantId) => void handleRemoveTenant(tenantId)}
+        onRemoteUnlock={() => void handleRemoteUnlock()}
+        onAssignDevice={() => setShowDeviceAssignmentModal(true)}
+        onChangeDevice={() => setShowDeviceAssignmentModal(true)}
+        onSharedAccessChanged={() => void loadUnitDetails()}
+        onGoToTenantTab={() => {
+          handleTabChange('tenant');
+          if (canChangePrimaryTenant) {
+            setShowPrimaryTenantChange(true);
+          }
+        }}
+        setShowPrimaryTenantChange={setShowPrimaryTenantChange}
+        setShowAddSharedAccess={setShowAddSharedAccess}
+        setSelectedPrimaryTenant={setSelectedPrimaryTenant}
+        setSelectedSharedTenant={setSelectedSharedTenant}
+        onAssignShared={async () => {
+          await handleAssignTenant(selectedSharedTenant, false);
+          setShowAddSharedAccess(false);
+          setSelectedSharedTenant('');
+        }}
+      />
 
       {/* Edit Unit Modal */}
       <EditUnitModal
@@ -1111,19 +521,6 @@ export default function UnitDetailsPage() {
         }}
         unit={unit}
       />
-
-      {/* Share Key Modal */}
-      {unit && (
-        <ShareKeyModal
-          isOpen={showShareModal}
-          unitId={unit.id}
-          onClose={() => setShowShareModal(false)}
-          onSuccess={() => {
-            setShowShareModal(false);
-            // Optional: refresh any shared state
-          }}
-        />
-      )}
     </DetailsPageShell>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useLocation, useNavigate, type Location } from 'react-router-dom';
+import { useLocation, useNavigate, type Location, type NavigateFunction } from 'react-router-dom';
 import { getBackButtonLabel } from '@/utils/back-navigation.utils';
 
 type BackNavigationState = {
@@ -27,6 +27,20 @@ export const withReturnPath = <T extends Record<string, unknown> = Record<string
   fromPath: getCurrentPath(location),
   returnState: location.state,
 });
+
+/** Replace URL search params without clearing location.state (keeps back-button context). */
+export function replaceSearchParams(
+  navigate: NavigateFunction,
+  location: Pick<Location, 'pathname' | 'search' | 'state'>,
+  mutate: (params: URLSearchParams) => void,
+): void {
+  const params = new URLSearchParams(location.search);
+  mutate(params);
+  navigate(
+    { pathname: location.pathname, search: params.toString() },
+    { replace: true, state: location.state },
+  );
+}
 
 export const useBackNavigation = (fallbackPath: string, replaceFallback: boolean = true) => {
   const navigate = useNavigate();

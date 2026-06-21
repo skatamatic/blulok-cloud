@@ -862,7 +862,7 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
       const denylistTargets = unitIds.length === 0
         ? []
-        : await AccessControlZoneAccessService.getDenylistTargetsForUnits(unitIds);
+        : await AccessControlZoneAccessService.getDenylistTargetsForUserRevocation(unitIds, id);
 
       if (denylistTargets.length === 0) {
         return; // No devices to deny

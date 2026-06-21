@@ -14,7 +14,7 @@ jest.mock('@/services/denylist-optimization.service', () => ({
 }));
 jest.mock('@/services/access-control-zone-access.service', () => ({
   AccessControlZoneAccessService: {
-    getDenylistTargetsForUnits: jest.fn().mockResolvedValue([{ device_id: 'device-1', device_type: 'blulok' }]),
+    getDenylistRemovalTargetsForUserGrant: jest.fn().mockResolvedValue([{ device_id: 'device-1', device_type: 'blulok' }]),
     getDeviceFacilityIds: jest.fn().mockResolvedValue(new Map([['device-1', 'facility-1']])),
   },
 }));

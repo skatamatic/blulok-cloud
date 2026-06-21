@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AccessCodeManagementTab } from '@/components/AccessCodes/AccessCodeManagementTab';
 import { AccessControlDevice } from '@/types/facility.types';
 
@@ -37,20 +37,14 @@ jest.mock('@/services/api.service', () => ({
 }));
 
 describe('AccessCodeManagementTab', () => {
-  const selectMainEntryGroup = async (waitForSetup = true) => {
-    const groupInput = await screen.findByPlaceholderText('Select access-code group...');
-    fireEvent.click(groupInput);
-    const options = await screen.findAllByRole('button', { name: /access-code group/i });
-    fireEvent.click(options[0]);
-    await waitFor(() => {
-      expect(mockGetDeviceGroup).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(screen.queryByText(/Create an access-code group in Device Groups first/i)).not.toBeInTheDocument();
-    });
+  const selectGroupCard = async (groupName: string, waitForSetup = true) => {
+    const card = await screen.findByRole('button', { name: new RegExp(`select ${groupName} access group`, 'i') });
+    if (card.getAttribute('aria-pressed') !== 'true') {
+      fireEvent.click(card);
+    }
     if (waitForSetup) {
       await waitFor(() => {
-        expect(screen.getByText('Group Access Code Setup')).toBeInTheDocument();
+        expect(screen.getAllByPlaceholderText('6 digits').length).toBeGreaterThan(0);
       });
     }
   };
@@ -125,16 +119,15 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup(false);
+    await selectGroupCard('Main Entry Group', false);
 
     await waitFor(() => {
       expect(screen.getByText(
-        /this group cannot be setup because it has no access control devices in it, add at least one device to configure it/i,
+        /has no keypad-enabled access-control devices/i,
       )).toBeInTheDocument();
-      expect(screen.queryByText('Group Access Code Setup')).not.toBeInTheDocument();
-      expect(screen.queryByText('Devices in This Group')).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('6 digits')).not.toBeInTheDocument();
     });
   });
 
@@ -187,11 +180,11 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Front Entry');
     await waitFor(() => {
-      expect(screen.getByText('Devices in This Group')).toBeInTheDocument();
+      expect(screen.getByText('Keypad device sync')).toBeInTheDocument();
       expect(screen.getAllByText('Main Gate').length).toBeGreaterThan(0);
     });
   });
@@ -216,11 +209,11 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Main Entry Group');
 
-    fireEvent.change(screen.getByPlaceholderText('6 digits'), { target: { value: '123456' } });
+    fireEvent.change(screen.getAllByPlaceholderText('6 digits')[0], { target: { value: '123456' } });
     fireEvent.click(screen.getAllByRole('button', { name: /^set$/i })[0]);
     fireEvent.click(screen.getByRole('button', { name: /set & push/i }));
 
@@ -256,9 +249,9 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Main Entry Group');
 
     fireEvent.click(screen.getByRole('button', { name: /re-generate group codes/i }));
     fireEvent.click(screen.getByRole('button', { name: /regenerate & push/i }));
@@ -300,9 +293,9 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Main Entry Group');
 
     fireEvent.click(screen.getByRole('button', { name: /re-generate group codes/i }));
     fireEvent.click(screen.getByRole('button', { name: /regenerate & push/i }));
@@ -359,9 +352,9 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Main Entry Group');
 
     fireEvent.click(screen.getByRole('button', { name: /re-generate group codes/i }));
     fireEvent.click(screen.getByRole('button', { name: /regenerate & push/i }));
@@ -414,13 +407,33 @@ describe('AccessCodeManagementTab', () => {
       });
     mockGetEffectiveAccessCodes
       .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({
         data: [
           {
             device_id: 'ac-1',
             device_name: 'Main Gate',
             device_serial: 'SN-test',
-        device_type: 'gate',
+            device_type: 'gate',
+            location_description: 'Front entry',
+            relay_channel: 1,
+            code: '112233',
+            valid_until: new Date(Date.now() + 3600_000).toISOString(),
+            source_scope_type: 'device_group',
+            source_scope_id: 'group-1',
+            source_scope_name: 'Main Entry Group',
+            schedule_id: 'sched-1',
+            schedule_name: 'Daytime',
+          },
+        ],
+      })
+      .mockResolvedValue({
+        data: [
+          {
+            device_id: 'ac-1',
+            device_name: 'Main Gate',
+            device_serial: 'SN-test',
+            device_type: 'gate',
             location_description: 'Front entry',
             relay_channel: 1,
             code: '112233',
@@ -453,14 +466,15 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Main Entry Group');
     await waitFor(() => {
       expect(screen.getByText('Daytime')).toBeInTheDocument();
-      expect(screen.getByText(/Users: 4/)).toBeInTheDocument();
     });
-    expect(screen.queryByText('112233')).not.toBeInTheDocument();
+    const scheduleSection = screen.getByText('Schedule codes').closest('section');
+    expect(within(scheduleSection as HTMLElement).getByText('4')).toBeInTheDocument();
+    expect(screen.queryAllByText('112233')).toHaveLength(0);
 
     fireEvent.click(screen.getByRole('button', { name: /re-generate group codes/i }));
     fireEvent.click(screen.getByRole('button', { name: /regenerate & push/i }));
@@ -472,7 +486,7 @@ describe('AccessCodeManagementTab', () => {
         scope_id: 'group-1',
       });
       expect(mockGetEffectiveAccessCodes.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(screen.getByText('112233')).toBeInTheDocument();
+      expect(screen.getAllByText('112233').length).toBeGreaterThan(0);
     });
   });
 
@@ -559,17 +573,18 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Main Entry Group');
     await waitFor(() => {
       expect(screen.getByText('Daytime')).toBeInTheDocument();
-      expect(screen.getByText(/Users: 12/)).toBeInTheDocument();
       expect(screen.getAllByText('654321').length).toBeGreaterThan(0);
     });
+    const scheduleSection = screen.getByText('Schedule codes').closest('section');
+    expect(within(scheduleSection as HTMLElement).getByText('12')).toBeInTheDocument();
   });
 
-  it('opens group dropdown on click and only filters when typing', async () => {
+  it('renders selectable group cards and switches selection', async () => {
     mockGetDeviceGroups.mockResolvedValue({
       data: [
         {
@@ -578,6 +593,8 @@ describe('AccessCodeManagementTab', () => {
           group_type: 'access_code',
           name: 'Main Entry Group',
           is_active: true,
+          is_default: false,
+          is_global_shared: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
@@ -587,11 +604,16 @@ describe('AccessCodeManagementTab', () => {
           group_type: 'access_code',
           name: 'Back Gate Group',
           is_active: true,
+          is_default: false,
+          is_global_shared: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
       ],
     });
+    mockGetDeviceGroup.mockImplementation(async (groupId: string) => ({
+      data: { id: groupId, members: [{ device_id: 'ac-1', device_type: 'access_control' }] },
+    }));
 
     const devices: AccessControlDevice[] = [
       {
@@ -611,14 +633,17 @@ describe('AccessCodeManagementTab', () => {
 
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
-    const groupInput = await screen.findByPlaceholderText('Select access-code group...');
-    fireEvent.click(groupInput);
-    expect(screen.getByRole('button', { name: /main entry group/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /back gate group/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /select main entry group access group/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /select back gate group access group/i })).toBeInTheDocument();
+    });
 
-    fireEvent.change(groupInput, { target: { value: 'Back' } });
-    expect(screen.getByRole('button', { name: /back gate group/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /main entry group/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /select back gate group access group/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /select back gate group access group/i })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByText('Keypad device sync')).toBeInTheDocument();
+    });
   });
 
   it('renders unknown push state badge for unexpected backend status', async () => {
@@ -651,11 +676,12 @@ describe('AccessCodeManagementTab', () => {
     render(<AccessCodeManagementTab facilityId="facility-1" devices={devices} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Access-Code Group Setup')).toBeInTheDocument();
+      expect(screen.getByText('Access Codes')).toBeInTheDocument();
     });
-    await selectMainEntryGroup();
+    await selectGroupCard('Main Entry Group');
     await waitFor(() => {
-      expect(screen.getByText(/Push state: unknown/i)).toBeInTheDocument();
+      expect(screen.getByText(/Gateway push: unknown/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Push: unknown/i).length).toBeGreaterThan(0);
     });
   });
 });

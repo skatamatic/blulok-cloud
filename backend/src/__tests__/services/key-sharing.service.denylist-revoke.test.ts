@@ -34,7 +34,7 @@ jest.mock('@/config/environment', () => ({
 }));
 jest.mock('@/services/access-control-zone-access.service', () => ({
   AccessControlZoneAccessService: {
-    getDenylistTargetsForUnits: jest.fn(),
+    getDenylistTargetsForUserRevocation: jest.fn(),
     getDeviceFacilityIds: jest.fn(),
   },
 }));
@@ -74,7 +74,7 @@ describe('KeySharingService.revokeShare denylist targeting', () => {
     mockGateway = { unicastToFacility: jest.fn() };
     (GatewayEventsService.getInstance as jest.Mock).mockReturnValue(mockGateway);
 
-    (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+    (AccessControlZoneAccessService.getDenylistTargetsForUserRevocation as jest.Mock).mockResolvedValue([
       { device_id: 'lock-1', device_type: 'blulok' },
       { device_id: 'ac-door-1', device_type: 'access_control' },
     ]);
@@ -97,7 +97,7 @@ describe('KeySharingService.revokeShare denylist targeting', () => {
       'admin-1',
     );
 
-    expect(AccessControlZoneAccessService.getDenylistTargetsForUnits).toHaveBeenCalledWith(['unit-1']);
+    expect(AccessControlZoneAccessService.getDenylistTargetsForUserRevocation).toHaveBeenCalledWith(['unit-1'], 'invitee-1');
     expect(mockDenylistModel.bulkCreate).toHaveBeenCalledWith([
       expect.objectContaining({
         device_id: 'lock-1',

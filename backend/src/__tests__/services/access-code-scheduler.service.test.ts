@@ -44,6 +44,11 @@ jest.mock('@/services/access-code.service', () => ({
 
 import { AccessCodeSchedulerService } from '@/services/access-code-scheduler.service';
 
+const makeGroupsQuery = (groupRows: Array<{ id: string; facility_id: string }>) => ({
+  select: jest.fn().mockReturnThis(),
+  where: jest.fn().mockResolvedValue(groupRows),
+});
+
 describe('AccessCodeSchedulerService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -59,11 +64,7 @@ describe('AccessCodeSchedulerService', () => {
         facility_id: 'fac-1',
       },
     ];
-    const groupsQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockResolvedValue(groupRows),
-    };
+    const groupsQuery = makeGroupsQuery(groupRows);
     getGroupConfig.mockResolvedValue({
       is_enabled: true,
       digit_count: 6,
@@ -99,11 +100,7 @@ describe('AccessCodeSchedulerService', () => {
         facility_id: 'fac-1',
       },
     ];
-    const groupsQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockResolvedValue(groupRows),
-    };
+    const groupsQuery = makeGroupsQuery(groupRows);
     getGroupConfig.mockResolvedValue({
       is_enabled: true,
       digit_count: 6,
@@ -169,11 +166,7 @@ describe('AccessCodeSchedulerService', () => {
 
   it('schedules one-minute retry when push delivery fails', async () => {
     const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
-    const groupsQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockResolvedValue(groupRows),
-    };
+    const groupsQuery = makeGroupsQuery(groupRows);
     const latestCodeQuery = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
@@ -236,11 +229,7 @@ describe('AccessCodeSchedulerService', () => {
 
   it('rotates due groups while gateway is offline and queues push delivery', async () => {
     const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
-    const groupsQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockResolvedValue(groupRows),
-    };
+    const groupsQuery = makeGroupsQuery(groupRows);
     const latestCodeQuery = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
@@ -274,11 +263,7 @@ describe('AccessCodeSchedulerService', () => {
 
   it('does not repeat offline rotation until interval elapses', async () => {
     const groupRows = [{ id: 'grp-1', facility_id: 'fac-1' }];
-    const groupsQuery = {
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockResolvedValue(groupRows),
-    };
+    const groupsQuery = makeGroupsQuery(groupRows);
     const latestCodeQuery = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),

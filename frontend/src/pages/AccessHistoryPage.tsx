@@ -8,6 +8,12 @@ import { withReturnPath } from '@/hooks/useBackNavigation';
 import { useHighlight } from '@/hooks/useHighlight';
 import { UnitFilter } from '@/components/Common/UnitFilter';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
+import {
+  filterDateFieldLabelClass,
+  filterDateRangeGridClass,
+  filterSelectClass,
+} from '@/components/Common/list-filters.styles';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
@@ -25,6 +31,7 @@ import {
   getAccessFailureDetail,
   getAccessLocationDisplay,
   getAccessLogMetadata,
+  getAccessLogUserLink,
   getAccessStatusDisplay,
   getAccessUserDisplay,
 } from '@/utils/access-history-display.utils';
@@ -573,45 +580,38 @@ export default function AccessHistoryPage() {
   const totalPages = Math.ceil(total / (filters.limit || 50));
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Access History
-          </h1>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Monitor and track all access events across your facilities
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
+    <div className="space-y-4">
+      <ListPageHeader
+        title="Access History"
+        subtitle="Monitor and track all access events across your facilities"
+        actions={
           <div className="relative" ref={exportDropdownRef}>
             <button
               onClick={() => setShowExportDropdown(!showExportDropdown)}
               disabled={loading}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {loading ? (
-                <div className="animate-spin rounded-full h-4 w-4 mr-2 border-b-2 border-gray-600 dark:border-gray-300"></div>
+                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-gray-600 dark:border-gray-300" />
               ) : (
-                <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+                <ArrowDownTrayIcon className="mr-2 h-4 w-4" />
               )}
               {loading ? 'Exporting...' : 'Export'}
-              <ChevronDownIcon className="h-4 w-4 ml-2" />
+              <ChevronDownIcon className="ml-2 h-4 w-4" />
             </button>
-            
+
             {showExportDropdown && (
-              <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 z-10">
+              <div className="absolute right-0 z-10 mt-2 w-48 rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
                 <div className="py-1">
                   <button
                     onClick={() => exportData('filtered')}
-                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
                   >
                     Export Current Filter
                   </button>
                   <button
                     onClick={() => exportData('all')}
-                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
                   >
                     Export All Data
                   </button>
@@ -619,8 +619,8 @@ export default function AccessHistoryPage() {
               </div>
             )}
           </div>
-        </div>
-      </div>
+        }
+      />
 
       {/* Filters */}
       <ExpandableFilters
@@ -632,17 +632,22 @@ export default function AccessHistoryPage() {
         hasActiveFilters={hasActiveFilters()}
         onClearFilters={clearFilters}
         sections={[
-          // Primary filters - always visible
           {
             title: 'Status',
-            icon: <CheckCircleIcon className="h-5 w-5" />,
+            icon: <CheckCircleIcon className="h-4 w-4" />,
             type: 'buttons',
+            span: 'full',
             options: [
               { key: 'all', label: 'All', color: 'primary' },
               { key: 'success', label: 'Success', color: 'green' },
-              { key: 'failed', label: 'Failed', color: 'red' }
+              { key: 'failed', label: 'Failed', color: 'red' },
             ],
-            selected: filters.success === undefined ? 'all' : filters.success === true ? 'success' : 'failed',
+            selected:
+              filters.success === undefined
+                ? 'all'
+                : filters.success === true
+                  ? 'success'
+                  : 'failed',
             onSelect: (value) => {
               if (value === 'all') {
                 handleFilterChange('success', undefined);
@@ -651,24 +656,24 @@ export default function AccessHistoryPage() {
               } else {
                 handleFilterChange('success', false);
               }
-            }
+            },
           },
           {
             title: 'Date Range',
-            icon: <CalendarIcon className="h-5 w-5" />,
-            type: 'select',
+            icon: <CalendarIcon className="h-4 w-4" />,
+            type: 'buttons',
+            span: 'full',
             options: [
-              { key: '', label: 'All Time' },
-              { key: 'today', label: 'Today' },
-              { key: 'week', label: 'This Week' },
-              { key: 'month', label: 'This Month' },
-              { key: 'custom', label: 'Custom Range' }
+              { key: '', label: 'All Time', color: 'primary' },
+              { key: 'today', label: 'Today', color: 'gray' },
+              { key: 'week', label: 'This Week', color: 'gray' },
+              { key: 'month', label: 'This Month', color: 'gray' },
+              { key: 'custom', label: 'Custom', color: 'gray' },
             ],
             selected: getCurrentDateRangeSelection(),
             onSelect: (value) => {
               if (value === 'custom') {
                 setIsCustomDateRange(true);
-                // Don't clear existing dates, let user modify them
               } else if (value === '') {
                 setIsCustomDateRange(false);
                 handleFilterChange('date_from', undefined);
@@ -697,109 +702,118 @@ export default function AccessHistoryPage() {
                     break;
                   }
                 }
-                
+
                 handleFilterChange('date_from', dateFrom);
                 handleFilterChange('date_to', dateTo);
               }
-            }
+            },
           },
-          // Additional filters for expanded view
-          ...(filtersExpanded ? [
-            {
-              title: 'Action',
-              icon: <KeyIcon className="h-5 w-5" />,
-              type: 'select' as const,
-              options: [
-                { key: '', label: 'All Actions' },
-                { key: 'unlock', label: 'Unlock' },
-                { key: 'lock', label: 'Lock' },
-                { key: 'access_granted', label: 'Access Granted' },
-                { key: 'unlock_attempt', label: 'Unlock Attempt Denied' },
-                { key: 'lock_attempt', label: 'Lock Attempt Failed' },
-                { key: 'manual_override', label: 'Manual Override' },
-                { key: 'schedule_violation', label: 'Schedule Violation' }
-              ],
-              selected: filters.action || '',
-              onSelect: (value: string) => handleFilterChange('action', value || undefined)
-            },
-            {
-              title: 'Method',
-              icon: <DevicePhoneMobileIcon className="h-5 w-5" />,
-              type: 'select' as const,
-              options: [
-                { key: '', label: 'All Methods' },
-                { key: 'app', label: 'Mobile App' },
-                { key: 'keypad', label: 'Keypad' },
-                { key: 'card', label: 'Card' },
-                { key: 'physical_key', label: 'Physical Key' },
-                { key: 'manual', label: 'Manual Override' },
-                { key: 'remote_gateway', label: 'Remote via Gateway' },
-                { key: 'admin_remote', label: 'Remote (Admin)' },
-                { key: 'local_device', label: 'Local Device' },
-                { key: 'route_pass', label: 'Route Pass' },
-                { key: 'automatic', label: 'Local Device (legacy)' }
-              ],
-              selected: filters.method || '',
-              onSelect: (value: string) => handleFilterChange('method', value || undefined)
-            },
-            {
-              title: 'User',
-              icon: <UserIcon className="h-5 w-5" />,
-              type: 'user' as const,
-              options: [],
-              selected: filters.user_id || '',
-              onSelect: (value: string) => handleFilterChange('user_id', value || undefined),
-              placeholder: 'Search users...'
-            },
-            {
-              title: 'Unit',
-              icon: <HomeIcon className="h-5 w-5" />,
-              type: 'custom' as const,
-              options: [],
-              selected: filters.unit_id || '',
-              onSelect: () => {},
-              customContent: (
-                <UnitFilter
-                  value={filters.unit_id || ''}
-                  onChange={(unitId) => handleFilterChange('unit_id', unitId || undefined)}
-                  placeholder="Search units..."
-                  facilityId={selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : undefined}
-                  className="w-full"
-                />
-              )
-            },
-            // Only show custom date range when "custom" is selected
-            ...(getCurrentDateRangeSelection() === 'custom' ? [{
-              title: 'Custom Date Range',
-              icon: <CalendarIcon className="h-5 w-5" />,
-              type: 'custom' as const,
-              options: [],
-              selected: '',
-              onSelect: () => {},
-              customContent: (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">From Date</label>
-                    <input
-                      type="date"
-                      value={filters.date_from || ''}
-                      onChange={(e) => handleFilterChange('date_from', e.target.value || undefined)}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">To Date</label>
-                    <input
-                      type="date"
-                      value={filters.date_to || ''}
-                      onChange={(e) => handleFilterChange('date_to', e.target.value || undefined)}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
-              )
-            }] : [])
-          ] : [])
+          {
+            title: 'Action',
+            icon: <KeyIcon className="h-4 w-4" />,
+            type: 'select',
+            options: [
+              { key: '', label: 'All Actions' },
+              { key: 'unlock', label: 'Unlock' },
+              { key: 'lock', label: 'Lock' },
+              { key: 'access_granted', label: 'Access Granted' },
+              { key: 'unlock_attempt', label: 'Unlock Attempt Denied' },
+              { key: 'lock_attempt', label: 'Lock Attempt Failed' },
+              { key: 'manual_override', label: 'Manual Override' },
+              { key: 'schedule_violation', label: 'Schedule Violation' },
+            ],
+            selected: filters.action || '',
+            onSelect: (value: string) => handleFilterChange('action', value || undefined),
+          },
+          {
+            title: 'Method',
+            icon: <DevicePhoneMobileIcon className="h-4 w-4" />,
+            type: 'select',
+            options: [
+              { key: '', label: 'All Methods' },
+              { key: 'app', label: 'Mobile App' },
+              { key: 'keypad', label: 'Keypad' },
+              { key: 'card', label: 'Card' },
+              { key: 'physical_key', label: 'Physical Key' },
+              { key: 'manual', label: 'Manual Override' },
+              { key: 'remote_gateway', label: 'Remote via Gateway' },
+              { key: 'admin_remote', label: 'Remote (Admin)' },
+              { key: 'local_device', label: 'Local Device' },
+              { key: 'route_pass', label: 'Route Pass' },
+              { key: 'automatic', label: 'Local Device (legacy)' },
+            ],
+            selected: filters.method || '',
+            onSelect: (value: string) => handleFilterChange('method', value || undefined),
+          },
+          {
+            title: 'User',
+            icon: <UserIcon className="h-4 w-4" />,
+            type: 'user',
+            options: [],
+            selected: filters.user_id || '',
+            onSelect: (value: string) => handleFilterChange('user_id', value || undefined),
+            placeholder: 'Search users...',
+          },
+          {
+            title: 'Unit',
+            icon: <HomeIcon className="h-4 w-4" />,
+            type: 'custom',
+            options: [],
+            selected: filters.unit_id || '',
+            onSelect: () => {},
+            customContent: (
+              <UnitFilter
+                value={filters.unit_id || ''}
+                onChange={(unitId) => handleFilterChange('unit_id', unitId || undefined)}
+                placeholder="Search units..."
+                facilityId={
+                  selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+                    ? selectedFacilityId
+                    : undefined
+                }
+                className="w-full min-w-0"
+              />
+            ),
+          },
+          ...(getCurrentDateRangeSelection() === 'custom'
+            ? [
+                {
+                  title: 'Custom Date Range',
+                  icon: <CalendarIcon className="h-4 w-4" />,
+                  type: 'custom' as const,
+                  span: 'full' as const,
+                  options: [],
+                  selected: '',
+                  onSelect: () => {},
+                  customContent: (
+                    <div className={filterDateRangeGridClass}>
+                      <div>
+                        <label className={filterDateFieldLabelClass}>From Date</label>
+                        <input
+                          type="date"
+                          value={filters.date_from || ''}
+                          onChange={(e) =>
+                            handleFilterChange('date_from', e.target.value || undefined)
+                          }
+                          className={filterSelectClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={filterDateFieldLabelClass}>To Date</label>
+                        <input
+                          type="date"
+                          value={filters.date_to || ''}
+                          onChange={(e) =>
+                            handleFilterChange('date_to', e.target.value || undefined)
+                          }
+                          className={filterSelectClass}
+                        />
+                      </div>
+                    </div>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
 
@@ -883,6 +897,7 @@ export default function AccessHistoryPage() {
                   const isExpanded = expandedRow === log.id;
                   const metadata = getAccessLogMetadata(log);
                   const userDisplay = getAccessUserDisplay(log);
+                  const userLink = getAccessLogUserLink(log);
                   const locationDisplay = getAccessLocationDisplay(log, { hideFacility: isFacilityScoped });
                   const detailItems = buildAccessLogDetailItems(log, isFacilityScoped, {
                     omitRowSummaryFields: true,
@@ -918,26 +933,15 @@ export default function AccessHistoryPage() {
                           <div className="flex items-center">
                             <UserIcon className="h-4 w-4 text-gray-400 mr-2 flex-shrink-0" />
                             <div>
-                              {metadata.user ? (
+                              {userLink ? (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleNavigation(metadata.user!.navigation_url, metadata.user!.id, 'user');
+                                    handleNavigation(userLink.href, userLink.id, 'user');
                                   }}
                                   className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
                                 >
-                                  {userDisplay.primary}
-                                  <LinkIcon className="h-3 w-3 ml-1" />
-                                </button>
-                              ) : metadata.initiated_by?.navigation_url ? (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleNavigation(metadata.initiated_by!.navigation_url!, metadata.initiated_by!.id, 'user');
-                                  }}
-                                  className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
-                                >
-                                  {userDisplay.primary}
+                                  {userLink.label}
                                   <LinkIcon className="h-3 w-3 ml-1" />
                                 </button>
                               ) : (

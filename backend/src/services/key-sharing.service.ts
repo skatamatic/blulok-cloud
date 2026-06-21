@@ -25,8 +25,12 @@ export class KeySharingService {
     return KeySharingService.instance;
   }
 
-  private async getDenylistTargetsForUnit(unitId: string) {
-    return AccessControlZoneAccessService.getDenylistTargetsForUnits([unitId]);
+  private async getDenylistTargetsForUnitRevocation(unitId: string, userId: string) {
+    return AccessControlZoneAccessService.getDenylistTargetsForUserRevocation([unitId], userId);
+  }
+
+  private async getDenylistRemovalTargetsForUnitGrant(unitId: string, userId: string) {
+    return AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant([unitId], userId);
   }
 
   /**
@@ -166,7 +170,7 @@ export class KeySharingService {
         const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
 
         const denylistModel = new DenylistEntryModel();
-        const unitTargets = await this.getDenylistTargetsForUnit(unitId);
+        const unitTargets = await this.getDenylistRemovalTargetsForUnitGrant(unitId, invitee.id);
         const unitDeviceIds = unitTargets.map((target) => target.device_id);
         if (unitDeviceIds.length > 0) {
           const entries = (await denylistModel.findByUser(invitee.id))
@@ -389,7 +393,10 @@ export class KeySharingService {
 
       if (becameActive && unexpired) {
         const denylistModel = new DenylistEntryModel();
-        const unitTargets = await this.getDenylistTargetsForUnit(existingSharing.unit_id);
+        const unitTargets = await this.getDenylistRemovalTargetsForUnitGrant(
+          existingSharing.unit_id,
+          existingSharing.shared_with_user_id,
+        );
         const unitDeviceIds = unitTargets.map((target) => target.device_id);
         const entries = (await denylistModel.findByUser(existingSharing.shared_with_user_id))
           .filter((entry) => unitDeviceIds.includes(entry.device_id));
@@ -448,7 +455,10 @@ export class KeySharingService {
     if (!success) return false;
 
     try {
-      const denylistTargets = await this.getDenylistTargetsForUnit(existingSharing.unit_id);
+      const denylistTargets = await this.getDenylistTargetsForUnitRevocation(
+        existingSharing.unit_id,
+        existingSharing.shared_with_user_id,
+      );
       if (denylistTargets.length === 0) return true;
 
       const deviceIds = denylistTargets.map((target) => target.device_id);

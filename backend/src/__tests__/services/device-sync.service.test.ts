@@ -38,6 +38,22 @@ jest.mock('../../../src/services/access-code.service', () => ({
   },
 }));
 
+const mockEnsureDefaultGroup = jest.fn().mockResolvedValue({ id: 'default-group-1' });
+const mockAssignAccessControlToDefaultGroup = jest.fn().mockResolvedValue(undefined);
+const mockAssignBluLokToDefaultGroup = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('../../../src/services/device-group.service', () => ({
+  DeviceGroupService: {
+    getInstance: jest.fn(() => ({
+      ensureDefaultGroup: (...args: unknown[]) => mockEnsureDefaultGroup(...args),
+      assignAccessControlToDefaultGroup: (...args: unknown[]) =>
+        mockAssignAccessControlToDefaultGroup(...args),
+      assignBluLokToDefaultGroup: (...args: unknown[]) =>
+        mockAssignBluLokToDefaultGroup(...args),
+    })),
+  },
+}));
+
 const mockCancelForBlulok = jest.fn().mockResolvedValue(1);
 const mockCancelForAccessControl = jest.fn().mockResolvedValue(1);
 
@@ -99,6 +115,9 @@ describe('DeviceSyncService', () => {
     jest.clearAllMocks();
     mockCancelForBlulok.mockClear();
     mockCancelForAccessControl.mockClear();
+    mockEnsureDefaultGroup.mockClear();
+    mockAssignBluLokToDefaultGroup.mockClear();
+    mockAssignAccessControlToDefaultGroup.mockClear();
     mockDeleteBluLokFromInventory.mockResolvedValue({
       gatewayId: 'gateway-123',
       facilityId: 'facility-1',
@@ -583,6 +602,22 @@ describe('DeviceSyncService', () => {
         firmware_version: '1.0.0',
         supports_remote_lock: true,
       }]);
+    });
+
+    it('assigns newly synced BluLok locks to the facility default access group', async () => {
+      mockDeviceModel.findBluLokDevices
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          createDeviceWithContext({ id: 'device-new', device_serial: 'LOCK-1' }),
+        ]);
+      mockDeviceModel.bulkCreateBluLokDevices.mockResolvedValue(1);
+
+      await deviceSyncService.syncDeviceInventory(gatewayId, [
+        { lock_id: 'LOCK-1', lock_number: 101 },
+      ]);
+
+      expect(mockEnsureDefaultGroup).toHaveBeenCalledWith('facility-1');
+      expect(mockAssignBluLokToDefaultGroup).toHaveBeenCalledWith('facility-1', 'device-new');
     });
 
     it('should remove sync-managed devices not in inventory', async () => {

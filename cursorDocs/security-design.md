@@ -98,7 +98,7 @@ This document summarizes the new centralized trust model implemented in the back
 Route Passes are scoped by role to enforce least-privilege access:
 - **DEV_ADMIN/ADMIN**: Audience includes all locks across all facilities plus app-entry access_control devices.
 - **FACILITY_ADMIN**: Audience includes **app-entry access_control devices only** in assigned facilities (not unit lock unlock).
-- **TENANT**: Audience limited to locks for units assigned via FMS (`unit_assignments` table) plus zone-linked app-entry access.
+- **TENANT**: Audience limited to locks for units assigned via FMS (`unit_assignments` table) plus app-entry access from **specific access groups** (shared lock membership) and the facility **default/global access group** (`is_global_shared`).
 - **MAINTENANCE**: Audience limited to explicitly granted units (future: `maintenance_unit_access` table).
 
 Facility associations for route pass issuance are always read from the database for **FACILITY_ADMIN** (not from the login JWT), so admin updates to assignments take effect on the next `POST /passes/request` even if the user has not re-authenticated.
@@ -108,7 +108,7 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 ### Denylist Policy (when denylist applies)
 Denylist is for **revoking credentials that were actually issued** to users on specific devices they had access to — primarily **tenants/maintenance on unit locks** and **shared-key invitees**. It is **not** used for facility-admin facility assignment changes (they do not receive lock audiences).
 
-Denylist targets include **BluLok locks on the unit** and **app-enabled access_control devices** zone-linked to those locks (immediate route-pass rejection on app-entry doors/gates, not only after pass TTL).
+Denylist targets include **BluLok locks on the unit**, **app-enabled access_control devices in specific access groups** linked to those locks, and **global/default-group access_control devices** in the same facility **only when the user loses all remaining unit/key-share access in that facility** (partial unit unassignment does not denylist facility-wide gates while the user still holds another unit or active share there).
 - Owner deactivation:
   - Denylist the owner on devices from both primary and shared units.
   - Inactivate all active, unexpired shares granted by the owner.

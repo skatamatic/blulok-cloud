@@ -367,8 +367,7 @@ export class DevicesService {
 
       const shouldPushAccessCodes = await trx('device_group_members as m')
         .join('device_groups as g', 'g.id', 'm.group_id')
-        .where('g.group_type', 'access_code')
-        .andWhere('m.device_id', deviceId)
+        .where('m.device_id', deviceId)
         .andWhere('m.device_type', 'access_control')
         .first()
         .then(Boolean);
@@ -504,7 +503,6 @@ export class DevicesService {
   ): Promise<boolean> {
     const query = trx('device_group_members as m')
       .join('device_groups as g', 'g.id', 'm.group_id')
-      .where('g.group_type', 'access_code')
       .andWhere('m.device_type', 'blulok')
       .andWhere((builder) => {
         builder.where('m.device_id', deviceId);

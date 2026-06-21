@@ -52,7 +52,6 @@ jest.mock('@/models/gateway.model', () => ({
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
-    findReassignmentCandidates: jest.fn().mockResolvedValue([]),
   })),
 }));
 

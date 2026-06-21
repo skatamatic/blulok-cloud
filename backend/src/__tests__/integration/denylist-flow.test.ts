@@ -18,7 +18,8 @@ jest.mock('@/services/gateway/gateway-events.service');
 jest.mock('@/models/denylist-entry.model');
 jest.mock('@/services/access-control-zone-access.service', () => ({
   AccessControlZoneAccessService: {
-    getDenylistTargetsForUnits: jest.fn(),
+    getDenylistTargetsForUserRevocation: jest.fn(),
+    getDenylistRemovalTargetsForUserGrant: jest.fn(),
     getDenylistDeviceIdsForUnits: jest.fn(),
     getDeviceFacilityIds: jest.fn(),
   },
@@ -101,7 +102,7 @@ describe('Denylist Flow Integration', () => {
       bulkRemove: jest.fn().mockResolvedValue(1),
       pruneExpired: jest.fn().mockResolvedValue(0),
     } as any;
-    (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+    (AccessControlZoneAccessService.getDenylistTargetsForUserRevocation as jest.Mock).mockResolvedValue([
       { device_id: 'device-1', device_type: 'blulok' },
     ]);
     (AccessControlZoneAccessService.getDenylistDeviceIdsForUnits as jest.Mock).mockResolvedValue(['device-1']);
@@ -188,7 +189,7 @@ describe('Denylist Flow Integration', () => {
       mockDenylistModel.findByUser.mockClear();
       mockDenylistModel.bulkRemove.mockClear();
       mockGatewayEvents.unicastToFacility.mockClear();
-      (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([
         { device_id: 'device-1', device_type: 'blulok' },
       ]);
 

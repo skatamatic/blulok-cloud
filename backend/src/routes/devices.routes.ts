@@ -73,6 +73,7 @@ import { DeviceMetadataService } from '../services/device-metadata.service';
 import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/database.service';
 import { AccessCodeService } from '@/services/access-code.service';
+import { DeviceGroupService } from '@/services/device-group.service';
 import { validate } from '@/middleware/validator.middleware';
 import {
   normalizeDeviceListSortKey,
@@ -544,6 +545,16 @@ router.post('/access-control', requireAdminOrFacilityAdmin, asyncHandler(async (
   try {
     const device = await deviceModel.createAccessControlDevice(sanitizedValue);
     try {
+      await DeviceGroupService.getInstance().assignAccessControlToDefaultGroup(
+        String(gateway.facility_id),
+        String(device.id),
+        { actorId: user.userId, actorName: user.email ?? undefined },
+      );
+    } catch (groupErr) {
+      await deviceModel.deleteAccessControlDevice(String(device.id));
+      throw groupErr;
+    }
+    try {
       await DevicesService.getInstance().cancelDeletionTombstoneForAccessControl(
         String(gateway.facility_id),
         deviceSerial,
@@ -632,6 +643,16 @@ router.post('/blulok', requireAdminOrFacilityAdmin, asyncHandler(async (req: Aut
       device_settings: Object.keys(deviceSettings).length > 0 ? deviceSettings : undefined,
       metadata,
     });
+
+    try {
+      await DeviceGroupService.getInstance().assignBluLokToDefaultGroup(
+        String(gateway.facility_id),
+        String(device.id),
+        { actorId: user.userId, actorName: user.email ?? undefined },
+      );
+    } catch (groupErr) {
+      logger.warn('Failed to assign BluLok device to default access group', { groupErr });
+    }
 
     try {
       await DevicesService.getInstance().cancelDeletionTombstoneForBlulok(

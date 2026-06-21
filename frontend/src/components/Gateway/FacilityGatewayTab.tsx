@@ -24,7 +24,6 @@ import { GatewayDeviceSyncHistory } from './GatewayDeviceSyncHistory';
 import { GatewayTelemetryLogsTab } from './GatewayTelemetryLogsTab';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
-import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { usePromptDialog } from '@/hooks/usePromptDialog';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -120,12 +119,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
   const userRole = authState.user?.role;
   const isDevAdmin = userRole === UserRole.DEV_ADMIN;
   const isPlatformAdmin = userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN;
-  const canReassignGateway = canManageGateway && (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN);
-  const [candidateGateways, setCandidateGateways] = useState<Gateway[]>([]);
-  const [selectedCandidateGatewayId, setSelectedCandidateGatewayId] = useState('');
-  const [loadingCandidates, setLoadingCandidates] = useState(false);
-  const [reassigningGateway, setReassigningGateway] = useState(false);
-  const [showReassignConfirm, setShowReassignConfirm] = useState(false);
   const { openPrompt, promptDialog } = usePromptDialog();
   const swapRecoveryAlertRef = useRef(false);
   const {
@@ -244,32 +237,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     };
   }, [ws, facilityId, isDevAdmin]);
 
-  const loadReassignmentCandidates = useCallback(async () => {
-    if (!canReassignGateway) {
-      setCandidateGateways([]);
-      return;
-    }
-
-    try {
-      setLoadingCandidates(true);
-      const response = await apiService.getGatewayReassignmentCandidates(facilityId);
-      setCandidateGateways(Array.isArray(response.gateways) ? (response.gateways as Gateway[]) : []);
-      setSelectedCandidateGatewayId('');
-    } catch (error) {
-      console.error('Failed to load gateway reassignment candidates:', error);
-      addToast({ type: 'error', title: 'Failed to load available gateways' });
-    } finally {
-      setLoadingCandidates(false);
-    }
-  }, [addToast, canReassignGateway, facilityId]);
-
-  useEffect(() => {
-    if (activeTab !== 'overview') {
-      return;
-    }
-    loadReassignmentCandidates();
-  }, [activeTab, loadReassignmentCandidates]);
-
   useEffect(() => {
     swapRecoveryAlertRef.current = false;
   }, [facilityId]);
@@ -307,79 +274,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             className="inline-flex shrink-0 items-center justify-center rounded-lg bg-[#147FD4] px-4 py-2 text-sm font-medium text-white hover:bg-[#1269b0] transition-colors"
           >
             Open Swap / Recovery
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  const executeGatewayReassignment = async () => {
-    if (!selectedCandidateGatewayId) {
-      return;
-    }
-
-    try {
-      setReassigningGateway(true);
-      await apiService.reassignGateway(selectedCandidateGatewayId, facilityId);
-      addToast({ type: 'success', title: gateway ? 'Gateway replaced successfully' : 'Gateway assigned successfully' });
-      await Promise.all([reload(), loadReassignmentCandidates()]);
-    } catch (error: any) {
-      const message = error?.response?.data?.message || (gateway ? 'Failed to replace gateway' : 'Failed to assign gateway');
-      addToast({ type: 'error', title: message });
-    } finally {
-      setReassigningGateway(false);
-    }
-  };
-
-  const handleGatewayReassignment = () => {
-    if (!selectedCandidateGatewayId) {
-      return;
-    }
-    setShowReassignConfirm(true);
-  };
-
-  const renderGatewayAssignmentCard = () => {
-    if (!canReassignGateway) {
-      return null;
-    }
-
-    return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-          {gateway ? 'Replace Gateway' : 'Assign Gateway'}
-        </h3>
-        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          {gateway
-            ? 'Select an unassigned gateway that is already connected to the cloud, then replace the current assignment.'
-            : 'Select an unassigned gateway that is online so it can be linked to this facility.'}
-        </p>
-        {gateway && (
-          <div className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
-            Current gateway: <span className="font-medium text-gray-900 dark:text-white">{gateway.name}</span>
-          </div>
-        )}
-        <div className="flex flex-col md:flex-row md:items-center gap-3">
-          <select
-            value={selectedCandidateGatewayId}
-            onChange={(e) => setSelectedCandidateGatewayId(e.target.value)}
-            disabled={loadingCandidates || reassigningGateway}
-            className="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-          >
-            <option value="">
-              {loadingCandidates ? 'Loading available gateways...' : 'Select an unassigned online gateway'}
-            </option>
-            {candidateGateways.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.name} ({candidate.id})
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={handleGatewayReassignment}
-            disabled={!selectedCandidateGatewayId || loadingCandidates || reassigningGateway}
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {reassigningGateway ? (gateway ? 'Replacing...' : 'Assigning...') : (gateway ? 'Replace Gateway' : 'Assign Gateway')}
           </button>
         </div>
       </div>
@@ -542,7 +436,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       return (
         <div className="space-y-6">
           {renderSwapRecoveryOverviewAlert()}
-          {renderGatewayAssignmentCard()}
           {wsConnected && (
             <div
               className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
@@ -551,7 +444,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               <p className="font-medium">WebSocket session active — no gateway assigned yet</p>
               <p className="mt-1 text-amber-900/90 dark:text-amber-200/90">
                 A gateway has authenticated to this facility for <code className="text-xs font-mono px-1 rounded bg-white/60 dark:bg-black/20">/ws/gateway</code>, but this facility
-                does not have a gateway record. Assign a gateway below (if your role allows) or contact BluLok so device sync and firmware can run.
+                does not have a bound gateway yet. Open <strong className="font-semibold">Swap / Recovery</strong> to complete first-install binding, or contact BluLok for setup assistance.
               </p>
               {lastActivityAt && (
                 <p className="mt-2 text-xs text-amber-800/80 dark:text-amber-300/80">
@@ -564,9 +457,18 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No gateway assigned</h3>
             <p className="text-gray-600 dark:text-gray-400 max-w-lg mx-auto">
-              No gateway has been assigned to this facility yet. Contact BluLok for setup assistance, or use Assign Gateway above if your administrator has placed an
-              unassigned gateway online.
+              No gateway has been bound to this facility yet. Power on your gateway with the facility UUID configured, then use the{' '}
+              <strong className="font-semibold">Swap / Recovery</strong> tab to bind it. Contact BluLok if you need help with first-time setup.
             </p>
+            {canManageGateway && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('swap-recovery')}
+                className="mt-4 inline-flex items-center justify-center rounded-lg bg-[#147FD4] px-4 py-2 text-sm font-medium text-white hover:bg-[#1269b0] transition-colors"
+              >
+                Open Swap / Recovery
+              </button>
+            )}
           </div>
         </div>
       );
@@ -577,7 +479,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     return (
       <div className="space-y-6">
         {renderSwapRecoveryOverviewAlert()}
-        {renderGatewayAssignmentCard()}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Overview</h3>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
@@ -715,7 +616,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           <div className="text-center py-8">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400">
-              Assign a gateway to this facility before running sync. See Overview for the WebSocket and API URLs your gateway needs.
+              Bind a gateway via Swap / Recovery before running sync. See Overview for the WebSocket and API URLs your gateway needs.
             </p>
           </div>
         </div>
@@ -990,7 +891,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           <div className="text-center py-8">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400">
-              Assign a gateway to this facility to use diagnostics. Connection status and endpoints are on the Overview tab.
+              Bind a gateway via Swap / Recovery to use diagnostics. Connection status and endpoints are on the Overview tab.
             </p>
           </div>
         </div>
@@ -1401,7 +1302,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         {activeTab === 'inventory-sync' && isPlatformAdmin && !gateway && (
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 dark:text-gray-400">Assign a gateway to view inventory sync history.</p>
+            <p className="text-gray-600 dark:text-gray-400">Bind a gateway via Swap / Recovery to view inventory sync history.</p>
           </div>
         )}
         {activeTab === 'gateway-logs' && canManageGateway && gateway && (
@@ -1414,7 +1315,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         {activeTab === 'gateway-logs' && canManageGateway && !gateway && (
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 dark:text-gray-400">Assign a gateway to view operational telemetry logs.</p>
+            <p className="text-gray-600 dark:text-gray-400">Bind a gateway via Swap / Recovery to view operational telemetry logs.</p>
           </div>
         )}
         {activeTab === 'firmware' && gateway && (
@@ -1430,7 +1331,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         )}
         {activeTab === 'provisioning' && canManageGateway && !gateway && (
           <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-300">
-            Assign a gateway to this facility before managing provisioning backups.
+            Bind a gateway via Swap / Recovery before managing provisioning backups.
           </div>
         )}
         {activeTab === 'swap-recovery' && canManageGateway && (
@@ -1453,23 +1354,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         {renderRotationModal()}
       </div>
 
-      <ConfirmDialog
-        isOpen={showReassignConfirm}
-        title={gateway ? 'Replace gateway?' : 'Assign gateway?'}
-        message={
-          gateway
-            ? 'Replace this facility gateway with the selected unassigned online gateway? The current gateway will be moved to the unassigned pool.'
-            : 'Assign the selected unassigned online gateway to this facility?'
-        }
-        confirmLabel={gateway ? 'Replace gateway' : 'Assign gateway'}
-        cancelLabel="Cancel"
-        confirmTone="primary"
-        onConfirm={() => {
-          setShowReassignConfirm(false);
-          void executeGatewayReassignment();
-        }}
-        onCancel={() => setShowReassignConfirm(false)}
-      />
       {promptDialog}
     </div>
   );

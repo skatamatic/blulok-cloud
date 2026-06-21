@@ -21,6 +21,28 @@ function mockKnexChainForFirstRow(row: Record<string, unknown>) {
 // Mock DevicesService
 jest.mock('@/services/devices.service');
 
+const mockAssignAccessControlToDefaultGroup = jest.fn().mockResolvedValue(undefined);
+const mockAssignBluLokToDefaultGroup = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('@/services/device-group.service', () => ({
+  DeviceGroupService: {
+    getInstance: jest.fn(() => ({
+      assignAccessControlToDefaultGroup: (...args: unknown[]) =>
+        mockAssignAccessControlToDefaultGroup(...args),
+      assignBluLokToDefaultGroup: (...args: unknown[]) =>
+        mockAssignBluLokToDefaultGroup(...args),
+    })),
+  },
+}));
+
+jest.mock('@/services/access-code.service', () => ({
+  AccessCodeService: {
+    getInstance: jest.fn(() => ({
+      pushCodesToGateway: jest.fn().mockResolvedValue(undefined),
+    })),
+  },
+}));
+
 const mockUpdateBluLokMetadata = jest.fn();
 const mockUpdateAccessControlMetadata = jest.fn();
 
@@ -74,6 +96,7 @@ const createMockDeviceModel = () => ({
   countAccessControlDevices: jest.fn().mockResolvedValue(0),
   getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({}),
   createAccessControlDevice: jest.fn().mockResolvedValue({ id: 'device-1', name: 'Test Device' }),
+  deleteAccessControlDevice: jest.fn().mockResolvedValue(undefined),
   createBluLokDevice: jest.fn().mockResolvedValue({ id: 'device-1', name: 'Test Device' }),
   updateDeviceStatus: jest.fn().mockResolvedValue(undefined),
   updateLockStatus: jest.fn().mockResolvedValue(undefined),
@@ -105,6 +128,8 @@ describe('Devices Routes', () => {
 
   beforeEach(async () => {
     testData = createMockTestData();
+    mockAssignAccessControlToDefaultGroup.mockClear();
+    mockAssignBluLokToDefaultGroup.mockClear();
     
     // Create mock knex connection
     const createMockKnex = (returnValue?: any) => {
@@ -428,6 +453,11 @@ describe('Devices Routes', () => {
         expect(response.body).toHaveProperty('device');
         expect(response.body.device).toHaveProperty('name', validAccessControlData.name);
         expect(response.body.device).toHaveProperty('device_type', validAccessControlData.device_type);
+        expect(mockAssignAccessControlToDefaultGroup).toHaveBeenCalledWith(
+          '550e8400-e29b-41d4-a716-446655440001',
+          'device-1',
+          expect.objectContaining({ actorId: expect.any(String) }),
+        );
       });
 
       it('should create access control device for ADMIN', async () => {
@@ -590,6 +620,11 @@ describe('Devices Routes', () => {
         expect(response.body).toHaveProperty('device');
         expect(response.body.device).toHaveProperty('name', validBluLokData.name);
         expect(response.body.device).toHaveProperty('device_type', validBluLokData.device_type);
+        expect(mockAssignBluLokToDefaultGroup).toHaveBeenCalledWith(
+          '550e8400-e29b-41d4-a716-446655440001',
+          'device-1',
+          expect.objectContaining({ actorId: expect.any(String) }),
+        );
       });
 
       it('should normalize serial alias to device_serial and serial', async () => {

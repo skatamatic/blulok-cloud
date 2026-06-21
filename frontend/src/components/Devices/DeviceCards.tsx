@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import { CpuChipIcon, LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon, SignalIcon, WifiIcon, ServerIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { LockClosedIcon, LockOpenIcon, QuestionMarkCircleIcon, CheckCircleIcon, ExclamationTriangleIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { AccessControlDevice, BluLokDevice, NetworkInfraDevice } from '@/types/facility.types';
+import { DeviceTypeIcon } from '@/components/Common/DeviceTypeIcon';
+import { formatNetworkInfraKindLabel, getDeviceIconMeta } from '@/utils/device-icon.utils';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import {
@@ -39,6 +41,7 @@ export function AccessControlDeviceCard({ device, groupNames = [], onViewDevice 
   const StatusIcon = (statusIcons as Record<string, typeof CheckCircleIcon>)[device.status] || CheckCircleIcon;
   const accessMethods =
     device.access_methods && device.access_methods.length > 0 ? device.access_methods : ['app'];
+  const iconMeta = getDeviceIconMeta({ device_category: 'access_control', device_type: device.device_type });
 
   return (
     <div
@@ -56,15 +59,18 @@ export function AccessControlDeviceCard({ device, groupNames = [], onViewDevice 
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center">
-          <div className="p-3 bg-primary-100 dark:bg-primary-900/20 rounded-lg mr-4">
-            <CpuChipIcon className="h-6 w-6 text-primary-600 dark:text-primary-400" />
-          </div>
+          <DeviceTypeIcon
+            device={{ device_category: 'access_control', device_type: device.device_type }}
+            size="lg"
+            className="mr-4"
+            meta={iconMeta}
+          />
           <div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">{device.name}</h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
               {formatAccessDeviceListSubtitle(device)}
             </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 capitalize">{device.device_type} Controller</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{iconMeta.label} Controller</p>
           </div>
         </div>
         <div className="flex items-center space-x-2">
@@ -159,9 +165,7 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center">
-          <div className="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-lg mr-4">
-            <LockClosedIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-          </div>
+          <DeviceTypeIcon device={{ device_category: 'blulok' }} size="lg" className="mr-4" />
           <div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">
               {formatBluLokLockNumberLabel(device)}
@@ -182,7 +186,6 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
 
       {device.primary_tenant && (
         <div className="flex items-center text-sm text-gray-600 dark:text-gray-400 mb-4">
-          <CpuChipIcon className="h-4 w-4 mr-2" />
           <span>
             {device.primary_tenant.first_name} {device.primary_tenant.last_name}
           </span>
@@ -211,15 +214,9 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
 }
 
 const networkInfraKindLabels: Record<NetworkInfraDevice['device_kind'], string> = {
-  gateway: 'Facility Gateway',
-  bridge: 'Bridge',
-  friend_node: 'Friend Node',
-};
-
-const networkInfraKindIcons: Record<NetworkInfraDevice['device_kind'], typeof ServerIcon> = {
-  gateway: ServerIcon,
-  bridge: SignalIcon,
-  friend_node: WifiIcon,
+  gateway: formatNetworkInfraKindLabel('gateway'),
+  bridge: formatNetworkInfraKindLabel('bridge'),
+  friend_node: formatNetworkInfraKindLabel('friend_node'),
 };
 
 export function NetworkInfraDeviceCard({
@@ -233,7 +230,10 @@ export function NetworkInfraDeviceCard({
   onDelete?: (device: NetworkInfraDevice) => void;
   onManageGateway?: () => void;
 }) {
-  const KindIcon = networkInfraKindIcons[device.device_kind] || ServerIcon;
+  const iconMeta = getDeviceIconMeta({
+    device_category: 'network_infra',
+    device_kind: device.device_kind,
+  });
   const StatusIcon = (statusIcons as Record<string, typeof CheckCircleIcon>)[device.status] || CheckCircleIcon;
   const displayTitle =
     device.device_kind === 'gateway' ? device.name : networkInfraKindLabels[device.device_kind];
@@ -245,9 +245,12 @@ export function NetworkInfraDeviceCard({
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center">
-          <div className="p-3 bg-indigo-100 dark:bg-indigo-900/20 rounded-lg mr-4">
-            <KindIcon className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
-          </div>
+          <DeviceTypeIcon
+            device={{ device_category: 'network_infra', device_kind: device.device_kind }}
+            size="lg"
+            className="mr-4"
+            meta={iconMeta}
+          />
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-lg font-medium text-gray-900 dark:text-white">{displayTitle}</h3>
@@ -259,7 +262,7 @@ export function NetworkInfraDeviceCard({
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">{device.device_serial}</p>
             {device.device_kind === 'gateway' && (
-              <p className="text-sm text-gray-500 dark:text-gray-400">{networkInfraKindLabels.gateway}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">{iconMeta.label}</p>
             )}
           </div>
         </div>

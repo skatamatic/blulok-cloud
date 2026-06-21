@@ -198,8 +198,7 @@ export class AccessCodeSchedulerService {
     let discoveredOnlineFacility = false;
     const groups = await this.db('device_groups')
       .select('id', 'facility_id')
-      .where('group_type', 'access_code')
-      .andWhere('is_active', true);
+      .where('is_active', true);
 
     for (const row of groups) {
       const groupId = String(row.id);

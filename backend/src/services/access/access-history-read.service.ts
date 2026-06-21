@@ -472,10 +472,14 @@ export class AccessHistoryReadService {
       presentation.failure_summary = failureSummary;
     }
 
-    if (row.actor_type === 'user' && userId && userName) {
+    if (row.actor_type === 'user' && userId) {
+      const trimmedName = typeof userName === 'string' ? userName.trim() : '';
+      const metadataEmail = typeof baseMetadata.user_email === 'string' ? baseMetadata.user_email.trim() : '';
+      const resolvedUserName = trimmedName || metadataEmail || 'User';
       presentation.user = {
         id: userId,
-        name: userName,
+        name: resolvedUserName,
+        ...(metadataEmail ? { email: metadataEmail } : {}),
         navigation_url: `/users/${userId}/details`,
       };
     } else if (row.actor_type) {

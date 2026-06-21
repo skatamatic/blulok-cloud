@@ -2,6 +2,7 @@ import { DeviceModel, BluLokDevice, CreateBluLokDeviceData, CreateAccessControlD
 import { DeviceEventService } from './device-event.service';
 import { DevicesService } from './devices.service';
 import { AccessCodeService } from './access-code.service';
+import { DeviceGroupService } from './device-group.service';
 import {
   AccessDeviceInventoryItem,
   AccessDeviceStateUpdate,
@@ -467,6 +468,32 @@ export class DeviceSyncService {
    * @param devices - Array of devices that should exist on the gateway
    * @returns Promise resolving to sync result with counts
    */
+  /**
+   * Auto-assign newly synced blulok unit locks to the facility default access group,
+   * mirroring access-control device behaviour. Failures are recorded but non-fatal.
+   */
+  private async assignBluLokDevicesToDefaultGroup(
+    facilityId: string | null,
+    gatewayId: string,
+    createdDevices: CreateBluLokDeviceData[],
+    result: InventorySyncResult,
+  ): Promise<void> {
+    if (!facilityId || createdDevices.length === 0) return;
+    try {
+      const groupService = DeviceGroupService.getInstance();
+      await groupService.ensureDefaultGroup(facilityId);
+      const syncedDevices = await this.deviceModel.findBluLokDevices({ gateway_id: gatewayId });
+      for (const createData of createdDevices) {
+        const syncedDevice = syncedDevices.find((d) => d.device_serial === createData.device_serial);
+        if (syncedDevice) {
+          await groupService.assignBluLokToDefaultGroup(facilityId, String(syncedDevice.id));
+        }
+      }
+    } catch (groupErr: any) {
+      result.errors.push(`Failed to assign BluLok default access group after sync: ${groupErr.message}`);
+    }
+  }
+
   public async syncDeviceInventory(
     gatewayId: string,
     devices: DeviceInventoryItem[]
@@ -594,6 +621,7 @@ export class DeviceSyncService {
             });
           }
           console.log(`[DEVICE-SYNC] Bulk added ${count} devices from inventory sync`);
+          await this.assignBluLokDevicesToDefaultGroup(facilityId, gatewayId, devicesToAdd, result);
         } catch (error: any) {
           result.errors.push(`Bulk add failed: ${error.message}`);
           // Fall back to individual inserts
@@ -601,6 +629,7 @@ export class DeviceSyncService {
             try {
               await this.deviceModel.createBluLokDevice(createData);
               result.added++;
+              await this.assignBluLokDevicesToDefaultGroup(facilityId, gatewayId, [createData], result);
               result.entries!.push({
                 action: 'added',
                 device_kind: 'blulok',
@@ -943,6 +972,20 @@ export class DeviceSyncService {
             });
           }
           console.log(`[DEVICE-SYNC] Bulk added ${count} access control devices from inventory sync`);
+          try {
+            const groupService = DeviceGroupService.getInstance();
+            await groupService.ensureDefaultGroup(facilityId);
+            const syncedDevices = await this.deviceModel.findAccessControlDevices({ gateway_id: gatewayId });
+            for (const createData of devicesToAdd) {
+              const key = formatAccessDeviceKey(createData.device_serial, createData.relay_channel);
+              const syncedDevice = syncedDevices.find((d) => resolveAccessDeviceKey(d) === key);
+              if (syncedDevice) {
+                await groupService.assignAccessControlToDefaultGroup(facilityId, String(syncedDevice.id));
+              }
+            }
+          } catch (groupErr: any) {
+            result.errors.push(`Failed to assign default access group after bulk add: ${groupErr.message}`);
+          }
         } catch (error: any) {
           result.errors.push(`Bulk add access control failed: ${error.message}`);
           for (const createData of devicesToAdd) {
@@ -950,6 +993,21 @@ export class DeviceSyncService {
               await this.deviceModel.createAccessControlDevice(createData);
               result.added++;
               inventoryChanged = true;
+              try {
+                const syncedDevices = await this.deviceModel.findAccessControlDevices({ gateway_id: gatewayId });
+                const key = formatAccessDeviceKey(createData.device_serial, createData.relay_channel);
+                const syncedDevice = syncedDevices.find((d) => resolveAccessDeviceKey(d) === key);
+                if (syncedDevice) {
+                  await DeviceGroupService.getInstance().assignAccessControlToDefaultGroup(
+                    facilityId,
+                    String(syncedDevice.id),
+                  );
+                }
+              } catch (groupErr: any) {
+                result.errors.push(
+                  `Failed to assign default access group for ${createData.device_serial}:${createData.relay_channel}: ${groupErr.message}`,
+                );
+              }
               result.entries!.push({
                 action: 'added',
                 device_kind: 'access_control',

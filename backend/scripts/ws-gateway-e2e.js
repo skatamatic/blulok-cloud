@@ -2409,6 +2409,27 @@ async function run() {
     ok(`Assigned device ${deviceId} to unit`);
     created.deviceId = deviceId;
 
+    step('Verifying gateway-synced BluLok lock auto-assigned to default access group');
+    const postSyncGroupsResp = await axios.get(`${API_BASE}/device-groups`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { facility_id: facilityId },
+    });
+    const postSyncDefaultGroup = (postSyncGroupsResp.data?.data || []).find((group) => group.is_default);
+    if (!postSyncDefaultGroup) {
+      throw new Error('Expected per-facility default access group after BluLok gateway sync');
+    }
+    const postSyncDefaultDetailResp = await axios.get(
+      `${API_BASE}/device-groups/${postSyncDefaultGroup.id}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const blulokInDefaultAfterSync = (postSyncDefaultDetailResp.data?.data?.members || []).some(
+      (member) => member.device_type === 'blulok' && member.device_id === deviceId,
+    );
+    if (!blulokInDefaultAfterSync) {
+      throw new Error('Expected gateway-synced BluLok lock to be auto-assigned to default access group');
+    }
+    ok('Gateway-synced BluLok lock auto-assigned to default access group');
+
     // ---- HTTP: same LockCommandService path as dashboard (not DevTools gateway-command) ----
     heading('HTTP API — Cloud lock / unlock (BluLok + access control)');
     step('PUT /devices/blulok/:id/lock — lock then unlock (CLOSE / OPEN via gateway)');
@@ -6031,6 +6052,25 @@ async function run() {
     );
     ok(`Zone group ${denylistZoneGroupId} links lock ${deviceId} and access_control ${denylistZoneAcDeviceId}`);
 
+    const denylistGroupsResp = await axios.get(`${API_BASE}/device-groups`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { facility_id: facilityId },
+    });
+    const denylistDefaultGroup = (denylistGroupsResp.data?.data || []).find((group) => group.is_default);
+    if (denylistDefaultGroup) {
+      const denylistDefaultDetailResp = await axios.get(
+        `${API_BASE}/device-groups/${denylistDefaultGroup.id}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const blulokStillInDefault = (denylistDefaultDetailResp.data?.data?.members || []).some(
+        (member) => member.device_type === 'blulok' && member.device_id === deviceId,
+      );
+      if (blulokStillInDefault) {
+        throw new Error('Expected BluLok lock to leave default group when added to a specific zone group');
+      }
+      ok('BluLok lock leaves default group when moved into denylist zone group');
+    }
+
     const expectAddShare3 = waitForCommand(ws, (cmd) => {
       if (cmd.cmd_type !== 'DENYLIST_ADD' || !Array.isArray(cmd.denylist_add)) return false;
       if (!cmd.denylist_add.some((entry) => entry.sub === share2Id)) return false;
@@ -8559,6 +8599,29 @@ async function run() {
     );
     ok('Admin metadata relay edit propagated to ACCESS_CODE_UPDATE with stable device_id');
 
+    step('Verifying default access group exists and auto-assigns synced access-control devices');
+    const defaultGroupsListResp = await axios.get(
+      `${API_BASE}/device-groups`,
+      {
+        params: { facility_id: created.facilityId },
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+      },
+    );
+    const facilityGroups = defaultGroupsListResp.data?.data || [];
+    const defaultAccessGroup = facilityGroups.find((group) => group.is_default);
+    if (!defaultAccessGroup) {
+      throw new Error('Expected per-facility default access group (is_default=true)');
+    }
+    const defaultGroupDetailResp = await axios.get(
+      `${API_BASE}/device-groups/${defaultAccessGroup.id}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    const defaultMemberIds = (defaultGroupDetailResp.data?.data?.members || []).map((member) => member.device_id);
+    if (!defaultMemberIds.includes(multiDoorDeviceA.id)) {
+      throw new Error('Expected freshly synced access-control device to be auto-assigned to default access group');
+    }
+    ok('Default access group contains auto-assigned access-control device');
+
     step('Creating a device group and assigning two access-control devices');
     const groupCreateResp = await axios.post(
       `${API_BASE}/device-groups`,
@@ -8587,6 +8650,18 @@ async function run() {
         { device_id: created.deviceId, device_type: 'blulok' },
         { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
       );
+
+      const defaultAfterSpecificResp = await axios.get(
+        `${API_BASE}/device-groups/${defaultAccessGroup.id}`,
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      const stillInDefault = (defaultAfterSpecificResp.data?.data?.members || []).some(
+        (member) => member.device_type === 'blulok' && member.device_id === created.deviceId,
+      );
+      if (stillInDefault) {
+        throw new Error('Expected BluLok lock to leave default group when added to a specific access group');
+      }
+      ok('BluLok lock leaves default group when moved into a specific access group');
     }
     ok(`Created access-code group ${accessCodeGroupId} and assigned devices ${keypadDeviceA}, ${keypadDeviceB}${created.deviceId ? `, ${created.deviceId} (blulok)` : ''}`);
 
@@ -9162,59 +9237,44 @@ async function run() {
     accessCodeConfigModified = false;
     ok('Access code schedule reverted');
 
-    step('Creating global shared access-code group and validating uniqueness + exclusivity conflicts');
+    step('Validating unified default global group and additional global shared access groups');
+    const groupsListForGlobalResp = await axios.get(
+      `${API_BASE}/device-groups`,
+      {
+        params: { facility_id: created.facilityId },
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+      },
+    );
+    const allFacilityGroups = groupsListForGlobalResp.data?.data || [];
+    const defaultGlobalGroup = allFacilityGroups.find((group) => group.is_default);
+    if (!defaultGlobalGroup || !defaultGlobalGroup.is_global_shared) {
+      throw new Error('Expected protected default access group to be global shared');
+    }
+
     const globalGroupResp = await axios.post(
       `${API_BASE}/device-groups`,
       {
         facility_id: created.facilityId,
-        group_type: 'access_code',
         is_global_shared: true,
-        name: `E2E Global Access Group ${Date.now()}`,
+        name: `E2E Additional Global Group ${Date.now()}`,
       },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     globalSharedAccessCodeGroupId = globalGroupResp.data?.data?.id;
-    if (!globalSharedAccessCodeGroupId) throw new Error('Global shared group creation did not return id');
+    if (!globalSharedAccessCodeGroupId) throw new Error('Additional global shared group creation did not return id');
+    if (globalGroupResp.data?.data?.is_global_shared !== true) {
+      throw new Error('Expected additional global shared group to remain global shared');
+    }
 
-    const firstGlobalSharedAccessCodeGroupId = globalSharedAccessCodeGroupId;
-    const secondGlobalResp = await axios.post(
-      `${API_BASE}/device-groups`,
-      {
-        facility_id: created.facilityId,
-        group_type: 'access_code',
-        is_global_shared: true,
-        name: `E2E Duplicate Global Group ${Date.now()}`,
-      },
-      {
-        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
-        validateStatus: () => true,
-      },
+    const defaultAfterCreateResp = await axios.get(
+      `${API_BASE}/device-groups/${defaultGlobalGroup.id}`,
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
-    if (![200, 201].includes(secondGlobalResp.status)) {
-      throw new Error(`Expected second global shared group create to succeed, got ${secondGlobalResp.status}`);
+    if (!defaultAfterCreateResp.data?.data?.is_global_shared) {
+      throw new Error('Expected default access group to remain global shared after creating another global group');
     }
-    const promotedGlobalSharedGroupId = secondGlobalResp.data?.data?.id;
-    if (!promotedGlobalSharedGroupId) {
-      throw new Error('Second global shared group create did not return id');
-    }
-    const [firstGlobalGroupStateResp, promotedGlobalGroupStateResp] = await Promise.all([
-      axios.get(`${API_BASE}/device-groups/${firstGlobalSharedAccessCodeGroupId}`, {
-        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
-      }),
-      axios.get(`${API_BASE}/device-groups/${promotedGlobalSharedGroupId}`, {
-        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
-      }),
-    ]);
-    const firstGroupState = firstGlobalGroupStateResp.data?.data;
-    const promotedGroupState = promotedGlobalGroupStateResp.data?.data;
-    if (firstGroupState?.is_global_shared !== false) {
-      throw new Error('Expected previous global shared group to be auto-demoted');
-    }
-    if (promotedGroupState?.is_global_shared !== true) {
-      throw new Error('Expected second created global shared group to be promoted');
-    }
-    demotedGlobalSharedAccessCodeGroupId = firstGlobalSharedAccessCodeGroupId;
-    globalSharedAccessCodeGroupId = promotedGlobalSharedGroupId;
+    demotedGlobalSharedAccessCodeGroupId = null;
+    ok('Default global group remains protected while additional global shared groups can coexist');
 
     const membershipConflictResp = await axios.post(
       `${API_BASE}/device-groups/${globalSharedAccessCodeGroupId}/members`,
@@ -9262,7 +9322,7 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     await expectGlobalGroupSet;
-    ok('Global shared uniqueness + exclusivity conflict behavior validated and global membership configured');
+    ok('Global shared group membership and keypad code configuration validated');
 
     step('Configuring schedule-scoped access code and validating tenant schedule resolution');
     const accessCodeSchedulesResp = await axios.get(

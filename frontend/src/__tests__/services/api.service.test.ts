@@ -552,49 +552,6 @@ describe('APIService', () => {
       });
     });
 
-    describe('reassignGateway', () => {
-      it('should successfully reassign a gateway', async () => {
-        const gatewayId = 'gateway-1';
-        const targetFacilityId = 'facility-2';
-        const mockResponse = {
-          data: {
-            success: true,
-            message: 'Gateway reassigned successfully',
-            gateway: {
-              id: gatewayId,
-              facility_id: targetFacilityId,
-            },
-          },
-        };
-
-        mockAxios.patch.mockResolvedValueOnce(mockResponse);
-
-        const result = await apiService.reassignGateway(gatewayId, targetFacilityId);
-
-        expect(mockAxios.patch).toHaveBeenCalledWith(`/gateways/${gatewayId}/reassign`, { targetFacilityId });
-        expect(result).toEqual(mockResponse.data);
-      });
-    });
-
-    describe('getGatewayReassignmentCandidates', () => {
-      it('should fetch gateway reassignment candidates', async () => {
-        const facilityId = 'facility-1';
-        const mockResponse = {
-          data: {
-            success: true,
-            gateways: [{ id: 'gateway-2', facility_id: 'facility-2', status: 'online' }],
-          },
-        };
-
-        mockAxios.get.mockResolvedValueOnce(mockResponse);
-
-        const result = await apiService.getGatewayReassignmentCandidates(facilityId);
-
-        expect(mockAxios.get).toHaveBeenCalledWith(`/gateways/reassignment-candidates/${facilityId}`);
-        expect(result).toEqual(mockResponse.data);
-      });
-    });
-
     describe('updateGatewayStatus', () => {
       it('should successfully update gateway status', async () => {
         const gatewayId = 'gateway-1';

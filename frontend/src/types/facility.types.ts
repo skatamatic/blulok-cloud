@@ -130,8 +130,10 @@ export type AccessMethod = 'app' | 'keypad' | 'fob';
 export interface DeviceGroup {
   id: string;
   facility_id: string;
+  /** @deprecated Legacy discriminator — unified access groups no longer branch on this in UI or entitlement logic. */
   group_type: 'zone' | 'access_code';
   is_global_shared: boolean;
+  is_default: boolean;
   access_code_current_code?: string | null;
   access_code_current_valid_from?: string | null;
   access_code_current_valid_until?: string | null;

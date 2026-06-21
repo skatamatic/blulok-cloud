@@ -5,7 +5,7 @@ import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { 
   HomeIcon,
   MapIcon,
-  FunnelIcon,
+  SignalIcon,
   UserIcon,
   LockClosedIcon,
   LockOpenIcon,
@@ -17,6 +17,7 @@ import { Unit, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
 import { UserFilter } from '@/components/Common/UserFilter';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
@@ -398,51 +399,46 @@ export default function UnitsManagementPage() {
   const uniqueTypes = Array.from(new Set(units.map(unit => unit.unit_type).filter(Boolean)));
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Storage Units
-          </h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Manage storage units, tenants, and facility operations
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-            <ViewModeToggle
-              value={viewMode === 'table' ? 'table' : 'grid'}
-              onChange={(m) => setViewMode(m)}
-              showText={false}
-              noneSelected={viewMode === 'sitemap'}
-            />
-            <button
-              type="button"
-              onClick={() => setViewMode('sitemap')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'sitemap'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-              title="Site map"
-              aria-label="Site map"
-            >
-              <MapIcon className="h-4 w-4" />
-            </button>
-          </div>
+    <div className="space-y-4">
+      <ListPageHeader
+        title="Storage Units"
+        subtitle="Manage storage units, tenants, and facility operations"
+        actions={
+          <>
+            <div className="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+              <ViewModeToggle
+                value={viewMode === 'table' ? 'table' : 'grid'}
+                onChange={(m) => setViewMode(m)}
+                showText={false}
+                noneSelected={viewMode === 'sitemap'}
+              />
+              <button
+                type="button"
+                onClick={() => setViewMode('sitemap')}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  viewMode === 'sitemap'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+                title="Site map"
+                aria-label="Site map"
+              >
+                <MapIcon className="h-4 w-4" />
+              </button>
+            </div>
 
-          {canManage && (
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              Add Unit
-            </button>
-          )}
-        </div>
-      </div>
+            {canManage && (
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+              >
+                <PlusIcon className="mr-2 h-4 w-4" />
+                Add Unit
+              </button>
+            )}
+          </>
+        }
+      />
 
       {/* Facility Selection - Prominent */}
       {/* Filters */}
@@ -469,64 +465,62 @@ export default function UnitsManagementPage() {
             setCurrentPage(1);
           }}
           sections={[
-            // All filters in expanded view for better layout
-            ...(filtersExpanded ? [
-              {
-                title: 'Status',
-                icon: <FunnelIcon className="h-5 w-5" />,
-                options: [
-                  { key: '', label: 'All Status' },
-                  { key: 'available', label: 'Available', color: 'green' },
-                  { key: 'occupied', label: 'Occupied', color: 'blue' },
-                  { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
-                  { key: 'reserved', label: 'Reserved', color: 'purple' }
-                ],
-                selected: filters.status || '',
-                onSelect: handleStatusFilter
-              },
-              {
-                title: 'Lock Status',
-                icon: <LockClosedIcon className="h-5 w-5" />,
-                options: [
-                  { key: 'all', label: 'All Lock States' },
-                  { key: 'locked', label: 'Locked', color: 'blue' },
-                  { key: 'unlocked', label: 'Unlocked', color: 'green' },
-                  { key: 'unknown', label: 'Unknown', color: 'gray' }
-                ],
-                selected: filters.lock_status || 'all',
-                onSelect: handleLockStatusFilter
-              },
-              {
-                title: 'Unit Type',
-                icon: <HomeIcon className="h-5 w-5" />,
-                options: [
-                  { key: '', label: 'All Types' },
-                  ...uniqueTypes.slice(0, 4).map(type => ({
-                    key: type || '',
-                    label: type || 'Unknown',
-                    color: 'primary'
-                  }))
-                ],
-                selected: filters.unit_type || '',
-                onSelect: handleTypeFilter
-              },
-              {
-                title: 'Tenant',
-                icon: <UserIcon className="h-5 w-5" />,
-                type: 'custom' as const,
-                options: [],
-                selected: filters.tenant_id || '',
-                onSelect: () => {},
-                customContent: (
-                  <UserFilter
-                    value={filters.tenant_id || ''}
-                    onChange={(userId) => handleFilterChange('tenant_id', userId || undefined)}
-                    placeholder="Search tenants..."
-                    className="w-full"
-                  />
-                )
-              }
-            ] : [])
+            {
+              title: 'Status',
+              icon: <SignalIcon className="h-4 w-4" />,
+              options: [
+                { key: '', label: 'All Status', color: 'primary' },
+                { key: 'available', label: 'Available', color: 'green' },
+                { key: 'occupied', label: 'Occupied', color: 'blue' },
+                { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
+                { key: 'reserved', label: 'Reserved', color: 'purple' },
+              ],
+              selected: filters.status || '',
+              onSelect: handleStatusFilter,
+            },
+            {
+              title: 'Lock Status',
+              icon: <LockClosedIcon className="h-4 w-4" />,
+              options: [
+                { key: 'all', label: 'All Lock States' },
+                { key: 'locked', label: 'Locked', color: 'blue' },
+                { key: 'unlocked', label: 'Unlocked', color: 'green' },
+                { key: 'unknown', label: 'Unknown', color: 'gray' },
+              ],
+              selected: filters.lock_status || 'all',
+              onSelect: handleLockStatusFilter,
+            },
+            {
+              title: 'Unit Type',
+              icon: <HomeIcon className="h-4 w-4" />,
+              options: [
+                { key: '', label: 'All Types', color: 'primary' },
+                ...uniqueTypes.slice(0, 6).map((type) => ({
+                  key: type || '',
+                  label: type || 'Unknown',
+                  color: 'primary',
+                })),
+              ],
+              selected: filters.unit_type || '',
+              onSelect: handleTypeFilter,
+            },
+            {
+              title: 'Tenant',
+              icon: <UserIcon className="h-4 w-4" />,
+              type: 'custom' as const,
+              span: 'full' as const,
+              options: [],
+              selected: filters.tenant_id || '',
+              onSelect: () => {},
+              customContent: (
+                <UserFilter
+                  value={filters.tenant_id || ''}
+                  onChange={(userId) => handleFilterChange('tenant_id', userId || undefined)}
+                  placeholder="Search tenants..."
+                  className="w-full max-w-md"
+                />
+              ),
+            },
           ]}
         />
       )}

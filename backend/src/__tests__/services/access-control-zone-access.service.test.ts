@@ -83,8 +83,8 @@ describe('AccessControlZoneAccessService', () => {
 
     const result = await AccessControlZoneAccessService.getAccessControlDeviceIdsForBluLokDevices(['lock-1']);
 
-    expect(zoneQuery.where).toHaveBeenCalledWith('dg.group_type', 'zone');
-    expect(zoneQuery.andWhere).toHaveBeenCalledWith('dg.is_active', true);
+    expect(zoneQuery.where).toHaveBeenCalledWith('dg.is_active', true);
+    expect(zoneQuery.andWhere).toHaveBeenCalledWith('dg.is_default', false);
     expect(zoneQuery.whereIn).toHaveBeenCalledWith('zone_lock.device_id', ['lock-1']);
     expect(result).toEqual(['ac-1', '44']);
   });
@@ -104,7 +104,7 @@ describe('AccessControlZoneAccessService', () => {
     expect(result).toEqual(['ac-a']);
   });
 
-  it('getDenylistTargetsForUnits includes bluLok locks and app-enabled zone access_control', async () => {
+  it('getDenylistTargetsForUnits includes bluLok locks and scoped access_control only', async () => {
     const lockSpy = jest
       .spyOn(AccessControlZoneAccessService, 'getBluLokDeviceIdsForUnits')
       .mockResolvedValue(['lock-a']);
@@ -120,6 +120,52 @@ describe('AccessControlZoneAccessService', () => {
       { device_id: 'lock-a', device_type: 'blulok' },
       { device_id: 'ac-a', device_type: 'access_control' },
     ]);
+  });
+
+  it('getDenylistTargetsForUserRevocation adds global devices only when facility access is lost', async () => {
+    jest.spyOn(AccessControlZoneAccessService, 'getDenylistTargetsForUnits').mockResolvedValue([
+      { device_id: 'lock-a', device_type: 'blulok' },
+    ]);
+    jest
+      .spyOn(AccessControlZoneAccessService as any, 'getGlobalDenylistTargetsWhenFacilityAccessLost')
+      .mockResolvedValue([{ device_id: 'ac-global', device_type: 'access_control' }]);
+
+    const result = await AccessControlZoneAccessService.getDenylistTargetsForUserRevocation(
+      ['unit-a'],
+      'user-1',
+    );
+
+    expect(result).toEqual([
+      { device_id: 'lock-a', device_type: 'blulok' },
+      { device_id: 'ac-global', device_type: 'access_control' },
+    ]);
+  });
+
+  it('userHasActiveUnitAccessInFacility checks unit_assignments not units.tenant_id', async () => {
+    const assignmentCountQuery = {
+      join: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      whereNotIn: jest.fn().mockReturnThis(),
+      count: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    const db = jest.fn((table: string) => {
+      if (table === 'unit_assignments as ua') return assignmentCountQuery;
+      throw new Error(`Unexpected table: ${table}`);
+    });
+    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
+
+    const hasAccess = await (AccessControlZoneAccessService as any).userHasActiveUnitAccessInFacility(
+      'tenant-1',
+      'fac-1',
+      ['unit-excluded'],
+    );
+
+    expect(hasAccess).toBe(true);
+    expect(assignmentCountQuery.join).toHaveBeenCalledWith('units as u', 'u.id', 'ua.unit_id');
+    expect(assignmentCountQuery.where).toHaveBeenCalledWith('u.facility_id', 'fac-1');
+    expect(assignmentCountQuery.where).toHaveBeenCalledWith('ua.tenant_id', 'tenant-1');
+    expect(assignmentCountQuery.whereNotIn).toHaveBeenCalledWith('u.id', ['unit-excluded']);
   });
 
   it('getDenylistDeviceIdsForUnits returns device IDs from denylist targets', async () => {

@@ -673,6 +673,7 @@ jest.mock('../models/device.model', () => {
       .mockResolvedValue('550e8400-e29b-41d4-a716-446655440001'),
     findAccessControlIdentityConflict: jest.fn().mockResolvedValue(null),
     createAccessControlDevice: createAccessControlDeviceMock,
+    deleteAccessControlDevice: jest.fn().mockResolvedValue(undefined),
     createBluLokDevice: createBluLokDeviceMock,
     updateLockStatus: jest.fn().mockResolvedValue({ success: true }),
     updateStatus: jest.fn().mockResolvedValue({ success: true }),
@@ -733,25 +734,6 @@ jest.mock('../models/gateway.model', () => ({
       ];
       const gateway = gateways.find(g => g.id === id);
       return Promise.resolve(gateway ? { ...gateway, ...data } : null);
-    }),
-    findReassignmentCandidates: jest.fn().mockResolvedValue([
-      { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
-    ]),
-    assignUnassignedGatewayToFacility: jest.fn().mockImplementation((id: string, targetFacilityId: string) => {
-      if (id !== 'gateway-3') {
-        return Promise.resolve({ gateway: null, displacedGatewayId: null });
-      }
-      const displacedGatewayId = targetFacilityId === 'facility-1' ? 'gateway-1' : null;
-      return Promise.resolve({
-        gateway: {
-          id: 'gateway-3',
-          facility_id: targetFacilityId,
-          name: 'Gateway 3',
-          status: 'online',
-          gateway_type: 'simulated',
-        },
-        displacedGatewayId,
-      });
     }),
     updateStatus: jest.fn().mockResolvedValue(undefined),
     delete: jest.fn().mockResolvedValue(true)

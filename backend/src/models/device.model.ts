@@ -186,8 +186,8 @@ export interface DeviceWithContext extends BluLokDevice {
   gateway_name: string;
   primary_tenant?: {
     id: string;
-    firstName: string;
-    lastName: string;
+    first_name: string;
+    last_name: string;
     email: string;
   };
 }
@@ -494,8 +494,8 @@ export class DeviceModel {
       if (primaryTenant) {
         base.primary_tenant = {
           id: primaryTenant.id,
-          firstName: primaryTenant.first_name,
-          lastName: primaryTenant.last_name,
+          first_name: primaryTenant.first_name,
+          last_name: primaryTenant.last_name,
           email: primaryTenant.email,
         };
       }

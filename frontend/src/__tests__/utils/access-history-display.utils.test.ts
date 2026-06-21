@@ -11,6 +11,7 @@ import {
   getAccessFailureDetail,
   getAccessLocationDisplay,
   getAccessLogMetadata,
+  getAccessLogUserLink,
   getAccessUserDisplay,
   isNonUserAccessActor,
 } from '@/utils/access-history-display.utils';
@@ -70,6 +71,81 @@ describe('access-history-display.utils', () => {
     };
     const user = getAccessUserDisplay(remoteLog);
     expect(user.primary).toBe('Jane Admin');
+  });
+
+  it('labels keypad user links from metadata id and user_name when name is missing', () => {
+    const keypadLog: AccessLog = {
+      ...baseLog,
+      method: 'keypad',
+      actor_type: 'user',
+      user_id: 'user-2',
+      user_name: 'Taylor Morgan',
+      metadata: {
+        user: {
+          id: 'user-2',
+          name: '',
+          navigation_url: '/users/user-2/details',
+        },
+      },
+    };
+
+    expect(getAccessUserDisplay(keypadLog).primary).toBe('Taylor Morgan');
+    expect(getAccessLogUserLink(keypadLog)).toEqual({
+      id: 'user-2',
+      href: '/users/user-2/details',
+      label: 'Taylor Morgan',
+    });
+  });
+
+  it('falls back to email for linked users without a display name', () => {
+    const emailLog: AccessLog = {
+      ...baseLog,
+      method: 'app',
+      actor_type: 'user',
+      user_id: 'user-3',
+      user_name: undefined,
+      user_email: 'tenant@example.com',
+      metadata: {
+        user: {
+          id: 'user-3',
+          name: '',
+          email: 'tenant@example.com',
+          navigation_url: '/users/user-3/details',
+        },
+      },
+    };
+
+    expect(getAccessUserDisplay(emailLog).primary).toBe('tenant@example.com');
+    expect(getAccessLogUserLink(emailLog)?.label).toBe('tenant@example.com');
+  });
+
+  it('includes linked user in compact detail items', () => {
+    const linkedLog: AccessLog = {
+      ...baseLog,
+      method: 'keypad',
+      user_id: 'user-4',
+      user_name: 'Alex Tenant',
+      metadata: {
+        user: {
+          id: 'user-4',
+          name: '',
+          navigation_url: '/users/user-4/details',
+        },
+      },
+    };
+
+    const items = buildAccessLogDetailItems(linkedLog, true, { omitRowSummaryFields: true });
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'User',
+          value: 'Alex Tenant',
+          href: '/users/user-4/details',
+          navigationId: 'user-4',
+          navigationTarget: 'user',
+        }),
+      ]),
+    );
   });
 
   it('labels unlock attempts and denial reasons', () => {

@@ -5,13 +5,12 @@ import {
   BoltIcon,
   BuildingOfficeIcon,
   CheckCircleIcon,
-  CubeIcon,
   HomeIcon,
-  KeyIcon,
   LockClosedIcon,
   PlusCircleIcon,
   WifiIcon,
 } from '@heroicons/react/24/outline';
+import { ACCESS_DEVICE_TYPE_OPTIONS } from '@/utils/device-icon.utils';
 import { AnimatePresence, motion } from 'framer-motion';
 import axios from 'axios';
 import { Modal } from '@/components/Modal/Modal';
@@ -49,11 +48,10 @@ interface AddDeviceModalProps {
   deviceType?: HardwareKind;
 }
 
-const ACCESS_DEVICE_TYPES = [
-  { value: 'gate' as const, label: 'Gate', description: 'Vehicle or pedestrian gate', icon: BoltIcon },
-  { value: 'elevator' as const, label: 'Elevator', description: 'Elevator floor relay', icon: CubeIcon },
-  { value: 'door' as const, label: 'Door', description: 'Entry or interior door', icon: KeyIcon },
-];
+const ACCESS_DEVICE_TYPES = ACCESS_DEVICE_TYPE_OPTIONS.map(({ Icon, ...rest }) => ({
+  ...rest,
+  icon: Icon,
+}));
 
 const HARDWARE_OPTIONS: Array<{
   id: HardwareKind;

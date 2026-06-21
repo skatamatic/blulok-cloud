@@ -24,7 +24,7 @@ jest.mock('@/services/denylist-optimization.service', () => ({
 }));
 jest.mock('@/services/access-control-zone-access.service', () => ({
   AccessControlZoneAccessService: {
-    getDenylistTargetsForUnits: jest.fn(),
+    getDenylistTargetsForUserRevocation: jest.fn(),
     getDeviceFacilityIds: jest.fn(),
   },
 }));
@@ -134,7 +134,7 @@ describe('User Deactivation Cascades', () => {
     } as any;
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
 
-    (AccessControlZoneAccessService.getDenylistTargetsForUnits as jest.Mock).mockResolvedValue([
+    (AccessControlZoneAccessService.getDenylistTargetsForUserRevocation as jest.Mock).mockResolvedValue([
       { device_id: 'device-A', device_type: 'blulok' },
       { device_id: 'device-B', device_type: 'blulok' },
     ]);

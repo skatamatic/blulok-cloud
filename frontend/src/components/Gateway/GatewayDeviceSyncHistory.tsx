@@ -3,10 +3,9 @@ import {
   ArrowPathIcon,
   ChevronRightIcon,
   ExclamationTriangleIcon,
-  LockClosedIcon,
-  ServerIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
+import { getDeviceIconMeta } from '@/utils/device-icon.utils';
 import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import type { DeviceSyncLogEntry, GatewayDeviceSyncLogRecord } from '@/types/gateway.types';
@@ -150,12 +149,20 @@ function SyncLogRow({ log }: { log: GatewayDeviceSyncLogRecord }) {
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700/80">
                     {log.entries.map((entry, idx) => {
                       const meta = ACTION_META[entry.action];
-                      const KindIcon = entry.device_kind === 'blulok' ? LockClosedIcon : ServerIcon;
+                      const iconDevice =
+                        entry.device_kind === 'blulok'
+                          ? ({ device_category: 'blulok' } as const)
+                          : ({
+                              device_category: 'access_control' as const,
+                              device_type: entry.device_kind === 'access_control' ? undefined : null,
+                            } as const);
+                      const iconMeta = getDeviceIconMeta(iconDevice);
+                      const KindIcon = iconMeta.Icon;
                       return (
                         <tr key={`${entry.identifier}-${entry.action}-${idx}`}>
                           <td className="py-2 pr-3 whitespace-nowrap">
                             <span className="inline-flex items-center gap-1.5 font-mono text-xs text-gray-900 dark:text-white">
-                              <KindIcon className="h-3.5 w-3.5 text-gray-400" />
+                              <KindIcon className={`h-3.5 w-3.5 ${iconMeta.iconClass}`} />
                               {entry.identifier}
                             </span>
                           </td>

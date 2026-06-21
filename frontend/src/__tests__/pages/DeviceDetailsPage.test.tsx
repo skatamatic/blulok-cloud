@@ -178,7 +178,7 @@ describe('DeviceDetailsPage', () => {
     });
   });
 
-  it('renders device overview tab by default', async () => {
+  it('renders unified device overview by default', async () => {
     render(
       <MemoryRouter initialEntries={['/devices/device-1']}>
         <ToastProvider>
@@ -192,7 +192,6 @@ describe('DeviceDetailsPage', () => {
     });
 
     expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
-    expect(screen.getByText('Unit assignment')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Unassign from unit/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Remove lock from cloud inventory/i })).toBeInTheDocument();
     const matches = screen.getAllByText((_, node) => node?.textContent?.includes('Unit A-101') || false);
@@ -217,11 +216,11 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Unit assignment')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Unassign from unit/i })).toBeInTheDocument();
     });
 
     expect(screen.getByRole('button', { name: /Remove lock from cloud inventory/i })).toBeInTheDocument();
-    expect(screen.getByText(/Remove from facility \(cloud inventory\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Danger zone/i)).toBeInTheDocument();
     expect(screen.getByText(/gateway is notified/i)).toBeInTheDocument();
   });
 
@@ -435,10 +434,10 @@ describe('DeviceDetailsPage', () => {
     });
 
     expect(screen.queryByRole('button', { name: /Remove lock from cloud inventory/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Remove from facility \(cloud inventory\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Danger zone/i)).not.toBeInTheDocument();
   });
 
-  it('switches to denylist tab and loads entries', async () => {
+  it('loads denylist when denylist tab is selected', async () => {
     mockApiService.getDeviceDenylist.mockResolvedValue({
       success: true,
       entries: mockDenylistEntries,
@@ -456,8 +455,7 @@ describe('DeviceDetailsPage', () => {
       expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
     });
 
-    const denylistTab = screen.getByText('Denylist');
-    fireEvent.click(denylistTab);
+    fireEvent.click(screen.getByRole('button', { name: 'Denylist' }));
 
     await waitFor(() => {
       expect(mockApiService.getDeviceDenylist).toHaveBeenCalledWith('device-1');
@@ -571,11 +569,11 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Back')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Back to Devices/i })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('Back'));
-    expect(mockNavigate).toHaveBeenCalledWith(-1);
+    fireEvent.click(screen.getByRole('button', { name: /Back to Devices/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/devices', { replace: true });
   });
 
   it('reloads device details on lock command failure', async () => {
@@ -661,15 +659,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
-      });
-
-      // Click on Overview tab to ensure we're on the right tab
-      const overviewTab = screen.getByRole('button', { name: /overview/i });
-      fireEvent.click(overviewTab);
-
-      await waitFor(() => {
-        expect(screen.getByText('Signal Strength')).toBeInTheDocument();
+        expect(screen.getByText(/Signal strength/i)).toBeInTheDocument();
       });
 
       // -55 dBm is >= -60, so it shows "Good" (Excellent is >= -50)
@@ -689,10 +679,6 @@ describe('DeviceDetailsPage', () => {
       await waitFor(() => {
         expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
-
-      // Click on Overview tab
-      const overviewTab = screen.getByRole('button', { name: /overview/i });
-      fireEvent.click(overviewTab);
 
       await waitFor(() => {
         expect(screen.getByText('Temperature')).toBeInTheDocument();
@@ -719,10 +705,6 @@ describe('DeviceDetailsPage', () => {
         expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
-      // Click on Overview tab
-      const overviewTab = screen.getByRole('button', { name: /overview/i });
-      fireEvent.click(overviewTab);
-
       await waitFor(() => {
         expect(screen.getByText(/Error: LOW_BATTERY/)).toBeInTheDocument();
       });
@@ -748,10 +730,6 @@ describe('DeviceDetailsPage', () => {
         expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
-      // Click on Overview tab
-      const overviewTab = screen.getByRole('button', { name: /overview/i });
-      fireEvent.click(overviewTab);
-
       await waitFor(() => {
         expect(screen.getByText('-85 dBm')).toBeInTheDocument();
       });
@@ -776,10 +754,6 @@ describe('DeviceDetailsPage', () => {
       await waitFor(() => {
         expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
-
-      // Click on Overview tab
-      const overviewTab = screen.getByRole('button', { name: /overview/i });
-      fireEvent.click(overviewTab);
 
       await waitFor(() => {
         expect(screen.getByText('55.0°C')).toBeInTheDocument();
@@ -856,10 +830,6 @@ describe('DeviceDetailsPage', () => {
         expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
 
-      // Click on Overview tab
-      const overviewTab = screen.getByRole('button', { name: /overview/i });
-      fireEvent.click(overviewTab);
-
       await waitFor(() => {
         expect(screen.getByText('85%')).toBeInTheDocument();
       });
@@ -904,10 +874,6 @@ describe('DeviceDetailsPage', () => {
       await waitFor(() => {
         expect(screen.getByRole('heading', { level: 1, name: 'SN123456' })).toBeInTheDocument();
       });
-
-      // Click on Overview tab
-      const overviewTab = screen.getByRole('button', { name: /overview/i });
-      fireEvent.click(overviewTab);
 
       await waitFor(() => {
         expect(screen.getByText('85%')).toBeInTheDocument();

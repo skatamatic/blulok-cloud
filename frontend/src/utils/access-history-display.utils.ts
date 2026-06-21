@@ -168,9 +168,88 @@ export function formatDenialReason(reason: string): string {
   return DENIAL_REASON_LABELS[reason] || formatAccessAction(reason);
 }
 
+function trimDisplayText(value: string | undefined | null): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Resolve a human-readable label for a linked user on an access log row. */
+export function resolveAccessLogUserLabel(
+  log: AccessLog,
+  meta: AccessLogPresentationMetadata = getAccessLogMetadata(log),
+): string | null {
+  const linkedUserId = meta.initiated_by?.id || meta.user?.id || log.user_id || null;
+  if (!linkedUserId) return null;
+
+  const nameCandidates = [
+    meta.initiated_by?.name,
+    meta.user?.name,
+    meta.actor?.type === 'user' ? meta.actor?.name : null,
+    log.user_id === linkedUserId ? log.user_name : null,
+    log.user_id === linkedUserId ? log.primary_tenant_name : null,
+  ];
+
+  for (const candidate of nameCandidates) {
+    const label = trimDisplayText(candidate);
+    if (label) return label;
+  }
+
+  const emailCandidates = [
+    meta.user?.email,
+    log.user_id === linkedUserId ? log.user_email : null,
+    log.user_id === linkedUserId ? log.primary_tenant_email : null,
+  ];
+
+  for (const candidate of emailCandidates) {
+    const label = trimDisplayText(candidate);
+    if (label) return label;
+  }
+
+  return 'View user';
+}
+
+export type AccessLogUserLink = {
+  id: string;
+  href: string;
+  label: string;
+};
+
+/** Linked user navigation target for access history rows, when one exists. */
+export function getAccessLogUserLink(log: AccessLog): AccessLogUserLink | null {
+  const meta = getAccessLogMetadata(log);
+  const label = resolveAccessLogUserLabel(log, meta);
+  if (!label) return null;
+
+  if (meta.user?.id && meta.user.navigation_url) {
+    return {
+      id: meta.user.id,
+      href: meta.user.navigation_url,
+      label,
+    };
+  }
+
+  if (meta.initiated_by?.id && meta.initiated_by.navigation_url) {
+    return {
+      id: meta.initiated_by.id,
+      href: meta.initiated_by.navigation_url,
+      label,
+    };
+  }
+
+  const userId = meta.user?.id || meta.initiated_by?.id || log.user_id;
+  if (!userId) return null;
+
+  return {
+    id: userId,
+    href: getAccessLogUserDetailsPath(userId),
+    label,
+  };
+}
+
 export function isNonUserAccessActor(log: AccessLog): boolean {
   const meta = getAccessLogMetadata(log);
-  if (meta.initiated_by?.name || meta.user?.name || log.user_id) {
+  if (meta.initiated_by?.id || meta.initiated_by?.name || meta.user?.id || meta.user?.name || log.user_id) {
     return false;
   }
   const actorType = meta.actor?.type || log.actor_type;
@@ -182,26 +261,12 @@ export function isNonUserAccessActor(log: AccessLog): boolean {
 
 export function getAccessUserDisplay(log: AccessLog): { primary: string; secondary: string | null } {
   const meta = getAccessLogMetadata(log);
+  const linkedLabel = resolveAccessLogUserLabel(log, meta);
 
-  if (meta.initiated_by?.name) {
+  if (linkedLabel) {
     return {
-      primary: meta.initiated_by.name,
-      secondary: meta.user?.email || log.user_email || null,
-    };
-  }
-
-  if (meta.user?.name) {
-    return {
-      primary: meta.user.name,
-      secondary: meta.user.email || log.user_email || null,
-    };
-  }
-
-  const primary = meta.actor?.name || log.user_name;
-  if (primary && !isNonUserAccessActor(log)) {
-    return {
-      primary,
-      secondary: log.user_email || null,
+      primary: linkedLabel,
+      secondary: meta.user?.email || log.user_email || log.primary_tenant_email || null,
     };
   }
 
@@ -213,8 +278,9 @@ export function getAccessUserDisplay(log: AccessLog): { primary: string; seconda
     return { primary: '—', secondary: null };
   }
 
+  const primary = meta.actor?.name || log.user_name;
   return {
-    primary: primary || '—',
+    primary: trimDisplayText(primary) || '—',
     secondary: log.user_email || null,
   };
 }
@@ -302,13 +368,29 @@ export function buildAccessLogDetailItems(
 
   const items: AccessLogDetailItem[] = [];
 
+  const userLink = getAccessLogUserLink(log);
+
   if (!omitRow) {
     items.push(
       { label: 'Action', value: formatAccessAction(log.action) },
       { label: 'Method', value: formatAccessMethod(log.method) },
       { label: 'Status', value: getAccessStatusDisplay(log).label },
-      { label: 'User', value: user.primary },
+      {
+        label: 'User',
+        value: user.primary,
+        href: userLink?.href,
+        navigationId: userLink?.id,
+        navigationTarget: userLink ? 'user' : undefined,
+      },
     );
+  } else if (userLink && user.primary !== '—') {
+    items.push({
+      label: 'User',
+      value: userLink.label,
+      href: userLink.href,
+      navigationId: userLink.id,
+      navigationTarget: 'user',
+    });
   }
 
   if (!hideFacility && (meta.facility?.name || log.facility_name)) {

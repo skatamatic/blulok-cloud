@@ -226,7 +226,7 @@ export class DenylistEntryModel {
   async removeForUnits(unitIds: string[], userId: string): Promise<number> {
     try {
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      const targets = await AccessControlZoneAccessService.getDenylistTargetsForUnits(unitIds);
+      const targets = await AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant(unitIds, userId);
       if (targets.length === 0) {
         return 0;
       }
@@ -249,7 +249,7 @@ export class DenylistEntryModel {
   async findByUnitsAndUser(unitIds: string[], userId: string): Promise<DeviceDenylistEntry[]> {
     try {
       const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      const targets = await AccessControlZoneAccessService.getDenylistTargetsForUnits(unitIds);
+      const targets = await AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant(unitIds, userId);
       if (targets.length === 0) {
         return [];
       }

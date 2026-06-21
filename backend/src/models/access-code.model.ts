@@ -238,7 +238,6 @@ export class AccessCodeModel {
         .whereIn('dgm.device_id', facilityDevices.map((d) => d.device_id))
         .where((qb) => qb.where('dgm.device_type', 'access_control').orWhereNull('dgm.device_type'))
         .andWhere('dg.facility_id', facilityId)
-        .andWhere('dg.group_type', 'access_code')
         .andWhere('dg.is_active', true);
       const sortedGroupRows = groupRows
         .filter((row) => row.group_id)

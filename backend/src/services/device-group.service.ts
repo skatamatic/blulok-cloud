@@ -13,6 +13,7 @@ import { AuthService } from '@/services/auth.service';
 import { DatabaseService } from '@/services/database.service';
 import { AccessCodeService } from '@/services/access-code.service';
 import { UserRole } from '@/types/auth.types';
+import { DEFAULT_ACCESS_GROUP_NAME } from '@/constants/access-group.constants';
 
 interface ActorContext {
   actorId?: string;
@@ -43,6 +44,23 @@ export class DeviceGroupService {
     const group = await this.model.findById(id);
     if (!group) throw new NotFoundError('Device group');
     return group;
+  }
+
+  private assertDefaultGroupProtected(group: DeviceGroup, data?: UpdateDeviceGroupData): void {
+    if (!group.is_default) return;
+
+    if (data?.name !== undefined && data.name !== group.name && data.name !== DEFAULT_ACCESS_GROUP_NAME) {
+      throw new ValidationError('The default access group cannot be renamed');
+    }
+    if (data?.is_default === false) {
+      throw new ValidationError('The default access group cannot be unset');
+    }
+    if (data?.is_global_shared === false) {
+      throw new ValidationError('The default access group must remain available to all facility tenants');
+    }
+    if (data?.is_active === false) {
+      throw new ValidationError('The default access group cannot be deactivated');
+    }
   }
 
   private async assertDeviceInFacility(deviceId: string, facilityId: string, deviceType: DeviceGroupMemberType): Promise<void> {
@@ -81,43 +99,10 @@ export class DeviceGroupService {
     }
   }
 
-  private async assertGlobalSharedConstraint(groupType: DeviceGroupType, isGlobalShared: boolean): Promise<void> {
-    if (groupType !== 'access_code' && isGlobalShared) {
-      throw new ValidationError('is_global_shared is only valid for access_code groups');
+  private async pushCodesIfAccessControlChanged(facilityId: string, deviceType: DeviceGroupMemberType | undefined): Promise<void> {
+    if (deviceType === 'access_control' || !deviceType) {
+      await AccessCodeService.getInstance().pushCodesToGateway(facilityId);
     }
-  }
-
-  private async hasGlobalSharedAccessCodeGroup(facilityId: string, excludeGroupId?: string): Promise<boolean> {
-    const existing = await this.db('device_groups')
-      .select('id')
-      .where('facility_id', facilityId)
-      .andWhere('group_type', 'access_code')
-      .andWhere('is_global_shared', true)
-      .modify((qb) => {
-        if (excludeGroupId) qb.andWhereNot('id', excludeGroupId);
-      })
-      .first();
-    return Boolean(existing);
-  }
-
-  private async promoteGlobalSharedGroup(facilityId: string, groupId: string): Promise<void> {
-    const now = new Date();
-    await this.db('device_groups')
-      .where('facility_id', facilityId)
-      .andWhere('group_type', 'access_code')
-      .andWhere('is_global_shared', true)
-      .andWhereNot('id', groupId)
-      .update({
-        is_global_shared: false,
-        updated_at: now,
-      });
-
-    await this.db('device_groups')
-      .where('id', groupId)
-      .update({
-        is_global_shared: true,
-        updated_at: now,
-      });
   }
 
   private async logGroupActivity(
@@ -145,6 +130,172 @@ export class DeviceGroupService {
     });
   }
 
+  /**
+   * Idempotently ensure the per-facility default access group exists.
+   * Used on facility creation and when assigning new access-control devices.
+   */
+  async ensureDefaultGroup(facilityId: string, actor: ActorContext = {}): Promise<DeviceGroup> {
+    const existing = await this.model.findDefaultByFacility(facilityId);
+    if (existing) return existing;
+
+    const group = await this.model.create({
+      facility_id: facilityId,
+      group_type: 'access_code',
+      is_global_shared: true,
+      is_default: true,
+      name: DEFAULT_ACCESS_GROUP_NAME,
+      description: 'Default access group — all tenants in this facility',
+    });
+
+    await this.logGroupActivity(
+      group,
+      'Default access group created',
+      `Created default access group "${group.name}"`,
+      actor,
+    );
+
+    return group;
+  }
+
+  /**
+   * Assign a device (access-control or blulok) to the facility default group.
+   * Every device belongs to the default group unless it has been moved into a
+   * specific (non-default) group, which takes precedence.
+   */
+  private async assignDeviceToDefaultGroup(
+    facilityId: string,
+    deviceId: string,
+    deviceType: DeviceGroupMemberType,
+    actor: ActorContext = {},
+  ): Promise<void> {
+    const defaultGroup = await this.ensureDefaultGroup(facilityId, actor);
+
+    const inSpecificGroup = await this.model.countAccessControlMembershipsForDevice(
+      deviceId,
+      facilityId,
+      { specificGroupsOnly: true, deviceType },
+    );
+    if (inSpecificGroup > 0) {
+      await this.model.removeMember(defaultGroup.id, deviceId, deviceType);
+      return;
+    }
+
+    await this.model.addMember(defaultGroup.id, deviceId, deviceType);
+  }
+
+  /**
+   * Assign an access-control device to the facility default group (auto-assignment hook).
+   */
+  async assignAccessControlToDefaultGroup(
+    facilityId: string,
+    deviceId: string,
+    actor: ActorContext = {},
+  ): Promise<void> {
+    await this.assignDeviceToDefaultGroup(facilityId, deviceId, 'access_control', actor);
+  }
+
+  /**
+   * Assign a blulok unit lock to the facility default group (auto-assignment hook).
+   */
+  async assignBluLokToDefaultGroup(
+    facilityId: string,
+    deviceId: string,
+    actor: ActorContext = {},
+  ): Promise<void> {
+    await this.assignDeviceToDefaultGroup(facilityId, deviceId, 'blulok', actor);
+  }
+
+  /**
+   * Idempotently ensure all facility devices (access-control + blulok unit locks) belong to the
+   * default group unless they are in a specific (non-default) zone group.
+   */
+  async backfillDefaultGroupMemberships(
+    facilityId: string,
+    actor: ActorContext = {},
+  ): Promise<{ added: number }> {
+    const defaultGroup = await this.ensureDefaultGroup(facilityId, actor);
+
+    const [accessControlDevices, bluLokDevices] = await Promise.all([
+      this.db('access_control_devices as acd')
+        .select('acd.id')
+        .join('gateways as g', 'g.id', 'acd.gateway_id')
+        .where('g.facility_id', facilityId),
+      this.db('blulok_devices as bd')
+        .select('bd.id')
+        .join('gateways as g', 'g.id', 'bd.gateway_id')
+        .where('g.facility_id', facilityId),
+    ]);
+
+    let added = 0;
+
+    const backfillDevice = async (deviceId: string, deviceType: DeviceGroupMemberType): Promise<void> => {
+      const inSpecificGroup = await this.model.countAccessControlMembershipsForDevice(
+        deviceId,
+        facilityId,
+        { specificGroupsOnly: true, deviceType },
+      );
+
+      if (inSpecificGroup > 0) {
+        await this.model.removeMember(defaultGroup.id, deviceId, deviceType);
+        return;
+      }
+
+      const alreadyInDefault = await this.db('device_group_members')
+        .where({
+          group_id: defaultGroup.id,
+          device_id: deviceId,
+          device_type: deviceType,
+        })
+        .first();
+
+      if (alreadyInDefault) return;
+
+      await this.model.addMember(defaultGroup.id, deviceId, deviceType);
+      added += 1;
+    };
+
+    for (const row of accessControlDevices) {
+      await backfillDevice(String(row.id), 'access_control');
+    }
+    for (const row of bluLokDevices) {
+      await backfillDevice(String(row.id), 'blulok');
+    }
+
+    return { added };
+  }
+
+  private async removeFromDefaultGroupIfNeeded(
+    facilityId: string,
+    deviceId: string,
+    deviceType: DeviceGroupMemberType,
+    targetGroup: DeviceGroup,
+  ): Promise<void> {
+    if (targetGroup.is_default) return;
+
+    const defaultGroup = await this.model.findDefaultByFacility(facilityId);
+    if (!defaultGroup) return;
+
+    await this.model.removeMember(defaultGroup.id, deviceId, deviceType);
+  }
+
+  private async rejoinDefaultGroupIfNeeded(
+    facilityId: string,
+    deviceId: string,
+    deviceType: DeviceGroupMemberType,
+    removedFromGroup: DeviceGroup,
+  ): Promise<void> {
+    if (removedFromGroup.is_default) return;
+
+    const remainingSpecific = await this.model.countAccessControlMembershipsForDevice(
+      deviceId,
+      facilityId,
+      { specificGroupsOnly: true, deviceType },
+    );
+    if (remainingSpecific > 0) return;
+
+    await this.assignDeviceToDefaultGroup(facilityId, deviceId, deviceType);
+  }
+
   async create(
     data: CreateDeviceGroupData,
     userRole: UserRole,
@@ -152,27 +303,23 @@ export class DeviceGroupService {
     actor: ActorContext = {},
   ): Promise<DeviceGroup> {
     this.assertFacilityAccess(userRole, userFacilityIds, data.facility_id);
-    const groupType = data.group_type || 'zone';
-    const requestedGlobal = Boolean(data.is_global_shared);
-    await this.assertGlobalSharedConstraint(groupType, requestedGlobal);
-    const hadGlobalBeforeCreate = groupType === 'access_code'
-      ? await this.hasGlobalSharedAccessCodeGroup(data.facility_id)
-      : false;
+
+    if (data.is_default) {
+      throw new ValidationError('Default access groups are created automatically');
+    }
 
     const group = await this.model.create({
       ...data,
-      is_global_shared: groupType === 'access_code' ? requestedGlobal : false,
+      group_type: data.group_type || 'zone',
+      is_global_shared: Boolean(data.is_global_shared),
+      is_default: false,
     });
-
-    if (groupType === 'access_code' && (requestedGlobal || !hadGlobalBeforeCreate)) {
-      await this.promoteGlobalSharedGroup(group.facility_id, group.id);
-    }
 
     const hydratedGroup = await this.getGroupOrThrow(group.id);
     await this.logGroupActivity(
       hydratedGroup,
-      'Device group created',
-      `Created device group "${hydratedGroup.name}"`,
+      'Access group created',
+      `Created access group "${hydratedGroup.name}"`,
       actor,
     );
     return hydratedGroup;
@@ -185,6 +332,7 @@ export class DeviceGroupService {
     groupType?: DeviceGroupType,
   ): Promise<DeviceGroup[]> {
     this.assertFacilityAccess(userRole, userFacilityIds, facilityId);
+    await this.ensureDefaultGroup(facilityId);
     return this.model.findByFacility(facilityId, groupType);
   }
 
@@ -207,21 +355,16 @@ export class DeviceGroupService {
   ): Promise<DeviceGroup> {
     const existing = await this.getGroupOrThrow(id);
     this.assertFacilityAccess(userRole, userFacilityIds, existing.facility_id);
-    const nextGroupType = data.group_type ?? existing.group_type;
-    const nextIsGlobalShared = data.is_global_shared ?? existing.is_global_shared;
-    await this.assertGlobalSharedConstraint(nextGroupType, Boolean(nextIsGlobalShared));
+    this.assertDefaultGroupProtected(existing, data);
 
-    const hadGlobalBeforeUpdate = nextGroupType === 'access_code'
-      ? await this.hasGlobalSharedAccessCodeGroup(existing.facility_id, existing.id)
-      : false;
+    if (data.is_default && !existing.is_default) {
+      throw new ValidationError('Default access groups are managed automatically');
+    }
 
-    const globalSnapshot = await this.db('device_groups')
-      .select('id', 'is_global_shared')
-      .where('facility_id', existing.facility_id)
-      .andWhere('group_type', 'access_code');
     const rollbackGroupState: UpdateDeviceGroupData = {
       group_type: existing.group_type,
       is_global_shared: existing.is_global_shared,
+      is_default: existing.is_default,
       name: existing.name,
       description: existing.description,
       settings: existing.settings,
@@ -232,41 +375,23 @@ export class DeviceGroupService {
       access_code_current_valid_until: existing.access_code_current_valid_until ?? null,
     };
 
-    const updated = await this.model.update(id, {
-      ...data,
-      is_global_shared: nextGroupType === 'access_code' ? data.is_global_shared : false,
-    });
+    const updated = await this.model.update(id, data);
     if (!updated) throw new NotFoundError('Device group');
 
-    if (nextGroupType === 'access_code' && (Boolean(data.is_global_shared) || !hadGlobalBeforeUpdate)) {
-      await this.promoteGlobalSharedGroup(updated.facility_id, updated.id);
-    }
-
     const hydratedUpdated = await this.getGroupOrThrow(updated.id);
-    const shouldRefreshGatewayCodes = (
-      (data.is_active !== undefined || data.group_type !== undefined)
-      && (existing.group_type === 'access_code' || hydratedUpdated.group_type === 'access_code')
-    );
+    const shouldRefreshGatewayCodes = data.is_active !== undefined || data.group_type !== undefined;
     if (shouldRefreshGatewayCodes) {
       try {
         await AccessCodeService.getInstance().pushCodesToGateway(hydratedUpdated.facility_id);
       } catch (pushError) {
-        // Keep update behavior atomic for callers: rollback persisted DB changes when push fails.
         await this.model.update(existing.id, rollbackGroupState);
-        await Promise.all(
-          globalSnapshot.map((row) =>
-            this.db('device_groups')
-              .where('id', String(row.id))
-              .update({ is_global_shared: Boolean(row.is_global_shared), updated_at: new Date() }),
-          ),
-        );
         throw pushError;
       }
     }
     await this.logGroupActivity(
       hydratedUpdated,
-      'Device group updated',
-      `Updated device group "${hydratedUpdated.name}"`,
+      'Access group updated',
+      `Updated access group "${hydratedUpdated.name}"`,
       actor,
       { updatedFields: Object.keys(data) },
     );
@@ -281,14 +406,28 @@ export class DeviceGroupService {
   ): Promise<void> {
     const group = await this.getGroupOrThrow(id);
     this.assertFacilityAccess(userRole, userFacilityIds, group.facility_id);
-    await this.model.delete(id);
-    if (group.group_type === 'access_code') {
-      await AccessCodeService.getInstance().pushCodesToGateway(group.facility_id);
+
+    if (group.is_default) {
+      throw new ValidationError('The default access group cannot be deleted');
     }
+
+    const members = await this.model.getMembers(group.id);
+    await this.model.delete(id);
+
+    for (const member of members) {
+      await this.rejoinDefaultGroupIfNeeded(
+        group.facility_id,
+        member.device_id,
+        member.device_type,
+        group,
+      );
+    }
+    await AccessCodeService.getInstance().pushCodesToGateway(group.facility_id);
+
     await this.logGroupActivity(
       group,
-      'Device group deleted',
-      `Deleted device group "${group.name}"`,
+      'Access group deleted',
+      `Deleted access group "${group.name}"`,
       actor,
     );
   }
@@ -326,13 +465,23 @@ export class DeviceGroupService {
     }
 
     await this.assertDeviceInFacility(resolvedDeviceId, group.facility_id, deviceType);
-    const member = await this.model.addMember(groupId, resolvedDeviceId, deviceType, sourceUnitId);
-    if (group.group_type === 'access_code' && deviceType === 'access_control') {
-      await AccessCodeService.getInstance().pushCodesToGateway(group.facility_id);
+
+    // Devices live in the default group until moved into one or more specific groups.
+    // A device may belong to several specific groups at once (e.g. a shared wing door),
+    // but never to a specific group and the default group simultaneously.
+    if (!group.is_default) {
+      await this.removeFromDefaultGroupIfNeeded(group.facility_id, resolvedDeviceId, deviceType, group);
     }
+
+    const member = await this.model.addMember(groupId, resolvedDeviceId, deviceType, sourceUnitId);
+
+    if (deviceType === 'access_control') {
+      await this.pushCodesIfAccessControlChanged(group.facility_id, deviceType);
+    }
+
     await this.logGroupActivity(
       group,
-      'Device added to group',
+      'Device added to access group',
       `Added device ${resolvedDeviceId} to group "${group.name}"`,
       actor,
       { deviceId: resolvedDeviceId, deviceType, sourceUnitId: sourceUnitId || null },
@@ -350,13 +499,26 @@ export class DeviceGroupService {
   ): Promise<void> {
     const group = await this.getGroupOrThrow(groupId);
     this.assertFacilityAccess(userRole, userFacilityIds, group.facility_id);
-    await this.model.removeMember(groupId, deviceId, deviceType);
-    if (group.group_type === 'access_code' && (deviceType === 'access_control' || !deviceType)) {
-      await AccessCodeService.getInstance().pushCodesToGateway(group.facility_id);
+
+    if (group.is_default) {
+      throw new ValidationError(
+        'Remove this device from its specific access group instead; default membership is managed automatically',
+      );
     }
+
+    await this.model.removeMember(groupId, deviceId, deviceType);
+
+    await this.rejoinDefaultGroupIfNeeded(
+      group.facility_id,
+      deviceId,
+      deviceType ?? 'access_control',
+      group,
+    );
+    await this.pushCodesIfAccessControlChanged(group.facility_id, deviceType);
+
     await this.logGroupActivity(
       group,
-      'Device removed from group',
+      'Device removed from access group',
       `Removed device ${deviceId} from group "${group.name}"`,
       actor,
       { deviceId, deviceType: deviceType || 'any' },
@@ -373,4 +535,3 @@ export class DeviceGroupService {
     return this.model.getMembers(groupId);
   }
 }
-

@@ -7,15 +7,15 @@ import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
+import { DeviceTypeBadge, DeviceTypeIcon } from '@/components/Common/DeviceTypeIcon';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
 import { 
   ServerIcon,
   FunnelIcon,
   BoltIcon,
-  CubeIcon,
   KeyIcon,
-  LockClosedIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
   WrenchScrewdriverIcon,
@@ -37,6 +37,7 @@ import {
   formatBluLokDeviceSubtitle,
   formatBluLokLockNumberLabel,
 } from '@/utils/blulokDeviceDisplay.utils';
+import { formatNetworkInfraKindLabel } from '@/utils/device-icon.utils';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -47,13 +48,6 @@ const statusColors = {
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
   unlocked: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-};
-
-const deviceTypeIcons = {
-  gate: BoltIcon,
-  elevator: CubeIcon,
-  door: KeyIcon,
-  blulok: LockClosedIcon
 };
 
 const statusIcons = {
@@ -321,51 +315,46 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
 
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Devices</h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Monitor and manage all facility devices
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-            <ViewModeToggle
-              value={activeTab === 'table' ? 'table' : 'grid'}
-              onChange={(m) => setActiveTab(m)}
-              showText={false}
-              noneSelected={activeTab === 'commands'}
-            />
-            <button
-              type="button"
-              onClick={() => setActiveTab('commands')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'commands'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-              title="Command queue"
-              aria-label="Command queue"
-            >
-              <KeyIcon className="h-4 w-4" />
-            </button>
-          </div>
-          
-          {canManage && !isNetworkInfraScope && (
-            <div className="relative">
+    <div className="space-y-4">
+      <ListPageHeader
+        title="Devices"
+        subtitle="Monitor and manage all facility devices"
+        actions={
+          <>
+            <div className="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+              <ViewModeToggle
+                value={activeTab === 'table' ? 'table' : 'grid'}
+                onChange={(m) => setActiveTab(m)}
+                showText={false}
+                noneSelected={activeTab === 'commands'}
+              />
               <button
-                onClick={() => setShowAddDeviceModal(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
+                type="button"
+                onClick={() => setActiveTab('commands')}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === 'commands'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+                title="Command queue"
+                aria-label="Command queue"
               >
-                <ServerIcon className="h-4 w-4 mr-2" />
-                Add Device
+                <KeyIcon className="h-4 w-4" />
               </button>
             </div>
-          )}
-        </div>
-      </div>
+
+            {canManage && !isNetworkInfraScope && (
+              <button
+                onClick={() => setShowAddDeviceModal(true)}
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+              >
+                <ServerIcon className="mr-2 h-4 w-4" />
+                Add Device
+              </button>
+            )}
+          </>
+        }
+      />
 
       {/* Filters */}
       <ExpandableFilters
@@ -389,28 +378,34 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
         sections={[
           {
             title: 'Device Scope',
-            icon: <ServerIcon className="h-5 w-5" />,
-            options: [
-              { key: 'operational', label: 'Access Control + Locks', color: 'primary' },
-              { key: 'network_infra', label: 'Network Infra', color: 'blue' },
-            ],
-            selected: filters.device_scope || 'operational',
-            onSelect: handleScopeFilter
-          },
-          ...(!isNetworkInfraScope ? [{
-            title: 'Device Type',
-            icon: <FunnelIcon className="h-5 w-5" />,
+            icon: <ServerIcon className="h-4 w-4" />,
+            span: 'full',
             options: [
               { key: 'all', label: 'All Devices', color: 'primary' },
-              { key: 'access_control', label: 'Access Control', color: 'blue' },
-              { key: 'blulok', label: 'BluLok', color: 'green' }
+              { key: 'operational', label: 'Access + Locks', color: 'blue' },
+              { key: 'network_infra', label: 'Network Infra', color: 'gray' },
             ],
-            selected: filters.device_type || '',
-            onSelect: handleTypeFilter
-          }] : []),
+            selected: filters.device_scope || 'operational',
+            onSelect: handleScopeFilter,
+          },
+          ...(!isNetworkInfraScope
+            ? [
+                {
+                  title: 'Device Type',
+                  icon: <FunnelIcon className="h-4 w-4" />,
+                  options: [
+                    { key: 'all', label: 'All Types', color: 'primary' },
+                    { key: 'access_control', label: 'Access Control', color: 'blue' },
+                    { key: 'blulok', label: 'BluLok', color: 'green' },
+                  ],
+                  selected: filters.device_type || 'all',
+                  onSelect: handleTypeFilter,
+                },
+              ]
+            : []),
           {
             title: 'Status',
-            icon: <BoltIcon className="h-5 w-5" />,
+            icon: <BoltIcon className="h-4 w-4" />,
             options: [
               { key: '', label: 'All Status', color: 'primary' },
               { key: 'online', label: 'Online', color: 'green' },
@@ -588,6 +583,10 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                 if (device.device_category === 'network_infra') {
                   const infraDevice = device as NetworkInfraDevice;
                   const StatusIcon = statusIcons[infraDevice.status as keyof typeof statusIcons] || CheckCircleIcon;
+                  const infraIconDevice = {
+                    device_category: 'network_infra' as const,
+                    device_kind: infraDevice.device_kind,
+                  };
                   return (
                     <tr
                       key={`network-infra-${infraDevice.id}`}
@@ -596,18 +595,22 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/20">
-                            <ServerIcon className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                          </div>
-                          <div className="ml-3">
+                          <DeviceTypeIcon device={infraIconDevice} size="sm" className="mr-3" />
+                          <div>
                             <div className="text-sm font-medium text-gray-900 dark:text-white">
-                              {infraDevice.device_kind === 'gateway' ? infraDevice.name : infraDevice.device_kind.replace('_', ' ')}
+                              {infraDevice.device_kind === 'gateway'
+                                ? infraDevice.name
+                                : formatNetworkInfraKindLabel(infraDevice.device_kind)}
                             </div>
-                            <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">{infraDevice.device_serial}</div>
+                            <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                              {infraDevice.device_serial}
+                            </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm capitalize">{infraDevice.device_kind.replace('_', ' ')}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <DeviceTypeBadge device={infraIconDevice} />
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[infraDevice.status as keyof typeof statusColors] || statusColors.unknown}`}>
                           <StatusIcon className="h-3 w-3 mr-1" />
@@ -637,7 +640,12 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                 const accessDevice = device as AccessControlDevice & { device_category: string };
                 const blulokDevice = device as BluLokDevice & { device_category: string };
                 const lastActivity = isBlulok ? blulokDevice.last_activity : accessDevice.last_activity;
-                const DeviceIcon = isBlulok ? LockClosedIcon : deviceTypeIcons[accessDevice.device_type as keyof typeof deviceTypeIcons] || ServerIcon;
+                const iconDevice = isBlulok
+                  ? ({ device_category: 'blulok' } as const)
+                  : ({
+                      device_category: 'access_control' as const,
+                      device_type: accessDevice.device_type,
+                    } as const);
                 const StatusIcon = statusIcons[isBlulok ? blulokDevice.device_status as keyof typeof statusIcons : accessDevice.status as keyof typeof statusIcons] || CheckCircleIcon;
                 
                 return (
@@ -649,10 +657,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                   >
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <div className="flex items-center">
-                        <div className={`p-2 rounded-lg ${isBlulok ? 'bg-blue-100 dark:bg-blue-900/20' : 'bg-primary-100 dark:bg-primary-900/20'}`}>
-                          <DeviceIcon className={`h-4 w-4 ${isBlulok ? 'text-blue-600 dark:text-blue-400' : 'text-primary-600 dark:text-primary-400'}`} />
-                        </div>
-                        <div className="ml-3">
+                        <DeviceTypeIcon device={iconDevice} size="sm" className="mr-3" />
+                        <div>
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
                             {isBlulok
                               ? formatBluLokLockNumberLabel(blulokDevice)
@@ -669,13 +675,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        isBlulok 
-                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
-                          : 'bg-primary-100 text-primary-800 dark:bg-primary-900/20 dark:text-primary-400'
-                      }`}>
-                        {isBlulok ? 'BluLok Device' : accessDevice.device_type?.replace('_', ' ').toUpperCase() || 'Access Control'}
-                      </span>
+                      <DeviceTypeBadge device={iconDevice} />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[isBlulok ? blulokDevice.device_status as keyof typeof statusColors : accessDevice.status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}`}>

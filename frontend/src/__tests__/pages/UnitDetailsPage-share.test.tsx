@@ -162,8 +162,8 @@ describe('UnitDetailsPage shared access', () => {
       expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
-    fireEvent.click(screen.getByRole('button', { name: /add shared access/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant & Sharing' }));
+    fireEvent.click(screen.getByRole('button', { name: /add shared/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Mock Select Tenant' }));
 
     // Regression check: action should remain visible after tenant selection.
@@ -197,8 +197,11 @@ describe('UnitDetailsPage shared access', () => {
       expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
-    expect(screen.getByRole('button', { name: /add shared access/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant & Sharing' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add shared/i })).toBeInTheDocument();
+    });
   });
 
   it('hides shared access controls for non-primary tenants', async () => {
@@ -222,8 +225,8 @@ describe('UnitDetailsPage shared access', () => {
       expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
-    expect(screen.queryByRole('button', { name: /add shared access/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant & Sharing' }));
+    expect(screen.queryByRole('button', { name: /add shared/i })).not.toBeInTheDocument();
   });
 
   it('allows admin to assign a primary tenant from unit details', async () => {
@@ -247,10 +250,10 @@ describe('UnitDetailsPage shared access', () => {
       expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tenant' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant & Sharing' }));
     fireEvent.click(screen.getByRole('button', { name: /assign primary/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Mock Select Tenant' }));
-    fireEvent.click(screen.getByRole('button', { name: /apply change/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
 
     await waitFor(() => {
       expect(mockApiService.assignTenantToUnit).toHaveBeenCalledWith('unit-1', 'tenant-2', true);
