@@ -23,7 +23,6 @@ import {
   overviewAsideClass,
   overviewFieldLabelClass,
   overviewPanelBodyClass,
-  overviewPanelHeaderClass,
   overviewPanelSubsectionClass,
   overviewSubsectionDividerClass,
 } from '@/components/Common/DetailsPageLayout';
@@ -285,10 +284,9 @@ export function UnitDetailsOverview({
             )}
           </DetailsOverviewCardBody>
 
-          <div className={overviewPanelHeaderClass}>
-            <OverviewSectionHeader title="Unit" description={`${unit.unit_type || 'Unit'} · ${unit.facility_name}`} />
-          </div>
-            <div className={`${overviewPanelBodyClass} grid gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]`}>
+          <div
+            className={`${overviewPanelBodyClass} border-t border-gray-100 dark:border-gray-700/80 grid gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]`}
+          >
               <div>
                 <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
                   <OverviewField label="Unit number">{unit.unit_number}</OverviewField>

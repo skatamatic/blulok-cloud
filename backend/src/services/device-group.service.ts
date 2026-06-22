@@ -13,7 +13,7 @@ import { AuthService } from '@/services/auth.service';
 import { DatabaseService } from '@/services/database.service';
 import { AccessCodeService } from '@/services/access-code.service';
 import { UserRole } from '@/types/auth.types';
-import { DEFAULT_ACCESS_GROUP_NAME } from '@/constants/access-group.constants';
+import { DEFAULT_ACCESS_GROUP_NAME, LEGACY_DEFAULT_ACCESS_GROUP_NAMES } from '@/constants/access-group.constants';
 
 interface ActorContext {
   actorId?: string;
@@ -131,12 +131,71 @@ export class DeviceGroupService {
   }
 
   /**
-   * Idempotently ensure the per-facility default access group exists.
-   * Used on facility creation and when assigning new access-control devices.
+   * Resolve which group row should be the single facility default (legacy "free", global shared, etc.).
+   */
+  private async resolveDefaultGroupCandidate(facilityId: string): Promise<DeviceGroup | null> {
+    for (const legacyName of LEGACY_DEFAULT_ACCESS_GROUP_NAMES) {
+      const legacy = await this.model.findByFacilityAndName(facilityId, legacyName);
+      if (legacy) return legacy;
+    }
+
+    const globalShared = await this.model.findOldestGlobalSharedByFacility(facilityId);
+    if (globalShared) return globalShared;
+
+    return this.model.findDefaultByFacility(facilityId);
+  }
+
+  private async normalizeDefaultGroup(
+    facilityId: string,
+    groupId: string,
+    actor: ActorContext,
+    options?: { logCreation?: boolean },
+  ): Promise<DeviceGroup> {
+    await this.model.clearDefaultFlagForFacility(facilityId, groupId);
+
+    const updated = await this.model.update(groupId, {
+      is_default: true,
+      is_global_shared: true,
+      is_active: true,
+      group_type: 'access_code',
+      name: DEFAULT_ACCESS_GROUP_NAME,
+      description: 'Default access group — all tenants in this facility',
+    });
+    if (!updated) throw new NotFoundError('Device group');
+
+    if (options?.logCreation) {
+      await this.logGroupActivity(
+        updated,
+        'Default access group created',
+        `Created default access group "${updated.name}"`,
+        actor,
+      );
+    }
+
+    return updated;
+  }
+
+  /**
+   * Idempotently ensure exactly one canonical default access group per facility.
+   * Promotes legacy/global groups (e.g. "free"), clears duplicate defaults, and normalizes the name.
    */
   async ensureDefaultGroup(facilityId: string, actor: ActorContext = {}): Promise<DeviceGroup> {
-    const existing = await this.model.findDefaultByFacility(facilityId);
-    if (existing) return existing;
+    const candidate = await this.resolveDefaultGroupCandidate(facilityId);
+
+    if (candidate) {
+      const needsRepair =
+        !candidate.is_default
+        || !candidate.is_global_shared
+        || candidate.name !== DEFAULT_ACCESS_GROUP_NAME
+        || candidate.group_type !== 'access_code';
+
+      if (needsRepair || (await this.model.countDefaultGroupsForFacility(facilityId)) > 1) {
+        return this.normalizeDefaultGroup(facilityId, candidate.id, actor);
+      }
+
+      await this.model.clearDefaultFlagForFacility(facilityId, candidate.id);
+      return candidate;
+    }
 
     const group = await this.model.create({
       facility_id: facilityId,

@@ -88,9 +88,12 @@ export function DetailsPageHeader({
   actions,
 }: DetailsPageHeaderProps) {
   const hasIdentity = Boolean(subtitle || meta);
+  const actionsSlotClass = actions
+    ? 'flex min-h-[2.375rem] shrink-0 flex-wrap items-center gap-2 sm:justify-end'
+    : 'hidden min-h-[2.375rem] shrink-0 flex-wrap items-center gap-2 sm:flex sm:justify-end';
 
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+    <div className="flex min-h-[2.75rem] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {onBack ? <DetailsPageBackButton onClick={onBack} label={backLabel} /> : null}
         {media}
@@ -116,9 +119,9 @@ export function DetailsPageHeader({
           ) : null}
         </div>
       </div>
-      {actions ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">{actions}</div>
-      ) : null}
+      <div className={actionsSlotClass} data-testid="details-header-actions">
+        {actions}
+      </div>
     </div>
   );
 }
@@ -131,8 +134,12 @@ export interface ListPageHeaderProps {
 
 /** Compact single-row header for list/management views. */
 export function ListPageHeader({ title, subtitle, actions }: ListPageHeaderProps) {
+  const actionsSlotClass = actions
+    ? 'flex min-h-[2.375rem] shrink-0 flex-wrap items-center gap-2 sm:justify-end'
+    : 'hidden min-h-[2.375rem] shrink-0 flex-wrap items-center gap-2 sm:flex sm:justify-end';
+
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+    <div className="flex min-h-[2.75rem] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <h1 className={detailsHeaderTitleClass}>{title}</h1>
         {subtitle ? (
@@ -144,9 +151,9 @@ export function ListPageHeader({ title, subtitle, actions }: ListPageHeaderProps
           </>
         ) : null}
       </div>
-      {actions ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">{actions}</div>
-      ) : null}
+      <div className={actionsSlotClass} data-testid="details-header-actions">
+        {actions}
+      </div>
     </div>
   );
 }
@@ -238,7 +245,7 @@ export function DetailsOverviewCard({ children }: { children: ReactNode }) {
 }
 
 export function DetailsOverviewCardBody({ children }: { children: ReactNode }) {
-  return <div className="space-y-6 p-6">{children}</div>;
+  return <div className={`${overviewPanelBodyClass} space-y-5`}>{children}</div>;
 }
 
 export function OverviewField({
@@ -282,15 +289,24 @@ export function OverviewSectionHeader({
   description?: string;
   action?: ReactNode;
 }) {
+  const actionSlotClass = action
+    ? 'flex min-h-9 shrink-0 items-center justify-end'
+    : 'hidden min-h-9 shrink-0 items-center justify-end sm:flex';
+
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-      <div>
+    <div
+      className="flex min-h-10 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+      data-testid="overview-section-header"
+    >
+      <div className="min-w-0 flex-1">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h3>
         {description ? (
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{description}</p>
         ) : null}
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      <div className={actionSlotClass} data-testid="overview-section-header-action">
+        {action}
+      </div>
     </div>
   );
 }

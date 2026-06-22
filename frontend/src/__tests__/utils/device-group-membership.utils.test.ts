@@ -32,16 +32,16 @@ describe('device-group-membership.utils', () => {
   });
 
   it('formats default group labels', () => {
-    expect(formatAccessGroupLabel({ name: 'All Facility Access', is_default: true }))
-      .toBe('All Facility Access (Default — all tenants)');
+    expect(formatAccessGroupLabel({ name: 'Default Facility Group', is_default: true }))
+      .toBe('Default Facility Group (Default — all tenants)');
   });
 
   it('sorts default groups first', () => {
     expect(sortAccessGroupRefs([
       { id: 'b', name: 'Building A', is_default: false },
-      { id: 'a', name: 'All Facility Access', is_default: true },
+      { id: 'a', name: 'Default Facility Group', is_default: true },
     ])).toEqual([
-      { id: 'a', name: 'All Facility Access', is_default: true },
+      { id: 'a', name: 'Default Facility Group', is_default: true },
       { id: 'b', name: 'Building A', is_default: false },
     ]);
   });

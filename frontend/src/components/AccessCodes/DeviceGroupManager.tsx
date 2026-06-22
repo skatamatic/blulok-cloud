@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   ArrowTopRightOnSquareIcon,
+  PencilSquareIcon,
   PlusIcon,
   TrashIcon,
   UsersIcon,
@@ -93,6 +94,8 @@ export function DeviceGroupManager({
   const [groupLoadError, setGroupLoadError] = useState<string | null>(null);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [isRenamingGroup, setIsRenamingGroup] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [internalCreateDialogOpen, setInternalCreateDialogOpen] = useState(false);
   const isCreateDialogControlled = createDialogOpen !== undefined;
@@ -248,28 +251,38 @@ export function DeviceGroupManager({
       const counts: Record<string, number> = {};
       const membersByGroup: Record<string, GroupMemberRef[]> = {};
       nextGroups.forEach((group, index) => {
-        const members = (detailResponses[index].data?.members || []) as GroupMemberRef[];
+        const members = (detailResponses[index].data?.members || []).map((member) => ({
+          device_id: member.device_id,
+          device_type: member.device_type || 'access_control',
+          source_unit_id: member.source_unit_id ?? null,
+        })) as GroupMemberRef[];
         counts[group.id] = members.length;
         membersByGroup[group.id] = members;
       });
       setGroupMemberCounts(counts);
 
+      const configByGroup: Record<string, typeof DEFAULT_GROUP_CONFIG> = {};
       if (showAccessCodes) {
         const configResponses = await Promise.all(
           nextGroups.map((group) => apiService.getAccessCodeGroupConfig(group.id)),
         );
-        const summaries = nextGroups.reduce<Record<string, GroupCardSummary>>((acc, group, index) => {
-          acc[group.id] = buildGroupSummary(
-            group,
-            membersByGroup[group.id] || [],
-            configResponses[index].data || DEFAULT_GROUP_CONFIG,
-            effectiveCodes,
-            keypadDeviceById,
-          );
-          return acc;
-        }, {});
-        setGroupSummaries(summaries);
+        nextGroups.forEach((group, index) => {
+          configByGroup[group.id] = configResponses[index].data || DEFAULT_GROUP_CONFIG;
+        });
       }
+
+      const summaries = nextGroups.reduce<Record<string, GroupCardSummary>>((acc, group) => {
+        const members = membersByGroup[group.id] || [];
+        acc[group.id] = buildGroupSummary(
+          group,
+          members,
+          configByGroup[group.id] || DEFAULT_GROUP_CONFIG,
+          showAccessCodes ? effectiveCodes : [],
+          keypadDeviceById,
+        );
+        return acc;
+      }, {});
+      setGroupSummaries(summaries);
     } catch (error) {
       console.error(error);
       setGroupMemberCounts({});
@@ -329,6 +342,8 @@ export function DeviceGroupManager({
   }, [groups, selectedGroupId, defaultGroup?.id, sortedGroups, initialGroupId]);
 
   const selectGroup = (groupId: string) => {
+    setIsRenamingGroup(false);
+    setRenameDraft('');
     setSelectedGroupId(groupId);
     loadSelectedGroupMembers(groupId).catch(() => undefined);
     onGroupChange?.(groupId);
@@ -529,6 +544,52 @@ export function DeviceGroupManager({
     }
   };
 
+  const startRenameGroup = () => {
+    if (!selectedGroup || selectedGroup.is_default) return;
+    setRenameDraft(selectedGroup.name);
+    setIsRenamingGroup(true);
+  };
+
+  const cancelRenameGroup = () => {
+    setIsRenamingGroup(false);
+    setRenameDraft('');
+  };
+
+  const saveRenameGroup = async () => {
+    if (!selectedGroupId || !selectedGroup || selectedGroup.is_default) return;
+    const nextName = renameDraft.trim();
+    if (!nextName) {
+      addToast({ type: 'error', title: 'Group name is required' });
+      return;
+    }
+    if (!groupNamePattern.test(nextName)) {
+      addToast({ type: 'error', title: 'Group name contains invalid characters' });
+      return;
+    }
+    if (groups.some((group) => group.id !== selectedGroupId && group.name.trim().toLowerCase() === nextName.toLowerCase())) {
+      addToast({ type: 'error', title: 'An access group with that name already exists' });
+      return;
+    }
+    if (nextName === selectedGroup.name) {
+      cancelRenameGroup();
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await apiService.updateDeviceGroup(selectedGroupId, { name: nextName });
+      cancelRenameGroup();
+      await onGroupsChanged();
+      addToast({ type: 'success', title: 'Access group renamed' });
+    } catch (error: any) {
+      console.error(error);
+      const message = error?.response?.data?.message || 'Failed to rename access group';
+      addToast({ type: 'error', title: String(message) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
@@ -585,17 +646,60 @@ export function DeviceGroupManager({
               <div className="flex h-full flex-col">
                 <div className="border-b border-gray-200 px-5 py-5 dark:border-gray-700 sm:px-6">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h4 className="truncate text-base font-semibold text-gray-900 dark:text-white">
-                          {selectedGroup.name}
-                        </h4>
-                        {selectedGroup.is_default && (
-                          <span className="inline-flex rounded-md bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                            Protected default
-                          </span>
-                        )}
-                      </div>
+                    <div className="min-w-0 flex-1">
+                      {isRenamingGroup ? (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <input
+                            type="text"
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            disabled={saving}
+                            className="w-full max-w-md rounded-lg border border-gray-300 bg-white px-3 py-2 text-base font-semibold text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                            aria-label="Access group name"
+                          />
+                          <div className="flex shrink-0 items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void saveRenameGroup()}
+                              disabled={saving || !renameDraft.trim()}
+                              className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelRenameGroup}
+                              disabled={saving}
+                              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="truncate text-base font-semibold text-gray-900 dark:text-white">
+                            {selectedGroup.name}
+                          </h4>
+                          {selectedGroup.is_default && (
+                            <span className="inline-flex rounded-md bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                              Protected default
+                            </span>
+                          )}
+                          {!selectedGroup.is_default && (
+                            <button
+                              type="button"
+                              onClick={startRenameGroup}
+                              disabled={saving}
+                              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                              aria-label={`Rename ${selectedGroup.name}`}
+                            >
+                              <PencilSquareIcon className="h-3.5 w-3.5" aria-hidden />
+                              Rename
+                            </button>
+                          )}
+                        </div>
+                      )}
                       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                         {describeGroupAccess(selectedGroup)}
                       </p>
@@ -605,7 +709,7 @@ export function DeviceGroupManager({
                         </p>
                       )}
                     </div>
-                    {!selectedGroup.is_default && (
+                    {!selectedGroup.is_default && !isRenamingGroup && (
                       <button
                         type="button"
                         onClick={() => setShowDeleteConfirm(true)}

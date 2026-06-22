@@ -1,9 +1,28 @@
 import {
   formatAccessDeviceListSubtitle,
+  formatAccessDevicePageTitle,
   isGatewaySyncProvisioned,
 } from '@/utils/accessDeviceDisplay.utils';
 
 describe('accessDeviceDisplay.utils', () => {
+  describe('formatAccessDevicePageTitle', () => {
+    it('prefers name, then location, then relay, then device type', () => {
+      expect(formatAccessDevicePageTitle({ name: 'Main Door' })).toBe('Main Door');
+      expect(
+        formatAccessDevicePageTitle({
+          location_description: 'Lobby',
+          relay_channel: 2,
+          device_type: 'door',
+        }),
+      ).toBe('Lobby');
+      expect(
+        formatAccessDevicePageTitle({ relay_channel: 2, device_type: 'gate' }),
+      ).toBe('Relay 2');
+      expect(formatAccessDevicePageTitle({ device_type: 'elevator' })).toBe('Elevator');
+      expect(formatAccessDevicePageTitle({})).toBe('Access device');
+    });
+  });
+
   describe('formatAccessDeviceListSubtitle', () => {
     it('joins serial and relay channel', () => {
       expect(

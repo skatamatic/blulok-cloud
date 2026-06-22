@@ -270,6 +270,43 @@ export class DeviceGroupModel {
     return row ? this.deserializeGroup(row as Record<string, unknown>) : null;
   }
 
+  async countDefaultGroupsForFacility(facilityId: string): Promise<number> {
+    const knex = this.db.connection;
+    const row = await knex('device_groups')
+      .where({ facility_id: facilityId, is_default: true })
+      .count<{ count: string | number }[]>('* as count')
+      .first();
+    return Number(row?.count ?? 0);
+  }
+
+  async findByFacilityAndName(facilityId: string, name: string): Promise<DeviceGroup | null> {
+    const knex = this.db.connection;
+    const row = await knex('device_groups')
+      .where({ facility_id: facilityId })
+      .whereRaw('LOWER(name) = ?', [name.toLowerCase()])
+      .orderBy('is_global_shared', 'desc')
+      .orderBy('created_at', 'asc')
+      .first();
+    return row ? this.deserializeGroup(row as Record<string, unknown>) : null;
+  }
+
+  async findOldestGlobalSharedByFacility(facilityId: string): Promise<DeviceGroup | null> {
+    const knex = this.db.connection;
+    const row = await knex('device_groups')
+      .where({ facility_id: facilityId, is_global_shared: true })
+      .orderBy('created_at', 'asc')
+      .first();
+    return row ? this.deserializeGroup(row as Record<string, unknown>) : null;
+  }
+
+  async clearDefaultFlagForFacility(facilityId: string, exceptGroupId: string): Promise<void> {
+    const knex = this.db.connection;
+    await knex('device_groups')
+      .where({ facility_id: facilityId })
+      .whereNot('id', exceptGroupId)
+      .update({ is_default: false, updated_at: new Date() });
+  }
+
   async countAccessControlMembershipsForDevice(
     deviceId: string,
     facilityId: string,

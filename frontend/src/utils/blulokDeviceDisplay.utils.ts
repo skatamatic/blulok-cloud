@@ -1,5 +1,8 @@
+import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
+
 export type BluLokDeviceDisplayFields = {
   id?: string;
+  name?: string;
   device_serial?: string;
   serial?: string;
   firmware_version?: string;
@@ -43,6 +46,20 @@ export function formatBluLokLockNumberLabel(device: BluLokDeviceDisplayFields): 
 
   const serial = getBluLokHardwareSerial(device);
   if (serial) return serial;
+
+  return 'Unknown lock';
+}
+
+/** Page header title — never falls back to hardware serial (shown in metadata grid). */
+export function formatBluLokDevicePageTitle(device: BluLokDeviceDisplayFields): string {
+  const displayName = readDisplayName(device.device_settings);
+  if (displayName) return displayName;
+
+  const name = device.name?.trim();
+  if (name) return name;
+
+  const lockNumber = getBluLokLockNumber(device);
+  if (lockNumber != null) return `Lock #${lockNumber}`;
 
   return 'Unknown lock';
 }

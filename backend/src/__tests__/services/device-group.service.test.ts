@@ -4,6 +4,10 @@ jest.mock('@/models/device-group.model', () => ({
     findById: jest.fn(),
     findByFacility: jest.fn(),
     findDefaultByFacility: jest.fn(),
+    countDefaultGroupsForFacility: jest.fn(),
+    findByFacilityAndName: jest.fn(),
+    findOldestGlobalSharedByFacility: jest.fn(),
+    clearDefaultFlagForFacility: jest.fn(),
     countAccessControlMembershipsForDevice: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
@@ -59,7 +63,20 @@ describe('DeviceGroupService', () => {
       return chain;
     });
     model.findDefaultByFacility.mockResolvedValue(null);
+    model.findByFacilityAndName.mockResolvedValue(null);
+    model.findOldestGlobalSharedByFacility.mockResolvedValue(null);
+    model.countDefaultGroupsForFacility.mockResolvedValue(0);
+    model.clearDefaultFlagForFacility.mockResolvedValue(undefined);
     model.countAccessControlMembershipsForDevice.mockResolvedValue(0);
+    model.update.mockImplementation((id: string, data: Record<string, unknown>) => Promise.resolve({
+      id,
+      facility_id: 'fac-1',
+      is_default: true,
+      is_global_shared: true,
+      group_type: 'access_code',
+      name: DEFAULT_ACCESS_GROUP_NAME,
+      ...data,
+    }));
   });
 
   it('creates group when user has facility access', async () => {
@@ -108,14 +125,17 @@ describe('DeviceGroupService', () => {
   });
 
   it('ensureDefaultGroup creates protected default group idempotently', async () => {
+    model.findByFacilityAndName.mockResolvedValue(null);
+    model.findOldestGlobalSharedByFacility.mockResolvedValue(null);
     model.findDefaultByFacility
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         id: 'def-1',
         facility_id: 'fac-1',
         is_default: true,
         is_global_shared: true,
         name: DEFAULT_ACCESS_GROUP_NAME,
+        group_type: 'access_code',
       });
     model.create.mockResolvedValue({
       id: 'def-1',
@@ -131,6 +151,41 @@ describe('DeviceGroupService', () => {
     expect(first.id).toBe('def-1');
     expect(second.id).toBe('def-1');
     expect(model.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('ensureDefaultGroup promotes legacy free group and clears other defaults', async () => {
+    model.findByFacilityAndName.mockImplementation(async (_facilityId: string, name: string) => {
+      if (name.toLowerCase() === 'free') {
+        return {
+          id: 'free-1',
+          facility_id: 'fac-1',
+          is_default: false,
+          is_global_shared: true,
+          name: 'free',
+          group_type: 'access_code',
+        };
+      }
+      return null;
+    });
+    model.countDefaultGroupsForFacility.mockResolvedValue(2);
+    model.update.mockResolvedValue({
+      id: 'free-1',
+      facility_id: 'fac-1',
+      is_default: true,
+      is_global_shared: true,
+      name: DEFAULT_ACCESS_GROUP_NAME,
+      group_type: 'access_code',
+    });
+
+    const group = await service.ensureDefaultGroup('fac-1');
+
+    expect(group.name).toBe(DEFAULT_ACCESS_GROUP_NAME);
+    expect(model.clearDefaultFlagForFacility).toHaveBeenCalledWith('fac-1', 'free-1');
+    expect(model.update).toHaveBeenCalledWith('free-1', expect.objectContaining({
+      is_default: true,
+      name: DEFAULT_ACCESS_GROUP_NAME,
+    }));
+    expect(model.create).not.toHaveBeenCalled();
   });
 
   it('findById throws NotFound for missing group', async () => {

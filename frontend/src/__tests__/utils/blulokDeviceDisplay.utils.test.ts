@@ -1,5 +1,6 @@
 import {
   formatBluLokDeviceSubtitle,
+  formatBluLokDevicePageTitle,
   formatBluLokLockNumberLabel,
   getBluLokHardwareSerial,
   getBluLokLockNumber,
@@ -33,6 +34,32 @@ describe('blulokDeviceDisplay.utils', () => {
     expect(
       formatBluLokLockNumberLabel({ device_serial: 'BLU-002', firmware_version: '1.0.0' }),
     ).toBe('BLU-002');
+  });
+
+  describe('formatBluLokDevicePageTitle', () => {
+    it('prefers display name from device settings', () => {
+      expect(
+        formatBluLokDevicePageTitle({
+          device_serial: 'BLU-002',
+          device_settings: { displayName: 'Front gate' },
+        }),
+      ).toBe('Front gate');
+    });
+
+    it('uses lock number when no display name or name', () => {
+      expect(
+        formatBluLokDevicePageTitle({
+          device_serial: 'BLU-002',
+          device_settings: { lockNumber: 12 },
+        }),
+      ).toBe('Lock #12');
+    });
+
+    it('never falls back to hardware serial', () => {
+      expect(
+        formatBluLokDevicePageTitle({ device_serial: 'BLU-002', serial: 'BLU-002' }),
+      ).toBe('Unknown lock');
+    });
   });
 
   it('extracts lock number from device_settings', () => {

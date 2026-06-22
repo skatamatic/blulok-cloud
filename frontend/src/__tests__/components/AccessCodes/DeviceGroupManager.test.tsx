@@ -40,7 +40,7 @@ const defaultGroup = {
   group_type: 'access_code' as const,
   is_global_shared: true,
   is_default: true,
-  name: 'All Facility Access',
+  name: 'Default Facility Group',
   is_active: true,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),

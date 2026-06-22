@@ -17,12 +17,8 @@ import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { usePromptDialog } from '@/hooks/usePromptDialog';
 import { EditDeviceMetadataModal } from '@/components/Devices/EditDeviceMetadataModal';
-import { formatAccessDeviceListSubtitle, isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
-import {
-  formatBluLokDeviceSubtitle,
-  formatBluLokLockNumberLabel,
-} from '@/utils/blulokDeviceDisplay.utils';
-import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
+import { formatAccessDevicePageTitle, isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
+import { formatBluLokDevicePageTitle } from '@/utils/blulokDeviceDisplay.utils';
 import { formatMetadataSideEffectsToast } from '@/utils/deviceApiErrors';
 import type { DeviceMetadataSideEffects } from '@/types/facility.types';
 import {
@@ -521,18 +517,6 @@ export default function DeviceDetailsPage() {
     );
   }
 
-  const deviceSubtitle =
-    deviceCategory === 'access_control'
-      ? formatAccessDeviceListSubtitle({
-          device_serial: device.device_serial,
-          relay_channel: device.relay_channel ?? 1,
-          location_description: device.location_description,
-        })
-      : formatBluLokDeviceSubtitle(device);
-
-  const blulokDisplayName =
-    deviceCategory === 'blulok' ? readDisplayName(device.device_settings) : '';
-
   const deviceTabs = [
     { key: 'overview', label: 'Overview' },
     ...(deviceCategory === 'blulok'
@@ -558,10 +542,9 @@ export default function DeviceDetailsPage() {
         backLabel={backLabel}
         title={
           deviceCategory === 'blulok'
-            ? blulokDisplayName || device.name || formatBluLokLockNumberLabel(device)
-            : device.name || device.device_serial
+            ? formatBluLokDevicePageTitle(device)
+            : formatAccessDevicePageTitle(device)
         }
-        subtitle={deviceSubtitle}
         meta={
           deviceCategory === 'access_control' && isGatewaySyncProvisioned(device.metadata) ? (
             <span className="inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-900/30 px-2.5 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-300">

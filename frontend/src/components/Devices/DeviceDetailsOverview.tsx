@@ -17,7 +17,6 @@ import {
   overviewAsideClass,
   overviewFieldLabelClass,
   overviewPanelBodyClass,
-  overviewPanelHeaderClass,
   overviewPanelSubsectionClass,
   overviewStatCardClass,
   overviewSubsectionDividerClass,
@@ -38,9 +37,8 @@ import {
   lockStatusColors,
   statusBadgeSmClass,
 } from '@/utils/statusBadge.utils';
-import { formatAccessDeviceListSubtitle, isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
+import { isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
 import {
-  formatBluLokDeviceSubtitle,
   getBluLokLockNumber,
 } from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
@@ -204,15 +202,6 @@ export function DeviceDetailsOverview({
   const hasSignal = device.signal_strength != null && !Number.isNaN(Number(device.signal_strength));
   const hasTemperature = tempNum != null && !Number.isNaN(tempNum);
 
-  const deviceSubtitle =
-    deviceCategory === 'blulok'
-      ? formatBluLokDeviceSubtitle(device)
-      : formatAccessDeviceListSubtitle({
-          device_serial: device.device_serial,
-          relay_channel: device.relay_channel ?? 1,
-          location_description: device.location_description,
-        });
-
   const statStrip = (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-2">
       <OverviewStat label="Connectivity">
@@ -294,10 +283,9 @@ export function DeviceDetailsOverview({
             )}
           </DetailsOverviewCardBody>
 
-          <div className={overviewPanelHeaderClass}>
-            <OverviewSectionHeader title="Device" description={deviceSubtitle} />
-          </div>
-        <div className={`${overviewPanelBodyClass} grid gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]`}>
+        <div
+          className={`${overviewPanelBodyClass} border-t border-gray-100 dark:border-gray-700/80 grid gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]`}
+        >
           <div>
             <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
             {deviceCategory === 'blulok' && (
@@ -342,7 +330,10 @@ export function DeviceDetailsOverview({
             </OverviewField>
             {device.unit_id && device.unit_number && (
               <OverviewField label="Unit">
-                <div className="space-y-2">
+                <div
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2"
+                  data-testid="device-unit-row"
+                >
                   <Link
                     to={`/units/${device.unit_id}`}
                     state={withReturnPath(location)}
@@ -489,7 +480,7 @@ export function DeviceDetailsOverview({
           )}
 
       {canManage && (deviceCategory === 'blulok' || deviceCategory === 'access_control') && (
-        <div className={`mx-6 mb-6 ${overviewDangerZoneClass}`}>
+        <div className={`mx-5 mb-5 border-t border-gray-100 pt-5 dark:border-gray-700/80 ${overviewDangerZoneClass}`}>
           <OverviewSectionHeader title="Danger zone" description="Irreversible cloud inventory actions" />
           <p className="mt-3 text-sm text-red-800/90 dark:text-red-100/90">
             Deletes this device&apos;s cloud record for the current gateway, including group memberships
