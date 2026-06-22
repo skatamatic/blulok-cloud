@@ -3,6 +3,7 @@ import {
   ArrowPathIcon,
   ChevronRightIcon,
   ExclamationTriangleIcon,
+  ServerIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import { getDeviceIconMeta } from '@/utils/device-icon.utils';

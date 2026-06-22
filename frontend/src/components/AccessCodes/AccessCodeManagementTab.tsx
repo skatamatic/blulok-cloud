@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiService } from '@/services/api.service';
-import { AccessControlDevice, DeviceGroup, EffectiveAccessCode } from '@/types/facility.types';
+import { AccessControlDevice, DeviceGroup } from '@/types/facility.types';
 import { AccessGroupSelector } from '@/components/AccessCodes/AccessGroupSelector';
 import { AccessCodeGroupPanel } from '@/components/AccessCodes/AccessCodeGroupPanel';
 import {
@@ -24,7 +24,6 @@ export function AccessCodeManagementTab({ facilityId, devices }: AccessCodeManag
   const [groupSummaries, setGroupSummaries] = useState<Record<string, GroupCardSummary>>({});
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<GroupMemberRef[]>([]);
-  const [effectiveCodes, setEffectiveCodes] = useState<EffectiveAccessCode[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pushState, setPushState] = useState<{ status: string; last_error: string | null } | null>(null);
@@ -79,7 +78,6 @@ export function AccessCodeManagementTab({ facilityId, devices }: AccessCodeManag
         return acc;
       }, {});
 
-      setEffectiveCodes(effectiveList.data || []);
       setGroups(loadedGroups);
       setGroupSummaries(summaries);
       setPushState(pushStateResp.data || null);

@@ -146,10 +146,11 @@ export function DeviceGroupManager({
   const memberSections = useMemo<MemberSection[]>(() => {
     const unitLocks = selectedGroupMembers.filter((member) => member.device_type === 'blulok');
     const accessControl = selectedGroupMembers.filter((member) => member.device_type === 'access_control');
-    return [
+    const sections: MemberSection[] = [
       { key: 'unit_locks', title: 'Unit locks', members: unitLocks },
       { key: 'access_control', title: 'Access control', members: accessControl },
-    ].filter((section) => section.members.length > 0);
+    ];
+    return sections.filter((section) => section.members.length > 0);
   }, [selectedGroupMembers]);
   const selectedMemberKeys = useMemo(
     () => new Set(selectedGroupMembers.flatMap((member) => {

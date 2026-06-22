@@ -11,8 +11,6 @@ import { useToast } from '@/contexts/ToastContext';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { overviewFieldLabelClass, overviewSectionClass, overviewStatCardClass } from '@/components/Common/DetailsPageLayout';
 import {
-  detailsBtnPrimarySm,
-  detailsBtnSecondarySm,
   detailsFormLabelClass,
   detailsInputClass,
   overviewAlertWarningClass,

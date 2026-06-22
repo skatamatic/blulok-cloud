@@ -34,31 +34,6 @@ import { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStat
 import { gatewayOperationalStatusColors } from '@/utils/facility-gateway-live-status.utils';
 import { formatDateTime, formatTime, formatUtcDateTime } from '@/utils/datetime.utils';
 
-interface Gateway {
-  id: string;
-  facility_id: string | null;
-  name: string;
-  model?: string;
-  firmware_version?: string;
-  ip_address?: string;
-  mac_address?: string;
-  status: 'online' | 'offline' | 'error' | 'maintenance';
-  last_seen?: Date;
-  configuration?: Record<string, any>;
-  metadata?: Record<string, any>;
-  gateway_type?: 'physical' | 'http' | 'simulated';
-  connection_url?: string;
-  base_url?: string;
-  api_key?: string;
-  username?: string;
-  password?: string;
-  protocol_version?: string;
-  poll_frequency_ms?: number;
-  ignore_ssl_cert?: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
-
 interface SyncLogEntry {
   timestamp: Date;
   level: 'info' | 'warn' | 'error' | 'success';
