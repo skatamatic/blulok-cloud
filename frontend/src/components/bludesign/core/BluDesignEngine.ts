@@ -1968,6 +1968,9 @@ export class BluDesignEngine {
    * Use importSceneDataAsync for projects with custom assets
    */
   importSceneData(data: FacilityData | LegacyFacilityData): void {
+    // Discard undo stack from the previous facility — loaded scene is the new baseline.
+    this.actionHistory.clear();
+
     this.defaultCamera =
       'defaultCamera' in data && data.defaultCamera ? data.defaultCamera : null;
     const layoutImport = getLayoutImportFromFacility(data as FacilityData);

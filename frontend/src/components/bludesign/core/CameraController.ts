@@ -185,26 +185,50 @@ export class CameraController {
     let handled = false;
     switch (key) {
       case 'w':
-        this.walkKeys.forward = isDown;
-        handled = true;
+        if (isDown) {
+          if (!modifiersBlockWalk) {
+            this.walkKeys.forward = true;
+            handled = true;
+          }
+        } else {
+          this.walkKeys.forward = false;
+          handled = true;
+        }
         break;
       case 's':
-        this.walkKeys.back = isDown;
-        handled = true;
+        if (isDown) {
+          if (!modifiersBlockWalk) {
+            this.walkKeys.back = true;
+            handled = true;
+          }
+        } else {
+          this.walkKeys.back = false;
+          handled = true;
+        }
         break;
       case 'a':
-        this.walkKeys.left = isDown;
         if (isDown) {
-          this.walkKeys.orbitModifier = event.altKey;
+          if (!modifiersBlockWalk) {
+            this.walkKeys.left = true;
+            this.walkKeys.orbitModifier = event.altKey;
+            handled = true;
+          }
+        } else {
+          this.walkKeys.left = false;
+          handled = true;
         }
-        handled = true;
         break;
       case 'd':
-        this.walkKeys.right = isDown;
         if (isDown) {
-          this.walkKeys.orbitModifier = event.altKey;
+          if (!modifiersBlockWalk) {
+            this.walkKeys.right = true;
+            this.walkKeys.orbitModifier = event.altKey;
+            handled = true;
+          }
+        } else {
+          this.walkKeys.right = false;
+          handled = true;
         }
-        handled = true;
         break;
       case 'shift':
         this.walkKeys.shift = isDown;

@@ -82,11 +82,38 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     }
 
     const key = event.key.toLowerCase();
+    const isCtrl = event.ctrlKey || event.metaKey;
     const isAlt = event.altKey;
     const isShift = event.shiftKey;
 
-    // Tool shortcuts
-    if (!isAlt && !isShift) {
+    // Standard edit shortcuts (Ctrl/Cmd) — must run before tool/camera key handlers
+    if (isCtrl && !isAlt) {
+      switch (key) {
+        case 's':
+          if (isShift) {
+            onSaveAs?.();
+          } else {
+            onSave?.();
+          }
+          event.preventDefault();
+          return;
+        case 'z':
+          if (isShift) {
+            onRedo?.();
+          } else {
+            onUndo?.();
+          }
+          event.preventDefault();
+          return;
+        case 'y':
+          onRedo?.();
+          event.preventDefault();
+          return;
+      }
+    }
+
+    // Tool shortcuts — skip when a modifier would collide with edit/camera bindings
+    if (!isAlt && !isShift && !isCtrl) {
       switch (key) {
         case 'v':
           onToolChange?.(EditorTool.SELECT);
@@ -178,8 +205,8 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
       }
     }
 
-    // Alt shortcuts (avoid Ctrl — browser shortcuts like Ctrl+W close tabs)
-    if (isAlt && !isShift) {
+    // Alt shortcuts (clipboard, file open/new, camera orbit)
+    if (isAlt && !isShift && !isCtrl) {
       switch (key) {
         case 'c':
           onCopy?.();
@@ -193,24 +220,12 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
           onPaste?.();
           event.preventDefault();
           break;
-        case 'z':
-          onUndo?.();
-          event.preventDefault();
-          break;
         case 'n':
           onNew?.();
           event.preventDefault();
           break;
         case 'o':
           onLoad?.();
-          event.preventDefault();
-          break;
-        case 's':
-          onSave?.();
-          event.preventDefault();
-          break;
-        case 'y':
-          onRedo?.();
           event.preventDefault();
           break;
         case 'arrowleft':
@@ -227,7 +242,7 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     }
 
     // Alt+Shift shortcuts
-    if (isAlt && isShift) {
+    if (isAlt && isShift && !isCtrl) {
       switch (key) {
         case 'a':
           onSelectAll?.();
@@ -235,14 +250,6 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
           break;
         case 'd':
           onDuplicate?.();
-          event.preventDefault();
-          break;
-        case 'z':
-          onRedo?.();
-          event.preventDefault();
-          break;
-        case 's':
-          onSaveAs?.();
           event.preventDefault();
           break;
         case 'g':

@@ -273,8 +273,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           { label: 'New', onClick: onNew, shortcut: 'Alt+N' },
           { label: 'Open...', onClick: onLoad, shortcut: 'Alt+O' },
           { divider: true },
-          { label: 'Save', onClick: onSave, shortcut: 'Alt+S' },
-          { label: 'Save As...', onClick: onSaveAs, shortcut: 'Alt+Shift+S' },
+          { label: 'Save', onClick: onSave, shortcut: 'Ctrl+S' },
+          { label: 'Save As...', onClick: onSaveAs, shortcut: 'Ctrl+Shift+S' },
           { divider: true },
           { label: 'Export...', onClick: () => console.log('Export'), disabled: true },
         ]}
@@ -283,8 +283,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         label="Edit"
         isDark={isDark}
         items={[
-          { label: 'Undo', onClick: onUndo, shortcut: 'Alt+Z', disabled: !canUndo },
-          { label: 'Redo', onClick: onRedo, shortcut: 'Alt+Y', disabled: !canRedo },
+          { label: 'Undo', onClick: onUndo, shortcut: 'Ctrl+Z', disabled: !canUndo },
+          { label: 'Redo', onClick: onRedo, shortcut: 'Ctrl+Y', disabled: !canRedo },
           { divider: true },
           { label: 'Cut', onClick: onCut, shortcut: 'Alt+X', disabled: !hasSelection },
           { label: 'Copy', onClick: onCopy, shortcut: 'Alt+C', disabled: !hasSelection },

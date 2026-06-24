@@ -97,10 +97,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
       {/* Undo / redo */}
       <div className={groupClass}>
-        <IconButton isDark={isDark} title="Undo (Alt+Z)" disabled={disabled || !canUndo} onClick={onUndo}>
+        <IconButton isDark={isDark} title="Undo (Ctrl+Z)" disabled={disabled || !canUndo} onClick={onUndo}>
           <ArrowUturnLeftIcon className="w-4 h-4" />
         </IconButton>
-        <IconButton isDark={isDark} title="Redo (Alt+Y)" disabled={disabled || !canRedo} onClick={onRedo}>
+        <IconButton isDark={isDark} title="Redo (Ctrl+Y)" disabled={disabled || !canRedo} onClick={onRedo}>
           <ArrowUturnRightIcon className="w-4 h-4" />
         </IconButton>
       </div>

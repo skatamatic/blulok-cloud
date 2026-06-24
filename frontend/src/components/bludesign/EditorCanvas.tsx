@@ -65,6 +65,7 @@ import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { PerformanceMonitor } from './ui/PerformanceMonitor';
 import { RenderingSettingsManager } from './core/RenderingSettingsManager';
 import { EditorPreferences, loadPreferences } from './core/Preferences';
+import type { HistoryEvent } from './core/ActionHistory';
 import {
   EditorTool,
   EditorMode,
@@ -76,6 +77,7 @@ import {
   SimulationState,
   Building,
   FacilityData,
+  type EngineEvent,
 } from './core/types';
 import { AssetRegistry } from './assets/AssetRegistry';
 import { AssetService } from './services/AssetService';
@@ -1164,16 +1166,20 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   // Track history state for undo/redo buttons
   useEffect(() => {
     if (!engine) return;
-    
-    const handleHistoryChange = (event: any) => {
-      if (event && typeof event === 'object' && 'canUndo' in event && 'canRedo' in event) {
-        setCanUndo(event.canUndo);
-        setCanRedo(event.canRedo);
-      }
+
+    const syncHistoryState = () => {
+      setCanUndo(engine.canUndo());
+      setCanRedo(engine.canRedo());
     };
-    
+
+    const handleHistoryChange = (event: EngineEvent<HistoryEvent>) => {
+      setCanUndo(event.data.canUndo);
+      setCanRedo(event.data.canRedo);
+    };
+
+    syncHistoryState();
     engine.on('history-changed', handleHistoryChange);
-    
+
     return () => {
       engine.off('history-changed', handleHistoryChange);
     };
