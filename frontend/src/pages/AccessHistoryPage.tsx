@@ -194,6 +194,8 @@ export default function AccessHistoryPage() {
   const [filtersExpanded, setFiltersExpanded] = useState(
     () => !!searchParams.get('unit_id')
   );
+  const [unitFilterLabel, setUnitFilterLabel] = useState<string>();
+  const [userFilterLabel, setUserFilterLabel] = useState<string>();
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortableColumn>('occurred_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -427,6 +429,8 @@ export default function AccessHistoryPage() {
 
   const clearFilters = () => {
     setFilters(defaultAccessHistoryDateFilters());
+    setUnitFilterLabel(undefined);
+    setUserFilterLabel(undefined);
     setIsCustomDateRange(false);
     setCurrentPage(1);
   };
@@ -751,6 +755,8 @@ export default function AccessHistoryPage() {
             type: 'user',
             options: [],
             selected: filters.user_id || '',
+            selectedLabel: userFilterLabel,
+            onDisplayLabelChange: setUserFilterLabel,
             onSelect: (value: string) => handleFilterChange('user_id', value || undefined),
             placeholder: 'Search users...',
           },
@@ -760,11 +766,13 @@ export default function AccessHistoryPage() {
             type: 'custom',
             options: [],
             selected: filters.unit_id || '',
+            selectedLabel: unitFilterLabel,
             onSelect: () => {},
             customContent: (
               <UnitFilter
                 value={filters.unit_id || ''}
                 onChange={(unitId) => handleFilterChange('unit_id', unitId || undefined)}
+                onDisplayLabelChange={setUnitFilterLabel}
                 placeholder="Search units..."
                 facilityId={
                   selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID

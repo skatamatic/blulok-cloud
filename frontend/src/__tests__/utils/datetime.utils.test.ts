@@ -6,6 +6,7 @@ import {
   formatNotificationTimestamp,
   formatRelativeTime,
   formatRelativeWithExact,
+  formatTime,
   formatUtcDateTime,
   isoToDatetimeLocal,
   localDateInputToUtcEndIso,
@@ -140,6 +141,12 @@ describe('datetime.utils', () => {
     it('formats invalid input as fallback', () => {
       expect(formatDate('invalid')).toBe('—');
       expect(formatDateTime('invalid')).toBe('—');
+    });
+
+    it('formats epoch millisecond timestamps', () => {
+      const ts = new Date('2026-06-16T15:30:00.000Z').getTime();
+      expect(formatTime(ts)).toMatch(/\d/);
+      expect(formatDateTime(ts)).toMatch(/Jun 16, 2026/);
     });
   });
 

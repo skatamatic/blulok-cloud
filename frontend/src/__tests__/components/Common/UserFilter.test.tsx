@@ -6,16 +6,27 @@ import userEvent from '@testing-library/user-event';
 import { UserFilter } from '@/components/Common/UserFilter';
 
 const mockGetUsers = jest.fn();
+const mockGetUser = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getUsers: (...args: unknown[]) => mockGetUsers(...args),
+    getUser: (...args: unknown[]) => mockGetUser(...args),
   },
 }));
 
 describe('UserFilter', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetUser.mockResolvedValue({
+      user: {
+        id: 'user-9',
+        firstName: 'Jamie',
+        lastName: 'Lee',
+        email: 'j@example.com',
+        role: 'tenant',
+      },
+    });
     mockGetUsers.mockResolvedValue({
       success: true,
       users: [
@@ -49,6 +60,30 @@ describe('UserFilter', () => {
 
     await user.click(screen.getByRole('button', { name: /Taylor Morgan/i }));
     expect(onChange).toHaveBeenCalledWith('user-1');
+  });
+
+  it('resolves preselected user id to display name via getUser', async () => {
+    const onDisplayLabelChange = jest.fn();
+
+    render(
+      <UserFilter
+        value="user-9"
+        onChange={jest.fn()}
+        onDisplayLabelChange={onDisplayLabelChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockGetUser).toHaveBeenCalledWith('user-9');
+    });
+
+    await waitFor(() => {
+      expect(onDisplayLabelChange).toHaveBeenCalledWith('Jamie Lee');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Jamie Lee')).toBeInTheDocument();
+    });
   });
 
   it('passes facility and role filters to getUsers', async () => {

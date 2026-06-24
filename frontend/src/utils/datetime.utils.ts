@@ -38,10 +38,15 @@ export const RELATIVE_UNITS_ACTIVITY_OPTS: FormatRelativeOptions = {
   absoluteStyle: 'date',
 };
 
-export function parseInstant(input: string | Date | null | undefined): Date | null {
+export function parseInstant(input: string | Date | number | null | undefined): Date | null {
   if (input == null) return null;
   if (input instanceof Date) {
     return Number.isNaN(input.getTime()) ? null : input;
+  }
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input)) return null;
+    const parsed = new Date(input);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -135,7 +140,7 @@ export function isoToDatetimeLocal(iso: string | null | undefined): string {
 }
 
 export function formatDateTime(
-  input: string | Date | null | undefined,
+  input: string | Date | number | null | undefined,
   fallback = '—',
 ): string {
   const date = parseInstant(input);
@@ -144,7 +149,7 @@ export function formatDateTime(
 }
 
 export function formatDate(
-  input: string | Date | null | undefined,
+  input: string | Date | number | null | undefined,
   fallback = '—',
 ): string {
   const date = parseInstant(input);
@@ -153,7 +158,7 @@ export function formatDate(
 }
 
 export function formatTime(
-  input: string | Date | null | undefined,
+  input: string | Date | number | null | undefined,
   fallback = '—',
 ): string {
   const date = parseInstant(input);
@@ -162,7 +167,7 @@ export function formatTime(
 }
 
 export function formatDateTimeParts(
-  input: string | Date | null | undefined,
+  input: string | Date | number | null | undefined,
 ): { date: string; time: string } | null {
   const date = parseInstant(input);
   if (!date) return null;

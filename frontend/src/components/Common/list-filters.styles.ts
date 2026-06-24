@@ -1,7 +1,7 @@
 /** Shared Tailwind tokens for searchable filterable list views. */
 
 export const filterBarShellClass =
-  'overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800';
+  'overflow-visible rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800';
 
 export const filterBarToolbarClass =
   'flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between';
@@ -32,13 +32,16 @@ export const filterBarActiveCountClass =
   'ml-1 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-800 dark:bg-primary-900/40 dark:text-primary-300';
 
 export const filterPanelClass =
-  'border-t border-gray-200 bg-gray-50/80 px-4 py-5 dark:border-gray-700 dark:bg-gray-900/40 sm:px-5';
+  'overflow-visible border-t border-gray-200 bg-gray-50/80 px-4 py-5 dark:border-gray-700 dark:bg-gray-900/40 sm:px-5';
 
 export const filterPanelGridClass =
   'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-x-5 lg:gap-y-5';
 
 export const filterSectionCardClass =
-  'rounded-lg border border-gray-200/90 bg-white p-3.5 shadow-sm dark:border-gray-700/90 dark:bg-gray-800/60';
+  'overflow-visible rounded-lg border border-gray-200/90 bg-white p-3.5 shadow-sm dark:border-gray-700/90 dark:bg-gray-800/60';
+
+export const filterComboboxDropdownClass =
+  'z-[9999] bg-white dark:bg-gray-800 shadow-2xl max-h-60 rounded-lg py-1 text-sm ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none border border-gray-200 dark:border-gray-700';
 
 export const filterSectionTitleClass =
   'text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400';

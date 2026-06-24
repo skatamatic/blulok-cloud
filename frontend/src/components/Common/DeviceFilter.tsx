@@ -1,8 +1,10 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CpuChipIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { BluLokDeviceSummary } from '@/components/Common/BluLokDeviceSummary';
+import { filterComboboxDropdownClass } from '@/components/Common/list-filters.styles';
+import { useFilterDropdownPortal } from '@/hooks/useFilterDropdownPortal';
 import {
   bluLokDeviceMatchesSearch,
   formatBluLokLockNumberLabel,
@@ -38,9 +40,8 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
   const [loading, setLoading] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
+  const { dropdownRef, dropdownStyle } = useFilterDropdownPortal(isOpen, containerRef, [searchTerm]);
 
   useEffect(() => {
     loadDevices();
@@ -65,31 +66,6 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
       setSearchTerm('');
     }
   }, [value, devices]);
-
-  // Compute floating dropdown position relative to input
-  useLayoutEffect(() => {
-    if (!isOpen) return;
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-  }, [isOpen, searchTerm]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onScrollOrResize = () => {
-      const el = containerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-    };
-    window.addEventListener('scroll', onScrollOrResize, true);
-    window.addEventListener('resize', onScrollOrResize);
-    return () => {
-      window.removeEventListener('scroll', onScrollOrResize, true);
-      window.removeEventListener('resize', onScrollOrResize);
-    };
-  }, [isOpen]);
 
   const loadDevices = async () => {
     if (!facilityId) return;
@@ -156,10 +132,9 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
         createPortal(
           <div
             ref={dropdownRef}
-            className="z-[9999] bg-white dark:bg-gray-800 shadow-2xl max-h-60 rounded-lg py-1 text-sm ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none border border-gray-200 dark:border-gray-700"
-            style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, minWidth: 300 }}
+            className={filterComboboxDropdownClass}
+            style={dropdownStyle}
             onMouseDown={(e) => {
-              // Prevent input blur when clicking inside the dropdown
               e.preventDefault();
             }}
           >

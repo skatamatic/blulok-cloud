@@ -49,6 +49,10 @@ export interface FilterSection {
   placeholder?: string;
   className?: string;
   customContent?: React.ReactNode;
+  /** Human-readable label for collapsed summary pills (user/unit pickers). */
+  selectedLabel?: string;
+  /** Notified when a combobox filter resolves its display label. */
+  onDisplayLabelChange?: (label: string) => void;
   /** Span full width in the filter panel grid (e.g. tenant picker). */
   fullWidth?: boolean;
   /** Grid span: `full` spans the entire panel row. */
@@ -180,6 +184,7 @@ export const ExpandableFilters: React.FC<ExpandableFiltersProps> = ({
           onChange={section.onSelect}
           placeholder={section.placeholder || 'Search users...'}
           className={filterFieldClass}
+          onDisplayLabelChange={section.onDisplayLabelChange}
         />
       );
     }
@@ -237,6 +242,7 @@ export const ExpandableFilters: React.FC<ExpandableFiltersProps> = ({
         <div className={filterCollapsedSummaryClass}>
           {activeSummary.map((section) => {
             const label =
+              section.selectedLabel ||
               section.options.find((option) => option.key === section.selected)?.label ||
               section.selected;
             return (

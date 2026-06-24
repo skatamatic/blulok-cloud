@@ -74,6 +74,7 @@ export default function UnitsManagementPage() {
   };
   const [viewMode, setViewMode] = useState<ListViewMode | 'sitemap'>('table');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [tenantFilterLabel, setTenantFilterLabel] = useState<string>();
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
@@ -462,6 +463,7 @@ export default function UnitsManagementPage() {
               offset: 0,
               tenant_id: ''
             });
+            setTenantFilterLabel(undefined);
             setCurrentPage(1);
           }}
           sections={[
@@ -511,13 +513,16 @@ export default function UnitsManagementPage() {
               span: 'full' as const,
               options: [],
               selected: filters.tenant_id || '',
+              selectedLabel: tenantFilterLabel,
               onSelect: () => {},
               customContent: (
                 <UserFilter
                   value={filters.tenant_id || ''}
                   onChange={(userId) => handleFilterChange('tenant_id', userId || undefined)}
+                  onDisplayLabelChange={setTenantFilterLabel}
                   placeholder="Search tenants..."
                   className="w-full max-w-md"
+                  roleFilter="tenant"
                 />
               ),
             },

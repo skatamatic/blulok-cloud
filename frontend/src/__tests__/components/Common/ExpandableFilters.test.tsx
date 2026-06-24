@@ -90,6 +90,31 @@ describe('ExpandableFilters', () => {
     expect(screen.getByText('Small')).toBeInTheDocument();
   });
 
+  it('uses selectedLabel for collapsed summary when options lack the selected key', () => {
+    render(
+      <ExpandableFilters
+        searchValue=""
+        onSearchChange={jest.fn()}
+        isExpanded={false}
+        onToggleExpanded={jest.fn()}
+        hasActiveFilters
+        sections={[
+          {
+            title: 'Unit',
+            options: [],
+            selected: 'unit-42',
+            selectedLabel: 'Unit 105',
+            onSelect: jest.fn(),
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/Unit:/)).toBeInTheDocument();
+    expect(screen.getByText('Unit 105')).toBeInTheDocument();
+    expect(screen.queryByText('unit-42')).not.toBeInTheDocument();
+  });
+
   it('calls onToggleExpanded when filters button is clicked', async () => {
     const onToggleExpanded = jest.fn();
     const user = userEvent.setup();
