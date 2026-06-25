@@ -85,6 +85,11 @@ router.get('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response)
   res.json({ success: true, data: { ...group, members } });
 }));
 
+router.get('/:id/users', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const users = await service.getUsersWithAccess(req.params.id, req.user!.role, req.user!.facilityIds);
+  res.json({ success: true, data: users });
+}));
+
 router.put('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { error, value } = updateSchema.validate(req.body);
   if (error) {

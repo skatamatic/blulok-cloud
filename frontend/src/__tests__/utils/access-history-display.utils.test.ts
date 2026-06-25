@@ -119,7 +119,28 @@ describe('access-history-display.utils', () => {
     expect(getAccessLogUserLink(emailLog)?.label).toBe('tenant@example.com');
   });
 
-  it('includes linked user in compact detail items', () => {
+  it('does not use uuid-shaped values as person display names', () => {
+    const uuid = '13a907c7-8537-459a-be49-ff30cfc0083f';
+    const uuidLog: AccessLog = {
+      ...baseLog,
+      method: 'app',
+      actor_type: 'user',
+      user_id: uuid,
+      user_name: uuid,
+      metadata: {
+        user: {
+          id: uuid,
+          name: uuid,
+          navigation_url: `/users/${uuid}/details`,
+        },
+      },
+    };
+
+    expect(getAccessLogUserLink(uuidLog)?.label).toBe('View user');
+    expect(getAccessUserDisplay(uuidLog).primary).toBe('View user');
+  });
+
+  it('labels keypad user links from metadata id and user_name when name is missing', () => {
     const linkedLog: AccessLog = {
       ...baseLog,
       method: 'keypad',

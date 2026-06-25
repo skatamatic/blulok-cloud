@@ -438,7 +438,36 @@ export class KeySharingService {
     return refetched;
   }
 
-  public async revokeShare(ctx: { userId: string; role: UserRole }, id: string, performedBy: string): Promise<boolean> {
+  /**
+   * Revoke all active key shares for a unit (e.g. before unit deletion).
+   * Pushes denylist updates so shared users lose route pass access to the unit lock.
+   */
+  public async revokeAllActiveSharesForUnit(
+    unitId: string,
+    performedBy: string,
+    performerRole: UserRole,
+    options?: { bestEffortGatewayDenylist?: boolean },
+  ): Promise<number> {
+    const { sharings } = await this.keySharings.getUnitSharedKeys(unitId, { is_active: true });
+    let revoked = 0;
+    for (const sharing of sharings) {
+      await this.revokeShare(
+        { userId: performedBy, role: performerRole },
+        sharing.id,
+        performedBy,
+        options,
+      );
+      revoked += 1;
+    }
+    return revoked;
+  }
+
+  public async revokeShare(
+    ctx: { userId: string; role: UserRole },
+    id: string,
+    performedBy: string,
+    options?: { bestEffortGatewayDenylist?: boolean },
+  ): Promise<boolean> {
     const existingSharing = await this.keySharings.findById(id);
     if (!existingSharing) {
       throw new Error('Key sharing record not found');
@@ -500,6 +529,13 @@ export class KeySharingService {
       }
     } catch (error) {
       logger.error('Failed to push denylist on key sharing revocation:', error);
+      if (options?.bestEffortGatewayDenylist) {
+        logger.warn(
+          `Continuing after share revocation denylist push failure shareId=${id} unitId=${existingSharing.unit_id}`,
+        );
+        this.notifyKeySharingChanged(existingSharing.unit_id);
+        return true;
+      }
       throw new Error('Failed to enforce share revocation denylist');
     }
 

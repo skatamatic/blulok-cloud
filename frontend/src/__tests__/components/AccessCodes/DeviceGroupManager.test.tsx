@@ -13,6 +13,7 @@ const mockGetAccessCodePushState = jest.fn();
 const mockGetFacilitySchedules = jest.fn();
 const mockGetScheduleUsage = jest.fn();
 const mockDeleteDeviceGroup = jest.fn();
+const mockGetDeviceGroupUsers = jest.fn();
 const mockOnGroupChange = jest.fn();
 
 jest.mock('@/contexts/ToastContext', () => ({
@@ -33,6 +34,7 @@ jest.mock('@/services/api.service', () => ({
     getScheduleUsage: (...args: unknown[]) => mockGetScheduleUsage(...args),
     removeDeviceGroupMember: jest.fn(),
     deleteDeviceGroup: (...args: unknown[]) => mockDeleteDeviceGroup(...args),
+    getDeviceGroupUsers: (...args: unknown[]) => mockGetDeviceGroupUsers(...args),
   },
 }));
 
@@ -77,6 +79,7 @@ describe('DeviceGroupManager', () => {
     mockGetFacilitySchedules.mockResolvedValue({ schedules: [] });
     mockGetScheduleUsage.mockResolvedValue({ usage: { totalCount: 0 } });
     mockDeleteDeviceGroup.mockResolvedValue({ success: true });
+    mockGetDeviceGroupUsers.mockResolvedValue({ data: [] });
     mockOnGroupChange.mockReset();
   });
 
@@ -861,6 +864,44 @@ describe('DeviceGroupManager', () => {
     await waitFor(() => {
       expect(mockDeleteDeviceGroup).toHaveBeenCalledWith('group-1');
       expect(mockOnGroupChange).toHaveBeenCalledWith('');
+    });
+  });
+
+  it('loads users when the Users tab is selected', async () => {
+    mockGetDeviceGroupUsers.mockResolvedValue({
+      data: [
+        {
+          user_id: 'user-1',
+          first_name: 'Jane',
+          last_name: 'Tenant',
+          email: 'jane@example.com',
+          role: 'tenant',
+          access_reasons: ['primary_tenant'],
+          unit_numbers: ['101'],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <DeviceGroupManager
+          facilityId="facility-1"
+          devices={[]}
+          groups={[defaultGroup]}
+          onGroupsChanged={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(mockGetDeviceGroup).toHaveBeenCalledWith('group-default');
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: /Users/i }));
+
+    await waitFor(() => {
+      expect(mockGetDeviceGroupUsers).toHaveBeenCalledWith('group-default');
+      expect(screen.getByText('Jane Tenant')).toBeInTheDocument();
     });
   });
 });

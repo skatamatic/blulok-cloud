@@ -19,6 +19,7 @@ import { withReturnPath } from '@/hooks/useBackNavigation';
 import { AccessGroupSelector } from '@/components/AccessCodes/AccessGroupSelector';
 import { AccessGroupDetailTabs } from '@/components/AccessCodes/AccessGroupDetailTabs';
 import { AccessCodeGroupPanel } from '@/components/AccessCodes/AccessCodeGroupPanel';
+import { AccessGroupUsersPanel } from '@/components/AccessCodes/AccessGroupUsersPanel';
 import {
   buildGroupSummary,
   buildGroupableAccessControlSearchKeywords,
@@ -28,6 +29,7 @@ import {
   filterKeypadDevices,
   GroupCardSummary,
   GroupMemberRef,
+  GroupUserAccess,
   pushStatusClasses,
   pushStatusLabel,
   resolveAccessGroupMemberTitle,
@@ -86,7 +88,7 @@ export function DeviceGroupManager({
   const [groupName, setGroupName] = useState('');
   const [copyFromGroupId, setCopyFromGroupId] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState('');
-  const [detailTab, setDetailTab] = useState<'members' | 'codes'>('members');
+  const [detailTab, setDetailTab] = useState<'members' | 'users' | 'codes'>('members');
   const [groupSummaries, setGroupSummaries] = useState<Record<string, GroupCardSummary>>({});
   const [pushState, setPushState] = useState<{
     status: string;
@@ -95,9 +97,13 @@ export function DeviceGroupManager({
   const [effectiveCodes, setEffectiveCodes] = useState<EffectiveAccessCode[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<GroupMemberRef[]>([]);
+  const [selectedGroupUsers, setSelectedGroupUsers] = useState<GroupUserAccess[]>([]);
   const [groupMemberCounts, setGroupMemberCounts] = useState<Record<string, number>>({});
   const [groupLoadError, setGroupLoadError] = useState<string | null>(null);
   const [loadingMembers, setLoadingMembers] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
+  const [usersLoadedForGroupId, setUsersLoadedForGroupId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [isRenamingGroup, setIsRenamingGroup] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
@@ -115,6 +121,7 @@ export function DeviceGroupManager({
   const normalizedGroupName = groupName.trim();
   const groupNamePattern = /^[A-Za-z0-9\s\-_.(),+&:'/#!;]+$/;
   const membersRequestIdRef = useRef(0);
+  const usersRequestIdRef = useRef(0);
   const groupCountsRequestIdRef = useRef(0);
   const groupsRef = useRef(groups);
   const pendingDeletedGroupIdRef = useRef<string | null>(null);
@@ -244,6 +251,53 @@ export function DeviceGroupManager({
     }
   };
 
+  const loadSelectedGroupUsers = async (groupId: string) => {
+    if (!groupId) {
+      setSelectedGroupUsers([]);
+      setUsersLoadError(null);
+      setUsersLoadedForGroupId(null);
+      return;
+    }
+    const requestId = usersRequestIdRef.current + 1;
+    usersRequestIdRef.current = requestId;
+    setLoadingUsers(true);
+    try {
+      const response = await apiService.getDeviceGroupUsers(groupId);
+      if (usersRequestIdRef.current !== requestId) return;
+      setSelectedGroupUsers(response.data || []);
+      setUsersLoadError(null);
+      setUsersLoadedForGroupId(groupId);
+    } catch (error) {
+      if (usersRequestIdRef.current !== requestId) return;
+      if (
+        pendingDeletedGroupIdRef.current === groupId
+        || !groupsRef.current.some((group) => group.id === groupId)
+      ) {
+        setSelectedGroupUsers([]);
+        setUsersLoadError(null);
+        setUsersLoadedForGroupId(null);
+        return;
+      }
+      console.error(error);
+      setSelectedGroupUsers([]);
+      setUsersLoadError('Failed to load group users');
+      setUsersLoadedForGroupId(null);
+      addToast({ type: 'error', title: 'Failed to load group users' });
+    } finally {
+      if (usersRequestIdRef.current === requestId) {
+        setLoadingUsers(false);
+      }
+    }
+  };
+
+  const refreshGroupUsersAfterMemberChange = async (groupId: string) => {
+    if (detailTab === 'users') {
+      await loadSelectedGroupUsers(groupId);
+      return;
+    }
+    setUsersLoadedForGroupId(null);
+  };
+
   const loadGroupCounts = async (nextGroups: DeviceGroup[]) => {
     if (nextGroups.length === 0) {
       setGroupMemberCounts({});
@@ -338,6 +392,11 @@ export function DeviceGroupManager({
   }, [initialGroupId]);
 
   useEffect(() => {
+    if (detailTab !== 'users' || !selectedGroupId) return;
+    loadSelectedGroupUsers(selectedGroupId).catch(() => undefined);
+  }, [detailTab, selectedGroupId]);
+
+  useEffect(() => {
     const fallbackGroupId = defaultGroup?.id || sortedGroups[0]?.id || '';
     const urlGroupId =
       initialGroupId && groups.some((group) => group.id === initialGroupId)
@@ -368,14 +427,22 @@ export function DeviceGroupManager({
   const selectGroup = (groupId: string) => {
     setIsRenamingGroup(false);
     setRenameDraft('');
+    setSelectedGroupUsers([]);
+    setUsersLoadedForGroupId(null);
     setSelectedGroupId(groupId);
     loadSelectedGroupMembers(groupId).catch(() => undefined);
     onGroupChange?.(groupId);
   };
 
   const selectedSummary = selectedGroup ? groupSummaries[selectedGroup.id] : null;
+  const hasUnitLocks = selectedGroupMembers.some((member) => member.device_type === 'blulok');
   const detailTabs = [
     { key: 'members', label: 'Members', count: selectedGroupMembers.length },
+    {
+      key: 'users',
+      label: 'Users',
+      count: usersLoadedForGroupId === selectedGroupId ? selectedGroupUsers.length : undefined,
+    },
     ...(showAccessCodes ? [{ key: 'codes', label: 'Access Codes' as const }] : []),
   ];
 
@@ -515,6 +582,7 @@ export function DeviceGroupManager({
       setSelectedDeviceId('');
       await onGroupsChanged();
       await loadSelectedGroupMembers(selectedGroupId);
+      await refreshGroupUsersAfterMemberChange(selectedGroupId);
       addToast({ type: 'success', title: 'Device added to access group' });
     } catch (error: any) {
       console.error(error);
@@ -539,6 +607,7 @@ export function DeviceGroupManager({
       await apiService.removeDeviceGroupMember(selectedGroupId, member.device_id, member.device_type);
       await onGroupsChanged();
       await loadSelectedGroupMembers(selectedGroupId);
+      await refreshGroupUsersAfterMemberChange(selectedGroupId);
       addToast({ type: 'success', title: 'Device removed from access group' });
     } catch (error: any) {
       console.error(error);
@@ -563,6 +632,8 @@ export function DeviceGroupManager({
       await apiService.deleteDeviceGroup(deletedGroupId);
       setSelectedGroupId(fallbackGroupId);
       setSelectedGroupMembers([]);
+      setSelectedGroupUsers([]);
+      setUsersLoadedForGroupId(null);
       onGroupChange?.(fallbackGroupId);
       await onGroupsChanged();
       if (fallbackGroupId) {
@@ -795,7 +866,7 @@ export function DeviceGroupManager({
                     <AccessGroupDetailTabs
                       tabs={detailTabs}
                       activeTab={detailTab}
-                      onChange={(key) => setDetailTab(key as 'members' | 'codes')}
+                      onChange={(key) => setDetailTab(key as 'members' | 'users' | 'codes')}
                     />
                   </div>
                 </div>
@@ -944,6 +1015,13 @@ export function DeviceGroupManager({
                         </div>
                       )}
                     </>
+                  ) : detailTab === 'users' ? (
+                    <AccessGroupUsersPanel
+                      users={selectedGroupUsers}
+                      loading={loadingUsers}
+                      loadError={usersLoadError}
+                      hasUnitLocks={hasUnitLocks}
+                    />
                   ) : (
                     <AccessCodeGroupPanel
                       facilityId={facilityId}
@@ -957,7 +1035,7 @@ export function DeviceGroupManager({
               </div>
             ) : (
               <div className="flex h-full min-h-[20rem] items-center justify-center px-6 py-12 text-center">
-                <p className="text-sm text-gray-500 dark:text-gray-400">Select an access group to manage members and codes.</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Select an access group to manage members, users, and codes.</p>
               </div>
             )}
           </main>

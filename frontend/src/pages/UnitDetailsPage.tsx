@@ -12,6 +12,7 @@ import {
   WrenchScrewdriverIcon,
   BuildingOfficeIcon,
   PencilIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import { useDetailsBackNavigation, replaceSearchParams, withReturnPath } from '@/hooks/useBackNavigation';
 import {
@@ -21,7 +22,8 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
-import { detailsBtnSecondarySm, detailsTabCountBadgeClass, detailsUnlockButtonClass } from '@/components/Common/details-page.styles';
+import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
+import { detailsBtnDangerSm, detailsBtnSecondarySm, detailsTabCountBadgeClass, detailsUnlockButtonClass } from '@/components/Common/details-page.styles';
 import {
   deviceStatusColors,
   lockStatusColors,
@@ -133,6 +135,8 @@ export default function UnitDetailsPage() {
   const [showAddSharedAccess, setShowAddSharedAccess] = useState(false);
   const [showPrimaryTenantChange, setShowPrimaryTenantChange] = useState(false);
   const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingUnit, setDeletingUnit] = useState(false);
   const [accessGroups, setAccessGroups] = useState<UnitAccessGroupRef[]>([]);
   const [activeTab, setActiveTab] = useState<UnitDetailsTab>(() => getUnitTabFromSearch(location.search));
   const unitLockStatusRef = useRef<string | undefined>(undefined);
@@ -301,6 +305,42 @@ export default function UnitDetailsPage() {
     }
   };
 
+  const handleDeleteUnit = async () => {
+    if (!unitId) return;
+
+    try {
+      setDeletingUnit(true);
+      await apiService.deleteUnit(unitId);
+      addToast({ type: 'success', title: 'Unit deleted', message: `Unit ${unit?.unit_number ?? ''} was removed.` });
+      setShowDeleteConfirm(false);
+      navigate('/units');
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { message?: string } } };
+      addToast({
+        type: 'error',
+        title: 'Delete failed',
+        message: apiError?.response?.data?.message || 'Failed to delete unit. Please try again.',
+      });
+    } finally {
+      setDeletingUnit(false);
+    }
+  };
+
+  const buildDeleteUnitMessage = () => {
+    if (!unit) return '';
+    const tenantCount = (unit.primary_tenant ? 1 : 0) + (unit.shared_tenants?.length ?? 0);
+    const impactParts: string[] = [];
+    if (tenantCount > 0) {
+      impactParts.push(`${tenantCount} tenant assignment${tenantCount === 1 ? '' : 's'} will be removed`);
+    }
+    if (unit.blulok_device) {
+      impactParts.push('the linked lock will be detached');
+    }
+    impactParts.push('active route passes will be revoked');
+    const impact = impactParts.length > 0 ? ` ${impactParts.join(', ')}.` : '';
+    return `Permanently delete Unit ${unit.unit_number}?${impact} This cannot be undone.`;
+  };
+
   const handleRemoteUnlock = async () => {
     if (!unit?.blulok_device || !unitId || !canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
 
@@ -439,6 +479,15 @@ export default function UnitDetailsPage() {
                 <PencilIcon className="h-4 w-4 mr-2" />
                 Edit Unit
               </button>
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={deletingUnit}
+                className={detailsBtnDangerSm}
+              >
+                <TrashIcon className="h-4 w-4 mr-2" />
+                Delete Unit
+              </button>
             </>
           ) : undefined
         }
@@ -520,6 +569,19 @@ export default function UnitDetailsPage() {
           loadUnitDetails(); // Refresh unit data
         }}
         unit={unit}
+      />
+
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="Delete unit?"
+        message={buildDeleteUnitMessage()}
+        confirmLabel="Delete unit"
+        confirmTone="danger"
+        isLoading={deletingUnit}
+        onConfirm={() => void handleDeleteUnit()}
+        onCancel={() => {
+          if (!deletingUnit) setShowDeleteConfirm(false);
+        }}
       />
     </DetailsPageShell>
   );

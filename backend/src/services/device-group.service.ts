@@ -20,6 +20,24 @@ interface ActorContext {
   actorName?: string;
 }
 
+export type DeviceGroupUserAccessReason =
+  | 'primary_tenant'
+  | 'assigned_tenant'
+  | 'shared_key'
+  | 'facility_admin'
+  | 'admin'
+  | 'dev_admin';
+
+export interface DeviceGroupUserAccess {
+  user_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+  role: UserRole;
+  access_reasons: DeviceGroupUserAccessReason[];
+  unit_numbers: string[];
+}
+
 export class DeviceGroupService {
   private static instance: DeviceGroupService;
   private model = new DeviceGroupModel();
@@ -592,5 +610,161 @@ export class DeviceGroupService {
     const group = await this.getGroupOrThrow(groupId);
     this.assertFacilityAccess(userRole, userFacilityIds, group.facility_id);
     return this.model.getMembers(groupId);
+  }
+
+  private async resolveGroupUnitIds(groupId: string): Promise<string[]> {
+    const members = await this.model.getMembers(groupId);
+    const blulokMembers = members.filter((member) => member.device_type === 'blulok');
+    const unitIds = new Set<string>();
+
+    for (const member of blulokMembers) {
+      if (member.source_unit_id) {
+        unitIds.add(String(member.source_unit_id));
+      }
+    }
+
+    const deviceIdsWithoutUnit = blulokMembers
+      .filter((member) => !member.source_unit_id)
+      .map((member) => member.device_id);
+
+    if (deviceIdsWithoutUnit.length > 0) {
+      const rows = await this.db('blulok_devices')
+        .select('unit_id')
+        .whereIn('id', deviceIdsWithoutUnit)
+        .whereNotNull('unit_id');
+      for (const row of rows) {
+        unitIds.add(String(row.unit_id));
+      }
+    }
+
+    return Array.from(unitIds);
+  }
+
+  async getUsersWithAccess(
+    groupId: string,
+    userRole: UserRole,
+    userFacilityIds: string[] | undefined,
+  ): Promise<DeviceGroupUserAccess[]> {
+    const group = await this.getGroupOrThrow(groupId);
+    this.assertFacilityAccess(userRole, userFacilityIds, group.facility_id);
+
+    const unitIds = await this.resolveGroupUnitIds(groupId);
+    const userMap = new Map<string, DeviceGroupUserAccess>();
+
+    const upsertUser = (
+      row: {
+        id: string;
+        first_name: string | null;
+        last_name: string | null;
+        email: string;
+        role: UserRole;
+      },
+      reason: DeviceGroupUserAccessReason,
+      unitNumber?: string | null,
+    ): void => {
+      const existing = userMap.get(row.id);
+      if (existing) {
+        if (!existing.access_reasons.includes(reason)) {
+          existing.access_reasons.push(reason);
+        }
+        if (unitNumber && !existing.unit_numbers.includes(unitNumber)) {
+          existing.unit_numbers.push(unitNumber);
+        }
+        return;
+      }
+
+      userMap.set(row.id, {
+        user_id: row.id,
+        first_name: row.first_name ?? null,
+        last_name: row.last_name ?? null,
+        email: row.email,
+        role: row.role,
+        access_reasons: [reason],
+        unit_numbers: unitNumber ? [unitNumber] : [],
+      });
+    };
+
+    if (unitIds.length > 0) {
+      const assignmentRows = await this.db('unit_assignments as ua')
+        .join('users as u', 'u.id', 'ua.tenant_id')
+        .join('units as un', 'un.id', 'ua.unit_id')
+        .select(
+          'u.id',
+          'u.first_name',
+          'u.last_name',
+          'u.email',
+          'u.role',
+          'un.unit_number',
+          'ua.is_primary',
+        )
+        .whereIn('ua.unit_id', unitIds)
+        .where('u.is_active', true)
+        .where((qb) => {
+          qb.whereNull('ua.access_expires_at').orWhere('ua.access_expires_at', '>', this.db.fn.now());
+        });
+
+      for (const row of assignmentRows) {
+        const reason: DeviceGroupUserAccessReason = row.is_primary ? 'primary_tenant' : 'assigned_tenant';
+        upsertUser(row, reason, row.unit_number ? String(row.unit_number) : null);
+      }
+
+      const sharedRows = await this.db('key_sharing as ks')
+        .join('users as u', 'u.id', 'ks.shared_with_user_id')
+        .join('units as un', 'un.id', 'ks.unit_id')
+        .select(
+          'u.id',
+          'u.first_name',
+          'u.last_name',
+          'u.email',
+          'u.role',
+          'un.unit_number',
+        )
+        .whereIn('ks.unit_id', unitIds)
+        .where('ks.is_active', true)
+        .where('u.is_active', true)
+        .where((qb) => {
+          qb.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', this.db.fn.now());
+        });
+
+      for (const row of sharedRows) {
+        upsertUser(row, 'shared_key', row.unit_number ? String(row.unit_number) : null);
+      }
+    }
+
+    const facilityAdminRows = await this.db('user_facility_associations as ufa')
+      .join('users as u', 'u.id', 'ufa.user_id')
+      .select('u.id', 'u.first_name', 'u.last_name', 'u.email', 'u.role')
+      .where('ufa.facility_id', group.facility_id)
+      .where('u.role', UserRole.FACILITY_ADMIN)
+      .where('u.is_active', true);
+
+    for (const row of facilityAdminRows) {
+      upsertUser(row, 'facility_admin');
+    }
+
+    const globalAdminRows = await this.db('users')
+      .select('id', 'first_name', 'last_name', 'email', 'role')
+      .whereIn('role', [UserRole.ADMIN, UserRole.DEV_ADMIN])
+      .where('is_active', true);
+
+    for (const row of globalAdminRows) {
+      upsertUser(
+        row,
+        row.role === UserRole.DEV_ADMIN ? 'dev_admin' : 'admin',
+      );
+    }
+
+    const sortKey = (user: DeviceGroupUserAccess): string => {
+      const name = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
+      return (name || user.email).toLowerCase();
+    };
+
+    return Array.from(userMap.values())
+      .map((user) => ({
+        ...user,
+        access_reasons: [...user.access_reasons],
+        unit_numbers: [...user.unit_numbers].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      }))
+      .sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
   }
 }

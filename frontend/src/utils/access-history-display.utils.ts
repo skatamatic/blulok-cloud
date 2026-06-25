@@ -174,6 +174,12 @@ function trimDisplayText(value: string | undefined | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function trimPersonDisplayText(value: string | undefined | null): string | null {
+  const trimmed = trimDisplayText(value);
+  if (!trimmed || looksLikeUuid(trimmed)) return null;
+  return trimmed;
+}
+
 /** Resolve a human-readable label for a linked user on an access log row. */
 export function resolveAccessLogUserLabel(
   log: AccessLog,
@@ -191,7 +197,7 @@ export function resolveAccessLogUserLabel(
   ];
 
   for (const candidate of nameCandidates) {
-    const label = trimDisplayText(candidate);
+    const label = trimPersonDisplayText(candidate);
     if (label) return label;
   }
 
@@ -280,7 +286,7 @@ export function getAccessUserDisplay(log: AccessLog): { primary: string; seconda
 
   const primary = meta.actor?.name || log.user_name;
   return {
-    primary: trimDisplayText(primary) || '—',
+    primary: trimPersonDisplayText(primary) || '—',
     secondary: log.user_email || null,
   };
 }

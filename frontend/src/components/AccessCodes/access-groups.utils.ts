@@ -4,6 +4,7 @@ import {
   DeviceGroup,
   EffectiveAccessCode,
 } from '@/types/facility.types';
+import { UserRole } from '@/types/auth.types';
 import { formatBluLokDevicePageTitle } from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName, readLockNumber } from '@/utils/deviceMetadataForm.utils';
 
@@ -21,6 +22,24 @@ export interface GroupMemberRef {
   device_id: string;
   device_type: 'access_control' | 'blulok';
   source_unit_id?: string | null;
+}
+
+export type GroupUserAccessReason =
+  | 'primary_tenant'
+  | 'assigned_tenant'
+  | 'shared_key'
+  | 'facility_admin'
+  | 'admin'
+  | 'dev_admin';
+
+export interface GroupUserAccess {
+  user_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+  role: UserRole;
+  access_reasons: GroupUserAccessReason[];
+  unit_numbers: string[];
 }
 
 export interface GroupableDeviceFields {

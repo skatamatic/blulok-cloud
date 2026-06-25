@@ -1,4 +1,6 @@
 import { UserRole } from '@/types/auth.types';
+import { DeviceModel } from '@/models/device.model';
+import { DatabaseService } from '@/services/database.service';
 import { UnitModel, UnitAssignment } from '@/models/unit.model';
 import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitAssignmentEventsService } from './events/unit-assignment-events.service';
@@ -37,11 +39,13 @@ export class UnitsService {
   private unitModel: UnitModel;
   private unitAssignmentModel: UnitAssignmentModel;
   private eventService: UnitAssignmentEventsService;
+  private deviceModel: DeviceModel;
 
   private constructor() {
     this.unitModel = new UnitModel();
     this.unitAssignmentModel = new UnitAssignmentModel();
     this.eventService = UnitAssignmentEventsService.getInstance();
+    this.deviceModel = new DeviceModel();
   }
 
   public static getInstance(): UnitsService {
@@ -499,9 +503,85 @@ export class UnitsService {
     }
   }
 
+  /**
+   * Delete a unit: unassign all tenants (denylist route pass access), revoke key shares,
+   * detach any linked lock, then remove the unit row.
+   */
+  async deleteUnit(unitId: string, userId: string, userRole: UserRole): Promise<void> {
+    const unit = await this.unitModel.findById(unitId);
+    if (!unit) {
+      throw new Error('Unit not found');
+    }
+
+    const hasAccess = await this.unitModel.hasUserAccessToUnit(unitId, userId, userRole);
+    if (!hasAccess) {
+      throw new Error('Access denied: You do not have permission to delete this unit');
+    }
+
+    const assignments = await this.unitAssignmentModel.findByUnitId(unitId);
+    for (const assignment of assignments) {
+      await this.unassignTenant(unitId, assignment.tenant_id, {
+        performedBy: userId,
+        source: 'api',
+      });
+    }
+
+    const { KeySharingService } = await import('@/services/key-sharing.service');
+    const keySharingService = KeySharingService.getInstance();
+    await keySharingService.revokeAllActiveSharesForUnit(unitId, userId, userRole, {
+      bestEffortGatewayDenylist: true,
+    });
+
+    const linkedDevice = await this.deviceModel.findBluLokByUnitId(unitId);
+    if (linkedDevice) {
+      const { DevicesService } = await import('@/services/devices.service');
+      await DevicesService.getInstance().unassignDeviceFromUnit(linkedDevice.id, {
+        performedBy: userId,
+        source: 'api',
+      });
+    }
+
+    const knex = DatabaseService.getInstance().connection;
+    await knex('device_group_members').where('source_unit_id', unitId).del();
+
+    await this.unitModel.deleteUnitById(unitId);
+
+    this.logUnitDeletedSideEffects(unit, userId, {
+      tenantsUnassigned: assignments.length,
+      hadDevice: Boolean(linkedDevice),
+    }).catch((err) => logger.error('Failed to log unit deletion side effects:', err));
+
+    logger.info(`Unit ${unitId} (${unit.unit_number}) deleted by ${userId}`, {
+      facilityId: unit.facility_id,
+      tenantsUnassigned: assignments.length,
+      hadDevice: Boolean(linkedDevice),
+    });
+  }
+
   // ============================================
   // Side-effect helpers (notifications + activity logs)
   // ============================================
+
+  private async logUnitDeletedSideEffects(
+    unit: { id: string; facility_id: string; unit_number: string },
+    performedBy: string,
+    stats: { tenantsUnassigned: number; hadDevice: boolean },
+  ): Promise<void> {
+    const { UserModel } = await import('@/models/user.model');
+    const performer = await UserModel.findById(performedBy) as any;
+    const performerName = performer
+      ? `${performer.first_name || ''} ${performer.last_name || ''}`.trim() || performer.email
+      : 'System';
+
+    await ActivityService.getInstance().logUnitDeleted(
+      unit.id,
+      unit.facility_id,
+      unit.unit_number,
+      performedBy,
+      performerName,
+      stats,
+    );
+  }
 
   /**
    * Log notification and activity for a tenant assignment.

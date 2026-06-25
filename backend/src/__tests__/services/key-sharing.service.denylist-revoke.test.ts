@@ -118,4 +118,23 @@ describe('KeySharingService.revokeShare denylist targeting', () => {
     );
     expect(mockGateway.unicastToFacility).toHaveBeenCalledWith('fac-1', 'mock-denylist-add-jwt');
   });
+
+  it('continues when gateway denylist push fails if bestEffortGatewayDenylist is set', async () => {
+    mockGateway.unicastToFacility.mockImplementation(() => {
+      throw new Error('gateway offline');
+    });
+    const service = KeySharingService.getInstance();
+
+    await expect(
+      service.revokeShare(
+        { userId: 'admin-1', role: UserRole.ADMIN },
+        'share-1',
+        'admin-1',
+        { bestEffortGatewayDenylist: true },
+      ),
+    ).resolves.toBe(true);
+
+    expect(mockDenylistModel.bulkCreate).toHaveBeenCalled();
+    expect(mockKeySharings.revokeSharing).toHaveBeenCalled();
+  });
 });

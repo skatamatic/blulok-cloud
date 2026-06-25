@@ -32,6 +32,7 @@ const mockDelete = jest.fn().mockResolvedValue(undefined);
 const mockAddMember = jest.fn().mockResolvedValue({ id: 'm-1', group_id: 'grp-1', device_id: 'dev-1' });
 const mockRemoveMember = jest.fn().mockResolvedValue(undefined);
 const mockGetMembers = jest.fn().mockResolvedValue([]);
+const mockGetUsersWithAccess = jest.fn().mockResolvedValue([]);
 
 jest.mock('@/services/device-group.service', () => ({
   DeviceGroupService: {
@@ -44,6 +45,7 @@ jest.mock('@/services/device-group.service', () => ({
       addMember: (...args: unknown[]) => mockAddMember(...args),
       removeMember: (...args: unknown[]) => mockRemoveMember(...args),
       getMembers: (...args: unknown[]) => mockGetMembers(...args),
+      getUsersWithAccess: (...args: unknown[]) => mockGetUsersWithAccess(...args),
     }),
   },
 }));
@@ -123,6 +125,29 @@ describe('Device Groups Routes', () => {
 
     expect(response.body.success).toBe(false);
     expect(String(response.body.message || '')).toContain('default access group');
+  });
+
+  it('returns users with access for a group', async () => {
+    mockGetUsersWithAccess.mockResolvedValueOnce([
+      {
+        user_id: 'user-1',
+        first_name: 'Jane',
+        last_name: 'Tenant',
+        email: 'jane@example.com',
+        role: 'tenant',
+        access_reasons: ['primary_tenant'],
+        unit_numbers: ['101'],
+      },
+    ]);
+
+    const response = await request(app)
+      .get('/api/v1/device-groups/grp-1/users')
+      .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+      .expect(200);
+
+    expectSuccess(response);
+    expect(response.body.data).toHaveLength(1);
+    expect(mockGetUsersWithAccess).toHaveBeenCalled();
   });
 
   it('returns 409 with explicit conflict code for exclusivity violations', async () => {

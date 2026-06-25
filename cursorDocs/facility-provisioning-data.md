@@ -63,4 +63,15 @@ No gateway-online requirement, no restore progress, no WebSocket subscription.
 
 ## Out of scope (v1)
 
-- Scheduled uploads, retention/TTL, per-file encryption, tenant self-service without facility admin role
+- Gateway WebSocket provisioning push/restore
+- Provisioning phase in swap recovery
+- Signed GCS download URLs (stream-through only)
+- Scheduled uploads, retention/TTL, per-file encryption
+- Tenant self-service without facility admin role
+- `facility_admin` delete via API or mobile app
+
+## Companion docs
+
+- **[App integration guide](./facility-provisioning-app-developer-guide.md)** — upload/list/download flows, request/response shapes
+- [Auth & roles](./auth.md)
+- [Security design](./security-design.md)

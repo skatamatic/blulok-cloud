@@ -205,4 +205,58 @@ describe('AccessHistoryPage', () => {
     });
     expect(screen.getByText(/showing 1 out of 1 access items/i)).toBeInTheDocument();
   });
+
+  it('truncates long action failure text in the row and shows full detail when expanded', async () => {
+    const user = userEvent.setup();
+    const longFailure =
+      'Timed out waiting for gateway confirmation — Gateway did not confirm lock command before timeout';
+    const ts = new Date().toISOString();
+    mockGetAccessHistory.mockResolvedValue({
+      logs: [
+        {
+          id: 'log-denied',
+          device_id: 'd1',
+          device_type: 'access_control',
+          action: 'unlock_attempt',
+          method: 'remote_gateway',
+          success: false,
+          occurred_at: ts,
+          created_at: ts,
+          updated_at: ts,
+          user_name: 'Developer Admin',
+          metadata: {
+            failure_summary: longFailure,
+            user: {
+              id: 'admin-1',
+              name: 'Developer Admin',
+              navigation_url: '/users/admin-1/details',
+            },
+            device: {
+              id: 'd1',
+              name: 'Main Gate',
+              navigation_url: '/devices/access-control/d1',
+            },
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    const { container } = renderPage(<AccessHistoryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Unlock attempt denied')).toBeInTheDocument();
+    });
+
+    const clampedCells = container.querySelectorAll('.line-clamp-2');
+    expect(clampedCells.length).toBeGreaterThanOrEqual(2);
+    expect(Array.from(clampedCells).some((el) => el.textContent?.includes('Timed out waiting for gateway confirmation'))).toBe(true);
+
+    await user.click(screen.getByText('Unlock attempt denied'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failure reason')).toBeInTheDocument();
+    });
+    expect(screen.getAllByText(longFailure).length).toBeGreaterThan(0);
+  });
 });

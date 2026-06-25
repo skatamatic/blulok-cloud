@@ -851,8 +851,17 @@ export default function AccessHistoryPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <div className="overflow-x-auto lg:overflow-hidden">
+            <table className="w-full min-w-[720px] table-fixed divide-y divide-gray-200 dark:divide-gray-700 lg:min-w-0">
+              <colgroup>
+                <col className="w-[24%]" />
+                <col className="w-[15%]" />
+                <col className="w-[17%]" />
+                <col className="w-[13%]" />
+                <col className="w-[11%]" />
+                <col className="w-[15%]" />
+                <col className="w-10" />
+              </colgroup>
               <thead className="bg-gray-50 dark:bg-gray-900">
                 <tr>
                   <SortableTableTh
@@ -861,6 +870,7 @@ export default function AccessHistoryPage() {
                     sortBy={sortBy}
                     sortOrder={sortOrder}
                     onSort={(key) => handleSort(key as SortableColumn)}
+                    className="!px-4 text-gray-500 dark:text-gray-400"
                   />
                   <SortableTableTh
                     label="User"
@@ -868,8 +878,9 @@ export default function AccessHistoryPage() {
                     sortBy={sortBy}
                     sortOrder={sortOrder}
                     onSort={(key) => handleSort(key as SortableColumn)}
+                    className="!px-4 text-gray-500 dark:text-gray-400"
                   />
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     {isFacilityScoped ? 'Unit / Device' : 'Unit / Access Point'}
                   </th>
                   <SortableTableTh
@@ -878,6 +889,7 @@ export default function AccessHistoryPage() {
                     sortBy={sortBy}
                     sortOrder={sortOrder}
                     onSort={(key) => handleSort(key as SortableColumn)}
+                    className="!px-4 text-gray-500 dark:text-gray-400"
                   />
                   <SortableTableTh
                     label="Status"
@@ -885,6 +897,7 @@ export default function AccessHistoryPage() {
                     sortBy={sortBy}
                     sortOrder={sortOrder}
                     onSort={(key) => handleSort(key as SortableColumn)}
+                    className="!px-4 text-gray-500 dark:text-gray-400"
                   />
                   <SortableTableTh
                     label="Time"
@@ -892,8 +905,9 @@ export default function AccessHistoryPage() {
                     sortBy={sortBy}
                     sortOrder={sortOrder}
                     onSort={(key) => handleSort(key as SortableColumn)}
+                    className="!px-4 text-gray-500 dark:text-gray-400"
                   />
-                  <th className="relative px-4 py-3 w-10">
+                  <th className="relative px-2 py-3 w-10">
                     <span className="sr-only">Expand</span>
                   </th>
                 </tr>
@@ -917,85 +931,106 @@ export default function AccessHistoryPage() {
                     <Fragment key={log.id}>
                       <tr 
                         id={generateHighlightId('access-log', log.id)}
-                        className="group transition-all duration-200 cursor-pointer hover:bg-blue-50/70 dark:hover:bg-blue-900/10"
+                        className="group transition-colors duration-200 cursor-pointer hover:bg-blue-50/70 dark:hover:bg-blue-900/10"
                         onClick={() => toggleRowExpansion(log.id)}
                       >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700 mr-3">
-                              <ActionIcon className={`h-5 w-5 ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-400'}`} />
+                        <td className="px-4 py-3 align-top">
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
+                              <ActionIcon className={`h-4 w-4 ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-400'}`} />
                             </div>
-                            <div>
-                              <div className={`text-sm font-medium ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-900 dark:text-white'}`}>
+                            <div className="min-w-0 flex-1">
+                              <div
+                                className={`text-sm font-medium line-clamp-2 break-words ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-900 dark:text-white'}`}
+                                title={formatAccessAction(log.action)}
+                              >
                                 {formatAccessAction(log.action)}
                               </div>
                               {!log.success && failureDetail && (
-                                <div className="text-xs text-red-600 dark:text-red-400">
+                                <div
+                                  className="mt-0.5 text-xs leading-snug text-red-600 dark:text-red-400 line-clamp-2 break-words"
+                                  title={failureDetail}
+                                >
                                   {failureDetail}
                                 </div>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <UserIcon className="h-4 w-4 text-gray-400 mr-2 flex-shrink-0" />
-                            <div>
+                        <td className="px-4 py-3 align-middle">
+                          <div className="flex items-center min-w-0 gap-2">
+                            <UserIcon className="h-4 w-4 shrink-0 text-gray-400" />
+                            <div className="min-w-0 flex-1">
                               {userLink ? (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleNavigation(userLink.href, userLink.id, 'user');
                                   }}
-                                  className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
+                                  className="block max-w-full truncate text-left text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
+                                  title={userLink.label}
                                 >
-                                  {userLink.label}
-                                  <LinkIcon className="h-3 w-3 ml-1" />
+                                  <span className="inline-flex max-w-full items-center">
+                                    <span className="truncate">{userLink.label}</span>
+                                    <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
+                                  </span>
                                 </button>
                               ) : (
-                                <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                <div
+                                  className="truncate text-sm font-medium text-gray-900 dark:text-white"
+                                  title={userDisplay.primary}
+                                >
                                   {userDisplay.primary}
                                 </div>
                               )}
                               {userDisplay.secondary && (
-                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                <div
+                                  className="truncate text-xs text-gray-500 dark:text-gray-400"
+                                  title={userDisplay.secondary}
+                                >
                                   {userDisplay.secondary}
                                 </div>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
+                        <td className="px-4 py-3 align-middle">
+                          <div className="flex items-center min-w-0 gap-2">
                             {log.device_type === 'blulok' ? (
-                              <BuildingStorefrontIcon className="h-4 w-4 text-gray-400 mr-2 flex-shrink-0" />
+                              <BuildingStorefrontIcon className="h-4 w-4 shrink-0 text-gray-400" />
                             ) : (
-                              <CpuChipIcon className="h-4 w-4 text-gray-400 mr-2 flex-shrink-0" />
+                              <CpuChipIcon className="h-4 w-4 shrink-0 text-gray-400" />
                             )}
-                            <div>
+                            <div className="min-w-0 flex-1">
                               {!isFacilityScoped && metadata.facility ? (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleNavigation(metadata.facility!.navigation_url, metadata.facility!.id, 'facility');
                                   }}
-                                  className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 flex items-center"
+                                  className="block max-w-full truncate text-left text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
+                                  title={locationDisplay.primary}
                                 >
-                                  {locationDisplay.primary}
-                                  <LinkIcon className="h-3 w-3 ml-1" />
+                                  <span className="inline-flex max-w-full items-center">
+                                    <span className="truncate">{locationDisplay.primary}</span>
+                                    <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
+                                  </span>
                                 </button>
                               ) : (
-                                <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                <div
+                                  className="truncate text-sm font-medium text-gray-900 dark:text-white"
+                                  title={locationDisplay.primary}
+                                >
                                   {metadata.unit ? (
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         handleNavigation(metadata.unit!.navigation_url, metadata.unit!.id, 'unit');
                                       }}
-                                      className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 inline-flex items-center"
+                                      className="inline-flex max-w-full items-center truncate text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
                                     >
-                                      {locationDisplay.primary}
-                                      <LinkIcon className="h-3 w-3 ml-1" />
+                                      <span className="truncate">{locationDisplay.primary}</span>
+                                      <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
                                     </button>
                                   ) : metadata.device ? (
                                     <button
@@ -1003,10 +1038,10 @@ export default function AccessHistoryPage() {
                                         e.stopPropagation();
                                         handleNavigation(metadata.device!.navigation_url, metadata.device!.id, 'device');
                                       }}
-                                      className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200 inline-flex items-center"
+                                      className="inline-flex max-w-full items-center truncate text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
                                     >
-                                      {locationDisplay.primary}
-                                      <LinkIcon className="h-3 w-3 ml-1" />
+                                      <span className="truncate">{locationDisplay.primary}</span>
+                                      <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
                                     </button>
                                   ) : (
                                     locationDisplay.primary
@@ -1014,23 +1049,29 @@ export default function AccessHistoryPage() {
                                 </div>
                               )}
                               {locationDisplay.secondary && (
-                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                <div
+                                  className="truncate text-xs text-gray-500 dark:text-gray-400"
+                                  title={locationDisplay.secondary}
+                                >
                                   {locationDisplay.secondary}
                                 </div>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
+                        <td className="px-4 py-3 align-middle">
+                          <div className="flex min-w-0 items-center gap-1.5">
                             <MethodIcon className={`h-4 w-4 shrink-0 ${methodColors[log.method as keyof typeof methodColors] || 'text-gray-400'}`} />
-                            <span className="text-sm text-gray-900 dark:text-white">
+                            <span
+                              className="truncate text-sm text-gray-900 dark:text-white"
+                              title={formatAccessMethod(log.method)}
+                            >
                               {formatAccessMethod(log.method)}
                             </span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                        <td className="px-4 py-3 align-middle whitespace-nowrap">
+                          <span className={`inline-flex max-w-full items-center truncate rounded-full px-2.5 py-1 text-xs font-medium ${
                             statusDisplay.tone === 'success'
                               ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
                               : statusDisplay.tone === 'pending'
@@ -1038,38 +1079,38 @@ export default function AccessHistoryPage() {
                                 : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
                           }`}>
                             {statusDisplay.tone === 'success' ? (
-                              <CheckCircleIcon className="h-3.5 w-3.5 mr-1" />
+                              <CheckCircleIcon className="mr-1 h-3.5 w-3.5 shrink-0" />
                             ) : statusDisplay.tone === 'pending' ? (
-                              <ClockIcon className="h-3.5 w-3.5 mr-1" />
+                              <ClockIcon className="mr-1 h-3.5 w-3.5 shrink-0" />
                             ) : (
-                              <XCircleIcon className="h-3.5 w-3.5 mr-1" />
+                              <XCircleIcon className="mr-1 h-3.5 w-3.5 shrink-0" />
                             )}
-                            {statusDisplay.label}
+                            <span className="truncate">{statusDisplay.label}</span>
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-4 py-3 align-middle whitespace-nowrap">
                           <div className="text-sm text-gray-900 dark:text-white">
                             {formatOccurredAt(log.occurred_at)}
                           </div>
                           {log.duration_seconds ? (
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                            <div className="truncate text-xs text-gray-500 dark:text-gray-400">
                               Duration: {formatDuration(log.duration_seconds)}
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-4 py-4 whitespace-nowrap text-center">
+                        <td className="px-2 py-3 align-middle text-center whitespace-nowrap">
                           {isExpanded ? (
-                            <ChevronUpIcon className="h-4 w-4 text-gray-400 mx-auto" />
+                            <ChevronUpIcon className="mx-auto h-4 w-4 text-gray-400" />
                           ) : (
-                            <ChevronRightIcon className="h-4 w-4 text-gray-400 mx-auto" />
+                            <ChevronRightIcon className="mx-auto h-4 w-4 text-gray-400" />
                           )}
                         </td>
                       </tr>
                       
                       {isExpanded && (
                         <tr className="bg-gray-50/80 dark:bg-gray-900/40">
-                          <td colSpan={7} className="px-6 py-5 max-w-0">
-                            <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+                          <td colSpan={7} className="px-4 py-4">
+                            <div className="w-full min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
                               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                                 {detailItems.map((item) => (
                                   <div key={item.label} className="min-w-0">

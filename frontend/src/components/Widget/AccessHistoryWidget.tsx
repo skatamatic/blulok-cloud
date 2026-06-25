@@ -145,6 +145,12 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     return label;
   };
 
+  const getActionSummary = (log: AccessLog): { primary: string; title: string } => {
+    const title = getActionText(log);
+    const primary = formatAccessAction(log.action);
+    return { primary, title };
+  };
+
   const getActionColor = (log: AccessLog): string => {
     const { action, success } = log;
     
@@ -253,28 +259,41 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
           <div className={`space-y-2 ${WIDGET_LIST_SCROLL_CLASS}`}>
             {displayHistory.map((entry) => {
               const entryTime = formatEntryTime(entry.occurred_at);
+              const actionSummary = getActionSummary(entry);
+              const failureDetail = !entry.success ? getAccessFailureDetail(entry) : null;
               return (
               <div key={entry.id} className="flex items-center space-x-3 p-2 rounded-md bg-gray-50 dark:bg-gray-700">
                 <div className="flex-shrink-0">
                   {getActionIcon(entry)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center space-x-2">
-                    <span className="font-medium text-sm text-gray-900 dark:text-gray-100">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate" title={getUnitDisplayName(entry)}>
                       {getUnitDisplayName(entry)}
                     </span>
-                    <span className={`text-sm font-medium ${getActionColor(entry)}`}>
-                      {getActionText(entry)}
+                    <span
+                      className={`text-sm font-medium truncate ${getActionColor(entry)}`}
+                      title={actionSummary.title}
+                    >
+                      {actionSummary.primary}
                     </span>
                   </div>
-                  <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
-                    <UserIcon className="h-3 w-3" />
-                    <span>{getUserDisplayName(entry)}</span>
-                    <ClockIcon className="h-3 w-3 ml-2" />
-                    <span title={entryTime.title}>
+                  <div className="flex items-center gap-2 min-w-0 text-xs text-gray-500 dark:text-gray-400">
+                    <UserIcon className="h-3 w-3 shrink-0" />
+                    <span className="truncate" title={getUserDisplayName(entry)}>{getUserDisplayName(entry)}</span>
+                    <ClockIcon className="h-3 w-3 shrink-0 ml-1" />
+                    <span className="truncate" title={entryTime.title}>
                       {entryTime.display}
                     </span>
                   </div>
+                  {!entry.success && failureDetail && (
+                    <p
+                      className="mt-1 text-xs text-red-600 dark:text-red-400 line-clamp-2 break-words"
+                      title={failureDetail}
+                    >
+                      {failureDetail}
+                    </p>
+                  )}
                 </div>
               </div>
             );})}

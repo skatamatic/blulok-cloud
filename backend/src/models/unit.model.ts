@@ -1363,4 +1363,38 @@ export class UnitModel {
       throw error;
     }
   }
+
+  /**
+   * Delete a unit row. Caller must enforce authorization and run pre-delete cleanup.
+   */
+  async deleteUnitById(unitId: string): Promise<void> {
+    const knex = this.db.connection;
+
+    try {
+      const deleted = await knex('units').where('id', unitId).del();
+      if (deleted === 0) {
+        throw new Error('Unit not found');
+      }
+
+      logger.info(`Unit deleted: ${unitId}`);
+    } catch (error) {
+      logger.error('Error deleting unit:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * @deprecated Use deleteUnitById after service-layer authorization and cleanup.
+   */
+  async deleteUnit(unitId: string, userId: string, userRole: UserRole): Promise<void> {
+    const hasAccess = await this.hasUserAccessToUnit(unitId, userId, userRole);
+    if (!hasAccess) {
+      const existing = await this.db.connection('units').where('id', unitId).first();
+      if (!existing) {
+        throw new Error('Unit not found');
+      }
+      throw new Error('Access denied: You do not have permission to delete this unit');
+    }
+    await this.deleteUnitById(unitId);
+  }
 }

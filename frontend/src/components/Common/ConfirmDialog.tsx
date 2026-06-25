@@ -8,6 +8,7 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   confirmTone?: 'primary' | 'danger';
+  isLoading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   footerExtra?: ReactNode;
@@ -20,6 +21,7 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   confirmTone = 'primary',
+  isLoading = false,
   onConfirm,
   onCancel,
   footerExtra,
@@ -30,7 +32,7 @@ export function ConfirmDialog({
     if (!isOpen) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || isLoading) return;
       event.preventDefault();
       event.stopPropagation();
       onCancel();
@@ -41,7 +43,7 @@ export function ConfirmDialog({
     return () => {
       document.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [isOpen, onCancel]);
+  }, [isOpen, isLoading, onCancel]);
 
   useEffect(() => {
     if (!isOpen || !panelRef.current) return;
@@ -63,6 +65,7 @@ export function ConfirmDialog({
       className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4"
       role="presentation"
       onMouseDown={(event) => {
+        if (isLoading) return;
         if (event.target === event.currentTarget) {
           event.stopPropagation();
           onCancel();
@@ -97,14 +100,16 @@ export function ConfirmDialog({
             type="button"
             data-confirm-dialog-cancel
             onClick={onCancel}
-            className="btn-secondary !px-3 !py-2"
+            disabled={isLoading}
+            className="btn-secondary !px-3 !py-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {cancelLabel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className={`${confirmClass} !px-3 !py-2`}
+            disabled={isLoading}
+            className={`${confirmClass} !px-3 !py-2 disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             {confirmLabel}
           </button>

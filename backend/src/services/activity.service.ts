@@ -463,6 +463,46 @@ export class ActivityService {
     });
   }
 
+  /**
+   * Log permanent removal of a unit from a facility.
+   */
+  async logUnitDeleted(
+    unitId: string,
+    facilityId: string,
+    unitNumber: string,
+    performedBy: string,
+    performedByName: string,
+    stats: { tenantsUnassigned: number; hadDevice: boolean },
+  ): Promise<ActivityLogResponse> {
+    const parts: string[] = [];
+    if (stats.tenantsUnassigned > 0) {
+      parts.push(`${stats.tenantsUnassigned} tenant assignment(s) removed`);
+    }
+    if (stats.hadDevice) {
+      parts.push('linked lock detached');
+    }
+    const detail = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+
+    return this.logActivity({
+      entityType: 'unit',
+      entityId: unitId,
+      activityType: 'configuration_change',
+      title: 'Unit Deleted',
+      description: `Unit ${unitNumber} was permanently deleted${detail}`,
+      actorType: 'user',
+      actorId: performedBy,
+      actorName: performedByName,
+      result: 'success',
+      facilityId,
+      unitId,
+      metadata: {
+        unitNumber,
+        tenantsUnassigned: stats.tenantsUnassigned,
+        hadDevice: stats.hadDevice,
+      },
+    });
+  }
+
   // ============================================
   // Helper methods
   // ============================================

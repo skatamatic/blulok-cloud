@@ -718,6 +718,11 @@ class ApiService {
     return response.data;
   }
 
+  async deleteUnit(id: string) {
+    const response = await this.api.delete(`/units/${id}`);
+    return response.data;
+  }
+
   async assignTenantToUnit(unitId: string, tenantId: string, isPrimary: boolean) {
     const response = await this.api.post(`/units/${unitId}/assign`, { 
       tenant_id: tenantId, 
@@ -788,6 +793,22 @@ class ApiService {
           source_unit_id?: string | null;
         }>;
       };
+    };
+  }
+
+  async getDeviceGroupUsers(groupId: string) {
+    const response = await this.api.get(`/device-groups/${groupId}/users`);
+    return response.data as {
+      success: boolean;
+      data: Array<{
+        user_id: string;
+        first_name: string | null;
+        last_name: string | null;
+        email: string;
+        role: string;
+        access_reasons: Array<'primary_tenant' | 'assigned_tenant' | 'shared_key' | 'facility_admin' | 'admin' | 'dev_admin'>;
+        unit_numbers: string[];
+      }>;
     };
   }
 

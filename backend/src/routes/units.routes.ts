@@ -376,6 +376,44 @@ router.put('/:unitId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRol
   }
 }));
 
+// DELETE /units/:unitId - Delete unit (Admin, Dev Admin, Facility Admin only)
+router.delete('/:unitId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user!.userId;
+  const userRole = req.user!.role as UserRole;
+  const unitId = req.params.unitId;
+
+  if (!unitId) {
+    res.status(400).json({ success: false, message: 'Unit ID is required' });
+    return;
+  }
+
+  try {
+    const unitsService = UnitsService.getInstance();
+    await unitsService.deleteUnit(unitId, userId, userRole);
+
+    const wsService = WebSocketService.getInstance();
+    await wsService.broadcastUnitsUpdate();
+    await wsService.broadcastBatteryStatusUpdate();
+
+    res.json({
+      success: true,
+      message: 'Unit deleted successfully',
+      data: { unit_id: unitId, deleted_at: new Date().toISOString() },
+    });
+  } catch (error: any) {
+    if (error.message?.includes('Access denied')) {
+      res.status(403).json({ success: false, message: error.message });
+      return;
+    }
+    if (error.message?.includes('not found')) {
+      res.status(404).json({ success: false, message: error.message });
+      return;
+    }
+    logger.error('Error deleting unit:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete unit' });
+  }
+}));
+
 // POST /units/:unitId/assign - Assign tenant to unit (Admin/Dev Admin/Facility Admin, or primary tenant for shared access)
 router.post('/:unitId/assign', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN, UserRole.TENANT]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
