@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosError, AxiosRequestConfig } from 'axios';
 import { getApiBaseUrl } from './appConfig';
 import { LoginCredentials, LoginResponse } from '@/types/auth.types';
+import type { GroupUserAccess } from '@/components/AccessCodes/access-groups.utils';
 import { AccessCode, AccessCodeConfig, AccessCodeGroupConfig, DeviceGroup, EffectiveAccessCode, UserAccessCode, AccessControlDevice, CreateAccessControlDevicePayload, UpdateAccessControlDevicePayload } from '@/types/facility.types';
 import type { ScopedGeneralStatsData } from '@/types/dashboard.types';
 import type { UserNotificationApi } from '@/types/notifications.types';
@@ -800,15 +801,7 @@ class ApiService {
     const response = await this.api.get(`/device-groups/${groupId}/users`);
     return response.data as {
       success: boolean;
-      data: Array<{
-        user_id: string;
-        first_name: string | null;
-        last_name: string | null;
-        email: string;
-        role: string;
-        access_reasons: Array<'primary_tenant' | 'assigned_tenant' | 'shared_key' | 'facility_admin' | 'admin' | 'dev_admin'>;
-        unit_numbers: string[];
-      }>;
+      data: GroupUserAccess[];
     };
   }
 
