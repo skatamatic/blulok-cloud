@@ -87,6 +87,49 @@ describe('AccessHistoryReadService', () => {
     expect(result.logs[0].device_name).toBe('Lock #106');
   });
 
+  it('resolves route-pass actor display name from joined user record', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-route-pass',
+        activity_type: 'access_attempt',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'user',
+        actor_id: 'user-9',
+        actor_name: '13a907c7-8537-459a-be49-ff30cfc0083f',
+        result: 'success',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'access_granted',
+          method: 'route_pass',
+          device_type: 'blulok',
+          actor: {
+            user_id: 'user-9',
+            role: 'tenant',
+            name: '13a907c7-8537-459a-be49-ff30cfc0083f',
+          },
+        },
+        actor_user_first_name: 'Alex',
+        actor_user_last_name: 'Tenant',
+        actor_user_email: 'alex@example.com',
+        device_serial: 'ae4097b2-16b3-4b1d-b964-6021c7be6ea2',
+        blulok_device_settings: { lockNumber: 12 },
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, {});
+    expect(result.logs[0].user_name).toBe('Alex Tenant');
+    expect(result.logs[0].user_email).toBe('alex@example.com');
+    expect(result.logs[0].metadata?.user).toMatchObject({
+      id: 'user-9',
+      name: 'Alex Tenant',
+      email: 'alex@example.com',
+    });
+  });
+
   it('uses end-of-day UTC for date-only date_to filters', async () => {
     mockFindWithContext.mockResolvedValue([]);
     mockCount.mockResolvedValue(0);

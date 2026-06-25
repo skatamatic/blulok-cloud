@@ -51,7 +51,7 @@ describe('AccessLogExpandedDetails', () => {
     expect(screen.getByText('Timed out waiting for gateway confirmation')).toBeInTheDocument();
     expect(screen.getByText('Main entrance')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /view user/i }));
+    await user.click(screen.getByRole('button', { name: /Developer Admin/i }));
     expect(onNavigate).toHaveBeenCalledWith('/users/user-1/details', 'user-1', 'user');
   });
 });

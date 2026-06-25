@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AccessGroupUsersPanel } from '@/components/AccessCodes/AccessGroupUsersPanel';
 import { UserRole } from '@/types/auth.types';
@@ -47,9 +47,12 @@ describe('AccessGroupUsersPanel', () => {
     expect(screen.getByText('Jane Tenant')).toBeInTheDocument();
     expect(screen.getByText('Primary tenant')).toBeInTheDocument();
     expect(screen.getByText('Units: Unit 101')).toBeInTheDocument();
-    expect(screen.getAllByText('View details')).toHaveLength(2);
+    expect(screen.queryByText('View user')).not.toBeInTheDocument();
     expect(screen.getByText('Sam Shared')).toBeInTheDocument();
     expect(screen.getByText('Shared key')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Jane Tenant/i }));
+    expect(screen.getByRole('link', { name: /View user/i })).toHaveAttribute('href', '/users/user-1/details');
   });
 
   it('shows empty state when no users match', () => {

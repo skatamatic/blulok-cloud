@@ -176,8 +176,26 @@ function trimDisplayText(value: string | undefined | null): string | null {
 
 function trimPersonDisplayText(value: string | undefined | null): string | null {
   const trimmed = trimDisplayText(value);
-  if (!trimmed || looksLikeUuid(trimmed)) return null;
+  if (!trimmed || looksLikeUuid(trimmed) || /^user$/i.test(trimmed)) return null;
+  if (/^(gateway|system)$/i.test(trimmed)) return null;
   return trimmed;
+}
+
+function resolveLinkedUserEmail(
+  log: AccessLog,
+  meta: AccessLogPresentationMetadata,
+  linkedUserId: string,
+): string | null {
+  const candidates = [
+    meta.user?.email,
+    log.user_id === linkedUserId ? log.user_email : null,
+    log.user_id === linkedUserId ? log.primary_tenant_email : null,
+  ];
+  for (const candidate of candidates) {
+    const label = trimDisplayText(candidate);
+    if (label) return label;
+  }
+  return null;
 }
 
 /** Resolve a human-readable label for a linked user on an access log row. */
@@ -212,7 +230,7 @@ export function resolveAccessLogUserLabel(
     if (label) return label;
   }
 
-  return 'View user';
+  return resolveLinkedUserEmail(log, meta, linkedUserId);
 }
 
 export type AccessLogUserLink = {
@@ -224,6 +242,9 @@ export type AccessLogUserLink = {
 /** Linked user navigation target for access history rows, when one exists. */
 export function getAccessLogUserLink(log: AccessLog): AccessLogUserLink | null {
   const meta = getAccessLogMetadata(log);
+  const linkedUserId = meta.initiated_by?.id || meta.user?.id || log.user_id || null;
+  if (!linkedUserId) return null;
+
   const label = resolveAccessLogUserLabel(log, meta);
   if (!label) return null;
 

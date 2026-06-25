@@ -12,7 +12,7 @@ import {
 } from '@/constants/access-history.constants';
 import { parseQueryDateFrom, parseQueryDateTo, toIsoStringOrEpoch } from '@/utils/datetime.utils';
 import { mapLegacyAccessAction, mapLegacyAccessMethod } from '@/utils/access-history-remote.utils';
-import { resolveBluLokDeviceDisplayName } from '@/utils/blulok-device-display.utils';
+import { resolveBluLokDeviceDisplayName, isLikelyUuid } from '@/utils/blulok-device-display.utils';
 
 export type QueryFilters = {
   facility_id?: string;
@@ -323,6 +323,37 @@ export class AccessHistoryReadService {
     return { success: false, status: 'failed' };
   }
 
+  private resolveActorDisplayName(
+    ctx: ActivityLogWithContext,
+    actor: Record<string, unknown> | undefined,
+    storedActorName: string | undefined,
+  ): string | undefined {
+    const joinedName = [ctx.actor_user_first_name, ctx.actor_user_last_name]
+      .filter((part) => typeof part === 'string' && part.trim().length > 0)
+      .join(' ')
+      .trim();
+    if (joinedName && !isLikelyUuid(joinedName)) {
+      return joinedName;
+    }
+
+    const actorMetaName = typeof actor?.name === 'string' ? actor.name.trim() : '';
+    if (actorMetaName && !isLikelyUuid(actorMetaName) && !/^user$/i.test(actorMetaName)) {
+      return actorMetaName;
+    }
+
+    const actorName = typeof storedActorName === 'string' ? storedActorName.trim() : '';
+    if (actorName && !isLikelyUuid(actorName) && !/^user$/i.test(actorName)) {
+      return actorName;
+    }
+
+    const email = typeof ctx.actor_user_email === 'string' ? ctx.actor_user_email.trim() : '';
+    if (email) {
+      return email;
+    }
+
+    return undefined;
+  }
+
   private mapToAccessHistoryRecord(row: ActivityLog | ActivityLogWithContext): AccessHistoryRecord {
     const metadata = this.extractMetadata(row);
     const action = this.extractAction(row, metadata);
@@ -334,15 +365,15 @@ export class AccessHistoryReadService {
       ? (metadata.actor as Record<string, unknown>)
       : undefined;
 
-    const userName = row.actor_name
-      || (actor && typeof actor.name === 'string' ? actor.name : undefined);
+    const ctx = row as ActivityLogWithContext;
+    const userName = this.resolveActorDisplayName(ctx, actor, row.actor_name
+      || (actor && typeof actor.name === 'string' ? actor.name : undefined));
     const userIdFromActor = actor && typeof actor.user_id === 'string' ? actor.user_id : undefined;
     const deviceType = this.inferDeviceType(metadata);
     const createdAt = toIsoStringOrEpoch(row.created_at);
     const updatedAt = toIsoStringOrEpoch(row.updated_at);
     const occurredAt = toIsoStringOrEpoch(row.occurred_at);
 
-    const ctx = row as ActivityLogWithContext;
     const deviceName = this.resolveDeviceName(ctx, deviceType);
     const resolvedUserId = userIdFromActor || row.actor_id || undefined;
     const resultStatus = this.deriveResultStatus(row.result);
@@ -379,7 +410,7 @@ export class AccessHistoryReadService {
       facility_name: ctx.facility_name,
       unit_number: ctx.unit_number,
       user_name: userName,
-      user_email: undefined,
+      user_email: ctx.actor_user_email || undefined,
       actor_type: row.actor_type,
       device_name: deviceName,
       device_location: ctx.device_location || undefined,
@@ -473,15 +504,18 @@ export class AccessHistoryReadService {
     }
 
     if (row.actor_type === 'user' && userId) {
-      const trimmedName = typeof userName === 'string' ? userName.trim() : '';
       const metadataEmail = typeof baseMetadata.user_email === 'string' ? baseMetadata.user_email.trim() : '';
-      const resolvedUserName = trimmedName || metadataEmail || 'User';
-      presentation.user = {
-        id: userId,
-        name: resolvedUserName,
-        ...(metadataEmail ? { email: metadataEmail } : {}),
-        navigation_url: `/users/${userId}/details`,
-      };
+      const joinedEmail = typeof ctx.actor_user_email === 'string' ? ctx.actor_user_email.trim() : '';
+      const email = metadataEmail || joinedEmail;
+      const resolvedUserName = userName || email;
+      if (resolvedUserName) {
+        presentation.user = {
+          id: userId,
+          name: resolvedUserName,
+          ...(email ? { email } : {}),
+          navigation_url: `/users/${userId}/details`,
+        };
+      }
     } else if (row.actor_type) {
       presentation.actor = {
         type: row.actor_type,

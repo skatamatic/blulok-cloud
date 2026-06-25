@@ -137,6 +137,9 @@ export interface ActivityLogWithContext extends ActivityLog {
   device_location?: string;
   access_control_device_name?: string;
   facility_name?: string;
+  actor_user_first_name?: string | null;
+  actor_user_last_name?: string | null;
+  actor_user_email?: string | null;
 }
 
 /** Safety limits to prevent unbounded queries */
@@ -300,12 +303,16 @@ export class ActivityLogModel {
         'blulok_devices.device_settings as blulok_device_settings_raw',
         'access_control_devices.name as access_control_device_name',
         'access_control_devices.location_description as device_location',
-        'facilities.name as facility_name'
+        'facilities.name as facility_name',
+        'actor_users.first_name as actor_user_first_name',
+        'actor_users.last_name as actor_user_last_name',
+        'actor_users.email as actor_user_email',
       )
       .leftJoin('units', 'activity_logs.unit_id', 'units.id')
       .leftJoin('blulok_devices', 'activity_logs.device_id', 'blulok_devices.id')
       .leftJoin('access_control_devices', 'activity_logs.device_id', 'access_control_devices.id')
-      .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id');
+      .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id')
+      .leftJoin('actor_users', 'activity_logs.actor_id', 'actor_users.id');
 
     // Apply common filters with table prefix for joined query
     query = this.applyFilters(query, filters, 'activity_logs.');
@@ -334,6 +341,9 @@ export class ActivityLogModel {
       device_location: l.device_location,
       access_control_device_name: l.access_control_device_name,
       facility_name: l.facility_name,
+      actor_user_first_name: l.actor_user_first_name ?? null,
+      actor_user_last_name: l.actor_user_last_name ?? null,
+      actor_user_email: l.actor_user_email ?? null,
     }));
   }
 

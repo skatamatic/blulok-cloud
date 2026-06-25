@@ -1,9 +1,9 @@
-import { Link, useLocation } from 'react-router-dom';
-import { ArrowTopRightOnSquareIcon, UserCircleIcon } from '@heroicons/react/24/outline';
-import { withReturnPath } from '@/hooks/useBackNavigation';
+import { useEffect, useState } from 'react';
+import { ChevronDownIcon, ChevronRightIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 import { UserRole } from '@/types/auth.types';
 import { formatRoleName, getRoleBadgeColor } from '@/utils/user-role-display.utils';
 import type { GroupUserAccess } from '@/components/AccessCodes/access-groups.utils';
+import { AccessGroupRowDetailLinks } from '@/components/AccessCodes/AccessGroupRowDetailLinks';
 
 interface AccessGroupUsersPanelProps {
   users: GroupUserAccess[];
@@ -42,7 +42,11 @@ export function AccessGroupUsersPanel({
   loadError,
   hasUnitLocks,
 }: AccessGroupUsersPanelProps) {
-  const location = useLocation();
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setExpandedUserId(null);
+  }, [users]);
 
   if (loadError) {
     return (
@@ -79,52 +83,67 @@ export function AccessGroupUsersPanel({
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-500 dark:text-gray-400">
-        Tenants and shared-key holders with access to units in this group.
+        Tenants and shared-key holders with access to units in this group. Expand a row for links.
       </p>
       <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
-        {users.map((user, index) => (
-          <Link
-            key={user.user_id}
-            to={`/users/${user.user_id}/details`}
-            state={withReturnPath(location)}
-            className={`flex flex-col gap-3 px-4 py-3 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 sm:flex-row sm:items-center ${
-              index > 0 ? 'border-t border-gray-200 dark:border-gray-700' : ''
-            }`}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate font-medium text-gray-900 dark:text-white">
-                  {formatUserName(user)}
-                </span>
-                {shouldShowRoleBadge(user) && (
-                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${getRoleBadgeColor(user.role)}`}>
-                    {formatRoleName(user.role)}
-                  </span>
-                )}
+        {users.map((user, index) => {
+          const isExpanded = expandedUserId === user.user_id;
+          return (
+            <div key={user.user_id}>
+              <div
+                className={`${index > 0 ? 'border-t border-gray-200 dark:border-gray-700' : ''} ${
+                  isExpanded ? 'bg-gray-50 dark:bg-gray-800/60' : ''
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setExpandedUserId(isExpanded ? null : user.user_id)}
+                  aria-expanded={isExpanded}
+                  className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-medium text-gray-900 dark:text-white">
+                        {formatUserName(user)}
+                      </span>
+                      {shouldShowRoleBadge(user) && (
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${getRoleBadgeColor(user.role)}`}>
+                          {formatRoleName(user.role)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="truncate text-xs text-gray-500 dark:text-gray-400">{user.email}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {user.access_reasons.map((reason) => (
+                        <span
+                          key={reason}
+                          className={`inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-medium ${ACCESS_REASON_CLASSES[reason]}`}
+                        >
+                          {ACCESS_REASON_LABELS[reason]}
+                        </span>
+                      ))}
+                    </div>
+                    {user.unit_numbers.length > 0 && (
+                      <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                        Units: {user.unit_numbers.map((unitNumber) => `Unit ${unitNumber}`).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                  {isExpanded ? (
+                    <ChevronDownIcon className="mt-1 h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+                  ) : (
+                    <ChevronRightIcon className="mt-1 h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+                  )}
+                </button>
               </div>
-              <p className="truncate text-xs text-gray-500 dark:text-gray-400">{user.email}</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {user.access_reasons.map((reason) => (
-                  <span
-                    key={reason}
-                    className={`inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-medium ${ACCESS_REASON_CLASSES[reason]}`}
-                  >
-                    {ACCESS_REASON_LABELS[reason]}
-                  </span>
-                ))}
-              </div>
-              {user.unit_numbers.length > 0 && (
-                <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  Units: {user.unit_numbers.map((unitNumber) => `Unit ${unitNumber}`).join(', ')}
-                </p>
+              {isExpanded && (
+                <AccessGroupRowDetailLinks
+                  links={[{ label: 'View user', to: `/users/${user.user_id}/details` }]}
+                />
               )}
             </div>
-            <span className="inline-flex shrink-0 items-center gap-1 self-start text-xs font-medium text-primary-600 dark:text-primary-400 sm:self-center">
-              View details
-              <ArrowTopRightOnSquareIcon className="h-3 w-3" aria-hidden />
-            </span>
-          </Link>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

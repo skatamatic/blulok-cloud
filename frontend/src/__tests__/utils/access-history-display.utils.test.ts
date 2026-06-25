@@ -137,8 +137,29 @@ describe('access-history-display.utils', () => {
       },
     };
 
-    expect(getAccessLogUserLink(uuidLog)?.label).toBe('View user');
-    expect(getAccessUserDisplay(uuidLog).primary).toBe('View user');
+    expect(getAccessLogUserLink(uuidLog)).toBeNull();
+    expect(getAccessUserDisplay(uuidLog).primary).toBe('—');
+  });
+
+  it('uses email when route-pass style logs only have a linked user id', () => {
+    const linkedLog: AccessLog = {
+      ...baseLog,
+      method: 'route_pass',
+      actor_type: 'user',
+      user_id: 'user-9',
+      user_email: 'tenant@example.com',
+      metadata: {
+        user: {
+          id: 'user-9',
+          name: 'User',
+          email: 'tenant@example.com',
+          navigation_url: '/users/user-9/details',
+        },
+      },
+    };
+
+    expect(getAccessLogUserLink(linkedLog)?.label).toBe('tenant@example.com');
+    expect(getAccessUserDisplay(linkedLog).primary).toBe('tenant@example.com');
   });
 
   it('labels keypad user links from metadata id and user_name when name is missing', () => {

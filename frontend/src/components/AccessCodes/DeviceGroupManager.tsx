@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
 import {
-  ArrowTopRightOnSquareIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   PencilSquareIcon,
   PlusIcon,
   TrashIcon,
@@ -15,11 +15,11 @@ import { DeviceTypeIcon } from '@/components/Common/DeviceTypeIcon';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { getDeviceIconMeta } from '@/utils/device-icon.utils';
 import { Modal } from '@/components/Modal/Modal';
-import { withReturnPath } from '@/hooks/useBackNavigation';
 import { AccessGroupSelector } from '@/components/AccessCodes/AccessGroupSelector';
 import { AccessGroupDetailTabs } from '@/components/AccessCodes/AccessGroupDetailTabs';
 import { AccessCodeGroupPanel } from '@/components/AccessCodes/AccessCodeGroupPanel';
 import { AccessGroupUsersPanel } from '@/components/AccessCodes/AccessGroupUsersPanel';
+import { AccessGroupRowDetailLinks } from '@/components/AccessCodes/AccessGroupRowDetailLinks';
 import {
   buildGroupSummary,
   buildGroupableAccessControlSearchKeywords,
@@ -84,7 +84,6 @@ export function DeviceGroupManager({
   onGroupChange,
 }: DeviceGroupManagerProps) {
   const { addToast } = useToast();
-  const location = useLocation();
   const [groupName, setGroupName] = useState('');
   const [copyFromGroupId, setCopyFromGroupId] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState('');
@@ -108,6 +107,7 @@ export function DeviceGroupManager({
   const [isRenamingGroup, setIsRenamingGroup] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [expandedMemberKey, setExpandedMemberKey] = useState<string | null>(null);
   const [internalCreateDialogOpen, setInternalCreateDialogOpen] = useState(false);
   const isCreateDialogControlled = createDialogOpen !== undefined;
   const showCreateDialog = isCreateDialogControlled ? createDialogOpen : internalCreateDialogOpen;
@@ -390,6 +390,10 @@ export function DeviceGroupManager({
       pendingDeletedGroupIdRef.current = null;
     }
   }, [initialGroupId]);
+
+  useEffect(() => {
+    setExpandedMemberKey(null);
+  }, [selectedGroupId, detailTab]);
 
   useEffect(() => {
     if (detailTab !== 'users' || !selectedGroupId) return;
@@ -938,6 +942,8 @@ export function DeviceGroupManager({
                                   const isBlulok = member.device_type === 'blulok';
                                   const unitLabel = isBlulok && device?.unit_number ? `Unit ${device.unit_number}` : null;
                                   const showRemove = !selectedGroup.is_default;
+                                  const memberKey = `${member.device_type}:${member.device_id}`;
+                                  const isExpanded = expandedMemberKey === memberKey;
                                   const iconDevice = isBlulok
                                     ? ({ device_category: 'blulok' } as const)
                                     : ({
@@ -945,67 +951,67 @@ export function DeviceGroupManager({
                                         device_type: device?.device_type,
                                       } as const);
                                   const iconMeta = getDeviceIconMeta(iconDevice);
+                                  const detailLinks = [
+                                    { label: 'View device', to: `/devices/${member.device_id}` },
+                                    ...(isBlulok && device?.unit_id
+                                      ? [{ label: 'View unit', to: `/units/${device.unit_id}` }]
+                                      : []),
+                                  ];
                                   return (
-                                    <div
-                                      key={`${member.device_type}:${member.device_id}`}
-                                      className={`flex items-center gap-3 px-4 py-3 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 ${
-                                        index > 0 ? 'border-t border-gray-200 dark:border-gray-700' : ''
-                                      }`}
-                                    >
-                                      <DeviceTypeIcon
-                                        device={iconDevice}
-                                        size="md"
-                                        meta={iconMeta}
-                                      />
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <span className="truncate font-medium text-gray-900 dark:text-white">
-                                            {resolveAccessGroupMemberTitle(member, device)}
-                                          </span>
-                                          {selectedGroup.is_default && (
-                                            <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                                              Auto-assigned
-                                            </span>
-                                          )}
-                                        </div>
-                                        <p className="truncate text-xs text-gray-500 dark:text-gray-400">
-                                          {isBlulok ? 'Unit lock' : 'Access control'}
-                                          {unitLabel ? ` · ${unitLabel}` : ''}
-                                          {device?.device_serial ? ` · ${device.device_serial}` : ''}
-                                          {!isBlulok && device?.device_type ? ` · ${device.device_type}` : ''}
-                                          {!isBlulok && device?.location_description ? ` · ${device.location_description}` : ''}
-                                        </p>
-                                        <div className="mt-1.5 flex flex-wrap items-center gap-3">
-                                          <Link
-                                            to={`/devices/${member.device_id}`}
-                                            state={withReturnPath(location)}
-                                            className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-                                          >
-                                            View device
-                                            <ArrowTopRightOnSquareIcon className="h-3 w-3" aria-hidden />
-                                          </Link>
-                                          {isBlulok && device?.unit_id && (
-                                            <Link
-                                              to={`/units/${device.unit_id}`}
-                                              state={withReturnPath(location)}
-                                              className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-                                            >
-                                              View unit
-                                              <ArrowTopRightOnSquareIcon className="h-3 w-3" aria-hidden />
-                                            </Link>
-                                          )}
-                                        </div>
-                                      </div>
-                                      {showRemove && (
+                                    <div key={memberKey}>
+                                      <div
+                                        className={`flex items-center gap-3 px-4 py-3 transition-colors ${
+                                          index > 0 ? 'border-t border-gray-200 dark:border-gray-700' : ''
+                                        } ${isExpanded ? 'bg-gray-50 dark:bg-gray-800/60' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'}`}
+                                      >
                                         <button
                                           type="button"
-                                          onClick={() => removeMember(member)}
-                                          disabled={saving}
-                                          className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-red-900/50 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                                          onClick={() => setExpandedMemberKey(isExpanded ? null : memberKey)}
+                                          aria-expanded={isExpanded}
+                                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
                                         >
-                                          Remove
+                                          <DeviceTypeIcon
+                                            device={iconDevice}
+                                            size="md"
+                                            meta={iconMeta}
+                                          />
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="truncate font-medium text-gray-900 dark:text-white">
+                                                {resolveAccessGroupMemberTitle(member, device)}
+                                              </span>
+                                              {selectedGroup.is_default && (
+                                                <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                                                  Auto-assigned
+                                                </span>
+                                              )}
+                                            </div>
+                                            <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+                                              {isBlulok ? 'Unit lock' : 'Access control'}
+                                              {unitLabel ? ` · ${unitLabel}` : ''}
+                                              {device?.device_serial ? ` · ${device.device_serial}` : ''}
+                                              {!isBlulok && device?.device_type ? ` · ${device.device_type}` : ''}
+                                              {!isBlulok && device?.location_description ? ` · ${device.location_description}` : ''}
+                                            </p>
+                                          </div>
+                                          {isExpanded ? (
+                                            <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+                                          ) : (
+                                            <ChevronRightIcon className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+                                          )}
                                         </button>
-                                      )}
+                                        {showRemove && (
+                                          <button
+                                            type="button"
+                                            onClick={() => removeMember(member)}
+                                            disabled={saving}
+                                            className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-red-900/50 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                                          >
+                                            Remove
+                                          </button>
+                                        )}
+                                      </div>
+                                      {isExpanded && <AccessGroupRowDetailLinks links={detailLinks} />}
                                     </div>
                                   );
                                 })}

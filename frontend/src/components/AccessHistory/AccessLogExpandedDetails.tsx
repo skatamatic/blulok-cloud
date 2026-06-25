@@ -47,11 +47,17 @@ export function AccessLogExpandedDetails({
   ].filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   const quickLinkLabels: Record<string, string> = {
-    User: 'View user',
     Unit: 'View unit',
     Device: 'View device',
     'Access point': 'View access point',
     Facility: 'View facility',
+  };
+
+  const getQuickLinkLabel = (item: (typeof quickLinks)[number]): string => {
+    if (item.navigationTarget === 'user') {
+      return item.value;
+    }
+    return item.value || quickLinkLabels[item.label] || `View ${item.label.toLowerCase()}`;
   };
 
   const detailFields = fields.filter(
@@ -160,7 +166,7 @@ export function AccessLogExpandedDetails({
                 }}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:border-primary-200 hover:bg-primary-50 dark:border-gray-600 dark:bg-gray-800 dark:text-primary-400 dark:hover:border-primary-900/50 dark:hover:bg-primary-950/30"
               >
-                {quickLinkLabels[item.label] || `View ${item.label.toLowerCase()}`}
+                {getQuickLinkLabel(item)}
                 <LinkIcon className="h-3 w-3 shrink-0" />
               </button>
             ))}
@@ -173,7 +179,7 @@ export function AccessLogExpandedDetails({
                 }}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:border-primary-200 hover:bg-primary-50 dark:border-gray-600 dark:bg-gray-800 dark:text-primary-400 dark:hover:border-primary-900/50 dark:hover:bg-primary-950/30"
               >
-                View device
+                {metadata.device.name || 'View device'}
                 <LinkIcon className="h-3 w-3 shrink-0" />
               </button>
             )}
