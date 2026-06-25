@@ -44,9 +44,6 @@ import {
   ACCESS_EVENT_METHODS,
   AccessEventPayload,
 } from '@/services/access/access-event.types';
-import { ProvisioningBackupService } from '@/services/provisioning/provisioning-backup.service';
-import { PROVISIONING_MAX_SIZE_BYTES } from '@/constants/provisioning.constants';
-import { ProvisioningUploadSource } from '@/models/gateway-provisioning-backup.model';
 
 const router = Router();
 
@@ -671,113 +668,6 @@ router.get('/access-codes', authenticateToken, requireFacilityAdmin, asyncHandle
       })),
     },
   });
-}));
-
-const provisioningPrepareSchema = Joi.object({
-  filename: Joi.string().trim().required(),
-  size_bytes: Joi.number().integer().positive().required(),
-  facility_id: Joi.string().optional(),
-  tid: tidField,
-});
-
-const provisioningCompleteSchema = Joi.object({
-  upload_id: Joi.string().uuid().required(),
-  filename: Joi.string().trim().required(),
-  size_bytes: Joi.number().integer().positive().required(),
-  upload_source: Joi.string().valid('gateway_push', 'cloud_requested').optional(),
-  facility_id: Joi.string().optional(),
-  tid: tidField,
-});
-
-// PUT /api/v1/internal/gateway/provisioning/direct-upload/:uploadId
-router.put(
-  '/provisioning/direct-upload/:uploadId',
-  express.raw({ type: 'application/zip', limit: PROVISIONING_MAX_SIZE_BYTES }),
-  asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const uploadId = req.params.uploadId;
-    const uploadToken = req.header('x-provisioning-upload-token') || req.header('X-Provisioning-Upload-Token');
-    if (!uploadToken) {
-      res.status(401).json({ success: false, message: 'Missing provisioning upload token' });
-      return;
-    }
-
-    const body = req.body;
-    if (!Buffer.isBuffer(body) || body.length === 0) {
-      res.status(400).json({ success: false, message: 'Empty upload body' });
-      return;
-    }
-
-    try {
-      await ProvisioningBackupService.receiveDirectUpload(uploadId, uploadToken, body);
-      res.status(200).json({ success: true });
-    } catch (err: any) {
-      res.status(400).json({ success: false, message: err?.message || 'Failed to store provisioning upload' });
-    }
-  }),
-);
-
-// POST /api/v1/internal/gateway/provisioning/prepare
-router.post('/provisioning/prepare', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = provisioningPrepareSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-
-  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
-  if (!facilityId) return;
-
-  try {
-    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
-    const session = await ProvisioningBackupService.prepareUpload(
-      facilityId,
-      value.filename,
-      value.size_bytes,
-      origin,
-    );
-    const responseData: Record<string, unknown> = {
-      upload_id: session.upload_id,
-      upload_url: session.upload_url,
-      upload_headers: session.upload_headers,
-      expires_in_seconds: session.expires_in_seconds,
-      gateway_id: session.gateway_id,
-      facility_id: facilityId,
-    };
-    if (value.tid !== undefined) responseData.tid = value.tid;
-    res.json({ success: true, data: responseData });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err?.message || 'Failed to prepare provisioning upload' });
-  }
-}));
-
-// POST /api/v1/internal/gateway/provisioning/complete
-router.post('/provisioning/complete', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = provisioningCompleteSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-
-  const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
-  if (!facilityId) return;
-
-  try {
-    const uploadSource = (value.upload_source || 'gateway_push') as ProvisioningUploadSource;
-    const backup = await ProvisioningBackupService.completeUpload(
-      facilityId,
-      value.upload_id,
-      value.filename,
-      value.size_bytes,
-      uploadSource,
-      null,
-    );
-    const responseData: Record<string, unknown> = { backup, facility_id: facilityId };
-    if (value.tid !== undefined) responseData.tid = value.tid;
-    logger.info(`Gateway provisioning backup completed backupId=${backup.id} facility=${facilityId}`);
-    res.json({ success: true, data: responseData });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err?.message || 'Failed to complete provisioning upload' });
-  }
 }));
 
 export { router as internalGatewayRouter };

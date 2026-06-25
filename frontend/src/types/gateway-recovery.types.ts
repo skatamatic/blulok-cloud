@@ -2,7 +2,6 @@ export type GatewayRecoveryStatus =
   | 'detected'
   | 'awaiting_config'
   | 'firmware'
-  | 'provisioning'
   | 'inventory_push'
   | 'complete'
   | 'failed'
@@ -16,10 +15,8 @@ export interface GatewayRecovery {
   previous_gateway_id: string | null;
   status: GatewayRecoveryStatus;
   firmware_id: string | null;
-  provisioning_backup_id: string | null;
   inventory_snapshot_id: string | null;
   firmware_push_id: string | null;
-  provisioning_restore_id: string | null;
   inventory_chunks_total: number | null;
   inventory_chunks_sent: number;
   bypassed: boolean;
@@ -40,7 +37,6 @@ export interface GatewayRecoveryProgress {
   percent: number;
   message?: string;
   firmwareId?: string | null;
-  provisioningBackupId?: string | null;
   inventorySnapshotId?: string | null;
   chunksTotal?: number;
   chunksSent?: number;
@@ -64,7 +60,6 @@ export interface GatewayRecoveryEvent {
 
 export const RECOVERY_PHASE_ORDER: GatewayRecoveryStatus[] = [
   'firmware',
-  'provisioning',
   'inventory_push',
   'complete',
 ];
@@ -73,7 +68,6 @@ export const RECOVERY_PHASE_LABELS: Record<string, string> = {
   detected: 'Detected',
   awaiting_config: 'Configure',
   firmware: 'Firmware',
-  provisioning: 'Provisioning',
   inventory_push: 'Inventory Push',
   complete: 'Complete',
   failed: 'Failed',

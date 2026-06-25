@@ -1,6 +1,6 @@
-export type DeviceSyncAction = 'added' | 'removed' | 'unchanged' | 'skipped_manual' | 'error';
+export type DeviceSyncAction = 'added' | 'removed' | 'unchanged' | 'updated' | 'skipped_manual' | 'error';
 
-export type DeviceSyncKind = 'blulok' | 'access_control';
+export type DeviceSyncKind = 'blulok' | 'access_control' | 'bridge' | 'friend_node';
 
 export interface DeviceSyncLogEntry {
   action: DeviceSyncAction;
@@ -14,6 +14,7 @@ export interface InventorySyncSummary {
   added: number;
   removed: number;
   unchanged: number;
+  updated?: number;
   skipped_manual?: number;
   errors: string[];
 }
@@ -27,9 +28,19 @@ export interface GatewayDeviceSyncLogRecord {
   summary: {
     locks?: InventorySyncSummary | null;
     access_control?: InventorySyncSummary | null;
+    network_infra?: InventorySyncSummary | null;
   };
   entries: DeviceSyncLogEntry[];
   created_at: string;
+}
+
+export interface GatewayDeviceSyncLogsResponse {
+  success: boolean;
+  logs: GatewayDeviceSyncLogRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
 }
 
 export interface GatewayTelemetryLogRecord {

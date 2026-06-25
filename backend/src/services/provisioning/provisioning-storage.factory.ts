@@ -1,5 +1,5 @@
 /**
- * Provisioning backup storage — reuses firmware GCS bucket with `provisioning/` prefix.
+ * Facility provisioning file storage — reuses firmware GCS bucket with `facility-provisioning/` prefix.
  */
 
 import * as path from 'path';
@@ -22,22 +22,29 @@ export interface ProvisioningSignedUploadSession {
   upload_token?: string;
 }
 
+/** Client-visible prepare response — omits internal storage_path. */
+export type PublicProvisioningUploadSession = Omit<ProvisioningSignedUploadSession, 'storage_path'> & {
+  facility_id: string;
+};
+
 export interface ProvisioningStorageProvider {
   initialize(): Promise<void>;
   supportsSignedUpload(): boolean;
-  buildStoragePath(gatewayId: string, backupId: string, filename: string): string;
+  buildStoragePath(facilityId: string, fileId: string, filename: string): string;
   createSignedUploadSession(
-    gatewayId: string,
-    backupId: string,
+    facilityId: string,
+    fileId: string,
     filename: string,
+    contentType: string,
     clientOrigin?: string,
+    directUploadPath?: string,
   ): Promise<ProvisioningSignedUploadSession>;
   fileExists(storagePath: string): Promise<boolean>;
   getStoredFileSize(storagePath: string): Promise<number>;
   hashStoredFile(storagePath: string): Promise<string>;
   download(storagePath: string): Promise<Buffer>;
   remove(storagePath: string): Promise<void>;
-  writePreparedUpload(storagePath: string, data: Buffer): Promise<void>;
+  writePreparedUpload(storagePath: string, data: Buffer, contentType?: string): Promise<void>;
 }
 
 class ProvisioningStorageAdapter implements ProvisioningStorageProvider {
@@ -45,7 +52,7 @@ class ProvisioningStorageAdapter implements ProvisioningStorageProvider {
 
   async initialize(): Promise<void> {
     await this.base.initialize();
-    logger.info(`Provisioning storage initialized (${this.base.type})`);
+    logger.info(`Facility provisioning storage initialized (${this.base.type})`);
   }
 
   supportsSignedUpload(): boolean {
@@ -62,30 +69,36 @@ class ProvisioningStorageAdapter implements ProvisioningStorageProvider {
     return `http://${host}:${port}`;
   }
 
-  buildStoragePath(gatewayId: string, backupId: string, filename: string): string {
+  buildStoragePath(facilityId: string, fileId: string, filename: string): string {
     const safeFilename = path.basename(filename);
     if (!safeFilename || safeFilename === '.' || safeFilename === '..') {
       throw new Error('Invalid provisioning filename');
     }
-    return `provisioning/${gatewayId}/${backupId}/${safeFilename}`;
+    return `facility-provisioning/${facilityId}/${fileId}/${safeFilename}`;
   }
 
   async createSignedUploadSession(
-    gatewayId: string,
-    backupId: string,
+    facilityId: string,
+    fileId: string,
     filename: string,
+    contentType: string,
     clientOrigin?: string,
+    directUploadPath?: string,
   ): Promise<ProvisioningSignedUploadSession> {
-    const storagePath = this.buildStoragePath(gatewayId, backupId, filename);
+    const storagePath = this.buildStoragePath(facilityId, fileId, filename);
+    const resolvedContentType = contentType || 'application/octet-stream';
 
     if (this.base.type === StorageProviderType.LOCAL) {
       const uploadToken = crypto.randomBytes(32).toString('hex');
+      const uploadPath =
+        directUploadPath ||
+        `${this.resolveDirectUploadBaseUrl()}/api/v1/facilities/${facilityId}/provisioning-data/direct-upload/${fileId}`;
       return {
-        upload_id: backupId,
+        upload_id: fileId,
         storage_path: storagePath,
-        upload_url: `${this.resolveDirectUploadBaseUrl()}/api/v1/internal/gateway/provisioning/direct-upload/${backupId}`,
+        upload_url: uploadPath,
         upload_headers: {
-          'Content-Type': 'application/zip',
+          'Content-Type': resolvedContentType,
           'X-Provisioning-Upload-Token': uploadToken,
         },
         expires_in_seconds: 3600,
@@ -99,11 +112,11 @@ class ProvisioningStorageAdapter implements ProvisioningStorageProvider {
 
     const gcs = this.base as import('@/services/storage/gcs-base.provider').GCSBaseStorage;
     const session = await gcs.createResumableUploadSession(storagePath, {
-      contentType: 'application/zip',
+      contentType: resolvedContentType,
       origin: clientOrigin,
     });
     return {
-      upload_id: backupId,
+      upload_id: fileId,
       storage_path: storagePath,
       upload_url: session.url,
       upload_headers: session.headers,
@@ -141,9 +154,9 @@ class ProvisioningStorageAdapter implements ProvisioningStorageProvider {
     return this.base.downloadFile(storagePath);
   }
 
-  async writePreparedUpload(storagePath: string, data: Buffer): Promise<void> {
+  async writePreparedUpload(storagePath: string, data: Buffer, contentType?: string): Promise<void> {
     this.assertValidPath(storagePath);
-    await this.base.uploadFile(storagePath, data, 'application/zip');
+    await this.base.uploadFile(storagePath, data, contentType || 'application/octet-stream');
   }
 
   async remove(storagePath: string): Promise<void> {
@@ -156,7 +169,9 @@ class ProvisioningStorageAdapter implements ProvisioningStorageProvider {
   }
 
   private assertValidPath(storagePath: string): void {
-    if (!storagePath.startsWith('provisioning/')) {
+    const valid =
+      storagePath.startsWith('facility-provisioning/') || storagePath.startsWith('provisioning/');
+    if (!valid) {
       throw new Error('Path does not reference provisioning storage');
     }
     if (storagePath.includes('..')) {
@@ -215,11 +230,14 @@ async function loadFirmwareStorageConfigForProvisioning(): Promise<{
 export function validateProvisioningFilename(filename: string): string[] {
   const errors: string[] = [];
   const base = path.basename(filename || '');
-  if (!base.toLowerCase().endsWith('.zip')) {
-    errors.push('File must have a .zip extension');
-  }
   if (!base || base === '.' || base === '..') {
     errors.push('Invalid filename');
+  }
+  if (base !== (filename || '').trim()) {
+    errors.push('Filename must not contain path separators');
+  }
+  if (/[\0<>:"|?*]/.test(base)) {
+    errors.push('Filename contains invalid characters');
   }
   return errors;
 }

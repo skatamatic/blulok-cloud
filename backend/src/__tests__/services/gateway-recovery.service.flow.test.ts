@@ -11,7 +11,6 @@ const mockRecoveryModel = {
 };
 
 const mockPushModel = { findById: jest.fn() };
-const mockRestoreModel = { findById: jest.fn() };
 const mockEventAppend = jest.fn();
 const mockFinalizeRecoverySession = jest.fn();
 const mockSetRecoveryPushTarget = jest.fn();
@@ -32,10 +31,6 @@ jest.mock('@/models/firmware-push.model', () => ({
   FirmwarePushModel: jest.fn().mockImplementation(() => mockPushModel),
 }));
 
-jest.mock('@/models/gateway-provisioning-restore.model', () => ({
-  GatewayProvisioningRestoreModel: jest.fn().mockImplementation(() => mockRestoreModel),
-}));
-
 jest.mock('@/models/gateway.model', () => ({
   GatewayModel: jest.fn().mockImplementation(() => ({
     findById: jest.fn(),
@@ -47,18 +42,6 @@ jest.mock('@/models/firmware.model', () => ({
   FirmwareModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue([]),
     findById: jest.fn().mockResolvedValue({ id: 'fw-1', target_type: 'gateway' }),
-  })),
-}));
-
-jest.mock('@/models/gateway-provisioning-backup.model', () => ({
-  GatewayProvisioningBackupModel: jest.fn().mockImplementation(() => ({
-    findByGatewayId: jest.fn().mockResolvedValue([]),
-    findByFacilityId: jest.fn().mockResolvedValue([]),
-    findById: jest.fn().mockResolvedValue({
-      id: 'pb-1',
-      gateway_id: 'gw-old',
-      facility_id: 'fac-1',
-    }),
   })),
 }));
 
@@ -92,19 +75,11 @@ jest.mock('@/services/provisioning/gateway-chunk-push.engine', () => ({
 }));
 
 const mockCancelPush = jest.fn();
-const mockCancelRestore = jest.fn();
 
 jest.mock('@/services/firmware/firmware.service', () => ({
   FirmwareService: {
     initiatePush: jest.fn(),
     cancelPush: mockCancelPush,
-  },
-}));
-
-jest.mock('@/services/provisioning/provisioning-restore.service', () => ({
-  ProvisioningRestoreService: {
-    initiateRestore: jest.fn(),
-    cancelRestore: mockCancelRestore,
   },
 }));
 
@@ -194,7 +169,7 @@ describe('GatewayRecoveryService flow', () => {
   });
 
   describe('bypass', () => {
-    it('cancels child firmware and provisioning jobs before finalizing', async () => {
+    it('cancels child firmware jobs before finalizing', async () => {
       const active = {
         id: 'rec-1',
         facility_id: 'fac-1',
@@ -202,7 +177,6 @@ describe('GatewayRecoveryService flow', () => {
         previous_gateway_id: 'gw-old',
         status: 'firmware',
         firmware_push_id: 'push-1',
-        provisioning_restore_id: 'restore-1',
       };
       mockRecoveryModel.findActiveByFacility
         .mockResolvedValueOnce(active)
@@ -213,7 +187,6 @@ describe('GatewayRecoveryService flow', () => {
 
       expect(GatewayChunkPushEngine.cancelPush).toHaveBeenCalledWith('rec-1');
       expect(mockCancelPush).toHaveBeenCalledWith('push-1');
-      expect(mockCancelRestore).toHaveBeenCalledWith('restore-1');
       expect(mockRecoveryModel.updateStatus).toHaveBeenCalledWith('rec-1', 'bypassed');
       expect(mockFinalizeRecoverySession).toHaveBeenCalledWith('fac-1', 'gw-new', 'gw-old');
       expect(mockSetRecoveryPushTarget).toHaveBeenCalledWith('fac-1', null);
@@ -354,14 +327,12 @@ describe('GatewayRecoveryService flow', () => {
         previous_gateway_id: 'gw-old',
         status: id === 'rec-2' ? 'firmware' : 'detected',
         firmware_id: 'fw-1',
-        provisioning_backup_id: 'pb-1',
         initiated_by: 'user-1',
       }));
       mockRecoveryModel.updateFields.mockResolvedValue(undefined);
 
       await GatewayRecoveryService.initiate('gw-new', 'fac-1', 'user-1', {
         firmwareId: 'fw-1',
-        provisioningBackupId: 'pb-1',
       });
 
       expect(mockRecoveryModel.createIfNoActive).toHaveBeenCalled();

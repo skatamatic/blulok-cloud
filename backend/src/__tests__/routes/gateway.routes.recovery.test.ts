@@ -81,9 +81,7 @@ describe('Gateway Recovery Routes', () => {
     });
     mockGetRecoveryOptions.mockResolvedValue({
       firmwareOptions: [{ id: 'fw-1', version: '1.0.0', label: '1.0.0' }],
-      provisioningBackupOptions: [{ id: 'pb-1', label: 'backup.zip' }],
       defaultFirmwareId: 'fw-1',
-      defaultProvisioningBackupId: 'pb-1',
     });
     mockGetRecoveryById.mockResolvedValue({
       id: 'rec-1',
@@ -137,22 +135,20 @@ describe('Gateway Recovery Routes', () => {
     expect(mockGetRecoveryOptions).toHaveBeenCalledWith('gateway-swap', 'facility-1');
   });
 
-  it('initiates recovery with firmware and provisioning selections', async () => {
+  it('initiates recovery with firmware selection', async () => {
     const firmwareId = '11111111-1111-4111-8111-111111111111';
-    const provisioningBackupId = '22222222-2222-4222-8222-222222222222';
     mockInitiate.mockResolvedValueOnce({
       id: 'rec-1',
       status: 'firmware',
       gateway_id: 'gateway-swap',
       facility_id: 'facility-1',
       firmware_id: firmwareId,
-      provisioning_backup_id: provisioningBackupId,
     });
 
     const res = await request(app)
       .post('/api/v1/gateways/gateway-swap/recovery/initiate')
       .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-      .send({ firmwareId, provisioningBackupId })
+      .send({ firmwareId })
       .expect(200);
 
     expect(res.body.data.status).toBe('firmware');
@@ -160,7 +156,7 @@ describe('Gateway Recovery Routes', () => {
       'gateway-swap',
       'facility-1',
       testData.users.facilityAdmin.id,
-      { firmwareId, provisioningBackupId },
+      { firmwareId },
     );
   });
 

@@ -479,7 +479,7 @@ class ApiService {
   async getGatewayDeviceSyncLogs(
     gatewayId: string,
     params?: { limit?: number; offset?: number }
-  ): Promise<{ success: boolean; logs: import('@/types/gateway.types').GatewayDeviceSyncLogRecord[]; total: number }> {
+  ): Promise<import('@/types/gateway.types').GatewayDeviceSyncLogsResponse> {
     const response = await this.api.get(`/gateways/${gatewayId}/device-sync-logs`, { params });
     return response.data;
   }
@@ -1257,37 +1257,37 @@ class ApiService {
     return response.data;
   }
 
-  async listGatewayProvisioningBackups(gatewayId: string, limit = 50, offset = 0) {
+  async listFacilityProvisioningFiles(facilityId: string, limit = 50, offset = 0) {
     const params: Record<string, string> = {};
     if (limit !== 50) params.limit = String(limit);
     if (offset > 0) params.offset = String(offset);
-    const response = await this.api.get(`/gateways/${gatewayId}/provisioning`, { params });
+    const response = await this.api.get(`/facilities/${facilityId}/provisioning-data`, { params });
     return response.data;
   }
 
-  async deleteGatewayProvisioningBackup(gatewayId: string, backupId: string) {
-    const response = await this.api.delete(`/gateways/${gatewayId}/provisioning/${backupId}`);
+  async prepareFacilityProvisioningUpload(
+    facilityId: string,
+    body: { filename: string; size_bytes: number; content_type?: string },
+  ) {
+    const response = await this.api.post(`/facilities/${facilityId}/provisioning-data/prepare`, body);
     return response.data;
   }
 
-  async requestGatewayProvisioningUpload(gatewayId: string) {
-    const response = await this.api.post(`/gateways/${gatewayId}/provisioning/request-upload`, {});
+  async completeFacilityProvisioningUpload(
+    facilityId: string,
+    body: { upload_id: string; filename: string; size_bytes: number; content_type?: string },
+  ) {
+    const response = await this.api.post(`/facilities/${facilityId}/provisioning-data/complete`, body);
     return response.data;
   }
 
-  async restoreGatewayProvisioningBackup(gatewayId: string, backupId: string) {
-    const response = await this.api.post(`/gateways/${gatewayId}/provisioning/${backupId}/restore`, {});
+  async deleteFacilityProvisioningFile(facilityId: string, fileId: string) {
+    const response = await this.api.delete(`/facilities/${facilityId}/provisioning-data/${fileId}`);
     return response.data;
   }
 
-  async getGatewayProvisioningRestoreStatus(gatewayId: string) {
-    const response = await this.api.get(`/gateways/${gatewayId}/provisioning/restore-status`);
-    return response.data;
-  }
-
-  async cancelGatewayProvisioningRestore(gatewayId: string, restoreId: string) {
-    const response = await this.api.post(`/gateways/${gatewayId}/provisioning/restore/${restoreId}/cancel`, {});
-    return response.data;
+  getFacilityProvisioningDownloadPath(facilityId: string, fileId: string): string {
+    return `/facilities/${facilityId}/provisioning-data/${fileId}/download`;
   }
 
   async getGatewayRecoveryStatus(gatewayId: string) {
@@ -1307,7 +1307,7 @@ class ApiService {
 
   async initiateGatewayRecovery(
     gatewayId: string,
-    body?: { firmwareId?: string; provisioningBackupId?: string },
+    body?: { firmwareId?: string },
   ) {
     const response = await this.api.post(`/gateways/${gatewayId}/recovery/initiate`, body || {});
     return response.data;

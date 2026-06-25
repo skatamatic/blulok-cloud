@@ -3,6 +3,13 @@ import { createApp } from '@/app';
 import { GatewayService } from '@/services/gateway/gateway.service';
 import { createMockTestData, expectUnauthorized, expectForbidden, expectNotFound, expectConflict } from '@/__tests__/utils/mock-test-helpers';
 
+const isBlockingActiveForFacilityMock = jest.fn().mockResolvedValue(false);
+jest.mock('@/services/gateway/gateway-recovery.service', () => ({
+  GatewayRecoveryService: {
+    isBlockingActiveForFacility: (...args: unknown[]) => isBlockingActiveForFacilityMock(...args),
+  },
+}));
+
 // Mock DeviceModel to prevent errors during gateway sync operations
 jest.mock('@/models/device.model', () => ({
   DeviceModel: jest.fn().mockImplementation(() => ({
@@ -26,6 +33,7 @@ describe('Gateway Routes', () => {
 
   beforeEach(() => {
     testData = createMockTestData();
+    isBlockingActiveForFacilityMock.mockResolvedValue(false);
   });
 
   afterAll(async () => {
@@ -602,6 +610,18 @@ describe('Gateway Routes', () => {
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expectNotFound(response);
+    });
+
+    it('should return 409 when gateway recovery is blocking manual sync', async () => {
+      isBlockingActiveForFacilityMock.mockResolvedValueOnce(true);
+
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/sync')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.code).toBe('recovery_in_progress');
     });
   });
 });

@@ -17,6 +17,7 @@ yarn-error.log*
 .env.production.local
 backend/.env
 frontend/.env
+backend/terrain-harness-out/
 env
 
 # Database
@@ -47,8 +48,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Docker
+# Docker — allow committed frontend dockerignore (root pattern would ignore all)
 .dockerignore
+!frontend/.dockerignore
 
 # Testing
 /coverage/

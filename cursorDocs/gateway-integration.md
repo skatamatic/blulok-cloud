@@ -195,6 +195,24 @@ Both tabs on the facility details page share **`useFacilityGatewayLiveStatus`**,
 
 Both tabs show the same **`online` / `offline` / `error` / `maintenance`** badge labels.
 
+### Inventory sync history (Gateway tab → Inventory sync)
+
+**`GatewayDeviceSyncHistory`** loads audit rows via **`GET /gateways/:id/device-sync-logs`**. While the tab is open:
+
+- **Primary:** subscribes to **`gateway_device_sync_logs`** and prepends rows on **`gateway_device_sync_log_update`** (broadcast when `GatewayDeviceSyncLogService.recordInventorySync` completes after inventory ingest).
+- **Backstop:** silent HTTP poll every **8s** only when the dashboard WebSocket is disconnected (no poll while connected).
+- **UX:** only the first load shows a full spinner; background refresh keeps the table visible. The **Refresh** button spins only on manual clicks — not on live/poll updates. Manual refresh failures show a warning banner and toast while preserving loaded rows. **Load more** uses `hasMore` from the API.
+
+**Separate from manual sync:** the **Sync** tab’s **`POST /gateways/:id/sync`** outbound pull is not recorded in this audit trail (and is blocked during gateway recovery, same as inventory sync).
+
+### Dashboard WebSocket — device sync logs
+
+Subscribe on the **operator** `/ws` channel (not `/ws/gateway`):
+
+- **Type:** `gateway_device_sync_logs`
+- **Filters:** `{ facility_id?, gateway_id? }`
+- **Updates:** `gateway_device_sync_log_update` with `{ logs: [...] }` (new rows only)
+
 ## Gateway device sync (locks + access control)
 
 **Start here (gateway firmware):** [Gateway device sync — developer guide](./gateway-device-sync-developer-guide.md) — inventory reconcile, non-destructive state API, manual devices, tombstones, workflows.

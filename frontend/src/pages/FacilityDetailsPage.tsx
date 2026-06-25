@@ -24,6 +24,7 @@ import {
   CheckCircleIcon,
   WrenchScrewdriverIcon,
   TrashIcon,
+  ArchiveBoxIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Facility, DeviceHierarchy, AccessControlDevice, BluLokDevice, NetworkInfraDevice, Unit, DeviceFilters, UnitFilters, DeviceGroup } from '@/types/facility.types';
@@ -35,6 +36,7 @@ import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import { FacilityLockTimeoutSetting } from '@/components/Facility/FacilityLockTimeoutSetting';
+import { FacilityProvisioningDataTab } from '@/components/Facility/FacilityProvisioningDataTab';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
 import { SchedulesHubTab } from '@/components/Schedules/SchedulesHubTab';
 import { MyAccessCodes } from '@/components/AccessCodes/MyAccessCodes';
@@ -141,6 +143,7 @@ const FACILITY_TAB_KEYS = [
   'access-codes',
   'device-groups',
   'fms',
+  'provisioning-data',
   'gateway',
 ] as const;
 
@@ -270,6 +273,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   // Refs for debouncing WebSocket-triggered refreshes
   const loadDevicesRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
   const loadUnitsRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
+  const loadDeviceGroupsRequestIdRef = useRef(0);
   const loadFacilityDataRef = useRef<
     (facilityId?: string, options?: { background?: boolean }) => void | Promise<void>
   >(async () => {});
@@ -464,12 +468,19 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const loadDeviceGroups = useCallback(async () => {
     if (!facility?.id || !canManage) return;
 
+    const requestId = loadDeviceGroupsRequestIdRef.current + 1;
+    loadDeviceGroupsRequestIdRef.current = requestId;
+
     try {
       const groupsResponse = await apiService.getDeviceGroups(facility.id);
       const groups = groupsResponse.data || [];
+      if (loadDeviceGroupsRequestIdRef.current !== requestId) return;
+
       setDeviceGroups(groups);
 
       const groupDetails = await Promise.all(groups.map((group) => apiService.getDeviceGroup(group.id)));
+      if (loadDeviceGroupsRequestIdRef.current !== requestId) return;
+
       const mapped: Record<string, string[]> = {};
       groupDetails.forEach((detail) => {
         const group = detail.data;
@@ -481,6 +492,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
 
       setGroupNamesByDeviceId(mapped);
     } catch (error) {
+      if (loadDeviceGroupsRequestIdRef.current !== requestId) return;
       console.error('Failed to load device groups:', error);
       setDeviceGroups([]);
       setGroupNamesByDeviceId({});
@@ -912,6 +924,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     ...(isTenant || !canManage ? [{ key: 'access-codes', label: 'Access Codes', icon: KeyIcon }] : []),
     ...(!isTenant && canManage ? [{ key: 'device-groups', label: 'Access Groups', icon: RectangleGroupIcon }] : []),
     ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
+    ...(!isTenant && canManage ? [{ key: 'provisioning-data', label: 'Provisioning Data', icon: ArchiveBoxIcon }] : []),
     ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : []),
   ];
 
@@ -1743,6 +1756,10 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
         />
       )}
 
+      {activeTab === 'provisioning-data' && facility && canManage && (
+        <FacilityProvisioningDataTab facilityId={facility.id} facilityName={facility.name} />
+      )}
+
       {/* Schedules Tab */}
       {activeTab === 'schedules' && facility && (
         <SchedulesHubTab
@@ -1759,7 +1776,6 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
             ...((deviceHierarchy?.accessControlDevices || []).map((d) => ({ ...d, device_category: 'access_control' as const }))),
             ...((deviceHierarchy?.blulokDevices || []).map((d) => ({
               ...d,
-              name: d.unit_number ? `Unit ${d.unit_number}` : d.device_serial,
               device_category: 'blulok' as const,
             }))),
           ]}

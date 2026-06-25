@@ -211,7 +211,7 @@ export default function GatewayFirmwareTab({
 
         const isTerminal = (TERMINAL_STATUSES as readonly string[]).includes(data.step);
         if (isTerminal) {
-          terminalRefreshTimer.current = setTimeout(() => loadData(), 500);
+          terminalRefreshTimer.current = setTimeout(() => loadData({ silent: true }), 500);
         }
       },
     );

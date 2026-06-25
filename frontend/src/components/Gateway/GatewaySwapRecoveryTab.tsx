@@ -82,9 +82,7 @@ export default function GatewaySwapRecoveryTab({
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [firmwareOptions, setFirmwareOptions] = useState<RecoveryOption[]>([]);
-  const [provisioningOptions, setProvisioningOptions] = useState<RecoveryOption[]>([]);
   const [selectedFirmwareId, setSelectedFirmwareId] = useState('');
-  const [selectedProvisioningBackupId, setSelectedProvisioningBackupId] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const targetGatewayId = useMemo(() => {
@@ -107,7 +105,6 @@ export default function GatewaySwapRecoveryTab({
         setEvents([]);
         setInventoryPreview([]);
         setFirmwareOptions([]);
-        setProvisioningOptions([]);
         setLiveProgress(null);
         onRecoveryChange?.();
         return;
@@ -126,18 +123,11 @@ export default function GatewaySwapRecoveryTab({
       const options = optionsRes.data;
       if (options) {
         setFirmwareOptions(options.firmwareOptions || []);
-        setProvisioningOptions(options.provisioningBackupOptions || []);
         if (canShowRecoveryConfig(status, nextCandidates.length > 0)) {
           setSelectedFirmwareId(
             status?.firmware_id
             || options.defaultFirmwareId
             || options.firmwareOptions?.[0]?.id
-            || '',
-          );
-          setSelectedProvisioningBackupId(
-            status?.provisioning_backup_id
-            || options.defaultProvisioningBackupId
-            || options.provisioningBackupOptions?.[0]?.id
             || '',
           );
         }
@@ -253,7 +243,6 @@ export default function GatewaySwapRecoveryTab({
     try {
       const res = await apiService.initiateGatewayRecovery(targetGatewayId, {
         firmwareId: selectedFirmwareId || undefined,
-        provisioningBackupId: selectedProvisioningBackupId || undefined,
       });
       setRecovery(res.data);
       setLiveProgress(deriveRecoveryProgress(res.data));
@@ -437,7 +426,7 @@ export default function GatewaySwapRecoveryTab({
               <div>
                 <h4 className="font-medium text-secondary-900 dark:text-white">Recovery configuration</h4>
                 <p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
-                  Select firmware and provisioning backup for the replacement gateway.
+                  Select firmware for the replacement gateway.
                 </p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -446,7 +435,7 @@ export default function GatewaySwapRecoveryTab({
                     Swap candidate is offline — connect the replacement gateway before starting recovery. Bypass remains available to platform admins if you accept the risk.
                   </p>
                 )}
-                <label className="block text-sm">
+                <label className="block text-sm md:col-span-2">
                   <span className="text-secondary-600 dark:text-secondary-300">Firmware image</span>
                   <select
                     value={selectedFirmwareId}
@@ -455,19 +444,6 @@ export default function GatewaySwapRecoveryTab({
                   >
                     {firmwareOptions.length === 0 && <option value="">No firmware available</option>}
                     {firmwareOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block text-sm">
-                  <span className="text-secondary-600 dark:text-secondary-300">Provisioning backup</span>
-                  <select
-                    value={selectedProvisioningBackupId}
-                    onChange={(e) => setSelectedProvisioningBackupId(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 px-3 py-2 text-secondary-900 dark:text-white transition-colors focus:border-[#147FD4] focus:ring-1 focus:ring-[#147FD4]"
-                  >
-                    {provisioningOptions.length === 0 && <option value="">No backup available</option>}
-                    {provisioningOptions.map((opt) => (
                       <option key={opt.id} value={opt.id}>{opt.label}</option>
                     ))}
                   </select>
@@ -481,7 +457,7 @@ export default function GatewaySwapRecoveryTab({
               <div>
                 <h3 className="text-lg font-semibold text-secondary-900 dark:text-white">Phased recovery</h3>
                 <p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
-                  Configure → firmware → provisioning restore → inventory snapshot push
+                  Configure → firmware → inventory snapshot push
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -489,7 +465,7 @@ export default function GatewaySwapRecoveryTab({
                   <button
                     type="button"
                     onClick={() => void handleInitiate()}
-                    disabled={submitting || !selectedFirmwareId || !selectedProvisioningBackupId || candidateOffline}
+                    disabled={submitting || !selectedFirmwareId || candidateOffline}
                     aria-busy={submitting}
                     className="inline-flex items-center gap-2 rounded-lg bg-[#147FD4] px-4 py-2 text-sm font-medium text-white hover:bg-[#1269b0] active:scale-[0.98] disabled:opacity-50 transition-all"
                   >
@@ -554,7 +530,7 @@ export default function GatewaySwapRecoveryTab({
               )}
             </div>
 
-            <ol className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+            <ol className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               {RECOVERY_STEPPER_STEPS.map((step, idx) => {
                 const done = stepperIndex > idx || recovery?.status === 'complete' || recovery?.status === 'bypassed';
                 const current = stepperIndex === idx && isActive;
@@ -623,7 +599,7 @@ export default function GatewaySwapRecoveryTab({
           <div className="rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-900 p-5">
             <h4 className="font-medium text-secondary-900 dark:text-white mb-2">Inventory snapshot preview</h4>
             <p className="text-sm text-secondary-500 dark:text-secondary-400 mb-3">
-              {inventoryPreview.length} device(s) will be pushed to the new gateway after provisioning.
+              {inventoryPreview.length} device(s) will be pushed to the new gateway after firmware update.
             </p>
             <ul className="max-h-40 overflow-y-auto text-xs font-mono text-secondary-600 dark:text-secondary-300 space-y-1">
               {inventoryPreview.slice(0, 20).map((d, i) => (
@@ -650,7 +626,7 @@ export default function GatewaySwapRecoveryTab({
                   <ShieldExclamationIcon className="h-5 w-5 text-red-500 shrink-0" />
                   <div>
                     <p className="text-sm text-red-700 dark:text-red-300">
-                      Bypass skips firmware, provisioning, and inventory protection. Platform admins only. Only use if you accept the risk of
+                      Bypass skips firmware and inventory protection. Platform admins only. Only use if you accept the risk of
                       partial inventory wiping cloud devices.
                     </p>
                     <button
@@ -672,7 +648,7 @@ export default function GatewaySwapRecoveryTab({
       <ConfirmDialog
         isOpen={bypassConfirmOpen}
         title="Bypass gateway recovery?"
-        message="This immediately unblocks inventory sync without completing firmware, provisioning, or inventory snapshot push. Cloud lock data could be deleted if the new gateway sends a partial inventory."
+        message="This immediately unblocks inventory sync without completing firmware or inventory snapshot push. Cloud lock data could be deleted if the new gateway sends a partial inventory."
         confirmLabel="Bypass recovery"
         confirmTone="danger"
         onConfirm={() => void handleBypass()}

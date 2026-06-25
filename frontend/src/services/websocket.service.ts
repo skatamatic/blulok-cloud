@@ -157,14 +157,14 @@ class WebSocketService implements IWebSocketService {
         case 'firmware_push_progress_update':
           this.handleFirmwarePushProgressUpdate(message);
           break;
-        case 'provisioning_restore_progress_update':
-          this.handleProvisioningRestoreProgressUpdate(message);
-          break;
         case 'gateway_recovery_progress_update':
           this.handleGatewayRecoveryProgressUpdate(message);
           break;
         case 'gateway_telemetry_log_update':
           this.handleGatewayTelemetryLogUpdate(message);
+          break;
+        case 'gateway_device_sync_log_update':
+          this.handleGatewayDeviceSyncLogUpdate(message);
           break;
         case 'device_status_update':
           this.handleDeviceStatusUpdate(message);
@@ -275,13 +275,6 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
-  private handleProvisioningRestoreProgressUpdate(message: { data?: unknown }): void {
-    const handlers = this.messageHandlers.get('provisioning_restore_progress');
-    if (handlers) {
-      handlers.forEach(handler => handler(message.data));
-    }
-  }
-
   private handleGatewayRecoveryProgressUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('gateway_recovery_progress');
     if (handlers) {
@@ -291,6 +284,13 @@ class WebSocketService implements IWebSocketService {
 
   private handleGatewayTelemetryLogUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('gateway_telemetry_logs');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleGatewayDeviceSyncLogUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('gateway_device_sync_logs');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }

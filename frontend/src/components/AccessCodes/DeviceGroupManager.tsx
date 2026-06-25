@@ -21,6 +21,8 @@ import { AccessGroupDetailTabs } from '@/components/AccessCodes/AccessGroupDetai
 import { AccessCodeGroupPanel } from '@/components/AccessCodes/AccessCodeGroupPanel';
 import {
   buildGroupSummary,
+  buildGroupableAccessControlSearchKeywords,
+  buildGroupableBlulokSearchKeywords,
   DEFAULT_GROUP_CONFIG,
   describeGroupAccess,
   filterKeypadDevices,
@@ -28,12 +30,14 @@ import {
   GroupMemberRef,
   pushStatusClasses,
   pushStatusLabel,
+  resolveAccessGroupMemberTitle,
+  resolveGroupableDeviceLabel,
   sortAccessGroups,
 } from '@/components/AccessCodes/access-groups.utils';
 
 interface GroupableDevice {
   id: string;
-  name: string;
+  name?: string;
   device_category?: 'access_control' | 'blulok';
   access_methods?: AccessMethod[];
   device_type?: 'gate' | 'elevator' | 'door';
@@ -41,6 +45,7 @@ interface GroupableDevice {
   unit_id?: string;
   unit_number?: string;
   device_serial?: string;
+  device_settings?: Record<string, unknown> | null;
   relay_channel?: number;
   device_status?: string;
 }
@@ -110,6 +115,10 @@ export function DeviceGroupManager({
   const normalizedGroupName = groupName.trim();
   const groupNamePattern = /^[A-Za-z0-9\s\-_.(),+&:'/#!;]+$/;
   const membersRequestIdRef = useRef(0);
+  const groupCountsRequestIdRef = useRef(0);
+  const groupsRef = useRef(groups);
+  const pendingDeletedGroupIdRef = useRef<string | null>(null);
+  groupsRef.current = groups;
 
   const sortedGroups = useMemo(() => sortAccessGroups(groups), [groups]);
   const defaultGroup = useMemo(() => groups.find((group) => group.is_default) || null, [groups]);
@@ -175,11 +184,7 @@ export function DeviceGroupManager({
       })
       .map((device) => ({
         value: device.id,
-        label:
-          (typeof device.name === 'string' && device.name.trim()) ||
-          (device.unit_number ? `Unit ${device.unit_number}` : '') ||
-          (typeof device.device_serial === 'string' && device.device_serial.trim()) ||
-          device.id,
+        label: resolveGroupableDeviceLabel(device),
         description: [
           device.device_category === 'blulok' ? 'Unit lock' : 'Access control device',
           device.device_category === 'blulok' && device.unit_number ? `Unit ${device.unit_number}` : '',
@@ -190,17 +195,10 @@ export function DeviceGroupManager({
           device.device_category === 'access_control' ? (device.location_description || '') : '',
           device.device_category === 'access_control' && device.access_methods?.includes('keypad') ? 'keypad-enabled' : '',
         ].filter(Boolean).join(' • '),
-        keywords: [
-          device.id,
-          device.name,
-          device.device_category || '',
-          device.device_category === 'blulok' ? (device.unit_number || '') : '',
-          device.device_category === 'blulok' ? (device.device_serial || '') : '',
-          device.device_category === 'access_control' ? (device.device_serial || '') : '',
-          device.device_category === 'access_control' && device.relay_channel != null ? `relay ${device.relay_channel}` : '',
-          device.device_category === 'access_control' ? (device.location_description || '') : '',
-          device.device_category === 'access_control' ? (device.device_type || '') : '',
-        ].filter(Boolean) as string[],
+        keywords:
+          device.device_category === 'blulok'
+            ? buildGroupableBlulokSearchKeywords(device)
+            : buildGroupableAccessControlSearchKeywords(device),
       })),
     [devices, selectedMemberKeys],
   );
@@ -227,6 +225,14 @@ export function DeviceGroupManager({
       setGroupLoadError(null);
     } catch (error) {
       if (membersRequestIdRef.current !== requestId) return;
+      if (
+        pendingDeletedGroupIdRef.current === groupId
+        || !groupsRef.current.some((group) => group.id === groupId)
+      ) {
+        setSelectedGroupMembers([]);
+        setGroupLoadError(null);
+        return;
+      }
       console.error(error);
       setSelectedGroupMembers([]);
       setGroupLoadError('Failed to load group members');
@@ -244,10 +250,13 @@ export function DeviceGroupManager({
       setGroupSummaries({});
       return;
     }
+    const requestId = groupCountsRequestIdRef.current + 1;
+    groupCountsRequestIdRef.current = requestId;
     try {
       const detailResponses = await Promise.all(
         nextGroups.map((group) => apiService.getDeviceGroup(group.id)),
       );
+      if (groupCountsRequestIdRef.current !== requestId) return;
       const counts: Record<string, number> = {};
       const membersByGroup: Record<string, GroupMemberRef[]> = {};
       nextGroups.forEach((group, index) => {
@@ -266,11 +275,13 @@ export function DeviceGroupManager({
         const configResponses = await Promise.all(
           nextGroups.map((group) => apiService.getAccessCodeGroupConfig(group.id)),
         );
+        if (groupCountsRequestIdRef.current !== requestId) return;
         nextGroups.forEach((group, index) => {
           configByGroup[group.id] = configResponses[index].data || DEFAULT_GROUP_CONFIG;
         });
       }
 
+      if (groupCountsRequestIdRef.current !== requestId) return;
       const summaries = nextGroups.reduce<Record<string, GroupCardSummary>>((acc, group) => {
         const members = membersByGroup[group.id] || [];
         acc[group.id] = buildGroupSummary(
@@ -284,6 +295,7 @@ export function DeviceGroupManager({
       }, {});
       setGroupSummaries(summaries);
     } catch (error) {
+      if (groupCountsRequestIdRef.current !== requestId) return;
       console.error(error);
       setGroupMemberCounts({});
       setGroupSummaries({});
@@ -317,6 +329,15 @@ export function DeviceGroupManager({
   }, [groups, effectiveCodes, showAccessCodes, keypadDeviceById]);
 
   useEffect(() => {
+    if (
+      pendingDeletedGroupIdRef.current
+      && initialGroupId !== pendingDeletedGroupIdRef.current
+    ) {
+      pendingDeletedGroupIdRef.current = null;
+    }
+  }, [initialGroupId]);
+
+  useEffect(() => {
     const fallbackGroupId = defaultGroup?.id || sortedGroups[0]?.id || '';
     const urlGroupId =
       initialGroupId && groups.some((group) => group.id === initialGroupId)
@@ -324,6 +345,9 @@ export function DeviceGroupManager({
         : null;
 
     if (urlGroupId && selectedGroupId !== urlGroupId) {
+      if (pendingDeletedGroupIdRef.current === urlGroupId) {
+        return;
+      }
       setSelectedGroupId(urlGroupId);
       loadSelectedGroupMembers(urlGroupId).catch(() => undefined);
       return;
@@ -528,12 +552,22 @@ export function DeviceGroupManager({
   const deleteSelectedGroup = async () => {
     if (!selectedGroupId || !selectedGroup || selectedGroup.is_default) return;
 
+    const deletedGroupId = selectedGroupId;
+    const fallbackGroupId = defaultGroup?.id || sortedGroups.find((g) => g.id !== deletedGroupId)?.id || '';
+    membersRequestIdRef.current += 1;
+    groupCountsRequestIdRef.current += 1;
+    pendingDeletedGroupIdRef.current = deletedGroupId;
+
     setSaving(true);
     try {
-      await apiService.deleteDeviceGroup(selectedGroupId);
-      setSelectedGroupId(defaultGroup?.id || '');
+      await apiService.deleteDeviceGroup(deletedGroupId);
+      setSelectedGroupId(fallbackGroupId);
       setSelectedGroupMembers([]);
+      onGroupChange?.(fallbackGroupId);
       await onGroupsChanged();
+      if (fallbackGroupId) {
+        await loadSelectedGroupMembers(fallbackGroupId);
+      }
       addToast({ type: 'success', title: 'Access group deleted' });
     } catch (error: any) {
       console.error(error);
@@ -855,7 +889,7 @@ export function DeviceGroupManager({
                                       <div className="min-w-0 flex-1">
                                         <div className="flex flex-wrap items-center gap-2">
                                           <span className="truncate font-medium text-gray-900 dark:text-white">
-                                            {device?.name || member.device_id}
+                                            {resolveAccessGroupMemberTitle(member, device)}
                                           </span>
                                           {selectedGroup.is_default && (
                                             <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">

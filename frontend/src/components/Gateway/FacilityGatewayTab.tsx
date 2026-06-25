@@ -13,10 +13,8 @@ import {
   DocumentDuplicateIcon,
   CpuChipIcon,
   DocumentTextIcon,
-  ArchiveBoxIcon,
 } from '@heroicons/react/24/outline';
 import GatewayFirmwareTab from './GatewayFirmwareTab';
-import GatewayProvisioningTab from './GatewayProvisioningTab';
 import { useFacilityGatewayRecovery } from '@/hooks/useFacilityGatewayRecovery';
 import GatewaySwapRecoveryTab from './GatewaySwapRecoveryTab';
 import RecoveryBlockingBanner from './RecoveryBlockingBanner';
@@ -78,7 +76,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       errors: string[];
     };
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'provisioning' | 'swap-recovery' | 'devtools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'swap-recovery' | 'devtools'>('overview');
 
   // Debug panel state
   const [fallbackJwtInput, setFallbackJwtInput] = useState('');
@@ -376,15 +374,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     );
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-        <span className="ml-3 text-gray-600 dark:text-gray-400">Loading gateway configuration...</span>
-      </div>
-    );
-  }
-
   // Navigation tabs
   const navTabs = [
     { id: 'overview' as const, label: 'Overview', icon: InformationCircleIcon },
@@ -397,13 +386,39 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       : []),
     { id: 'firmware' as const, label: 'Firmware', icon: CpuChipIcon },
     ...(canManageGateway
-      ? [{ id: 'provisioning' as const, label: 'Provisioning Data', icon: ArchiveBoxIcon }]
-      : []),
-    ...(canManageGateway
       ? [{ id: 'swap-recovery' as const, label: 'Swap / Recovery', icon: ArrowPathIcon }]
       : []),
     { id: 'devtools' as const, label: 'DevTools/Diag', icon: WrenchScrewdriverIcon },
   ];
+
+  if (loading) {
+    return (
+      <div className="flex gap-6">
+        <div className="w-64 flex-shrink-0">
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-2">
+            <nav className="space-y-1">
+              {navTabs.map((tab) => {
+                const Icon = tab.icon;
+                return (
+                  <div
+                    key={tab.id}
+                    className="w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-400 dark:text-gray-500"
+                  >
+                    <Icon className="h-5 w-5 mr-3 shrink-0 opacity-50" />
+                    <span className="flex-1 text-left">{tab.label}</span>
+                  </div>
+                );
+              })}
+            </nav>
+          </div>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+          <span className="ml-3 text-gray-600 dark:text-gray-400">Loading gateway configuration...</span>
+        </div>
+      </div>
+    );
+  }
 
   // Render Overview Tab
   const renderOverviewTab = () => {
@@ -602,7 +617,26 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       <div className="space-y-6">
         {/* Sync Now Button */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Manual Synchronization</h3>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Manual device status sync</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Pulls live lock/device status from the bound gateway over the legacy outbound sync path. Results appear below
+            and are not written to the{' '}
+            {isPlatformAdmin ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('inventory-sync')}
+                  className="font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  Inventory sync
+                </button>{' '}
+                audit trail
+              </>
+            ) : (
+              'inventory sync audit trail'
+            )}
+            .
+          </p>
           {recoveryBlocking && (
             <div
               className="mb-4 rounded-lg border border-amber-300/60 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
@@ -630,7 +664,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             )}
           </button>
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 text-center">
-            Sync will fetch latest data from gateway devices
+            Fetches latest device status from the gateway (not gateway inventory reconcile)
           </p>
           {lastSyncTime && (
             <div className="mt-4 flex items-center text-sm text-gray-600 dark:text-gray-400">
@@ -1271,7 +1305,11 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             {recoveryBlocking && (
               <RecoveryBlockingBanner message="Inventory sync history is read-only during gateway swap recovery. New syncs are blocked until recovery completes or is bypassed." />
             )}
-            <GatewayDeviceSyncHistory gatewayId={gateway.id} />
+            <GatewayDeviceSyncHistory
+              gatewayId={gateway.id}
+              facilityId={facilityId}
+              liveEnabled={activeTab === 'inventory-sync'}
+            />
           </div>
         )}
         {activeTab === 'inventory-sync' && isPlatformAdmin && !gateway && (
@@ -1300,14 +1338,6 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             gatewayModel={gateway.model}
             recoveryBlocking={recoveryBlocking}
           />
-        )}
-        {activeTab === 'provisioning' && canManageGateway && gateway && (
-          <GatewayProvisioningTab gatewayId={gateway.id} wsConnected={wsConnected} recoveryBlocking={recoveryBlocking} />
-        )}
-        {activeTab === 'provisioning' && canManageGateway && !gateway && (
-          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 text-sm text-gray-600 dark:text-gray-300">
-            Bind a gateway via Swap / Recovery before managing provisioning backups.
-          </div>
         )}
         {activeTab === 'swap-recovery' && canManageGateway && (
           <GatewaySwapRecoveryTab

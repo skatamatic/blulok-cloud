@@ -185,57 +185,6 @@ export type FirmwareProgressMessage = {
   };
 };
 
-/** Cloud → gateway: sent after reconnect when restores await final PROVISIONING_RESTORE_STATUS. */
-export type ProvisioningRestoreResumeMessage = {
-  type: 'PROVISIONING_RESTORE_RESUME';
-  restores: Array<{
-    restore_id: string;
-    backup_id: string;
-    status: 'verifying';
-    chunks_sent?: number;
-    chunks_total?: number | null;
-  }>;
-};
-
-export type ProvisioningUploadRequestMessage = {
-  type: 'PROVISIONING_UPLOAD_REQUEST';
-  jwt: string;
-};
-
-export type ProvisioningManifestMessage = {
-  type: 'PROVISIONING_MANIFEST';
-  jwt: string;
-};
-
-export type ProvisioningChunkMessage = {
-  type: 'PROVISIONING_CHUNK';
-  jwt: string;
-};
-
-export type ProvisioningChunkAckMessage = {
-  type: 'PROVISIONING_CHUNK_ACK';
-  nonce: string;
-  chunkIndex: number;
-  status: 'ok' | 'error';
-  message?: string;
-};
-
-export type ProvisioningRestoreStatusMessage = {
-  type: 'PROVISIONING_RESTORE_STATUS';
-  restore_id: string;
-  status: string;
-  error?: string;
-  message?: string;
-};
-
-export type ProvisioningRestoreStatusAckMessage = {
-  type: 'PROVISIONING_RESTORE_STATUS_ACK';
-  restore_id?: string;
-  accepted: boolean;
-  restore_status?: 'pending' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
-  reason?: string;
-};
-
 export type InventorySnapshotManifestMessage = {
   type: 'INVENTORY_SNAPSHOT_MANIFEST';
   jwt: string;
@@ -267,7 +216,7 @@ export type InventorySnapshotStatusAckMessage = {
   type: 'INVENTORY_SNAPSHOT_STATUS_ACK';
   recovery_id?: string;
   accepted: boolean;
-  recovery_status?: 'detected' | 'awaiting_config' | 'firmware' | 'provisioning' | 'inventory_push' | 'complete' | 'failed' | 'cancelled' | 'bypassed';
+  recovery_status?: 'detected' | 'awaiting_config' | 'firmware' | 'inventory_push' | 'complete' | 'failed' | 'cancelled' | 'bypassed';
   reason?: string;
 };
 
@@ -282,7 +231,7 @@ export type InventorySnapshotResumeMessage = {
   }>;
 };
 
-export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage | FirmwareChunkAckMessage | FirmwareUpdateStatusMessage | FirmwareProgressMessage | AccessCodeUpdateAckMessage | ProvisioningChunkAckMessage | ProvisioningRestoreStatusMessage | InventorySnapshotChunkAckMessage | InventorySnapshotStatusMessage;
+export type GatewayInboundMessage = AuthMessage | PongMessage | ProxyRequestMessage | CommandAckMessage | FirmwareChunkAckMessage | FirmwareUpdateStatusMessage | FirmwareProgressMessage | AccessCodeUpdateAckMessage | InventorySnapshotChunkAckMessage | InventorySnapshotStatusMessage;
 export type GatewayOutboundMessage =
   | AuthOkMessage
   | ErrorMessage
@@ -293,10 +242,6 @@ export type GatewayOutboundMessage =
   | FirmwareChunkMessage
   | FirmwarePushResumeMessage
   | AccessCodeUpdateMessage
-  | ProvisioningUploadRequestMessage
-  | ProvisioningManifestMessage
-  | ProvisioningChunkMessage
-  | ProvisioningRestoreResumeMessage
   | InventorySnapshotManifestMessage
   | InventorySnapshotChunkMessage
   | InventorySnapshotResumeMessage;

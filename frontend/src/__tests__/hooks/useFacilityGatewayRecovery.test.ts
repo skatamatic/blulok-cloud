@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useFacilityGatewayRecovery } from '@/hooks/useFacilityGatewayRecovery';
 import { apiService } from '@/services/api.service';
 
@@ -47,5 +47,24 @@ describe('useFacilityGatewayRecovery', () => {
 
     expect(result.current.hasSwapAlert).toBe(true);
     expect(result.current.isBlocking).toBe(false);
+  });
+
+  it('retains recovery snapshot when a silent poll fails', async () => {
+    const { result } = renderHook(() => useFacilityGatewayRecovery('fac-1', true));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.recovery?.status).toBe('detected');
+
+    (apiService.getGatewayRecoveryCandidates as jest.Mock).mockRejectedValueOnce(new Error('network'));
+
+    await act(async () => {
+      await result.current.refetch({ silent: true });
+    });
+
+    expect(result.current.recovery?.status).toBe('detected');
+    expect(result.current.candidates).toHaveLength(1);
   });
 });

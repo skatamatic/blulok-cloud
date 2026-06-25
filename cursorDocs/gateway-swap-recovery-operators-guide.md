@@ -25,12 +25,11 @@ When a facility’s on-site gateway is replaced, the cloud **must not trust inve
 | Replacement gateway has a **stable GUID** it sends in `AUTH.gatewayId` | Identity; **the cloud record is auto-created on first connect** — pre-creating it is optional (see §5.1) |
 | Replacement gateway `facility_id` is **null** or matches this facility | Other-facility gateways are rejected as swap candidates |
 | At least one **gateway firmware image** uploaded (`target_type=gateway`) | Recovery phase 1 |
-| At least one **provisioning backup** for the **previous** gateway | Recovery phase 2 (backup owner = bound gateway) |
 | Operator JWT with **`facility_admin`** (scoped), **`admin`**, or **`dev_admin`** | WS AUTH (also gates auto-registration) + recovery REST |
 | Backend migration **078** + **079** applied | Recovery tables + one active recovery per facility |
 | Gateway can reach **`wss://<host>/ws/gateway`** and **`https://<host>/api/v1`** | Same URLs as Facility → Gateway → Overview |
 
-See also: [Gateway ↔ Cloud integration](./gateway-integration.md), [Gateway provisioning backup](./gateway-provisioning-backup.md), [Firmware OTA](./firmware-ota-architecture.md).
+See also: [Gateway ↔ Cloud integration](./gateway-integration.md), [Facility provisioning data](./facility-provisioning-data.md), [Firmware OTA](./firmware-ota-architecture.md).
 
 ### Gateway firmware (before field deployment)
 
@@ -39,8 +38,7 @@ See also: [Gateway ↔ Cloud integration](./gateway-integration.md), [Gateway pr
 | Generate + persist a **stable GUID** and send it as `AUTH.gatewayId` | Identity binding / swap detection / auto-registration |
 | Handle **`sessionRole`** in `AUTH_OK` | Know if you are `active`, `swap_candidate`, or `legacy` |
 | Implement **firmware OTA** ACK/status (existing) | Recovery phase 1 |
-| Implement **provisioning restore** ACK/status (existing) | Recovery phase 2 |
-| Implement **`INVENTORY_SNAPSHOT_*`** (new) | Recovery phase 3 |
+| Implement **`INVENTORY_SNAPSHOT_*`** (new) | Recovery phase 2 |
 | **Do not** rely on inventory sync during recovery | Cloud returns **409** `recovery_in_progress` |
 | Reconnect + re-**AUTH** after disconnect | Resume pushes; swap candidate must stay online during recovery |
 
@@ -77,12 +75,9 @@ sequenceDiagram
 
   Cloud->>Cloud: Recovery status=detected (blocks inventory + locks)
 
-  Op->>Cloud: POST recovery/initiate (firmware + backup)
+  Op->>Cloud: POST recovery/initiate (firmware)
   Cloud->>NewGW: FIRMWARE_* (via swap candidate only)
   NewGW-->>Cloud: FIRMWARE_CHUNK_ACK / FIRMWARE_UPDATE_STATUS
-
-  Cloud->>NewGW: PROVISIONING_* (swap candidate only)
-  NewGW-->>Cloud: PROVISIONING_CHUNK_ACK / PROVISIONING_RESTORE_STATUS
 
   Cloud->>NewGW: INVENTORY_SNAPSHOT_* (swap candidate only)
   NewGW-->>Cloud: INVENTORY_SNAPSHOT_CHUNK_ACK
@@ -99,7 +94,6 @@ sequenceDiagram
 | `detected` | Swap candidate seen; not started | **Yes** |
 | `awaiting_config` | Config saved; about to start firmware | **Yes** |
 | `firmware` | OTA to swap candidate | **Yes** |
-| `provisioning` | Provisioning restore to swap candidate | **Yes** |
 | `inventory_push` | Inventory snapshot chunks + verify | **Yes** |
 | `complete` | New gateway bound; normal ops | No |
 | `bypassed` | Platform admin escape hatch | No |
@@ -142,18 +136,18 @@ Set on the device (e.g. `CLOUD_WS`, `CLOUD_API` in mesh-manager compose). Use a 
    - Bound gateway ID (production)
    - Swap candidate ID + **connected**
    - Alert: facility operations restricted
-4. Select **firmware image** and **provisioning backup** (defaults: highest semver gateway firmware + latest backup from **previous/bound** gateway).
+4. Select **firmware image** (default: highest semver gateway firmware).
 5. Click **Start swap recovery**.
-6. Monitor the **5-step stepper** and event log until **Complete**.
+6. Monitor the **4-step stepper** and event log until **Complete**.
 7. Verify Overview shows the **new gateway** bound; inventory sync and remote locks work again.
 
-**Important:** The swap candidate must stay **connected** during phases 1–3. If it drops, recovery pauses; reconnect and re-**AUTH** with the same `gatewayId`. The bound gateway may disconnect without pausing recovery (if the candidate stays up).
+**Important:** The swap candidate must stay **connected** during phases 1–2. If it drops, recovery pauses; reconnect and re-**AUTH** with the same `gatewayId`. The bound gateway may disconnect without pausing recovery (if the candidate stays up).
 
 ### 5.4 If recovery fails
 
 | Situation | Action |
 |-----------|--------|
-| Phase failed (firmware / provisioning / inventory) | Read event log + `error_message`; fix root cause; **Retry recovery** |
+| Phase failed (firmware / inventory) | Read event log + `error_message`; fix root cause; **Retry recovery** |
 | Swap candidate offline | Reconnect device; **Retry** (or **Cancel** and start new recovery when ready) |
 | Stuck / unacceptable risk | Platform admin: **Bypass recovery** (skips all phases — see risks below) |
 | Wrong recovery started | **Cancel recovery** → **Start new recovery** |
@@ -164,7 +158,7 @@ Bypass immediately:
 
 - Unblocks inventory sync and remote locks
 - Runs DB rebind to the swap candidate gateway (if configured)
-- **Does not** guarantee firmware, provisioning, or inventory snapshot were applied
+- **Does not** guarantee firmware or inventory snapshot were applied
 
 **Risk:** If the new gateway later sends partial inventory, cloud devices could still be affected. Use only when operators accept that risk.
 
@@ -175,7 +169,7 @@ API: `POST /api/v1/gateways/:gatewayId/recovery/bypass` body `{ "confirm": true 
 - **Manual gateway sync** (Sync tab disabled)
 - **Remote lock/unlock** (REST returns failure — recovery in progress)
 - **Inventory reconcile** via gateway (`409 recovery_in_progress`)
-- **Manual firmware push** / **provisioning restore** on bound gateway tabs (UI blocked; use Swap / Recovery instead)
+- **Manual firmware push** on bound gateway tabs (UI blocked; use Swap / Recovery instead)
 - Outbound **denylist**, **access code push**, **lock commands** to the facility (dropped by cloud)
 
 ---
@@ -233,7 +227,7 @@ API: `POST /api/v1/gateways/:gatewayId/recovery/bypass` body `{ "confirm": true 
 ### 6.2 Dual-connection behavior during swap
 
 - **Bound gateway** and **swap candidate** may both be connected simultaneously.
-- Recovery **outbound** (`FIRMWARE_*`, `PROVISIONING_*`, `INVENTORY_SNAPSHOT_*`) is sent **only to the swap candidate** WebSocket.
+- Recovery **outbound** (`FIRMWARE_*`, `INVENTORY_SNAPSHOT_*`) is sent **only to the swap candidate** WebSocket.
 - If the swap candidate is offline, those messages are **dropped** (not redirected to the bound gateway).
 - **Inbound** recovery ACK/status messages are accepted **only from the swap candidate** whose `gatewayId` matches the armed recovery target. The bound gateway **cannot** spoof inventory snapshot status.
 
@@ -257,36 +251,11 @@ Same protocol as manual OTA. During recovery, messages arrive on the **swap cand
 | `FIRMWARE_CHUNK` | Signed JWT chunk |
 | `FIRMWARE_PUSH_RESUME` | After reconnect, if push was verifying |
 
-On success, cloud auto-advances to provisioning. Implement reconnect: on `AUTH`, handle resume messages.
+On success, cloud auto-advances to inventory snapshot push. Implement reconnect: on `AUTH`, handle resume messages.
 
 See: [Firmware OTA Architecture](./firmware-ota-architecture.md).
 
-### 6.4 Phase 2 — Provisioning restore (existing)
-
-Same protocol as admin-initiated restore. Backup belongs to the **previous (bound) gateway**; restore **targets** the swap candidate.
-
-**Cloud → gateway:**
-
-| Type | JWT `cmd_type` |
-|------|----------------|
-| `PROVISIONING_MANIFEST` | `PROVISIONING_MANIFEST` |
-| `PROVISIONING_CHUNK` | `PROVISIONING_CHUNK` |
-| `PROVISIONING_RESTORE_RESUME` | (envelope on reconnect) |
-
-**Gateway → cloud:**
-
-| Type | Fields |
-|------|--------|
-| `PROVISIONING_CHUNK_ACK` | `nonce`, `chunkIndex`, `status` |
-| `PROVISIONING_RESTORE_STATUS` | `restore_id`, `status` (`success` / failure), optional `error` |
-
-**Cloud → gateway:** `PROVISIONING_RESTORE_STATUS_ACK` (`accepted`, `restore_status`, `reason`).
-
-Chunk size: **`FIRMWARE_CHUNK_SIZE_BYTES`** (~2.36 MB raw per chunk).
-
-See: [Gateway provisioning backup](./gateway-provisioning-backup.md).
-
-### 6.5 Phase 3 — Inventory snapshot (new)
+### 6.4 Phase 2 — Inventory snapshot (new)
 
 Cloud builds a binary snapshot from current cloud device records, pushes it to the swap candidate, and waits for apply confirmation.
 
@@ -328,7 +297,7 @@ Cloud builds a binary snapshot from current cloud device records, pushes it to t
 
 **Verify timeout:** Cloud waits **5 minutes** after all chunks are ACKed. If no `success`, recovery → `failed`.
 
-**Firmware implementation checklist for phase 3:**
+**Firmware implementation checklist for phase 2:**
 
 1. Receive manifest; verify JWT + `sha256` / size.
 2. ACK each chunk with matching `nonce` + `chunkIndex`.
@@ -378,10 +347,10 @@ Auth: `Authorization: Bearer <JWT>`
 |--------|------|---------|
 | GET | `/gateways/facility/:facilityId/recovery/candidates` | Swap candidates + active recovery summary |
 | GET | `/gateways/:gatewayId/recovery/status` | Latest recovery for swap gateway |
-| GET | `/gateways/:gatewayId/recovery/options` | Firmware + provisioning backup dropdowns |
+| GET | `/gateways/:gatewayId/recovery/options` | Firmware dropdown |
 | GET | `/gateways/:gatewayId/recovery/inventory-preview` | Devices that will be in snapshot |
 | GET | `/gateways/:gatewayId/recovery/:recoveryId/events` | Event timeline (`?limit=100`) |
-| POST | `/gateways/:gatewayId/recovery/initiate` | Start recovery `{ firmwareId?, provisioningBackupId? }` |
+| POST | `/gateways/:gatewayId/recovery/initiate` | Start recovery `{ firmwareId? }` |
 | POST | `/gateways/:gatewayId/recovery/retry` | Retry failed recovery |
 | POST | `/gateways/:gatewayId/recovery/:recoveryId/cancel` | Cancel in-progress recovery |
 | POST | `/gateways/:gatewayId/recovery/bypass` | **Admin only** `{ confirm: true }` |
@@ -391,12 +360,11 @@ Auth: `Authorization: Bearer <JWT>`
 
 ```json
 {
-  "firmwareId": "11111111-1111-4111-8111-111111111111",
-  "provisioningBackupId": "22222222-2222-4222-8222-222222222222"
+  "firmwareId": "11111111-1111-4111-8111-111111111111"
 }
 ```
 
-Omit IDs to use cloud defaults (highest semver gateway firmware + latest backup from previous gateway).
+Omit `firmwareId` to use cloud default (highest semver gateway firmware).
 
 ---
 
@@ -423,7 +391,7 @@ Run migrations on deploy before gateways connect.
 
 ### Startup order
 
-On backend boot, **gateway recovery** in-flight state is re-armed **before** firmware/provisioning resume, so recovery push routing targets the swap candidate before child jobs run.
+On backend boot, **gateway recovery** in-flight state is re-armed **before** firmware resume, so recovery push routing targets the swap candidate before child jobs run.
 
 ### Cloud Run / multi-instance
 
@@ -485,7 +453,7 @@ E2E swap section creates an unassigned gateway, connects second WS, verifies can
 | [Gateway Swap / Recovery Architecture](./gateway-swap-recovery-architecture.md) | Cloud state machine, gating rules |
 | [Gateway ↔ Cloud integration](./gateway-integration.md) | AUTH, PROXY, Cloud Run |
 | [Firmware OTA Architecture](./firmware-ota-architecture.md) | Phase 1 messages |
-| [Gateway provisioning backup](./gateway-provisioning-backup.md) | Phase 2 messages |
+| [Facility provisioning data](./facility-provisioning-data.md) | Facility file upload/download (not part of swap recovery) |
 | [Gateway device inventory payload](./gateway-device-inventory-payload.md) | Normal inventory (blocked during recovery) |
 
 ---
@@ -495,7 +463,7 @@ E2E swap section creates an unassigned gateway, connects second WS, verifies can
 | Message family | Sent to | Accepted from |
 |----------------|---------|---------------|
 | `LOCK`, `DENYLIST_*`, `ACCESS_CODE_UPDATE` | Bound (`active`) session | N/A (cloud → GW) |
-| `FIRMWARE_*`, `PROVISIONING_*`, `INVENTORY_SNAPSHOT_*` | Swap candidate only | Swap candidate only |
+| `FIRMWARE_*`, `INVENTORY_SNAPSHOT_*` | Swap candidate only | Swap candidate only |
 | `PROXY_REQUEST` / inventory | Bound session (but inventory **409** while blocking) | Bound session |
 | `PING` / `PONG` | Both | Both |
 

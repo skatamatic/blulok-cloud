@@ -45,6 +45,7 @@ import {
   MAX_LOCK_COMMAND_TIMEOUT_SEC,
   MIN_LOCK_COMMAND_TIMEOUT_SEC,
 } from '../constants/lock-command.constants';
+import { facilityProvisioningRouter, facilityProvisioningDirectUploadRouter } from './facility-provisioning.routes';
 
 const router = Router();
 const facilityModel = new FacilityModel();
@@ -117,6 +118,9 @@ async function enrichFacilityWithBluDesignLink(facility: Facility): Promise<Faci
     ...(bluDesignFacilityId && { bluDesignFacilityId }),
   };
 }
+
+// Token-only provisioning upload (no Bearer JWT) — must mount before authenticateToken.
+router.use('/:facilityId/provisioning-data', facilityProvisioningDirectUploadRouter);
 
 // Apply authentication middleware to all routes
 router.use(authenticateToken);
@@ -362,5 +366,7 @@ router.delete('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), async 
     }
   }
 });
+
+router.use('/:facilityId/provisioning-data', facilityProvisioningRouter);
 
 export { router as facilitiesRouter };

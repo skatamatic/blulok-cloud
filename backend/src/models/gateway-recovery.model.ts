@@ -5,7 +5,6 @@ export type GatewayRecoveryStatus =
   | 'detected'
   | 'awaiting_config'
   | 'firmware'
-  | 'provisioning'
   | 'inventory_push'
   | 'complete'
   | 'failed'
@@ -23,7 +22,6 @@ export const BLOCKING_RECOVERY_STATUSES: GatewayRecoveryStatus[] = [
   'detected',
   'awaiting_config',
   'firmware',
-  'provisioning',
   'inventory_push',
 ];
 
@@ -34,10 +32,8 @@ export interface GatewayRecovery {
   previous_gateway_id: string | null;
   status: GatewayRecoveryStatus;
   firmware_id: string | null;
-  provisioning_backup_id: string | null;
   inventory_snapshot_id: string | null;
   firmware_push_id: string | null;
-  provisioning_restore_id: string | null;
   inventory_chunks_total: number | null;
   inventory_chunks_sent: number;
   inventory_nonce: string | null;

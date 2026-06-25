@@ -14,7 +14,7 @@ export interface FacilityGatewayRecoveryState {
   isBlocking: boolean;
   hasSwapAlert: boolean;
   hasActiveRecovery: boolean;
-  refetch: () => Promise<void>;
+  refetch: (opts?: { silent?: boolean }) => Promise<void>;
 }
 
 export function useFacilityGatewayRecovery(
@@ -26,7 +26,7 @@ export function useFacilityGatewayRecovery(
   const [loading, setLoading] = useState(enabled);
   const mountedRef = useRef(true);
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (opts?: { silent?: boolean }) => {
     if (!enabled || !facilityId) return;
     try {
       const res = await apiService.getGatewayRecoveryCandidates(facilityId);
@@ -35,8 +35,12 @@ export function useFacilityGatewayRecovery(
       setRecovery(res.data?.recovery || null);
     } catch {
       if (!mountedRef.current) return;
-      setCandidates([]);
-      setRecovery(null);
+      // Keep the last known recovery snapshot during background polls so banners
+      // do not flicker on transient API errors.
+      if (!opts?.silent) {
+        setCandidates([]);
+        setRecovery(null);
+      }
     } finally {
       if (mountedRef.current) setLoading(false);
     }
@@ -53,7 +57,7 @@ export function useFacilityGatewayRecovery(
 
     void refetch();
     const interval = window.setInterval(() => {
-      void refetch();
+      void refetch({ silent: true });
     }, 12000);
 
     return () => {

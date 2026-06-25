@@ -8078,193 +8078,100 @@ async function run() {
     lockFirmwareId = null;
 
     // =====================================================================
-    // Gateway Provisioning Backup E2E
+    // Facility Provisioning Data E2E
     // =====================================================================
-    heading('Gateway Provisioning Backup');
+    heading('Facility Provisioning Data');
 
-    let provisioningBackupId = null;
-    let provisioningRestoreId = null;
+    let provisioningFileId = null;
 
-    step('Creating minimal zip for provisioning upload');
-    const archiver = require('archiver');
-    const { PassThrough } = require('stream');
-    const zipBuffer = await new Promise((resolve, reject) => {
-      const chunks = [];
-      const passthrough = new PassThrough();
-      passthrough.on('data', (c) => chunks.push(c));
-      passthrough.on('end', () => resolve(Buffer.concat(chunks)));
-      passthrough.on('error', reject);
-      const archive = archiver('zip', { zlib: { level: 9 } });
-      archive.on('error', reject);
-      archive.pipe(passthrough);
-      archive.append('e2e provisioning backup', { name: 'mesh.txt' });
-      archive.finalize();
-    });
+    step('Creating minimal provisioning file payload');
+    const provisioningPayload = Buffer.from('e2e facility provisioning data');
 
-    step('Gateway PROXY prepare provisioning upload');
-    const provPrepareResp = await proxyWs(ws, `prov-prepare-${Date.now()}`, 'POST', '/internal/gateway/provisioning/prepare', {
-      body: { filename: 'e2e-mesh.zip', size_bytes: zipBuffer.length, facility_id: created.facilityId },
-    });
+    step('Admin prepare facility provisioning upload');
+    const provPrepareResp = await axios.post(
+      `${API_BASE}/facilities/${created.facilityId}/provisioning-data/prepare`,
+      {
+        filename: 'e2e-mesh.bin',
+        size_bytes: provisioningPayload.length,
+        content_type: 'application/octet-stream',
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
     if (provPrepareResp.status !== 200) {
-      if (process.env.SKIP_PROVISIONING_E2E === '1') {
-        info(`Skipping provisioning upload E2E (prepare status ${provPrepareResp.status}: ${JSON.stringify(provPrepareResp.body)})`);
+      if (process.env.SKIP_FACILITY_PROVISIONING_E2E === '1') {
+        info(`Skipping facility provisioning E2E (prepare status ${provPrepareResp.status}: ${JSON.stringify(provPrepareResp.data)})`);
       } else {
-        throw new Error(`Provisioning prepare failed (status ${provPrepareResp.status}): ${JSON.stringify(provPrepareResp.body)}`);
+        throw new Error(`Facility provisioning prepare failed (status ${provPrepareResp.status}): ${JSON.stringify(provPrepareResp.data)}`);
       }
     } else {
-      const uploadId = provPrepareResp.body?.data?.upload_id;
-      const uploadUrl = provPrepareResp.body?.data?.upload_url;
-      const uploadHeaders = provPrepareResp.body?.data?.upload_headers || {};
-      if (!uploadId || !uploadUrl) throw new Error('Provisioning prepare missing upload_id/upload_url');
+      const uploadId = provPrepareResp.data?.data?.upload_id;
+      const uploadUrl = provPrepareResp.data?.data?.upload_url;
+      const uploadHeaders = provPrepareResp.data?.data?.upload_headers || {};
+      if (!uploadId || !uploadUrl) throw new Error('Facility provisioning prepare missing upload_id/upload_url');
 
-      step('PUT zip to upload session');
-      await axios.put(uploadUrl, zipBuffer, {
-        headers: { ...uploadHeaders, 'Content-Length': zipBuffer.length },
+      step('PUT file to upload session');
+      await axios.put(uploadUrl, provisioningPayload, {
+        headers: { ...uploadHeaders, 'Content-Length': provisioningPayload.length },
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
       });
 
-      step('Gateway PROXY complete provisioning upload');
-      const provCompleteResp = await proxyWs(ws, `prov-complete-${Date.now()}`, 'POST', '/internal/gateway/provisioning/complete', {
-        body: {
+      step('Admin complete facility provisioning upload');
+      const provCompleteResp = await axios.post(
+        `${API_BASE}/facilities/${created.facilityId}/provisioning-data/complete`,
+        {
           upload_id: uploadId,
-          filename: 'e2e-mesh.zip',
-          size_bytes: zipBuffer.length,
-          facility_id: created.facilityId,
+          filename: 'e2e-mesh.bin',
+          size_bytes: provisioningPayload.length,
+          content_type: 'application/octet-stream',
         },
-      });
-      if (provCompleteResp.status !== 200) throw new Error(`Provisioning complete failed: ${JSON.stringify(provCompleteResp.body)}`);
-      provisioningBackupId = provCompleteResp.body?.data?.backup?.id;
-      if (!provisioningBackupId) throw new Error('Missing backup id after provisioning complete');
-      if (provCompleteResp.body?.data?.backup?.storage_path !== undefined) {
-        throw new Error('storage_path should not be exposed in provisioning backup API response');
-      }
-      ok(`Provisioning backup created: id=${provisioningBackupId}`);
-
-      step('Admin list provisioning backups');
-      const listResp = await axios.get(`${API_BASE}/gateways/${created.gatewayId}/provisioning`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const listed = listResp.data?.data?.backups || [];
-      if (!listed.some((b) => b.id === provisioningBackupId)) throw new Error('Created backup not found in list');
-      ok(`Listed ${listed.length} provisioning backup(s)`);
-
-      step('Request upload from gateway (WS JWT)');
-      let uploadRequestJwt = null;
-      const uploadReqListener = (raw) => {
-        try {
-          const msg = JSON.parse(raw);
-          if (msg.type === 'PROVISIONING_UPLOAD_REQUEST' && msg.jwt) {
-            uploadRequestJwt = msg.jwt;
-          }
-        } catch { /* ignore */ }
-      };
-      ws.on('message', uploadReqListener);
-      await axios.post(
-        `${API_BASE}/gateways/${created.gatewayId}/provisioning/request-upload`,
-        {},
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      await delay(1500);
-      ws.off('message', uploadReqListener);
-      if (!uploadRequestJwt) throw new Error('Expected PROVISIONING_UPLOAD_REQUEST on gateway WS');
-      const uploadReqClaims = decodeJwtClaims(uploadRequestJwt);
-      if (uploadReqClaims.cmd_type !== 'PROVISIONING_UPLOAD_REQUEST') throw new Error('Invalid upload request cmd_type');
-      ok('PROVISIONING_UPLOAD_REQUEST received on gateway WS');
+      if (provCompleteResp.status !== 200) {
+        throw new Error(`Facility provisioning complete failed: ${JSON.stringify(provCompleteResp.data)}`);
+      }
+      provisioningFileId = provCompleteResp.data?.data?.file?.id;
+      if (!provisioningFileId) throw new Error('Missing file id after facility provisioning complete');
+      if (provCompleteResp.data?.data?.file?.storage_path !== undefined) {
+        throw new Error('storage_path should not be exposed in facility provisioning API response');
+      }
+      ok(`Facility provisioning file created: id=${provisioningFileId}`);
 
-      step('Initiate provisioning restore and simulate gateway chunk ACK flow');
-      let provManifest = null;
-      let provNonce = null;
-      let provRestoreId = null;
-      const provDeliveryPromise = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Provisioning restore delivery timeout')), 120000);
-        const onMsg = (raw) => {
-          try {
-            const msg = JSON.parse(raw);
-            if (msg.type === 'PROVISIONING_MANIFEST' && msg.jwt) {
-              const payload = decodeJwtClaims(msg.jwt);
-              if (payload.cmd_type !== 'PROVISIONING_MANIFEST') return;
-              provManifest = payload;
-              provNonce = payload.nonce;
-              provRestoreId = payload.restore_id;
-            }
-            if (msg.type === 'PROVISIONING_CHUNK' && msg.jwt && provNonce) {
-              const payload = decodeJwtClaims(msg.jwt);
-              if (payload.cmd_type !== 'PROVISIONING_CHUNK') return;
-              if (payload.nonce !== provNonce) return;
-              ws.send(JSON.stringify({
-                type: 'PROVISIONING_CHUNK_ACK',
-                nonce: provNonce,
-                chunkIndex: payload.chunk_index,
-                status: 'ok',
-              }));
-              if (typeof payload.chunk_index === 'number' && provManifest && payload.chunk_index + 1 >= provManifest.chunk_count) {
-                clearTimeout(timer);
-                ws.off('message', onMsg);
-                resolve({ manifest: provManifest, restoreId: provRestoreId });
-              }
-            }
-          } catch { /* ignore */ }
-        };
-        ws.on('message', onMsg);
-      });
-
-      const restoreResp = await axios.post(
-        `${API_BASE}/gateways/${created.gatewayId}/provisioning/${provisioningBackupId}/restore`,
-        {},
+      step('Admin list facility provisioning files');
+      const listResp = await axios.get(
+        `${API_BASE}/facilities/${created.facilityId}/provisioning-data`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      provisioningRestoreId = restoreResp.data?.data?.id;
-      if (!provisioningRestoreId) throw new Error('Missing restore id');
-      const provDelivery = await provDeliveryPromise;
-      ok(`Provisioning restore delivered ${provDelivery.manifest.chunk_count} chunk(s)`);
-
-      step('Poll restore status until verifying before gateway success report');
-      let provVerifyStatus = null;
-      for (let i = 0; i < 30; i++) {
-        await delay(500);
-        const statusResp = await axios.get(
-          `${API_BASE}/gateways/${created.gatewayId}/provisioning/restore-status`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        provVerifyStatus = statusResp.data?.data?.active;
-        if (provVerifyStatus?.status === 'verifying' || provVerifyStatus?.status === 'complete') break;
+      const listed = listResp.data?.data?.files || [];
+      if (!listed.some((f) => f.id === provisioningFileId)) {
+        throw new Error('Created facility provisioning file not found in list');
       }
-      if (!provVerifyStatus || (provVerifyStatus.status !== 'verifying' && provVerifyStatus.status !== 'complete')) {
-        throw new Error(`Expected provisioning restore verifying, got ${provVerifyStatus?.status}`);
-      }
+      ok(`Listed ${listed.length} facility provisioning file(s)`);
 
-      step('Gateway reports PROVISIONING_RESTORE_STATUS success');
-      ws.send(JSON.stringify({
-        type: 'PROVISIONING_RESTORE_STATUS',
-        restore_id: provDelivery.restoreId || provisioningRestoreId,
-        status: 'success',
-      }));
-      await delay(1000);
-
-      step('Poll restore status until complete');
-      let provFinal = null;
-      for (let i = 0; i < 20; i++) {
-        await delay(500);
-        const statusResp = await axios.get(
-          `${API_BASE}/gateways/${created.gatewayId}/provisioning/restore-status`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        provFinal = statusResp.data?.data?.active || statusResp.data?.data?.history?.[0];
-        if (provFinal?.status === 'complete') break;
+      step('Admin download facility provisioning file');
+      const downloadResp = await axios.get(
+        `${API_BASE}/facilities/${created.facilityId}/provisioning-data/${provisioningFileId}/download`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'arraybuffer',
+        },
+      );
+      if (downloadResp.status !== 200) {
+        throw new Error(`Expected download 200, got ${downloadResp.status}`);
       }
-      if (!provFinal || provFinal.status !== 'complete') {
-        throw new Error(`Expected provisioning restore complete, got ${provFinal?.status}`);
+      const downloaded = Buffer.from(downloadResp.data);
+      if (!downloaded.equals(provisioningPayload)) {
+        throw new Error('Downloaded provisioning file bytes do not match uploaded payload');
       }
-      ok('Provisioning restore complete');
+      ok('Facility provisioning file download verified');
 
-      step('Admin delete provisioning backup');
+      step('Admin delete facility provisioning file');
       await axios.delete(
-        `${API_BASE}/gateways/${created.gatewayId}/provisioning/${provisioningBackupId}`,
+        `${API_BASE}/facilities/${created.facilityId}/provisioning-data/${provisioningFileId}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      provisioningBackupId = null;
-      ok('Provisioning backup deleted');
+      provisioningFileId = null;
+      ok('Facility provisioning file deleted');
     }
 
     // =====================================================================
@@ -10145,7 +10052,7 @@ async function run() {
         throw new Error(`Expected active recovery after swap AUTH, got ${JSON.stringify(statusCheck.data?.data)}`);
       }
 
-      step('REST: recovery options returns firmware and backup choices');
+      step('REST: recovery options returns firmware choices');
       const optionsResp = await axios.get(`${API_BASE}/gateways/${swapGatewayId}/recovery/options`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -10153,10 +10060,10 @@ async function run() {
         throw new Error(`Expected recovery options 200, got ${optionsResp.status}`);
       }
       const options = optionsResp.data?.data;
-      if (!Array.isArray(options?.firmwareOptions) || !Array.isArray(options?.provisioningBackupOptions)) {
-        throw new Error(`Expected recovery options arrays, got ${JSON.stringify(options)}`);
+      if (!Array.isArray(options?.firmwareOptions)) {
+        throw new Error(`Expected recovery firmware options array, got ${JSON.stringify(options)}`);
       }
-      ok('Recovery options endpoint returns firmware and provisioning backup choices');
+      ok('Recovery options endpoint returns firmware choices');
 
       step('Lock command blocked on REST while recovery active');
       if (created.deviceId) {

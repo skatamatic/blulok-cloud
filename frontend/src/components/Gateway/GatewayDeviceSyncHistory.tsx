@@ -1,16 +1,22 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowPathIcon,
   ChevronRightIcon,
   ExclamationTriangleIcon,
   ServerIcon,
   ShieldCheckIcon,
+  SignalIcon,
 } from '@heroicons/react/24/outline';
-import { getDeviceIconMeta } from '@/utils/device-icon.utils';
+import { getDeviceIconMeta, type DeviceIconInput } from '@/utils/device-icon.utils';
 import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
+import { useToast } from '@/contexts/ToastContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import type { DeviceSyncLogEntry, GatewayDeviceSyncLogRecord } from '@/types/gateway.types';
 import { formatDateTimeParts } from '@/utils/datetime.utils';
+
+const PAGE_SIZE = 25;
+const WS_DISCONNECTED_POLL_MS = 8_000;
 
 const ACTION_META: Record<
   DeviceSyncLogEntry['action'],
@@ -31,6 +37,11 @@ const ACTION_META: Record<
     chip: 'bg-gray-100 text-gray-700 dark:bg-gray-700/60 dark:text-gray-300',
     dot: 'bg-gray-400',
   },
+  updated: {
+    label: 'Updated',
+    chip: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
+    dot: 'bg-sky-500',
+  },
   skipped_manual: {
     label: 'Skipped (manual)',
     chip: 'bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200',
@@ -43,16 +54,31 @@ const ACTION_META: Record<
   },
 };
 
+function deviceIconInput(entry: DeviceSyncLogEntry): DeviceIconInput {
+  if (entry.device_kind === 'blulok') {
+    return { device_category: 'blulok' };
+  }
+  if (entry.device_kind === 'access_control') {
+    return { device_category: 'access_control' };
+  }
+  return {
+    device_category: 'network_infra',
+    device_kind: entry.device_kind,
+  };
+}
+
 function SummaryChips({ summary }: { summary: GatewayDeviceSyncLogRecord['summary'] }) {
   const locks = summary.locks;
   const access = summary.access_control;
-  if (!locks && !access) {
+  const networkInfra = summary.network_infra;
+  if (!locks && !access && !networkInfra) {
     return <span className="text-xs text-gray-500 dark:text-gray-400">No device partitions</span>;
   }
 
   const rows = [
     locks ? { kind: 'BluLok', data: locks } : null,
     access ? { kind: 'Access', data: access } : null,
+    networkInfra ? { kind: 'Network', data: networkInfra } : null,
   ].filter(Boolean) as Array<{ kind: string; data: NonNullable<typeof locks> }>;
 
   return (
@@ -62,6 +88,7 @@ function SummaryChips({ summary }: { summary: GatewayDeviceSyncLogRecord['summar
           <span className="font-medium text-gray-700 dark:text-gray-300">{kind}</span>
           {data.added > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{data.added}</span>}
           {data.removed > 0 && <span className="text-rose-600 dark:text-rose-400">−{data.removed}</span>}
+          {(data.updated ?? 0) > 0 && <span className="text-sky-600 dark:text-sky-400">~{data.updated}</span>}
           {(data.skipped_manual ?? 0) > 0 && (
             <span className="text-amber-700 dark:text-amber-300">skip {data.skipped_manual}</span>
           )}
@@ -149,15 +176,8 @@ function SyncLogRow({ log }: { log: GatewayDeviceSyncLogRecord }) {
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700/80">
                     {log.entries.map((entry, idx) => {
-                      const meta = ACTION_META[entry.action];
-                      const iconDevice =
-                        entry.device_kind === 'blulok'
-                          ? ({ device_category: 'blulok' } as const)
-                          : ({
-                              device_category: 'access_control' as const,
-                              device_type: entry.device_kind === 'access_control' ? undefined : null,
-                            } as const);
-                      const iconMeta = getDeviceIconMeta(iconDevice);
+                      const meta = ACTION_META[entry.action] ?? ACTION_META.error;
+                      const iconMeta = getDeviceIconMeta(deviceIconInput(entry));
                       const KindIcon = iconMeta.Icon;
                       return (
                         <tr key={`${entry.identifier}-${entry.action}-${idx}`}>
@@ -195,73 +215,188 @@ function SyncLogRow({ log }: { log: GatewayDeviceSyncLogRecord }) {
 
 interface GatewayDeviceSyncHistoryProps {
   gatewayId: string;
+  facilityId: string;
+  liveEnabled?: boolean;
 }
 
-export function GatewayDeviceSyncHistory({ gatewayId }: GatewayDeviceSyncHistoryProps) {
+export function GatewayDeviceSyncHistory({
+  gatewayId,
+  facilityId,
+  liveEnabled = false,
+}: GatewayDeviceSyncHistoryProps) {
+  const { addToast } = useToast();
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const [logs, setLogs] = useState<GatewayDeviceSyncLogRecord[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [fatalError, setFatalError] = useState<string | null>(null);
+  const [refreshWarning, setRefreshWarning] = useState<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
+  const offsetRef = useRef(0);
+
+  const mergeIncomingLogs = useCallback((incoming: GatewayDeviceSyncLogRecord[]) => {
+    if (incoming.length === 0) return;
+    setLogs((prev) => {
+      const existing = new Set(prev.map((log) => log.id));
+      const fresh = incoming.filter((log) => !existing.has(log.id));
+      if (fresh.length === 0) return prev;
+      setTotal((current) => current + fresh.length);
+      return [...fresh, ...prev];
+    });
+  }, []);
 
   const load = useCallback(
-    async (opts?: { background?: boolean }) => {
+    async (opts?: { silent?: boolean; manual?: boolean; reset?: boolean; loadMore?: boolean }) => {
       if (!gatewayId) return;
+      const seq = ++loadSeqRef.current;
+      const isInitial = !opts?.silent && !opts?.manual && !opts?.loadMore && !hasLoadedOnceRef.current;
+      const nextOffset = opts?.reset ? 0 : opts?.loadMore ? offsetRef.current : 0;
+
       try {
-        if (opts?.background) setRefreshing(true);
-        else setLoading(true);
-        setError(null);
-        const res = await apiService.getGatewayDeviceSyncLogs(gatewayId, { limit: 25, offset: 0 });
-        setLogs(res.logs ?? []);
+        if (opts?.manual) setManualRefreshing(true);
+        else if (opts?.loadMore) setLoadingMore(true);
+        else if (isInitial) setInitialLoading(true);
+
+        if (opts?.manual) setRefreshWarning(null);
+        if (isInitial) setFatalError(null);
+
+        const res = await apiService.getGatewayDeviceSyncLogs(gatewayId, {
+          limit: PAGE_SIZE,
+          offset: nextOffset,
+        });
+        if (seq !== loadSeqRef.current) return;
+
+        const incoming = res.logs ?? [];
+        if (opts?.loadMore) {
+          setLogs((prev) => [...prev, ...incoming]);
+        } else {
+          setLogs(incoming);
+        }
+
+        offsetRef.current = opts?.loadMore ? nextOffset + incoming.length : incoming.length;
         setTotal(res.total ?? 0);
+        setHasMore(Boolean(res.hasMore));
+        hasLoadedOnceRef.current = true;
+        setHasLoadedOnce(true);
       } catch (err) {
+        if (seq !== loadSeqRef.current) return;
         console.error('Failed to load gateway device sync logs', err);
-        setError('Could not load device inventory sync history.');
+
+        if (opts?.manual && hasLoadedOnceRef.current) {
+          setRefreshWarning('Could not refresh — showing last loaded data.');
+          addToast({ type: 'error', title: 'Could not refresh sync history' });
+        } else if (!opts?.silent && !opts?.loadMore) {
+          setFatalError('Could not load device inventory sync history.');
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (seq !== loadSeqRef.current) return;
+        setInitialLoading(false);
+        setManualRefreshing(false);
+        setLoadingMore(false);
       }
     },
-    [gatewayId]
+    [gatewayId, addToast],
   );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    hasLoadedOnceRef.current = false;
+    setHasLoadedOnce(false);
+    setInitialLoading(true);
+    setFatalError(null);
+    setRefreshWarning(null);
+    offsetRef.current = 0;
+    void load({ reset: true });
+  }, [gatewayId, load]);
+
+  useEffect(() => {
+    if (!liveEnabled || !gatewayId) return;
+
+    const subscriptionId = subscribe(
+      'gateway_device_sync_logs',
+      (data: { logs?: GatewayDeviceSyncLogRecord[] }) => {
+        mergeIncomingLogs(data?.logs ?? []);
+      },
+      undefined,
+      { filters: { facility_id: facilityId, gateway_id: gatewayId } },
+    );
+
+    return () => {
+      if (subscriptionId) unsubscribe(subscriptionId);
+    };
+  }, [subscribe, unsubscribe, liveEnabled, gatewayId, facilityId, mergeIncomingLogs]);
+
+  useEffect(() => {
+    if (!liveEnabled || !gatewayId || isConnected) return;
+
+    const timer = window.setInterval(() => {
+      void load({ silent: true, reset: true });
+    }, WS_DISCONNECTED_POLL_MS);
+
+    return () => window.clearInterval(timer);
+  }, [liveEnabled, gatewayId, isConnected, load]);
+
+  const showInitialSpinner = initialLoading && !hasLoadedOnce;
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
         <div>
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white flex items-center gap-2">
-            <ShieldCheckIcon className="h-5 w-5 text-primary-500" />
-            Device inventory sync history
-          </h3>
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white flex items-center gap-2">
+              <ShieldCheckIcon className="h-5 w-5 text-primary-500" />
+              Device inventory sync history
+            </h3>
+            {liveEnabled && (
+              <span
+                className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1 ${
+                  isConnected
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                }`}
+              >
+                <SignalIcon className={`h-3.5 w-3.5 ${isConnected ? 'text-emerald-500' : ''}`} />
+                {isConnected ? 'Live' : 'Polling'}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm text-gray-600 dark:text-gray-400 max-w-2xl">
-            Each time the gateway pushes inventory, the cloud records adds, removals, unchanged devices, and manual
-            devices that were skipped because an admin added them by hand.
+            Audit trail when the gateway pushes inventory via{' '}
+            <code className="text-xs font-mono">/devices/inventory</code>. This is separate from the{' '}
+            <strong className="font-medium">Sync</strong> tab&apos;s manual device-status pull, which is not recorded here.
           </p>
         </div>
         <button
           type="button"
-          onClick={() => void load({ background: true })}
-          disabled={refreshing}
+          onClick={() => void load({ manual: true, reset: true })}
+          disabled={manualRefreshing || showInitialSpinner}
           className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
         >
-          <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          <ArrowPathIcon className={`h-4 w-4 ${manualRefreshing ? 'animate-spin' : ''}`} />
           Refresh
         </button>
       </div>
 
-      {loading ? (
+      {refreshWarning && logs.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 flex items-start gap-2">
+          <ExclamationTriangleIcon className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+          <p className="text-sm text-amber-800 dark:text-amber-200">{refreshWarning}</p>
+        </div>
+      )}
+
+      {showInitialSpinner ? (
         <div className="flex items-center justify-center py-12 text-gray-500 dark:text-gray-400">
           <ArrowPathIcon className="h-6 w-6 animate-spin mr-2" />
           Loading sync history…
         </div>
-      ) : error ? (
+      ) : fatalError ? (
         <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 flex items-start gap-2">
           <ExclamationTriangleIcon className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+          <p className="text-sm text-red-700 dark:text-red-300">{fatalError}</p>
         </div>
       ) : logs.length === 0 ? (
         <div className="text-center py-12 rounded-xl border border-dashed border-gray-300 dark:border-gray-600">
@@ -307,6 +442,27 @@ export function GatewayDeviceSyncHistory({ gatewayId }: GatewayDeviceSyncHistory
                 {logs.map((log) => (
                   <SyncLogRow key={log.id} log={log} />
                 ))}
+                {hasMore && (
+                  <tr className="bg-gray-50/80 dark:bg-gray-900/40">
+                    <td colSpan={5} className="px-4 py-4 text-center border-t border-gray-200 dark:border-gray-700">
+                      <button
+                        type="button"
+                        onClick={() => void load({ silent: true, loadMore: true })}
+                        disabled={loadingMore}
+                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                      >
+                        {loadingMore ? (
+                          <>
+                            <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                            Loading…
+                          </>
+                        ) : (
+                          'Load more'
+                        )}
+                      </button>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

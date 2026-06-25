@@ -1,18 +1,29 @@
 import { GatewayDeviceSyncLogModel } from '../models/gateway-device-sync-log.model';
-import type { DeviceSyncLogEntry, InventorySyncSummary } from '../types/gateway-device-sync.types';
+import type {
+  DeviceSyncLogEntry,
+  GatewayDeviceSyncLogRecord,
+  InventorySyncSummary,
+} from '../types/gateway-device-sync.types';
 import type { InventorySyncResult } from './device-sync.service';
 import { InventorySyncNotificationService } from './notifications/inventory-sync-notification.service';
+import { GatewayDeviceSyncLogSubscriptionManager } from './subscriptions/gateway-device-sync-log-subscription-manager';
+import type { SubscriptionRegistry } from './subscriptions/subscription-registry';
 import { logger } from '@/utils/logger';
 
 export class GatewayDeviceSyncLogService {
   private static instance: GatewayDeviceSyncLogService;
   private readonly model = new GatewayDeviceSyncLogModel();
+  private subscriptionRegistry: SubscriptionRegistry | null = null;
 
   static getInstance(): GatewayDeviceSyncLogService {
     if (!GatewayDeviceSyncLogService.instance) {
       GatewayDeviceSyncLogService.instance = new GatewayDeviceSyncLogService();
     }
     return GatewayDeviceSyncLogService.instance;
+  }
+
+  setSubscriptionRegistry(registry: SubscriptionRegistry): void {
+    this.subscriptionRegistry = registry;
   }
 
   async recordInventorySync(params: {
@@ -23,7 +34,7 @@ export class GatewayDeviceSyncLogService {
     lockResult: InventorySyncResult | null;
     accessResult: InventorySyncResult | null;
     networkInfraResult?: InventorySyncResult | null;
-  }): Promise<void> {
+  }): Promise<GatewayDeviceSyncLogRecord> {
     const lockResult = params.lockResult;
     const accessResult = params.accessResult;
     const networkInfraResult = params.networkInfraResult ?? null;
@@ -71,6 +82,7 @@ export class GatewayDeviceSyncLogService {
         added: result.added,
         removed: result.removed,
         unchanged: result.unchanged,
+        updated: result.updated,
         skipped_manual: result.skipped_manual,
         errors: result.errors,
       };
@@ -88,6 +100,8 @@ export class GatewayDeviceSyncLogService {
       },
       entries,
     });
+
+    this.broadcast([log]);
 
     void InventorySyncNotificationService.getInstance()
       .notifyInventorySyncErrors({
@@ -107,12 +121,22 @@ export class GatewayDeviceSyncLogService {
           error: message,
         });
       });
+
+    return log;
   }
 
   async listForGateway(
     gatewayId: string,
-    options: { limit?: number; offset?: number } = {}
+    options: { limit?: number; offset?: number } = {},
   ) {
     return this.model.findByGatewayId(gatewayId, options);
+  }
+
+  broadcast(entries: GatewayDeviceSyncLogRecord[]): void {
+    if (entries.length === 0) return;
+    const manager = this.subscriptionRegistry?.getManager(
+      'gateway_device_sync_logs',
+    ) as GatewayDeviceSyncLogSubscriptionManager | undefined;
+    manager?.broadcastUpdate(entries);
   }
 }

@@ -51,8 +51,6 @@ import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { sanitizePayloadPath } from '@/utils/gateway-telemetry-log.parser';
 import { parseQueryDateFrom, parseQueryDateTo } from '@/utils/datetime.utils';
-import { ProvisioningBackupService } from '@/services/provisioning/provisioning-backup.service';
-import { ProvisioningRestoreService } from '@/services/provisioning/provisioning-restore.service';
 import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
 import { InventorySnapshotService } from '@/services/gateway/inventory-snapshot.service';
 
@@ -163,104 +161,6 @@ async function assertRecoveryGatewayAccess(
   return { gateway, facilityId };
 }
 
-// GET /api/gateways/:gatewayId/provisioning — list provisioning backups
-router.get('/:gatewayId/provisioning', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const gatewayId = String(req.params.gatewayId);
-  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
-  if (!access) return;
-
-  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
-  const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const result = await ProvisioningBackupService.listBackups(gatewayId, limit, offset);
-  res.json({ success: true, data: result });
-}));
-
-// DELETE /api/gateways/:gatewayId/provisioning/:backupId — platform admins only
-router.delete('/:gatewayId/provisioning/:backupId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const gatewayId = String(req.params.gatewayId);
-  const backupId = String(req.params.backupId);
-  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
-  if (!access) return;
-
-  const backup = await ProvisioningBackupService.getBackup(backupId);
-  if (!backup || backup.gateway_id !== gatewayId) {
-    res.status(404).json({ success: false, message: 'Backup not found' });
-    return;
-  }
-
-  const deleted = await ProvisioningBackupService.deleteBackup(backupId);
-  res.json({ success: true, deleted });
-}));
-
-// POST /api/gateways/:gatewayId/provisioning/request-upload
-router.post('/:gatewayId/provisioning/request-upload', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const gatewayId = String(req.params.gatewayId);
-  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
-  if (!access) return;
-
-  try {
-    const result = await ProvisioningBackupService.requestUploadFromGateway(
-      gatewayId,
-      access.facilityId,
-      req.user!.userId,
-    );
-    res.json({ success: true, data: result });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err?.message || 'Failed to request upload' });
-  }
-}));
-
-// POST /api/gateways/:gatewayId/provisioning/:backupId/restore
-router.post('/:gatewayId/provisioning/:backupId/restore', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const gatewayId = String(req.params.gatewayId);
-  const backupId = String(req.params.backupId);
-  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
-  if (!access) return;
-
-  try {
-    const restore = await ProvisioningRestoreService.initiateRestore(
-      backupId,
-      gatewayId,
-      access.facilityId,
-      req.user!.userId,
-    );
-    res.json({ success: true, data: restore });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err?.message || 'Failed to initiate restore' });
-  }
-}));
-
-// GET /api/gateways/:gatewayId/provisioning/restore-status
-router.get('/:gatewayId/provisioning/restore-status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const gatewayId = String(req.params.gatewayId);
-  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
-  if (!access) return;
-
-  const status = await ProvisioningRestoreService.getRestoreStatus(gatewayId);
-  res.json({ success: true, data: status });
-}));
-
-// POST /api/gateways/:gatewayId/provisioning/restore/:restoreId/cancel
-router.post('/:gatewayId/provisioning/restore/:restoreId/cancel', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const gatewayId = String(req.params.gatewayId);
-  const restoreId = String(req.params.restoreId);
-  const access = await assertGatewayFacilityAccess(req, res, gatewayId);
-  if (!access) return;
-
-  const restore = await ProvisioningRestoreService.getRestoreById(restoreId);
-  if (!restore || restore.gateway_id !== gatewayId) {
-    res.status(404).json({ success: false, message: 'Restore not found' });
-    return;
-  }
-
-  try {
-    await ProvisioningRestoreService.cancelRestore(restoreId);
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err?.message || 'Failed to cancel restore' });
-  }
-}));
-
 // ── Gateway Swap / Recovery ──
 
 // GET /api/gateways/:gatewayId/recovery/status
@@ -295,7 +195,6 @@ router.get('/:gatewayId/recovery/inventory-preview', requireRoles([UserRole.ADMI
 
 const recoveryInitiateSchema = Joi.object({
   firmwareId: Joi.string().uuid().optional(),
-  provisioningBackupId: Joi.string().uuid().optional(),
 });
 
 // POST /api/gateways/:gatewayId/recovery/initiate
@@ -566,6 +465,7 @@ router.get('/:id/device-sync-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_A
     total,
     limit,
     offset,
+    hasMore: offset + logs.length < total,
   });
 }));
 
@@ -811,6 +711,18 @@ router.post('/:id/sync', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserR
       res.status(403).json({
         success: false,
         message: 'Access denied. You can only sync gateways in your assigned facilities.'
+      });
+      return;
+    }
+  }
+
+  if (gateway.facility_id) {
+    const blocking = await GatewayRecoveryService.isBlockingActiveForFacility(gateway.facility_id);
+    if (blocking) {
+      res.status(409).json({
+        success: false,
+        code: 'recovery_in_progress',
+        message: 'Gateway recovery in progress — manual sync blocked until recovery completes or is bypassed',
       });
       return;
     }

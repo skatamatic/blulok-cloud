@@ -15,8 +15,8 @@ import { DeviceStatusSubscriptionManager } from './device-status-subscription-ma
 import { NotificationSubscriptionManager } from './notification-subscription-manager';
 import { ActivitySubscriptionManager } from './activity-subscription-manager';
 import { GatewayTelemetryLogSubscriptionManager } from './gateway-telemetry-log-subscription-manager';
+import { GatewayDeviceSyncLogSubscriptionManager } from './gateway-device-sync-log-subscription-manager';
 import { FirmwarePushSubscriptionManager } from './firmware-push-subscription-manager';
-import { ProvisioningRestoreSubscriptionManager } from './provisioning-restore-subscription-manager';
 import { GatewayRecoverySubscriptionManager } from './gateway-recovery-subscription-manager';
 import { AccessCodesSubscriptionManager } from './access-codes-subscription-manager';
 import { KeySharingSubscriptionManager } from './key-sharing-subscription-manager';
@@ -70,9 +70,9 @@ export class SubscriptionRegistry {
     this.registerManager(new NotificationSubscriptionManager());
     this.registerManager(new ActivitySubscriptionManager());
     this.registerManager(new FirmwarePushSubscriptionManager());
-    this.registerManager(new ProvisioningRestoreSubscriptionManager());
     this.registerManager(new GatewayRecoverySubscriptionManager());
     this.registerManager(new GatewayTelemetryLogSubscriptionManager());
+    this.registerManager(new GatewayDeviceSyncLogSubscriptionManager());
     this.registerManager(new AccessCodesSubscriptionManager());
     this.registerManager(new KeySharingSubscriptionManager());
   }
@@ -177,10 +177,6 @@ export class SubscriptionRegistry {
 
   public getFirmwarePushProgressManager(): FirmwarePushSubscriptionManager | undefined {
     return this.getManager('firmware_push_progress') as FirmwarePushSubscriptionManager;
-  }
-
-  public getProvisioningRestoreProgressManager(): ProvisioningRestoreSubscriptionManager | undefined {
-    return this.getManager('provisioning_restore_progress') as ProvisioningRestoreSubscriptionManager;
   }
 
   public getGatewayRecoveryProgressManager(): GatewayRecoverySubscriptionManager | undefined {

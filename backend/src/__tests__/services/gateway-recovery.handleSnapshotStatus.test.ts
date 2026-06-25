@@ -12,10 +12,6 @@ const mockPushModel = {
   findById: jest.fn(),
 };
 
-const mockRestoreModel = {
-  findById: jest.fn(),
-};
-
 jest.mock('@/models/gateway-recovery.model', () => {
   const actual = jest.requireActual('@/models/gateway-recovery.model');
   return {
@@ -31,10 +27,6 @@ jest.mock('@/models/firmware-push.model', () => ({
   FirmwarePushModel: jest.fn().mockImplementation(() => mockPushModel),
 }));
 
-jest.mock('@/models/gateway-provisioning-restore.model', () => ({
-  GatewayProvisioningRestoreModel: jest.fn().mockImplementation(() => mockRestoreModel),
-}));
-
 jest.mock('@/models/gateway.model', () => ({
   GatewayModel: jest.fn().mockImplementation(() => ({
     findById: jest.fn(),
@@ -45,13 +37,6 @@ jest.mock('@/models/gateway.model', () => ({
 jest.mock('@/models/firmware.model', () => ({
   FirmwareModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue([]),
-  })),
-}));
-
-jest.mock('@/models/gateway-provisioning-backup.model', () => ({
-  GatewayProvisioningBackupModel: jest.fn().mockImplementation(() => ({
-    findByGatewayId: jest.fn().mockResolvedValue([]),
-    findByFacilityId: jest.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -85,13 +70,6 @@ jest.mock('@/services/firmware/firmware.service', () => ({
   FirmwareService: {
     initiatePush: jest.fn(),
     cancelPush: jest.fn(),
-  },
-}));
-
-jest.mock('@/services/provisioning/provisioning-restore.service', () => ({
-  ProvisioningRestoreService: {
-    initiateRestore: jest.fn(),
-    cancelRestore: jest.fn(),
   },
 }));
 

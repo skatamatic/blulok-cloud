@@ -9,21 +9,18 @@ import {
 } from '@/models/gateway-recovery.model';
 import { GatewayModel } from '@/models/gateway.model';
 import { FirmwareModel } from '@/models/firmware.model';
-import { GatewayProvisioningBackupModel } from '@/models/gateway-provisioning-backup.model';
 import { FirmwarePushModel } from '@/models/firmware-push.model';
-import { GatewayProvisioningRestoreModel } from '@/models/gateway-provisioning-restore.model';
 import { FirmwareService } from '@/services/firmware/firmware.service';
-import { ProvisioningRestoreService } from '@/services/provisioning/provisioning-restore.service';
 import { InventorySnapshotService } from '@/services/gateway/inventory-snapshot.service';
 import { GatewayChunkPushEngine } from '@/services/provisioning/gateway-chunk-push.engine';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { WebsocketGatewayTransport } from '@/services/gateway/websocket-gateway.transport';
 import { FIRMWARE_CHUNK_SIZE_BYTES } from '@/constants/firmware-chunk.constants';
+import { RECOVERY_PROGRESS_EVENT_PERCENT_STEP } from '@/constants/provisioning.constants';
 import { pickHighestSemver } from '@/utils/semver-compare.utils';
 import { logger } from '@/utils/logger';
 import { DatabaseService } from '@/services/database.service';
 
-const PROVISIONING_RESTORE_EVENT_PERCENT_STEP = 5;
 const VERIFY_TIMEOUT_MS = 5 * 60 * 1000;
 const GATEWAY_STATUS_FAILED = new Set(['failed', 'error', 'failure']);
 const cancelledRecoveries = new Set<string>();
@@ -33,7 +30,7 @@ const verifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const blockingFacilities = new Set<string>();
 const blockingCache = new Map<string, { blocking: boolean; expiresAt: number }>();
 const BLOCKING_CACHE_TTL_MS = 5_000;
-const RECOVERY_PUSH_STATUSES: GatewayRecoveryStatus[] = ['firmware', 'provisioning', 'inventory_push'];
+const RECOVERY_PUSH_STATUSES: GatewayRecoveryStatus[] = ['firmware', 'inventory_push'];
 const startupInventoryPushInFlight = new Set<string>();
 
 export interface GatewayRecoveryProgressPayload {
@@ -45,7 +42,6 @@ export interface GatewayRecoveryProgressPayload {
   percent: number;
   message?: string;
   firmwareId?: string | null;
-  provisioningBackupId?: string | null;
   inventorySnapshotId?: string | null;
   chunksTotal?: number;
   chunksSent?: number;
@@ -65,9 +61,7 @@ export class GatewayRecoveryService {
   private static eventModel = new GatewayRecoveryEventModel();
   private static gatewayModel = new GatewayModel();
   private static firmwareModel = new FirmwareModel();
-  private static backupModel = new GatewayProvisioningBackupModel();
   private static pushModel = new FirmwarePushModel();
-  private static restoreModel = new GatewayProvisioningRestoreModel();
 
   static async isBlockingActiveForFacility(facilityId: string): Promise<boolean> {
     try {
@@ -113,14 +107,12 @@ export class GatewayRecoveryService {
 
   static async getRecoveryLinkedPushIds(facilityId: string): Promise<{
     firmwarePushId?: string;
-    restoreId?: string;
     inventoryRecoveryId?: string;
   } | null> {
     const active = await this.recoveryModel.findActiveByFacility(facilityId);
     if (!active || !RECOVERY_PUSH_STATUSES.includes(active.status)) return null;
     return {
       firmwarePushId: active.firmware_push_id ?? undefined,
-      restoreId: active.provisioning_restore_id ?? undefined,
       inventoryRecoveryId: active.status === 'inventory_push' ? active.id : undefined,
     };
   }
@@ -130,18 +122,14 @@ export class GatewayRecoveryService {
     if (!active || active.gateway_id !== gatewayId) return;
 
     const onlyPushIds = new Set(
-      [active.firmware_push_id, active.provisioning_restore_id, active.id].filter(Boolean) as string[],
+      [active.firmware_push_id, active.id].filter(Boolean) as string[],
     );
     if (onlyPushIds.size > 0) {
       GatewayChunkPushEngine.pausePushOnDisconnect(facilityId, { onlyPushIds });
     }
 
     const { FirmwareService } = await import('@/services/firmware/firmware.service');
-    const { ProvisioningRestoreService } = await import('@/services/provisioning/provisioning-restore.service');
-    await Promise.all([
-      FirmwareService.handleFacilityDisconnect(facilityId, { disconnectedSessionRole: 'swap_candidate' }),
-      ProvisioningRestoreService.handleFacilityDisconnect(facilityId, { disconnectedSessionRole: 'swap_candidate' }),
-    ]);
+    await FirmwareService.handleFacilityDisconnect(facilityId, { disconnectedSessionRole: 'swap_candidate' });
 
     if (active.status === 'inventory_push') {
       logger.info(`Recovery inventory push paused on swap candidate disconnect facility=${facilityId}`);
@@ -211,42 +199,20 @@ export class GatewayRecoveryService {
     return highest?.id ?? images[0].id;
   }
 
-  static async resolveDefaultProvisioningBackupId(gatewayId: string, facilityId: string): Promise<string | null> {
-    const backups = await this.backupModel.findByGatewayId(gatewayId, 1, 0);
-    if (backups.length > 0) return backups[0].id;
-    const facilityBackups = await this.backupModel.findByFacilityId(facilityId, 1, 0);
-    return facilityBackups[0]?.id ?? null;
-  }
-
-  static async getRecoveryOptions(gatewayId: string, facilityId: string): Promise<{
+  static async getRecoveryOptions(gatewayId: string, _facilityId: string): Promise<{
     firmwareOptions: Array<{ id: string; version: string; label: string }>;
-    provisioningBackupOptions: Array<{ id: string; label: string; created_at?: string }>;
     defaultFirmwareId: string | null;
-    defaultProvisioningBackupId: string | null;
   }> {
-    const recovery = await this.recoveryModel.findActiveByFacility(facilityId);
-    const previousGatewayId = recovery?.previous_gateway_id || gatewayId;
     const firmwareImages = await this.firmwareModel.findAll(true, 'gateway');
     const firmwareOptions = firmwareImages.map((image) => ({
       id: image.id,
       version: image.version,
       label: `${image.version}${image.description ? ` — ${image.description}` : ''}`,
     }));
-    const backups = await this.backupModel.findByGatewayId(previousGatewayId, 50, 0);
-    const facilityBackups = backups.length > 0
-      ? backups
-      : await this.backupModel.findByFacilityId(facilityId, 50, 0);
-    const provisioningBackupOptions = facilityBackups.map((backup) => ({
-      id: backup.id,
-      label: backup.filename || backup.id,
-      created_at: backup.created_at instanceof Date ? backup.created_at.toISOString() : backup.created_at,
-    }));
 
     return {
       firmwareOptions,
-      provisioningBackupOptions,
       defaultFirmwareId: await this.resolveDefaultFirmwareId(),
-      defaultProvisioningBackupId: await this.resolveDefaultProvisioningBackupId(previousGatewayId, facilityId),
     };
   }
 
@@ -305,7 +271,7 @@ export class GatewayRecoveryService {
     gatewayId: string,
     facilityId: string,
     userId: string,
-    options?: { firmwareId?: string; provisioningBackupId?: string },
+    options?: { firmwareId?: string },
   ): Promise<GatewayRecovery> {
     let recovery = await this.recoveryModel.findActiveByFacility(facilityId);
     if (!recovery || recovery.gateway_id !== gatewayId) {
@@ -313,27 +279,16 @@ export class GatewayRecoveryService {
     }
 
     const firmwareId = options?.firmwareId ?? await this.resolveDefaultFirmwareId();
-    const provisioningBackupId = options?.provisioningBackupId
-      ?? await this.resolveDefaultProvisioningBackupId(recovery.previous_gateway_id || gatewayId, facilityId);
 
-    await this.validateRecoveryOptionIds(
-      firmwareId,
-      provisioningBackupId,
-      recovery.previous_gateway_id || gatewayId,
-      facilityId,
-    );
+    await this.validateRecoveryOptionIds(firmwareId);
 
     if (!firmwareId) {
       throw new Error('No gateway firmware available for recovery');
-    }
-    if (!provisioningBackupId) {
-      throw new Error('No provisioning backup available for recovery');
     }
 
     await this.recoveryModel.updateFields(recovery.id, {
       status: 'awaiting_config',
       firmware_id: firmwareId,
-      provisioning_backup_id: provisioningBackupId,
       initiated_by: userId,
     });
     recovery = (await this.recoveryModel.findById(recovery.id))!;
@@ -351,8 +306,6 @@ export class GatewayRecoveryService {
     if (recovery.status === 'awaiting_config') {
       await this.startFirmwarePhase(recovery.id);
     } else if (recovery.status === 'firmware') {
-      await this.startProvisioningPhase(recovery.id);
-    } else if (recovery.status === 'provisioning') {
       await this.startInventoryPushPhase(recovery.id);
     } else {
       throw new Error(`Cannot advance recovery in status '${recovery.status}'`);
@@ -375,11 +328,6 @@ export class GatewayRecoveryService {
     if (recovery.firmware_push_id) {
       try {
         await FirmwareService.cancelPush(recovery.firmware_push_id);
-      } catch { /* ignore */ }
-    }
-    if (recovery.provisioning_restore_id) {
-      try {
-        await ProvisioningRestoreService.cancelRestore(recovery.provisioning_restore_id);
       } catch { /* ignore */ }
     }
     await this.recoveryModel.updateStatus(recovery.id, 'bypassed');
@@ -410,8 +358,6 @@ export class GatewayRecoveryService {
     const retryPhase = await this.resolveRetryPhase(recovery);
     if (retryPhase === 'inventory_push') {
       await this.startInventoryPushPhase(recovery.id);
-    } else if (retryPhase === 'provisioning') {
-      await this.startProvisioningPhase(recovery.id);
     } else {
       await this.startFirmwarePhase(recovery.id);
     }
@@ -421,18 +367,11 @@ export class GatewayRecoveryService {
 
   private static async resolveRetryPhase(
     recovery: GatewayRecovery,
-  ): Promise<'firmware' | 'provisioning' | 'inventory_push'> {
+  ): Promise<'firmware' | 'inventory_push'> {
     if (recovery.firmware_push_id) {
       const push = await this.pushModel.findById(recovery.firmware_push_id);
       if (push?.status === 'complete') {
-        if (recovery.provisioning_restore_id) {
-          const restore = await this.restoreModel.findById(recovery.provisioning_restore_id);
-          if (restore?.status === 'complete') {
-            return 'inventory_push';
-          }
-          return 'provisioning';
-        }
-        return 'provisioning';
+        return 'inventory_push';
       }
     }
     return 'firmware';
@@ -451,11 +390,6 @@ export class GatewayRecoveryService {
     if (recovery.firmware_push_id) {
       try {
         await FirmwareService.cancelPush(recovery.firmware_push_id);
-      } catch { /* ignore */ }
-    }
-    if (recovery.provisioning_restore_id) {
-      try {
-        await ProvisioningRestoreService.cancelRestore(recovery.provisioning_restore_id);
       } catch { /* ignore */ }
     }
     const updated = await this.recoveryModel.atomicCancel(recoveryId);
@@ -499,41 +433,6 @@ export class GatewayRecoveryService {
     }
   }
 
-  private static async startProvisioningPhase(recoveryId: string): Promise<void> {
-    const recovery = await this.recoveryModel.findById(recoveryId);
-    if (!recovery || !recovery.provisioning_backup_id) return;
-    if (cancelledRecoveries.has(recoveryId)) return;
-
-    await this.recoveryModel.updateStatus(recoveryId, 'provisioning');
-    await this.eventModel.append(recoveryId, 'provisioning', 'Starting provisioning restore phase', 40);
-    this.broadcastProgress(recovery, 40, 'Provisioning restore starting');
-    this.armRecoveryPushTarget(recovery.facility_id, recovery.gateway_id);
-    await this.refreshBlockingState(recovery.facility_id);
-
-    try {
-      const restore = await ProvisioningRestoreService.initiateRestore(
-        recovery.provisioning_backup_id,
-        recovery.gateway_id,
-        recovery.facility_id,
-        recovery.initiated_by || recovery.gateway_id,
-        recovery.previous_gateway_id
-          ? { backupOwnerGatewayId: recovery.previous_gateway_id, requireRecoveryPushTarget: true }
-          : { requireRecoveryPushTarget: true },
-      );
-      await this.recoveryModel.updateFields(recoveryId, { provisioning_restore_id: restore.id });
-      this.startWatch(recoveryId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Provisioning restore failed to start';
-      logger.error(`Recovery provisioning phase failed recoveryId=${recoveryId}:`, err);
-      await this.recoveryModel.updateStatus(recoveryId, 'failed', message);
-      await this.eventModel.append(recoveryId, 'failed', message);
-      const latest = (await this.recoveryModel.findById(recoveryId))!;
-      this.broadcastProgress(latest, 0, message, 'failed');
-      this.clearRecoveryPushTarget(recovery.facility_id);
-      await this.refreshBlockingState(recovery.facility_id);
-    }
-  }
-
   private static async startInventoryPushPhase(recoveryId: string): Promise<void> {
     const recovery = await this.recoveryModel.findById(recoveryId);
     if (!recovery) return;
@@ -551,9 +450,9 @@ export class GatewayRecoveryService {
       inventory_chunks_sent: 0,
       inventory_chunks_total: null,
     });
-    await this.eventModel.append(recoveryId, 'inventory_push', 'Starting inventory snapshot push', 70);
+    await this.eventModel.append(recoveryId, 'inventory_push', 'Starting inventory snapshot push', 40);
     const latest = (await this.recoveryModel.findById(recoveryId))!;
-    this.broadcastProgress(latest, 70, 'Inventory snapshot push starting');
+    this.broadcastProgress(latest, 40, 'Inventory snapshot push starting');
     this.armRecoveryPushTarget(recovery.facility_id, recovery.gateway_id);
     await this.refreshBlockingState(recovery.facility_id);
     this.executeInventoryPush(recoveryId).catch((err) => {
@@ -607,12 +506,12 @@ export class GatewayRecoveryService {
       isCancelled: () => cancelledRecoveries.has(recoveryId),
       isOnline: () => this.isRecoveryTargetOnline(facilityId),
       onManifestSent: async () => {
-        await this.eventModel.append(recoveryId, 'inventory_push', 'Inventory manifest sent', lastEventPercent > 0 ? lastEventPercent : 70);
+        await this.eventModel.append(recoveryId, 'inventory_push', 'Inventory manifest sent', lastEventPercent > 0 ? lastEventPercent : 40);
       },
       onChunkProgress: async (chunksSent, chunksTotal, percent) => {
         await this.recoveryModel.updateInventoryProgress(recoveryId, chunksSent, chunksTotal);
-        const mappedPercent = 70 + Math.round(percent * 0.25);
-        if (lastEventPercent < 0 || mappedPercent - lastEventPercent >= PROVISIONING_RESTORE_EVENT_PERCENT_STEP || chunksSent === chunksTotal) {
+        const mappedPercent = 40 + Math.round(percent * 0.55);
+        if (lastEventPercent < 0 || mappedPercent - lastEventPercent >= RECOVERY_PROGRESS_EVENT_PERCENT_STEP || chunksSent === chunksTotal) {
           lastEventPercent = mappedPercent;
           const latest = (await this.recoveryModel.findById(recoveryId))!;
           this.broadcastProgress(latest, mappedPercent, `Inventory chunk ${chunksSent}/${chunksTotal}`);
@@ -760,26 +659,10 @@ export class GatewayRecoveryService {
       const push = await this.pushModel.findById(recovery.firmware_push_id);
       if (push?.status === 'complete') {
         this.clearWatch(recoveryId);
-        await this.startProvisioningPhase(recoveryId);
+        await this.startInventoryPushPhase(recoveryId);
       } else if (push?.status === 'failed') {
         this.clearWatch(recoveryId);
         const message = push.error_message || 'Firmware push failed';
-        await this.recoveryModel.updateStatus(recoveryId, 'failed', message);
-        await this.eventModel.append(recoveryId, 'failed', message);
-        this.clearRecoveryPushTarget(recovery.facility_id);
-        await this.refreshBlockingState(recovery.facility_id);
-        this.broadcastProgress(recovery, 0, message, 'failed');
-      }
-    }
-
-    if (recovery.status === 'provisioning' && recovery.provisioning_restore_id) {
-      const restore = await this.restoreModel.findById(recovery.provisioning_restore_id);
-      if (restore?.status === 'complete') {
-        this.clearWatch(recoveryId);
-        await this.startInventoryPushPhase(recoveryId);
-      } else if (restore?.status === 'failed') {
-        this.clearWatch(recoveryId);
-        const message = restore.error_message || 'Provisioning restore failed';
         await this.recoveryModel.updateStatus(recoveryId, 'failed', message);
         await this.eventModel.append(recoveryId, 'failed', message);
         this.clearRecoveryPushTarget(recovery.facility_id);
@@ -820,7 +703,7 @@ export class GatewayRecoveryService {
             resumeInFlightRecoveries.delete(`${facilityId}:push`);
           });
         }
-      } else if (['firmware', 'provisioning'].includes(active.status)) {
+      } else if (active.status === 'firmware') {
         this.startWatch(active.id);
       }
     } finally {
@@ -854,7 +737,7 @@ export class GatewayRecoveryService {
         this.executeInventoryPush(recovery.id).finally(() => {
           startupInventoryPushInFlight.delete(recovery.id);
         });
-      } else if (['firmware', 'provisioning', 'awaiting_config'].includes(recovery.status)) {
+      } else if (['firmware', 'awaiting_config'].includes(recovery.status)) {
         this.startWatch(recovery.id);
       }
     }
@@ -873,28 +756,11 @@ export class GatewayRecoveryService {
     }
   }
 
-  private static async validateRecoveryOptionIds(
-    firmwareId: string | null,
-    provisioningBackupId: string | null,
-    backupOwnerGatewayId: string,
-    facilityId: string,
-  ): Promise<void> {
+  private static async validateRecoveryOptionIds(firmwareId: string | null): Promise<void> {
     if (firmwareId) {
       const image = await this.firmwareModel.findById(firmwareId);
       if (!image || image.target_type !== 'gateway') {
         throw new Error('Invalid firmware selection for gateway recovery');
-      }
-    }
-    if (provisioningBackupId) {
-      const backup = await this.backupModel.findById(provisioningBackupId);
-      if (!backup) {
-        throw new Error('Provisioning backup not found');
-      }
-      if (backup.facility_id !== facilityId) {
-        throw new Error('Provisioning backup facility mismatch');
-      }
-      if (backup.gateway_id !== backupOwnerGatewayId) {
-        throw new Error('Provisioning backup does not belong to the previous gateway');
       }
     }
   }
@@ -969,7 +835,6 @@ export class GatewayRecoveryService {
       percent,
       message,
       firmwareId: recovery.firmware_id,
-      provisioningBackupId: recovery.provisioning_backup_id,
       inventorySnapshotId: recovery.inventory_snapshot_id,
       chunksTotal: recovery.inventory_chunks_total ?? undefined,
       chunksSent: recovery.inventory_chunks_sent,

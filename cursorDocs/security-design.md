@@ -28,16 +28,11 @@ This document summarizes the new centralized trust model implemented in the back
   - SECURE_TIME_SYNC: `{ cmd_type:'SECURE_TIME_SYNC', ts }`
   - FIRMWARE_MANIFEST: `{ cmd_type:'FIRMWARE_MANIFEST', push_id, target_type, version, sha256, size, chunk_count, chunk_size, nonce, compatible_models }`
   - FIRMWARE_CHUNK: `{ cmd_type:'FIRMWARE_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`
-  - PROVISIONING_UPLOAD_REQUEST: `{ cmd_type:'PROVISIONING_UPLOAD_REQUEST', request_id, expires_at }`
-  - PROVISIONING_MANIFEST: `{ cmd_type:'PROVISIONING_MANIFEST', restore_id, backup_id, filename, sha256, size_bytes, chunk_count, chunk_size, nonce }`
-  - PROVISIONING_CHUNK: `{ cmd_type:'PROVISIONING_CHUNK', nonce, chunk_index, chunk_sha256, data:'<base64>' }`
   - ACCESS_CODE_UPDATE: `{ cmd_type:'ACCESS_CODE_UPDATE', facility_id, nonce, codes:[{ device_id, access_id, relay_channel, valid_codes:[...] }] }` — `access_id` is gateway hardware serial (`device_serial`); `device_id` is cloud UUID
 - WebSocket command envelope: `{ type: 'COMMAND', jwt: 'eyJ...' }`
 - WebSocket firmware envelopes: `{ type: 'FIRMWARE_MANIFEST', jwt: 'eyJ...' }`, `{ type: 'FIRMWARE_CHUNK', jwt: 'eyJ...' }`
-- WebSocket provisioning envelopes: `{ type: 'PROVISIONING_UPLOAD_REQUEST', jwt }`, `{ type: 'PROVISIONING_MANIFEST', jwt }`, `{ type: 'PROVISIONING_CHUNK', jwt }`, `{ type: 'PROVISIONING_RESTORE_RESUME', restores:[...] }`
 - WebSocket access-code envelope: `{ type: 'ACCESS_CODE_UPDATE', jwt: 'eyJ...' }`
 - Gateway firmware responses: `{ type: 'FIRMWARE_CHUNK_ACK', nonce, chunkIndex, status:'ok'|'error' }`, `{ type: 'FIRMWARE_UPDATE_STATUS', push_id, status, target_type?, version?, error? }`, `{ type: 'FIRMWARE_PROGRESS', push_id, ... }` (optional)
-- Gateway provisioning responses: `{ type: 'PROVISIONING_CHUNK_ACK', nonce, chunkIndex, status }`, `{ type: 'PROVISIONING_RESTORE_STATUS', restore_id, status, error? }` → cloud `{ type: 'PROVISIONING_RESTORE_STATUS_ACK', ... }`
 
 #### Route Pass Audience Formats
 - Direct lock access: `lock:{lockId}`
@@ -65,14 +60,10 @@ This document summarizes the new centralized trust model implemented in the back
     - `POST /api/v1/firmware/:id/push/:gatewayId` - Initiate firmware push (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
     - `GET /api/v1/firmware/push-status/:gatewayId` - Current push state for page hydration
     - `POST /api/v1/firmware/push/:pushId/cancel` - Cancel in-progress push
-  - Gateway provisioning backups (see `cursorDocs/gateway-provisioning-backup.md`):
-    - `POST /api/v1/internal/gateway/provisioning/prepare|complete` - Gateway PROXY upload (zip to GCS, max 500MB)
-    - `GET /api/v1/gateways/:gatewayId/provisioning` - List backups (ADMIN/DEV_ADMIN/FACILITY_ADMIN)
-    - `DELETE /api/v1/gateways/:gatewayId/provisioning/:backupId` - Delete backup (ADMIN/DEV_ADMIN)
-    - `POST /api/v1/gateways/:gatewayId/provisioning/request-upload` - WS upload request JWT
-    - `POST /api/v1/gateways/:gatewayId/provisioning/:backupId/restore` - Chunk restore push
-    - `GET /api/v1/gateways/:gatewayId/provisioning/restore-status` - Active restore + history
-    - `POST /api/v1/gateways/:gatewayId/provisioning/restore/:restoreId/cancel` - Cancel restore
+  - Facility provisioning data (see `cursorDocs/facility-provisioning-data.md`):
+    - `GET|POST /api/v1/facilities/:facilityId/provisioning-data` — list, prepare, complete (max 500MB)
+    - `GET /api/v1/facilities/:facilityId/provisioning-data/:fileId/download` — stream-through download
+    - `DELETE /api/v1/facilities/:facilityId/provisioning-data/:fileId` — delete file (ADMIN/DEV_ADMIN)
   - Access Codes & Groups:
     - `GET /api/v1/access-codes/my` - User-specific device/code pairings (facility-scoped RBAC)
     - `GET/PUT /api/v1/access-codes/config/:facilityId` - Access-code policy management (ADMIN/DEV_ADMIN/FACILITY_ADMIN)

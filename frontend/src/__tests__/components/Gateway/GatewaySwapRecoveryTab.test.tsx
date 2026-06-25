@@ -55,9 +55,7 @@ describe('GatewaySwapRecoveryTab', () => {
     (apiService.getGatewayRecoveryOptions as jest.Mock).mockResolvedValue({
       data: {
         firmwareOptions: [{ id: 'fw-1', version: '1.0.0', label: '1.0.0' }],
-        provisioningBackupOptions: [{ id: 'pb-1', label: 'backup.tar' }],
         defaultFirmwareId: 'fw-1',
-        defaultProvisioningBackupId: 'pb-1',
       },
     });
     (apiService.getGatewayRecoveryEvents as jest.Mock).mockResolvedValue({
@@ -80,9 +78,9 @@ describe('GatewaySwapRecoveryTab', () => {
     );
     await waitFor(() => {
       expect(screen.getByText('Firmware')).toBeInTheDocument();
-      expect(screen.getByText('Provisioning')).toBeInTheDocument();
       expect(screen.getByText('Inventory Push')).toBeInTheDocument();
     });
+    expect(screen.queryByText('Provisioning')).not.toBeInTheDocument();
   });
 
   it('subscribes to gateway_recovery_progress websocket', async () => {
@@ -105,15 +103,15 @@ describe('GatewaySwapRecoveryTab', () => {
     expect(mockUnsubscribe).toHaveBeenCalledWith('sub-recovery-1');
   });
 
-  it('shows firmware and provisioning selectors before start', async () => {
+  it('shows firmware selector before start', async () => {
     render(
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
     );
     await waitFor(() => {
       expect(screen.getByText('Recovery configuration')).toBeInTheDocument();
       expect(screen.getByText('Firmware image')).toBeInTheDocument();
-      expect(screen.getByText('Provisioning backup')).toBeInTheDocument();
     });
+    expect(screen.queryByText('Provisioning backup')).not.toBeInTheDocument();
   });
 
   it('shows bypass option while recovery is detected', async () => {

@@ -9,14 +9,12 @@ export const RECOVERY_BLOCKING_STATUSES: GatewayRecoveryStatus[] = [
   'detected',
   'awaiting_config',
   'firmware',
-  'provisioning',
   'inventory_push',
 ];
 
 export const RECOVERY_STEPPER_STEPS: Array<{ key: string; label: string }> = [
   { key: 'configure', label: 'Configure' },
   { key: 'firmware', label: 'Firmware' },
-  { key: 'provisioning', label: 'Provisioning' },
   { key: 'inventory_push', label: 'Inventory Push' },
   { key: 'complete', label: 'Complete' },
 ];
@@ -29,9 +27,8 @@ export function resolveStepperStepIndex(status?: GatewayRecoveryStatus | null): 
   if (!status) return -1;
   if (status === 'detected' || status === 'awaiting_config') return 0;
   if (status === 'firmware') return 1;
-  if (status === 'provisioning') return 2;
-  if (status === 'inventory_push') return 3;
-  if (status === 'complete' || status === 'bypassed') return 4;
+  if (status === 'inventory_push') return 2;
+  if (status === 'complete' || status === 'bypassed') return 3;
   return -1;
 }
 
@@ -50,21 +47,17 @@ export function deriveRecoveryProgress(recovery: GatewayRecovery): GatewayRecove
       message = 'Recovery configured';
       break;
     case 'firmware':
-      percent = 15;
+      percent = 25;
       message = 'Firmware update in progress';
-      break;
-    case 'provisioning':
-      percent = 45;
-      message = 'Provisioning restore in progress';
       break;
     case 'inventory_push': {
       const sent = recovery.inventory_chunks_sent ?? 0;
       const total = recovery.inventory_chunks_total ?? 0;
       if (total > 0) {
-        percent = 70 + Math.round((sent / total) * 25);
+        percent = 50 + Math.round((sent / total) * 45);
         message = `Inventory snapshot push — chunk ${sent} of ${total}`;
       } else {
-        percent = 70;
+        percent = 50;
         message = 'Preparing inventory snapshot push';
       }
       break;
@@ -98,7 +91,6 @@ export function deriveRecoveryProgress(recovery: GatewayRecovery): GatewayRecove
     percent,
     message,
     firmwareId: recovery.firmware_id,
-    provisioningBackupId: recovery.provisioning_backup_id,
     inventorySnapshotId: recovery.inventory_snapshot_id,
     chunksTotal: recovery.inventory_chunks_total ?? undefined,
     chunksSent: recovery.inventory_chunks_sent,

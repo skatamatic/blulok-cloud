@@ -4,6 +4,8 @@ import {
   DeviceGroup,
   EffectiveAccessCode,
 } from '@/types/facility.types';
+import { formatBluLokDevicePageTitle } from '@/utils/blulokDeviceDisplay.utils';
+import { readDisplayName, readLockNumber } from '@/utils/deviceMetadataForm.utils';
 
 export const DEFAULT_GROUP_CONFIG: AccessCodeGroupConfig = {
   is_enabled: false,
@@ -19,6 +21,73 @@ export interface GroupMemberRef {
   device_id: string;
   device_type: 'access_control' | 'blulok';
   source_unit_id?: string | null;
+}
+
+export interface GroupableDeviceFields {
+  id?: string;
+  name?: string;
+  device_category?: 'access_control' | 'blulok';
+  device_settings?: Record<string, unknown> | null;
+  device_serial?: string;
+  unit_number?: string;
+}
+
+/** Same title logic as Device Details header for access-group member rows. */
+export function resolveAccessGroupMemberTitle(
+  member: GroupMemberRef,
+  device?: GroupableDeviceFields,
+): string {
+  if (member.device_type === 'blulok') {
+    return device ? formatBluLokDevicePageTitle(device) : 'Unknown lock';
+  }
+  const name = typeof device?.name === 'string' ? device.name.trim() : '';
+  return name || member.device_id;
+}
+
+export function resolveGroupableDeviceLabel(device: GroupableDeviceFields): string {
+  if (device.device_category === 'blulok') {
+    return formatBluLokDevicePageTitle(device);
+  }
+  const name = typeof device.name === 'string' ? device.name.trim() : '';
+  if (name) return name;
+  if (device.unit_number) return `Unit ${device.unit_number}`;
+  if (typeof device.device_serial === 'string' && device.device_serial.trim()) {
+    return device.device_serial.trim();
+  }
+  return device.id || 'Unknown device';
+}
+
+export function buildGroupableBlulokSearchKeywords(device: GroupableDeviceFields): string[] {
+  const title = formatBluLokDevicePageTitle(device);
+  const displayName = readDisplayName(device.device_settings);
+  const lockNumber = readLockNumber(device.device_settings);
+  return [
+    device.id,
+    device.name,
+    device.unit_number,
+    device.device_serial,
+    displayName,
+    lockNumber,
+    lockNumber ? `Lock #${lockNumber}` : '',
+    title,
+  ].filter(Boolean) as string[];
+}
+
+export function buildGroupableAccessControlSearchKeywords(
+  device: GroupableDeviceFields & {
+    relay_channel?: number;
+    location_description?: string;
+    device_type?: string;
+  },
+): string[] {
+  return [
+    device.id,
+    device.name,
+    device.device_serial,
+    device.relay_channel != null ? `relay ${device.relay_channel}` : '',
+    device.location_description,
+    device.device_type,
+  ].filter(Boolean) as string[];
 }
 
 export interface GroupCardSummary {

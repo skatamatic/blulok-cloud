@@ -31,13 +31,14 @@ Transport behavior:
 
 ## Recovery state machine
 
-Statuses: `detected` → `awaiting_config` → `firmware` → `provisioning` → `inventory_push` → `complete` (or `failed`, `cancelled`, `bypassed`).
+Statuses: `detected` → `awaiting_config` → `firmware` → `inventory_push` → `complete` (or `failed`, `cancelled`, `bypassed`).
 
 Phases delegate to existing services:
 
 1. **Firmware** — `FirmwareService.initiatePush` (default: highest semver `target_type=gateway`)
-2. **Provisioning** — `ProvisioningRestoreService.initiateRestore` (default: most recent backup)
-3. **Inventory push** — new `INVENTORY_SNAPSHOT_*` chunk protocol
+2. **Inventory push** — `INVENTORY_SNAPSHOT_*` chunk protocol via `GatewayChunkPushEngine`
+
+Facility provisioning files are managed separately via REST (see [Facility provisioning data](./facility-provisioning-data.md)); they are **not** pushed during swap recovery.
 
 Child operation completion is watched to auto-advance. On `complete`, device rows are rebound to the new gateway and the swap candidate WS is promoted to the active session.
 
@@ -55,13 +56,13 @@ While recovery is active (not `complete` or `bypassed`):
 - Access-code push (`ACCESS_CODE_UPDATE`)
 - Denylist add/remove (`DENYLIST_ADD`, `DENYLIST_REMOVE`)
 
-Operational JWT/object commands are dropped when a blocking recovery is active. Recovery push messages (`FIRMWARE_*`, `PROVISIONING_*`, `INVENTORY_SNAPSHOT_*`) are still delivered.
+Operational JWT/object commands are dropped when a blocking recovery is active. Recovery push messages (`FIRMWARE_*`, `INVENTORY_SNAPSHOT_*`) are still delivered.
 
-**Recovery push routing:** During `firmware`, `provisioning`, or `inventory_push`, recovery outbound messages route to the parked swap-candidate WebSocket only. If the swap candidate is offline, recovery push messages are **dropped** (not sent to the bound gateway). Operational traffic continues to the bound (active) gateway session until finalize promotes the candidate.
+**Recovery push routing:** During `firmware` or `inventory_push`, recovery outbound messages route to the parked swap-candidate WebSocket only. If the swap candidate is offline, recovery push messages are **dropped** (not sent to the bound gateway). Operational traffic continues to the bound (active) gateway session until finalize promotes the candidate.
 
-**Inbound recovery messages:** While a recovery push target is armed, firmware/provisioning/inventory ACK and status messages are accepted **only** from the swap-candidate session whose `gatewayId` matches the armed target. The bound gateway cannot spoof recovery status.
+**Inbound recovery messages:** While a recovery push target is armed, firmware/inventory ACK and status messages are accepted **only** from the swap-candidate session whose `gatewayId` matches the armed target. The bound gateway cannot spoof recovery status.
 
-**Online checks during recovery:** Chunk push `isOnline` and provisioning restore preflight use swap-candidate connectivity when a recovery push target is armed (not merely “any gateway connected”).
+**Online checks during recovery:** Chunk push `isOnline` uses swap-candidate connectivity when a recovery push target is armed (not merely “any gateway connected”).
 
 **Disconnect handling:** Active gateway disconnect does not pause recovery pushes when the swap candidate remains online. Swap-candidate disconnect pauses only recovery-linked pushes.
 
@@ -77,11 +78,11 @@ Operational JWT/object commands are dropped when a blocking recovery is active. 
 
 **Inventory verify timeout:** After all inventory chunks are sent, the cloud waits up to 5 minutes for `INVENTORY_SNAPSHOT_STATUS success`; otherwise recovery moves to `failed`. Success is only accepted when recovery status is `inventory_push`.
 
-**Allowed:** firmware/provisioning/inventory snapshot chunks, ACK/status messages, time-sync, access-code poll, non-destructive state updates.
+**Allowed:** firmware/inventory snapshot chunks, ACK/status messages, time-sync, access-code poll, non-destructive state updates.
 
 ## Inventory snapshot protocol (cloud → gateway)
 
-Mirrors provisioning restore chunk flow via `GatewayChunkPushEngine`:
+Uses `GatewayChunkPushEngine` (same chunk engine as firmware OTA):
 
 | Message | Direction |
 |---------|-----------|
@@ -106,7 +107,7 @@ Gateway firmware must rebuild its device DB from the snapshot and reply `INVENTO
 | POST | `/gateways/:gatewayId/recovery/initiate` | Start phased recovery |
 | POST | `/gateways/:gatewayId/recovery/advance` | Manual phase advance |
 | POST | `/gateways/:gatewayId/recovery/bypass` | Escape hatch (`confirm: true`) |
-| GET | `/gateways/:gatewayId/recovery/options` | Firmware + provisioning backup selectors |
+| GET | `/gateways/:gatewayId/recovery/options` | Firmware selector |
 | GET | `/gateways/:gatewayId/recovery/:recoveryId/events` | Recovery event timeline |
 | POST | `/gateways/:gatewayId/recovery/retry` | Retry failed recovery from last configured phase |
 | POST | `/gateways/:gatewayId/recovery/:recoveryId/cancel` | Cancel |
