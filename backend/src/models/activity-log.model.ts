@@ -312,7 +312,7 @@ export class ActivityLogModel {
       .leftJoin('blulok_devices', 'activity_logs.device_id', 'blulok_devices.id')
       .leftJoin('access_control_devices', 'activity_logs.device_id', 'access_control_devices.id')
       .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id')
-      .leftJoin('actor_users', 'activity_logs.actor_id', 'actor_users.id');
+      .leftJoin('users as actor_users', 'activity_logs.actor_id', 'actor_users.id');
 
     // Apply common filters with table prefix for joined query
     query = this.applyFilters(query, filters, 'activity_logs.');

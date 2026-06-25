@@ -253,6 +253,11 @@ describe('ActivityLogModel', () => {
       expect(selectArgs).not.toContain('blulok_devices.device_serial as blulok_device_name');
       expect(selectArgs).not.toContain('blulok_devices.name as blulok_device_name');
       expect(selectArgs).not.toContain('blulok_devices.location_description as device_location');
+      expect(mockQueryBuilder.leftJoin).toHaveBeenCalledWith(
+        'users as actor_users',
+        'activity_logs.actor_id',
+        'actor_users.id',
+      );
     });
   });
 
