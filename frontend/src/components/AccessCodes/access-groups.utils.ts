@@ -27,10 +27,7 @@ export interface GroupMemberRef {
 export type GroupUserAccessReason =
   | 'primary_tenant'
   | 'assigned_tenant'
-  | 'shared_key'
-  | 'facility_admin'
-  | 'admin'
-  | 'dev_admin';
+  | 'shared_key';
 
 export interface GroupUserAccess {
   user_id: string;

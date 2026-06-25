@@ -23,10 +23,13 @@ interface ActorContext {
 export type DeviceGroupUserAccessReason =
   | 'primary_tenant'
   | 'assigned_tenant'
-  | 'shared_key'
-  | 'facility_admin'
-  | 'admin'
-  | 'dev_admin';
+  | 'shared_key';
+
+const GROUP_ACCESS_EXCLUDED_USER_ROLES = [
+  UserRole.ADMIN,
+  UserRole.DEV_ADMIN,
+  UserRole.FACILITY_ADMIN,
+];
 
 export interface DeviceGroupUserAccess {
   user_id: string;
@@ -699,6 +702,7 @@ export class DeviceGroupService {
         )
         .whereIn('ua.unit_id', unitIds)
         .where('u.is_active', true)
+        .whereNotIn('u.role', GROUP_ACCESS_EXCLUDED_USER_ROLES)
         .where((qb) => {
           qb.whereNull('ua.access_expires_at').orWhere('ua.access_expires_at', '>', this.db.fn.now());
         });
@@ -722,6 +726,7 @@ export class DeviceGroupService {
         .whereIn('ks.unit_id', unitIds)
         .where('ks.is_active', true)
         .where('u.is_active', true)
+        .whereNotIn('u.role', GROUP_ACCESS_EXCLUDED_USER_ROLES)
         .where((qb) => {
           qb.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', this.db.fn.now());
         });
@@ -729,29 +734,6 @@ export class DeviceGroupService {
       for (const row of sharedRows) {
         upsertUser(row, 'shared_key', row.unit_number ? String(row.unit_number) : null);
       }
-    }
-
-    const facilityAdminRows = await this.db('user_facility_associations as ufa')
-      .join('users as u', 'u.id', 'ufa.user_id')
-      .select('u.id', 'u.first_name', 'u.last_name', 'u.email', 'u.role')
-      .where('ufa.facility_id', group.facility_id)
-      .where('u.role', UserRole.FACILITY_ADMIN)
-      .where('u.is_active', true);
-
-    for (const row of facilityAdminRows) {
-      upsertUser(row, 'facility_admin');
-    }
-
-    const globalAdminRows = await this.db('users')
-      .select('id', 'first_name', 'last_name', 'email', 'role')
-      .whereIn('role', [UserRole.ADMIN, UserRole.DEV_ADMIN])
-      .where('is_active', true);
-
-    for (const row of globalAdminRows) {
-      upsertUser(
-        row,
-        row.role === UserRole.DEV_ADMIN ? 'dev_admin' : 'admin',
-      );
     }
 
     const sortKey = (user: DeviceGroupUserAccess): string => {

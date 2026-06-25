@@ -16,18 +16,12 @@ const ACCESS_REASON_LABELS: Record<GroupUserAccess['access_reasons'][number], st
   primary_tenant: 'Primary tenant',
   assigned_tenant: 'Assigned tenant',
   shared_key: 'Shared key',
-  facility_admin: 'Facility admin',
-  admin: 'Admin',
-  dev_admin: 'Dev admin',
 };
 
 const ACCESS_REASON_CLASSES: Record<GroupUserAccess['access_reasons'][number], string> = {
   primary_tenant: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
   assigned_tenant: 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300',
   shared_key: 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300',
-  facility_admin: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300',
-  admin: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
-  dev_admin: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
 };
 
 function formatUserName(user: GroupUserAccess): string {
@@ -36,17 +30,10 @@ function formatUserName(user: GroupUserAccess): string {
 }
 
 function shouldShowRoleBadge(user: GroupUserAccess): boolean {
-  const { role, access_reasons: reasons } = user;
-  if (reasons.includes('facility_admin') && role === UserRole.FACILITY_ADMIN) return false;
-  if (reasons.includes('admin') && role === UserRole.ADMIN) return false;
-  if (reasons.includes('dev_admin') && role === UserRole.DEV_ADMIN) return false;
-  if (
-    role === UserRole.TENANT
-    && reasons.some((reason) => reason === 'primary_tenant' || reason === 'assigned_tenant' || reason === 'shared_key')
-  ) {
-    return false;
-  }
-  return true;
+  if (user.role !== UserRole.TENANT) return true;
+  return !user.access_reasons.some(
+    (reason) => reason === 'primary_tenant' || reason === 'assigned_tenant' || reason === 'shared_key',
+  );
 }
 
 export function AccessGroupUsersPanel({
@@ -82,8 +69,8 @@ export function AccessGroupUsersPanel({
         <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">No users found</p>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {hasUnitLocks
-            ? 'No tenants, shared-key holders, or admins match this group yet.'
-            : 'Add unit locks to see tenants and shared-key holders. Facility and system admins appear when configured.'}
+            ? 'No tenants or shared-key holders match this group yet.'
+            : 'Add unit locks to see tenants and shared-key holders for this group.'}
         </p>
       </div>
     );
@@ -92,7 +79,7 @@ export function AccessGroupUsersPanel({
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-500 dark:text-gray-400">
-        Users with access to units in this group — as primary or assigned tenants, via shared keys, or through admin roles.
+        Tenants and shared-key holders with access to units in this group.
       </p>
       <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
         {users.map((user, index) => (

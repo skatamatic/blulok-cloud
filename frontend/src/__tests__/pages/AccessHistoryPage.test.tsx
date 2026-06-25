@@ -206,7 +206,7 @@ describe('AccessHistoryPage', () => {
     expect(screen.getByText(/showing 1 out of 1 access items/i)).toBeInTheDocument();
   });
 
-  it('truncates long action failure text in the row and shows full detail when expanded', async () => {
+  it('shows a brief denial note in the row and full failure reason when expanded', async () => {
     const user = userEvent.setup();
     const longFailure =
       'Timed out waiting for gateway confirmation — Gateway did not confirm lock command before timeout';
@@ -242,21 +242,20 @@ describe('AccessHistoryPage', () => {
       total: 1,
     });
 
-    const { container } = renderPage(<AccessHistoryPage />);
+    renderPage(<AccessHistoryPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Unlock attempt denied')).toBeInTheDocument();
     });
 
-    const clampedCells = container.querySelectorAll('.line-clamp-2');
-    expect(clampedCells.length).toBeGreaterThanOrEqual(2);
-    expect(Array.from(clampedCells).some((el) => el.textContent?.includes('Timed out waiting for gateway confirmation'))).toBe(true);
+    expect(screen.queryByText('Denied')).not.toBeInTheDocument();
+    expect(screen.queryByText(longFailure)).not.toBeInTheDocument();
 
     await user.click(screen.getByText('Unlock attempt denied'));
 
     await waitFor(() => {
-      expect(screen.getByText('Failure reason')).toBeInTheDocument();
+      expect(screen.getByLabelText('Failure reason')).toBeInTheDocument();
     });
-    expect(screen.getAllByText(longFailure).length).toBeGreaterThan(0);
+    expect(screen.getByText(longFailure)).toBeInTheDocument();
   });
 });

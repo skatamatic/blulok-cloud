@@ -16,12 +16,12 @@ const sampleUsers: GroupUserAccess[] = [
   },
   {
     user_id: 'user-2',
-    first_name: 'Pat',
-    last_name: 'Manager',
-    email: 'fa@example.com',
-    role: UserRole.FACILITY_ADMIN,
-    access_reasons: ['facility_admin'],
-    unit_numbers: [],
+    first_name: 'Sam',
+    last_name: 'Shared',
+    email: 'sam@example.com',
+    role: UserRole.TENANT,
+    access_reasons: ['shared_key'],
+    unit_numbers: ['102'],
   },
 ];
 
@@ -43,14 +43,13 @@ describe('AccessGroupUsersPanel', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/Users with access to units in this group/)).toBeInTheDocument();
+    expect(screen.getByText(/Tenants and shared-key holders with access to units in this group/)).toBeInTheDocument();
     expect(screen.getByText('Jane Tenant')).toBeInTheDocument();
     expect(screen.getByText('Primary tenant')).toBeInTheDocument();
     expect(screen.getByText('Units: Unit 101')).toBeInTheDocument();
     expect(screen.getAllByText('View details')).toHaveLength(2);
-    expect(screen.getByText('Pat Manager')).toBeInTheDocument();
-    expect(screen.getByText('Facility admin')).toBeInTheDocument();
-    expect(screen.queryByText('Facility Admin')).not.toBeInTheDocument();
+    expect(screen.getByText('Sam Shared')).toBeInTheDocument();
+    expect(screen.getByText('Shared key')).toBeInTheDocument();
   });
 
   it('shows empty state when no users match', () => {
@@ -61,6 +60,6 @@ describe('AccessGroupUsersPanel', () => {
     );
 
     expect(screen.getByText('No users found')).toBeInTheDocument();
-    expect(screen.getByText(/No tenants, shared-key holders, or admins match this group yet/)).toBeInTheDocument();
+    expect(screen.getByText(/No tenants or shared-key holders match this group yet/)).toBeInTheDocument();
   });
 });

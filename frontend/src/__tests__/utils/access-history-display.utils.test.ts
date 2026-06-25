@@ -14,6 +14,7 @@ import {
   getAccessLogUserLink,
   getAccessUserDisplay,
   isNonUserAccessActor,
+  partitionAccessLogDetailItems,
 } from '@/utils/access-history-display.utils';
 
 const baseLog: AccessLog = {
@@ -269,5 +270,25 @@ describe('access-history-display.utils', () => {
     };
 
     expect(formatAccessHistoryDeviceLabel(log, getAccessLogMetadata(log))).toBe('Lock #106');
+  });
+
+  it('partitions failure and notes from contextual detail fields', () => {
+    const items = buildAccessLogDetailItems(
+      {
+        ...baseLog,
+        success: false,
+        metadata: {
+          failure_summary: 'Device offline',
+          description: 'Additional operator note',
+        },
+      },
+      true,
+      { omitRowSummaryFields: true },
+    );
+
+    const partitioned = partitionAccessLogDetailItems(items);
+    expect(partitioned.failure?.value).toBe('Device offline');
+    expect(partitioned.notes?.value).toBe('Additional operator note');
+    expect(partitioned.fields.some((item) => item.label === 'Failure reason')).toBe(false);
   });
 });

@@ -643,7 +643,7 @@ describe('DeviceGroupService', () => {
       model.findById.mockResolvedValue(group);
     });
 
-    it('merges primary tenants, shared keys, and admins with correct reasons', async () => {
+    it('merges primary tenants, assigned tenants, and shared keys with correct reasons', async () => {
       model.getMembers.mockResolvedValue([
         { device_id: 'lock-1', device_type: 'blulok', source_unit_id: 'unit-1' },
       ]);
@@ -653,6 +653,7 @@ describe('DeviceGroupService', () => {
         select: jest.fn().mockReturnThis(),
         whereIn: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
+        whereNotIn: jest.fn().mockReturnThis(),
         then: (resolve: (value: unknown[]) => void) => resolve([
           {
             id: 'tenant-1',
@@ -680,6 +681,7 @@ describe('DeviceGroupService', () => {
         select: jest.fn().mockReturnThis(),
         whereIn: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
+        whereNotIn: jest.fn().mockReturnThis(),
         then: (resolve: (value: unknown[]) => void) => resolve([
           {
             id: 'tenant-3',
@@ -692,78 +694,24 @@ describe('DeviceGroupService', () => {
         ]),
       };
 
-      const facilityAdminChain = {
-        join: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        then: (resolve: (value: unknown[]) => void) => resolve([
-          {
-            id: 'fa-1',
-            first_name: 'Facility',
-            last_name: 'Admin',
-            email: 'fa@example.com',
-            role: UserRole.FACILITY_ADMIN,
-          },
-        ]),
-      };
-
-      const globalAdminChain = {
-        select: jest.fn().mockReturnThis(),
-        whereIn: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        then: (resolve: (value: unknown[]) => void) => resolve([
-          {
-            id: 'admin-1',
-            first_name: 'Sys',
-            last_name: 'Admin',
-            email: 'admin@example.com',
-            role: UserRole.ADMIN,
-          },
-        ]),
-      };
-
       dbMock.mockImplementation((table: string) => {
         if (table === 'unit_assignments as ua') return assignmentChain;
         if (table === 'key_sharing as ks') return sharedChain;
-        if (table === 'user_facility_associations as ufa') return facilityAdminChain;
-        if (table === 'users') return globalAdminChain;
         return {};
       });
 
       const users = await service.getUsersWithAccess('grp-users', UserRole.FACILITY_ADMIN, ['fac-1']);
 
-      expect(users).toHaveLength(5);
+      expect(users).toHaveLength(3);
       expect(users.find((user) => user.user_id === 'tenant-1')?.access_reasons).toEqual(['primary_tenant']);
       expect(users.find((user) => user.user_id === 'tenant-2')?.access_reasons).toEqual(['assigned_tenant']);
       expect(users.find((user) => user.user_id === 'tenant-3')?.access_reasons).toEqual(['shared_key']);
-      expect(users.find((user) => user.user_id === 'fa-1')?.access_reasons).toEqual(['facility_admin']);
-      expect(users.find((user) => user.user_id === 'admin-1')?.access_reasons).toEqual(['admin']);
     });
 
-    it('returns only admins when the group has no unit locks', async () => {
+    it('returns empty when the group has no unit locks', async () => {
       model.getMembers.mockResolvedValue([
         { device_id: 'ac-1', device_type: 'access_control' },
       ]);
-
-      const facilityAdminChain = {
-        join: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        then: (resolve: (value: unknown[]) => void) => resolve([]),
-      };
-
-      const globalAdminChain = {
-        select: jest.fn().mockReturnThis(),
-        whereIn: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        then: (resolve: (value: unknown[]) => void) => resolve([]),
-      };
-
-      dbMock.mockImplementation((table: string) => {
-        if (table === 'user_facility_associations as ufa') return facilityAdminChain;
-        if (table === 'users') return globalAdminChain;
-        return {};
-      });
 
       const users = await service.getUsersWithAccess('grp-users', UserRole.FACILITY_ADMIN, ['fac-1']);
       expect(users).toEqual([]);

@@ -359,6 +359,19 @@ export type AccessLogDetailItem = {
   navigationTarget?: AccessLogNavigationTarget;
 };
 
+export function partitionAccessLogDetailItems(items: AccessLogDetailItem[]): {
+  failure: AccessLogDetailItem | null;
+  notes: AccessLogDetailItem | null;
+  fields: AccessLogDetailItem[];
+} {
+  const failure = items.find((item) => item.label === 'Failure reason') ?? null;
+  const notes = items.find((item) => item.label === 'Notes') ?? null;
+  const fields = items.filter(
+    (item) => item.label !== 'Failure reason' && item.label !== 'Notes',
+  );
+  return { failure, notes, fields };
+}
+
 export function buildAccessLogDetailItems(
   log: AccessLog,
   hideFacility: boolean,
@@ -431,7 +444,10 @@ export function buildAccessLogDetailItems(
 
   if (meta.device?.location || log.device_location) {
     const locationValue = meta.device?.location || log.device_location || '—';
-    if (!omitRow || location.secondary !== locationValue) {
+    const includeLocation = omitRow
+      ? Boolean(locationValue && locationValue !== '—')
+      : location.secondary !== locationValue;
+    if (includeLocation) {
       items.push({ label: 'Location', value: locationValue });
     }
   }

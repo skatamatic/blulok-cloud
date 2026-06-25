@@ -24,11 +24,10 @@ import {
   parseActivityWsEnvelope,
   prependUniqueAccessLog,
 } from '@/utils/access-history-live.utils';
+import { AccessLogExpandedDetails } from '@/components/AccessHistory/AccessLogExpandedDetails';
 import {
-  buildAccessLogDetailItems,
   formatAccessAction,
   formatAccessMethod,
-  getAccessFailureDetail,
   getAccessLocationDisplay,
   getAccessLogMetadata,
   getAccessLogUserLink,
@@ -854,11 +853,11 @@ export default function AccessHistoryPage() {
           <div className="overflow-x-auto lg:overflow-hidden">
             <table className="w-full min-w-[720px] table-fixed divide-y divide-gray-200 dark:divide-gray-700 lg:min-w-0">
               <colgroup>
-                <col className="w-[24%]" />
-                <col className="w-[15%]" />
-                <col className="w-[17%]" />
-                <col className="w-[13%]" />
-                <col className="w-[11%]" />
+                <col className="w-[18%]" />
+                <col className="w-[16%]" />
+                <col className="w-[20%]" />
+                <col className="w-[14%]" />
+                <col className="w-[12%]" />
                 <col className="w-[15%]" />
                 <col className="w-10" />
               </colgroup>
@@ -921,37 +920,37 @@ export default function AccessHistoryPage() {
                   const userDisplay = getAccessUserDisplay(log);
                   const userLink = getAccessLogUserLink(log);
                   const locationDisplay = getAccessLocationDisplay(log, { hideFacility: isFacilityScoped });
-                  const detailItems = buildAccessLogDetailItems(log, isFacilityScoped, {
-                    omitRowSummaryFields: true,
-                  });
-                  const failureDetail = getAccessFailureDetail(log);
                   const statusDisplay = getAccessStatusDisplay(log);
+                  const actionLabel = formatAccessAction(log.action);
+                  const actionToneClass = actionColors[log.action as keyof typeof actionColors]
+                    || (log.success ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400');
+                  const showsDenialInLabel = /\b(denied|failed)\b/i.test(actionLabel);
                   
                   return (
                     <Fragment key={log.id}>
                       <tr 
                         id={generateHighlightId('access-log', log.id)}
-                        className="group transition-colors duration-200 cursor-pointer hover:bg-blue-50/70 dark:hover:bg-blue-900/10"
+                        className={`group cursor-pointer transition-colors duration-200 hover:bg-blue-50/70 dark:hover:bg-blue-900/10 ${
+                          isExpanded ? 'bg-blue-50/60 dark:bg-blue-900/15' : ''
+                        }`}
                         onClick={() => toggleRowExpansion(log.id)}
+                        aria-expanded={isExpanded}
                       >
-                        <td className="px-4 py-3 align-top">
-                          <div className="flex items-start gap-2.5 min-w-0">
+                        <td className="px-4 py-3 align-middle">
+                          <div className="flex items-center gap-2.5 min-w-0">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
                               <ActionIcon className={`h-4 w-4 ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-400'}`} />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div
-                                className={`text-sm font-medium line-clamp-2 break-words ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-900 dark:text-white'}`}
-                                title={formatAccessAction(log.action)}
+                                className={`truncate text-sm font-medium ${actionToneClass}`}
+                                title={actionLabel}
                               >
-                                {formatAccessAction(log.action)}
+                                {actionLabel}
                               </div>
-                              {!log.success && failureDetail && (
-                                <div
-                                  className="mt-0.5 text-xs leading-snug text-red-600 dark:text-red-400 line-clamp-2 break-words"
-                                  title={failureDetail}
-                                >
-                                  {failureDetail}
+                              {!log.success && !showsDenialInLabel && (
+                                <div className="mt-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+                                  Denied
                                 </div>
                               )}
                             </div>
@@ -1108,54 +1107,13 @@ export default function AccessHistoryPage() {
                       </tr>
                       
                       {isExpanded && (
-                        <tr className="bg-gray-50/80 dark:bg-gray-900/40">
-                          <td colSpan={7} className="px-4 py-4">
-                            <div className="w-full min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
-                              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
-                                {detailItems.map((item) => (
-                                  <div key={item.label} className="min-w-0">
-                                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                      {item.label}
-                                    </dt>
-                                    <dd className="mt-1 text-sm text-gray-900 dark:text-white break-words [overflow-wrap:anywhere]">
-                                      {item.href ? (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleNavigation(
-                                              item.href!,
-                                              item.navigationId,
-                                              item.navigationTarget,
-                                            );
-                                          }}
-                                          className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
-                                        >
-                                          {item.value}
-                                          <LinkIcon className="h-3 w-3 ml-1" />
-                                        </button>
-                                      ) : (
-                                        item.value
-                                      )}
-                                    </dd>
-                                  </div>
-                                ))}
-                              </div>
-                              {metadata.device && (
-                                <div className="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-wrap justify-end gap-2 min-w-0">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleNavigation(metadata.device!.navigation_url, metadata.device!.id, 'device');
-                                    }}
-                                    className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center"
-                                  >
-                                    View device
-                                    <LinkIcon className="h-3 w-3 ml-1" />
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                        <tr className="bg-gray-50/50 dark:bg-gray-900/30">
+                          <td colSpan={7} className="px-4 py-3">
+                            <AccessLogExpandedDetails
+                              log={log}
+                              hideFacility={isFacilityScoped}
+                              onNavigate={handleNavigation}
+                            />
                           </td>
                         </tr>
                       )}
