@@ -110,12 +110,40 @@ describe('Units Routes', () => {
 
     it('should filter by facility_id', async () => {
       const response = await request(app)
-        .get('/api/v1/units?facility_id=facility-1')
+        .get(`/api/v1/units?facility_id=${testData.facilities.facility1.id}&limit=50&offset=0`)
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .expect(200);
 
       expectSuccess(response);
-      expect(response.body).toHaveProperty('units');
+      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
+    });
+
+    it('should filter by camelCase facilityId query param', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units?facilityId=${testData.facilities.facility1.id}&limit=50&offset=0`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
+    });
+
+    it('should return 403 when facility admin requests units for an unassigned facility', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units?facilityId=${testData.facilities.facility2.id}`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 403 when tenant requests units for a foreign facility', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units?facility_id=${testData.facilities.facility2.id}`)
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .expect(403);
+
+      expectForbidden(response);
     });
 
     it('should filter by status', async () => {

@@ -38,9 +38,11 @@ import { FacilityModel, Facility } from '../models/facility.model';
 // import { GatewayModel } from '../models/gateway.model';
 import { DeviceModel } from '../models/device.model';
 import { authenticateToken, requireRoles, applyFacilityScope } from '../middleware/auth.middleware';
+import { asyncHandler } from '../middleware/error.middleware';
 import { UserRole, AuthenticatedRequest } from '../types/auth.types';
 import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '../services/database.service';
+import { handleGetUnitsList } from './units-list.handler';
 import {
   MAX_LOCK_COMMAND_TIMEOUT_SEC,
   MIN_LOCK_COMMAND_TIMEOUT_SEC,
@@ -124,6 +126,18 @@ router.use('/:facilityId/provisioning-data', facilityProvisioningDirectUploadRou
 
 // Apply authentication middleware to all routes
 router.use(authenticateToken);
+
+// GET /api/v1/facilities/:facilityId/units - List units for a specific facility
+router.get('/:facilityId/units', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { facilityId } = req.params;
+  const facility = await facilityModel.findById(String(facilityId));
+  if (!facility) {
+    res.status(404).json({ success: false, message: 'Facility not found' });
+    return;
+  }
+
+  await handleGetUnitsList(req, res, String(facilityId));
+}));
 
 // GET /api/facilities - Get all facilities (with filtering for admins)
 router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {

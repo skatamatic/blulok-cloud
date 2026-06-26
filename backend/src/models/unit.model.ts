@@ -612,13 +612,14 @@ export class UnitModel {
         }
     }
     
-    if (filters.unit_type) {
+      if (filters.unit_type) {
         query = query.where('u.unit_type', filters.unit_type);
       }
 
-      if (filters.facility_id) {
-        query = query.where('u.facility_id', filters.facility_id);
-    }
+      const facilityFilter = filters.facility_id || filters.facilityId;
+      if (facilityFilter) {
+        query = query.where('u.facility_id', facilityFilter);
+      }
     
     if (filters.tenant_id) {
         query = query.where('ua.tenant_id', filters.tenant_id);

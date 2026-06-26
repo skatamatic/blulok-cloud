@@ -90,10 +90,19 @@ Authorization: Bearer …
 
 ### Step B — List units (see current lock, if any)
 
+Either form works:
+
+```http
+GET /api/v1/facilities/{facilityId}/units?limit=50&offset=0
+Authorization: Bearer …
+```
+
 ```http
 GET /api/v1/units?facility_id={facilityId}&limit=50&offset=0
 Authorization: Bearer …
 ```
+
+Both accept `facility_id` or `facilityId` as a query param on `/units`. Results are always scoped to the requested facility when that filter is present.
 
 Each unit may include `blulok_device` when a lock is linked. For a single unit:
 

@@ -44,6 +44,7 @@ import { authenticateToken, requireRoles } from '@/middleware/auth.middleware';
 import { WebSocketService } from '@/services/websocket.service';
 import { createUnitSchema, updateUnitSchema } from '@/schemas/unit.schemas';
 import { logger } from '@/utils/logger';
+import { handleGetUnitsList } from '@/routes/units-list.handler';
 
 const router = Router();
 
@@ -52,47 +53,15 @@ router.use(authenticateToken as any);
 
 // GET /units - Get units for the authenticated user (supports both widget and management page)
 router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const userId = req.user!.userId;
-  const userRole = req.user!.role;
-  const filters = req.query;
-
-  try {
-    const unitsService = UnitsService.getInstance();
-    const result = await unitsService.getUnits(userId, userRole, filters);
-
-    res.json({
-      success: true,
-      ...result
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch units'
-    });
-  }
+  await handleGetUnitsList(req, res);
 }));
 
 // GET /units/unlocked - Get unlocked units for the authenticated user
 router.get('/unlocked', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const userId = req.user!.userId;
-  const userRole = req.user!.role;
-
-  try {
-    const unitsService = UnitsService.getInstance();
-    const filters = { ...req.query, lock_status: 'unlocked' };
-    const result = await unitsService.getUnits(userId, userRole, filters);
-
-    res.json({
-      success: true,
-      units: result.units || [],
-      total: result.total || 0
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch unlocked units'
-    });
-  }
+  await handleGetUnitsList(req, res, {
+    extraFilters: { lock_status: 'unlocked' },
+    errorMessage: 'Failed to fetch unlocked units',
+  });
 }));
 
 // GET /units/my - Get my units (tenant only)

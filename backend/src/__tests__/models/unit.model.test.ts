@@ -153,6 +153,17 @@ describe('UnitModel', () => {
 
       expect(result).toHaveProperty('units');
       expect(result).toHaveProperty('total');
+      expect(result.units.every((unit) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
+    });
+
+    it('should apply camelCase facilityId filter correctly', async () => {
+      const result = await unitModel.getUnitsListForUser(
+        testData.users.admin.id,
+        'admin' as UserRole,
+        { facilityId: testData.facilities.facility2.id, limit: 10, offset: 0 }
+      );
+
+      expect(result.units.every((unit) => unit.facility_id === testData.facilities.facility2.id)).toBe(true);
     });
 
     it('should apply pagination correctly', async () => {

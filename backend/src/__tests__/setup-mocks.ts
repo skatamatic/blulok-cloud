@@ -1745,8 +1745,9 @@ jest.mock('../models/unit.model', () => {
         }
         
         // Apply filters
-        if (filters.facility_id) {
-          filteredUnits = filteredUnits.filter(u => u.facility_id === filters.facility_id);
+        if (filters.facility_id || filters.facilityId) {
+          const facilityFilter = filters.facility_id || filters.facilityId;
+          filteredUnits = filteredUnits.filter(u => u.facility_id === facilityFilter);
         }
         if (filters.status) {
           filteredUnits = filteredUnits.filter(u => u.status === filters.status);
