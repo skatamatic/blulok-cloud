@@ -146,6 +146,16 @@ describe('Units Routes', () => {
       expectForbidden(response);
     });
 
+    it('should scope unlocked units by camelCase facilityId', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units/unlocked?facilityId=${testData.facilities.facility1.id}&limit=50`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
+    });
+
     it('should filter by status', async () => {
       const response = await request(app)
         .get('/api/v1/units?status=occupied')

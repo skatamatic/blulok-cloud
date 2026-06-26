@@ -1005,34 +1005,92 @@ function assertUnitsBelongToFacility(units, facilityId, label) {
   }
 }
 
-async function verifyFacilityUnitsListing(token, facilityId) {
+function assertNestedUnitsRouteRegistered(response, label) {
+  if (response.status === 404) {
+    throw new Error(`${label} returned 404 — /api/v1/facilities/:facilityId/units is not mounted`);
+  }
+}
+
+async function verifyFacilityUnitsListing(token, facilityId, options = {}) {
+  const {
+    expectedUnitId = null,
+    foreignFacilityId = null,
+    facilityAdminToken = null,
+  } = options;
+
   step('Verifying facility-scoped units list APIs');
+
   const nestedRes = await axios.get(`${API_BASE}/facilities/${facilityId}/units`, {
     headers: authHeaders(token),
     params: { limit: 25, offset: 0 },
+    validateStatus: () => true,
   });
-  if (!nestedRes.data?.success) {
-    throw new Error(`Nested units list failed: ${JSON.stringify(nestedRes.data)}`);
+  assertNestedUnitsRouteRegistered(nestedRes, 'GET /facilities/:id/units');
+  if (nestedRes.status !== 200 || !nestedRes.data?.success) {
+    throw new Error(`Nested units list failed (${nestedRes.status}): ${JSON.stringify(nestedRes.data)}`);
   }
   assertUnitsBelongToFacility(nestedRes.data.units, facilityId, 'GET /facilities/:id/units');
+  if (expectedUnitId && !(nestedRes.data.units || []).some((unit) => unit.id === expectedUnitId)) {
+    throw new Error(`Nested units list missing expected unit ${expectedUnitId}`);
+  }
 
   const snakeRes = await axios.get(`${API_BASE}/units`, {
     headers: authHeaders(token),
     params: { facility_id: facilityId, limit: 25, offset: 0 },
+    validateStatus: () => true,
   });
-  if (!snakeRes.data?.success) {
-    throw new Error(`Snake_case units list failed: ${JSON.stringify(snakeRes.data)}`);
+  if (snakeRes.status !== 200 || !snakeRes.data?.success) {
+    throw new Error(`Snake_case units list failed (${snakeRes.status}): ${JSON.stringify(snakeRes.data)}`);
   }
   assertUnitsBelongToFacility(snakeRes.data.units, facilityId, 'GET /units?facility_id');
+  if (expectedUnitId && !(snakeRes.data.units || []).some((unit) => unit.id === expectedUnitId)) {
+    throw new Error(`Snake_case units list missing expected unit ${expectedUnitId}`);
+  }
 
   const camelRes = await axios.get(`${API_BASE}/units`, {
     headers: authHeaders(token),
     params: { facilityId, limit: 25, offset: 0 },
+    validateStatus: () => true,
   });
-  if (!camelRes.data?.success) {
-    throw new Error(`camelCase units list failed: ${JSON.stringify(camelRes.data)}`);
+  if (camelRes.status !== 200 || !camelRes.data?.success) {
+    throw new Error(`camelCase units list failed (${camelRes.status}): ${JSON.stringify(camelRes.data)}`);
   }
   assertUnitsBelongToFacility(camelRes.data.units, facilityId, 'GET /units?facilityId');
+  if (expectedUnitId && !(camelRes.data.units || []).some((unit) => unit.id === expectedUnitId)) {
+    throw new Error(`camelCase units list missing expected unit ${expectedUnitId}`);
+  }
+
+  if (foreignFacilityId) {
+    step('Verifying nested units path overrides conflicting query facility filter');
+    const overrideRes = await axios.get(`${API_BASE}/facilities/${facilityId}/units`, {
+      headers: authHeaders(token),
+      params: { facility_id: foreignFacilityId, facilityId: foreignFacilityId, limit: 25, offset: 0 },
+      validateStatus: () => true,
+    });
+    assertNestedUnitsRouteRegistered(overrideRes, 'GET /facilities/:id/units (path override)');
+    if (overrideRes.status !== 200 || !overrideRes.data?.success) {
+      throw new Error(`Path override units list failed (${overrideRes.status}): ${JSON.stringify(overrideRes.data)}`);
+    }
+    assertUnitsBelongToFacility(overrideRes.data.units, facilityId, 'path facility wins over query');
+  }
+
+  if (facilityAdminToken) {
+    step('Verifying facility admin can list units for assigned facility via nested route');
+    const faRes = await axios.get(`${API_BASE}/facilities/${facilityId}/units`, {
+      headers: authHeaders(facilityAdminToken),
+      params: { limit: 25, offset: 0 },
+      validateStatus: () => true,
+    });
+    assertNestedUnitsRouteRegistered(faRes, 'GET /facilities/:id/units (facility admin)');
+    if (faRes.status !== 200 || !faRes.data?.success) {
+      throw new Error(`Facility admin nested units list failed (${faRes.status}): ${JSON.stringify(faRes.data)}`);
+    }
+    assertUnitsBelongToFacility(faRes.data.units, facilityId, 'facility admin nested list');
+    if (expectedUnitId && !(faRes.data.units || []).some((unit) => unit.id === expectedUnitId)) {
+      throw new Error(`Facility admin nested list missing expected unit ${expectedUnitId}`);
+    }
+  }
+
   ok('Facility-scoped units list APIs return only in-facility units');
 }
 
@@ -1043,8 +1101,18 @@ async function verifyFacilityAdminUnitsAccessDenied(facAdminToken, foreignFacili
     params: { limit: 25, offset: 0 },
     validateStatus: () => true,
   });
+  assertNestedUnitsRouteRegistered(nestedRes, 'GET /facilities/:id/units (foreign facility admin)');
   if (nestedRes.status !== 403) {
-    throw new Error(`Expected 403 for nested foreign facility units, got ${nestedRes.status}`);
+    throw new Error(`Expected 403 for nested foreign facility units, got ${nestedRes.status}: ${JSON.stringify(nestedRes.data)}`);
+  }
+
+  const snakeRes = await axios.get(`${API_BASE}/units`, {
+    headers: authHeaders(facAdminToken),
+    params: { facility_id: foreignFacilityId, limit: 25, offset: 0 },
+    validateStatus: () => true,
+  });
+  if (snakeRes.status !== 403) {
+    throw new Error(`Expected 403 for snake_case foreign facility units, got ${snakeRes.status}: ${JSON.stringify(snakeRes.data)}`);
   }
 
   const queryRes = await axios.get(`${API_BASE}/units`, {
@@ -1053,7 +1121,7 @@ async function verifyFacilityAdminUnitsAccessDenied(facAdminToken, foreignFacili
     validateStatus: () => true,
   });
   if (queryRes.status !== 403) {
-    throw new Error(`Expected 403 for camelCase foreign facility units, got ${queryRes.status}`);
+    throw new Error(`Expected 403 for camelCase foreign facility units, got ${queryRes.status}: ${JSON.stringify(queryRes.data)}`);
   }
   ok('Facility admin rejected for foreign facility units list');
 }
@@ -2014,10 +2082,18 @@ async function run() {
   created.facilityAdminToken = facilityAdmin.token;
   ok('Facility admin ready');
 
-  step('Verifying facility-scoped units list APIs');
+  heading('Facility Units API');
+  step('Creating probe unit for facility-scoped units list coverage');
   const unitsApiProbeFacilityId = await createTestFacility(token, `E2E-Units-API-Probe-${Date.now()}`);
   created.extraFacilityIds.push(unitsApiProbeFacilityId);
-  await verifyFacilityUnitsListing(token, facilityId);
+  const unitsApiProbeUnit = await createUnit(token, facilityId, `E2E-UNITS-API-${Date.now()}`);
+  if (!unitsApiProbeUnit?.id) throw new Error('Failed to create probe unit for facility units API coverage');
+  created.units.push(unitsApiProbeUnit.id);
+  await verifyFacilityUnitsListing(token, facilityId, {
+    expectedUnitId: unitsApiProbeUnit.id,
+    foreignFacilityId: unitsApiProbeFacilityId,
+    facilityAdminToken: facilityAdmin.token,
+  });
   await verifyFacilityAdminUnitsAccessDenied(facilityAdmin.token, unitsApiProbeFacilityId);
 
   step('Provisioning platform admin for app-code role coverage');

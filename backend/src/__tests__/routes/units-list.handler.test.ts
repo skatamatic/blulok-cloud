@@ -61,4 +61,39 @@ describe('units-list.handler', () => {
     }));
     expect(res.json).toHaveBeenCalledWith({ success: true, units: [], total: 0 });
   });
+
+  it('forces path facility id over query params', async () => {
+    getUnits.mockResolvedValue({ units: [], total: 0 });
+    const req = {
+      user: { userId: 'admin-1', role: UserRole.ADMIN },
+      query: { facilityId: 'fac-from-query', limit: '25' },
+    } as AuthenticatedRequest;
+    const res = buildResponse();
+
+    await handleGetUnitsList(req, res, 'fac-from-path');
+
+    expect(getUnits).toHaveBeenCalledWith('admin-1', UserRole.ADMIN, expect.objectContaining({
+      facility_id: 'fac-from-path',
+      limit: '25',
+    }));
+  });
+
+  it('returns 403 when a facility-scoped user lacks facility access', async () => {
+    (AuthService.isFacilityScoped as jest.Mock).mockReturnValue(true);
+    (AuthService.canAccessFacility as jest.Mock).mockResolvedValue(false);
+    const req = {
+      user: { userId: 'fac-admin-1', role: UserRole.FACILITY_ADMIN },
+      query: { limit: '25' },
+    } as AuthenticatedRequest;
+    const res = buildResponse();
+
+    await handleGetUnitsList(req, res, 'foreign-facility');
+
+    expect(getUnits).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      message: 'Access denied to this facility',
+    });
+  });
 });

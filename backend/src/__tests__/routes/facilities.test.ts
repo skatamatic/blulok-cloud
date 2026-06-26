@@ -211,47 +211,6 @@ describe('Facilities Routes', () => {
     });
   });
 
-  describe('GET /api/v1/facilities/:facilityId/units - List Facility Units', () => {
-    it('should return units scoped to the facility path param', async () => {
-      const response = await request(app)
-        .get(`/api/v1/facilities/${testData.facilities.facility1.id}/units?limit=25&offset=0`)
-        .set('Authorization', `Bearer ${testData.users.admin.token}`)
-        .expect(200);
-
-      expectSuccess(response);
-      expect(response.body).toHaveProperty('units');
-      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
-    });
-
-    it('should return 404 for unknown facility', async () => {
-      const response = await request(app)
-        .get('/api/v1/facilities/non-existent-facility/units')
-        .set('Authorization', `Bearer ${testData.users.admin.token}`)
-        .expect(404);
-
-      expectNotFound(response);
-    });
-
-    it('should return 403 when facility admin requests units for an unassigned facility', async () => {
-      const response = await request(app)
-        .get(`/api/v1/facilities/${testData.facilities.facility2.id}/units`)
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .expect(403);
-
-      expectForbidden(response);
-    });
-
-    it('should scope to path facility when query facility_id differs', async () => {
-      const response = await request(app)
-        .get(`/api/v1/facilities/${testData.facilities.facility1.id}/units?facility_id=${testData.facilities.facility2.id}`)
-        .set('Authorization', `Bearer ${testData.users.admin.token}`)
-        .expect(200);
-
-      expectSuccess(response);
-      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
-    });
-  });
-
   describe('GET /api/v1/facilities/:id - Get Specific Facility', () => {
     it('should return facility details for DEV_ADMIN', async () => {
       const response = await request(app)
