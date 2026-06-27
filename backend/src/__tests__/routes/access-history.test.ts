@@ -201,6 +201,16 @@ describe('Access History Routes', () => {
       expectSuccess(response);
       expect(response.body).toHaveProperty('logs');
     });
+
+    it('should accept Joi-coerced boolean and date filters', async () => {
+      const response = await request(app)
+        .get('/api/v1/access-history?success=true&start_date=2024-06-01&end_date=2024-06-30')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('logs');
+    });
   });
 
   describe('Security - Role-Based Access Control - Main Access History Endpoint', () => {

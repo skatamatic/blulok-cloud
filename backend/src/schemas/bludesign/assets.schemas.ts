@@ -1,5 +1,5 @@
 import Joi from 'joi';
-import { routeIdField } from '@/openapi/common-schemas';
+import { routeIdField, coercibleLimitQuery, coercibleOffsetQuery } from '@/openapi/common-schemas';
 import { AssetCategory, GeometryType } from '@/bludesign/types/bludesign.types';
 import {
   assetDefinitionSchema,
@@ -112,4 +112,12 @@ export const projectMaterialPresetParamSchema = Joi.object({
   projectId: routeIdField(),
   assetId: routeIdField(),
   presetId: routeIdField(),
+});
+
+export const bluDesignProjectAssetListQuerySchema = Joi.object({
+  category: Joi.string().valid(...Object.values(AssetCategory)).optional(),
+  isSmart: Joi.boolean().optional(),
+  search: Joi.string().max(255).optional(),
+  limit: coercibleLimitQuery(),
+  offset: coercibleOffsetQuery(),
 });

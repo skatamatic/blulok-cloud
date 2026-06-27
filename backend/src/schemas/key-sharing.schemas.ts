@@ -17,7 +17,7 @@ export const keySharingListQuerySchema = Joi.object({
   offset: Joi.number().integer().min(0).default(0),
   sort_by: Joi.string().default('shared_at'),
   sort_order: Joi.string().valid('asc', 'desc').default('desc'),
-  group_by_unit: Joi.string().optional(),
+  group_by_unit: Joi.boolean().optional(),
 });
 
 export const keySharingUserQuerySchema = Joi.object({

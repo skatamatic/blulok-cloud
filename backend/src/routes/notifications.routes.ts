@@ -45,24 +45,12 @@ import {
   deleteNotificationResponseSchema,
 } from '@/schemas/notifications.schemas';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
+import { parseQueryBoolean } from '@/utils/query-boolean.util';
 
 const router = Router();
 const MOUNT = '/api/v1/notifications';
 
 router.use(authenticateToken);
-
-const parseBooleanQuery = (value: unknown): boolean | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === true || value === 'true') {
-    return true;
-  }
-  if (value === false || value === 'false') {
-    return false;
-  }
-  return undefined;
-};
 
 registerGet(
   router,
@@ -91,10 +79,10 @@ registerGet(
       {
         type: type as any,
         priority: priority as any,
-        isRead: parseBooleanQuery(isRead),
+        isRead: parseQueryBoolean(isRead),
         facilityId: facilityId as string | undefined,
         facilityIds: !facilityId && !AuthService.canAccessAllFacilities(user.role) ? user.facilityIds : undefined,
-        includeExpired: parseBooleanQuery(includeExpired),
+        includeExpired: parseQueryBoolean(includeExpired),
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
       },

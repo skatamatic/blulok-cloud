@@ -2048,6 +2048,7 @@ async function run() {
   };
   const facilityAdmin = { id: null, token: null, email: null };
   let share1Token = null;
+  let share1ShareId = null;
   let share2Token = null;
   let primaryToken = null;
   let accessCodeOriginalConfig = null;
@@ -5734,6 +5735,7 @@ async function run() {
     // Share with user2
     step('Sharing with user2');
     const share1 = await shareKey(token, unitId, share1Id, 'full');
+    share1ShareId = share1;
     created.shares.push(share1);
     ok(`Shared with user2 (shareId=${share1})`);
 
@@ -6820,15 +6822,14 @@ async function run() {
           { headers: { Authorization: `Bearer ${notifActorToken}` } }
         );
         const unreadBefore = unreadCountResp.data?.unreadCount ?? 0;
-        if (unreadBefore === 0) {
-          info('Unread count is 0 for selected actor; skipping single-read delta assertions');
-        } else {
-          ok(`Unread count before any reads: ${unreadBefore}`);
+        const unreadNotifs = notifications.filter(n => !n.isRead);
+        if (unreadNotifs.length === 0) {
+          throw new Error(`Expected at least one unread notification for ${notifActorLabel} mark-single test`);
         }
+        ok(`Unread count before any reads: ${unreadBefore}`);
 
         // --- Mark a single notification as read and verify unread count delta ---
-        const unreadNotifs = notifications.filter(n => !n.isRead);
-        if (unreadNotifs.length > 0) {
+        {
           step('Testing mark single notification as read (with delta verification)');
           const targetNotif = unreadNotifs[0];
           const markOneResp = await axios.post(
@@ -6954,11 +6955,52 @@ async function run() {
 
         // ------------------------------------------------------------------
         // Mark-all / mark-multiple / single-read with REAL unread items
-        // Use share1 who has access_granted notifications, plus generate
-        // additional ones via revoke+re-share to ensure multiple unreads.
+        // Use share1 who should have access_granted notifications. share1 is
+        // revoked earlier for active-only filter tests; regenerate via
+        // revoke+reactivate on share1ShareId (not another user's share).
         // ------------------------------------------------------------------
-        if (!share1Token || created.shares.length === 0) throw new Error('share1Token or shares unavailable for notification mark tests');
+        if (!share1Token || !share1ShareId) {
+          throw new Error('share1Token or share1ShareId unavailable for notification mark tests');
+        }
         {
+          const notifShareId = share1ShareId;
+
+          const getShare1UnreadCount = async () => {
+            const resp = await axios.get(
+              `${API_BASE}/notifications/unread-count`,
+              { headers: { Authorization: `Bearer ${share1Token}` } },
+            );
+            return resp.data?.unreadCount ?? 0;
+          };
+
+          const regenerateShare1AccessNotification = async () => {
+            await revokeShare(token, notifShareId);
+            created.shares = created.shares.filter((id) => id !== notifShareId);
+            await delay(500);
+            await reactivateShare(token, notifShareId);
+            if (!created.shares.includes(notifShareId)) {
+              created.shares.push(notifShareId);
+            }
+            await delay(1000);
+          };
+
+          const ensureShare1UnreadNotifications = async (minimum, label) => {
+            let unread = await getShare1UnreadCount();
+            let attempts = 0;
+            while (unread < minimum && attempts < 3) {
+              step(`${label}: need ${minimum} unread for share1, have ${unread}; regenerating via revoke+reactivate`);
+              await regenerateShare1AccessNotification();
+              unread = await getShare1UnreadCount();
+              attempts += 1;
+            }
+            if (unread < minimum) {
+              throw new Error(
+                `Expected at least ${minimum} unread notification(s) for share1 after ${attempts} regeneration attempt(s), got ${unread}`,
+              );
+            }
+            return unread;
+          };
+
           step('Testing shared user notifications (access_granted)');
           const shareNotifResp = await axios.get(
             `${API_BASE}/notifications`,
@@ -6975,88 +7017,48 @@ async function run() {
           }
 
           // Test mark-all FIRST while share1 still has unread notifications
-          const share1Idx = created.shares.length > 1 ? 1 : 0;
-          let notifShareId = created.shares[share1Idx];
-
-          // Verify share1 has unread notifications for mark-all
           step('Testing mark all notifications as read');
-          const getShareUnreadCount = async () => {
-            const resp = await axios.get(
-              `${API_BASE}/notifications/unread-count`,
-              { headers: { Authorization: `Bearer ${share1Token}` } }
-            );
-            return resp.data?.unreadCount ?? 0;
-          };
+          const preMarkAllUnread = await ensureShare1UnreadNotifications(1, 'mark-all');
+          ok(`${preMarkAllUnread} unread notification(s) before mark-all`);
 
-          let preMarkAllUnread = await getShareUnreadCount();
-          if (preMarkAllUnread === 0) {
-            step('No unread notifications found; generating fresh unread for mark-all');
-            await revokeShare(token, notifShareId);
-            created.shares = created.shares.filter(id => id !== notifShareId);
-            await delay(500);
-            await axios.put(
-              `${API_BASE}/key-sharing/${notifShareId}`,
-              { is_active: true },
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            created.shares.push(notifShareId);
-            await delay(1000);
-            preMarkAllUnread = await getShareUnreadCount();
+          const markAllResp = await axios.post(
+            `${API_BASE}/notifications/read-all`,
+            {},
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          const markedAllCount = markAllResp.data?.markedCount ?? 0;
+          if (markedAllCount === 0) {
+            throw new Error(`mark-all returned markedCount=0 but expected at least ${preMarkAllUnread}`);
           }
-          if (preMarkAllUnread === 0) {
-            info('Still no unread notifications for share1; skipping mark-all validation in this run');
-          } else {
-            ok(`${preMarkAllUnread} unread notification(s) before mark-all`);
+          ok(`Marked ${markedAllCount} notifications as read via mark-all`);
 
-            const markAllResp = await axios.post(
-              `${API_BASE}/notifications/read-all`,
-              {},
-              { headers: { Authorization: `Bearer ${share1Token}` } }
-            );
-            const markedAllCount = markAllResp.data?.markedCount ?? 0;
-            if (markedAllCount === 0) {
-              throw new Error(`mark-all returned markedCount=0 but expected at least ${preMarkAllUnread}`);
-            }
-            ok(`Marked ${markedAllCount} notifications as read via mark-all`);
-
-            // Verify unread count is now 0
-            const unreadAfterAllResp = await axios.get(
-              `${API_BASE}/notifications/unread-count`,
-              { headers: { Authorization: `Bearer ${share1Token}` } }
-            );
-            if (unreadAfterAllResp.data?.unreadCount !== 0) {
-              throw new Error(`Expected 0 unread after mark-all, got ${unreadAfterAllResp.data?.unreadCount}`);
-            }
-            ok('Unread count is now 0 after marking all as read');
-
-            // Verify no unread via filter
-            const allReadResp = await axios.get(
-              `${API_BASE}/notifications`,
-              {
-                headers: { Authorization: `Bearer ${share1Token}` },
-                params: { isRead: 'false' }
-              }
-            );
-            const remainingUnread = allReadResp.data?.notifications || [];
-            if (remainingUnread.length !== 0) {
-              throw new Error(`Expected 0 unread notifications after mark-all, found ${remainingUnread.length}`);
-            }
-            ok('Confirmed: zero unread notifications after mark-all');
+          // Verify unread count is now 0
+          const unreadAfterAllResp = await axios.get(
+            `${API_BASE}/notifications/unread-count`,
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          if (unreadAfterAllResp.data?.unreadCount !== 0) {
+            throw new Error(`Expected 0 unread after mark-all, got ${unreadAfterAllResp.data?.unreadCount}`);
           }
+          ok('Unread count is now 0 after marking all as read');
+
+          // Verify no unread via filter
+          const allReadResp = await axios.get(
+            `${API_BASE}/notifications`,
+            {
+              headers: { Authorization: `Bearer ${share1Token}` },
+              params: { isRead: 'false' }
+            }
+          );
+          const remainingUnread = allReadResp.data?.notifications || [];
+          if (remainingUnread.length !== 0) {
+            throw new Error(`Expected 0 unread notifications after mark-all, found ${remainingUnread.length}`);
+          }
+          ok('Confirmed: zero unread notifications after mark-all');
 
           // Now generate a fresh notification for single-read + delta tests
-          // Revoke and reactivate share to trigger new access_granted notification
           step('Generating fresh notification for single-read tests');
-          await revokeShare(token, notifShareId);
-          created.shares = created.shares.filter(id => id !== notifShareId);
-          await delay(500);
-          await axios.put(
-            `${API_BASE}/key-sharing/${notifShareId}`,
-            { is_active: true },
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          created.shares.push(notifShareId);
-          await delay(1000);
+          await regenerateShare1AccessNotification();
 
           // Fetch fresh notifications
           const freshResp = await axios.get(
@@ -7067,83 +7069,86 @@ async function run() {
             }
           );
           const freshUnread = freshResp.data?.notifications || [];
+          if (freshUnread.length === 0) {
+            throw new Error('Expected at least 1 fresh unread notification for share1 single-read test after regeneration');
+          }
 
           // Test mark single notification as read (with delta verification)
-          if (freshUnread.length > 0) {
-            ok(`${freshUnread.length} fresh unread notification(s) available for single-read test`);
-            step('Testing mark single notification as read (with delta verification)');
-            const targetNotif = freshUnread[0];
-            const unreadCountBefore = freshUnread.length;
-            const markOneResp = await axios.post(
-              `${API_BASE}/notifications/${targetNotif.id}/read`,
-              {},
-              { headers: { Authorization: `Bearer ${share1Token}` } }
-            );
-            if (!markOneResp.data?.notification?.isRead) {
-              throw new Error('Expected isRead=true in mark-as-read response');
-            }
-            if (!markOneResp.data.notification.readAt) {
-              throw new Error('Expected readAt timestamp in mark-as-read response');
-            }
-            ok(`Marked notification ${targetNotif.id} as read (isRead=${markOneResp.data.notification.isRead}, readAt=${markOneResp.data.notification.readAt})`);
+          ok(`${freshUnread.length} fresh unread notification(s) available for single-read test`);
+          step('Testing mark single notification as read (with delta verification)');
+          const targetNotif = freshUnread[0];
+          const unreadCountBefore = freshUnread.length;
+          const markOneResp = await axios.post(
+            `${API_BASE}/notifications/${targetNotif.id}/read`,
+            {},
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          if (!markOneResp.data?.notification?.isRead) {
+            throw new Error('Expected isRead=true in mark-as-read response');
+          }
+          if (!markOneResp.data.notification.readAt) {
+            throw new Error('Expected readAt timestamp in mark-as-read response');
+          }
+          ok(`Marked notification ${targetNotif.id} as read (isRead=${markOneResp.data.notification.isRead}, readAt=${markOneResp.data.notification.readAt})`);
 
-            // Verify unread count decreased by exactly 1
-            const unreadAfterOneResp = await axios.get(
-              `${API_BASE}/notifications/unread-count`,
-              { headers: { Authorization: `Bearer ${share1Token}` } }
-            );
-            const unreadAfterOne = unreadAfterOneResp.data?.unreadCount ?? 0;
-            if (unreadAfterOne !== unreadCountBefore - 1) {
-              throw new Error(`Unread count delta unexpected: ${unreadCountBefore} -> ${unreadAfterOne} (expected ${unreadCountBefore - 1})`);
-            }
-            ok(`Unread count decreased by 1: ${unreadCountBefore} -> ${unreadAfterOne}`);
+          // Verify unread count decreased by exactly 1
+          const unreadAfterOneResp = await axios.get(
+            `${API_BASE}/notifications/unread-count`,
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          const unreadAfterOne = unreadAfterOneResp.data?.unreadCount ?? 0;
+          if (unreadAfterOne !== unreadCountBefore - 1) {
+            throw new Error(`Unread count delta unexpected: ${unreadCountBefore} -> ${unreadAfterOne} (expected ${unreadCountBefore - 1})`);
+          }
+          ok(`Unread count decreased by 1: ${unreadCountBefore} -> ${unreadAfterOne}`);
 
-            // Verify the notification appears in isRead=true filtered list
-            step('Testing isRead filter (read notifications)');
-            const readFilterResp = await axios.get(
-              `${API_BASE}/notifications`,
-              {
-                headers: { Authorization: `Bearer ${share1Token}` },
-                params: { isRead: 'true' }
-              }
-            );
-            const readNotifs = readFilterResp.data?.notifications || [];
-            const foundRead = readNotifs.some(n => n.id === targetNotif.id);
-            if (!foundRead) {
-              throw new Error(`Marked notification not found in isRead=true filtered results (got ${readNotifs.length} results)`);
+          // Verify the notification appears in isRead=true filtered list
+          step('Testing isRead filter (read notifications)');
+          const readFilterResp = await axios.get(
+            `${API_BASE}/notifications`,
+            {
+              headers: { Authorization: `Bearer ${share1Token}` },
+              params: { isRead: 'true' }
             }
-            ok('Marked notification appears in isRead=true filtered results');
+          );
+          const readNotifs = readFilterResp.data?.notifications || [];
+          const foundRead = readNotifs.some(n => n.id === targetNotif.id);
+          if (!foundRead) {
+            throw new Error(`Marked notification not found in isRead=true filtered results (got ${readNotifs.length} results)`);
+          }
+          ok('Marked notification appears in isRead=true filtered results');
 
-            // Verify the notification does NOT appear in isRead=false filtered list
-            step('Testing isRead filter (unread notifications)');
-            const unreadFilterResp = await axios.get(
-              `${API_BASE}/notifications`,
-              {
-                headers: { Authorization: `Bearer ${share1Token}` },
-                params: { isRead: 'false' }
-              }
-            );
-            const unreadNotifs2 = unreadFilterResp.data?.notifications || [];
-            const foundInUnread = unreadNotifs2.some(n => n.id === targetNotif.id);
-            if (!foundInUnread) {
-              ok('Marked notification no longer appears in isRead=false filtered results');
-            } else {
-              throw new Error(`Notification ${targetNotif.id} still appears as unread after marking as read`);
+          // Verify the notification does NOT appear in isRead=false filtered list
+          step('Testing isRead filter (unread notifications)');
+          const unreadFilterResp = await axios.get(
+            `${API_BASE}/notifications`,
+            {
+              headers: { Authorization: `Bearer ${share1Token}` },
+              params: { isRead: 'false' }
             }
+          );
+          const unreadNotifs2 = unreadFilterResp.data?.notifications || [];
+          const foundInUnread = unreadNotifs2.some(n => n.id === targetNotif.id);
+          if (!foundInUnread) {
+            ok('Marked notification no longer appears in isRead=false filtered results');
+          } else {
+            throw new Error(`Notification ${targetNotif.id} still appears as unread after marking as read`);
+          }
 
-            // Verify idempotency: marking same notification as read again should still succeed
-            step('Testing mark-as-read idempotency');
-            const markAgainResp = await axios.post(
-              `${API_BASE}/notifications/${targetNotif.id}/read`,
-              {},
-              { headers: { Authorization: `Bearer ${share1Token}` } }
-            );
-            if (markAgainResp.data?.notification?.isRead) {
-              ok('Re-marking already-read notification still returns isRead=true');
-            }
+          // Verify idempotency: marking same notification as read again should still succeed
+          step('Testing mark-as-read idempotency');
+          const markAgainResp = await axios.post(
+            `${API_BASE}/notifications/${targetNotif.id}/read`,
+            {},
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          if (markAgainResp.data?.notification?.isRead) {
+            ok('Re-marking already-read notification still returns isRead=true');
           }
 
           // Test mark multiple as read
+          step('Testing mark multiple notifications as read');
+          await ensureShare1UnreadNotifications(2, 'mark-multiple');
           const refreshMultiResp = await axios.get(
             `${API_BASE}/notifications`,
             {
@@ -7152,36 +7157,34 @@ async function run() {
             }
           );
           const currentUnread = refreshMultiResp.data?.notifications || [];
-          if (currentUnread.length >= 2) {
-            step('Testing mark multiple notifications as read');
-            const batchIds = currentUnread.slice(0, 2).map(n => n.id);
-            const markMultiResp = await axios.post(
-              `${API_BASE}/notifications/read`,
-              { notificationIds: batchIds },
-              { headers: { Authorization: `Bearer ${share1Token}` } }
-            );
-            if (markMultiResp.data?.markedCount === undefined) {
-              throw new Error('Expected markedCount in mark-multiple response');
-            }
-            ok(`Marked ${markMultiResp.data.markedCount} notifications as read via batch (sent ${batchIds.length} IDs)`);
+          if (currentUnread.length < 2) {
+            throw new Error(`Expected at least 2 unread notifications for mark-multiple, got ${currentUnread.length}`);
+          }
+          const batchIds = currentUnread.slice(0, 2).map(n => n.id);
+          const markMultiResp = await axios.post(
+            `${API_BASE}/notifications/read`,
+            { notificationIds: batchIds },
+            { headers: { Authorization: `Bearer ${share1Token}` } }
+          );
+          if (markMultiResp.data?.markedCount === undefined) {
+            throw new Error('Expected markedCount in mark-multiple response');
+          }
+          ok(`Marked ${markMultiResp.data.markedCount} notifications as read via batch (sent ${batchIds.length} IDs)`);
 
-            // Verify those IDs are now read
-            const verifyBatchResp = await axios.get(
-              `${API_BASE}/notifications`,
-              {
-                headers: { Authorization: `Bearer ${share1Token}` },
-                params: { isRead: 'false' }
-              }
-            );
-            const stillUnread = verifyBatchResp.data?.notifications || [];
-            const batchStillUnread = stillUnread.filter(n => batchIds.includes(n.id));
-            if (batchStillUnread.length === 0) {
-              ok('All batch-marked notifications confirmed as read');
-            } else {
-              throw new Error(`${batchStillUnread.length} of ${batchIds.length} batch notifications still unread`);
+          // Verify those IDs are now read
+          const verifyBatchResp = await axios.get(
+            `${API_BASE}/notifications`,
+            {
+              headers: { Authorization: `Bearer ${share1Token}` },
+              params: { isRead: 'false' }
             }
+          );
+          const stillUnread = verifyBatchResp.data?.notifications || [];
+          const batchStillUnread = stillUnread.filter(n => batchIds.includes(n.id));
+          if (batchStillUnread.length === 0) {
+            ok('All batch-marked notifications confirmed as read');
           } else {
-            info(`Only ${currentUnread.length} unread notification(s) remaining, skipping mark-multiple test`);
+            throw new Error(`${batchStillUnread.length} of ${batchIds.length} batch notifications still unread`);
           }
 
           // (mark-all was tested above before single-read)

@@ -12,6 +12,8 @@ import { logger } from '@/utils/logger';
 import { AppEntryAccessService } from '@/services/passes/app-entry-access.service';
 import { AccessCodeService } from '@/services/access-code.service';
 import { toE164 } from '@/utils/phone.util';
+import { runUserActivationSideEffects } from '@/services/user-activation-side-effects.service';
+import { runUserDeactivationSideEffects } from '@/services/user-deactivation-side-effects.service';
 import {
   assertRequesterMayAssignRoleOnCreate,
   assertRequesterMayAssignRoleOnUpdate,
@@ -800,12 +802,41 @@ registerPut(
   }
 
   // Update user (non-phone fields)
+  const activating =
+    updateData.isActive === true && existingUser.is_active === false;
+  const deactivating =
+    updateData.isActive === false && existingUser.is_active === true;
+
+  if (deactivating) {
+    if (id === req.user!.userId) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot deactivate your own account',
+      });
+      return;
+    }
+    if (existingUser.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Only dev_admin can deactivate dev_admin users',
+      });
+      return;
+    }
+  }
+
   const updatedUser = await UserModel.updateById(id, {
     first_name: updateData.firstName,
     last_name: updateData.lastName,
     role: updateData.role,
     is_active: updateData.isActive
   }) as User;
+
+  if (activating) {
+    void runUserActivationSideEffects(id);
+  }
+  if (deactivating) {
+    void runUserDeactivationSideEffects(id, req.user!.userId);
+  }
 
   res.json({
     success: true,
@@ -890,111 +921,7 @@ registerDelete(
 
   await UserModel.deactivateUser(id);
 
-  // Push denylist update to relevant locks via gateway events (fire-and-forget)
-  // Device-targeted: determine lock device_ids from user's assigned units AND shared units, then unicast per facility
-  (async () => {
-    try {
-      const { DenylistService } = await import('@/services/denylist.service');
-      const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
-      const { DatabaseService } = await import('@/services/database.service');
-      const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
-      const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
-      const { config } = await import('@/config/environment');
-      const { logger } = await import('@/utils/logger');
-      const knex = DatabaseService.getInstance().connection;
-      const denylistModel = new DenylistEntryModel();
-      
-      // Collect all units the user has access to:
-      // 1) Primary/assigned units (unit_assignments)
-      const primaryUnitIds = await knex('unit_assignments')
-        .where('tenant_id', id)
-        .pluck('unit_id');
-
-      // 2) Shared units via key_sharing (active and not expired)
-      const sharedUnitIds = await knex('key_sharing')
-        .where('shared_with_user_id', id)
-        .where('is_active', true)
-        .where(function(this: any) {
-          this.whereNull('expires_at').orWhere('expires_at', '>', knex.fn.now());
-        })
-        .pluck('unit_id');
-
-      const unitIds = Array.from(new Set([...(primaryUnitIds || []), ...(sharedUnitIds || [])]));
-
-      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
-      const denylistTargets = unitIds.length === 0
-        ? []
-        : await AccessControlZoneAccessService.getDenylistTargetsForUserRevocation(unitIds, id);
-
-      if (denylistTargets.length === 0) {
-        return; // No devices to deny
-      }
-
-      const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(
-        denylistTargets.map((target) => target.device_id),
-      );
-
-      // Check if we should skip denylist command (user's last route pass is expired)
-      const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(id);
-      
-      // Calculate expiration based on route pass TTL (for DB entry)
-      const now = new Date();
-      const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
-      const expiresAt = new Date(now.getTime() + ttlMs);
-      const exp = Math.floor(expiresAt.getTime() / 1000);
-      const byFacility = new Map<string, string[]>();
-      const performedBy = req.user!.userId;
-
-      await denylistModel.bulkCreate(denylistTargets.map((target) => ({
-        device_id: target.device_id,
-        device_type: target.device_type,
-        user_id: id,
-        expires_at: expiresAt,
-        source: 'user_deactivation' as const,
-        created_by: performedBy,
-      })));
-
-      denylistTargets.forEach((target) => {
-        const facilityId = deviceFacilityMap.get(target.device_id);
-        if (!facilityId) return;
-        const list = byFacility.get(facilityId) || [];
-        list.push(target.device_id);
-        byFacility.set(facilityId, list);
-      });
-
-      // Send denylist commands only if user's last route pass is not expired
-      if (!shouldSkip) {
-      for (const [facilityId, deviceIds] of byFacility.entries()) {
-        const jwt = await DenylistService.buildDenylistAdd([{ sub: id, exp }], deviceIds);
-        GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
-      }
-      } else {
-        logger.info(`Skipping DENYLIST_ADD for deactivated user ${id} - last route pass is expired`);
-      }
-
-      // -------- Cascading change for GRANTED access (primary_tenant's invitees) --------
-      // Updated product decision: inactivate shares only; DO NOT denylist invitees here.
-      const activeSharesGranted = await knex('key_sharing')
-        .where('primary_tenant_id', id)
-        .where('is_active', true)
-        .where(function(this: any) {
-          this.whereNull('expires_at').orWhere('expires_at', '>', knex.fn.now());
-        })
-        .select('id', 'unit_id', 'shared_with_user_id');
-
-      for (const share of activeSharesGranted) {
-        try {
-          // Inactivate the share
-          await knex('key_sharing').where('id', share.id).update({ is_active: false, updated_at: knex.fn.now() });
-          // No denylist operations for invitees on owner deactivation
-        } catch (err) {
-          logger.error(`Failed cascading revoke for sharing ${share.id} on deactivation of user ${id}:`, err);
-        }
-      }
-    } catch (error) {
-      logger.error('Failed to push denylist on user deactivation:', error);
-    }
-  })();
+  void runUserDeactivationSideEffects(id, req.user!.userId);
 
   res.json({
     success: true,
@@ -1058,69 +985,7 @@ registerPost(
 
   await UserModel.activateUser(id);
 
-  // On activation: remove owner from device denylists and reactivate shares
-  (async () => {
-    const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
-    const { DenylistService } = await import('@/services/denylist.service');
-    const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
-    const { DatabaseService } = await import('@/services/database.service');
-    const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
-    const { logger } = await import('@/utils/logger');
-
-    const knex = DatabaseService.getInstance().connection;
-    const denylistModel = new DenylistEntryModel();
-
-    try {
-      // Load active denylist entries for this user
-      const entries = await denylistModel.findByUser(id);
-      if (entries.length > 0) {
-        // Map device -> facility
-        const deviceIds = Array.from(new Set(entries.map(e => e.device_id)));
-        const deviceFacilityRows = await knex('blulok_devices as bd')
-          .join('units as u', 'bd.unit_id', 'u.id')
-          .whereIn('bd.id', deviceIds)
-          .select('bd.id as device_id', 'u.facility_id');
-
-        const facilityToDeviceIds = new Map<string, string[]>();
-        for (const row of deviceFacilityRows) {
-          const list = facilityToDeviceIds.get(row.facility_id) || [];
-          list.push(row.device_id);
-          facilityToDeviceIds.set(row.facility_id, list);
-        }
-
-        // Bulk remove all DB entries (single query instead of N queries)
-        await denylistModel.bulkRemove(deviceIds, id);
-
-        // Send remove commands per facility, honoring optimization
-        for (const [facilityId, targetDeviceIds] of facilityToDeviceIds.entries()) {
-          const entriesForFacility = entries.filter(e => targetDeviceIds.includes(e.device_id));
-          const entriesToProcess = entriesForFacility.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e as any));
-
-          if (entriesToProcess.length > 0) {
-            const jwt = await DenylistService.buildDenylistRemove([{ sub: id, exp: 0 }], targetDeviceIds);
-            GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
-          } else {
-            logger.info(`Skipped DENYLIST_REMOVE for user ${id} on ${targetDeviceIds.length} device(s) - entries already expired, removed from DB only`);
-          }
-        }
-      }
-    } catch (err) {
-      logger.error(`Failed to process denylist removal on activation for user ${id}:`, err);
-    }
-
-    try {
-      // Reactivate previously deactivated (and unexpired) shares owned by this user
-      await knex('key_sharing')
-        .where('primary_tenant_id', id)
-        .where('is_active', false)
-        .where(function(this: any) {
-          this.whereNull('expires_at').orWhere('expires_at', '>', knex.raw('UTC_TIMESTAMP()'));
-        })
-        .update({ is_active: true, updated_at: knex.raw('UTC_TIMESTAMP()') });
-    } catch (err) {
-      logger.error(`Failed to reactivate shares on activation for user ${id}:`, err);
-    }
-  })().catch(() => {});
+  void runUserActivationSideEffects(id);
 
   res.json({ success: true, message: 'User activated successfully' });
 }));

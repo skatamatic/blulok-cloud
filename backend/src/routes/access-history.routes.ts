@@ -64,6 +64,12 @@ import { ActivityLogModel } from '@/models/activity-log.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { AuthService } from '@/services/auth.service';
+import {
+  parseQueryBoolean,
+  queryString,
+  queryDateString,
+  queryStringArray,
+} from '@/utils/query-boolean.util';
 
 const router = Router();
 const MOUNT = '/api/v1/access-history';
@@ -118,48 +124,20 @@ const getScopeService = (): AccessEventScopeService => {
 
 router.use(authenticateToken);
 
-const parseBoolean = (value: unknown): boolean | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === true || value === 'true') {
-    return true;
-  }
-  if (value === false || value === 'false') {
-    return false;
-  }
-  return undefined;
-};
-
 const normalizeFilters = (query: AuthenticatedRequest['query']): QueryFilters => ({
-  facility_id: typeof query.facility_id === 'string' ? query.facility_id : undefined,
-  unit_id: typeof query.unit_id === 'string' ? query.unit_id : undefined,
-  user_id: typeof query.user_id === 'string' ? query.user_id : undefined,
-  device_id: typeof query.device_id === 'string' ? query.device_id : undefined,
-  action:
-    typeof query.action === 'string'
-      ? query.action
-      : typeof query.action_type === 'string'
-        ? query.action_type
-        : undefined,
-  method: typeof query.method === 'string' ? query.method : undefined,
-  denial_reason: typeof query.denial_reason === 'string' ? query.denial_reason : undefined,
-  date_from:
-    typeof query.date_from === 'string'
-      ? query.date_from
-      : typeof query.start_date === 'string'
-        ? query.start_date
-        : undefined,
-  date_to:
-    typeof query.date_to === 'string'
-      ? query.date_to
-      : typeof query.end_date === 'string'
-        ? query.end_date
-        : undefined,
-  success: parseBoolean(query.success),
+  facility_id: queryString(query.facility_id),
+  unit_id: queryString(query.unit_id),
+  user_id: queryString(query.user_id),
+  device_id: queryString(query.device_id),
+  action: queryString(query.action) ?? queryString(query.action_type),
+  method: queryString(query.method),
+  denial_reason: queryString(query.denial_reason),
+  date_from: queryDateString(query.date_from) ?? queryDateString(query.start_date),
+  date_to: queryDateString(query.date_to) ?? queryDateString(query.end_date),
+  success: parseQueryBoolean(query.success),
   limit: Number(query.limit) || 50,
   offset: Number(query.offset) || 0,
-  sort_by: typeof query.sort_by === 'string' ? query.sort_by : 'occurred_at',
+  sort_by: queryString(query.sort_by) ?? 'occurred_at',
   sort_order: query.sort_order === 'asc' ? 'asc' : 'desc',
 });
 
@@ -179,7 +157,8 @@ registerGet(
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    if (typeof req.query.facility_id === 'string' && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(req.query.facility_id)) {
+    const facilityId = queryString(req.query.facility_id);
+    if (facilityId && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(facilityId)) {
       res.status(403).json({ success: false, message: 'Access denied to this facility' });
       return;
     }
@@ -329,7 +308,8 @@ registerGet(
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    if (typeof req.query.facility_id === 'string' && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(req.query.facility_id)) {
+    const facilityId = queryString(req.query.facility_id);
+    if (facilityId && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(facilityId)) {
       res.status(403).json({ success: false, message: 'Access denied to this facility' });
       return;
     }
@@ -368,7 +348,7 @@ registerGet(
       return;
     }
 
-    const period = typeof req.query.period === 'string' ? req.query.period : 'month';
+    const period = queryString(req.query.period) ?? 'month';
     if (period !== 'day' && period !== 'week' && period !== 'month' && period !== 'year') {
       res.status(400).json({ success: false, message: 'Invalid period. Must be one of: day, week, month, year' });
       return;
@@ -388,11 +368,7 @@ registerGet(
       groupBy = 'week';
     }
 
-    const requestedFacilityIds = Array.isArray(req.query.facility_ids)
-      ? (req.query.facility_ids as string[])
-      : typeof req.query.facility_ids === 'string'
-        ? [req.query.facility_ids]
-        : [];
+    const requestedFacilityIds = queryStringArray(req.query.facility_ids);
 
     let allowedFacilityIds: string[] | undefined;
 

@@ -243,6 +243,18 @@ describe('Gateway Recovery Routes', () => {
     expect(mockGetRecoveryEvents).toHaveBeenCalledWith('rec-1', 100);
   });
 
+  it('honors custom limit after Joi query coercion', async () => {
+    mockGetRecoveryEvents.mockResolvedValueOnce([]);
+
+    await request(app)
+      .get('/api/v1/gateways/gateway-swap/recovery/rec-1/events')
+      .query({ limit: 25 })
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .expect(200);
+
+    expect(mockGetRecoveryEvents).toHaveBeenCalledWith('rec-1', 25);
+  });
+
   it('returns 404 when cancel recovery id does not match gateway status', async () => {
     mockGetRecoveryById.mockResolvedValueOnce({
       id: 'rec-other',

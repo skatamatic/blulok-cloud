@@ -46,6 +46,7 @@ import { AuthService } from '../services/auth.service';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 import { toE164 } from '@/utils/phone.util';
+import { parseQueryBoolean } from '@/utils/query-boolean.util';
 import { AccessLogModel } from '../models/access-log.model';
 import {
   registerGet,
@@ -120,7 +121,7 @@ registerGet(
     if (is_active === undefined) {
       filters.is_active = true;
     } else {
-      filters.is_active = is_active === 'true';
+      filters.is_active = parseQueryBoolean(is_active) ?? false;
     }
     if (expires_before) filters.expires_before = new Date(expires_before as string);
 
@@ -156,8 +157,8 @@ registerGet(
 
     // Optional grouped-by-unit view when explicitly requested.
     // This preserves backwards compatibility for existing clients.
-    const groupByUnit = (req.query.group_by_unit as string | undefined)?.toLowerCase();
-    if (groupByUnit === 'true' || groupByUnit === '1') {
+    const groupByUnit = parseQueryBoolean(req.query.group_by_unit);
+    if (groupByUnit === true) {
       const unitsMap = new Map<string, any>();
 
       for (const sharing of result.sharings) {
@@ -255,7 +256,10 @@ registerGet(
     // Add query filters
     if (unit_id) filters.unit_id = unit_id as string;
     if (access_level) filters.access_level = access_level as string;
-    if (is_active !== undefined) filters.is_active = is_active === 'true';
+    if (is_active !== undefined) {
+      const parsed = parseQueryBoolean(is_active);
+      if (parsed !== undefined) filters.is_active = parsed;
+    }
     if (expires_before) filters.expires_before = new Date(expires_before as string);
 
     // Get both owned keys and shared keys
@@ -368,7 +372,7 @@ registerGet(
     if (is_active === undefined) {
       filters.is_active = true;
     } else {
-      filters.is_active = is_active === 'true';
+      filters.is_active = parseQueryBoolean(is_active) ?? false;
     }
     if (expires_before) filters.expires_before = new Date(expires_before as string);
 

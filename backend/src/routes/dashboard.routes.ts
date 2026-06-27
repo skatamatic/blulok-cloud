@@ -9,6 +9,7 @@ import {
   dashboardResponseSchema,
 } from '@/schemas/dashboard.schemas';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
+import { queryString } from '@/utils/query-boolean.util';
 
 const router = Router();
 const MOUNT = '/api/v1/dashboard';
@@ -48,10 +49,7 @@ registerGet(
       return;
     }
 
-    const facilityId =
-      typeof req.query.facility_id === 'string' && req.query.facility_id.length > 0
-        ? req.query.facility_id
-        : undefined;
+    const facilityId = queryString(req.query.facility_id);
 
     const data = await svc.getScopedStats(user.userId, user.role, facilityId ? { facilityId } : undefined);
     res.json({ success: true, data });

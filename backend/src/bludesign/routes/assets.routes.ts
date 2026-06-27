@@ -21,6 +21,7 @@ import {
   registerDelete,
 } from '@/openapi/register-route';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
+import { parseQueryBoolean, parseOptionalQueryInt } from '@/utils/query-boolean.util';
 import {
   createAssetSchema,
   updateAssetSchema,
@@ -34,10 +35,12 @@ import {
   projectAssetDefinitionIdParamSchema,
   projectAssetDefinitionAssetIdParamSchema,
   projectMaterialPresetParamSchema,
+  bluDesignProjectAssetListQuerySchema,
 } from '@/schemas/bludesign/assets.schemas';
 import {
   customModelProjectParamSchema,
   customModelDeleteParamSchema,
+  bluDesignProjectAssetDefinitionListQuerySchema,
 } from '@/schemas/bludesign/asset-definitions.schemas';
 
 const router = Router({ mergeParams: true });
@@ -93,6 +96,7 @@ registerGet(
     summary: 'List all assets in a project',
     security: 'bearer',
     params: projectAssetParamSchema,
+    query: bluDesignProjectAssetListQuerySchema,
     responses: { 403: errorEnvelopeSchema },
   },
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -105,10 +109,10 @@ registerGet(
 
     const assets = await BluDesignAssetModel.findByProject(projectId, {
       category: category as import('../types/bludesign.types').AssetCategory | undefined,
-      isSmart: isSmart === 'true' ? true : isSmart === 'false' ? false : undefined,
+      isSmart: parseQueryBoolean(isSmart),
       search: search as string | undefined,
-      limit: limit ? parseInt(limit as string, 10) : undefined,
-      offset: offset ? parseInt(offset as string, 10) : undefined,
+      limit: parseOptionalQueryInt(limit),
+      offset: parseOptionalQueryInt(offset),
     });
 
     const total = await BluDesignAssetModel.countByProject(projectId);
@@ -459,14 +463,15 @@ registerGet(
     summary: 'List all asset definitions',
     security: 'bearer',
     params: projectAssetParamSchema,
+    query: bluDesignProjectAssetDefinitionListQuerySchema,
   },
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { category, isSmart, isBuiltin } = req.query;
 
     const definitions = await AssetService.getAssetDefinitions({
       category: category as string | undefined,
-      isSmart: isSmart === 'true' ? true : isSmart === 'false' ? false : undefined,
-      isBuiltin: isBuiltin === 'true' ? true : isBuiltin === 'false' ? false : undefined,
+      isSmart: parseQueryBoolean(isSmart),
+      isBuiltin: parseQueryBoolean(isBuiltin),
     });
 
     res.json({ success: true, data: definitions });

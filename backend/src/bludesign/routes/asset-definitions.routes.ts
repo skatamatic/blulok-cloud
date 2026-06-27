@@ -22,6 +22,7 @@ import {
   registerDelete,
 } from '@/openapi/register-route';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
+import { parseQueryBoolean } from '@/utils/query-boolean.util';
 import {
   assetDefinitionSchema,
   updateAssetDefinitionSchema,
@@ -33,6 +34,7 @@ import {
   customModelProjectParamSchema,
   customModelDeleteParamSchema,
   globalModelIdParamSchema,
+  bluDesignGlobalAssetDefinitionListQuerySchema,
 } from '@/schemas/bludesign/asset-definitions.schemas';
 
 const router = Router();
@@ -74,14 +76,15 @@ registerGet(
     tags: ['BluDesign'],
     summary: 'List all asset definitions',
     security: 'bearer',
+    query: bluDesignGlobalAssetDefinitionListQuerySchema,
   },
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { category, isSmart, isBuiltin } = req.query;
 
     const definitions = await AssetService.getAssetDefinitions({
       category: category as string | undefined,
-      isSmart: isSmart === 'true' ? true : isSmart === 'false' ? false : undefined,
-      isBuiltin: isBuiltin === 'true' ? true : isBuiltin === 'false' ? false : undefined,
+      isSmart: parseQueryBoolean(isSmart),
+      isBuiltin: parseQueryBoolean(isBuiltin),
     });
 
     res.json({ success: true, data: definitions });

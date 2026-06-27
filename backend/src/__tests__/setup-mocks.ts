@@ -1189,7 +1189,7 @@ jest.mock('../models/key-sharing.model', () => ({
           filteredKeys = filteredKeys.filter(key => {
             // Handle both boolean and numeric values (database may return 1/0)
             const keyIsActive = key.is_active === true || (key.is_active as any) === 1;
-            const filterIsActive = filters.is_active === true || filters.is_active === 1 || filters.is_active === 'true';
+            const filterIsActive = filters.is_active === true || filters.is_active === 1;
             return keyIsActive === filterIsActive;
           });
         }

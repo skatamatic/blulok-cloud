@@ -392,6 +392,13 @@ export class KeySharingService {
       const unexpired = !effectiveExpiresAt || effectiveExpiresAt > now;
 
       if (becameActive && unexpired) {
+        this.notifyAccessGranted(
+          existingSharing.shared_with_user_id,
+          existingSharing.unit_id,
+        ).catch(err =>
+          logger.error('Failed to send access granted notification on share reactivation:', err),
+        );
+
         const denylistModel = new DenylistEntryModel();
         const unitTargets = await this.getDenylistRemovalTargetsForUnitGrant(
           existingSharing.unit_id,

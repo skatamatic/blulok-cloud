@@ -3,7 +3,7 @@
   "info": {
     "title": "BluLok Cloud API",
     "version": "1.0.0",
-    "description": "BluLok Cloud REST API. Interactive docs at /api/docs when ENABLE_OPENAPI_DOCS=true or non-production. Spec at /api/openapi.json."
+    "description": "BluLok Cloud REST API. Interactive docs at /api/docs (default). Raw spec at /api/openapi.json. Set ENABLE_OPENAPI_DOCS=false to hide Swagger UI."
   },
   "servers": [
     {
@@ -10932,6 +10932,46 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "isSmart",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11443,6 +11483,30 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "isSmart",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "isBuiltin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -12091,6 +12155,32 @@
           "BluDesign"
         ],
         "summary": "List all asset definitions",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "isSmart",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "isBuiltin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success"

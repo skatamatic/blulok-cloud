@@ -76,6 +76,18 @@ export const updateMaterialPresetSchema = materialPresetSchema.fork(
   (schema) => schema.optional(),
 );
 
+export const bluDesignGlobalAssetDefinitionListQuerySchema = Joi.object({
+  category: Joi.string().valid(...Object.values(AssetCategory)).optional(),
+  isSmart: Joi.boolean().optional(),
+  isBuiltin: Joi.boolean().optional(),
+});
+
+export const bluDesignProjectAssetDefinitionListQuerySchema = Joi.object({
+  category: Joi.string().valid(...Object.values(AssetCategory)).optional(),
+  isSmart: Joi.boolean().optional(),
+  isBuiltin: Joi.boolean().optional(),
+});
+
 export const assetDefinitionIdParamSchema = Joi.object({
   id: routeIdField(),
 });

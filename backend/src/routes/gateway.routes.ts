@@ -50,6 +50,7 @@ import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { sanitizePayloadPath } from '@/utils/gateway-telemetry-log.parser';
 import { parseQueryDateFrom, parseQueryDateTo } from '@/utils/datetime.utils';
+import { parseQueryIntClamped, parseQueryInt, queryString } from '@/utils/query-boolean.util';
 import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
 import { InventorySnapshotService } from '@/services/gateway/inventory-snapshot.service';
 import {
@@ -430,8 +431,7 @@ registerGet(
     return;
   }
 
-  const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 100;
-  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+  const limit = parseQueryIntClamped(req.query.limit, 100, 1, 200);
   const events = await GatewayRecoveryService.getRecoveryEvents(recoveryId, limit);
   res.json({ success: true, data: { events } });
 }));
@@ -507,7 +507,7 @@ registerGet(
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
-  const facilityFilter = typeof req.query.facility_id === 'string' ? req.query.facility_id : undefined;
+  const facilityFilter = queryString(req.query.facility_id);
   
   const gateways = await gatewayModel.findAll();
   
@@ -548,8 +548,8 @@ registerGet(
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const gatewayId = String(req.params.id);
-  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '500'), 10) || 500, 1), 500);
-  const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const limit = parseQueryIntClamped(req.query.limit, 500, 1, 500);
+  const offset = Math.max(parseQueryInt(req.query.offset, 0), 0);
 
   const gateway = await gatewayModel.findById(gatewayId);
   if (!gateway) {
@@ -564,15 +564,15 @@ registerGet(
     }
   }
 
-  const payloadPath = typeof req.query.payload_path === 'string' ? req.query.payload_path : undefined;
-  const payloadValue = typeof req.query.payload_value === 'string' ? req.query.payload_value : undefined;
+  const payloadPath = queryString(req.query.payload_path);
+  const payloadValue = queryString(req.query.payload_value);
   if (payloadPath && !sanitizePayloadPath(payloadPath)) {
     res.status(400).json({ success: false, message: 'Invalid payload_path' });
     return;
   }
 
-  const fromRaw = typeof req.query.from === 'string' && req.query.from ? req.query.from : undefined;
-  const toRaw = typeof req.query.to === 'string' && req.query.to ? req.query.to : undefined;
+  const fromRaw = queryString(req.query.from);
+  const toRaw = queryString(req.query.to);
   const from = fromRaw ? parseQueryDateFrom(fromRaw) : undefined;
   const to = toRaw ? parseQueryDateTo(toRaw) : undefined;
   if (from && Number.isNaN(from.getTime())) {
@@ -585,8 +585,8 @@ registerGet(
   }
 
   const payloadOp = req.query.payload_op === 'contains' ? 'contains' : 'eq';
-  const search = typeof req.query.search === 'string' ? req.query.search : undefined;
-  const sourceRaw = typeof req.query.source === 'string' ? req.query.source.trim() : '';
+  const search = queryString(req.query.search);
+  const sourceRaw = queryString(req.query.source)?.trim() ?? '';
   const source =
     sourceRaw === 'gateway_ws' || sourceRaw === 'cloud_system' ? sourceRaw : undefined;
   if (sourceRaw && !source) {
@@ -634,8 +634,8 @@ registerGet(
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.id);
-  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '20'), 10) || 20, 1), 100);
-  const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const limit = parseQueryIntClamped(req.query.limit, 20, 1, 100);
+  const offset = Math.max(parseQueryInt(req.query.offset, 0), 0);
 
   const gateway = await gatewayModel.findById(gatewayId);
   if (!gateway) {
