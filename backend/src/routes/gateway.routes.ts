@@ -40,7 +40,6 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { GatewayModel } from '../models/gateway.model';
 import { FacilityModel } from '../models/facility.model';
 import { authenticateToken, requireAdmin, requireRoles } from '../middleware/auth.middleware';
@@ -53,8 +52,28 @@ import { sanitizePayloadPath } from '@/utils/gateway-telemetry-log.parser';
 import { parseQueryDateFrom, parseQueryDateTo } from '@/utils/datetime.utils';
 import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
 import { InventorySnapshotService } from '@/services/gateway/inventory-snapshot.service';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+} from '@/openapi/register-route';
+import {
+  gatewayFacilityIdParamSchema,
+  gatewayIdParamSchema,
+  gatewayRecoveryIdParamSchema,
+  gatewayResourceIdParamSchema,
+  gatewayListQuerySchema,
+  gatewayRecoveryInitiateSchema,
+  gatewayRecoveryBypassSchema,
+  gatewayStatusUpdateSchema,
+  gatewayTelemetryLogsQuerySchema,
+  gatewaySyncLogsQuerySchema,
+  gatewayRecoveryEventsQuerySchema,
+  gatewayResponseSchema,
+} from '@/schemas/gateway.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/gateways';
 const gatewayModel = new GatewayModel();
 const facilityModel = new FacilityModel();
 
@@ -86,7 +105,21 @@ function validateGatewayConfigurationForTesting(gateway: any): boolean {
 router.use(authenticateToken);
 
 // GET /api/gateways/status/:facilityId - Inbound WS connection status for a facility
-router.get('/status/:facilityId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/status/:facilityId',
+  {
+    openApiPath: `${MOUNT}/status/{facilityId}`,
+    tags: ['Gateway'],
+    summary: 'Get inbound WebSocket connection status for facility',
+    security: 'bearer',
+    params: gatewayFacilityIdParamSchema,
+    responses: {
+      200: gatewayResponseSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const facilityId = String(req.params.facilityId);
 
@@ -164,7 +197,19 @@ async function assertRecoveryGatewayAccess(
 // ── Gateway Swap / Recovery ──
 
 // GET /api/gateways/:gatewayId/recovery/status
-router.get('/:gatewayId/recovery/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:gatewayId/recovery/status',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/status`,
+    tags: ['Gateway'],
+    summary: 'Get gateway recovery status',
+    security: 'bearer',
+    params: gatewayIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
   if (!access) return;
@@ -174,7 +219,19 @@ router.get('/:gatewayId/recovery/status', requireRoles([UserRole.ADMIN, UserRole
 }));
 
 // GET /api/gateways/facility/:facilityId/recovery/candidates
-router.get('/facility/:facilityId/recovery/candidates', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/facility/:facilityId/recovery/candidates',
+  {
+    openApiPath: `${MOUNT}/facility/{facilityId}/recovery/candidates`,
+    tags: ['Gateway'],
+    summary: 'List gateway recovery swap candidates',
+    security: 'bearer',
+    params: gatewayFacilityIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const facilityId = String(req.params.facilityId);
   if (!(await assertFacilityAccess(req, res, facilityId))) return;
 
@@ -184,7 +241,19 @@ router.get('/facility/:facilityId/recovery/candidates', requireRoles([UserRole.A
 }));
 
 // GET /api/gateways/:gatewayId/recovery/inventory-preview
-router.get('/:gatewayId/recovery/inventory-preview', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:gatewayId/recovery/inventory-preview',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/inventory-preview`,
+    tags: ['Gateway'],
+    summary: 'Preview inventory for gateway recovery',
+    security: 'bearer',
+    params: gatewayIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
   if (!access) return;
@@ -193,28 +262,33 @@ router.get('/:gatewayId/recovery/inventory-preview', requireRoles([UserRole.ADMI
   res.json({ success: true, data: { devices } });
 }));
 
-const recoveryInitiateSchema = Joi.object({
-  firmwareId: Joi.string().uuid().optional(),
-});
-
 // POST /api/gateways/:gatewayId/recovery/initiate
-router.post('/:gatewayId/recovery/initiate', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:gatewayId/recovery/initiate',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/initiate`,
+    tags: ['Gateway'],
+    summary: 'Initiate gateway recovery',
+    security: 'bearer',
+    params: gatewayIdParamSchema,
+    body: gatewayRecoveryInitiateSchema,
+    responses: {
+      200: gatewayResponseSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
   if (!access) return;
-
-  const { error, value } = recoveryInitiateSchema.validate(req.body || {});
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
 
   try {
     const recovery = await GatewayRecoveryService.initiate(
       gatewayId,
       access.facilityId,
       req.user!.userId,
-      value,
+      req.body,
     );
     res.json({ success: true, data: recovery });
   } catch (err: any) {
@@ -223,7 +297,19 @@ router.post('/:gatewayId/recovery/initiate', requireRoles([UserRole.ADMIN, UserR
 }));
 
 // POST /api/gateways/:gatewayId/recovery/advance
-router.post('/:gatewayId/recovery/advance', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:gatewayId/recovery/advance',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/advance`,
+    tags: ['Gateway'],
+    summary: 'Advance gateway recovery',
+    security: 'bearer',
+    params: gatewayIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
   if (!access) return;
@@ -236,28 +322,33 @@ router.post('/:gatewayId/recovery/advance', requireRoles([UserRole.ADMIN, UserRo
   }
 }));
 
-const recoveryBypassSchema = Joi.object({
-  confirm: Joi.boolean().required(),
-});
-
 // POST /api/gateways/:gatewayId/recovery/bypass
-router.post('/:gatewayId/recovery/bypass', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:gatewayId/recovery/bypass',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/bypass`,
+    tags: ['Gateway'],
+    summary: 'Bypass gateway recovery (admin only)',
+    security: 'bearer',
+    params: gatewayIdParamSchema,
+    body: gatewayRecoveryBypassSchema,
+    responses: {
+      200: gatewayResponseSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
   if (!access) return;
-
-  const { error, value } = recoveryBypassSchema.validate(req.body || {});
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
 
   try {
     const recovery = await GatewayRecoveryService.bypass(
       gatewayId,
       access.facilityId,
       req.user!.userId,
-      value.confirm === true,
+      req.body.confirm === true,
     );
     res.json({ success: true, data: recovery });
   } catch (err: any) {
@@ -266,7 +357,19 @@ router.post('/:gatewayId/recovery/bypass', requireRoles([UserRole.ADMIN, UserRol
 }));
 
 // GET /api/gateways/:gatewayId/recovery/options
-router.get('/:gatewayId/recovery/options', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:gatewayId/recovery/options',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/options`,
+    tags: ['Gateway'],
+    summary: 'Get gateway recovery options',
+    security: 'bearer',
+    params: gatewayIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
   if (!access) return;
@@ -276,7 +379,19 @@ router.get('/:gatewayId/recovery/options', requireRoles([UserRole.ADMIN, UserRol
 }));
 
 // POST /api/gateways/:gatewayId/recovery/retry
-router.post('/:gatewayId/recovery/retry', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:gatewayId/recovery/retry',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/retry`,
+    tags: ['Gateway'],
+    summary: 'Retry gateway recovery',
+    security: 'bearer',
+    params: gatewayIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
   if (!access) return;
@@ -290,7 +405,20 @@ router.post('/:gatewayId/recovery/retry', requireRoles([UserRole.ADMIN, UserRole
 }));
 
 // GET /api/gateways/:gatewayId/recovery/:recoveryId/events
-router.get('/:gatewayId/recovery/:recoveryId/events', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:gatewayId/recovery/:recoveryId/events',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/{recoveryId}/events`,
+    tags: ['Gateway'],
+    summary: 'Get gateway recovery events',
+    security: 'bearer',
+    params: gatewayRecoveryIdParamSchema,
+    query: gatewayRecoveryEventsQuerySchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const recoveryId = String(req.params.recoveryId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
@@ -309,7 +437,19 @@ router.get('/:gatewayId/recovery/:recoveryId/events', requireRoles([UserRole.ADM
 }));
 
 // POST /api/gateways/:gatewayId/recovery/:recoveryId/cancel
-router.post('/:gatewayId/recovery/:recoveryId/cancel', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:gatewayId/recovery/:recoveryId/cancel',
+  {
+    openApiPath: `${MOUNT}/{gatewayId}/recovery/{recoveryId}/cancel`,
+    tags: ['Gateway'],
+    summary: 'Cancel gateway recovery',
+    security: 'bearer',
+    params: gatewayRecoveryIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.gatewayId);
   const recoveryId = String(req.params.recoveryId);
   const access = await assertRecoveryGatewayAccess(req, res, gatewayId);
@@ -330,7 +470,18 @@ router.post('/:gatewayId/recovery/:recoveryId/cancel', requireRoles([UserRole.AD
 }));
 
 // POST /api/gateways - Create new gateway
-router.post('/', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Gateway'],
+    summary: 'Create gateway',
+    security: 'bearer',
+    responses: { 201: gatewayResponseSchema },
+  },
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
  
   const gatewayData = req.body;
   const gateway = await gatewayModel.create(gatewayData);
@@ -342,7 +493,19 @@ router.post('/', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, re
 }));
 
 // GET /api/gateways - Get all gateways
-router.get('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Gateway'],
+    summary: 'List gateways',
+    security: 'bearer',
+    query: gatewayListQuerySchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const facilityFilter = typeof req.query.facility_id === 'string' ? req.query.facility_id : undefined;
   
@@ -369,7 +532,20 @@ router.get('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACIL
 }));
 
 // GET /api/gateways/:id/telemetry-logs — gateway operational log stream (admin / facility admin)
-router.get('/:id/telemetry-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:id/telemetry-logs',
+  {
+    openApiPath: `${MOUNT}/{id}/telemetry-logs`,
+    tags: ['Gateway'],
+    summary: 'Get gateway telemetry logs',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    query: gatewayTelemetryLogsQuerySchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const gatewayId = String(req.params.id);
   const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '500'), 10) || 500, 1), 500);
@@ -443,7 +619,20 @@ router.get('/:id/telemetry-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADM
 }));
 
 // GET /api/gateways/:id/device-sync-logs — inventory sync audit trail (admin / dev_admin only)
-router.get('/:id/device-sync-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:id/device-sync-logs',
+  {
+    openApiPath: `${MOUNT}/{id}/device-sync-logs`,
+    tags: ['Gateway'],
+    summary: 'Get gateway device sync logs',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    query: gatewaySyncLogsQuerySchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const gatewayId = String(req.params.id);
   const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '20'), 10) || 20, 1), 100);
   const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
@@ -470,7 +659,19 @@ router.get('/:id/device-sync-logs', requireRoles([UserRole.ADMIN, UserRole.DEV_A
 }));
 
 // GET /api/gateways/:id - Get specific gateway
-router.get('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Gateway'],
+    summary: 'Get gateway by ID',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id;
   
@@ -502,7 +703,19 @@ router.get('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FA
 }));
 
 // PUT /api/gateways/:id - Update gateway
-router.put('/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPut(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Gateway'],
+    summary: 'Update gateway',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const id = req.params.id;
  
   const gatewayData = req.body;
@@ -533,7 +746,20 @@ router.put('/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, 
 }));
 
 // PUT /api/gateways/:id/status - Update gateway status
-router.put('/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPut(
+  router,
+  '/:id/status',
+  {
+    openApiPath: `${MOUNT}/{id}/status`,
+    tags: ['Gateway'],
+    summary: 'Update gateway status',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    body: gatewayStatusUpdateSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id;
   const { status } = req.body as { status: string };
@@ -568,7 +794,19 @@ router.put('/:id/status', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, User
 }));
 
 // POST /api/gateways/:id/test-connection - Test gateway connection
-router.post('/:id/test-connection', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:id/test-connection',
+  {
+    openApiPath: `${MOUNT}/{id}/test-connection`,
+    tags: ['Gateway'],
+    summary: 'Test gateway connection',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id;
 
@@ -691,7 +929,19 @@ router.post('/:id/test-connection', requireRoles([UserRole.ADMIN, UserRole.DEV_A
 }));
 
 // POST /api/gateways/:id/sync - Manually sync gateway
-router.post('/:id/sync', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:id/sync',
+  {
+    openApiPath: `${MOUNT}/{id}/sync`,
+    tags: ['Gateway'],
+    summary: 'Manually sync gateway',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const id = req.params.id;
 

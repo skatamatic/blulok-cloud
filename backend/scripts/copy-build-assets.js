@@ -14,6 +14,10 @@ const ASSETS = [
     from: 'src/bludesign/layout-import/ocr/tessdata/eng.traineddata.gz',
     to: 'dist/src/bludesign/layout-import/ocr/tessdata/eng.traineddata.gz',
   },
+  {
+    from: 'openapi/generated.json',
+    to: 'dist/openapi/generated.json',
+  },
 ];
 
 for (const { from, to } of ASSETS) {
@@ -21,6 +25,10 @@ for (const { from, to } of ASSETS) {
   const dest = path.join(ROOT, to);
 
   if (!fs.existsSync(src)) {
+    if (from === 'openapi/generated.json') {
+      console.warn(`copy-build-assets: skipping optional asset (run openapi:generate first): ${from}`);
+      continue;
+    }
     console.error(`copy-build-assets: missing required asset: ${from}`);
     process.exit(1);
   }

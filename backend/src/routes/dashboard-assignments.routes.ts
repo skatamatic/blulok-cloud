@@ -3,64 +3,78 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import {
   DashboardAssignmentModel,
   CreateAssignmentPayload,
 } from '@/models/saved-dashboard.model';
 import { AuthenticatedRequest } from '@/types/auth.types';
-import { UserRole } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import { DashboardLayoutBroadcastService } from '@/services/dashboard-layout-broadcast.service';
+import {
+  registerGet,
+  registerPost,
+  registerPatch,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  createDashboardAssignmentSchema,
+  updateDashboardAssignmentSchema,
+  dashboardAssignmentIdParamSchema,
+  dashboardAssignmentListResponseSchema,
+  dashboardAssignmentCreateResponseSchema,
+  dashboardAssignmentUpdateResponseSchema,
+  dashboardAssignmentDeleteResponseSchema,
+} from '@/schemas/dashboard-assignments.schemas';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
 
 const router = Router();
-const USER_ROLES = Object.values(UserRole);
+const MOUNT = '/api/v1/dashboard-assignments';
 
 router.use(authenticateToken as never);
 router.use(requireAdmin);
 
-const createSchema = Joi.object({
-  savedDashboardId: Joi.string().uuid().required(),
-  scope: Joi.string().valid('global', 'facility', 'user').required(),
-  facilityId: Joi.string().uuid().allow(null).optional(),
-  userId: Joi.string().uuid().allow(null).optional(),
-  targetRole: Joi.string()
-    .valid(...USER_ROLES)
-    .required(),
-  priority: Joi.number().integer().min(0).max(1000).optional(),
-});
-
-const updateSchema = Joi.object({
-  savedDashboardId: Joi.string().uuid().optional(),
-  priority: Joi.number().integer().min(0).max(1000).optional(),
-}).min(1);
-
-router.get(
+registerGet(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Dashboard Assignments'],
+    summary: 'List all dashboard assignment rules',
+    security: 'bearer',
+    responses: {
+      200: dashboardAssignmentListResponseSchema,
+    },
+  },
   asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
     const assignments = await DashboardAssignmentModel.listAll();
     res.json({ success: true, assignments });
-  })
+  }),
 );
 
-router.post(
+registerPost(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Dashboard Assignments'],
+    summary: 'Create a dashboard assignment rule',
+    security: 'bearer',
+    body: createDashboardAssignmentSchema,
+    responses: {
+      201: dashboardAssignmentCreateResponseSchema,
+      400: errorEnvelopeSchema,
+      409: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const userId = req.user!.userId;
-    const { error, value } = createSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({
-        success: false,
-        message: error.details[0]?.message || 'Validation error',
-      });
-      return;
-    }
+    const value = req.body;
 
     try {
       const created = await DashboardAssignmentModel.createAssignment(
         userId,
-        value as CreateAssignmentPayload
+        value as CreateAssignmentPayload,
       );
       await DashboardLayoutBroadcastService.notifyForAssignment(created);
       res.status(201).json({
@@ -80,21 +94,28 @@ router.post(
       const status = message.includes('already exists') ? 409 : 400;
       res.status(status).json({ success: false, message });
     }
-  })
+  }),
 );
 
-router.patch(
+registerPatch(
+  router,
   '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Dashboard Assignments'],
+    summary: 'Update a dashboard assignment rule',
+    security: 'bearer',
+    params: dashboardAssignmentIdParamSchema,
+    body: updateDashboardAssignmentSchema,
+    responses: {
+      200: dashboardAssignmentUpdateResponseSchema,
+      404: errorEnvelopeSchema,
+      400: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
-    const { error, value } = updateSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({
-        success: false,
-        message: error.details[0]?.message || 'Validation error',
-      });
-      return;
-    }
+    const value = req.body;
 
     const existing = await DashboardAssignmentModel.findById(id);
     if (!existing) {
@@ -123,11 +144,23 @@ router.patch(
       const message = err instanceof Error ? err.message : 'Failed to update assignment';
       res.status(400).json({ success: false, message });
     }
-  })
+  }),
 );
 
-router.delete(
+registerDelete(
+  router,
   '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Dashboard Assignments'],
+    summary: 'Delete a dashboard assignment rule',
+    security: 'bearer',
+    params: dashboardAssignmentIdParamSchema,
+    responses: {
+      200: dashboardAssignmentDeleteResponseSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const existing = await DashboardAssignmentModel.findById(id);
@@ -140,7 +173,7 @@ router.delete(
     await DashboardAssignmentModel.deleteById(id);
     await DashboardLayoutBroadcastService.notifyUsers(affected);
     res.json({ success: true, message: 'Assignment deleted' });
-  })
+  }),
 );
 
 export { router as dashboardAssignmentsRouter };

@@ -17,6 +17,8 @@ Content-Type: application/json
 
 **Limits:** max **500 MB** per file (`524_288_000` bytes). Filename must be a plain basename (no path separators).
 
+**Live interactive docs (dev):** `{dev-backend-url}/api/docs` — see [API documentation](./api-documentation.md).
+
 ---
 
 ## Data shapes

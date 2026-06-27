@@ -18,140 +18,187 @@
 import { Router, Response } from 'express';
 import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
-import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
+import { AuthenticatedRequest } from '@/types/auth.types';
 import { DenylistEntryModel } from '@/models/denylist-entry.model';
 import { DenylistPruningService } from '@/services/denylist-pruning.service';
 import { DatabaseService } from '@/services/database.service';
 import { AuthService } from '@/services/auth.service';
 import { logger } from '@/utils/logger';
+import { registerGet, registerPost } from '@/openapi/register-route';
+import {
+  denylistDeviceIdParamSchema,
+  denylistUserIdParamSchema,
+  denylistResponseSchema,
+} from '@/schemas/denylist.schemas';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/denylist';
+
 router.use(authenticateToken);
 
-// GET /api/v1/denylist/devices/:deviceId - Get denylist entries for a device
-router.get('/devices/:deviceId', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { deviceId } = req.params;
-  const user = req.user!;
+registerGet(
+  router,
+  '/devices/:deviceId',
+  {
+    openApiPath: `${MOUNT}/devices/{deviceId}`,
+    tags: ['Denylist'],
+    summary: 'Get denylist entries for a device',
+    security: 'bearer',
+    params: denylistDeviceIdParamSchema,
+    responses: {
+      200: denylistResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { deviceId } = req.params;
+    const user = req.user!;
 
-  // Check access: facility admin can only view devices in their facilities
-  if (AuthService.isFacilityAdmin(user.role)) {
-    const knex = DatabaseService.getInstance().connection;
-    const blulokDevice = await knex('blulok_devices')
-      .join('units', 'blulok_devices.unit_id', 'units.id')
-      .where('blulok_devices.id', deviceId)
-      .select('units.facility_id')
-      .first();
-    const accessControlDevice = blulokDevice ? null : await knex('access_control_devices as acd')
-      .join('gateways as g', 'acd.gateway_id', 'g.id')
-      .where('acd.id', deviceId)
-      .select('g.facility_id')
-      .first();
-    const facilityId = blulokDevice?.facility_id || accessControlDevice?.facility_id;
-
-    if (!facilityId || !user.facilityIds?.includes(facilityId)) {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied to this device'
-      });
-      return;
-    }
-  }
-
-  const denylistModel = new DenylistEntryModel();
-  const entries = await denylistModel.findByDevice(deviceId);
-
-  // Enrich entries with user information
-  const knex = DatabaseService.getInstance().connection;
-  const enrichedEntries = await Promise.all(
-    entries.map(async (entry) => {
-      const userInfo = await knex('users')
-        .where('id', entry.user_id)
-        .select('id', 'email', 'first_name', 'last_name')
+    if (AuthService.isFacilityAdmin(user.role)) {
+      const knex = DatabaseService.getInstance().connection;
+      const blulokDevice = await knex('blulok_devices')
+        .join('units', 'blulok_devices.unit_id', 'units.id')
+        .where('blulok_devices.id', deviceId)
+        .select('units.facility_id')
         .first();
+      const accessControlDevice = blulokDevice ? null : await knex('access_control_devices as acd')
+        .join('gateways as g', 'acd.gateway_id', 'g.id')
+        .where('acd.id', deviceId)
+        .select('g.facility_id')
+        .first();
+      const facilityId = blulokDevice?.facility_id || accessControlDevice?.facility_id;
 
-      return {
-        ...entry,
-        user: userInfo || { id: entry.user_id, email: null, first_name: null, last_name: null },
-      };
-    })
-  );
+      if (!facilityId || !user.facilityIds?.includes(facilityId)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this device',
+        });
+        return;
+      }
+    }
 
-  res.json({
-    success: true,
-    entries: enrichedEntries,
-  });
-}));
+    const denylistModel = new DenylistEntryModel();
+    const entries = await denylistModel.findByDevice(deviceId);
 
-// GET /api/v1/denylist/users/:userId - Get denylist entries for a user
-router.get('/users/:userId', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { userId } = req.params;
-
-  const denylistModel = new DenylistEntryModel();
-  const entries = await denylistModel.findByUser(userId);
-
-  // Enrich entries with device information
-  const knex = DatabaseService.getInstance().connection;
-  const enrichedEntries = await Promise.all(
-    entries.map(async (entry) => {
-      const device = entry.device_type === 'access_control'
-        ? await knex('access_control_devices as acd')
-          .join('gateways as g', 'acd.gateway_id', 'g.id')
-          .where('acd.id', entry.device_id)
-          .select(
-            'acd.id',
-            'acd.device_serial',
-            'acd.name',
-            'g.facility_id',
-          )
-          .first()
-        : await knex('blulok_devices')
-          .join('units', 'blulok_devices.unit_id', 'units.id')
-          .where('blulok_devices.id', entry.device_id)
-          .select(
-            'blulok_devices.id',
-            'blulok_devices.device_serial',
-            'units.unit_number',
-            'units.facility_id'
-          )
+    const knex = DatabaseService.getInstance().connection;
+    const enrichedEntries = await Promise.all(
+      entries.map(async (entry) => {
+        const userInfo = await knex('users')
+          .where('id', entry.user_id)
+          .select('id', 'email', 'first_name', 'last_name')
           .first();
 
-      return {
-        ...entry,
-        device: device || { id: entry.device_id, device_serial: null, unit_number: null, facility_id: null },
-      };
-    })
-  );
-
-  res.json({
-    success: true,
-    entries: enrichedEntries,
-  });
-}));
-
-// POST /api/v1/denylist/prune - Manually trigger pruning (admin only)
-router.post('/prune', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-
-  try {
-    const pruningService = DenylistPruningService.getInstance();
-    const removed = await pruningService.prune();
-
-    logger.info(`Manual denylist pruning triggered by ${user.userId}, removed ${removed} entries`);
+        return {
+          ...entry,
+          user: userInfo || { id: entry.user_id, email: null, first_name: null, last_name: null },
+        };
+      }),
+    );
 
     res.json({
       success: true,
-      message: `Pruned ${removed} expired denylist entries`,
-      removed,
+      entries: enrichedEntries,
     });
-  } catch (error: any) {
-    logger.error('Error during manual denylist pruning:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to prune denylist entries',
-      error: error.message,
+  }),
+);
+
+registerGet(
+  router,
+  '/users/:userId',
+  {
+    openApiPath: `${MOUNT}/users/{userId}`,
+    tags: ['Denylist'],
+    summary: 'Get denylist entries for a user',
+    security: 'bearer',
+    params: denylistUserIdParamSchema,
+    responses: {
+      200: denylistResponseSchema,
+    },
+  },
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { userId } = req.params;
+
+    const denylistModel = new DenylistEntryModel();
+    const entries = await denylistModel.findByUser(userId);
+
+    const knex = DatabaseService.getInstance().connection;
+    const enrichedEntries = await Promise.all(
+      entries.map(async (entry) => {
+        const device = entry.device_type === 'access_control'
+          ? await knex('access_control_devices as acd')
+            .join('gateways as g', 'acd.gateway_id', 'g.id')
+            .where('acd.id', entry.device_id)
+            .select(
+              'acd.id',
+              'acd.device_serial',
+              'acd.name',
+              'g.facility_id',
+            )
+            .first()
+          : await knex('blulok_devices')
+            .join('units', 'blulok_devices.unit_id', 'units.id')
+            .where('blulok_devices.id', entry.device_id)
+            .select(
+              'blulok_devices.id',
+              'blulok_devices.device_serial',
+              'units.unit_number',
+              'units.facility_id',
+            )
+            .first();
+
+        return {
+          ...entry,
+          device: device || { id: entry.device_id, device_serial: null, unit_number: null, facility_id: null },
+        };
+      }),
+    );
+
+    res.json({
+      success: true,
+      entries: enrichedEntries,
     });
-  }
-}));
+  }),
+);
+
+registerPost(
+  router,
+  '/prune',
+  {
+    openApiPath: `${MOUNT}/prune`,
+    tags: ['Denylist'],
+    summary: 'Manually trigger denylist pruning',
+    security: 'bearer',
+    responses: {
+      200: denylistResponseSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+
+    try {
+      const pruningService = DenylistPruningService.getInstance();
+      const removed = await pruningService.prune();
+
+      logger.info(`Manual denylist pruning triggered by ${user.userId}, removed ${removed} entries`);
+
+      res.json({
+        success: true,
+        message: `Pruned ${removed} expired denylist entries`,
+        removed,
+      });
+    } catch (error: any) {
+      logger.error('Error during manual denylist pruning:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to prune denylist entries',
+        error: error.message,
+      });
+    }
+  }),
+);
 
 export { router as denylistRouter };
-

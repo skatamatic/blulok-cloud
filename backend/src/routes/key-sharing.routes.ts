@@ -47,8 +47,27 @@ import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
 import { toE164 } from '@/utils/phone.util';
 import { AccessLogModel } from '../models/access-log.model';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  keySharingListQuerySchema,
+  keySharingUserQuerySchema,
+  keySharingUnitQuerySchema,
+  keySharingUserIdParamSchema,
+  keySharingUnitIdParamSchema,
+  keySharingIdParamSchema,
+  createKeySharingSchema,
+  updateKeySharingSchema,
+  keySharingInviteSchema,
+  keySharingResponseSchema,
+} from '@/schemas/key-sharing.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/key-sharing';
 const keySharingModel = new KeySharingModel();
 const accessLogModel = new AccessLogModel();
 
@@ -56,7 +75,20 @@ const accessLogModel = new AccessLogModel();
 router.use(authenticateToken);
 
 // Get key sharing records
-router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['KeySharing'],
+    summary: 'List key sharing records',
+    security: 'bearer',
+    query: keySharingListQuerySchema,
+    responses: {
+      200: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const {
@@ -172,8 +204,21 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
   }
 });
 
-// Get key sharing records for a specific user
-router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/user/:userId',
+  {
+    openApiPath: `${MOUNT}/user/{userId}`,
+    tags: ['KeySharing'],
+    summary: 'Get key sharing records for a user',
+    security: 'bearer',
+    params: keySharingUserIdParamSchema,
+    query: keySharingUserQuerySchema,
+    responses: {
+      200: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const { userId } = req.params;
@@ -255,8 +300,21 @@ router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Pr
   }
 });
 
-// Get key sharing records for a specific unit
-router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/unit/:unitId',
+  {
+    openApiPath: `${MOUNT}/unit/{unitId}`,
+    tags: ['KeySharing'],
+    summary: 'Get key sharing records for a unit',
+    security: 'bearer',
+    params: keySharingUnitIdParamSchema,
+    query: keySharingUnitQuerySchema,
+    responses: {
+      200: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const { unitId } = req.params;
@@ -387,36 +445,31 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
   }
 });
 
-// Create a new key sharing record
-router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user!;
-    const {
-      unit_id,
-      shared_with_user_id,
-      access_level = 'limited',
-      expires_at,
-      notes,
-      access_restrictions
-    } = req.body || {};
+registerPost(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['KeySharing'],
+    summary: 'Create a key sharing record',
+    security: 'bearer',
+    body: createKeySharingSchema,
+    responses: {
+      201: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = req.user!;
+      const {
+        unit_id,
+        shared_with_user_id,
+        access_level = 'limited',
+        expires_at,
+        notes,
+        access_restrictions,
+      } = req.body || {};
 
-    // Basic input validation (keep 400s at route level)
-    if (!unit_id || !shared_with_user_id) {
-      res.status(400).json({ error: 'unit_id and shared_with_user_id are required' });
-      return;
-    }
-    const validAccessLevels = ['full', 'limited', 'temporary', 'permanent'];
-    if (access_level && !validAccessLevels.includes(access_level)) {
-      res.status(400).json({ error: 'Invalid access_level. Must be one of: full, limited, temporary, permanent' });
-      return;
-    }
-    if (expires_at) {
-      const d = new Date(expires_at);
-      if (Number.isNaN(d.getTime())) {
-        res.status(400).json({ error: 'Invalid expires_at format. Must be a valid ISO date string' });
-        return;
-      }
-    }
     const { KeySharingService } = await import('@/services/key-sharing.service');
     const svc = KeySharingService.getInstance();
     const sharing = await svc.createShare(
@@ -446,8 +499,21 @@ router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void>
   }
 });
 
-// Update a key sharing record
-router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPut(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['KeySharing'],
+    summary: 'Update a key sharing record',
+    security: 'bearer',
+    params: keySharingIdParamSchema,
+    body: updateKeySharingSchema,
+    responses: {
+      200: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const { id } = req.params;
@@ -482,8 +548,20 @@ router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<voi
   }
 });
 
-// Revoke key sharing
-router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerDelete(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['KeySharing'],
+    summary: 'Revoke key sharing',
+    security: 'bearer',
+    params: keySharingIdParamSchema,
+    responses: {
+      200: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const { id } = req.params;
@@ -507,8 +585,19 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response): Promise<
   }
 });
 
-// Get expired sharing records (admin only)
-router.get('/admin/expired', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/admin/expired',
+  {
+    openApiPath: `${MOUNT}/admin/expired`,
+    tags: ['KeySharing'],
+    summary: 'List expired key sharing records (admin only)',
+    security: 'bearer',
+    responses: {
+      200: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     
@@ -531,43 +620,29 @@ router.get('/admin/expired', async (req: AuthenticatedRequest, res: Response): P
   }
 });
 
-export default router;
-// ----- Invite flow: POST /api/v1/key-sharing/invite -----
-// Allows a sharer to invite a user by phone number (E.164) and grant shared access to a unit.
-// Roles: TENANT (must be primary on unit), FACILITY_ADMIN (scoped to their facilities), ADMIN/DEV_ADMIN (global)
-router.post('/invite', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user!;
-    const { unit_id, phone, access_level = 'limited', expires_at } = req.body || {};
+registerPost(
+  router,
+  '/invite',
+  {
+    openApiPath: `${MOUNT}/invite`,
+    tags: ['KeySharing'],
+    summary: 'Invite a user to key sharing by phone',
+    security: 'bearer',
+    body: keySharingInviteSchema,
+    responses: {
+      200: keySharingResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = req.user!;
+      const { unit_id, phone, access_level = 'limited', expires_at } = req.body || {};
 
-    // Basic validation
-    if (!unit_id) {
-      res.status(400).json({ success: false, message: 'unit_id is required' });
-      return;
-    }
-    if (!phone) {
-      res.status(400).json({ success: false, message: 'phone is required' });
-      return;
-    }
-    const validAccess = ['full', 'limited', 'temporary'];
-    if (access_level && !validAccess.includes(access_level)) {
-      res.status(400).json({ success: false, message: 'Invalid access_level' });
-      return;
-    }
     let expiresAtDate: Date | null = null;
     if (expires_at) {
-      const d = new Date(expires_at);
-      if (Number.isNaN(d.getTime())) {
-        res.status(400).json({ success: false, message: 'Invalid expires_at format' });
-        return;
-      }
-      expiresAtDate = d;
+      expiresAtDate = new Date(expires_at);
     }
 
-    // Authorization checks
-    // - TENANT: must be primary tenant of the unit
-    // - FACILITY_ADMIN: unit must be in one of their facilities
-    // - ADMIN/DEV_ADMIN: allowed
     const knex = DatabaseService.getInstance().connection;
     const unit = await knex('units').where('id', unit_id).first();
     if (!unit) {
@@ -613,3 +688,5 @@ router.post('/invite', async (req: AuthenticatedRequest, res: Response): Promise
     res.status(500).json({ success: false, message: 'Failed to process invite' });
   }
 });
+
+export default router;

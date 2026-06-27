@@ -166,3 +166,17 @@ Prioritize in this order when expanding tests:
 2. **Device control** — `LockCommandService` (now covered), gateway send paths.
 3. **Frontend session** — `AuthContext` (now covered), then `GlobalFacilityContext` / `FMSSyncContext` if changing those flows.
 4. **Avoid** chasing 0% on `database.service.ts` (globally mocked) or Knex migrations.
+
+---
+
+## PR checklist (routes / API changes)
+
+When a PR touches route handlers or Joi schemas:
+
+1. `cd backend && npm test` (or targeted `__tests__/routes/*` suites)
+2. `npm run test:security` if auth/RBAC changed
+3. `npm run openapi:generate` and commit `backend/openapi/generated.json` if paths or schemas changed
+4. `npm run openapi:check` before merge (regenerate + strict pending check + git diff)
+5. `npm run ws:e2e` when behavior involves gateway WS or live DB flows
+
+See [API documentation](./api-documentation.md) for adding routes via `registerGet` / `registerPost`.

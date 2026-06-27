@@ -26,46 +26,29 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { NotificationService } from '@/services/notification.service';
 import { AuthService } from '@/services/auth.service';
 import { asyncHandler, AccessDeniedError, NotFoundError } from '@/middleware/error.middleware';
-import { validate } from '@/middleware/validator.middleware';
-import { IN_APP_NOTIFICATION_TYPES } from '@/constants/in-app-notification.constants';
+import { registerGet, registerPost, registerDelete } from '@/openapi/register-route';
+import {
+  notificationListQuerySchema,
+  markMultipleReadSchema,
+  markAllReadSchema,
+  unreadCountQuerySchema,
+  notificationIdParamSchema,
+  notificationListResponseSchema,
+  unreadCountResponseSchema,
+  notificationResponseSchema,
+  markedCountResponseSchema,
+  deleteNotificationResponseSchema,
+} from '@/schemas/notifications.schemas';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/notifications';
 
-// Validation schemas
-const listQuerySchema = Joi.object({
-  type: Joi.string().valid(...IN_APP_NOTIFICATION_TYPES).optional(),
-  priority: Joi.string().valid('low', 'normal', 'high', 'urgent').optional(),
-  isRead: Joi.boolean().optional(),
-  facilityId: Joi.string().uuid().optional(),
-  includeExpired: Joi.boolean().optional(),
-  limit: Joi.number().integer().min(1).max(100).default(50),
-  offset: Joi.number().integer().min(0).default(0),
-});
-
-const markMultipleReadSchema = Joi.object({
-  notificationIds: Joi.array().items(Joi.string().uuid()).min(1).max(100).required(),
-});
-
-const markAllReadSchema = Joi.object({
-  facilityId: Joi.string().uuid().optional(),
-});
-
-const unreadCountQuerySchema = Joi.object({
-  facilityId: Joi.string().uuid().optional(),
-});
-
-// Path parameter validation schemas
-const idParamSchema = Joi.object({
-  id: Joi.string().uuid().required(),
-});
-
-// Apply authentication to all routes
 router.use(authenticateToken);
 
 const parseBooleanQuery = (value: unknown): boolean | undefined => {
@@ -81,15 +64,19 @@ const parseBooleanQuery = (value: unknown): boolean | undefined => {
   return undefined;
 };
 
-/**
- * GET /api/v1/notifications
- * 
- * Get notifications for the current user.
- * Supports filtering by type, priority, read status, and facility.
- */
-router.get(
+registerGet(
+  router,
   '/',
-  validate(listQuerySchema, 'query'),
+  {
+    openApiPath: MOUNT,
+    tags: ['Notifications'],
+    summary: 'Get notifications for the current user',
+    security: 'bearer',
+    query: notificationListQuerySchema,
+    responses: {
+      200: notificationListResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { type, priority, isRead, facilityId, includeExpired, limit, offset } = req.query;
@@ -110,7 +97,7 @@ router.get(
         includeExpired: parseBooleanQuery(includeExpired),
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
-      }
+      },
     );
 
     res.json({
@@ -121,17 +108,23 @@ router.get(
       limit: Number(limit) || 50,
       offset: Number(offset) || 0,
     });
-  })
+  }),
 );
 
-/**
- * GET /api/v1/notifications/unread-count
- * 
- * Get the unread notification count for the current user.
- */
-router.get(
+registerGet(
+  router,
   '/unread-count',
-  validate(unreadCountQuerySchema, 'query'),
+  {
+    openApiPath: `${MOUNT}/unread-count`,
+    tags: ['Notifications'],
+    summary: 'Get unread notification count for the current user',
+    security: 'bearer',
+    query: unreadCountQuerySchema,
+    responses: {
+      200: unreadCountResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const facilityId = req.query.facilityId as string | undefined;
@@ -154,17 +147,23 @@ router.get(
       success: true,
       unreadCount: count,
     });
-  })
+  }),
 );
 
-/**
- * GET /api/v1/notifications/:id
- * 
- * Get a single notification by ID.
- */
-router.get(
+registerGet(
+  router,
   '/:id',
-  validate(idParamSchema, 'params'),
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Notifications'],
+    summary: 'Get a single notification by ID',
+    security: 'bearer',
+    params: notificationIdParamSchema,
+    responses: {
+      200: notificationResponseSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { id } = req.params;
@@ -180,17 +179,23 @@ router.get(
       success: true,
       notification,
     });
-  })
+  }),
 );
 
-/**
- * POST /api/v1/notifications/:id/read
- * 
- * Mark a single notification as read.
- */
-router.post(
+registerPost(
+  router,
   '/:id/read',
-  validate(idParamSchema, 'params'),
+  {
+    openApiPath: `${MOUNT}/{id}/read`,
+    tags: ['Notifications'],
+    summary: 'Mark a single notification as read',
+    security: 'bearer',
+    params: notificationIdParamSchema,
+    responses: {
+      200: notificationResponseSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { id } = req.params;
@@ -206,17 +211,22 @@ router.post(
       success: true,
       notification,
     });
-  })
+  }),
 );
 
-/**
- * POST /api/v1/notifications/read
- * 
- * Mark multiple notifications as read.
- */
-router.post(
+registerPost(
+  router,
   '/read',
-  validate(markMultipleReadSchema),
+  {
+    openApiPath: `${MOUNT}/read`,
+    tags: ['Notifications'],
+    summary: 'Mark multiple notifications as read',
+    security: 'bearer',
+    body: markMultipleReadSchema,
+    responses: {
+      200: markedCountResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { notificationIds } = req.body;
@@ -228,17 +238,23 @@ router.post(
       success: true,
       markedCount: count,
     });
-  })
+  }),
 );
 
-/**
- * POST /api/v1/notifications/read-all
- * 
- * Mark all notifications as read for the current user.
- */
-router.post(
+registerPost(
+  router,
   '/read-all',
-  validate(markAllReadSchema),
+  {
+    openApiPath: `${MOUNT}/read-all`,
+    tags: ['Notifications'],
+    summary: 'Mark all notifications as read for the current user',
+    security: 'bearer',
+    body: markAllReadSchema,
+    responses: {
+      200: markedCountResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { facilityId } = req.body;
@@ -267,17 +283,23 @@ router.post(
       success: true,
       markedCount: count,
     });
-  })
+  }),
 );
 
-/**
- * DELETE /api/v1/notifications/:id
- * 
- * Delete a notification.
- */
-router.delete(
+registerDelete(
+  router,
   '/:id',
-  validate(idParamSchema, 'params'),
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Notifications'],
+    summary: 'Delete a notification',
+    security: 'bearer',
+    params: notificationIdParamSchema,
+    responses: {
+      200: deleteNotificationResponseSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { id } = req.params;
@@ -293,7 +315,7 @@ router.delete(
       success: true,
       message: 'Notification deleted',
     });
-  })
+  }),
 );
 
 export { router as notificationsRouter };

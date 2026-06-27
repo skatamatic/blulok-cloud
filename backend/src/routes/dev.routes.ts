@@ -63,8 +63,11 @@ import fs from 'fs';
 import path from 'path';
 import { WebSocketService } from '../services/websocket.service';
 import { logger } from '../utils/logger';
+import { registerGet, registerPost } from '@/openapi/register-route';
+import { devLogsQuerySchema } from '@/schemas/dev.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/dev';
 
 // Middleware to ensure only admins and dev admins can access these routes
 const requireDevAccess = (req: AuthenticatedRequest, res: Response, next: any): void => {
@@ -81,8 +84,16 @@ const requireDevAccess = (req: AuthenticatedRequest, res: Response, next: any): 
 // Apply dev access middleware to all routes
 router.use(requireDevAccess);
 
-// POST /dev/create-admin-users - Create admin and dev admin users
-router.post('/create-admin-users', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/create-admin-users',
+  {
+    openApiPath: `${MOUNT}/create-admin-users`,
+    tags: ['Admin'],
+    summary: 'Create admin and dev admin users',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const db = DatabaseService.getInstance();
     const bcrypt = require('bcrypt');
@@ -160,10 +171,19 @@ router.post('/create-admin-users', asyncHandler(async (_req: AuthenticatedReques
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// POST /dev/seed-comprehensive-data - Seed comprehensive test data
-router.post('/seed-comprehensive-data', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/seed-comprehensive-data',
+  {
+    openApiPath: `${MOUNT}/seed-comprehensive-data`,
+    tags: ['Admin'],
+    summary: 'Seed comprehensive test data',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const db = DatabaseService.getInstance();
     
@@ -233,10 +253,19 @@ router.post('/seed-comprehensive-data', asyncHandler(async (_req: AuthenticatedR
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// POST /dev/reset-database - Reset database to initial seed state
-router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/reset-database',
+  {
+    openApiPath: `${MOUNT}/reset-database`,
+    tags: ['Admin'],
+    summary: 'Reset database to initial seed state',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const db = DatabaseService.getInstance();
 
@@ -327,10 +356,20 @@ router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, r
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// GET /dev/logs - Get backend logs
-router.get('/logs', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/logs',
+  {
+    openApiPath: `${MOUNT}/logs`,
+    tags: ['Admin'],
+    summary: 'Get backend logs',
+    security: 'bearer',
+    query: devLogsQuerySchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { type = 'all', lines = '100' } = req.query;
     const linesCount = parseInt(lines as string) || 100;
@@ -389,10 +428,19 @@ router.get('/logs', asyncHandler(async (req: AuthenticatedRequest, res: Response
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// GET /dev/websocket-stats - Get WebSocket statistics
-router.get('/websocket-stats', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/websocket-stats',
+  {
+    openApiPath: `${MOUNT}/websocket-stats`,
+    tags: ['Admin'],
+    summary: 'Get WebSocket statistics',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const wsService = WebSocketService.getInstance();
     const stats = wsService.getStats();
@@ -409,7 +457,8 @@ router.get('/websocket-stats', asyncHandler(async (_req: AuthenticatedRequest, r
       error: error.message
     });
   }
-}));
+  }),
+);
 
 // Helper functions for comprehensive data seeding
 

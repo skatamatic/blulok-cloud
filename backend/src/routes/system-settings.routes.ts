@@ -38,7 +38,6 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { UserRole } from '@/types/auth.types';
@@ -48,125 +47,110 @@ import { NotificationsConfig } from '@/types/notification.types';
 import { NotificationService } from '@/services/notifications/notification.service';
 import { UserModel, User } from '@/models/user.model';
 import { logger } from '@/utils/logger';
+import { registerGet, registerPost, registerPut } from '@/openapi/register-route';
+import {
+  updateSystemSettingsBodySchema,
+  notificationsConfigBodySchema,
+} from '@/schemas/system-settings.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/system-settings';
 
-const updateSettingsSchema = Joi.object({
-  'security.max_devices_per_user': Joi.number().integer().min(0).max(250).optional(),
-  'dev.blufms_demo_enabled': Joi.boolean().optional(),
-  'dev.bludesign_enabled': Joi.boolean().optional(),
-}).min(1); // At least one setting must be provided
-
-const notificationsSchema = Joi.object({
-  enabledChannels: Joi.object({
-    sms: Joi.boolean().allow(null).optional(),
-    email: Joi.boolean().allow(null).optional(),
-  }).unknown(true).optional().allow(null),
-  defaultProvider: Joi.object({
-    sms: Joi.string().valid('twilio', 'console').allow(null).optional(),
-    email: Joi.string().valid('console').allow(null).optional(),
-  }).unknown(true).optional().allow(null),
-  twilio: Joi.object({
-    accountSid: Joi.string().allow(null, '').optional(),
-    authToken: Joi.string().allow(null, '').optional(),
-    fromNumber: Joi.string().allow(null, '').optional(),
-  }).unknown(true).optional().allow(null),
-  templates: Joi.object({
-    inviteSms: Joi.string().allow(null, '').optional(),
-    inviteEmail: Joi.string().allow(null, '').optional(),
-    inviteEmailSubject: Joi.string().allow(null, '').optional(),
-    otpSms: Joi.string().allow(null, '').optional(),
-    otpEmail: Joi.string().allow(null, '').optional(),
-    otpEmailSubject: Joi.string().allow(null, '').optional(),
-    passwordResetSms: Joi.string().allow(null, '').optional(),
-    passwordResetEmail: Joi.string().allow(null, '').optional(),
-    passwordResetEmailSubject: Joi.string().allow(null, '').optional(),
-  }).unknown(true).optional().allow(null),
-  deeplinkBaseUrl: Joi.string().allow(null, '').optional(),
-}).unknown(true).min(1); // At least one field must be provided
-
-// GET /api/v1/system-settings
-router.get('/', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Access denied' });
-    return;
-  }
-
-  const model = new SystemSettingsModel();
-  const maxDevices = await model.get('security.max_devices_per_user');
-  const parsed = maxDevices !== undefined ? parseInt(maxDevices, 10) : NaN;
-  const safeValue = Number.isNaN(parsed) ? 2 : parsed;
-  
-  const blufmsDemoEnabled = await model.get('dev.blufms_demo_enabled');
-  const blufmsDemoValue = blufmsDemoEnabled === 'true';
-  
-  const bluDesignEnabled = await model.get('dev.bludesign_enabled');
-  const bluDesignValue = bluDesignEnabled === 'true';
-  
-  res.json({
-    success: true,
-    settings: {
-      'security.max_devices_per_user': safeValue,
-      'dev.blufms_demo_enabled': blufmsDemoValue,
-      'dev.bludesign_enabled': bluDesignValue
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['System'],
+    summary: 'Get system settings',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
     }
-  });
-}));
 
-// PUT /api/v1/system-settings
-router.put('/', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Access denied' });
-    return;
-  }
-  const { error, value } = updateSettingsSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
+    const model = new SystemSettingsModel();
+    const maxDevices = await model.get('security.max_devices_per_user');
+    const parsed = maxDevices !== undefined ? parseInt(maxDevices, 10) : NaN;
+    const safeValue = Number.isNaN(parsed) ? 2 : parsed;
 
-  const model = new SystemSettingsModel();
-  if (value['security.max_devices_per_user'] !== undefined) {
-    await model.set('security.max_devices_per_user', value['security.max_devices_per_user'].toString());
-  }
-  if (value['dev.blufms_demo_enabled'] !== undefined) {
-    await model.set('dev.blufms_demo_enabled', value['dev.blufms_demo_enabled'].toString());
-  }
-  if (value['dev.bludesign_enabled'] !== undefined) {
-    await model.set('dev.bludesign_enabled', value['dev.bludesign_enabled'].toString());
-  }
+    const blufmsDemoEnabled = await model.get('dev.blufms_demo_enabled');
+    const blufmsDemoValue = blufmsDemoEnabled === 'true';
 
-  res.json({ success: true, message: 'Settings updated successfully' });
-}));
+    const bluDesignEnabled = await model.get('dev.bludesign_enabled');
+    const bluDesignValue = bluDesignEnabled === 'true';
 
-// GET /api/v1/system-settings/notifications
-router.get('/notifications', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Access denied' });
-    return;
-  }
-
-  const model = new SystemSettingsModel();
-  const raw = await model.get('notifications.config');
-  let config: NotificationsConfig;
-
-  if (!raw) {
-    config = {
-      enabledChannels: { sms: true, email: false },
-      defaultProvider: { sms: 'console', email: 'console' },
-      templates: {
-        inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
-        otpSms: 'Your verification code is: {{code}}',
+    res.json({
+      success: true,
+      settings: {
+        'security.max_devices_per_user': safeValue,
+        'dev.blufms_demo_enabled': blufmsDemoValue,
+        'dev.bludesign_enabled': bluDesignValue,
       },
-      deeplinkBaseUrl: 'blulok://invite',
-    };
-  } else {
-    try {
-      config = JSON.parse(raw);
-    } catch {
+    });
+  }),
+);
+
+registerPut(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['System'],
+    summary: 'Update system settings',
+    security: 'bearer',
+    body: updateSystemSettingsBodySchema,
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+    const value = req.body;
+
+    const model = new SystemSettingsModel();
+    if (value['security.max_devices_per_user'] !== undefined) {
+      await model.set('security.max_devices_per_user', value['security.max_devices_per_user'].toString());
+    }
+    if (value['dev.blufms_demo_enabled'] !== undefined) {
+      await model.set('dev.blufms_demo_enabled', value['dev.blufms_demo_enabled'].toString());
+    }
+    if (value['dev.bludesign_enabled'] !== undefined) {
+      await model.set('dev.bludesign_enabled', value['dev.bludesign_enabled'].toString());
+    }
+
+    res.json({ success: true, message: 'Settings updated successfully' });
+  }),
+);
+
+registerGet(
+  router,
+  '/notifications',
+  {
+    openApiPath: `${MOUNT}/notifications`,
+    tags: ['System'],
+    summary: 'Get notification settings',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
+    const model = new SystemSettingsModel();
+    const raw = await model.get('notifications.config');
+    let config: NotificationsConfig;
+
+    if (!raw) {
       config = {
         enabledChannels: { sms: true, email: false },
         defaultProvider: { sms: 'console', email: 'console' },
@@ -176,96 +160,126 @@ router.get('/notifications', authenticateToken as any, asyncHandler(async (req: 
         },
         deeplinkBaseUrl: 'blulok://invite',
       };
+    } else {
+      try {
+        config = JSON.parse(raw);
+      } catch {
+        config = {
+          enabledChannels: { sms: true, email: false },
+          defaultProvider: { sms: 'console', email: 'console' },
+          templates: {
+            inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
+            otpSms: 'Your verification code is: {{code}}',
+          },
+          deeplinkBaseUrl: 'blulok://invite',
+        };
+      }
     }
-  }
 
-  res.json({ success: true, config });
-}));
+    res.json({ success: true, config });
+  }),
+);
 
-// PUT /api/v1/system-settings/notifications
-router.put('/notifications', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Access denied' });
-    return;
-  }
+registerPut(
+  router,
+  '/notifications',
+  {
+    openApiPath: `${MOUNT}/notifications`,
+    tags: ['System'],
+    summary: 'Update notification settings',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
 
-  // Log the incoming payload for debugging
-  logger.debug('Notification settings update request:', JSON.stringify(req.body, null, 2));
+    logger.debug('Notification settings update request:', JSON.stringify(req.body, null, 2));
 
-  const { error, value } = notificationsSchema.validate(req.body, { 
-    abortEarly: false,
-    allowUnknown: true, // Allow extra fields that aren't in the schema
-    stripUnknown: true, // Remove unknown fields from the validated result
-  });
-  if (error) {
-    const errorMessages = error.details.map(d => d.message).join('; ');
-    logger.error('Notification settings validation error:', errorMessages, error.details);
-    res.status(400).json({ 
-      success: false, 
-      message: errorMessages || 'Validation error',
-      details: error.details 
+    const { error, value } = notificationsConfigBodySchema.validate(req.body, {
+      abortEarly: false,
+      allowUnknown: true,
+      stripUnknown: true,
     });
-    return;
-  }
-
-  const model = new SystemSettingsModel();
-  await model.set('notifications.config', JSON.stringify(value));
-
-  res.json({ success: true, message: 'Notification settings updated successfully' });
-}));
-
-// POST /api/v1/system-settings/notifications/test
-router.post('/notifications/test', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const user = req.user!;
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({ success: false, message: 'Access denied' });
-    return;
-  }
-
-  const { toEmail, toPhone, configOverride } = req.body || {};
-
-  // Determine recipients: defaults to current user profile
-  let targetEmail: string | undefined = toEmail;
-  let targetPhone: string | undefined = toPhone;
-
-  if (!targetEmail || !targetPhone) {
-    const profile = await UserModel.findById(user.userId) as User | undefined;
-    if (!targetEmail && profile?.email) targetEmail = profile.email || undefined;
-    if (!targetPhone && profile?.phone_number) targetPhone = profile.phone_number || undefined;
-  }
-
-  if (!targetEmail && !targetPhone) {
-    res.status(400).json({ success: false, message: 'No recipient found. Provide toEmail/toPhone or set your email/phone.' });
-    return;
-  }
-
-  const notifications = NotificationService.getInstance();
-  try {
-    const result = await notifications.sendTestNotifications({ toEmail: targetEmail, toPhone: targetPhone }, configOverride);
-
-    // If nothing was sent and there are errors, return a 500 with details
-    if ((result.sent?.length || 0) === 0 && (result.errors?.length || 0) > 0) {
-      res.status(500).json({
+    if (error) {
+      const errorMessages = error.details.map(d => d.message).join('; ');
+      logger.error('Notification settings validation error:', errorMessages, error.details);
+      res.status(400).json({
         success: false,
-        message: 'Failed to send test notifications',
-        errors: result.errors,
+        message: errorMessages || 'Validation error',
+        details: error.details,
       });
       return;
     }
 
-    // Otherwise return success including any partial errors
-    res.json({
-      success: true,
-      message: 'Test notifications dispatched',
-      sent: result.sent,
-      errors: result.errors,
-      toEmail: targetEmail,
-      toPhone: targetPhone
-    });
-  } catch (e: any) {
-    res.status(500).json({ success: false, message: e?.message || 'Failed to send test notifications' });
-  }
-}));
+    const model = new SystemSettingsModel();
+    await model.set('notifications.config', JSON.stringify(value));
+
+    res.json({ success: true, message: 'Notification settings updated successfully' });
+  }),
+);
+
+registerPost(
+  router,
+  '/notifications/test',
+  {
+    openApiPath: `${MOUNT}/notifications/test`,
+    tags: ['System'],
+    summary: 'Send test notifications',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
+    const { toEmail, toPhone, configOverride } = req.body || {};
+
+    let targetEmail: string | undefined = toEmail;
+    let targetPhone: string | undefined = toPhone;
+
+    if (!targetEmail || !targetPhone) {
+      const profile = await UserModel.findById(user.userId) as User | undefined;
+      if (!targetEmail && profile?.email) targetEmail = profile.email || undefined;
+      if (!targetPhone && profile?.phone_number) targetPhone = profile.phone_number || undefined;
+    }
+
+    if (!targetEmail && !targetPhone) {
+      res.status(400).json({ success: false, message: 'No recipient found. Provide toEmail/toPhone or set your email/phone.' });
+      return;
+    }
+
+    const notifications = NotificationService.getInstance();
+    try {
+      const result = await notifications.sendTestNotifications({ toEmail: targetEmail, toPhone: targetPhone }, configOverride);
+
+      if ((result.sent?.length || 0) === 0 && (result.errors?.length || 0) > 0) {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to send test notifications',
+          errors: result.errors,
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'Test notifications dispatched',
+        sent: result.sent,
+        errors: result.errors,
+        toEmail: targetEmail,
+        toPhone: targetPhone,
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e?.message || 'Failed to send test notifications' });
+    }
+  }),
+);
 
 export { router as systemSettingsRouter };

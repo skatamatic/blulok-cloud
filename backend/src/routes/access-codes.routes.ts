@@ -1,64 +1,33 @@
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { authenticateToken, requireRoles } from '@/middleware/auth.middleware';
 import { asyncHandler, AccessDeniedError } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { AccessCodeService } from '@/services/access-code.service';
 import { AuthService } from '@/services/auth.service';
+import {
+  registerGet,
+  registerPut,
+  registerPost,
+} from '@/openapi/register-route';
+import {
+  accessCodeConfigSchema,
+  accessCodeRotateSchema,
+  accessCodeSetManualSchema,
+  accessCodeGroupConfigSchema,
+  accessCodeFacilityIdParamSchema,
+  accessCodeGroupIdParamSchema,
+  accessCodeIdParamSchema,
+  accessCodeFacilityQuerySchema,
+  accessCodeMyQuerySchema,
+  accessCodeResponseSchema,
+} from '@/schemas/access-codes.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/access-codes';
 const getService = (): AccessCodeService => AccessCodeService.getInstance();
 
 const manageRoles = [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN];
 const appReadRoles = [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN, UserRole.TENANT, UserRole.MAINTENANCE];
-
-const configSchema = Joi.object({
-  is_enabled: Joi.boolean().optional(),
-  digit_count: Joi.number().integer().min(3).max(8).optional(),
-  rotation_interval_hours: Joi.number().positive().optional(),
-  rotation_hour: Joi.number().integer().min(0).max(23).optional(),
-  rotation_minute: Joi.number().integer().min(0).max(59).optional(),
-}).min(1);
-
-const rotateSchema = Joi.object({
-  facility_id: Joi.string().uuid().required(),
-  scope_type: Joi.string().valid('device_group', 'device').optional(),
-  scope_id: Joi.string().uuid().allow(null).optional(),
-  schedule_id: Joi.string().uuid().allow(null).optional(),
-}).custom((value, helpers) => {
-  if (!value.scope_type) return value;
-  if ((value.scope_type === 'device' || value.scope_type === 'device_group') && !value.scope_id) {
-    return helpers.error('any.invalid', { message: `scope_id is required for ${value.scope_type} scope` });
-  }
-  if (value.schedule_id && value.scope_type !== 'device_group') {
-    return helpers.error('any.invalid', { message: 'schedule_id is only supported for device_group scope' });
-  }
-  return value;
-});
-
-const setManualSchema = Joi.object({
-  facility_id: Joi.string().uuid().required(),
-  scope_type: Joi.string().valid('device_group', 'device').required(),
-  scope_id: Joi.string().uuid().allow(null).optional(),
-  code: Joi.string().pattern(/^[0-9]{3,8}$/).required(),
-  schedule_id: Joi.string().uuid().allow(null).optional(),
-}).custom((value, helpers) => {
-  if ((value.scope_type === 'device' || value.scope_type === 'device_group') && !value.scope_id) {
-    return helpers.error('any.invalid', { message: `scope_id is required for ${value.scope_type} scope` });
-  }
-  if (value.schedule_id && value.scope_type !== 'device_group') {
-    return helpers.error('any.invalid', { message: 'schedule_id is only supported for device_group scope' });
-  }
-  return value;
-});
-
-const groupConfigSchema = Joi.object({
-  is_enabled: Joi.boolean().optional(),
-  digit_count: Joi.number().integer().min(3).max(8).optional(),
-  rotation_interval_hours: Joi.number().positive().optional(),
-  rotation_hour: Joi.number().integer().min(0).max(23).optional(),
-  rotation_minute: Joi.number().integer().min(0).max(59).optional(),
-}).min(1);
 
 const assertFacilityAccess = (req: AuthenticatedRequest, facilityId: string): void => {
   const user = req.user!;
@@ -70,107 +39,233 @@ const assertFacilityAccess = (req: AuthenticatedRequest, facilityId: string): vo
 
 router.use(authenticateToken);
 
-router.get('/my', requireRoles(appReadRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const facilityId = req.query.facility_id ? String(req.query.facility_id) : undefined;
-  const result = await getService().getCodesForUser(req.user!.userId, req.user!.role, req.user!.facilityIds, facilityId);
-  res.json({ success: true, data: result });
-}));
+registerGet(
+  router,
+  '/my',
+  {
+    openApiPath: `${MOUNT}/my`,
+    tags: ['AccessCodes'],
+    summary: 'Get access codes for current user',
+    security: 'bearer',
+    query: accessCodeMyQuerySchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(appReadRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const facilityId = req.query.facility_id ? String(req.query.facility_id) : undefined;
+    const result = await getService().getCodesForUser(req.user!.userId, req.user!.role, req.user!.facilityIds, facilityId);
+    res.json({ success: true, data: result });
+  }),
+);
 
-router.get('/app/my', requireRoles(appReadRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const facilityId = req.query.facility_id ? String(req.query.facility_id) : undefined;
-  const result = await getService().getAppCodesForUser(req.user!.userId, req.user!.role, req.user!.facilityIds, facilityId);
-  res.json({ success: true, data: result });
-}));
+registerGet(
+  router,
+  '/app/my',
+  {
+    openApiPath: `${MOUNT}/app/my`,
+    tags: ['AccessCodes'],
+    summary: 'Get app access codes for current user',
+    security: 'bearer',
+    query: accessCodeMyQuerySchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(appReadRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const facilityId = req.query.facility_id ? String(req.query.facility_id) : undefined;
+    const result = await getService().getAppCodesForUser(req.user!.userId, req.user!.role, req.user!.facilityIds, facilityId);
+    res.json({ success: true, data: result });
+  }),
+);
 
-router.get('/config/:facilityId', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  assertFacilityAccess(req, req.params.facilityId);
-  const config = await getService().getConfig(req.params.facilityId);
-  res.json({ success: true, data: config });
-}));
+registerGet(
+  router,
+  '/config/:facilityId',
+  {
+    openApiPath: `${MOUNT}/config/{facilityId}`,
+    tags: ['AccessCodes'],
+    summary: 'Get facility access code configuration',
+    security: 'bearer',
+    params: accessCodeFacilityIdParamSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    assertFacilityAccess(req, req.params.facilityId);
+    const config = await getService().getConfig(req.params.facilityId);
+    res.json({ success: true, data: config });
+  }),
+);
 
-router.get('/push-state/:facilityId', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  assertFacilityAccess(req, req.params.facilityId);
-  const state = getService().getPushState(req.params.facilityId);
-  res.json({ success: true, data: state });
-}));
+registerGet(
+  router,
+  '/push-state/:facilityId',
+  {
+    openApiPath: `${MOUNT}/push-state/{facilityId}`,
+    tags: ['AccessCodes'],
+    summary: 'Get access code push state for facility',
+    security: 'bearer',
+    params: accessCodeFacilityIdParamSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    assertFacilityAccess(req, req.params.facilityId);
+    const state = getService().getPushState(req.params.facilityId);
+    res.json({ success: true, data: state });
+  }),
+);
 
-router.put('/config/:facilityId', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = configSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
-  assertFacilityAccess(req, req.params.facilityId);
-  const config = await getService().upsertConfig(req.params.facilityId, value);
-  res.json({ success: true, data: config });
-}));
+registerPut(
+  router,
+  '/config/:facilityId',
+  {
+    openApiPath: `${MOUNT}/config/{facilityId}`,
+    tags: ['AccessCodes'],
+    summary: 'Update facility access code configuration',
+    security: 'bearer',
+    params: accessCodeFacilityIdParamSchema,
+    body: accessCodeConfigSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    assertFacilityAccess(req, req.params.facilityId);
+    const config = await getService().upsertConfig(req.params.facilityId, req.body);
+    res.json({ success: true, data: config });
+  }),
+);
 
-router.get('/', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const facilityId = String(req.query.facility_id || '');
-  if (!facilityId) {
-    res.status(400).json({ success: false, message: 'facility_id is required' });
-    return;
-  }
-  assertFacilityAccess(req, facilityId);
-  const scheduleId = req.query.schedule_id ? String(req.query.schedule_id) : undefined;
-  const codes = await getService().getActiveCodesForFacility(facilityId, scheduleId);
-  res.json({ success: true, data: codes });
-}));
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['AccessCodes'],
+    summary: 'List active access codes for facility',
+    security: 'bearer',
+    query: accessCodeFacilityQuerySchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const facilityId = String(req.query.facility_id || '');
+    assertFacilityAccess(req, facilityId);
+    const scheduleId = req.query.schedule_id ? String(req.query.schedule_id) : undefined;
+    const codes = await getService().getActiveCodesForFacility(facilityId, scheduleId);
+    res.json({ success: true, data: codes });
+  }),
+);
 
-router.get('/effective', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const facilityId = String(req.query.facility_id || '');
-  if (!facilityId) {
-    res.status(400).json({ success: false, message: 'facility_id is required' });
-    return;
-  }
-  assertFacilityAccess(req, facilityId);
-  const scheduleId = req.query.schedule_id ? String(req.query.schedule_id) : undefined;
-  const codes = await getService().getEffectiveCodesForFacility(facilityId, scheduleId);
-  res.json({ success: true, data: codes });
-}));
+registerGet(
+  router,
+  '/effective',
+  {
+    openApiPath: `${MOUNT}/effective`,
+    tags: ['AccessCodes'],
+    summary: 'List effective access codes for facility',
+    security: 'bearer',
+    query: accessCodeFacilityQuerySchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const facilityId = String(req.query.facility_id || '');
+    assertFacilityAccess(req, facilityId);
+    const scheduleId = req.query.schedule_id ? String(req.query.schedule_id) : undefined;
+    const codes = await getService().getEffectiveCodesForFacility(facilityId, scheduleId);
+    res.json({ success: true, data: codes });
+  }),
+);
 
-router.get('/groups/:groupId/config', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const facilityId = await getService().getGroupFacilityId(req.params.groupId);
-  assertFacilityAccess(req, facilityId);
-  const group = await getService().getGroupConfig(req.params.groupId);
-  res.json({ success: true, data: group });
-}));
+registerGet(
+  router,
+  '/groups/:groupId/config',
+  {
+    openApiPath: `${MOUNT}/groups/{groupId}/config`,
+    tags: ['AccessCodes'],
+    summary: 'Get device group access code configuration',
+    security: 'bearer',
+    params: accessCodeGroupIdParamSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const facilityId = await getService().getGroupFacilityId(req.params.groupId);
+    assertFacilityAccess(req, facilityId);
+    const group = await getService().getGroupConfig(req.params.groupId);
+    res.json({ success: true, data: group });
+  }),
+);
 
-router.put('/groups/:groupId/config', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = groupConfigSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
-  const facilityId = await getService().getGroupFacilityId(req.params.groupId);
-  assertFacilityAccess(req, facilityId);
-  const config = await getService().upsertGroupConfig(req.params.groupId, value);
-  res.json({ success: true, data: config });
-}));
+registerPut(
+  router,
+  '/groups/:groupId/config',
+  {
+    openApiPath: `${MOUNT}/groups/{groupId}/config`,
+    tags: ['AccessCodes'],
+    summary: 'Update device group access code configuration',
+    security: 'bearer',
+    params: accessCodeGroupIdParamSchema,
+    body: accessCodeGroupConfigSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const facilityId = await getService().getGroupFacilityId(req.params.groupId);
+    assertFacilityAccess(req, facilityId);
+    const config = await getService().upsertGroupConfig(req.params.groupId, req.body);
+    res.json({ success: true, data: config });
+  }),
+);
 
-router.post('/rotate', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = rotateSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
-  assertFacilityAccess(req, value.facility_id);
-  await getService().forceRotate(
-    value.facility_id,
-    value.scope_type,
-    value.scope_id,
-    req.user!.userId,
-    value.schedule_id,
-  );
-  res.json({ success: true });
-}));
+registerPost(
+  router,
+  '/rotate',
+  {
+    openApiPath: `${MOUNT}/rotate`,
+    tags: ['AccessCodes'],
+    summary: 'Force rotate access codes',
+    security: 'bearer',
+    body: accessCodeRotateSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const value = req.body;
+    assertFacilityAccess(req, value.facility_id);
+    await getService().forceRotate(
+      value.facility_id,
+      value.scope_type,
+      value.scope_id,
+      req.user!.userId,
+      value.schedule_id,
+    );
+    res.json({ success: true });
+  }),
+);
 
 const handleManualSet = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = setManualSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
+  const value = req.body;
   assertFacilityAccess(req, value.facility_id);
   await getService().setManualCode(
     value.facility_id,
@@ -183,16 +278,60 @@ const handleManualSet = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   res.json({ success: true });
 });
 
-// Preferred endpoint
-router.put('/manual/set', requireRoles(manageRoles), handleManualSet);
-// Backward-compatible endpoint from early implementation
-router.put('/:id/set', requireRoles(manageRoles), handleManualSet);
+registerPut(
+  router,
+  '/manual/set',
+  {
+    openApiPath: `${MOUNT}/manual/set`,
+    tags: ['AccessCodes'],
+    summary: 'Set manual access code',
+    security: 'bearer',
+    body: accessCodeSetManualSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  handleManualSet,
+);
 
-router.post('/push/:facilityId', requireRoles(manageRoles), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  assertFacilityAccess(req, req.params.facilityId);
-  await getService().pushCodesToGateway(req.params.facilityId);
-  res.json({ success: true });
-}));
+registerPut(
+  router,
+  '/:id/set',
+  {
+    openApiPath: `${MOUNT}/{id}/set`,
+    tags: ['AccessCodes'],
+    summary: 'Set manual access code (legacy path)',
+    security: 'bearer',
+    params: accessCodeIdParamSchema,
+    body: accessCodeSetManualSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  handleManualSet,
+);
+
+registerPost(
+  router,
+  '/push/:facilityId',
+  {
+    openApiPath: `${MOUNT}/push/{facilityId}`,
+    tags: ['AccessCodes'],
+    summary: 'Push access codes to gateway',
+    security: 'bearer',
+    params: accessCodeFacilityIdParamSchema,
+    responses: {
+      200: accessCodeResponseSchema,
+    },
+  },
+  requireRoles(manageRoles),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    assertFacilityAccess(req, req.params.facilityId);
+    await getService().pushCodesToGateway(req.params.facilityId);
+    res.json({ success: true });
+  }),
+);
 
 export { router as accessCodesRouter };
-

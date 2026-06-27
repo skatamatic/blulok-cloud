@@ -3,7 +3,6 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { SavedDashboardModel } from '@/models/saved-dashboard.model';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
@@ -11,55 +10,72 @@ import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import { buildDashboardApiResponse } from '@/services/dashboard-layout.service';
 import { parseActiveFacilityContext } from '@/utils/dashboard-assignment.utils';
 import { DashboardLayoutBroadcastService } from '@/services/dashboard-layout-broadcast.service';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+  registerPatch,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  savedDashboardCreateSchema,
+  savedDashboardUpdateSchema,
+  savedDashboardLoadSchema,
+  savedDashboardIdParamSchema,
+  dashboardResponseSchema,
+} from '@/schemas/dashboard.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/saved-dashboards';
 
 router.use(authenticateToken as never);
 router.use(requireAdmin);
-
-const createSchema = Joi.object({
-  name: Joi.string().trim().min(1).max(100).required(),
-  description: Joi.string().trim().max(500).allow('', null).optional(),
-});
-
-const updateSchema = Joi.object({
-  name: Joi.string().trim().min(1).max(100).optional(),
-  description: Joi.string().trim().max(500).allow('', null).optional(),
-}).min(1);
 
 function isDuplicateNameError(error: unknown): boolean {
   const err = error as { code?: string; errno?: number };
   return err.code === 'ER_DUP_ENTRY' || err.errno === 1062;
 }
 
-// GET /saved-dashboards
-router.get(
+registerGet(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Dashboard'],
+    summary: 'List saved dashboards',
+    security: 'bearer',
+    responses: {
+      200: dashboardResponseSchema,
+    },
+  },
   asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
     const dashboards = await SavedDashboardModel.listAll();
     res.json({ success: true, dashboards });
-  })
+  }),
 );
 
-// POST /saved-dashboards — snapshot caller's current working layout
-router.post(
+registerPost(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Dashboard'],
+    summary: 'Create saved dashboard from working layout',
+    security: 'bearer',
+    body: savedDashboardCreateSchema,
+    responses: {
+      201: dashboardResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const userId = req.user!.userId;
-    const { error, value } = createSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({
-        success: false,
-        message: error.details[0]?.message || 'Validation error',
-      });
-      return;
-    }
+    const value = req.body;
 
     try {
       const saved = await SavedDashboardModel.createFromUserWorkingLayout(
         userId,
         value.name,
-        value.description
+        value.description,
       );
       res.status(201).json({
         success: true,
@@ -80,12 +96,22 @@ router.post(
       const message = err instanceof Error ? err.message : 'Failed to save dashboard';
       res.status(400).json({ success: false, message });
     }
-  })
+  }),
 );
 
-// PUT /saved-dashboards/:id/snapshot — replace template snapshot from caller's working layout
-router.put(
+registerPut(
+  router,
   '/:id/snapshot',
+  {
+    openApiPath: `${MOUNT}/{id}/snapshot`,
+    tags: ['Dashboard'],
+    summary: 'Update saved dashboard snapshot from working layout',
+    security: 'bearer',
+    params: savedDashboardIdParamSchema,
+    responses: {
+      200: dashboardResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const userId = req.user!.userId;
@@ -116,23 +142,27 @@ router.put(
       const status = message.includes('not found') ? 404 : 400;
       res.status(status).json({ success: false, message });
     }
-  })
+  }),
 );
 
-// PATCH /saved-dashboards/:id
-router.patch(
+registerPatch(
+  router,
   '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Dashboard'],
+    summary: 'Update saved dashboard metadata',
+    security: 'bearer',
+    params: savedDashboardIdParamSchema,
+    body: savedDashboardUpdateSchema,
+    responses: {
+      200: dashboardResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const userId = req.user!.userId;
-    const { error, value } = updateSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({
-        success: false,
-        message: error.details[0]?.message || 'Validation error',
-      });
-      return;
-    }
+    const value = req.body;
 
     const existing = await SavedDashboardModel.findById(id);
     if (!existing) {
@@ -172,12 +202,22 @@ router.patch(
       }
       throw err;
     }
-  })
+  }),
 );
 
-// DELETE /saved-dashboards/:id
-router.delete(
+registerDelete(
+  router,
   '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Dashboard'],
+    summary: 'Delete saved dashboard',
+    security: 'bearer',
+    params: savedDashboardIdParamSchema,
+    responses: {
+      200: dashboardResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const existing = await SavedDashboardModel.findById(id);
@@ -195,12 +235,23 @@ router.delete(
     }
     await SavedDashboardModel.deleteById(id);
     res.json({ success: true, message: 'Saved dashboard deleted' });
-  })
+  }),
 );
 
-// POST /saved-dashboards/:id/load — apply snapshot to caller's working dashboard
-router.post(
+registerPost(
+  router,
   '/:id/load',
+  {
+    openApiPath: `${MOUNT}/{id}/load`,
+    tags: ['Dashboard'],
+    summary: 'Load saved dashboard into working layout',
+    security: 'bearer',
+    params: savedDashboardIdParamSchema,
+    body: savedDashboardLoadSchema,
+    responses: {
+      200: dashboardResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const userId = req.user!.userId;
@@ -208,7 +259,7 @@ router.post(
     const activeFacilityId = req.body?.activeFacilityId as string | undefined;
     const facilityContext = parseActiveFacilityContext(
       activeFacilityId,
-      req.user!.facilityIds ?? []
+      req.user!.facilityIds ?? [],
     );
 
     try {
@@ -226,7 +277,7 @@ router.post(
       message: 'Dashboard loaded successfully',
       ...response,
     });
-  })
+  }),
 );
 
 export { router as savedDashboardsRouter };

@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import { routeIdField, routeIdBodyField } from '@/openapi/common-schemas';
 
 export const createUnitSchema = Joi.object({
   unit_number: Joi.string().required().min(1).max(50).messages({
@@ -82,4 +83,75 @@ export const assignTenantSchema = Joi.object({
   notes: Joi.string().max(500).optional().allow('').messages({
     'string.max': 'Notes must not exceed 500 characters'
   })
+});
+
+export const unitIdParamSchema = Joi.object({
+  unitId: routeIdField(),
+});
+
+export const unitIdTenantIdParamSchema = Joi.object({
+  unitId: routeIdField(),
+  tenantId: routeIdField(),
+});
+
+export const assignUnitTenantBodySchema = Joi.object({
+  tenant_id: routeIdBodyField(),
+  access_type: Joi.string().valid('full', 'limited', 'emergency').default('full').optional(),
+  expires_at: Joi.date().iso().optional(),
+  start_date: Joi.date().iso().optional(),
+  end_date: Joi.date().iso().optional(),
+  rent_amount: Joi.number().positive().precision(2).optional(),
+  notes: Joi.string().max(500).optional().allow(''),
+  is_primary: Joi.boolean().optional(),
+}).unknown(true);
+
+export const unitDetailResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  unit: Joi.object().required(),
+});
+
+export const unitsMyResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  units: Joi.array().items(Joi.object()).required(),
+  total: Joi.number().integer().required(),
+});
+
+export const unitAssignmentsResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  data: Joi.array().items(Joi.object()).required(),
+});
+
+export const unitMutationResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  message: Joi.string().required(),
+  unit: Joi.object().optional(),
+});
+
+export const unitLockResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  message: Joi.string().required(),
+});
+
+export const unitDeleteResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  message: Joi.string().required(),
+  data: Joi.object({
+    unit_id: Joi.string().required(),
+    deleted_at: Joi.string().required(),
+  }).required(),
+});
+
+export const unitAssignResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  message: Joi.string().required(),
+});
+
+export const unitUnassignResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  message: Joi.string().required(),
+  data: Joi.object({
+    unit_id: Joi.string().required(),
+    tenant_id: Joi.string().required(),
+    removed_at: Joi.string().required(),
+  }).required(),
 });

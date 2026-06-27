@@ -9,9 +9,7 @@
  * - Gateways authenticate using facility-scoped Facility Admin JWTs.
  * - Locks reject time sync packets with ts older than their last seen value.
  */
-import { Router, Request, Response, RequestHandler, NextFunction } from 'express';
-import express from 'express';
-import Joi from 'joi';
+import { Router, Response, RequestHandler, NextFunction } from 'express';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
@@ -37,18 +35,20 @@ import { GatewayModel } from '@/models/gateway.model';
 import { AuthService } from '@/services/auth.service';
 import { logger } from '@/utils/logger';
 import { AccessEventIngestionService } from '@/services/access/access-event-ingestion.service';
+import { AccessEventPayload } from '@/services/access/access-event.types';
+import { registerGet, registerPost } from '@/openapi/register-route';
 import {
-  ACCESS_EVENT_ACTIONS,
-  ACCESS_EVENT_ACTOR_ROLES,
-  ACCESS_EVENT_DENIAL_REASONS,
-  ACCESS_EVENT_METHODS,
-  AccessEventPayload,
-} from '@/services/access/access-event.types';
+  gatewayStartupBodySchema,
+  gatewayFallbackPassBodySchema,
+  gatewayAccessEventsBodySchema,
+  gatewayAddLogBodySchema,
+  gatewayInventorySyncBodySchema,
+  gatewayStateUpdateBodySchema,
+  gatewayAccessCodesQuerySchema,
+} from '@/schemas/internal-gateway.schemas';
 
 const router = Router();
-
-// Gateway proxy injects a `tid` (transaction ID) for request/response correlation
-const tidField = Joi.alternatives().try(Joi.number(), Joi.string()).optional();
+const MOUNT = '/api/v1/internal/gateway';
 
 const requireFacilityAdmin: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   const role = req.user?.role;
@@ -98,241 +98,75 @@ const resolveScopedFacilityId = async (
   return facilityId;
 };
 
-// GET /api/v1/internal/gateway/time-sync
-router.get('/time-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/time-sync',
+  {
+    openApiPath: `${MOUNT}/time-sync`,
+    tags: ['GatewayInternal'],
+    summary: 'Return signed Secure Time Sync command packet for broadcast',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   const pkt = await TimeSyncService.buildSecureTimeSync();
   res.json({ success: true, ...pkt });
-}));
-
-// POST /api/v1/internal/gateway/request-time-sync
-const startupSchema = Joi.object({ lock_id: Joi.string().required(), tid: tidField });
-router.post('/request-time-sync', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = startupSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-  const pkt = await TimeSyncService.buildSecureTimeSync(undefined, value.lock_id);
-  res.json({ success: true, ...pkt });
-}));
-
-// POST /api/v1/internal/gateway/fallback-pass
-const fallbackSchema = Joi.object({ fallbackJwt: Joi.string().required(), tid: tidField });
-router.post('/fallback-pass', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = fallbackSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-  const routePass = await new FallbackService().processFallbackJwt(value.fallbackJwt);
-  res.json({ success: true, routePass });
-}));
-
-// ============================================================================
-// Access events + telemetry (non-inventory)
-// ============================================================================
-
-const accessEventSchema = Joi.object({
-  event_id: Joi.string().required(),
-  correlation_id: Joi.string().optional(),
-  occurred_at: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).required(),
-  facility_id: Joi.string().optional(),
-  unit_id: Joi.string().optional(),
-  device_id: Joi.string().required(),
-  gateway_id: Joi.string().optional(),
-  action: Joi.string().valid(...ACCESS_EVENT_ACTIONS).required(),
-  method: Joi.string().valid(...ACCESS_EVENT_METHODS).required(),
-  success: Joi.boolean().required(),
-  denial_reason: Joi.string().valid(...ACCESS_EVENT_DENIAL_REASONS).optional(),
-  reason_message: Joi.string().max(500).optional(),
-  actor: Joi.object({
-    user_id: Joi.string().optional(),
-    role: Joi.string().valid(...ACCESS_EVENT_ACTOR_ROLES).required(),
-    name: Joi.string().max(255).optional(),
-    app_device_id: Joi.string().optional(),
-  }).optional(),
-  keypad: Joi.object({
-    entered_code: Joi.string().max(64).optional(),
-    code_id: Joi.string().optional(),
-    code_label: Joi.string().max(255).optional(),
-    schedule_id: Joi.string().optional(),
-    schedule_name: Joi.string().max(255).optional(),
-    zone_id: Joi.string().optional(),
-    zone_name: Joi.string().max(255).optional(),
-  }).optional(),
-  route_pass: Joi.object({
-    route_pass_id: Joi.string().optional(),
-    issuance_id: Joi.string().optional(),
-    nonce: Joi.string().optional(),
-  }).optional(),
-  metadata: Joi.object().unknown(true).optional(),
-}).custom((value, helpers) => {
-  if (!value.success && !value.denial_reason) {
-    return helpers.error('any.custom', { message: 'denial_reason is required when success is false' });
-  }
-  return value;
-});
-
-const accessEventsSchema = Joi.object({
-  tid: tidField,
-  facility_id: Joi.string().optional(),
-  events: Joi.array().items(accessEventSchema).min(1).required(),
-});
-
-const addLogSchema = Joi.alternatives().try(
-  Joi.object({
-    facility_id: Joi.string().uuid().optional(),
-    tid: tidField,
-    message: Joi.string().required(),
-  }),
-  Joi.object({
-    facility_id: Joi.string().uuid().optional(),
-    tid: tidField,
-    messages: Joi.array().items(Joi.string()).min(1).max(GATEWAY_TELEMETRY_LOG_MAX_INGEST_BATCH).required(),
   }),
 );
 
-// ============================================================================
-// Device inventory and state (gateway PROXY contract)
-// ============================================================================
+registerPost(
+  router,
+  '/request-time-sync',
+  {
+    openApiPath: `${MOUNT}/request-time-sync`,
+    tags: ['GatewayInternal'],
+    summary: 'Return signed time sync packet for a specific lock',
+    security: 'bearer',
+    body: gatewayStartupBodySchema,
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const value = req.body;
+  const pkt = await TimeSyncService.buildSecureTimeSync(undefined, value.lock_id);
+  res.json({ success: true, ...pkt });
+  }),
+);
 
-// POST /api/v1/internal/gateway/devices/inventory
-// Sync device inventory - add new devices, remove missing ones
-// Now also supports updating state fields in the same call
-const lockInventoryFields = {
-  lock_id: Joi.string().trim().min(1).required(),
-  lock_number: Joi.number().optional(),
-  name: Joi.string().trim().max(255).optional(),
-  location_description: Joi.string().trim().max(255).optional(),
-  state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
-  locked: Joi.boolean().optional(),
-  battery_level: Joi.number().optional(),
-  battery_unit: Joi.string().optional(),
-  online: Joi.boolean().optional(),
-  signal_strength: Joi.number().optional(),
-  temperature_value: Joi.number().optional(),
-  temperature_unit: Joi.string().optional(),
-  firmware_version: Joi.string().optional(),
-  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-};
+registerPost(
+  router,
+  '/fallback-pass',
+  {
+    openApiPath: `${MOUNT}/fallback-pass`,
+    tags: ['GatewayInternal'],
+    summary: 'Verify device-signed fallback JWT and issue Route Pass',
+    security: 'bearer',
+    body: gatewayFallbackPassBodySchema,
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const value = req.body;
+  const routePass = await new FallbackService().processFallbackJwt(value.fallbackJwt);
+  res.json({ success: true, routePass });
+  }),
+);
 
-const accessInventoryFields = {
-  kind: Joi.string().valid('access_control').required(),
-  access_id: Joi.string().trim().min(1).required(),
-  relay_channel: Joi.number().integer().min(1).max(8).default(1),
-  device_type: Joi.string().valid('gate', 'door', 'elevator').optional(),
-  name: Joi.string().trim().max(255).optional(),
-  location_description: Joi.string().trim().max(255).optional(),
-  online: Joi.boolean().optional(),
-  locked: Joi.boolean().optional(),
-  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-};
-
-const lockInventoryItemSchema = Joi.object({
-  kind: Joi.string().valid('lock').required(),
-  ...lockInventoryFields,
-});
-
-const accessInventoryItemSchema = Joi.object(accessInventoryFields);
-
-const networkInfraInventoryItemSchema = Joi.object({
-  kind: Joi.string().valid('bridge', 'friend_node').required(),
-  serial: Joi.string().trim().min(1).required(),
-  state: Joi.string().trim().max(64).optional(),
-  firmware_version: Joi.string().trim().max(128).allow(null).optional(),
-  info: Joi.object().unknown(true).optional(),
-  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-}).unknown(true);
-
-const networkInfraStateItemSchema = Joi.object({
-  kind: Joi.string().valid('bridge', 'friend_node').required(),
-  serial: Joi.string().trim().min(1).required(),
-  state: Joi.string().trim().max(64).optional(),
-  firmware_version: Joi.string().trim().max(128).allow(null).optional(),
-  info: Joi.object().unknown(true).optional(),
-  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-}).unknown(true);
-
-const gatewayInventoryUpdateSchema = Joi.object({
-  kind: Joi.string().valid('gateway').required(),
-  serial: Joi.string().trim().min(1).optional(),
-  state: Joi.string().trim().max(64).optional(),
-  firmware_version: Joi.string().trim().max(128).optional(),
-  info: Joi.object().unknown(true).optional(),
-  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-}).unknown(true);
-
-const inventorySyncSchema = Joi.object({
-  tid: tidField,
-  facility_id: Joi.string().optional(),
-  devices: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        accessInventoryItemSchema,
-        lockInventoryItemSchema,
-        networkInfraInventoryItemSchema,
-        gatewayInventoryUpdateSchema,
-      ),
-    )
-    .required(),
-});
-
-const lockStateFields = {
-  lock_id: Joi.string().trim().min(1).required(),
-  lock_number: Joi.number().optional(),
-  serial: Joi.string().trim().min(1).optional(),
-  state: Joi.string().valid('CLOSED', 'OPENED', 'ERROR', 'UNKNOWN').optional(),
-  locked: Joi.boolean().optional(),
-  battery_level: Joi.number().optional(),
-  battery_unit: Joi.string().optional(),
-  online: Joi.boolean().optional(),
-  signal_strength: Joi.number().optional(),
-  temperature: Joi.number().optional(),
-  temperature_value: Joi.number().optional(),
-  temperature_unit: Joi.string().optional(),
-  firmware_version: Joi.string().optional(),
-  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-  error_code: Joi.string().allow(null, '').optional(),
-  error_message: Joi.string().allow(null, '').optional(),
-  source: Joi.string().valid('GATEWAY', 'USER', 'CLOUD').optional(),
-};
-
-const accessStateFields = {
-  kind: Joi.string().valid('access_control').required(),
-  access_id: Joi.string().trim().min(1).required(),
-  relay_channel: Joi.number().integer().min(1).max(8).default(1),
-  online: Joi.boolean().optional(),
-  locked: Joi.boolean().optional(),
-  last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
-};
-
-const lockStateUpdateSchema = Joi.object({
-  kind: Joi.string().valid('lock').required(),
-  ...lockStateFields,
-});
-
-const accessStateUpdateSchema = Joi.object(accessStateFields);
-
-const stateUpdateSchema = Joi.object({
-  tid: tidField,
-  facility_id: Joi.string().optional(),
-  updates: Joi.array()
-    .items(
-      Joi.alternatives().try(
-        accessStateUpdateSchema,
-        lockStateUpdateSchema,
-        networkInfraStateItemSchema,
-      ),
-    )
-    .required(),
-});
-
-router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = inventorySyncSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+registerPost(
+  router,
+  '/devices/inventory',
+  {
+    openApiPath: `${MOUNT}/devices/inventory`,
+    tags: ['GatewayInternal'],
+    summary: 'Sync device inventory from gateway',
+    security: 'bearer',
+    body: gatewayInventorySyncBodySchema,
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const value = req.body;
 
   const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
   if (!facilityId) return;
@@ -453,14 +287,23 @@ router.post('/devices/inventory', authenticateToken, requireFacilityAdmin, async
     message: 'Inventory sync completed',
     data: responseData,
   });
-}));
+  }),
+);
 
-router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = stateUpdateSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+registerPost(
+  router,
+  '/devices/state',
+  {
+    openApiPath: `${MOUNT}/devices/state`,
+    tags: ['GatewayInternal'],
+    summary: 'Apply device state updates from gateway',
+    security: 'bearer',
+    body: gatewayStateUpdateBodySchema,
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const value = req.body;
 
   const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
   if (!facilityId) return;
@@ -525,14 +368,23 @@ router.post('/devices/state', authenticateToken, requireFacilityAdmin, asyncHand
     message: 'State updates applied',
     data: responseData,
   });
-}));
+  }),
+);
 
-router.post('/access-events', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = accessEventsSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+registerPost(
+  router,
+  '/access-events',
+  {
+    openApiPath: `${MOUNT}/access-events`,
+    tags: ['GatewayInternal'],
+    summary: 'Ingest access events from gateway',
+    security: 'bearer',
+    body: gatewayAccessEventsBodySchema,
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const value = req.body;
 
   const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
   if (!facilityId) {
@@ -558,16 +410,28 @@ router.post('/access-events', authenticateToken, requireFacilityAdmin, asyncHand
       activity_ids: created.map((entry) => entry.id),
     },
   });
-}));
+  }),
+);
 
-router.post('/add_log', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/add_log',
+  {
+    openApiPath: `${MOUNT}/add_log`,
+    tags: ['GatewayInternal'],
+    summary: 'Ingest gateway telemetry log lines',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const body = normalizeAddLogBody(req.body);
   if (!body) {
     res.status(400).json({ success: false, message: 'Invalid add_log body' });
     return;
   }
 
-  const { error, value } = addLogSchema.validate(body);
+  const { error, value } = gatewayAddLogBodySchema.validate(body);
   if (error) {
     res.status(400).json({ success: false, message: error.message });
     return;
@@ -617,11 +481,22 @@ router.post('/add_log', authenticateToken, requireFacilityAdmin, asyncHandler(as
     success: true,
     data: responseData,
   });
-}));
+  }),
+);
 
-// GET /api/v1/internal/gateway/access-codes
-// Poll active access codes resolved to device/relay mappings for this facility.
-router.get('/access-codes', authenticateToken, requireFacilityAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/access-codes',
+  {
+    openApiPath: `${MOUNT}/access-codes`,
+    tags: ['GatewayInternal'],
+    summary: 'Poll active access codes for facility',
+    security: 'bearer',
+    query: gatewayAccessCodesQuerySchema,
+  },
+  authenticateToken,
+  requireFacilityAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
   const facilityIdHeader = String(req.headers['x-gateway-facility-id'] || '') || undefined;
   const requestedFacilityId = req.query.facility_id ? String(req.query.facility_id) : undefined;
@@ -668,7 +543,8 @@ router.get('/access-codes', authenticateToken, requireFacilityAdmin, asyncHandle
       })),
     },
   });
-}));
+  }),
+);
 
 export { router as internalGatewayRouter };
 

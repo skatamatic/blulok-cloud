@@ -21,17 +21,12 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { authenticateToken, requireDevAdmin, requireAdmin } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { GatewayService } from '@/services/gateway/gateway.service';
-import { validate } from '@/middleware/validator.middleware';
-import rateLimit from 'express-rate-limit';
 import { adminWriteLimiter } from '@/middleware/security-limits';
-import { InviteService } from '@/services/invite.service';
-import { OTPService } from '@/services/otp.service';
 import { DatabaseService } from '@/services/database.service';
 import { resolveLockCommandExpiresAtForFacility } from '@/utils/facility-lock-timeout.utils';
 import { UnitModel } from '@/models/unit.model';
@@ -43,43 +38,36 @@ import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { DenylistService } from '@/services/denylist.service';
 import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
 import { logger } from '@/utils/logger';
+import { registerDelete, registerGet, registerPost } from '@/openapi/register-route';
+import {
+  rateLimitBypassBodySchema,
+  notificationsTestModeBodySchema,
+  gatewayPingBodySchema,
+  gatewayCommandBodySchema,
+  deviceDeletionOutboxQuerySchema,
+  adminUserIdParamSchema,
+  adminFacilityIdParamSchema,
+} from '@/schemas/admin.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/admin';
 
 // Rate limit sensitive admin endpoint
 const rotationLimiter = adminWriteLimiter;
 
-const rateLimitBypassSchema = Joi.object({
-  enabled: Joi.boolean().required(),
-  durationSeconds: Joi.number().integer().min(1).max(900)
-    .when('enabled', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
-  ip: Joi.string().ip({ version: ['ipv4', 'ipv6'], cidr: 'forbidden' }).optional(),
-  reason: Joi.string().max(200).optional()
-});
-
-const notificationsTestModeSchema = Joi.object({
-  enabled: Joi.boolean().required(),
-});
-
-const gatewayPingSchema = Joi.object({
-  facilityId: Joi.string().required(),
-});
-
-// Minimal validation for dev tool - just ensure required fields are present
-const gatewayCommandSchema = Joi.object({
-  facilityId: Joi.string().required(),
-  command: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE', 'LOCK', 'UNLOCK').required(),
-  targetDeviceIds: Joi.array().items(Joi.string()).min(1).required(),
-  userId: Joi.string().when('command', {
-    is: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE'),
-    then: Joi.required(),
-    otherwise: Joi.optional()
-  }),
-  expirationSeconds: Joi.number().integer().min(60).max(86400 * 365).optional(), // For denylist entries
-});
-
-// POST /api/v1/admin/ops-key-rotation/broadcast
-router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/ops-key-rotation/broadcast',
+  {
+    openApiPath: `${MOUNT}/ops-key-rotation/broadcast`,
+    tags: ['Admin'],
+    summary: 'Broadcast operations key rotation to gateways',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireDevAdmin,
+  rotationLimiter,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const body = (req.body || {});
   const db = DatabaseService.getInstance().connection;
   const settingKey = 'security.last_root_rotation_ts';
@@ -183,22 +171,27 @@ router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, r
     signature,
     generated_ops_key_pair: generatedOpsKeyPair,
   });
-}));
+  }),
+);
 
-/**
- * POST /api/v1/admin/rate-limits/bypass
- * DEV_ADMIN only - Temporarily bypass rate limiting for local testing
- */
-router.post('/rate-limits/bypass', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/rate-limits/bypass',
+  {
+    openApiPath: `${MOUNT}/rate-limits/bypass`,
+    tags: ['Admin'],
+    summary: 'Temporarily bypass rate limiting for local testing',
+    security: 'bearer',
+    body: rateLimitBypassBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   if ((config.nodeEnv || '').toLowerCase() === 'production') {
     res.status(403).json({ success: false, message: 'Rate limit bypass is disabled in production' });
     return;
   }
-  const { error, value } = rateLimitBypassSchema.validate(req.body || {});
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+  const value = req.body;
   const svc = RateLimitBypassService.getInstance();
   if (!value.enabled) {
     svc.disable();
@@ -219,25 +212,27 @@ router.post('/rate-limits/bypass', authenticateToken, requireDevAdmin, asyncHand
     expiresAt: state.expiresAt,
     ip: state.ip
   });
-}));
+  }),
+);
 
-/**
- * POST /api/v1/admin/dev-tools/notifications-test-mode
- * DEV_ADMIN only - Enable or disable notification debug test mode.
- * When enabled (non-production only), NotificationService will publish
- * invite/OTP events to in-memory debug subscribers instead of calling
- * real SMS/email providers. Intended for local/E2E testing.
- */
-router.post('/dev-tools/notifications-test-mode', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/dev-tools/notifications-test-mode',
+  {
+    openApiPath: `${MOUNT}/dev-tools/notifications-test-mode`,
+    tags: ['Admin'],
+    summary: 'Enable or disable notification debug test mode',
+    security: 'bearer',
+    body: notificationsTestModeBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   if ((config.nodeEnv || '').toLowerCase() === 'production') {
     res.status(403).json({ success: false, message: 'Notifications test mode is disabled in production' });
     return;
   }
-  const { error, value } = notificationsTestModeSchema.validate(req.body || {});
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+  const value = req.body;
   const { NotificationDebugService } = await import('@/services/notifications/notification-debug.service');
   const svc = NotificationDebugService.getInstance();
   if (value.enabled) {
@@ -246,54 +241,54 @@ router.post('/dev-tools/notifications-test-mode', authenticateToken, requireDevA
     svc.disable();
   }
   res.json({ success: true, enabled: svc.isEnabled() });
-}));
+  }),
+);
 
-/**
- * POST /api/v1/admin/dev-tools/gateway-ping
- * DEV_ADMIN only - Force an immediate PING to a connected gateway for a facility.
- * This is intended solely for local/E2E testing of the heartbeat PING/PONG flow.
- */
-router.post('/dev-tools/gateway-ping', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/dev-tools/gateway-ping',
+  {
+    openApiPath: `${MOUNT}/dev-tools/gateway-ping`,
+    tags: ['Admin'],
+    summary: 'Force an immediate PING to a connected gateway',
+    security: 'bearer',
+    body: gatewayPingBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   if ((config.nodeEnv || '').toLowerCase() === 'production') {
     res.status(403).json({ success: false, message: 'Gateway dev ping is disabled in production' });
     return;
   }
 
-  const { error, value } = gatewayPingSchema.validate(req.body || {});
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-
+  const value = req.body;
   const facilityId = String(value.facilityId);
   // Use the same command shape that the heartbeat uses so gateways can treat it uniformly.
   GatewayEventsService.getInstance().unicastToFacility(facilityId, { type: 'PING' });
   res.json({ success: true, facilityId });
-}));
+  }),
+);
 
-const deviceDeletionOutboxQuerySchema = Joi.object({
-  facilityId: Joi.string().uuid().required(),
-  lockId: Joi.string().trim().min(1),
-  accessId: Joi.string().trim().min(1),
-  relayChannel: Joi.number().integer().min(1).max(255),
-}).xor('lockId', 'accessId').with('accessId', 'relayChannel');
-
-/**
- * GET /api/v1/admin/dev-tools/device-deletion-outbox
- * DEV_ADMIN only — inspect latest tombstone outbox row (E2E/local diagnostics).
- */
-router.get('/dev-tools/device-deletion-outbox', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/dev-tools/device-deletion-outbox',
+  {
+    openApiPath: `${MOUNT}/dev-tools/device-deletion-outbox`,
+    tags: ['Admin'],
+    summary: 'Inspect latest tombstone outbox row',
+    security: 'bearer',
+    query: deviceDeletionOutboxQuerySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   if ((config.nodeEnv || '').toLowerCase() === 'production') {
     res.status(403).json({ success: false, message: 'Device deletion outbox dev lookup is disabled in production' });
     return;
   }
 
-  const { error, value } = deviceDeletionOutboxQuerySchema.validate(req.query || {});
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-
+  const value = req.query;
   const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
   const outbox = DeviceDeletionOutboxService.getInstance();
   const facilityId = String(value.facilityId);
@@ -321,18 +316,23 @@ router.get('/dev-tools/device-deletion-outbox', authenticateToken, requireDevAdm
         }
       : null,
   });
-}));
+  }),
+);
 
-/**
- * DELETE /api/v1/admin/users/:id/hard
- * DEV_ADMIN only - Hard delete user and related rows (test/cleanup utility)
- */
-router.delete('/users/:id/hard', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerDelete(
+  router,
+  '/users/:id/hard',
+  {
+    openApiPath: `${MOUNT}/users/{id}/hard`,
+    tags: ['Admin'],
+    summary: 'Hard delete user and related rows',
+    security: 'bearer',
+    params: adminUserIdParamSchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
-  if (!id) {
-    res.status(400).json({ success: false, message: 'User ID is required' });
-    return;
-  }
   const db = DatabaseService.getInstance().connection;
   const unitModel = new UnitModel();
   await db.transaction(async (trx) => {
@@ -363,18 +363,23 @@ router.delete('/users/:id/hard', authenticateToken, requireDevAdmin, asyncHandle
     await trx('users').where({ id }).del().catch(() => {});
   });
   res.json({ success: true, message: 'User hard-deleted' });
-}));
+  }),
+);
 
-/**
- * DELETE /api/v1/admin/facilities/:id/hard
- * DEV_ADMIN only - Hard delete a facility and all related data created during tests.
- */
-router.delete('/facilities/:id/hard', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerDelete(
+  router,
+  '/facilities/:id/hard',
+  {
+    openApiPath: `${MOUNT}/facilities/{id}/hard`,
+    tags: ['Admin'],
+    summary: 'Hard delete a facility and all related data',
+    security: 'bearer',
+    params: adminFacilityIdParamSchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id: facilityId } = req.params;
-  if (!facilityId) {
-    res.status(400).json({ success: false, message: 'Facility ID is required' });
-    return;
-  }
   const db = DatabaseService.getInstance().connection;
   await db.transaction(async (trx) => {
     // Collect units in facility
@@ -412,13 +417,21 @@ router.delete('/facilities/:id/hard', authenticateToken, requireDevAdmin, asyncH
     await trx('facilities').where({ id: facilityId }).del().catch(() => {});
   });
   res.json({ success: true, message: 'Facility hard-deleted' });
-}));
+  }),
+);
 
-/**
- * POST /api/v1/admin/facilities
- * DEV_ADMIN only - Create a facility (test utility)
- */
-router.post('/facilities', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/facilities',
+  {
+    openApiPath: `${MOUNT}/facilities`,
+    tags: ['Admin'],
+    summary: 'Create a facility (test utility)',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const db = DatabaseService.getInstance().connection;
   const body = req.body || {};
   const name = body.name || `E2E Facility ${Date.now()}`;
@@ -434,25 +447,28 @@ router.post('/facilities', authenticateToken, requireDevAdmin, asyncHandler(asyn
     updated_at: db.fn.now(),
   });
   res.status(201).json({ success: true, facility: { id, name, address, status } });
-}));
+  }),
+);
 
-/**
- * POST /api/v1/admin/dev-tools/gateway-command
- * DEV_ADMIN only - Send test gateway commands (DENYLIST_ADD/REMOVE, LOCK/UNLOCK)
- * Intended for testing gateway communication and command delivery.
- */
-router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/dev-tools/gateway-command',
+  {
+    openApiPath: `${MOUNT}/dev-tools/gateway-command`,
+    tags: ['Admin'],
+    summary: 'Send test gateway commands',
+    security: 'bearer',
+    body: gatewayCommandBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   if ((config.nodeEnv || '').toLowerCase() === 'production') {
     res.status(403).json({ success: false, message: 'Gateway dev commands are disabled in production' });
     return;
   }
 
-  const { error, value } = gatewayCommandSchema.validate(req.body || {});
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-
+  const value = req.body;
   const { facilityId, command, targetDeviceIds, userId, expirationSeconds } = value;
   const gateway = GatewayEventsService.getInstance();
   const debugService = GatewayDebugService.getInstance();
@@ -710,13 +726,21 @@ router.post('/dev-tools/gateway-command', authenticateToken, requireDevAdmin, as
     logger.error(`Failed to send dev gateway command: ${err.message}`, err);
     res.status(500).json({ success: false, message: err.message || 'Failed to send gateway command' });
   }
-}));
+  }),
+);
 
-/**
- * POST /api/v1/admin/data-prune - Manually trigger data pruning (admin only)
- * Prunes expired/consumed invites, OTPs, and password reset tokens
- */
-router.post('/data-prune', authenticateToken, requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/data-prune',
+  {
+    openApiPath: `${MOUNT}/data-prune`,
+    tags: ['Admin'],
+    summary: 'Manually trigger data pruning',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
 
   try {
@@ -739,13 +763,21 @@ router.post('/data-prune', authenticateToken, requireAdmin, asyncHandler(async (
       error: error?.message || 'Unknown error',
     });
   }
-}));
+  }),
+);
 
-/**
- * POST /api/v1/admin/route-pass-prune - Manually trigger route pass pruning (admin only)
- * Prunes expired route pass issuance logs
- */
-router.post('/route-pass-prune', authenticateToken, requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/route-pass-prune',
+  {
+    openApiPath: `${MOUNT}/route-pass-prune`,
+    tags: ['Admin'],
+    summary: 'Manually trigger route pass pruning',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const user = req.user!;
 
   try {
@@ -759,7 +791,8 @@ router.post('/route-pass-prune', authenticateToken, requireAdmin, asyncHandler(a
     logger.error('Error during manual route pass pruning:', error);
     res.status(500).json({ success: false, message: 'Failed to prune route passes', error: error?.message || 'Unknown error' });
   }
-}));
+  }),
+);
 
 export { router as adminRouter };
 

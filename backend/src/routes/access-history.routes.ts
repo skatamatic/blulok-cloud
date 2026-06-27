@@ -44,6 +44,17 @@
 import { Router, Response } from 'express';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { AuthenticatedRequest, UserRole } from '../types/auth.types';
+import { registerGet } from '@/openapi/register-route';
+import {
+  accessHistoryQuerySchema,
+  accessHistoryUserIdParamSchema,
+  accessHistoryFacilityIdParamSchema,
+  accessHistoryUnitIdParamSchema,
+  accessHistoryIdParamSchema,
+  accessHistoryExportQuerySchema,
+  accessHistoryStatsQuerySchema,
+  accessHistoryResponseSchema,
+} from '@/schemas/access-history.schemas';
 import { AccessHistoryReadService, AccessHistoryRecord, QueryFilters } from '@/services/access/access-history-read.service';
 import { AccessLogModel } from '@/models/access-log.model';
 import { KeySharingModel } from '@/models/key-sharing.model';
@@ -55,6 +66,7 @@ import { UserFacilityAssociationModel } from '@/models/user-facility-association
 import { AuthService } from '@/services/auth.service';
 
 const router = Router();
+const MOUNT = '/api/v1/access-history';
 let accessHistoryReadService: AccessHistoryReadService | null = null;
 let legacyAccessLogModel: AccessLogModel | null = null;
 let keySharingModel: KeySharingModel | null = null;
@@ -124,7 +136,12 @@ const normalizeFilters = (query: AuthenticatedRequest['query']): QueryFilters =>
   unit_id: typeof query.unit_id === 'string' ? query.unit_id : undefined,
   user_id: typeof query.user_id === 'string' ? query.user_id : undefined,
   device_id: typeof query.device_id === 'string' ? query.device_id : undefined,
-  action: typeof query.action === 'string' ? query.action : undefined,
+  action:
+    typeof query.action === 'string'
+      ? query.action
+      : typeof query.action_type === 'string'
+        ? query.action_type
+        : undefined,
   method: typeof query.method === 'string' ? query.method : undefined,
   denial_reason: typeof query.denial_reason === 'string' ? query.denial_reason : undefined,
   date_from:
@@ -146,7 +163,20 @@ const normalizeFilters = (query: AuthenticatedRequest['query']): QueryFilters =>
   sort_order: query.sort_order === 'asc' ? 'asc' : 'desc',
 });
 
-router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['AccessHistory'],
+    summary: 'Query access history with filters',
+    security: 'bearer',
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     if (typeof req.query.facility_id === 'string' && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(req.query.facility_id)) {
@@ -160,7 +190,21 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
   }
 });
 
-router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/user/:userId',
+  {
+    openApiPath: `${MOUNT}/user/{userId}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history for a user',
+    security: 'bearer',
+    params: accessHistoryUserIdParamSchema,
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const targetUserId = req.params.userId;
@@ -189,7 +233,21 @@ router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Pr
   }
 });
 
-router.get('/facility/:facilityId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/facility/:facilityId',
+  {
+    openApiPath: `${MOUNT}/facility/{facilityId}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history for a facility',
+    security: 'bearer',
+    params: accessHistoryFacilityIdParamSchema,
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
@@ -210,7 +268,21 @@ router.get('/facility/:facilityId', async (req: AuthenticatedRequest, res: Respo
   }
 });
 
-router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/unit/:unitId',
+  {
+    openApiPath: `${MOUNT}/unit/{unitId}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history for a unit',
+    security: 'bearer',
+    params: accessHistoryUnitIdParamSchema,
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     if (user.role === UserRole.TENANT) {
@@ -241,7 +313,20 @@ router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Pr
   }
 });
 
-router.get('/export', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/export',
+  {
+    openApiPath: `${MOUNT}/export`,
+    tags: ['AccessHistory'],
+    summary: 'Export access history as CSV',
+    security: 'bearer',
+    query: accessHistoryExportQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     if (typeof req.query.facility_id === 'string' && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(req.query.facility_id)) {
@@ -262,7 +347,20 @@ router.get('/export', async (req: AuthenticatedRequest, res: Response): Promise<
   }
 });
 
-router.get('/stats/activity', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/stats/activity',
+  {
+    openApiPath: `${MOUNT}/stats/activity`,
+    tags: ['AccessHistory'],
+    summary: 'Get access activity statistics',
+    security: 'bearer',
+    query: accessHistoryStatsQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
@@ -336,7 +434,20 @@ router.get('/stats/activity', async (req: AuthenticatedRequest, res: Response): 
   }
 });
 
-router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history entry by ID',
+    security: 'bearer',
+    params: accessHistoryIdParamSchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
     const raw = await getActivityLogModel().findById(req.params.id);

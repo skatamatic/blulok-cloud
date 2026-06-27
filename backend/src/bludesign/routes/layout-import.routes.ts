@@ -14,8 +14,10 @@ import { asyncHandler } from '@/utils/asyncHandler';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { detectUnits } from '../layout-import';
 import type { DetectionOptions, DetectionEvent } from '../layout-import';
+import { registerPost } from '@/openapi/register-route';
 
 const router = Router();
+const MOUNT = '/api/v1/bludesign/layout-import';
 
 interface MulterRequest extends AuthenticatedRequest {
   file?: Express.Multer.File;
@@ -52,8 +54,15 @@ router.use(authenticateToken as any);
  * Body: multipart/form-data with `file`. Optional JSON `options` field with a
  * partial DetectionOptions object (tuning knobs).
  */
-router.post(
+registerPost(
+  router,
   '/detect',
+  {
+    openApiPath: `${MOUNT}/detect`,
+    tags: ['BluDesign'],
+    summary: 'Detect storage-unit candidates in a site-plan image',
+    security: 'bearer',
+  },
   upload.single('file'),
   asyncHandler(async (req: MulterRequest, res: Response) => {
     const file = req.file;
@@ -76,7 +85,7 @@ router.post(
 
     const result = await detectUnits(file.buffer, options);
     res.json({ success: true, data: result });
-  })
+  }),
 );
 
 /** Parse the optional JSON `options` multipart field, or throw on bad JSON. */
@@ -92,8 +101,15 @@ function parseOptions(raw: unknown): DetectionOptions | undefined {
  * stage progress and draw candidate boxes as they are discovered. The terminal
  * event is `{ type: 'done', result }` or `{ type: 'error', message }`.
  */
-router.post(
+registerPost(
+  router,
   '/detect/stream',
+  {
+    openApiPath: `${MOUNT}/detect/stream`,
+    tags: ['BluDesign'],
+    summary: 'Detect units with streaming NDJSON progress',
+    security: 'bearer',
+  },
   upload.single('file'),
   asyncHandler(async (req: MulterRequest, res: Response) => {
     const file = req.file;
@@ -133,7 +149,7 @@ router.post(
     } finally {
       res.end();
     }
-  })
+  }),
 );
 
 export { router as bluDesignLayoutImportRouter };

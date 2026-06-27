@@ -27,12 +27,19 @@ describe('units-list.handler', () => {
     return res;
   }
 
+  function buildRequest(partial: {
+    user: { userId: string; role: UserRole };
+    query?: Record<string, string>;
+  }): AuthenticatedRequest {
+    return {
+      user: partial.user,
+      query: partial.query ?? {},
+    } as unknown as AuthenticatedRequest;
+  }
+
   it('logs and returns 500 when the service throws', async () => {
     getUnits.mockRejectedValue(new Error('db down'));
-    const req = {
-      user: { userId: 'admin-1', role: UserRole.ADMIN },
-      query: {},
-    } as AuthenticatedRequest;
+    const req = buildRequest({ user: { userId: 'admin-1', role: UserRole.ADMIN } });
     const res = buildResponse();
 
     await handleGetUnitsList(req, res, { errorMessage: 'Failed to fetch units' });
@@ -44,10 +51,10 @@ describe('units-list.handler', () => {
 
   it('merges extra filters such as lock_status', async () => {
     getUnits.mockResolvedValue({ units: [], total: 0 });
-    const req = {
+    const req = buildRequest({
       user: { userId: 'admin-1', role: UserRole.ADMIN },
       query: { limit: '10' },
-    } as AuthenticatedRequest;
+    });
     const res = buildResponse();
 
     await handleGetUnitsList(req, res, {
@@ -64,10 +71,10 @@ describe('units-list.handler', () => {
 
   it('forces path facility id over query params', async () => {
     getUnits.mockResolvedValue({ units: [], total: 0 });
-    const req = {
+    const req = buildRequest({
       user: { userId: 'admin-1', role: UserRole.ADMIN },
       query: { facilityId: 'fac-from-query', limit: '25' },
-    } as AuthenticatedRequest;
+    });
     const res = buildResponse();
 
     await handleGetUnitsList(req, res, 'fac-from-path');
@@ -81,10 +88,10 @@ describe('units-list.handler', () => {
   it('returns 403 when a facility-scoped user lacks facility access', async () => {
     (AuthService.isFacilityScoped as jest.Mock).mockReturnValue(true);
     (AuthService.canAccessFacility as jest.Mock).mockResolvedValue(false);
-    const req = {
+    const req = buildRequest({
       user: { userId: 'fac-admin-1', role: UserRole.FACILITY_ADMIN },
       query: { limit: '25' },
-    } as AuthenticatedRequest;
+    });
     const res = buildResponse();
 
     await handleGetUnitsList(req, res, 'foreign-facility');

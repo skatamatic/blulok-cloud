@@ -1,12 +1,27 @@
 import { Router, Response, Request } from 'express';
 import express from 'express';
-import Joi from 'joi';
 import { authenticateToken, requireRoles } from '@/middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { FacilityProvisioningService, sanitizeContentDispositionFilename } from '@/services/provisioning/facility-provisioning.service';
 import { PROVISIONING_MAX_SIZE_BYTES } from '@/constants/provisioning.constants';
 import type { FacilityProvisioningUploadSource } from '@/models/facility-provisioning-file.model';
+import { registerGet, registerPost, registerPut, registerDelete } from '@/openapi/register-route';
+import { errorEnvelopeSchema, successEnvelopeSchema } from '@/openapi/common-schemas';
+import {
+  facilityIdParamSchema,
+  provisioningFileIdParamSchema,
+  directUploadParamSchema,
+  provisioningListQuerySchema,
+  prepareUploadSchema,
+  completeUploadSchema,
+  provisioningListResponseSchema,
+  prepareUploadResponseSchema,
+  completeUploadResponseSchema,
+  deleteProvisioningFileResponseSchema,
+} from '@/schemas/facility-provisioning.schemas';
+
+const MOUNT = '/api/v1/facilities/{facilityId}/provisioning-data';
 
 async function assertFacilityAccess(
   req: AuthenticatedRequest,
@@ -28,26 +43,26 @@ function resolveUploadSource(req: AuthenticatedRequest): FacilityProvisioningUpl
   return appDeviceId ? 'app' : 'dashboard';
 }
 
-const prepareSchema = Joi.object({
-  filename: Joi.string().trim().required(),
-  size_bytes: Joi.number().integer().positive().required(),
-  content_type: Joi.string().trim().max(255).optional(),
-});
-
-const completeSchema = Joi.object({
-  upload_id: Joi.string().uuid().required(),
-  filename: Joi.string().trim().required(),
-  size_bytes: Joi.number().integer().positive().required(),
-  content_type: Joi.string().trim().max(255).optional(),
-});
-
 const directUploadRouter = Router({ mergeParams: true });
 
 // PUT /api/v1/facilities/:facilityId/provisioning-data/direct-upload/:uploadId
 // Token-only auth (no Bearer JWT) — mirrors GCS resumable upload for local dev.
 // Mounted from facilities.routes BEFORE parent authenticateToken.
-directUploadRouter.put(
+registerPut(
+  directUploadRouter,
   '/direct-upload/:uploadId',
+  {
+    openApiPath: `${MOUNT}/direct-upload/{uploadId}`,
+    tags: ['Facilities', 'App'],
+    summary: 'Upload provisioning file bytes with upload token',
+    security: 'none',
+    params: directUploadParamSchema,
+    responses: {
+      200: successEnvelopeSchema,
+      400: errorEnvelopeSchema,
+      401: errorEnvelopeSchema,
+    },
+  },
   express.raw({ type: '*/*', limit: PROVISIONING_MAX_SIZE_BYTES }),
   asyncHandler(async (req: Request, res: Response): Promise<void> => {
     const facilityId = String(req.params.facilityId);
@@ -78,9 +93,21 @@ const router = Router({ mergeParams: true });
 
 router.use(authenticateToken);
 
-// GET /api/v1/facilities/:facilityId/provisioning-data
-router.get(
+registerGet(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Facilities', 'App'],
+    summary: 'List provisioning data files for a facility',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    query: provisioningListQuerySchema,
+    responses: {
+      200: provisioningListResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const facilityId = String(req.params.facilityId);
@@ -93,19 +120,28 @@ router.get(
   }),
 );
 
-// POST /api/v1/facilities/:facilityId/provisioning-data/prepare
-router.post(
+registerPost(
+  router,
   '/prepare',
+  {
+    openApiPath: `${MOUNT}/prepare`,
+    tags: ['Facilities', 'App'],
+    summary: 'Prepare a provisioning data upload session',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    body: prepareUploadSchema,
+    responses: {
+      200: prepareUploadResponseSchema,
+      400: errorEnvelopeSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const facilityId = String(req.params.facilityId);
     if (!(await assertFacilityAccess(req, res, facilityId))) return;
 
-    const { error, value } = prepareSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({ success: false, message: error.message });
-      return;
-    }
+    const value = req.body;
 
     try {
       const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
@@ -123,19 +159,28 @@ router.post(
   }),
 );
 
-// POST /api/v1/facilities/:facilityId/provisioning-data/complete
-router.post(
+registerPost(
+  router,
   '/complete',
+  {
+    openApiPath: `${MOUNT}/complete`,
+    tags: ['Facilities', 'App'],
+    summary: 'Complete a provisioning data upload',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    body: completeUploadSchema,
+    responses: {
+      200: completeUploadResponseSchema,
+      400: errorEnvelopeSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const facilityId = String(req.params.facilityId);
     if (!(await assertFacilityAccess(req, res, facilityId))) return;
 
-    const { error, value } = completeSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({ success: false, message: error.message });
-      return;
-    }
+    const value = req.body;
 
     try {
       const file = await FacilityProvisioningService.completeUpload(
@@ -154,9 +199,20 @@ router.post(
   }),
 );
 
-// GET /api/v1/facilities/:facilityId/provisioning-data/:fileId/download
-router.get(
+registerGet(
+  router,
   '/:fileId/download',
+  {
+    openApiPath: `${MOUNT}/{fileId}/download`,
+    tags: ['Facilities', 'App'],
+    summary: 'Download a provisioning data file',
+    security: 'bearer',
+    params: provisioningFileIdParamSchema,
+    responses: {
+      404: errorEnvelopeSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const facilityId = String(req.params.facilityId);
@@ -176,9 +232,21 @@ router.get(
   }),
 );
 
-// DELETE /api/v1/facilities/:facilityId/provisioning-data/:fileId
-router.delete(
+registerDelete(
+  router,
   '/:fileId',
+  {
+    openApiPath: `${MOUNT}/{fileId}`,
+    tags: ['Facilities', 'App'],
+    summary: 'Delete a provisioning data file',
+    security: 'bearer',
+    params: provisioningFileIdParamSchema,
+    responses: {
+      200: deleteProvisioningFileResponseSchema,
+      404: errorEnvelopeSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const facilityId = String(req.params.facilityId);

@@ -1,73 +1,41 @@
-/**
- * Access Control Routes
- *
- * API endpoints for querying facility access control devices (doors, gates, elevators).
- * These routes provide the mobile app with information about available access points
- * at a facility, enabling users to understand what they can access.
- *
- * Key Features:
- * - Query access control devices by facility
- * - Filter by device type (door, gate, elevator)
- * - Get device status and lock state
- * - Facility-scoped access control
- *
- * Access Control:
- * - All authenticated users can query devices
- * - Device visibility is filtered by facility access
- * - Tenants see devices at facilities they have access to
- * - Admins see all devices across all facilities
- *
- * Endpoints:
- * - GET /facilities/:facilityId/devices - List access control devices
- * - GET /facilities/:facilityId/summary - Get facility access control summary
- * - GET /devices/:deviceId - Get single device details
- */
-
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { authenticateToken, requireFacilityAccess } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { AccessControlService } from '@/services/access-control.service';
 import { asyncHandler, NotFoundError } from '@/middleware/error.middleware';
-import { validate } from '@/middleware/validator.middleware';
 import { logger } from '@/utils/logger';
+import { registerGet } from '@/openapi/register-route';
+import {
+  listDevicesQuerySchema,
+  facilityIdParamSchema,
+  deviceIdParamSchema,
+  accessControlDevicesResponseSchema,
+  accessControlSummaryResponseSchema,
+  accessControlDeviceResponseSchema,
+} from '@/schemas/access-control.schemas';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/access-control';
 
-// Validation schemas
-const listDevicesQuerySchema = Joi.object({
-  deviceType: Joi.string().valid('door', 'gate', 'elevator').optional(),
-  status: Joi.string().valid('online', 'offline', 'error', 'maintenance').optional(),
-  search: Joi.string().max(200).optional(),
-  sortBy: Joi.string().valid('name', 'device_type', 'status', 'last_activity').optional(),
-  sortOrder: Joi.string().valid('asc', 'desc').optional(),
-  limit: Joi.number().integer().min(1).max(100).default(50),
-  offset: Joi.number().integer().min(0).default(0),
-});
-
-// Path parameter validation schemas
-const facilityIdParamSchema = Joi.object({
-  facilityId: Joi.string().uuid().required(),
-});
-
-const deviceIdParamSchema = Joi.object({
-  deviceId: Joi.string().uuid().required(),
-});
-
-// Apply authentication to all routes
 router.use(authenticateToken);
 
-/**
- * GET /api/v1/access-control/facilities/:facilityId/devices
- * 
- * Get all access control devices for a facility.
- * Returns doors, gates, and elevators with their current status.
- */
-router.get(
+registerGet(
+  router,
   '/facilities/:facilityId/devices',
-  validate(facilityIdParamSchema, 'params'),
+  {
+    openApiPath: `${MOUNT}/facilities/{facilityId}/devices`,
+    tags: ['AccessControl', 'App'],
+    summary: 'List access control devices for a facility',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    query: listDevicesQuerySchema,
+    responses: {
+      200: accessControlDevicesResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireFacilityAccess('facilityId'),
-  validate(listDevicesQuerySchema, 'query'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { facilityId } = req.params;
@@ -75,7 +43,6 @@ router.get(
 
     const service = AccessControlService.getInstance();
 
-    // Note: Facility access is already validated by requireFacilityAccess middleware
     const result = await service.getAccessControlDevices(
       facilityId,
       user.userId,
@@ -89,7 +56,7 @@ router.get(
         sortOrder: sortOrder as 'asc' | 'desc' | undefined,
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
-      }
+      },
     );
 
     res.json({
@@ -99,61 +66,67 @@ router.get(
       limit: Number(limit) || 50,
       offset: Number(offset) || 0,
     });
-  })
+  }),
 );
 
-/**
- * GET /api/v1/access-control/facilities/:facilityId/summary
- * 
- * Get a summary of all access control devices at a facility.
- * Includes device counts by type and status.
- */
-router.get(
+registerGet(
+  router,
   '/facilities/:facilityId/summary',
-  validate(facilityIdParamSchema, 'params'),
+  {
+    openApiPath: `${MOUNT}/facilities/{facilityId}/summary`,
+    tags: ['AccessControl', 'App'],
+    summary: 'Get access control summary for a facility',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    responses: {
+      200: accessControlSummaryResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireFacilityAccess('facilityId'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { facilityId } = req.params;
 
     const service = AccessControlService.getInstance();
-
-    // Note: Facility access is already validated by requireFacilityAccess middleware
     const summary = await service.getFacilityAccessControlSummary(
       facilityId,
       user.userId,
       user.role,
-      user.facilityIds
+      user.facilityIds,
     );
 
     res.json({
       success: true,
       ...summary,
     });
-  })
+  }),
 );
 
-/**
- * GET /api/v1/access-control/devices/:deviceId
- * 
- * Get a single access control device by ID.
- * User must have access to the facility the device belongs to.
- */
-router.get(
+registerGet(
+  router,
   '/devices/:deviceId',
-  validate(deviceIdParamSchema, 'params'),
+  {
+    openApiPath: `${MOUNT}/devices/{deviceId}`,
+    tags: ['AccessControl', 'App'],
+    summary: 'Get a single access control device',
+    security: 'bearer',
+    params: deviceIdParamSchema,
+    responses: {
+      200: accessControlDeviceResponseSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { deviceId } = req.params;
 
     const service = AccessControlService.getInstance();
-
-    // Authorization is checked in the service layer based on device's facility
     const device = await service.getAccessControlDeviceById(
       deviceId,
       user.userId,
       user.role,
-      user.facilityIds
+      user.facilityIds,
     );
 
     if (!device) {
@@ -164,7 +137,7 @@ router.get(
       success: true,
       device,
     });
-  })
+  }),
 );
 
 export { router as accessControlRouter };

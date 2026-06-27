@@ -33,62 +33,31 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
-import { FacilityModel, Facility } from '../models/facility.model';
-// import { GatewayModel } from '../models/gateway.model';
-import { DeviceModel } from '../models/device.model';
-import { authenticateToken, requireRoles, applyFacilityScope } from '../middleware/auth.middleware';
-import { UserRole, AuthenticatedRequest } from '../types/auth.types';
-import { AuthService } from '../services/auth.service';
-import { DatabaseService } from '../services/database.service';
+import { FacilityModel, Facility } from '@/models/facility.model';
+import { DeviceModel } from '@/models/device.model';
+import { authenticateToken, requireRoles, applyFacilityScope } from '@/middleware/auth.middleware';
+import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
+import { AuthService } from '@/services/auth.service';
+import { DatabaseService } from '@/services/database.service';
+import { facilityProvisioningRouter, facilityProvisioningDirectUploadRouter } from '@/routes/facility-provisioning.routes';
+import { registerGet, registerPost, registerPut, registerDelete } from '@/openapi/register-route';
 import {
-  MAX_LOCK_COMMAND_TIMEOUT_SEC,
-  MIN_LOCK_COMMAND_TIMEOUT_SEC,
-} from '../constants/lock-command.constants';
-import { facilityProvisioningRouter, facilityProvisioningDirectUploadRouter } from './facility-provisioning.routes';
+  facilitiesListQuerySchema,
+  facilityIdParamSchema,
+  createFacilitySchema,
+  updateFacilitySchema,
+  facilitiesListResponseSchema,
+  facilityDetailResponseSchema,
+  facilityMutationResponseSchema,
+  facilityDeleteImpactResponseSchema,
+  facilityDeleteResponseSchema,
+} from '@/schemas/facilities.schemas';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/facilities';
 const facilityModel = new FacilityModel();
-// Removed unused gatewayModel
 const deviceModel = new DeviceModel();
-
-const createFacilitySchema = Joi.object({
-  name: Joi.string().trim().min(1).max(255).required(),
-  description: Joi.string().allow('').max(2000).optional(),
-  address: Joi.string().trim().min(1).max(500).required(),
-  latitude: Joi.number().min(-90).max(90).optional(),
-  longitude: Joi.number().min(-180).max(180).optional(),
-  branding_image: Joi.string().allow('').optional(),
-  image_mime_type: Joi.string().allow('').max(100).optional(),
-  contact_email: Joi.string().email().allow('').optional(),
-  contact_phone: Joi.string().allow('').max(50).optional(),
-  status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
-  lock_command_timeout_sec: Joi.number()
-    .integer()
-    .min(MIN_LOCK_COMMAND_TIMEOUT_SEC)
-    .max(MAX_LOCK_COMMAND_TIMEOUT_SEC)
-    .optional(),
-  metadata: Joi.object().optional(),
-});
-
-const updateFacilitySchema = Joi.object({
-  name: Joi.string().trim().min(1).max(255).optional(),
-  description: Joi.string().allow('').max(2000).optional(),
-  address: Joi.string().trim().min(1).max(500).optional(),
-  latitude: Joi.number().min(-90).max(90).optional(),
-  longitude: Joi.number().min(-180).max(180).optional(),
-  branding_image: Joi.string().allow('').optional(),
-  image_mime_type: Joi.string().allow('').max(100).optional(),
-  contact_email: Joi.string().email().allow('').optional(),
-  contact_phone: Joi.string().allow('').max(50).optional(),
-  status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
-  lock_command_timeout_sec: Joi.number()
-    .integer()
-    .min(MIN_LOCK_COMMAND_TIMEOUT_SEC)
-    .max(MAX_LOCK_COMMAND_TIMEOUT_SEC)
-    .optional(),
-  metadata: Joi.object().optional(),
-}).min(1);
 
 /**
  * Get linked BluDesign facility ID for a BluLok facility
@@ -122,250 +91,314 @@ async function enrichFacilityWithBluDesignLink(facility: Facility): Promise<Faci
 // Token-only provisioning upload (no Bearer JWT) — must mount before authenticateToken.
 router.use('/:facilityId/provisioning-data', facilityProvisioningDirectUploadRouter);
 
-// Apply authentication middleware to all routes
 router.use(authenticateToken);
 
-// GET /api/facilities - Get all facilities (with filtering for admins)
-router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user!;
-    const { search, status, sortBy, sortOrder, limit, offset, user_id } = req.query;
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Facilities'],
+    summary: 'List facilities',
+    security: 'bearer',
+    query: facilitiesListQuerySchema,
+    responses: {
+      200: facilitiesListResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = req.user!;
+      const { search, status, sortBy, sortOrder, limit, offset, user_id } = req.query;
 
-    const facilityIds = applyFacilityScope(req);
+      const facilityIds = applyFacilityScope(req);
 
-    if (facilityIds !== undefined && facilityIds.length === 0) {
-      res.json({ facilities: [], total: 0 });
-      return;
-    }
-
-    const filters = {
-      search: search as string,
-      status: status as string,
-      sortBy: sortBy as any,
-      sortOrder: sortOrder as any,
-      limit: limit ? parseInt(limit as string) : undefined,
-      offset: offset ? parseInt(offset as string) : undefined,
-      user_id: user_id as string,
-    };
-
-    const result = await facilityModel.findAll(filters);
-
-    // Filter by facility IDs if user has restricted access
-    if (facilityIds) {
-      result.facilities = result.facilities.filter(f => facilityIds.includes(f.id));
-      result.total = result.facilities.length;
-    }
-
-    // Filter by user if user_id is provided
-    if (user_id) {
-      const { UserFacilityAssociationModel } = await import('../models/user-facility-association.model');
-      const userFacilityIds = await UserFacilityAssociationModel.getUserFacilityIds(user_id as string);
-      result.facilities = result.facilities.filter(f => userFacilityIds.includes(f.id));
-      result.total = result.facilities.length;
-    }
-
-    // Get stats and BluDesign link for each facility
-    // For TENANT roles, do not include stats to avoid leaking sensitive data
-    let facilitiesPayload: any[];
-    if (user.role === UserRole.TENANT) {
-      facilitiesPayload = await Promise.all(
-        result.facilities.map(async (f) => {
-          const enriched = await enrichFacilityWithBluDesignLink(f);
-          return { ...enriched, stats: undefined };
-        })
-      );
-    } else {
-      facilitiesPayload = await Promise.all(
-        result.facilities.map(async (facility) => {
-          const [stats, enriched] = await Promise.all([
-            facilityModel.getFacilityStats(facility.id),
-            enrichFacilityWithBluDesignLink(facility),
-          ]);
-          return { ...enriched, stats };
-        })
-      );
-    }
-
-    res.json({ success: true, facilities: facilitiesPayload, total: result.total });
-  } catch (error) {
-    console.error('Error fetching facilities:', error);
-    res.status(500).json({ error: 'Failed to fetch facilities' });
-  }
-});
-
-// GET /api/facilities/:id - Get specific facility
-router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user!;
-    const id = req.params.id;
-
-    // facilityIds on req.user are hydrated from DB in authenticateToken
-    if (!AuthService.canAccessAllFacilities(user.role) && !user.facilityIds?.includes(id)) {
-      res.status(403).json({ error: 'Access denied to this facility' });
-      return;
-    }
-
-    const facility = await facilityModel.findById(String(id));
-    if (!facility) {
-      res.status(404).json({ error: 'Facility not found' });
-      return;
-    }
-
-    // Enrich facility with BluDesign link
-    const enrichedFacility = await enrichFacilityWithBluDesignLink(facility);
-
-    // Build response based on role
-    if (user.role === UserRole.TENANT) {
-      // Do not include stats or device hierarchy for tenants
-      res.json({ 
-        success: true,
-        facility: { ...enrichedFacility, stats: undefined },
-        deviceHierarchy: { facility: enrichedFacility, gateway: null, accessControlDevices: [], blulokDevices: [] }
-      });
-      return;
-    }
-
-    const stats = await facilityModel.getFacilityStats(String(id));
-    const deviceHierarchy = await deviceModel.getFacilityDeviceHierarchy(String(id));
-
-    res.json({ 
-      success: true,
-      facility: { ...enrichedFacility, stats },
-      deviceHierarchy
-    });
-  } catch (error) {
-    console.error('Error fetching facility:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch facility' });
-  }
-});
-
-// POST /api/facilities - Create new facility (Admin/Dev Admin only)
-router.post('/', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const { error, value } = createFacilitySchema.validate(req.body, {
-      abortEarly: false,
-      stripUnknown: true,
-      allowUnknown: true,
-    });
-    if (error) {
-      res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-      return;
-    }
-
-    const facilityData = value;
-    const duplicate = await facilityModel.findByName(facilityData.name);
-    if (duplicate) {
-      res.status(409).json({ success: false, message: 'A facility with this name already exists' });
-      return;
-    }
-
-    const facility = await facilityModel.create(facilityData);
-    
-    res.status(201).json({ success: true, facility });
-  } catch (error) {
-    console.error('Error creating facility:', error);
-    res.status(500).json({ success: false, message: 'Failed to create facility' });
-  }
-});
-
-// PUT /api/facilities/:id - Update facility
-router.put('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const user = req.user!;
-    const id = req.params.id;
-
-    // Check permissions (req.user.facilityIds hydrated from DB in authenticateToken)
-    if (user.role === UserRole.FACILITY_ADMIN) {
-      if (!user.facilityIds?.includes(id)) {
-        res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      if (facilityIds !== undefined && facilityIds.length === 0) {
+        res.json({ facilities: [], total: 0 });
         return;
       }
-    } else if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
-      res.status(403).json({ success: false, message: 'Insufficient permissions' });
-      return;
+
+      const filters = {
+        search: search as string,
+        status: status as string,
+        sortBy: sortBy as any,
+        sortOrder: sortOrder as any,
+        limit: limit ? parseInt(limit as string) : undefined,
+        offset: offset ? parseInt(offset as string) : undefined,
+        user_id: user_id as string,
+      };
+
+      const result = await facilityModel.findAll(filters);
+
+      if (facilityIds) {
+        result.facilities = result.facilities.filter(f => facilityIds.includes(f.id));
+        result.total = result.facilities.length;
+      }
+
+      if (user_id) {
+        const { UserFacilityAssociationModel } = await import('@/models/user-facility-association.model');
+        const userFacilityIds = await UserFacilityAssociationModel.getUserFacilityIds(user_id as string);
+        result.facilities = result.facilities.filter(f => userFacilityIds.includes(f.id));
+        result.total = result.facilities.length;
+      }
+
+      let facilitiesPayload: any[];
+      if (user.role === UserRole.TENANT) {
+        facilitiesPayload = await Promise.all(
+          result.facilities.map(async (f) => {
+            const enriched = await enrichFacilityWithBluDesignLink(f);
+            return { ...enriched, stats: undefined };
+          })
+        );
+      } else {
+        facilitiesPayload = await Promise.all(
+          result.facilities.map(async (facility) => {
+            const [stats, enriched] = await Promise.all([
+              facilityModel.getFacilityStats(facility.id),
+              enrichFacilityWithBluDesignLink(facility),
+            ]);
+            return { ...enriched, stats };
+          })
+        );
+      }
+
+      res.json({ success: true, facilities: facilitiesPayload, total: result.total });
+    } catch (error) {
+      console.error('Error fetching facilities:', error);
+      res.status(500).json({ error: 'Failed to fetch facilities' });
     }
+  },
+);
 
-    const { error, value } = updateFacilitySchema.validate(req.body, {
-      abortEarly: false,
-      stripUnknown: true,
-      allowUnknown: true,
-    });
-    if (error) {
-      res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-      return;
+registerGet(
+  router,
+  '/:id/delete-impact',
+  {
+    openApiPath: `${MOUNT}/{id}/delete-impact`,
+    tags: ['Facilities'],
+    summary: 'Get facility delete impact counts',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    responses: {
+      200: facilityDeleteImpactResponseSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const { FacilitiesService } = await import('@/services/facilities.service');
+      const svc = FacilitiesService.getInstance();
+      const impact = await svc.getDeleteImpact(id);
+      res.json({ success: true, ...impact });
+    } catch (error) {
+      console.error('Error fetching facility delete impact:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch delete impact' });
     }
+  },
+);
 
-    const facilityData = value;
+registerGet(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Facilities'],
+    summary: 'Get facility by ID',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    responses: {
+      200: facilityDetailResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = req.user!;
+      const id = req.params.id;
 
-    if (facilityData.name) {
-      const duplicate = await facilityModel.findByName(facilityData.name, String(id));
+      if (!AuthService.canAccessAllFacilities(user.role) && !user.facilityIds?.includes(id)) {
+        res.status(403).json({ error: 'Access denied to this facility' });
+        return;
+      }
+
+      const facility = await facilityModel.findById(String(id));
+      if (!facility) {
+        res.status(404).json({ error: 'Facility not found' });
+        return;
+      }
+
+      const enrichedFacility = await enrichFacilityWithBluDesignLink(facility);
+
+      if (user.role === UserRole.TENANT) {
+        res.json({
+          success: true,
+          facility: { ...enrichedFacility, stats: undefined },
+          deviceHierarchy: { facility: enrichedFacility, gateway: null, accessControlDevices: [], blulokDevices: [] }
+        });
+        return;
+      }
+
+      const stats = await facilityModel.getFacilityStats(String(id));
+      const deviceHierarchy = await deviceModel.getFacilityDeviceHierarchy(String(id));
+
+      res.json({
+        success: true,
+        facility: { ...enrichedFacility, stats },
+        deviceHierarchy
+      });
+    } catch (error) {
+      console.error('Error fetching facility:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch facility' });
+    }
+  },
+);
+
+registerPost(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Facilities'],
+    summary: 'Create a facility',
+    security: 'bearer',
+    body: createFacilitySchema,
+    responses: {
+      201: facilityMutationResponseSchema,
+      400: errorEnvelopeSchema,
+      409: errorEnvelopeSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const facilityData = req.body;
+      const duplicate = await facilityModel.findByName(facilityData.name);
       if (duplicate) {
         res.status(409).json({ success: false, message: 'A facility with this name already exists' });
         return;
       }
+
+      const facility = await facilityModel.create(facilityData);
+
+      res.status(201).json({ success: true, facility });
+    } catch (error) {
+      console.error('Error creating facility:', error);
+      res.status(500).json({ success: false, message: 'Failed to create facility' });
     }
+  },
+);
 
-    const facility = await facilityModel.update(String(id), facilityData);
-    
-    if (!facility) {
-      res.status(404).json({ success: false, message: 'Facility not found' });
-      return;
+registerPut(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Facilities'],
+    summary: 'Update a facility',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    body: updateFacilitySchema,
+    responses: {
+      200: facilityMutationResponseSchema,
+      400: errorEnvelopeSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+      409: errorEnvelopeSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = req.user!;
+      const id = req.params.id;
+
+      if (user.role === UserRole.FACILITY_ADMIN) {
+        if (!user.facilityIds?.includes(id)) {
+          res.status(403).json({ success: false, message: 'Access denied to this facility' });
+          return;
+        }
+      } else if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
+        res.status(403).json({ success: false, message: 'Insufficient permissions' });
+        return;
+      }
+
+      const facilityData = req.body;
+
+      if (facilityData.name) {
+        const duplicate = await facilityModel.findByName(facilityData.name, String(id));
+        if (duplicate) {
+          res.status(409).json({ success: false, message: 'A facility with this name already exists' });
+          return;
+        }
+      }
+
+      const facility = await facilityModel.update(String(id), facilityData);
+
+      if (!facility) {
+        res.status(404).json({ success: false, message: 'Facility not found' });
+        return;
+      }
+
+      res.json({ success: true, facility });
+    } catch (error) {
+      console.error('Error updating facility:', error);
+      res.status(500).json({ success: false, message: 'Failed to update facility' });
     }
+  },
+);
 
-    res.json({ success: true, facility });
-  } catch (error) {
-    console.error('Error updating facility:', error);
-    res.status(500).json({ success: false, message: 'Failed to update facility' });
-  }
-});
+registerDelete(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Facilities'],
+    summary: 'Delete a facility and cascade related data',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+    responses: {
+      200: facilityDeleteResponseSchema,
+      404: errorEnvelopeSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const performedBy = req.user!.userId;
 
-// GET /api/facilities/:id/delete-impact - Get counts of related data prior to deletion (Admin/Dev Admin)
-router.get('/:id/delete-impact', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const { FacilitiesService } = await import('@/services/facilities.service');
-    const svc = FacilitiesService.getInstance();
-    const impact = await svc.getDeleteImpact(id);
-    res.json({ success: true, ...impact });
-  } catch (error) {
-    console.error('Error fetching facility delete impact:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch delete impact' });
-  }
-});
+      const existing = await facilityModel.findById(String(id));
+      if (!existing) {
+        res.status(404).json({ success: false, message: 'Facility not found' });
+        return;
+      }
 
-// DELETE /api/facilities/:id - Delete facility and cascade related data (Admin/Dev Admin)
-router.delete('/:id', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]), async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const performedBy = req.user!.userId;
+      if (process.env.NODE_ENV === 'test') {
+        res.json({ success: true, message: 'Facility deleted successfully' });
+        return;
+      }
 
-    // Ensure facility exists first to return 404 appropriately
-    const existing = await facilityModel.findById(String(id));
-    if (!existing) {
-      res.status(404).json({ success: false, message: 'Facility not found' });
-      return;
-    }
-
-    // In test env, skip heavy cascade logic to avoid hanging mocks
-    if (process.env.NODE_ENV === 'test') {
+      const { FacilitiesService } = await import('@/services/facilities.service');
+      const svc = FacilitiesService.getInstance();
+      await svc.deleteFacilityCascade(id, performedBy);
       res.json({ success: true, message: 'Facility deleted successfully' });
-      return;
+    } catch (error) {
+      console.error('Error deleting facility:', error);
+      const message = (error as any)?.message || '';
+      if (message.includes('Facility not found')) {
+        res.status(404).json({ success: false, message: 'Facility not found' });
+      } else {
+        res.status(500).json({ success: false, message: 'Failed to delete facility' });
+      }
     }
-
-    const { FacilitiesService } = await import('@/services/facilities.service');
-    const svc = FacilitiesService.getInstance();
-    await svc.deleteFacilityCascade(id, performedBy);
-    res.json({ success: true, message: 'Facility deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting facility:', error);
-    const message = (error as any)?.message || '';
-    if (message.includes('Facility not found')) {
-      res.status(404).json({ success: false, message: 'Facility not found' });
-    } else {
-      res.status(500).json({ success: false, message: 'Failed to delete facility' });
-    }
-  }
-});
+  },
+);
 
 router.use('/:facilityId/provisioning-data', facilityProvisioningRouter);
 

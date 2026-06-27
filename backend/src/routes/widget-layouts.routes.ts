@@ -3,7 +3,6 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import {
   UserWidgetLayoutModel,
   DefaultWidgetTemplateModel,
@@ -14,91 +13,83 @@ import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken, requireAdmin } from '@/middleware/auth.middleware';
 import {
   buildDashboardApiResponse,
-  clampAndValidatePages,
   clampWidgetsOnPage,
   validateWidgetsOnPage,
 } from '@/services/dashboard-layout.service';
 import { parseActiveFacilityContext } from '@/utils/dashboard-assignment.utils';
 import {
-  WIDGET_SIZE_ENUM,
   validateLayoutConfig,
   clampLayout,
-  GRID_COLS,
 } from '@/utils/dashboard-layout-engine';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  savePagesSchema,
+  saveLegacySchema,
+  saveDashboardBodySchema,
+  updateWidgetSchema,
+  widgetIdParamSchema,
+  widgetPageIdQuerySchema,
+  widgetLayoutsListQuerySchema,
+  resetDashboardSchema,
+  widgetLayoutsResponseSchema,
+  widgetMutationResponseSchema,
+  widgetTemplatesResponseSchema,
+} from '@/schemas/widget-layouts.schemas';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
 
 const router = Router();
-const MAX_DASHBOARD_PAGES = 5;
+const MOUNT = '/api/v1/widget-layouts';
 
 router.use(authenticateToken as never);
 
-/** Accept legacy tall layouts; clampLayout runs before validateLayout. */
-const positionSchema = Joi.object({
-  x: Joi.number().min(0).max(GRID_COLS).required(),
-  y: Joi.number().min(0).max(50).required(),
-  w: Joi.number().min(1).max(GRID_COLS).required(),
-  h: Joi.number().min(1).max(50).required(),
-});
-
-const layoutConfigSchema = Joi.object({
-  position: positionSchema.required(),
-  size: Joi.string()
-    .valid(...WIDGET_SIZE_ENUM)
-    .required(),
-}).unknown(true);
-
-const widgetPayloadSchema = Joi.object({
-  widgetId: Joi.string().required(),
-  widgetType: Joi.string().optional(),
-  config: Joi.object().unknown(true).optional(),
-  layoutConfig: layoutConfigSchema.required(),
-  displayOrder: Joi.number().min(0).required(),
-  isVisible: Joi.boolean().optional(),
-});
-
-const pagePayloadSchema = Joi.object({
-  id: Joi.string().uuid().optional(),
-  name: Joi.string().max(100).optional(),
-  pageOrder: Joi.number().min(0).max(MAX_DASHBOARD_PAGES - 1).required(),
-  widgets: Joi.array().items(widgetPayloadSchema).required(),
-});
-
-const savePagesSchema = Joi.object({
-  activePageId: Joi.string().uuid().optional(),
-  pages: Joi.array().items(pagePayloadSchema).min(1).max(MAX_DASHBOARD_PAGES).required(),
-});
-
-const saveLegacySchema = Joi.object({
-  layouts: Joi.array().items(widgetPayloadSchema).required(),
-});
-
-const updateWidgetSchema = Joi.object({
-  layoutConfig: layoutConfigSchema.required(),
-  isVisible: Joi.boolean().optional(),
-  displayOrder: Joi.number().min(0).optional(),
-});
-
-// GET /widget-layouts
-router.get(
+registerGet(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Dashboard'],
+    summary: 'Get user widget layout dashboard state',
+    security: 'bearer',
+    query: widgetLayoutsListQuerySchema,
+    responses: {
+      200: widgetLayoutsResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const userId = req.user!.userId;
     const activeFacilityId = req.query.activeFacilityId as string | undefined;
     const facilityContext = parseActiveFacilityContext(
       activeFacilityId,
-      req.user!.facilityIds ?? []
+      req.user!.facilityIds ?? [],
     );
     const response = await buildDashboardApiResponse(
       userId,
       req.user!.role,
-      facilityContext
+      facilityContext,
     );
     res.json({ success: true, ...response });
-  })
+  }),
 );
 
-// POST /widget-layouts — legacy { layouts } or { pages }
-router.post(
+registerPost(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Dashboard'],
+    summary: 'Save user widget layout (pages or legacy layouts)',
+    security: 'bearer',
+    body: saveDashboardBodySchema,
+    responses: {
+      200: widgetMutationResponseSchema,
+      400: errorEnvelopeSchema,
+    },
+  },
   requireAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const userId = req.user!.userId;
@@ -134,7 +125,7 @@ router.post(
       }
       await UserWidgetLayoutModel.saveDashboardState(
         userId,
-        clampedPages as DashboardPagePayload[]
+        clampedPages as DashboardPagePayload[],
       );
       res.json({
         success: true,
@@ -178,33 +169,32 @@ router.post(
       success: true,
       message: 'Widget layout saved successfully',
     });
-  })
+  }),
 );
 
-// PUT /widget-layouts/:widgetId
-router.put(
+registerPut(
+  router,
   '/:widgetId',
+  {
+    openApiPath: `${MOUNT}/{widgetId}`,
+    tags: ['Dashboard'],
+    summary: 'Update a widget layout on a dashboard page',
+    security: 'bearer',
+    params: widgetIdParamSchema,
+    query: widgetPageIdQuerySchema,
+    body: updateWidgetSchema,
+    responses: {
+      200: widgetMutationResponseSchema,
+      400: errorEnvelopeSchema,
+    },
+  },
   requireAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { widgetId } = req.params;
     const userId = req.user!.userId;
     const pageId = req.query.pageId as string | undefined;
 
-    if (!widgetId) {
-      res.status(400).json({ success: false, message: 'Widget ID is required' });
-      return;
-    }
-
-    const { error, value } = updateWidgetSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({
-        success: false,
-        message: error.details[0]?.message || 'Validation error',
-      });
-      return;
-    }
-
-    const { layoutConfig, isVisible, displayOrder } = value;
+    const { layoutConfig, isVisible, displayOrder } = req.body;
     const clampedItems = clampLayout([
       {
         i: widgetId,
@@ -220,7 +210,7 @@ router.put(
     const size = layoutConfig.size as string;
     const check = validateLayoutConfig(
       layoutConfig.position as { x: number; y: number; w: number; h: number },
-      size
+      size,
     );
     if (!check.valid) {
       res.status(400).json({ success: false, message: check.error });
@@ -229,13 +219,13 @@ router.put(
 
     const resolvedPageId = await UserWidgetLayoutModel.resolvePageId(
       userId,
-      pageId
+      pageId,
     );
 
     const existing = await UserWidgetLayoutModel.findByUserAndWidget(
       userId,
       widgetId,
-      resolvedPageId
+      resolvedPageId,
     );
 
     if (existing) {
@@ -258,50 +248,72 @@ router.put(
     }
 
     res.json({ success: true, message: 'Widget updated successfully' });
-  })
+  }),
 );
 
-// DELETE /widget-layouts/:widgetId
-router.delete(
+registerDelete(
+  router,
   '/:widgetId',
+  {
+    openApiPath: `${MOUNT}/{widgetId}`,
+    tags: ['Dashboard'],
+    summary: 'Hide a widget from the dashboard',
+    security: 'bearer',
+    params: widgetIdParamSchema,
+    query: widgetPageIdQuerySchema,
+    responses: {
+      200: widgetMutationResponseSchema,
+    },
+  },
   requireAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { widgetId } = req.params;
     const userId = req.user!.userId;
     const pageId = req.query.pageId as string | undefined;
-
-    if (!widgetId) {
-      res.status(400).json({ success: false, message: 'Widget ID is required' });
-      return;
-    }
 
     await UserWidgetLayoutModel.hideWidget(userId, widgetId, pageId);
     res.json({ success: true, message: 'Widget hidden successfully' });
-  })
+  }),
 );
 
-// POST /widget-layouts/:widgetId/show
-router.post(
+registerPost(
+  router,
   '/:widgetId/show',
+  {
+    openApiPath: `${MOUNT}/{widgetId}/show`,
+    tags: ['Dashboard'],
+    summary: 'Show a hidden widget on the dashboard',
+    security: 'bearer',
+    params: widgetIdParamSchema,
+    query: widgetPageIdQuerySchema,
+    responses: {
+      200: widgetMutationResponseSchema,
+    },
+  },
   requireAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { widgetId } = req.params;
     const userId = req.user!.userId;
     const pageId = req.query.pageId as string | undefined;
 
-    if (!widgetId) {
-      res.status(400).json({ success: false, message: 'Widget ID is required' });
-      return;
-    }
-
     await UserWidgetLayoutModel.showWidget(userId, widgetId, pageId);
     res.json({ success: true, message: 'Widget shown successfully' });
-  })
+  }),
 );
 
-// POST /widget-layouts/reset — clear personal working state and return resolved layout
-router.post(
+registerPost(
+  router,
   '/reset',
+  {
+    openApiPath: `${MOUNT}/reset`,
+    tags: ['Dashboard'],
+    summary: 'Clear personal working state and return resolved layout',
+    security: 'bearer',
+    body: resetDashboardSchema,
+    responses: {
+      200: widgetLayoutsResponseSchema,
+    },
+  },
   requireAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const userId = req.user!.userId;
@@ -309,38 +321,56 @@ router.post(
     const activeFacilityId = req.body?.activeFacilityId as string | undefined;
     const facilityContext = parseActiveFacilityContext(
       activeFacilityId,
-      req.user!.facilityIds ?? []
+      req.user!.facilityIds ?? [],
     );
     const response = await buildDashboardApiResponse(
       userId,
       req.user!.role,
-      facilityContext
+      facilityContext,
     );
     res.json({
       success: true,
       message: 'Personal dashboard cleared; showing assigned or default layout',
       ...response,
     });
-  })
+  }),
 );
 
-// POST /widget-layouts/reset-defaults — legacy reset to system widget templates
-router.post(
+registerPost(
+  router,
   '/reset-defaults',
+  {
+    openApiPath: `${MOUNT}/reset-defaults`,
+    tags: ['Dashboard'],
+    summary: 'Reset widget layout to system defaults',
+    security: 'bearer',
+    responses: {
+      200: widgetMutationResponseSchema,
+    },
+  },
   requireAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const userId = req.user!.userId;
     await UserWidgetLayoutModel.resetToDefaults(userId);
     res.json({ success: true, message: 'Widget layout reset to defaults' });
-  })
+  }),
 );
 
-// GET /widget-layouts/templates
-router.get(
+registerGet(
+  router,
   '/templates',
+  {
+    openApiPath: `${MOUNT}/templates`,
+    tags: ['Dashboard'],
+    summary: 'List available widget templates for the current user role',
+    security: 'bearer',
+    responses: {
+      200: widgetTemplatesResponseSchema,
+    },
+  },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const templates = await DefaultWidgetTemplateModel.getAvailableForUser(
-      req.user!.role
+      req.user!.role,
     );
 
     res.json({
@@ -355,7 +385,7 @@ router.get(
         defaultOrder: template.default_order,
       })),
     });
-  })
+  }),
 );
 
 export { router as widgetLayoutsRouter };

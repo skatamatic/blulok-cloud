@@ -17,6 +17,7 @@ import { widgetLayoutsRouter } from '@/routes/widget-layouts.routes';
 import { savedDashboardsRouter } from '@/routes/saved-dashboards.routes';
 import { dashboardAssignmentsRouter } from '@/routes/dashboard-assignments.routes';
 import { facilitiesRouter } from '@/routes/facilities.routes';
+import { facilityUnitsRouter } from '@/routes/facility-units.routes';
 import { gatewayRouter } from '@/routes/gateway.routes';
 import { devicesRouter } from '@/routes/devices.routes';
 import { unitsRouter } from '@/routes/units.routes';
@@ -42,6 +43,7 @@ import { systemStorageRouter } from '@/routes/system-storage.routes';
 import { deviceGroupsRouter } from '@/routes/device-groups.routes';
 import { accessCodesRouter } from '@/routes/access-codes.routes';
 import dashboardRouter from '@/routes/dashboard.routes';
+import { openApiDocsRouter } from '@/openapi/docs.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -109,6 +111,8 @@ export function createApp(): Application {
   app.use('/api/v1/saved-dashboards', savedDashboardsRouter);
   app.use('/api/v1/dashboard-assignments', dashboardAssignmentsRouter);
   app.use('/api/v1/facilities', facilitiesRouter);
+  // Nested /facilities/:id/* routes that mirror the schedules router mount pattern
+  app.use('/api/v1', facilityUnitsRouter);
   // Mount specific /api/v1/* routers before schedulesRouter (schedules applies auth to all /api/v1 paths)
   app.use('/api/v1/internal/gateway', internalGatewayRouter);
   app.use('/api/v1/gateways', gatewayRouter);
@@ -142,6 +146,9 @@ export function createApp(): Application {
 
   // BluDesign routes (isolated 3D facility design system)
   app.use('/api/v1/bludesign', bluDesignRouter);
+
+  // OpenAPI spec (always) and Swagger UI (enabled by default via ENABLE_OPENAPI_DOCS)
+  app.use('/api', openApiDocsRouter);
 
   // Error handling middleware (must be last)
   app.use(errorHandler);

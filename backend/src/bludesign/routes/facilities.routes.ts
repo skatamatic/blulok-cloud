@@ -1,21 +1,32 @@
 /**
  * Facilities Routes
- * 
+ *
  * API routes for managing user facilities (save/load).
  */
 
 import { Router, Response, NextFunction } from 'express';
 import multer, { FileFilterCallback } from 'multer';
-import { FacilityService, FacilityData } from '../services/facility.service';
+import { FacilityService } from '../services/facility.service';
 import { authenticateToken } from '../../middleware/auth.middleware';
 import { AppError, NotFoundError } from '../../middleware/error.middleware';
 import { AuthenticatedRequest } from '../../types/auth.types';
 import { DatabaseService } from '../../services/database.service';
-import Joi from 'joi';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  saveFacilitySchema,
+  updateFacilitySchema,
+  facilityIdParamSchema,
+  terrainDataIdParamSchema,
+} from '@/schemas/bludesign/facilities.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/bludesign/facilities';
 
-// Lazy-load facility service to ensure DB is initialized
 let facilityServiceInstance: FacilityService | null = null;
 function getFacilityService(): FacilityService {
   if (!facilityServiceInstance) {
@@ -24,30 +35,6 @@ function getFacilityService(): FacilityService {
   }
   return facilityServiceInstance;
 }
-
-// Validation schemas - allow unknown fields to be more flexible
-const facilityDataSchema = Joi.object({
-  version: Joi.string().required(),
-  camera: Joi.object().required(),
-  placedObjects: Joi.array().required(),
-  gridSize: Joi.number().required(),
-  showGrid: Joi.boolean().required(),
-}).unknown(true); // Allow additional fields like 'name'
-
-const saveFacilitySchema = Joi.object({
-  name: Joi.string().min(1).max(255).required(),
-  data: facilityDataSchema.required(),
-  thumbnail: Joi.string().optional().allow(null, ''),
-  /** When duplicating a facility, copy layout-source.png from this facility id. */
-  copyLayoutSourceFrom: Joi.string().uuid().optional(),
-  /** When duplicating a facility, copy terrain sidecars from this facility id. */
-  copyTerrainFrom: Joi.string().uuid().optional(),
-});
-
-const updateFacilitySchema = Joi.object({
-  data: facilityDataSchema.required(),
-  thumbnail: Joi.string().optional().allow(null, ''),
-});
 
 const LAYOUT_SOURCE_MIMES = ['image/png', 'image/jpeg', 'image/webp'];
 
@@ -164,83 +151,109 @@ function handleTerrainHeightmapUpload(
   });
 }
 
-/**
- * GET /api/v1/bludesign/facilities
- * List all facilities for the authenticated user
- */
-router.get('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['BluDesign'],
+    summary: 'List all facilities for the authenticated user',
+    security: 'bearer',
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const facilities = await getFacilityService().getUserFacilities(userId);
+      res.json(facilities);
+    } catch (error) {
+      console.error('Error fetching facilities:', error);
+      res.status(500).json({ error: 'Failed to fetch facilities' });
     }
+  },
+);
 
-    const facilities = await getFacilityService().getUserFacilities(userId);
-    res.json(facilities);
-  } catch (error) {
-    console.error('Error fetching facilities:', error);
-    res.status(500).json({ error: 'Failed to fetch facilities' });
-  }
-});
+registerGet(
+  router,
+  '/last',
+  {
+    openApiPath: `${MOUNT}/last`,
+    tags: ['BluDesign'],
+    summary: 'Get the last opened facility for the authenticated user',
+    security: 'bearer',
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
 
-/**
- * GET /api/v1/bludesign/facilities/last
- * Get the last opened facility for the authenticated user
- */
-router.get('/last', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      const facility = await getFacilityService().getLastOpened(userId);
+
+      if (!facility) {
+        return res.status(404).json({ error: 'No facility found' });
+      }
+
+      res.json(facility);
+    } catch (error) {
+      console.error('Error fetching last facility:', error);
+      res.status(500).json({ error: 'Failed to fetch last facility' });
     }
+  },
+);
 
-    const facility = await getFacilityService().getLastOpened(userId);
-    
-    if (!facility) {
-      return res.status(404).json({ error: 'No facility found' });
-    }
-
-    res.json(facility);
-  } catch (error) {
-    console.error('Error fetching last facility:', error);
-    res.status(500).json({ error: 'Failed to fetch last facility' });
-  }
-});
-
-/**
- * GET /api/v1/bludesign/facilities/:id/layout-source
- * Download the persisted import plan image (PNG).
- */
-router.get('/:id/layout-source', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-    const buffer = await getFacilityService().loadLayoutSource(id, userId);
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.send(buffer);
-  } catch (error) {
-    const status = layoutSourceStatus(error);
-    if (status >= 500) console.error('Error fetching layout source:', error);
-    res.status(status).json({
-      error:
-        status === 404
-          ? 'Layout source not found'
-          : 'Failed to fetch layout source',
-    });
-  }
-});
-
-/**
- * PUT /api/v1/bludesign/facilities/:id/layout-source
- * Upload the import plan image after facility save.
- */
-router.put(
+registerGet(
+  router,
   '/:id/layout-source',
+  {
+    openApiPath: `${MOUNT}/{id}/layout-source`,
+    tags: ['BluDesign'],
+    summary: 'Download the persisted import plan image',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id } = req.params;
+      const buffer = await getFacilityService().loadLayoutSource(id, userId);
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error fetching layout source:', error);
+      res.status(status).json({
+        error:
+          status === 404
+            ? 'Layout source not found'
+            : 'Failed to fetch layout source',
+      });
+    }
+  },
+);
+
+registerPut(
+  router,
+  '/:id/layout-source',
+  {
+    openApiPath: `${MOUNT}/{id}/layout-source`,
+    tags: ['BluDesign'],
+    summary: 'Upload the import plan image after facility save',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
   authenticateToken,
   handleLayoutUpload,
   async (req: AuthenticatedRequest, res: Response) => {
@@ -269,38 +282,52 @@ router.put(
               : 'Failed to save layout source',
       });
     }
-  }
+  },
 );
 
-/**
- * GET /api/v1/bludesign/facilities/terrain-data/:terrainDataId/imagery
- */
-router.get('/terrain-data/:terrainDataId/imagery', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { terrainDataId } = req.params;
-    const buffer = await getFacilityService().loadTerrainDataImagery(terrainDataId, userId);
-    res.setHeader('Content-Type', 'image/jpeg');
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.send(buffer);
-  } catch (error) {
-    const status = layoutSourceStatus(error);
-    if (status >= 500) console.error('Error fetching terrain imagery:', error);
-    res.status(status).json({
-      error: status === 404 ? 'Terrain imagery not found' : 'Failed to fetch terrain imagery',
-    });
-  }
-});
-
-/**
- * PUT /api/v1/bludesign/facilities/terrain-data/:terrainDataId/imagery
- */
-router.put(
+registerGet(
+  router,
   '/terrain-data/:terrainDataId/imagery',
+  {
+    openApiPath: `${MOUNT}/terrain-data/{terrainDataId}/imagery`,
+    tags: ['BluDesign'],
+    summary: 'Download terrain data imagery',
+    security: 'bearer',
+    params: terrainDataIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { terrainDataId } = req.params;
+      const buffer = await getFacilityService().loadTerrainDataImagery(terrainDataId, userId);
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error fetching terrain imagery:', error);
+      res.status(status).json({
+        error: status === 404 ? 'Terrain imagery not found' : 'Failed to fetch terrain imagery',
+      });
+    }
+  },
+);
+
+registerPut(
+  router,
+  '/terrain-data/:terrainDataId/imagery',
+  {
+    openApiPath: `${MOUNT}/terrain-data/{terrainDataId}/imagery`,
+    tags: ['BluDesign'],
+    summary: 'Upload terrain data imagery',
+    security: 'bearer',
+    params: terrainDataIdParamSchema,
+  },
   authenticateToken,
   handleTerrainImageryUpload,
   async (req: AuthenticatedRequest, res: Response) => {
@@ -324,38 +351,52 @@ router.put(
         error: status === 400 ? (error as Error).message : 'Failed to save terrain imagery',
       });
     }
-  }
+  },
 );
 
-/**
- * GET /api/v1/bludesign/facilities/terrain-data/:terrainDataId/heightmap
- */
-router.get('/terrain-data/:terrainDataId/heightmap', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { terrainDataId } = req.params;
-    const buffer = await getFacilityService().loadTerrainDataHeightmap(terrainDataId, userId);
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.send(buffer);
-  } catch (error) {
-    const status = layoutSourceStatus(error);
-    if (status >= 500) console.error('Error fetching terrain heightmap:', error);
-    res.status(status).json({
-      error: status === 404 ? 'Terrain heightmap not found' : 'Failed to fetch terrain heightmap',
-    });
-  }
-});
-
-/**
- * PUT /api/v1/bludesign/facilities/terrain-data/:terrainDataId/heightmap
- */
-router.put(
+registerGet(
+  router,
   '/terrain-data/:terrainDataId/heightmap',
+  {
+    openApiPath: `${MOUNT}/terrain-data/{terrainDataId}/heightmap`,
+    tags: ['BluDesign'],
+    summary: 'Download terrain data heightmap',
+    security: 'bearer',
+    params: terrainDataIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { terrainDataId } = req.params;
+      const buffer = await getFacilityService().loadTerrainDataHeightmap(terrainDataId, userId);
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error fetching terrain heightmap:', error);
+      res.status(status).json({
+        error: status === 404 ? 'Terrain heightmap not found' : 'Failed to fetch terrain heightmap',
+      });
+    }
+  },
+);
+
+registerPut(
+  router,
+  '/terrain-data/:terrainDataId/heightmap',
+  {
+    openApiPath: `${MOUNT}/terrain-data/{terrainDataId}/heightmap`,
+    tags: ['BluDesign'],
+    summary: 'Upload terrain data heightmap',
+    security: 'bearer',
+    params: terrainDataIdParamSchema,
+  },
   authenticateToken,
   handleTerrainHeightmapUpload,
   async (req: AuthenticatedRequest, res: Response) => {
@@ -379,14 +420,19 @@ router.put(
         error: status === 400 ? (error as Error).message : 'Failed to save terrain heightmap',
       });
     }
-  }
+  },
 );
 
-/**
- * DELETE /api/v1/bludesign/facilities/terrain-data/:terrainDataId
- */
-router.delete(
+registerDelete(
+  router,
   '/terrain-data/:terrainDataId',
+  {
+    openApiPath: `${MOUNT}/terrain-data/{terrainDataId}`,
+    tags: ['BluDesign'],
+    summary: 'Delete terrain data',
+    security: 'bearer',
+    params: terrainDataIdParamSchema,
+  },
   authenticateToken,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -405,38 +451,52 @@ router.delete(
         error: status === 400 ? (error as Error).message : 'Failed to delete terrain data',
       });
     }
-  }
+  },
 );
 
-/**
- * GET /api/v1/bludesign/facilities/:id/terrain-imagery
- */
-router.get('/:id/terrain-imagery', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-    const buffer = await getFacilityService().loadTerrainImagery(id, userId);
-    res.setHeader('Content-Type', 'image/jpeg');
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.send(buffer);
-  } catch (error) {
-    const status = layoutSourceStatus(error);
-    if (status >= 500) console.error('Error fetching terrain imagery:', error);
-    res.status(status).json({
-      error: status === 404 ? 'Terrain imagery not found' : 'Failed to fetch terrain imagery',
-    });
-  }
-});
-
-/**
- * PUT /api/v1/bludesign/facilities/:id/terrain-imagery
- */
-router.put(
+registerGet(
+  router,
   '/:id/terrain-imagery',
+  {
+    openApiPath: `${MOUNT}/{id}/terrain-imagery`,
+    tags: ['BluDesign'],
+    summary: 'Download facility terrain imagery',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id } = req.params;
+      const buffer = await getFacilityService().loadTerrainImagery(id, userId);
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error fetching terrain imagery:', error);
+      res.status(status).json({
+        error: status === 404 ? 'Terrain imagery not found' : 'Failed to fetch terrain imagery',
+      });
+    }
+  },
+);
+
+registerPut(
+  router,
+  '/:id/terrain-imagery',
+  {
+    openApiPath: `${MOUNT}/{id}/terrain-imagery`,
+    tags: ['BluDesign'],
+    summary: 'Upload facility terrain imagery',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
   authenticateToken,
   handleTerrainImageryUpload,
   async (req: AuthenticatedRequest, res: Response) => {
@@ -465,38 +525,52 @@ router.put(
               : 'Failed to save terrain imagery',
       });
     }
-  }
+  },
 );
 
-/**
- * GET /api/v1/bludesign/facilities/:id/terrain-heightmap
- */
-router.get('/:id/terrain-heightmap', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-    const buffer = await getFacilityService().loadTerrainHeightmap(id, userId);
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.send(buffer);
-  } catch (error) {
-    const status = layoutSourceStatus(error);
-    if (status >= 500) console.error('Error fetching terrain heightmap:', error);
-    res.status(status).json({
-      error: status === 404 ? 'Terrain heightmap not found' : 'Failed to fetch terrain heightmap',
-    });
-  }
-});
-
-/**
- * PUT /api/v1/bludesign/facilities/:id/terrain-heightmap
- */
-router.put(
+registerGet(
+  router,
   '/:id/terrain-heightmap',
+  {
+    openApiPath: `${MOUNT}/{id}/terrain-heightmap`,
+    tags: ['BluDesign'],
+    summary: 'Download facility terrain heightmap',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id } = req.params;
+      const buffer = await getFacilityService().loadTerrainHeightmap(id, userId);
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(buffer);
+    } catch (error) {
+      const status = layoutSourceStatus(error);
+      if (status >= 500) console.error('Error fetching terrain heightmap:', error);
+      res.status(status).json({
+        error: status === 404 ? 'Terrain heightmap not found' : 'Failed to fetch terrain heightmap',
+      });
+    }
+  },
+);
+
+registerPut(
+  router,
+  '/:id/terrain-heightmap',
+  {
+    openApiPath: `${MOUNT}/{id}/terrain-heightmap`,
+    tags: ['BluDesign'],
+    summary: 'Upload facility terrain heightmap',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
   authenticateToken,
   handleTerrainHeightmapUpload,
   async (req: AuthenticatedRequest, res: Response) => {
@@ -525,120 +599,150 @@ router.put(
               : 'Failed to save terrain heightmap',
       });
     }
-  }
+  },
 );
 
-/**
- * GET /api/v1/bludesign/facilities/:id
- * Get a specific facility
- */
-router.get('/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+registerGet(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['BluDesign'],
+    summary: 'Get a specific facility',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id } = req.params;
+      const facility = await getFacilityService().getFacility(id, userId);
+
+      if (!facility) {
+        return res.status(404).json({ error: 'Facility not found' });
+      }
+
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json(facility);
+    } catch (error) {
+      console.error('Error fetching facility:', error);
+      res.status(500).json({ error: 'Failed to fetch facility' });
     }
+  },
+);
 
-    const { id } = req.params;
-    const facility = await getFacilityService().getFacility(id, userId);
+registerPost(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['BluDesign'],
+    summary: 'Save a new facility',
+    security: 'bearer',
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
 
-    if (!facility) {
-      return res.status(404).json({ error: 'Facility not found' });
+      const { error, value } = saveFacilitySchema.validate(req.body);
+      if (error) {
+        console.error('Facility save validation error:', error.details[0].message);
+        console.error('Request body keys:', Object.keys(req.body || {}));
+        console.error('Data keys:', Object.keys(req.body?.data || {}));
+        return res.status(400).json({ error: error.details[0].message });
+      }
+
+      const { name, data, thumbnail, copyLayoutSourceFrom, copyTerrainFrom } = value;
+      const facility = await getFacilityService().saveFacility(
+        userId,
+        name,
+        data,
+        thumbnail,
+        copyLayoutSourceFrom,
+        copyTerrainFrom,
+      );
+
+      res.status(201).json(facility);
+    } catch (error) {
+      console.error('Error saving facility:', error);
+      res.status(500).json({ error: 'Failed to save facility' });
     }
+  },
+);
 
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.json(facility);
-  } catch (error) {
-    console.error('Error fetching facility:', error);
-    res.status(500).json({ error: 'Failed to fetch facility' });
-  }
-});
+registerPut(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['BluDesign'],
+    summary: 'Update an existing facility',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
 
-/**
- * POST /api/v1/bludesign/facilities
- * Save a new facility
- */
-router.post('/', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      const { id } = req.params;
+      const { error, value } = updateFacilitySchema.validate(req.body);
+      if (error) {
+        return res.status(400).json({ error: error.details[0].message });
+      }
+
+      const { data, thumbnail } = value;
+      await getFacilityService().updateFacility(id, userId, data, thumbnail);
+
+      await getFacilityService().updateLastOpened(id, userId);
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error updating facility:', error);
+      res.status(500).json({ error: 'Failed to update facility' });
     }
+  },
+);
 
-    const { error, value } = saveFacilitySchema.validate(req.body);
-    if (error) {
-      console.error('Facility save validation error:', error.details[0].message);
-      console.error('Request body keys:', Object.keys(req.body || {}));
-      console.error('Data keys:', Object.keys(req.body?.data || {}));
-      return res.status(400).json({ error: error.details[0].message });
+registerDelete(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['BluDesign'],
+    summary: 'Delete a facility',
+    security: 'bearer',
+    params: facilityIdParamSchema,
+  },
+  authenticateToken,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id } = req.params;
+      await getFacilityService().deleteFacility(id, userId);
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting facility:', error);
+      res.status(500).json({ error: 'Failed to delete facility' });
     }
-
-    const { name, data, thumbnail, copyLayoutSourceFrom, copyTerrainFrom } = value;
-    const facility = await getFacilityService().saveFacility(
-      userId,
-      name,
-      data,
-      thumbnail,
-      copyLayoutSourceFrom,
-      copyTerrainFrom,
-    );
-
-    res.status(201).json(facility);
-  } catch (error) {
-    console.error('Error saving facility:', error);
-    res.status(500).json({ error: 'Failed to save facility' });
-  }
-});
-
-/**
- * PUT /api/v1/bludesign/facilities/:id
- * Update an existing facility
- */
-router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-    const { error, value } = updateFacilitySchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
-    }
-
-    const { data, thumbnail } = value;
-    await getFacilityService().updateFacility(id, userId, data, thumbnail);
-
-    // Update last_opened as well
-    await getFacilityService().updateLastOpened(id, userId);
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error updating facility:', error);
-    res.status(500).json({ error: 'Failed to update facility' });
-  }
-});
-
-/**
- * DELETE /api/v1/bludesign/facilities/:id
- * Delete a facility
- */
-router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-    await getFacilityService().deleteFacility(id, userId);
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error deleting facility:', error);
-    res.status(500).json({ error: 'Failed to delete facility' });
-  }
-});
+  },
+);
 
 export default router;

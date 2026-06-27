@@ -14,7 +14,6 @@
 
 import { Router, Response, RequestHandler, NextFunction } from 'express';
 import multer from 'multer';
-import Joi from 'joi';
 import { authenticateToken } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
@@ -25,10 +24,30 @@ import { FirmwarePushEventType } from '@/models/firmware-push-event.model';
 import { GatewayModel } from '@/models/gateway.model';
 import { FirmwarePushEventModel } from '@/models/firmware-push-event.model';
 import { logger } from '@/utils/logger';
+import {
+  registerGet,
+  registerPost,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  firmwareUploadSchema,
+  firmwareInitUploadSchema,
+  firmwareCompleteUploadSchema,
+  firmwareListQuerySchema,
+  firmwarePushStatusQuerySchema,
+  firmwarePushHistoryQuerySchema,
+  firmwarePushEventsQuerySchema,
+  firmwareIdParamSchema,
+  firmwareGatewayIdParamSchema,
+  firmwarePushIdParamSchema,
+  firmwarePushGatewayParamSchema,
+  firmwareResponseSchema,
+} from '@/schemas/firmware.schemas';
 
 const pushEventModel = new FirmwarePushEventModel();
 
 const router = Router();
+const MOUNT = '/api/v1/firmware';
 const gatewayModel = new GatewayModel();
 
 interface MulterRequest extends AuthenticatedRequest {
@@ -109,36 +128,23 @@ async function assertFacilityAccess(
 
 const VALID_TARGET_TYPES: readonly FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'access_control'];
 
-const uploadSchema = Joi.object({
-  version: Joi.string().max(64).required(),
-  target_type: Joi.string().valid(...VALID_TARGET_TYPES).optional().default('gateway'),
-  description: Joi.string().max(2000).optional().allow(''),
-  release_notes: Joi.string().max(10000).optional().allow(''),
-  compatible_models: Joi.string().optional().allow(''),
-  minimum_version: Joi.string().max(64).optional().allow(''),
-});
-
-const initUploadSchema = uploadSchema.keys({
-  phase: Joi.string().valid('prepare').required(),
-  filename: Joi.string().max(255).required(),
-  size_bytes: Joi.number().integer().min(1).max(FIRMWARE_MAX_SIZE_BYTES).required(),
-});
-
-const completeUploadSchema = initUploadSchema.keys({
-  phase: Joi.string().valid('finalize').required(),
-  upload_id: Joi.string().uuid().required(),
-});
-
 function parseCompatibleModels(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;
   const models = raw.split(',').map((m: string) => m.trim()).filter(Boolean);
   return models.length > 0 ? models : undefined;
 }
 
-function parseUploadMetadata(value: Joi.ValidationResult<any>['value']) {
+function parseUploadMetadata(value: {
+  version: string;
+  target_type?: string;
+  description?: string;
+  release_notes?: string;
+  compatible_models?: string;
+  minimum_version?: string;
+}) {
   return {
     version: value.version,
-    target_type: value.target_type || 'gateway',
+    target_type: (value.target_type || 'gateway') as FirmwareTargetType,
     description: value.description || undefined,
     release_notes: value.release_notes || undefined,
     compatible_models: parseCompatibleModels(value.compatible_models),
@@ -172,8 +178,19 @@ function handleFirmwareUploadError(err: any, res: Response): boolean {
   return false;
 }
 
-router.post(
+registerPost(
+  router,
   '/upload',
+  {
+    openApiPath: `${MOUNT}/upload`,
+    tags: ['Firmware'],
+    summary: 'Upload firmware binary or manage direct upload session',
+    security: 'bearer',
+    responses: {
+      200: firmwareResponseSchema,
+      201: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireDevAdmin,
   (req, res, next) => {
@@ -207,7 +224,7 @@ router.post(
     if (contentType.includes('application/json')) {
       const phase = req.body?.phase;
       if (phase === 'prepare') {
-        const { error, value } = initUploadSchema.validate(req.body);
+        const { error, value } = firmwareInitUploadSchema.validate(req.body);
         if (error) {
           res.status(400).json({ success: false, message: error.message });
           return;
@@ -228,7 +245,7 @@ router.post(
       }
 
       if (phase === 'finalize') {
-        const { error, value } = completeUploadSchema.validate(req.body);
+        const { error, value } = firmwareCompleteUploadSchema.validate(req.body);
         if (error) {
           res.status(400).json({ success: false, message: error.message });
           return;
@@ -259,7 +276,7 @@ router.post(
       return;
     }
 
-    const { error, value } = uploadSchema.validate(req.body);
+    const { error, value } = firmwareUploadSchema.validate(req.body);
     if (error) {
       res.status(400).json({ success: false, message: error.message });
       return;
@@ -295,8 +312,19 @@ router.post(
 // List firmware
 // ============================================================================
 
-router.get(
+registerGet(
+  router,
   '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Firmware'],
+    summary: 'List firmware images',
+    security: 'bearer',
+    query: firmwareListQuerySchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -311,8 +339,20 @@ router.get(
 // Get push status for a gateway (BEFORE /:id to avoid route conflict)
 // ============================================================================
 
-router.get(
+registerGet(
+  router,
   '/push-status/:gatewayId',
+  {
+    openApiPath: `${MOUNT}/push-status/{gatewayId}`,
+    tags: ['Firmware'],
+    summary: 'Get firmware push status for gateway',
+    security: 'bearer',
+    params: firmwareGatewayIdParamSchema,
+    query: firmwarePushStatusQuerySchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -349,8 +389,20 @@ router.get(
 // Get push history for a gateway (BEFORE /:id to avoid route conflict)
 // ============================================================================
 
-router.get(
+registerGet(
+  router,
   '/push-history/:gatewayId',
+  {
+    openApiPath: `${MOUNT}/push-history/{gatewayId}`,
+    tags: ['Firmware'],
+    summary: 'Get firmware push history for gateway',
+    security: 'bearer',
+    params: firmwareGatewayIdParamSchema,
+    query: firmwarePushHistoryQuerySchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -370,8 +422,19 @@ router.get(
 // Cancel firmware push (BEFORE /:id to avoid route conflict)
 // ============================================================================
 
-router.post(
+registerPost(
+  router,
   '/push/:pushId/cancel',
+  {
+    openApiPath: `${MOUNT}/push/{pushId}/cancel`,
+    tags: ['Firmware'],
+    summary: 'Cancel firmware push',
+    security: 'bearer',
+    params: firmwarePushIdParamSchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -401,8 +464,20 @@ router.post(
 // Get push event log (paginated)
 // ============================================================================
 
-router.get(
+registerGet(
+  router,
   '/push/:pushId/events',
+  {
+    openApiPath: `${MOUNT}/push/{pushId}/events`,
+    tags: ['Firmware'],
+    summary: 'Get firmware push event log',
+    security: 'bearer',
+    params: firmwarePushIdParamSchema,
+    query: firmwarePushEventsQuerySchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -447,8 +522,19 @@ router.get(
 // Get firmware details
 // ============================================================================
 
-router.get(
+registerGet(
+  router,
   '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Firmware'],
+    summary: 'Get firmware details',
+    security: 'bearer',
+    params: firmwareIdParamSchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -465,8 +551,19 @@ router.get(
 // Delete firmware (soft delete, DEV_ADMIN only)
 // ============================================================================
 
-router.delete(
+registerDelete(
+  router,
   '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Firmware'],
+    summary: 'Deactivate firmware image',
+    security: 'bearer',
+    params: firmwareIdParamSchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireDevAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -483,8 +580,19 @@ router.delete(
 // Initiate firmware push to gateway
 // ============================================================================
 
-router.post(
+registerPost(
+  router,
   '/:id/push/:gatewayId',
+  {
+    openApiPath: `${MOUNT}/{id}/push/{gatewayId}`,
+    tags: ['Firmware'],
+    summary: 'Initiate firmware push to gateway',
+    security: 'bearer',
+    params: firmwarePushGatewayParamSchema,
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
   authenticateToken,
   requireAdminOrFacilityAdmin,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {

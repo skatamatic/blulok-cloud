@@ -4,7 +4,9 @@ This document is for **mobile app developers** wiring **manager mode** commissio
 
 **Summary:** The APIs **already exist**. No new backend endpoints are required for `facility_admin` (and global admin) users. Use the discovery endpoints below to resolve IDs, then call assign/unassign on the lock’s cloud UUID. For decommissioning, use the inventory **DELETE** routes in §11 (not unassign).
 
-**Related docs:** [Facilities & devices schema](./facilities-devices-schema.md), [Auth & RBAC](./auth.md), [Device metadata / manual add](./device-metadata-editing.md), [Gateway device inventory](./gateway-device-inventory-payload.md), [Gateway integration — cloud inventory deletion](./gateway-integration.md#cloud-inventory-deletion-device_deleted).
+**Related docs:** [Facilities & devices schema](./facilities-devices-schema.md), [Auth & RBAC](./auth.md), [Device metadata / manual add](./device-metadata-editing.md), [Gateway device inventory](./gateway-device-inventory-payload.md), [Gateway integration — cloud inventory deletion](./gateway-integration.md#cloud-inventory-deletion-device_deleted), [Interactive API docs (Swagger)](./api-documentation.md).
+
+**Live interactive docs (dev):** `{dev-backend-url}/api/docs`
 
 ---
 
@@ -90,7 +92,7 @@ Authorization: Bearer …
 
 ### Step B — List units (see current lock, if any)
 
-Either form works:
+Either form works (both are mounted at `/api/v1`, same pattern as facility schedules):
 
 ```http
 GET /api/v1/facilities/{facilityId}/units?limit=50&offset=0

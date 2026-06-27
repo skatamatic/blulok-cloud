@@ -165,7 +165,14 @@ RUN npm ci --only=production && npm cache clean --force
 
 # Copy source and build
 COPY . .
+ENV NODE_ENV=test DB_NAME=openapi_build DB_USER=openapi DB_PASSWORD=build \
+    JWT_SECRET=openapi-build-jwt-secret-minimum-32-chars \
+    OPS_ED25519_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    OPS_ED25519_PUBLIC_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    ROOT_ED25519_PUBLIC_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 RUN npm run build
+RUN npm run openapi:generate -- --strict && npm run openapi:audit && node scripts/copy-build-assets.js
+RUN test -f dist/openapi/generated.json
 
 # Production stage
 FROM node:18-alpine AS production
@@ -467,6 +474,8 @@ DB_USER=blulok_user
 CORS_ORIGINS=https://blulok.com,https://app.blulok.com
 LOG_LEVEL=info
 ```
+
+**API documentation on Cloud Run:** `https://<backend-service-url>/api/openapi.json` (always). Swagger UI at `/api/docs` (on by default). The spec is regenerated during `backend/Dockerfile.prod` build — not read from git at runtime.
 
 ### Secret Management Strategy
 

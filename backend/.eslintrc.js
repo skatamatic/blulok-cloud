@@ -29,5 +29,22 @@ module.exports = {
     '@typescript-eslint/no-inferrable-types': 'off',
     'prefer-const': 'error',
     'no-var': 'error',
+    'no-restricted-syntax': [
+      'error',
+      {
+        selector:
+          "CallExpression[callee.object.name='router'][callee.property.name=/^(get|post|put|patch|delete)$/]",
+        message:
+          'Use registerGet/registerPost/registerPut/registerPatch/registerDelete from @/openapi/register-route instead of router.* in route files.',
+      },
+    ],
   },
+  overrides: [
+    {
+      files: ['src/openapi/**/*.ts', 'src/middleware/**/*.ts'],
+      rules: {
+        'no-restricted-syntax': 'off',
+      },
+    },
+  ],
 };

@@ -1,5 +1,4 @@
 import { Router, Response, NextFunction } from 'express';
-import Joi from 'joi';
 import { UserModel, User } from '@/models/user.model';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { AuthService } from '@/services/auth.service';
@@ -22,6 +21,20 @@ import {
   validateFacilityIdsForAssignment,
 } from '@/utils/users-rbac.util';
 import { UserListScopeService } from '@/services/user-list-scope.service';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  CREATE_PASSWORD_PATTERN,
+  usersListQuerySchema,
+  createUserSchema,
+  updateUserSchema,
+  userIdParamSchema,
+  usersResponseSchema,
+} from '@/schemas/users.schemas';
 
 /**
  * User Management Routes
@@ -49,6 +62,7 @@ import { UserListScopeService } from '@/services/user-list-scope.service';
  * - Account deactivation triggers denylist updates
  */
 const router = Router();
+const MOUNT = '/api/v1/users';
 
 // All routes require authentication - no anonymous access allowed
 router.use(authenticateToken);
@@ -66,33 +80,25 @@ const checkFacilityAccess = async (req: AuthenticatedRequest, targetUserId: stri
   );
 };
 
-// Validation schemas
-const CREATE_PASSWORD_PATTERN = new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$');
-
-const createUserSchema = Joi.object({
-  email: Joi.string().email().required(),
-  password: Joi.string().allow('').optional(),
-  phoneNumber: Joi.string().trim().allow('').optional(),
-  /** When true and password is omitted, sends first-time invite (SMS if phone set, else email when enabled). */
-  sendInvite: Joi.boolean().optional(),
-  /** Initial facility associations (required for non–globally-scoped roles). */
-  facilityIds: Joi.array().items(Joi.string().uuid()).optional().default([]),
-  firstName: Joi.string().min(1).max(100).required(),
-  lastName: Joi.string().min(1).max(100).required(),
-  role: Joi.string().valid(...Object.values(UserRole)).required()
-});
-
-const updateUserSchema = Joi.object({
-  firstName: Joi.string().min(1).max(100).optional(),
-  lastName: Joi.string().min(1).max(100).optional(),
-  phoneNumber: Joi.string().trim().allow('', null).optional(),
-  role: Joi.string().valid(...Object.values(UserRole)).optional(),
-  isActive: Joi.boolean().optional()
-});
-
-// GET /users - List all users with filtering and facility information
-router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { search, role, facility, sortBy = 'created_at', sortOrder = 'desc', limit, offset } = req.query;
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Users'],
+    summary: 'List users with filtering',
+    security: 'bearer',
+    query: usersListQuerySchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { search, role, facility, sortBy, sortOrder, sort_by, sort_order, facility_id, limit, offset } = req.query;
+  const resolvedSortBy = (sortBy ?? sort_by ?? 'created_at') as string;
+  const resolvedSortOrder = (sortOrder ?? sort_order ?? 'desc') as string;
+  const resolvedFacility = (facility ?? facility_id) as string | undefined;
   const userId = req.user!.userId;
   const userRole = req.user!.role;
 
@@ -136,15 +142,15 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   }
 
   // Apply facility filter
-  if (facility) {
-    filteredUsers = filteredUsers.filter((user) => userMatchesFacilityFilter(user, String(facility)));
+  if (resolvedFacility) {
+    filteredUsers = filteredUsers.filter((user) => userMatchesFacilityFilter(user, String(resolvedFacility)));
   }
 
   // Apply sorting
   filteredUsers.sort((a, b) => {
     let aVal, bVal;
     
-    switch (sortBy) {
+    switch (resolvedSortBy) {
       case 'name':
         aVal = `${a.first_name} ${a.last_name}`.toLowerCase();
         bVal = `${b.first_name} ${b.last_name}`.toLowerCase();
@@ -164,7 +170,7 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
         break;
     }
     
-    if (sortOrder === 'desc') {
+    if (resolvedSortOrder === 'desc') {
       return aVal < bVal ? 1 : -1;
     } else {
       return aVal > bVal ? 1 : -1;
@@ -200,8 +206,21 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   });
 }));
 
-// GET /users/:id - Get user by ID
-router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Users'],
+    summary: 'Get user by ID',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagementOrSelf,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
 
   if (!id) {
@@ -249,8 +268,21 @@ router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
   });
 }));
 
-// GET /users/:id/details - Get detailed user information with facilities, units, and devices
-router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:id/details',
+  {
+    openApiPath: `${MOUNT}/{id}/details`,
+    tags: ['Users'],
+    summary: 'Get detailed user information',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagementOrSelf,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
   const db = DatabaseService.getInstance().connection;
 
@@ -499,23 +531,23 @@ router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req:
   });
 }));
 
-// POST /users - Create new user
-router.post('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = createUserSchema.validate(req.body);
-  if (error) {
-    logger.warn('Create user validation failed', {
-      requester: req.user?.userId,
-      role: req.user?.role,
-      message: error.details[0]?.message,
-    });
-    res.status(400).json({
-      success: false,
-      message: error.details[0]?.message || 'Validation error'
-    });
-    return;
-  }
-
-  const passwordTrimmed = typeof value.password === 'string' ? value.password.trim() : '';
+registerPost(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Users'],
+    summary: 'Create a user',
+    security: 'bearer',
+    body: createUserSchema,
+    responses: {
+      201: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const value = req.body;
+    const passwordTrimmed = typeof value.password === 'string' ? value.password.trim() : '';
   if (passwordTrimmed) {
     if (passwordTrimmed.length < 8 || !CREATE_PASSWORD_PATTERN.test(passwordTrimmed)) {
       res.status(400).json({
@@ -618,8 +650,21 @@ router.post('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRe
   });
 }));
 
-// POST /users/:id/resend-invite - Admin action to resend first-time invite
-router.post('/:id/resend-invite', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:id/resend-invite',
+  {
+    openApiPath: `${MOUNT}/{id}/resend-invite`,
+    tags: ['Users'],
+    summary: 'Resend first-time user invite',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
   const user = await UserModel.findById(String(id)) as User | undefined;
   if (!user) {
@@ -637,8 +682,22 @@ router.post('/:id/resend-invite', requireUserManagement, asyncHandler(async (req
   res.json({ success: true, message: 'Invite resent' });
 }));
 
-// PUT /users/:id - Update user
-router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPut(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Users'],
+    summary: 'Update a user',
+    security: 'bearer',
+    params: userIdParamSchema,
+    body: updateUserSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagementOrSelf,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
   
   if (!id) {
@@ -658,18 +717,8 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     });
     return;
   }
-  
-  const { error, value } = updateUserSchema.validate(req.body);
-  
-  if (error) {
-    res.status(400).json({
-      success: false,
-      message: error.details[0]?.message || 'Validation error'
-    });
-    return;
-  }
 
-  const updateData: UpdateUserRequest = value;
+  const updateData: UpdateUserRequest = req.body;
 
   // Check if user exists
   const existingUser = await UserModel.findById(id) as User;
@@ -776,8 +825,21 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
   });
 }));
 
-// DELETE /users/:id - Deactivate user (soft delete)
-router.delete('/:id', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerDelete(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Users'],
+    summary: 'Deactivate a user',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
 
   if (!id) {
@@ -940,8 +1002,21 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
   });
 }));
 
-// POST /users/:id/activate - Reactivate user
-router.post('/:id/activate', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:id/activate',
+  {
+    openApiPath: `${MOUNT}/{id}/activate`,
+    tags: ['Users'],
+    summary: 'Reactivate a user',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
 
   if (!id) {
